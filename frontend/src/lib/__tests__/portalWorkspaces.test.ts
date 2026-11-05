@@ -60,7 +60,7 @@ describe('activeWorkspace', () => {
 describe('the list itself', () => {
   it('is the curated set, Super Admin first', () => {
     expect(PORTAL_WORKSPACES.map((w) => w.slug)).toEqual([
-      'admin', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'employer', 'audit', 'learner',
+      'admin', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'support', 'employer', 'audit', 'learner',
     ]);
   });
 
@@ -103,6 +103,12 @@ describe('the list itself', () => {
     const employer = PORTAL_WORKSPACES.find((w) => w.slug === 'employer');
     expect(employer).toBeDefined();
     expect(employer?.demoEmail).toBeNull();
+  });
+
+  it('opens the protected support queue without offering a public demo account', () => {
+    const support = PORTAL_WORKSPACES.find(w => w.slug === 'support');
+    expect(support).toMatchObject({ path: '/support/ticket-queue', demoEmail: null });
+    expect(activeWorkspace('/support/ticket-queue')?.slug).toBe('support');
   });
 });
 

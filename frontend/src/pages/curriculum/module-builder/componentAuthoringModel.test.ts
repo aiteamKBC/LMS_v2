@@ -1,8 +1,67 @@
 import { describe, expect, it } from 'vitest';
-import { componentLooksUnedited, componentTypeDescription, firstValidationMessage, normaliseComponentSettings, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
+import { componentLooksUnedited, componentTypeDescription, firstValidationMessage, MEDIA_SOURCE_TYPES, normaliseComponentSettings, normaliseVideoSourceType, providerForVideoSourceType, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
 import { createEmptyComponent } from './moduleAuthoringData';
+import type { ComponentSettings } from './componentAuthoringModel';
+
+describe('opaque legacy settings round trip', () => {
+  it.each(['object', 'string'])('retains unknown JSON and typed point metadata from %s legacy settings', representation => {
+    const legacy = { pointNumber: 3, unknownText: 'keep', unknownNumber: 0, unknownFalse: false,
+      unknownNull: null, unknownNested: { ids: ['a', 'b'], retained: true }, unknownArray: [1, { v: null }],
+      ['__proto__']: { retainedAsData: true },
+      podcastEmbedCode: '<iframe src="https://example.com/old"></iframe>' };
+    const input = { podcastSource: 'Embed', embedCode: '', podcastEmbedCode: '',
+      legacySettings: representation === 'object' ? legacy : JSON.stringify(legacy) } as unknown as ComponentSettings;
+    const before = JSON.stringify(input);
+    const first = normaliseComponentSettings('podcast', input);
+    const second = normaliseComponentSettings('podcast', first);
+    const { podcastEmbedCode: _known, ...unknown } = legacy;
+    expect(JSON.parse(String(first.legacySettings))).toEqual(unknown);
+    expect(second).toEqual(first);
+    expect(first.embedCode).toBe('');
+    expect(first.podcastEmbedCode).toBe('');
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it('keeps explicit authored overrides and does not coerce a numeric string', () => {
+    const output = normaliseComponentSettings('reading', {
+      pointNumber: '4', legacySettings: { pointNumber: 3, other: 'retained' },
+    } as unknown as ComponentSettings);
+    expect(JSON.parse(String(output.legacySettings))).toEqual({ pointNumber: '4', other: 'retained' });
+  });
+
+  it.each([null, [], '{bad', '[]', 'null', 'true', '"text"'])('ignores invalid legacy containers (%j)', legacySettings => {
+    const output = normaliseComponentSettings('reading', { legacySettings } as unknown as ComponentSettings);
+    expect(output.legacySettings).toBeUndefined();
+  });
+});
 
 describe('normaliseComponentSettings week-template compatibility', () => {
+  it('offers HTML (MP4) as a video source and keeps it distinct', () => {
+    expect(MEDIA_SOURCE_TYPES).toContain('HTML (MP4)');
+    expect(normaliseVideoSourceType('HTML (MP4)')).toBe('HTML (MP4)');
+    expect(normaliseVideoSourceType('Upload file')).toBe('HTML (MP4)');
+    expect(providerForVideoSourceType('HTML (MP4)')).toBe('Upload file');
+  });
+
+  it('validates an HTML (MP4) URL like other HTTP video sources', () => {
+    const settings = normaliseComponentSettings('video', {
+      sourceType: 'HTML (MP4)',
+      provider: 'Upload file',
+      videoUrl: 'https://cdn.example.invalid/lesson.mp4',
+      contentStatus: 'Ready for QA',
+    });
+
+    expect(validateComponentAuthoring({
+      type: 'video',
+      title: 'MP4 lesson',
+      expectedOtjh: 0,
+      points: 10,
+      reflectionRequired: false,
+      workplaceEvidenceRequired: false,
+      settings,
+    })).toEqual([]);
+  });
+
   it('identifies every invalid component by week and title in the save message', () => {
     const assignment = (title: string) => ({
       type: 'assignment' as const,

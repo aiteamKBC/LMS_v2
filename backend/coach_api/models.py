@@ -145,14 +145,38 @@ class CoachCalendarEvent(models.Model):
         return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
 
 
+class ReviewBookingReschedule(models.Model):
+    """Immutable context of a coach-rescheduled, unoccupied Review meeting."""
+
+    calendar_event_id = models.BigIntegerField(db_index=True)
+    learner_id = models.IntegerField()
+    event_key = models.CharField(max_length=255)
+    graph_event_id = models.CharField(max_length=255)
+    owner_email = models.EmailField(max_length=255)
+    booking_fingerprint = models.CharField(max_length=64)
+    scheduled_date = models.DateField()
+    scheduled_time = models.TimeField()
+    duration_minutes = models.PositiveIntegerField()
+    session_claim = models.JSONField(default=dict, blank=True)
+    evidence_manifest = models.JSONField(default=dict, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_review_reschedules', 'Coach"."coach_review_reschedule')
+        constraints = [models.UniqueConstraint(
+            fields=['calendar_event_id', 'booking_fingerprint'], name='coach_review_reschedule_once')]
+
+
 class MigratedReviewTemplate(models.Model):
     """Approved Aptem continuation form, separate from Curriculum templates."""
 
     FAMILY_MCM = "MCM"
     FAMILY_PR = "PR"
     FAMILY_PR_SKILLS_RADAR = "PR_SKILLS_RADAR"
+    FAMILY_PSP = "PSP"
     FAMILY_CHOICES = [(FAMILY_MCM, "Monthly Coaching Meeting"), (FAMILY_PR, "Progress Review"),
-                      (FAMILY_PR_SKILLS_RADAR, "Progress Review + Skills Radar")]
+                      (FAMILY_PR_SKILLS_RADAR, "Progress Review + Skills Radar"),
+                      (FAMILY_PSP, "Personal Support Plan")]
     SCOPE_GLOBAL = "GLOBAL"
     SCOPE_PROGRAMME = "PROGRAMME"
 
@@ -179,7 +203,7 @@ class MigratedReviewTemplate(models.Model):
                 name="coach_migrated_global_active",
             ),
             models.CheckConstraint(
-                condition=models.Q(review_family__in=["MCM", "PR", "PR_SKILLS_RADAR"]),
+                condition=models.Q(review_family__in=["MCM", "PR", "PR_SKILLS_RADAR", "PSP"]),
                 name="coach_migrated_template_family_valid",
             ),
             models.CheckConstraint(
@@ -261,6 +285,94 @@ class ImportedReviewInstance(models.Model):
             ),
         ]
 
+
+class ImportedMeetingOwnership(models.Model):
+    """Verified provider meeting reserved for one source-qualified APTEM Review.
+
+    The calendar ID points to the physical Learner table in PostgreSQL. It is
+    deliberately an integer here because CoachCalendarEvent maps to a view.
+    Provider identity is never released for reuse after cancellation.
+    """
+
+    STATE_ACTIVE = "active"
+    STATE_CANCELLED = "cancelled"
+
+    source_review_id = models.BigIntegerField()
+    learner_id = models.IntegerField()
+    review_event_key = models.CharField(max_length=255)
+    calendar_event_id = models.BigIntegerField()
+    overlay = models.ForeignKey(ImportedReviewInstance, null=True, blank=True,
+                                on_delete=models.PROTECT, related_name="meeting_ownerships")
+    owner_email = models.EmailField(max_length=255)
+    tenant_id = models.UUIDField()
+    organizer_id = models.UUIDField()
+    online_meeting_id = models.CharField(max_length=240)
+    graph_event_id = models.CharField(max_length=255)
+    booking_fingerprint = models.CharField(max_length=64)
+    provenance = models.CharField(max_length=32, default="graph-calendar-verified")
+    state = models.CharField(max_length=16, default=STATE_ACTIVE)
+    verified_at = models.DateTimeField()
+
+    class Meta:
+        db_table = _table_name('coach_test_imported_meeting_ownership',
+                               'Coach"."coach_imported_meeting_ownership')
+        constraints = [
+            models.UniqueConstraint(fields=["tenant_id", "organizer_id", "online_meeting_id"],
+                                    name="aptem_owner_provider_uniq"),
+            models.UniqueConstraint(fields=["calendar_event_id"], name="aptem_owner_calendar_uniq"),
+            models.UniqueConstraint(fields=["source_review_id"],
+                                    condition=models.Q(state="active"),
+                                    name="aptem_owner_active_source_uniq"),
+            models.CheckConstraint(condition=models.Q(state__in=["active", "cancelled"]),
+                                   name="aptem_owner_state_valid"),
+            models.CheckConstraint(condition=~models.Q(online_meeting_id=""),
+                                   name="aptem_owner_meeting_nonempty"),
+        ]
+
+class ReviewSourceReconciliation(models.Model):
+    """Explicit current authority; the calendar's Native fields remain provenance."""
+
+    learner_id = models.BigIntegerField()
+    # The Coach calendar model addresses a PostgreSQL VIEW. The migration's
+    # physical FK therefore targets Learner.coach_calendar_event, not that view.
+    calendar_event_id = models.BigIntegerField()
+    native_review_instance_id = models.CharField(max_length=128)
+    native_template_id = models.CharField(max_length=128)
+    native_event_key = models.CharField(max_length=255)
+    source_review_id = models.BigIntegerField()
+    aptem_review_id = models.CharField(max_length=128)
+    family = models.CharField(max_length=16, default="MCM")
+    overlay = models.ForeignKey(ImportedReviewInstance, on_delete=models.PROTECT)
+    status = models.CharField(max_length=16, default="APPLIED")
+    approved_by = models.BigIntegerField()
+    approved_at = models.DateTimeField()
+    reason = models.TextField()
+    reversed_by = models.BigIntegerField(null=True)
+    reversed_at = models.DateTimeField(null=True)
+    reversal_reason = models.TextField(blank=True)
+    # Hashes only: do not duplicate private meeting URLs or learner answers.
+    calendar_fingerprint = models.CharField(max_length=64)
+    overlay_fingerprint = models.CharField(max_length=64)
+    overlay_created = models.BooleanField(default=False)
+    overlay_previous_status = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_review_reconciliations', 'Coach"."review_source_reconciliation')
+        constraints = [
+            models.UniqueConstraint(fields=[field], condition=models.Q(status="APPLIED"), name=name)
+            for field, name in (
+                ("calendar_event_id", "review_recon_active_calendar"),
+                ("native_review_instance_id", "review_recon_active_native"),
+                ("source_review_id", "review_recon_active_source"),
+                ("overlay", "review_recon_active_overlay"),
+            )
+        ] + [
+            models.CheckConstraint(condition=models.Q(status__in=["APPLIED", "REVERSED"]), name="review_recon_valid_status"),
+            models.CheckConstraint(condition=models.Q(family="MCM"), name="review_recon_mcm_only"),
+        ]
+
+
 class MigratedReviewSignature(models.Model):
     """One immutable LMS sign-off for an imported review and participant role."""
 
@@ -289,6 +401,30 @@ class MigratedReviewDocument(models.Model):
 
     class Meta:
         db_table = _table_name('coach_test_migrated_review_documents', 'Coach"."coach_migrated_review_document')
+
+
+class MigratedReviewRevision(models.Model):
+    """Append-only application archive of the state replaced by a coach reopen."""
+
+    overlay = models.ForeignKey(
+        ImportedReviewInstance, on_delete=models.PROTECT, related_name="archived_revisions",
+    )
+    number = models.PositiveIntegerField()
+    snapshot = models.JSONField()
+    pdf_bytes = models.BinaryField(null=True)
+    pdf_sha256 = models.CharField(max_length=64, blank=True)
+    reason_code = models.CharField(max_length=32)
+    note = models.TextField(blank=True)
+    actor_account_id = models.BigIntegerField()
+    actor_email = models.EmailField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_migrated_review_revisions', 'Coach"."coach_migrated_review_revision')
+        constraints = [
+            models.UniqueConstraint(fields=["overlay", "number"], name="coach_migrated_revision_unique"),
+            models.CheckConstraint(condition=models.Q(number__gte=1), name="coach_migrated_revision_positive"),
+        ]
 
 
 class CoachCalendarSequence(models.Model):
@@ -402,7 +538,28 @@ class CoachManualAttendance(models.Model):
 
     owner_email = models.EmailField(max_length=255, db_index=True)
     learner_id = models.IntegerField(db_index=True)
+    # Stable cross-schema links already present on Coach.coach_manual_attendance.
+    # learner_id/enrolment_id remain historical snapshots used by the existing
+    # attendance contract; these relations are the canonical joins for new code.
+    learner_profile_link = models.ForeignKey(
+        "learner_api.LearnerProfile",
+        db_column="learner_profile_link_id",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="coach_manual_attendance_links",
+        db_index=False,
+    )
     enrolment_id = models.IntegerField(null=True, blank=True)
+    enrolment_link = models.ForeignKey(
+        "learner_api.EnrolmentUser",
+        db_column="enrolment_link_id",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="coach_manual_attendance_enrolment_links",
+        db_index=False,
+    )
     learner_name = models.CharField(max_length=255)
     learner_email = models.EmailField(max_length=255, blank=True)
     session_date = models.DateField(db_index=True)
@@ -437,6 +594,17 @@ class CoachAttendanceSourceAdjustment(models.Model):
 
     owner_email = models.EmailField(max_length=255)
     learner_id = models.IntegerField(db_index=True)
+    # Existing FK column; keep learner_id as the legacy snapshot until all
+    # readers migrate to the stable LearnerProfile relation.
+    learner_profile_link = models.ForeignKey(
+        "learner_api.LearnerProfile",
+        db_column="learner_profile_link_id",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="coach_attendance_adjustment_links",
+        db_index=False,
+    )
     source = models.CharField(max_length=40)
     source_id = models.CharField(max_length=255)
     session_date = models.DateField(null=True, blank=True)
@@ -459,6 +627,34 @@ class CoachAttendanceSourceAdjustment(models.Model):
                 condition=models.Q(status__in=["", "present", "absent"]),
                 name="coach_attendance_adjustment_status_valid",
             ),
+        ]
+
+
+class ReviewAttendanceLink(models.Model):
+    """Audited, reversible identity correction; original Teams evidence is immutable."""
+
+    calendar_event_id = models.BigIntegerField(db_index=True)
+    learner_id = models.IntegerField()
+    target_role = models.CharField(max_length=16, default='learner')
+    target_key = models.CharField(max_length=64, default='learner')
+    target_name = models.CharField(max_length=255, blank=True, default='')
+    session_key = models.CharField(max_length=64)
+    participant_key = models.CharField(max_length=64)
+    evidence = models.JSONField()
+    reason = models.CharField(max_length=500)
+    confirmed_by = models.EmailField(max_length=255)
+    confirmed_at = models.DateTimeField(auto_now_add=True)
+    revoked_by = models.EmailField(max_length=255, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoke_reason = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_review_attendance_link', 'Coach"."review_attendance_link')
+        constraints = [
+            models.UniqueConstraint(fields=['calendar_event_id', 'session_key', 'target_key'],
+                condition=models.Q(revoked_at__isnull=True), name='review_att_link_active_target'),
+            models.UniqueConstraint(fields=['calendar_event_id', 'session_key', 'participant_key'],
+                condition=models.Q(revoked_at__isnull=True), name='review_att_link_active_person'),
         ]
 
 
@@ -531,3 +727,119 @@ class CatchupReminder(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["event_key", "kind", "starts_at"], name="catchup_reminder_once"),
         ]
+
+
+class CoachingQualitySuggestion(models.Model):
+    """Separate, review-only AI cache. Never changes reviews or sanctions."""
+
+    event_key = models.CharField(max_length=255)
+    fingerprint = models.CharField(max_length=64)
+    state = models.CharField(max_length=16, default='running')
+    claim = models.UUIDField(default=uuid.uuid4)
+    lease_until = models.DateTimeField()
+    result = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_quality_suggestion', 'Coach"."coaching_quality_suggestion')
+        constraints = [models.UniqueConstraint(fields=['event_key', 'fingerprint'], name='coach_quality_input_unique')]
+
+
+class CoachingRecordingJob(models.Model):
+    """Durable, leased calendar/discovery/archive work and last successful snapshot."""
+
+    key = models.CharField(max_length=96, primary_key=True)
+    kind = models.CharField(max_length=16)
+    owner_email = models.EmailField(max_length=320)
+    context = models.JSONField(default=dict)
+    result = models.JSONField(default=dict)
+    state = models.CharField(max_length=16, default='queued')
+    claim = models.UUIDField(null=True)
+    lease_until = models.DateTimeField(null=True)
+    next_run_at = models.DateTimeField(null=True)
+    last_success_at = models.DateTimeField(null=True)
+    error_code = models.CharField(max_length=64, default='')
+    retryable = models.BooleanField(default=True)
+    attempts = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_recording_job', 'Coach"."coaching_recording_job')
+        indexes = [models.Index(fields=['kind', 'next_run_at'], name='coach_recording_job_due')]
+
+
+class CoachingCalendarIndex(models.Model):
+    """Complete, versioned calendar projection; source jobs remain authoritative."""
+
+    key = models.CharField(max_length=96, primary_key=True)
+    owner_email = models.EmailField(max_length=320)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    source_success_at = models.DateTimeField()
+    event_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = _table_name('coach_test_calendar_index', 'Coach"."coaching_calendar_index')
+        indexes = [models.Index(fields=['owner_email', 'starts_at', 'ends_at'], name='coach_cal_index_owner_window')]
+
+
+class CoachingCalendarMeeting(models.Model):
+    """Thin calendar metadata only; never video bytes, tokens or review evidence."""
+
+    key = models.CharField(max_length=64, primary_key=True)
+    snapshot = models.ForeignKey(CoachingCalendarIndex, on_delete=models.CASCADE, related_name='meetings')
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    event = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = _table_name('coach_test_calendar_meeting', 'Coach"."coaching_calendar_meeting')
+        indexes = [models.Index(fields=['snapshot', 'starts_at', 'ends_at'], name='coach_cal_meeting_window')]
+
+
+class CoachingCompletionSession(models.Model):
+    """Read-only Aptem projection; never marks a source review complete."""
+    key = models.CharField(max_length=64, primary_key=True)
+    component_id = models.BigIntegerField(db_index=True)
+    source_meeting_id = models.CharField(max_length=64)
+    owner_email = models.EmailField(max_length=320, db_index=True)
+    learner_name = models.CharField(max_length=255)
+    learner_email = models.EmailField(max_length=320)
+    family = models.CharField(max_length=3)
+    event_id = models.CharField(max_length=1024)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    state = models.CharField(max_length=32)
+    source_status = models.CharField(max_length=64)
+    source_updated_at = models.DateTimeField()
+    checked_at = models.DateTimeField()
+    class Meta:
+        db_table = _table_name('coach_test_completion_session', 'Coach"."coaching_completion_session')
+        indexes = [models.Index(fields=['state', 'ends_at'], name='coach_completion_due'),
+            models.Index(fields=['owner_email', 'starts_at'], name='coach_completion_occurrence')]
+
+
+class CoachingCompletionDigest(models.Model):
+    owner_email = models.EmailField(max_length=320)
+    day = models.DateField()
+    state = models.CharField(max_length=16, default='sending')
+    created_at = models.DateTimeField()
+    sent_at = models.DateTimeField(null=True)
+    class Meta:
+        db_table = _table_name('coach_test_completion_digest', 'Coach"."coaching_completion_digest')
+        constraints = [models.UniqueConstraint(fields=['owner_email', 'day'], name='coach_completion_digest_once')]
+
+
+class CoachingCompletionReminder(models.Model):
+    session = models.ForeignKey(CoachingCompletionSession, on_delete=models.PROTECT, related_name='reminders')
+    stage = models.PositiveSmallIntegerField()
+    due_at = models.DateTimeField()
+    read_at = models.DateTimeField(null=True)
+    dismissed_at = models.DateTimeField(null=True)
+    cancelled_at = models.DateTimeField(null=True)
+    digest = models.ForeignKey(CoachingCompletionDigest, null=True, on_delete=models.PROTECT, related_name='reminders')
+    class Meta:
+        db_table = _table_name('coach_test_completion_reminder', 'Coach"."coaching_completion_reminder')
+        constraints = [models.UniqueConstraint(fields=['session', 'stage'], name='coach_completion_stage_once')]
+        indexes = [models.Index(fields=['cancelled_at', 'due_at'], name='coach_completion_inbox')]

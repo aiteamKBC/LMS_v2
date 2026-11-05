@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
+from config.time_zones import calendar_zone, local_clock_to_utc
 
 ROOT = Path(__file__).parent
 
@@ -35,6 +36,7 @@ class SessionDeliveryClockTests(unittest.TestCase):
             'clean_str', 'parse_int', 'parse_date', 'format_date', 'parse_graph_datetime',
             'parse_clock_minutes', 'clock_time_plus_minutes', 'teams_calendar_minute_key',
             'module_session_clock', 'module_live_session_clock', 'calendar_clock_to_utc_iso',
+            'module_delivery_row', 'schedule_day_part', 'schedule_time_parts',
             'apply_module_session_plan_to_weeks', 'build_sessions_from_authoring_modules',
             'module_expected_teams_occurrence_keys', 'authoring_session_links_by_catalogue',
             'curriculum_module_session_plan',
@@ -64,7 +66,7 @@ class SessionDeliveryClockTests(unittest.TestCase):
                 'sessionPurpose': 'Keep outline', 'teamsRecording': 'record-transcribe',
             }}]} for index, session in enumerate(self.plan['sessions'])]
         self.n = {
-            'datetime': datetime, 'date': date, 'timedelta': timedelta, 'timezone': timezone, 'ZoneInfo': ZoneInfo,
+            'calendar_zone': calendar_zone, 'local_clock_to_utc': local_clock_to_utc, 'datetime': datetime, 'date': date, 'timedelta': timedelta, 'timezone': timezone, 'ZoneInfo': ZoneInfo,
             're': re, 'defaultdict': defaultdict, 'logger': logging.getLogger('session-clock-test'),
             'module_weekly_schedule': self.weekly.module_weekly_schedule, 'override_clock': self.overrides.override_clock,
             'DEFAULT_SESSION_START_TIME': '09:00', 'DEFAULT_SESSION_END_TIME': '10:00',
@@ -113,6 +115,36 @@ class SessionDeliveryClockTests(unittest.TestCase):
             self.assertEqual(settings['teamsRecording'], 'record-transcribe')
         self.assertEqual([week['components'][0]['settings']['sessionDateTimeUtc'] for week in weeks],
                          ['2026-10-23T08:00:00+00:00', '2026-10-30T09:00:00+00:00'])
+
+    def test_missing_imported_occurrence_has_planned_time_without_confirmed_teams_time(self):
+        self.weeks[0]['components'][0]['settings'].update(teamsCalendarBinding='missing', teamsStartDateTimeUtc='')
+        self.weeks[1]['components'][0]['settings'].update(teamsCalendarBinding='ambiguous', teamsStartDateTimeUtc='')
+        for week in self.stamp():
+            settings = week['components'][0]['settings']
+            self.assertTrue(settings['sessionDateTimeUtc'])
+            self.assertEqual(settings['teamsStartDateTimeUtc'], '')
+
+    def test_booked_additional_primary_session_keeps_own_date_clock_and_link(self):
+        extra = self.weeks[0]['components'][0]
+        extra['settings'].update(
+            teamsMeetingScope='additional', extraTeamsMeetingUrl='https://example.invalid/masterclass',
+            liveSessionUrl='https://example.invalid/masterclass', teamsMeetingUrl='https://example.invalid/masterclass',
+            extraTeamsStartDateTimeUtc='2026-10-02T14:00:00Z',
+            sessionDate='2026-10-02', sessionTime='15:00', durationMinutes=90,
+            sessionDateTimeUtc='2026-10-02T14:00:00Z',
+        )
+        before = copy.deepcopy(extra)
+        # Insertion moves this week's main-calendar slot, and even a main
+        # reschedule must not move the independent additional event.
+        self.plan['sessions'][0].update(date='2026-10-30', rescheduled=True)
+        self.stamp()
+        self.assertEqual(self.weeks[0]['components'][0], before)
+        links = self.n['authoring_session_links_by_catalogue'](['MOD-CLOCK'])['MOD-CLOCK']
+        self.assertEqual(links[0]['date'], '2026-10-02')
+        self.assertTrue(links[0]['additionalMeeting'])
+        self.assertTrue(links[0]['bookedAtMicrosoft'])
+        sessions = self.n['build_sessions_from_authoring_modules']([self.module])
+        self.assertEqual((sessions[0]['startTime'], sessions[0]['endTime']), ('15:00', '16:30'))
 
     def test_plan_endpoint_fills_missing_module_clocks_from_its_own_group_without_mutation(self):
         self.module.pop('session_start_time')
@@ -203,6 +235,7 @@ class SessionDeliveryClockTests(unittest.TestCase):
 
     def test_no_authored_date_is_invented_and_holiday_dates_stay_put(self):
         self.weeks[0]['components'][0]['settings']['sessionDate'] = ''
+        self.plan['sessions'][0]['date'] = ''  # Neither the source plan nor the component names a date.
         self.module['cohort_id'] = 'COHORT-1'
         sessions = self.n['build_sessions_from_authoring_modules']([self.module], {'COHORT-1': [{'date': '2026-10-30'}]})
         self.assertEqual(len(sessions), 1)

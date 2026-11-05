@@ -114,6 +114,17 @@ DB_POOL_OPTIONS = {
     # CONN_HEALTH_CHECKS is enabled (including pooled connections).
     'max_idle': int(os.environ.get('DB_POOL_MAX_IDLE', '180')),
 }
+# Connections the ``default`` alias keeps open in each process. psycopg_pool
+# grows past min_size one connection at a time, so with one warm connection
+# the second to fourth concurrent requests of a gthread worker (4 threads)
+# queued behind serial connects (~0.5-3.7s each to Neon from a remote client).
+# Four covers the threads; the pool opens them in the background on first use
+# (Django calls pool.open() without waiting), so startup is not delayed and a
+# management command that never touches the database opens none. Other
+# aliases keep min_size 1. Clamped to [1, max_size].
+DB_POOL_DEFAULT_MIN_SIZE = max(1, min(
+    int(os.environ.get('DB_POOL_MIN_SIZE', '4')), DB_POOL_OPTIONS['max_size'],
+))
 
 
 def database_from_url(database_url):
@@ -426,6 +437,9 @@ MIDDLEWARE = [
     # Django's own AuthenticationMiddleware so both identities are available and
     # neither shadows the other while the admin still uses django.contrib.auth.
     'login.middleware.LoginSessionMiddleware',
+    # A successful write to a learner's /learner_api/.../<kind>/<pk>/ paths
+    # invalidates their cached dashboard/My Learning reads (learner_api/response_cache.py).
+    'learner_api.response_cache.LearnerReadCacheMiddleware',
     # Rejects anonymous callers on the API prefixes before any view runs. Must
     # sit after LoginSessionMiddleware so the session is already resolved, and
     # before anything that would act on the request. Answers only "is there a
@@ -459,11 +473,10 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
-# Learner-facing feedback is controlled independently from Django's global DEBUG
-# mode. Staff authoring/reporting and token-scoped public event flows are separate.
-LEARNER_FEEDBACK_ENABLED = (
-    os.environ.get("LEARNER_FEEDBACK_ENABLED", "false").lower() == "true"
-)
+# Release every assigned feedback type for learners in production and locally.
+# Publication, ownership, assignment and availability dates are still enforced.
+LEARNER_FEEDBACK_ENABLED = True
+LEARNER_NON_LECTURE_FEEDBACK_ENABLED = True
 
 ROOT_URLCONF = 'config.urls'
 
@@ -490,6 +503,13 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 ASGI_APPLICATION = 'config.asgi.application'
+
+# Module Builder coordination is opt-in for a measured pilot. It does not
+# enable chat. Empty module list means all modules once explicitly enabled.
+CURRICULUM_COLLABORATION_ENABLED = os.environ.get('CURRICULUM_COLLABORATION_ENABLED', 'false').lower() == 'true'
+CURRICULUM_COLLABORATION_MODULES = tuple(value.strip() for value in os.environ.get('CURRICULUM_COLLABORATION_MODULES', '').split(',') if value.strip())
+CURRICULUM_COLLABORATION_REDIS_URL = os.environ.get('CURRICULUM_COLLABORATION_REDIS_URL', '')
+
 
 # DRF is used by the chat API. Session authentication keeps it compatible with
 # Django's existing browser login flow; projects using another auth mechanism
@@ -669,7 +689,7 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     db_options = dict(parse_qsl(parsed_db.query))
     db_options.setdefault("connect_timeout", DB_CONNECT_TIMEOUT)
     if DB_POOL:
-        db_options["pool"] = dict(DB_POOL_OPTIONS)
+        db_options["pool"] = {**DB_POOL_OPTIONS, "min_size": DB_POOL_DEFAULT_MIN_SIZE}
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -700,6 +720,12 @@ _enrolment_database_url = (
 )
 if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
+    # Learner pages run most of their queries here (e.g. 44 of the dashboard
+    # overview's ~58), so keep it as warm as ``default`` instead of min_size 1:
+    # a surge otherwise queues behind one-at-a-time connects to Neon.
+    _enrolment_pool = DATABASES['enrolment'].get('OPTIONS', {}).get('pool')
+    if isinstance(_enrolment_pool, dict):
+        _enrolment_pool['min_size'] = DB_POOL_DEFAULT_MIN_SIZE
     # `default` and `enrolment` are usually the same Neon database. Django treats
     # a second alias with the same NAME as a mirror and leaves it pointing at the
     # original during tests — which would aim the unmanaged-table DDL in
@@ -723,6 +749,17 @@ elif USE_SQLITE_FOR_TESTS:
     # Neon-branch provisioning never runs.
     DATABASES['enrolment'] = dict(DATABASES['default'])
     DATABASES['enrolment']['TEST'] = {'MIRROR': 'default'}
+
+# Optional cross-project sink for LMS support-ticket submissions.  The ticket
+# workflow remains on the enrolment database; this separate alias is only used
+# for the idempotent copy into public.assistant_conversations.  Keep the URL in
+# the deployment environment rather than in source or the repository .env.
+_assistant_conversations_database_url = (
+    os.environ.get('ASSISTANT_CONVERSATIONS_DATABASE_URL')
+    or os.environ.get('TICKETING_DATABASE_URL')
+)
+if _assistant_conversations_database_url and not USE_SQLITE_FOR_TESTS and 'test' not in sys.argv:
+    DATABASES['assistant_conversations'] = database_from_url(_assistant_conversations_database_url)
 
 # Learner Log Pro reads Audit.mre from its own Neon branch. Keeping it on a
 # separate alias prevents the imported audit workspace from changing the LMS's

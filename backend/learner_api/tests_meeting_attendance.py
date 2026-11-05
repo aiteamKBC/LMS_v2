@@ -95,7 +95,7 @@ class MeetingAttendanceTests(SimpleTestCase):
         request = RequestFactory().post('/', {'sessionId': meetings.report_key(self.source, self.meeting),
             'sessionTitle': self.meeting['title'], 'sessionDate': '2026-09-14', 'reasonCategory': 'illness', 'recoveryMethod': ''})
         with patch.object(absence, '_source_learner', return_value=self.source), \
-            patch.object(absence, '_resolve_absent_attendance', return_value=8000000000000000012), \
+            patch.object(absence, '_resolve_absent_attendance', return_value=(8000000000000000012, '')), \
             patch.object(absence, 'learner_profile_for_source', return_value=SimpleNamespace(coach_name='Coach', coach_email='coach@example.test')), \
             patch.object(absence, 'CoachAbsenceReport') as model, patch.object(absence.transaction, 'atomic', return_value=nullcontext()), \
             patch.object(absence, '_send_after_commit'), patch.object(absence, '_serialize', return_value={'id': 1}):

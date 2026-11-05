@@ -6,6 +6,7 @@ import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
+import { subscribeLearnerReadInvalidation } from '@/api/learnerRead';
 import { fetchHistoricalEvidence, type HistoricalEvidenceItem } from '@/api/historicalEvidence';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { EvidenceBody } from './components/EvidenceBody';
@@ -25,26 +26,50 @@ export default function EvidencePage() {
 
   const identity = `${kind}:${id}`;
   const [attempt, setAttempt] = useState(0);
+  const [uploadRefresh, setUploadRefresh] = useState(0);
   const [state, setState] = useState<{ identity: string; records: EvidenceRecord[]; loading: boolean; error: string | null } | null>(null);
   const [history, setHistory] = useState<{ identity: string; records: HistoricalEvidenceItem[]; loading: boolean; error: string | null } | null>(null);
   const reloadEvidence = useCallback(() => setAttempt(value => value + 1), []);
   useEffect(() => {
     if (!kind || !id) return;
     const controller = new AbortController();
-    setState(previous => ({ identity, records: previous?.identity === identity ? previous.records : [], loading: true, error: null }));
     setHistory(previous => ({ identity, records: previous?.identity === identity ? previous.records : [], loading: true, error: null }));
     void fetchHistoricalEvidence(kind, id, controller.signal)
       .then(records => { if (!controller.signal.aborted) setHistory({ identity, records, loading: false, error: null }); })
       .catch(error => {
         if (!controller.signal.aborted) setHistory(previous => ({ identity, records: previous?.identity === identity ? previous.records : [], loading: false, error: error instanceof Error ? error.message : 'Could not load previous evidence.' }));
       });
+    return () => controller.abort();
+  }, [kind, id, identity, attempt]);
+
+  // Uploads already share the reflection's evidence records. Refresh them when
+  // a mutation completes or the learner returns from another browser tab.
+  // Previous-learning evidence does not need another upstream read each time.
+  useEffect(() => {
+    if (!kind || !id) return;
+    const refreshUploads = () => setUploadRefresh(value => value + 1);
+    const refreshWhenVisible = () => { if (!document.hidden) refreshUploads(); };
+    const unsubscribe = subscribeLearnerReadInvalidation(refreshUploads);
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [kind, id]);
+
+  useEffect(() => {
+    if (!kind || !id) return;
+    const controller = new AbortController();
+    setState(previous => ({ identity, records: previous?.identity === identity ? previous.records : [], loading: true, error: null }));
     void fetchEvidence(kind, id, { signal: controller.signal })
       .then(records => { if (!controller.signal.aborted) setState({ identity, records, loading: false, error: null }); })
       .catch(error => {
         if (!controller.signal.aborted) setState(previous => ({ identity, records: previous?.identity === identity ? previous.records : [], loading: false, error: error instanceof Error ? error.message : 'Could not load evidence.' }));
       });
     return () => controller.abort();
-  }, [kind, id, identity, attempt]);
+  }, [kind, id, identity, attempt, uploadRefresh]);
   const current = state?.identity === identity ? state : null;
   const previous = history?.identity === identity ? history : null;
 

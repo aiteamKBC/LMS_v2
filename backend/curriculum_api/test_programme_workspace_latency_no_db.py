@@ -48,8 +48,8 @@ class ProgrammeWorkspaceReadTests(SimpleTestCase):
         columns = {table: {r['name'] for r in self.db.execute(f'pragma table_info({table})')} for table in ('components', 'ksb_mappings')}
 
         def read(table, where_sql='', params=None, order_sql='', **options):
+            self.child_reads.append(table)
             if table in columns:
-                self.child_reads.append(table)
                 fields = [c for c in options.get('columns') or [] if c in columns[table]]
                 sql = f'select {", ".join(fields) if fields else "*"} from {table}'
                 if where_sql:
@@ -74,7 +74,8 @@ class ProgrammeWorkspaceReadTests(SimpleTestCase):
         actual = [views.get_authoring_structure_payloads(ids, child_rows=shared, **options) for ids in [('M1',), ('M2', 'M1')]]
         self.assertEqual(actual, expected)
         self.assertEqual(shared, before)
-        self.assertEqual(self.child_reads, ['components', 'ksb_mappings'])
+        # One union read of each table; neither builder reads modules or weeks again.
+        self.assertEqual(self.child_reads, ['components', 'ksb_mappings', 'modules', 'weeks'])
         module = actual[0]['M1']
         self.assertEqual(module['lessonCount'], 2)
         self.assertEqual(module['ksbCount'], 1)
@@ -83,7 +84,7 @@ class ProgrammeWorkspaceReadTests(SimpleTestCase):
         self.assertNotIn('M2', actual[0])
 
     def test_empty_scope_does_not_read_entire_tables(self):
-        self.assertEqual(programme_workspace_reads.programme_structure_child_rows(['', None]), {'components': [], 'mappings': []})
+        self.assertEqual(programme_workspace_reads.programme_structure_child_rows(['', None]), {'components': [], 'mappings': [], 'modules': [], 'weeks': []})
         self.assertEqual(self.child_reads, [])
 
     def test_warm_section_returns_304_without_building_again_and_write_epoch_expires_it(self):

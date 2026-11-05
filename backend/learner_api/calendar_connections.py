@@ -3,6 +3,7 @@
 OAuth credentials never reach the browser. They are encrypted at rest and are
 only used to answer free/busy requests for the learner that owns the row.
 """
+from config.time_zones import local_clock_to_utc
 import base64
 import hashlib
 import json
@@ -685,15 +686,19 @@ def booking_conflicts(
     exclude_scheduled_date=None,
     exclude_scheduled_time=None,
     exclude_duration_minutes=None,
+    business_time_zone="Europe/London",
 ):
     """Return True when a proposed learner booking overlaps a connected calendar."""
-    start_dt = datetime.combine(scheduled_date, scheduled_time, tzinfo=timezone.utc) + timedelta(minutes=timezone_offset_minutes)
+    def instant(day, clock):
+        if business_time_zone:
+            return local_clock_to_utc(datetime.combine(day, clock), business_time_zone)
+        return datetime.combine(day, clock, tzinfo=timezone.utc) + timedelta(minutes=timezone_offset_minutes)
+
+    start_dt = instant(scheduled_date, scheduled_time)
     end_dt = start_dt + timedelta(minutes=duration_minutes)
     exclude_start_dt = exclude_end_dt = None
     if exclude_scheduled_date and exclude_scheduled_time and exclude_duration_minutes:
-        exclude_start_dt = datetime.combine(
-            exclude_scheduled_date, exclude_scheduled_time, tzinfo=timezone.utc
-        ) + timedelta(minutes=timezone_offset_minutes)
+        exclude_start_dt = instant(exclude_scheduled_date, exclude_scheduled_time)
         exclude_end_dt = exclude_start_dt + timedelta(minutes=exclude_duration_minutes)
     start, end = start_dt.isoformat().replace("+00:00", "Z"), end_dt.isoformat().replace("+00:00", "Z")
     try:

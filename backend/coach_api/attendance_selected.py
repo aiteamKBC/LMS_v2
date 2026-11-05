@@ -157,5 +157,6 @@ def selected_rows(profiles, occurrence_id, timing):
                 'learnerId': str(profile.id), 'status': status if status in {'present', 'absent'} else None,
                 'absenceReport': {'id': str(report.id), 'status': report.status,
                                   'url': getattr(report, 'evidence_image_url', '') or None} if report else None,
-                'version': versions[str(profile.id)]}
+                'version': versions[str(profile.id)],
+                'manualStatus': adjustment.status if adjustment and not adjustment.is_deleted and adjustment.status else None}
     return result

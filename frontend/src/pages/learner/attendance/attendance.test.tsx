@@ -100,6 +100,32 @@ it('shows recorded learning credit separately from make-up and keeps waiting out
 const mount = () => render(<MemoryRouter><AttendancePage /><CurrentLocation /></MemoryRouter>);
 
 describe('Attendance lecture workspace', () => {
+  it.each(['apprenticeship', 'commercial'])('shows manually corrected %s attendance without inventing a catch-up', async kind => {
+    learnerIdentity.kind = kind;
+    payload.lectures = [lecture({ id: 'manual', title: 'Manually confirmed lecture',
+      status: 'present' as AttendanceLecture['status'], rawStatus: 'absent', effectiveStatus: 'present',
+      effectiveAttendance: 1, finalOutcome: 'present', catchupStatus: null }),
+    lecture({ id: 'verified', title: 'Verified lecture', status: 'present' as AttendanceLecture['status'],
+      rawStatus: 'present', effectiveStatus: 'present', effectiveAttendance: 1 }),
+    lecture({ id: 'recovered', title: 'Recovered lecture', status: 'present' as AttendanceLecture['status'],
+      rawStatus: 'absent', effectiveStatus: 'made_up', effectiveAttendance: 1, catchupStatus: 'completed',
+      recovery: { method: 'alternative', date: '2026-09-02' } })];
+    mount();
+    const manual = await screen.findByRole('article', { name: 'Manually confirmed lecture' });
+    expect(within(manual).getByText('Attended')).toBeInTheDocument();
+    expect(within(manual).getByText('Attendance confirmed manually')).toBeInTheDocument();
+    expect(within(manual).queryByText(/Made up|Catch-up|Make-up needed/)).not.toBeInTheDocument();
+    expect(within(manual).queryByRole('button', { name: /Report Absence|Book Catchup/ })).not.toBeInTheDocument();
+    const verified = screen.getByRole('article', { name: 'Verified lecture' });
+    expect(within(verified).getByText('Attended')).toBeInTheDocument();
+    expect(within(verified).queryByText('Attendance confirmed manually')).not.toBeInTheDocument();
+    const recovered = screen.getByRole('article', { name: 'Recovered lecture' });
+    expect(within(recovered).getByText('Made up')).toBeInTheDocument();
+    expect(within(recovered).getByText('Made up via alternative')).toBeInTheDocument();
+    expect(lectureCounts(peekAttendanceWorkspace(kind as 'commercial' | 'apprenticeship', '12')!.lectures))
+      .toMatchObject({ attended: 3, absent: 0, covered: 1, rate: 100 });
+  });
+
   it.each(['apprenticeship', 'commercial'])('keeps learning-only modules out of the %s attendance selector, default and totals', async kind => {
     learnerIdentity.kind = kind;
     payload.modules.push(
@@ -237,6 +263,27 @@ describe('Attendance lecture workspace', () => {
     expect(posts).toEqual([]);
   });
 
+  it.each(['apprenticeship', 'commercial'])('combines Dr variants outside G1 for %s without changing lecture actions', async kind => {
+    learnerIdentity.kind = kind;
+    payload.modules = [{ id: 'legacy:alex', title: 'Dr. Alex - Leadership - Feb 27' },
+      { id: 'native:alex', title: 'Alex - Leadership - Feb 27' }];
+    payload.lectures = [lecture({ id: 'historical', title: 'Historical lecture', moduleId: 'legacy:alex', module: payload.modules[0].title,
+      monthlyLog: { month: '2026-09', sourceRef: 'att:historical' } }),
+      lecture({ id: 'current', title: 'Current lecture', moduleId: 'native:alex', module: payload.modules[1].title, status: 'absent' })];
+    schedulePayload.modules = [planModule('alex', payload.modules[1].title)];
+    const original = structuredClone(payload);
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:alex'));
+    expect(within(select).getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByText('50% attendance')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(2);
+    fireEvent.click(within(screen.getByRole('article', { name: 'Historical lecture' })).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/monthly-logs/${kind}/12/2026-09?source=att%3Ahistorical`);
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
   it('groups historical aliases with a current module supplied only by the schedule', async () => {
     const title = 'G1- Ray - Project Management Professional - Jan 26';
     payload.modules = [{ id: 'legacy:g1', title: title.replace('Ray', 'Dr.Ray') }];
@@ -255,6 +302,16 @@ describe('Attendance lecture workspace', () => {
     expect(lectureCounts(payload.lectures)).toMatchObject({ attended: 1, absent: 0, rate: 100 });
     mount();
     expect(await screen.findByText('Unmarked')).toBeInTheDocument();
+  });
+
+  it('shows cancelled lectures as cancelled without absence or catch-up actions', async () => {
+    payload.lectures = [lecture({ id: 'cancelled', title: 'Cancelled lecture', status: 'cancelled', canReportAbsence: false })];
+    payload.totals = { total: 0, attended: 0, absent: 0, covered: 0, upcoming: 0, attendanceRate: null };
+    mount();
+    const row = await screen.findByRole('article', { name: 'Cancelled lecture' });
+    expect(within(row).getByText('Cancelled')).toBeInTheDocument();
+    expect(within(row).queryByText(/Missed|Make-up needed/)).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: /Catchup|Report Absence|Open Activities/ })).not.toBeInTheDocument();
   });
 
   it('features today ahead of future lectures and credits its full hours once', async () => {

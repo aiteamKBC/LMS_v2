@@ -170,3 +170,69 @@ class CalendarRescheduleSyncTests(SimpleTestCase):
                 recovery = records.return_value.update.call_args.kwargs
                 self.assertEqual(recovery["graph_event_id"], "new-event" if delete_warning else "")
                 self.assertEqual(recovery["sync_state"], CoachCalendarEvent.SYNC_RECONCILIATION if delete_warning else CoachCalendarEvent.SYNC_FAILED)
+
+
+class CalendarRescheduleAvailabilityTests(SimpleTestCase):
+    def test_move_excludes_own_old_slot_but_still_rejects_other_busy_time(self):
+        import json
+        from inspect import unwrap
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from django.test import RequestFactory
+        from learner_api import calendar_connections
+
+        for event_type in ('catch-up', 'student-support', 'lms-introduction'):
+            for another_meeting in (False, True):
+                with self.subTest(event_type=event_type, another_meeting=another_meeting), ExitStack() as stack:
+                    record = CoachCalendarEvent(
+                        pk=51, event_key='synthetic-existing', event_type=event_type,
+                        owner_email='coach@example.invalid', owner_name='Coach',
+                        learner_id=21, learner_name='Synthetic learner', learner_email='learner@example.invalid',
+                        target_date=date(2099, 11, 23), scheduled_date=date(2099, 11, 23),
+                        scheduled_time=time(10), duration_minutes=60, status='scheduled', sync_state='synced',
+                        graph_event_id='original-event', graph_organizer_email='coach@example.invalid',
+                        meeting_link='https://example.invalid/original',
+                    )
+                    record.save = Mock()
+                    learner = SimpleNamespace(id=21, learner_type='commercial', enrolment_id=121)
+                    database = MagicMock()
+                    database.cursor.return_value.__enter__.return_value.fetchall.return_value = [('microsoft',)]
+                    stack.enter_context(patch.object(calendar_connections, '_db', return_value=database))
+                    stack.enter_context(patch.object(calendar_connections, '_row', return_value={}))
+                    busy = [{'start': '2099-11-23T10:00:00Z', 'end': '2099-11-23T11:00:00Z'}]
+                    if another_meeting:
+                        busy.append({'start': '2099-11-23T10:45:00Z', 'end': '2099-11-23T11:15:00Z'})
+                    stack.enter_context(patch.object(calendar_connections, '_sync_connection_busy', return_value=busy))
+                    for name, value in {
+                        'authenticated_coach_email': record.owner_email,
+                        'find_catchup_calendar_record': (record, 'Coach'),
+                        'fetch_owner_active_learner_profiles': [learner],
+                        'resolve_caseload_source_row': SimpleNamespace(id=121, learner_type='commercial'),
+                        'has_graph_credentials': True,
+                    }.items():
+                        stack.enter_context(patch.object(views, name, return_value=value))
+                    reserve = stack.enter_context(patch.object(views, 'persist_calendar_sync_reservation', return_value=record))
+                    graph = stack.enter_context(patch.object(views, 'microsoft_graph_request', return_value={
+                        'id': record.graph_event_id, 'onlineMeeting': {'joinUrl': record.meeting_link},
+                    }))
+                    def synchronize(_pk, event):
+                        warning = views.sync_calendar_event_to_graph(record, event)
+                        return record, warning, True
+                    stack.enter_context(patch.object(views, 'synchronize_reserved_calendar_event', side_effect=synchronize))
+                    request = RequestFactory().post('/coach_api/coach/timetable/events/schedule',
+                        data=json.dumps({'eventKey': record.event_key, 'scheduledDate': '2099-11-23',
+                                         'scheduledTime': '10:30', 'durationMinutes': 60, 'timezoneOffsetMinutes': -120}),
+                        content_type='application/json')
+                    response = unwrap(views.coach_timetable_schedule_event)(request)
+                    if another_meeting:
+                        self.assertEqual(response.status_code, 409)
+                        self.assertEqual(record.scheduled_time, time(10))
+                        reserve.assert_not_called()
+                        graph.assert_not_called()
+                    else:
+                        self.assertEqual(response.status_code, 200, response.content)
+                        graph.assert_called_once()
+                        self.assertEqual(graph.call_args.args, ('PATCH', 'users/coach%40example.invalid/events/original-event'))
+                        self.assertEqual(graph.call_args.kwargs['payload']['start']['dateTime'], '2099-11-23T10:30:00')
+                        self.assertEqual(record.graph_event_id, 'original-event')
+                        self.assertEqual(record.meeting_link, 'https://example.invalid/original')

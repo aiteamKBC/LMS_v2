@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumArchivedModule, CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
@@ -28,7 +29,7 @@ const restoreCurriculumModule = vi.fn(async () => ({ restored: true, id: 'MOD-AR
 
 // The workspace reads the signed-in account. Without this the page throws on
 // its first line and every case below fails before it asserts anything.
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 
@@ -73,6 +74,8 @@ const programmes = [
 
 const cohorts = [{ id: 'COHORT-1', name: 'Sept 2026', programmeId: 'PROG-DATA', programme: 'Data Analyst' }] as CurriculumCohort[];
 const groups = [{ id: 'GROUP-1', name: 'Group A', cohortId: 'COHORT-1', cohort: 'Sept 2026', programmeId: 'PROG-DATA', programme: 'Data Analyst' }] as CurriculumGroup[];
+
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 const modules = [
   {
@@ -150,6 +153,7 @@ async function renderCatalogue(route = '/curriculum/module-builder') {
 
 describe('Module Builder archive', { timeout: 15000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     reload.mockClear();
     fetchArchivedCurriculumModules.mockClear();
     restoreCurriculumModule.mockClear();

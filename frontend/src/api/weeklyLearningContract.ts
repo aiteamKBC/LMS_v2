@@ -3,6 +3,7 @@ import type { PlanSlotHoliday } from './trainingPlanDashboard';
 
 export type WeeklySessionState = 'attended' | 'missed' | 'upcoming' | 'live' | 'unscheduled' | 'unmarked' | 'cancelled';
 export type WeeklyAttendance = 'present' | 'absent' | 'upcoming' | 'unmarked';
+export type ReflectionKsbSelection = { codes: string[]; status: string };
 export type CanonicalWeek = {
   id: string; moduleId: string; weekId?: string; weekNumber: number; slotNumber: number;
   kind: 'live-session' | 'reading-week'; title: string; startDate: string; endDate: string;
@@ -19,7 +20,8 @@ export type CanonicalSelectedWeek = {
   activities: { id: string; title: string; type: string; isQuiz: boolean;
     status: 'completed' | 'in-progress' | 'not-started'; expectedHours: number | null; actualHours: number | null;
     durationMinutes: number | null; quizDuration: number | null; quizTimeUnit: string | null;
-    ksbCodes: string[]; quizId?: number | null; contentAvailable?: boolean; videoUrl?: string | null;
+    ksbCodes: string[]; reflectionKsbs?: ReflectionKsbSelection[]; recordedKsbCodes?: string[];
+    quizId?: number | null; contentAvailable?: boolean; videoUrl?: string | null;
     sessionDate?: string | null; sessionDateTimeUtc?: string | null; teamsLiveSessionId?: string | null }[];
 };
 export type WeeklyLearningResponse = {

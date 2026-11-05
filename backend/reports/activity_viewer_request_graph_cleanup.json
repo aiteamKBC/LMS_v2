@@ -1,0 +1,137 @@
+{
+  "branch": "coach_view",
+  "scope": "Activity Viewer request graph cleanup. Existing modified/untracked slide/PDF work preserved. No commits, branches, deployment, migrations, database writes or real HTTP profiling requests.",
+  "request_graph": [
+    {
+      "owner": "ComponentViewPage -> fetchLearnerDetail(componentId)",
+      "before": "GET /learner_api/learner-detail/{kind}/{id}/?content=summary",
+      "after": "GET /learner_api/learner-detail/{kind}/{id}/?content=activity&component_id={componentId}",
+      "consumes": "Selected content, authoring requirements, learner identity/KSBs, saved progress, module sidebar and Next activity navigation. Full navigation identities remain necessary for the existing UI.",
+      "counts": "One uncached GET before and after; programme snapshot calculation and persistence removed from this path."
+    },
+    {
+      "owner": "componentResource reading fallback",
+      "before": "Additional GET /learner_api/learner-detail/{kind}/{id}/?content=reading&component_id={componentId}",
+      "after": "Selected reading body included in activity response",
+      "counts": "Reading detail HTTP GETs 2 -> 1 when the fallback was required. The authorized selected-body SQL read still runs; no SQL reduction claimed for folding the HTTP response."
+    },
+    {
+      "owner": "ActivitySidebar -> useLiveLearnerRead",
+      "before": "GET /learner_api/training-plan-dashboard/{kind}/{id}/?section=overview",
+      "after": "GET /learner_api/training-plan-dashboard/{kind}/{id}/?section=learning",
+      "consumes": "Matching module start date and curriculumSlots holiday/month navigation metadata. Sessions, reviews, coach contacts, programme metrics and historical allocations are not consumed.",
+      "counts": "One schedule GET before and after. Learning projection also skips its unused targets_for call (one source-level SELECT)."
+    },
+    {
+      "owner": "WorkspaceShell/useLearnerNavGate, useLearnerWorkspaceAccess",
+      "after": "Existing learner-summary and conditional staff learner-action-access reads retained",
+      "consumes": "Identity, programme access and server-owned action permissions"
+    },
+    {
+      "owner": "useComponentAccessWindow",
+      "after": "GET /learner_api/working-hours/holidays/?componentId={componentId}",
+      "consumes": "Selected cohort holidays and completion-time validation; existing freshness retained"
+    },
+    {
+      "owner": "SessionResults/useSavedSessionData",
+      "after": "GET /learner_api/session-results/{kind}/{id}/{seriesId}/sessions/{number}/",
+      "consumes": "Canonical attendance, recovery, saved sync state, authorized recording/transcript metadata",
+      "counts": "Two concurrent identical readers -> one GET in isolated tests. Polling remains live."
+    },
+    {
+      "owner": "SessionRecordingPlayer",
+      "after": "GET /learner_api/session-results/{kind}/{id}/{seriesId}/artifacts/{fileId}/watch/",
+      "consumes": "Saved watch seconds, duration and CSRF token",
+      "counts": "Two concurrent identical readers -> one GET. Later mounts re-read. Successful watch reports invalidate pending old reads; writes and played-time accounting retained."
+    },
+    {
+      "owner": "SessionRecordingPlayer",
+      "after": "GET /learner_api/session-results/{kind}/{id}/{seriesId}/artifacts/{fileId}/?format=cues",
+      "consumes": "Linked transcript cues. Uses the same in-flight saved-results reader; distinct artifacts retain independent keys."
+    },
+    {
+      "owner": "Native media/assignment UI",
+      "after": "Existing browser media/range requests, selected file previews, conditional evidence GET and signed time-tracking writes retained",
+      "consumes": "Playback, reading, evidence and verified timing. Different resources and writes are not duplicates."
+    }
+  ],
+  "legacy_quiz_404": {
+    "supplied_evidence": "Query shape group_id=...&activity_id=...&catalogue_kind=quiz; complete URL and direct-load versus navigation timing not confirmed.",
+    "construction": "SubjectWorkspace.ActivityRow -> DeferredStudentMaterial -> StudentMaterial -> subjectRequest. Default URL: /learner_api/student-activity/{kind}/{learnerId}/?group_id={legacy.group_id}&activity_id={legacy.source_activity_id}&catalogue_kind=quiz. A supplied baseUrl may replace the route prefix.",
+    "backend": "student_activity.student_activity -> canonical owner verification -> legacy_quiz_review.read_review(owner, group_id, quiz_id, allow_attempts=True). activity_id denotes the source quiz ID in this branch.",
+    "cause": "UNRESOLVED. No ownership bypass, guessed quiz ID, suppressed 404 or fallback endpoint added."
+  },
+  "legacy_module_request": {
+    "owner": "My Learning CompactModules -> useMyLearningModule -> /learner_api/my-learning/{kind}/{id}/modules/{subject}/",
+    "finding": "The Native Component route does not invoke this loader. Without a complete Network Initiator/timing capture, the screenshot request cannot be attributed to a direct Native viewer load or proved to be a prior navigation request. No unrelated module request was removed speculatively."
+  },
+  "backend_rules": {
+    "changes": [
+      "Activity mode uses read_only=True and heal=False; no activation, plan hydration, KSB snapshot repair, hours persistence or identity repair.",
+      "Programme-wide live OTJH snapshot skipped only for the new activity projection. Existing complete/summary paths retain their prior behavior.",
+      "Attendance completion and live credits use the selected native module identity, or id-less legacy module scope. A shared title cannot select an unrelated native module.",
+      "Canonical attendance, correction, recovery, shared delivery, replacement and quiz retention readers remain authoritative."
+    ],
+    "remaining": "Master navigation and owned saved progress still resolve across the plan to preserve existing sidebar/Next behavior. This is not claimed to be a strictly selected-week-only backend. The KBC register and native/shared attendance work remain when required."
+  },
+  "files_changed_this_task": [
+    "backend/learner_api/learner_detail.py",
+    "backend/learner_api/training_plan_dashboard.py",
+    "backend/learner_api/test_activity_viewer_no_db.py",
+    "frontend/src/api/learnerDetail.ts",
+    "frontend/src/api/sessionResults.ts",
+    "frontend/src/api/__tests__/activityRequestGraph.test.ts",
+    "frontend/src/pages/learner/video-watch/ActivitySidebar.tsx",
+    "frontend/src/pages/learner/video-watch/__tests__/ActivitySidebar.test.tsx"
+  ],
+  "validation": {
+    "guarded_backend": {
+      "passed": 210,
+      "command": "@'\nimport os,sys,unittest,socket\nsys.path.insert(0,'backend')\nos.environ['DJANGO_SETTINGS_MODULE']='config.settings_sqlite_test'\nos.environ['DJANGO_USE_SQLITE']='true'\nos.environ['CURRICULUM_WARM']='0'\nfrom django.conf import settings\nassert all(db['ENGINE']=='django.db.backends.sqlite3' for db in settings.DATABASES.values())\nfrom unittest.mock import patch\nfrom django.db.backends.base.base import BaseDatabaseWrapper\nwith patch.object(BaseDatabaseWrapper,'ensure_connection',side_effect=AssertionError('Database access prohibited')), patch('psycopg.connect',side_effect=AssertionError('Direct DB prohibited')), patch('psycopg.Connection.connect',side_effect=AssertionError('Direct DB prohibited')):\n import django\n django.setup()\n with patch.object(socket.socket,'connect',side_effect=AssertionError('Network prohibited')):\n  names=['learner_api.test_activity_viewer_no_db','learner_api.test_dashboard_training_no_db','learner_api.test_dashboard_tabs_no_db','learner_api.test_dashboard_overview_no_db','learner_api.tests_my_learning_no_db','learner_api.tests_weekly_learning','learner_api.tests_live_session_progress','learner_api.tests_attendance_lectures','learner_api.test_retained_quiz_progress_no_db','learner_api.tests_shared_teams_attendance','learner_api.tests_recorded_attendance','learner_api.tests.TeamsAttendanceEligibilityTests','learner_api.tests.TeamsAttendanceSyncTests','curriculum_api.tests.TeamsMultiDayRecurrenceTests','curriculum_api.tests.TeamsAttendanceRosterTests']\n  result=unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromNames(names))\nsys.exit(not result.wasSuccessful())\n'@ | python -",
+      "guards": "SQLite-only aliases asserted; Django ensure_connection and both psycopg connect entry points denied. Socket connect denied during tests. Django startup occurs before the socket guard to allow Windows asyncio's local socketpair initialization; curriculum warming disabled. No application HTTP workflow started."
+    },
+    "focused_final": {
+      "passed": 66,
+      "files": 4,
+      "command": "npm --prefix frontend run test -- src/api/__tests__/activityRequestGraph.test.ts src/components/feature/SessionResults.test.tsx src/components/feature/SessionRecordingPlayer.test.tsx src/api/__tests__/sessionResultsRecordingUrl.test.ts --maxWorkers=2"
+    },
+    "sidebar_and_initial_graph": {
+      "passed": 70,
+      "files": 4,
+      "command": "npm --prefix frontend run test -- src/api/__tests__/activityRequestGraph.test.ts src/pages/learner/video-watch/__tests__/ActivitySidebar.test.tsx src/components/feature/SessionResults.test.tsx src/components/feature/SessionRecordingPlayer.test.tsx --maxWorkers=2"
+    },
+    "broad": {
+      "passed": 876,
+      "failed": 9,
+      "files": 73,
+      "command": "npm --prefix frontend run test -- src/pages/learner/video-watch src/pages/learner/quiz-take src/pages/learner/my-learning src/pages/workspace/learner/__tests__ src/api/__tests__/activityRequestGraph.test.ts src/api/__tests__/learnerRead.test.ts src/api/__tests__/viewerRequests.test.ts src/components/feature/SessionResults.test.tsx src/components/feature/SessionRecordingPlayer.test.tsx src/hooks/__tests__/learnerNavigation.test.tsx src/hooks/__tests__/useWeeklyLearning.test.tsx src/hooks/__tests__/useWeeklyLearningWeek.test.tsx --maxWorkers=2",
+      "failures": "Six recordedCourseProgress historical UI assertions also failed before this task. AssignmentSubmissionWizard personal-booking exemption and preview-coaching assertions (2), plus completion failed-reading-preview assertion (1), fail in isolation and remain unresolved; no passing baseline claimed for those three.",
+      "final_state_note": "Broad run preceded the final session mutation invalidation addition; the affected final API/recording suites subsequently passed (66)."
+    },
+    "teams_baseline": {
+      "passed": 119,
+      "files": 9,
+      "command": "npm --prefix frontend run test:teams",
+      "result": "PASS after final sessionResults edit"
+    },
+    "expanded_teams": "Guarded attendance/live/shared/recorded, eligibility/sync and recurrence/roster cases passed. PostgreSQL-backed meeting, verdict and race/security suites NOT RUN: no verified non-production runner, and no database provisioning/writes authorized for this task.",
+    "type_check": {
+      "command": "npm --prefix frontend run type-check",
+      "result": "PASS"
+    },
+    "build": {
+      "command": "npm --prefix frontend run build",
+      "result": "PASS; existing dependency eval/chunk/plugin warnings"
+    },
+    "lint": {
+      "command": ".\\node_modules\\.bin\\eslint.cmd src/api/learnerDetail.ts src/api/sessionResults.ts src/api/__tests__/activityRequestGraph.test.ts src/pages/learner/video-watch/ActivitySidebar.tsx src/pages/learner/video-watch/__tests__/ActivitySidebar.test.tsx --report-unused-disable-directives --max-warnings 0",
+      "cwd": "frontend",
+      "result": "PASS. Previously modified page.tsx was preserved and not edited this task; its prior fileProbe warning was not repaired."
+    },
+    "syntax": "Changed Python AST parse PASS",
+    "diff": "git diff --check PASS",
+    "live_teams": "NOT RUN",
+    "real_http": "NOT RUN"
+  },
+  "impact": "Source-level request sharing and narrower backend work are verified by guarded fixtures. Real HTTP impact, the screenshot's request ownership, quiz 404 cause and under-five-second target remain UNVERIFIED. No production Neon connection or profiling request performed."
+}

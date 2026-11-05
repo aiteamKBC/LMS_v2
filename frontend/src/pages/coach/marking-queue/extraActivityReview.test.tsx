@@ -3,12 +3,15 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import CoachMarkingReviewPage from '../marking-review/page';
+import type { StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 
 const mocks = vi.hoisted(() => ({
   coachFetch: vi.fn(),
   fetchEvidence: vi.fn(),
   getEvidenceDownloadUrl: vi.fn(),
+  loadSubmission: vi.fn(),
 }));
+vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: mocks.loadSubmission }));
 
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.coachFetch }));
 vi.mock('@/api/evidence', () => ({
@@ -86,11 +89,12 @@ beforeEach(() => {
   mocks.coachFetch.mockReset();
   mocks.fetchEvidence.mockReset().mockResolvedValue([]);
   mocks.getEvidenceDownloadUrl.mockReset();
+  mocks.loadSubmission.mockReset().mockResolvedValue({ assignmentAnswer: 'Full activity description', whatYouLearned: 'Learning reviewed' } as StoredLearningReflectionSubmission);
 });
 
 
 afterEach(cleanup);
-it.each([['accepted', 'Accept assignment and send feedback'], ['rejected', 'Refer back with feedback']])('reviews an extra activity with the existing %s workflow', async (decision, button) => {
+it.each([['accepted', 'Accept extra activity and send feedback'], ['rejected', 'Refer back with feedback']])('reviews an extra activity with the existing %s workflow', async (decision, button) => {
   mocks.coachFetch.mockImplementation((url: string, options?: { method?: string }) => {
     if (options?.method === 'PATCH') return response({ id: submission.id, status: decision });
     if (url.endsWith('/ai-prompt')) return response({ prompt: 'Review evidence.', available: true });
@@ -108,4 +112,35 @@ it.each([['accepted', 'Accept assignment and send feedback'], ['rejected', 'Refe
   await screen.findByText('Queue destination');
   const call = mocks.coachFetch.mock.calls.find(([, options]) => options?.method === 'PATCH');
   expect(JSON.parse(call?.[1].body)).toMatchObject({ decision, feedback: 'Evidence reviewed for this extra activity.' });
+});
+
+it('keeps the dedicated extra activity review in its own queue and shows coach provenance', async () => {
+  mocks.loadSubmission.mockResolvedValue({ assignmentAnswer: 'Full activity description', whatYouLearned: 'Learning reviewed', coachCreation: { name: 'Original Coach' } });
+  mocks.coachFetch.mockImplementation((url: string, options?: { method?: string }) => {
+    if (url.includes('/extra-activities?')) return Promise.resolve({ ok: true, json: async () => ({ items: [{ ...submission, title: submission.activityTitle, month: '2026-09' }] }) });
+    if (options?.method === 'PATCH') return response({ id: submission.id, status: 'accepted' });
+    if (url.endsWith('/ai-prompt')) return response({ prompt: 'Review evidence.', available: true });
+    return response({ item: submission });
+  });
+  render(<MemoryRouter initialEntries={[`/coach/extra-activities/${submission.id}`]}><Routes>
+    <Route path="/coach/extra-activities/:submissionId" element={<CoachMarkingReviewPage />} />
+    <Route path="/coach/extra-activities" element={<p>Extra activities destination</p>} />
+  </Routes></MemoryRouter>);
+  expect(await screen.findByRole('heading', { name: 'Extra activity review' })).toBeVisible();
+  expect(await screen.findByText('Added and originally approved by: Original Coach')).toBeVisible();
+  expect(screen.getByText('Full activity description')).toBeVisible();
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText('Review feedback'), 'Reviewed this additional learning activity.');
+  await user.click(screen.getByRole('button', { name: 'Accept extra activity and send feedback' }));
+  expect(await screen.findByText('Extra activities destination')).toBeVisible();
+  expect(mocks.coachFetch.mock.calls.some(([url]) => url.includes('/marking-queue?'))).toBe(false);
+});
+
+it('blocks reviewing when the full extra activity cannot be loaded', async () => {
+  mocks.loadSubmission.mockRejectedValue(new Error('Unavailable'));
+  mocks.coachFetch.mockImplementation((url: string) => url.endsWith('/ai-prompt') ? response({ available: false }) : url.includes('?status=all') ? response({ items: [], summary }) : response({ item: submission }));
+  render(<MemoryRouter initialEntries={[`/coach/marking-queue/${submission.id}`]}><Routes><Route path="/coach/marking-queue/:submissionId" element={<CoachMarkingReviewPage />} /></Routes></MemoryRouter>);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the full activity');
+  expect(screen.getByRole('button', { name: 'Accept extra activity and send feedback' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Refer back with feedback' })).toBeDisabled();
 });

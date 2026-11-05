@@ -3,9 +3,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { loadAssignmentTopicStates } from '@/api/assignmentTopics';
 import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, fetchReviewSlots, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
-vi.mock('@/api/learnerCalendar', () => ({ bookLearnerCalendarSession: vi.fn(), fetchLearnerCalendarEvents: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn() }));
+vi.mock('@/api/learnerCalendar', () => ({ bookLearnerCalendarSession: vi.fn(), fetchLearnerCalendarEvents: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn(), fetchReviewSlots: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn() }));
 vi.mock('@/api/assignmentTopics', () => ({ loadAssignmentTopicStates: vi.fn() }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn() }));
 function chooseDate(value: string) {
@@ -28,6 +28,7 @@ const props = { kind: 'commercial' as const, learnerId: '1', month: '2026-09', t
 beforeEach(() => {
   vi.mocked(loadAssignmentTopicStates).mockResolvedValue([]);
   vi.mocked(fetchLearnerMeetingArtifacts).mockResolvedValue({ artifacts: [] });
+  vi.mocked(fetchReviewSlots).mockResolvedValue(['09:00', '10:00']);
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ times: ['09:00', '10:00'] }) }));
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [slot], bookingCalendar: { division: 'england-and-wales', today: '2026-09-12', coveredYears: [2026], bankHolidays: [] } });
   vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: { ...slot, status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '09:00' } });
@@ -40,6 +41,17 @@ const aptemMcm = (id: string, plannedDate: string, status = 'not-scheduled') => 
 }) as ImportedReview;
 const withAptemMcms = (...reviews: ImportedReview[]) => vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: 1, category: 'monthly-coaching', reviews });
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
+it('reads saved imported meeting resources without exposing Coach refresh actions', async () => {
+  const imported = { ...slot, reviewSource: 'aptem' as const, eventKey: 'imported-review:901', status: 'scheduled',
+    scheduledDate: '2026-09-15', scheduledTime: '09:00', meetingLink: 'https://teams.example.test/saved' };
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [imported] });
+  vi.mocked(fetchLearnerMeetingArtifacts).mockResolvedValue({ artifacts: [], resourceMode: 'stored' });
+  render(<AssignmentCoachingBooking {...props} meetingKey={imported.eventKey} />);
+  expect(await screen.findByText(/No saved meeting recording is available/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+  expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledExactlyOnceWith('commercial', '1', imported.eventKey, expect.any(AbortSignal));
+});
+
 it('books the official MCM key and links the returned meeting after saving the draft', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
@@ -53,6 +65,23 @@ it('books the official MCM key and links the returned meeting after saving the d
   expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
   expect(screen.getByLabelText('Date')).toHaveTextContent('Select a date');
   expect(screen.getByLabelText('Time')).toHaveValue('');
+});
+
+it('defaults to one hour and rechecks availability before booking a different duration', async () => {
+  render(<AssignmentCoachingBooking {...props} />);
+  fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
+  expect(screen.getByLabelText('Duration')).toHaveValue('60');
+  chooseDate('2026-09-22');
+  await screen.findByRole('option', { name: '09:00' });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
+  fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '90' } });
+  await waitFor(() => expect(fetchReviewSlots).toHaveBeenLastCalledWith('commercial', '1', '2026-09-22', 90, expect.anything()));
+  expect(screen.getByLabelText('Time')).toHaveValue('');
+  expect(screen.getByRole('button', { name: 'Book 90-minute MCM' })).toBeDisabled();
+  await screen.findByRole('option', { name: '09:00' });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Book 90-minute MCM' }));
+  await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ durationMinutes: 90 })));
 });
 it('prevents weekend booking and booking without an official slot', async () => {
   render(<AssignmentCoachingBooking {...props} />);
@@ -133,14 +162,13 @@ it('loads own meeting artifacts without a Teams join link', async () => {
   await waitFor(() => expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledWith('commercial', '1', slot.eventKey, expect.any(AbortSignal)));
 });
 
-it('allows dates outside the old monthly windows, such as October 6 for September', async () => {
+it('closes the window after the 5th while allowing the 5th itself', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
 
   chooseDate('2026-10-06');
-  await screen.findByRole('option', { name: '09:00' });
-  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
-  expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
+  expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   chooseDate('2026-10-05');
   await screen.findByRole('option', { name: '09:00' });
   fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
@@ -152,7 +180,7 @@ it('allows dates outside the old monthly windows, such as October 6 for Septembe
 });
 
 it('blocks booking when the coach has no available appointments', async () => {
-  vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => ({ times: [] }) } as Response);
+  vi.mocked(fetchReviewSlots).mockResolvedValue([]);
   render(<AssignmentCoachingBooking {...props} />);
   await screen.findByLabelText('Date');
   chooseDate('2026-09-22');
@@ -160,7 +188,7 @@ it('blocks booking when the coach has no available appointments', async () => {
   expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
 });
 it('blocks booking when the coach calendar cannot be checked', async () => {
-  vi.mocked(fetch).mockResolvedValue({ ok: false, json: async () => ({ error: 'Calendar unavailable' }) } as Response);
+  vi.mocked(fetchReviewSlots).mockRejectedValue(new Error('Calendar unavailable'));
   render(<AssignmentCoachingBooking {...props} />);
   await screen.findByLabelText('Date');
   chooseDate('2026-09-22');
@@ -187,16 +215,16 @@ it('allows choosing and booking another available time when a meeting already ex
 });
 
 
-it('allows any upcoming weekday but still excludes past dates and weekends', async () => {
+it('allows upcoming MCM windows and excludes the 6th through 19th, past dates and weekends', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
-  for (const date of ['2026-10-14', '2026-11-18', '2026-12-10']) {
+  for (const date of ['2026-10-20', '2026-11-20', '2026-12-21']) {
     chooseDate(date);
     await screen.findByRole('option', { name: '09:00' });
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
     expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeEnabled();
   }
-  for (const date of ['2026-09-11', '2026-10-17']) {
+  for (const date of ['2026-09-11', '2026-10-17', '2026-10-19', '2026-11-18', '2026-12-10']) {
     chooseDate(date);
     expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
     expect(screen.getByLabelText('Date')).toHaveTextContent('Select a date');
@@ -204,14 +232,14 @@ it('allows any upcoming weekday but still excludes past dates and weekends', asy
 });
 
 
-it('enables every October weekday and disables every weekend in the calendar', async () => {
+it('enables October weekdays only from the 20th through the following 5th', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.click(await screen.findByLabelText('Date'));
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   const weekends = [3, 4, 10, 11, 17, 18, 24, 25, 31];
   for (let day = 1; day <= 31; day++) {
     const button = screen.getByRole('button', { name: `2026-10-${String(day).padStart(2, '0')}` });
-    if (weekends.includes(day)) expect(button).toBeDisabled();
+    if (weekends.includes(day) || (day > 5 && day < 20)) expect(button).toBeDisabled();
     else expect(button).toBeEnabled();
   }
 });

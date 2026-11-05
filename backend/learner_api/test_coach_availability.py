@@ -34,7 +34,7 @@ class CoachAvailabilityTests(SimpleTestCase):
         self.assertIn('10:15', slots)
 
     def test_lms_booking_blocks_even_before_outlook_sync(self):
-        record = SimpleNamespace(scheduled_date=date(2030, 7, 1), scheduled_time=time(10), duration_minutes=60)
+        record = SimpleNamespace(scheduled_date=date(2030, 7, 1), scheduled_time=time(10), duration_minutes=60, status='scheduled')
         slots = self.read(records=[record])
         self.assertEqual(slots, ['09:00', '11:00'])
 
@@ -96,7 +96,8 @@ class CoachAvailabilityAccessTests(SimpleTestCase):
             response = route.func(RequestFactory().get(path, {'date': '2026-09-22', 'timezoneOffsetMinutes': '-60'}), **route.kwargs)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(json.loads(response.content)['times'], ['10:00'])
-            slots.assert_called_once_with('coach@example.com', date(2026, 9, 22), -60, duration=60, uk_working_hours=False)
+            slots.assert_called_once_with('coach@example.com', date(2026, 9, 22), -60, duration=60, uk_working_hours=False,
+                review_hours=False, exclude_event_key='', review_self_record=None)
             slots.reset_mock()
             path = '/learner_api/calendar/commercial/102/coach-availability/'
             route = resolve(path)
@@ -180,7 +181,8 @@ class FirstSessionCollegeDayTests(SimpleTestCase):
         # who has no coach yet, which is every learner at this point, would be
         # told nobody is assigned at all.
         self.call(dict(self.BASE, collegeDay='1'))
-        self.last_free.assert_called_once_with('owner@example.com', date(2026, 9, 22), -60, duration=60, uk_working_hours=False)
+        self.last_free.assert_called_once_with('owner@example.com', date(2026, 9, 22), -60, duration=60, uk_working_hours=False,
+                review_hours=False, exclude_event_key='', review_self_record=None)
 
     def test_a_learner_with_no_case_owner_is_told_who_to_ask(self):
         body = self.call(dict(self.BASE, collegeDay='1'), owner=('', ''), expect_status=400)

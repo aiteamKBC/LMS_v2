@@ -16,15 +16,12 @@ const quizDetailResource = createCachedResource<LearnerDetail>('learner-quiz-det
   readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=quiz`));
 const componentResource = createCachedResource<LearnerDetail>('learner-component-detail', async key => {
   const [kind, id, componentId] = JSON.parse(key) as [LearnerKind, string, string];
-  const detail = await detailResource.read(`${kind}:${id}`);
-  const component = detail.components.find(item => item.componentId === componentId);
-  // A reading can contain only an iframe/image: it has no text for the list's
-  // availability flag, but the runner must still receive the original markup.
-  if (!component || component.contentHtml || (!component.hasReadingContent && component.type !== 'reading')) return detail;
-  const reading = await readLearnerJson<{ componentId: string; contentHtml: string | null }>(
-    `${BASE}/${kind}/${id}/?content=reading&component_id=${encodeURIComponent(componentId)}`);
-  if (reading.componentId !== componentId) throw new Error('The server returned a different activity. Please try again.');
-  return { ...detail, components: detail.components.map(item => item === component ? { ...item, contentHtml: reading.contentHtml } : item) };
+  const detail = await readLearnerJson<LearnerDetail>(
+    `${BASE}/${kind}/${id}/?content=activity&component_id=${encodeURIComponent(componentId)}`);
+  if (String(detail.id) !== id || !detail.components?.some(item => item.componentId === componentId)) {
+    throw new Error('The server returned a different activity. Please try again.');
+  }
+  return detail;
 });
 const summaryResource = createCachedResource<LearnerSummary>('learner-summary', key =>
   readLearnerJson(`/learner_api/learner-summary/${key.replace(':', '/')}/`));
@@ -66,6 +63,8 @@ export interface LearnerComponentEntry {
   ksbMappingCount?: number | null;      // 0 => component is not gated by the completion criteria
   ksbMappings?: ComponentKsbMapping[];  // the KSBs auto-credited when this component is completed
   componentId?: string | null;
+  /** Display-only grouping within the authored week; child IDs remain canonical. */
+  pointNumber?: number | null;
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
@@ -74,8 +73,10 @@ export interface LearnerComponentEntry {
   assignmentBrief?: string | null;      // assignment brief authored as plain text (Module Builder)
   assignmentBriefHtml?: string | null;  // assignment brief authored as rich text (Week Builder)
   videoUrl?: string | null;             // present on video components authored with a URL
+  alternativeYouTubeUrl?: string | null;
   audioUrl?: string | null;             // podcast / reading voice-over
   contentHtml?: string | null;          // reading rich-text content
+  lessonContentHtml?: string | null;    // video lesson content; activity read only
   hasReadingContent?: boolean;         // list response; HTML is loaded when opened
   fileName?: string | null;             // powerpoint / document file name
   /** Every file attached to the component, in the author's order. Entry 0
@@ -98,6 +99,7 @@ export interface LearnerComponentEntry {
   resourceUrl?: string | null;          // generic external/download URL
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
   teamsSessionNumber?: number | null;
+  additionalMeeting?: boolean;
   teamsLiveSessionId?: string | null;   // curriculum.live_sessions.id for attendance/artifact sync
   recordingSeriesId?: string | null;    // saved series owning a dated recorded event
   recordingSessionNumber?: number | null;

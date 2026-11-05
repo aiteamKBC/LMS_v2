@@ -12,7 +12,7 @@ from .migrated_reviews import render_sections
 from .migrated_template_sync import active_answers
 
 
-FAMILIES = {"MCM", "PR", "PR_SKILLS_RADAR"}
+FAMILIES = {"MCM", "PR", "PR_SKILLS_RADAR", "PSP"}
 SIGNATURE_ORDER = ("advisor", "employer", "participant", "referrer")
 PROVENANCE = "LMS continuation of imported Aptem review"
 
@@ -38,6 +38,13 @@ def review_pdf_data(overlay, signatures, *, learner_name, learner_email,
     snapshot = overlay.template_snapshot
     family = pdf_family(overlay, source_family)
     sections, _warnings = render_sections(snapshot, active_answers(snapshot, overlay.answers))
+    from .migrated_skills_radar import rating_status
+    for section in sections:
+        for field in section['fields']:
+            metadata = field['configuration'].get('skillsRadar') or {}
+            if metadata.get('kind') == 'coach':
+                goal = (overlay.answers or {}).get(field['id'].rsplit(':', 1)[0] + ':goal')
+                field['title'] += ' — ' + rating_status(field.get('answer'), goal)
     # Array order is the frozen form order, including legacy definitions whose
     # numeric order metadata is stale. Native continues using its own ordering.
     for index, section in enumerate(sections):
@@ -47,8 +54,9 @@ def review_pdf_data(overlay, signatures, *, learner_name, learner_email,
             "name": snapshot.get("name") or {
                 "MCM": "Monthly Coaching Meeting", "PR": "Progress Review",
                 "PR_SKILLS_RADAR": "Progress Review (+ Skills Radar)",
+                "PSP": "Personal Support Plan",
             }[family],
-            "reviewTypeCode": REVIEW_TYPE_MCM if family == "MCM" else REVIEW_TYPE_PROGRESS_REVIEW,
+            "reviewTypeCode": "aptem_psp" if family == "PSP" else REVIEW_TYPE_MCM if family == "MCM" else REVIEW_TYPE_PROGRESS_REVIEW,
             "reviewFamily": family,
         },
         "instance": {
@@ -68,12 +76,16 @@ def review_pdf_data(overlay, signatures, *, learner_name, learner_email,
 
 def render_migrated_pdf(overlay, signatures, **context):
     definition, information = review_pdf_data(overlay, signatures, **context)
+    signature_roles = SIGNATURE_ORDER
+    if definition["template"]["reviewFamily"] == "PSP":
+        signature_roles = tuple(role for role in SIGNATURE_ORDER
+                                if (overlay.signature_requirements or {}).get(role) or signatures.get(role))
     return render_review_pdf(
-        definition, information, signature_roles=SIGNATURE_ORDER,
+        definition, information, signature_roles=signature_roles,
         # A migrated bound summary is a normal saved answer at its frozen
         # position. No extra AI block or cross-review RAG history is invented.
         mcm_summary_block=False, rag_history_block=False,
-        provenance=PROVENANCE, keep_signature_blocks=True,
+        provenance=PROVENANCE, keep_signature_blocks=bool(signature_roles),
         # Migrated signature validation already permits up to 4000 x 4000.
         # Reusing Native presentation must not reject an existing valid mark.
         signature_image_max_pixels=16_000_000,
@@ -87,7 +99,7 @@ def stored_pdf_response(overlay, document):
 
     code = REVIEW_TYPE_MCM if pdf_family(overlay) == "MCM" else REVIEW_TYPE_PROGRESS_REVIEW
     identifier = re.sub(r"[^A-Za-z0-9_-]", "", str(overlay.pk))
-    prefix = EXPORTABLE_REVIEW_TYPES[code]
+    prefix = "personal-support-plan" if pdf_family(overlay) == "PSP" else EXPORTABLE_REVIEW_TYPES[code]
     response = HttpResponse(bytes(document.pdf_bytes), content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{prefix}-{identifier}.pdf"'
     response["Cache-Control"] = "private, no-store"

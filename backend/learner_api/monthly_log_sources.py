@@ -103,6 +103,7 @@ def _progress(learner):
 
 
 def _attempts(learner):
+    from .subject_timing import measured_seconds
     # This table may not be provisioned in installations without subject attempts.
     if not query('SELECT to_regclass(%s) AS table_name', ['"Learner".subject_activity_attempts'])[0]['table_name']:
         return []
@@ -112,6 +113,13 @@ def _attempts(learner):
         LEFT JOIN "Last_audit".groups g ON g.group_id=a.group_id
         WHERE a.enrolment_id=%s AND a.aptem_id=%s AND a.submitted_at IS NOT NULL
         ORDER BY a.submitted_at,a.id''', [learner['id'], learner.get('aptem_id')])
+    best = {}
+    for attempt in records:
+        definition = decoded(attempt['definition'], {})
+        seconds = measured_seconds(definition.get('studyTime'))
+        if attempt['completed'] and seconds is not None:
+            key = (attempt['group_id'], attempt['activity_id'], definition.get('catalogue_kind', 'material'))
+            best[key] = max(best.get(key, (-1, '')), (seconds, str(attempt['id'])))
     result = []
     for a in records:
         definition = decoded(a['definition'], {})
@@ -119,11 +127,23 @@ def _attempts(learner):
                     'status': 'Completed' if a['completed'] else 'Submitted',
                     'quiz_score': a['score_percent'], 'quiz_maximum_score': 100 if a['score_percent'] is not None else None,
                     'quiz_passed': a['passed'], 'quiz_attempt_number': None}]
-        # Attempt storage has no measured duration: never copy audited hours or
-        # manufacture elapsed time from the time between opening and submission.
-        result.append(row(f"subject:{a['id']}", a['submitted_at'], definition.get('title'),
+        timing = definition.get('studyTime') or {}
+        seconds = measured_seconds(timing)
+        key = (a['group_id'], a['activity_id'], definition.get('catalogue_kind', 'material'))
+        credited = seconds is not None and best.get(key) == (seconds, str(a['id']))
+        # Preserve untimed historical attempts as unavailable, never infer time
+        # from opening/submission dates or copy audited source hours.
+        result.append(row(f"subject:{a['id']}", timing.get('declaredCompletedAt') or a['submitted_at'], definition.get('title'),
+                          'Quiz' if definition.get('catalogue_kind') == 'quiz' else
                           'Reading+Quiz' if definition.get('quiz') else 'Learning', results=results,
-                          group=a['group_name'], note='Submitted on this platform. No activity time was recorded.'))
+                          hours=seconds / 3600 if credited else 0 if seconds is not None else None,
+                          group=a['group_name'], note='Measured study time recorded on this platform.' if seconds is not None else
+                          'Submitted on this platform. No activity time was recorded.'))
+        if seconds is not None:
+            result[-1]['accepted'] = bool(a['completed'])
+            if not credited:
+                result[-1]['completion_note'] = ('Study time is saved in attempt history. Completed hours use '
+                    'the longest completed attempt for this activity, counted once.')
     return result
 
 
@@ -283,16 +303,20 @@ def activity_content(learner, item):
             WHERE id=%s AND enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL''',
             [ref.split(':', 1)[1], learner['id'], learner['aptem_id']])
         if records:
-            from .student_activity import _owned_material, _definition_for, _local_pdf_urls
+            from .student_activity import _owned_material, _owned_quiz, _definition_for, _local_pdf_urls
             a = records[0]
+            definition = decoded(a['definition'], {})
             kind = (learner.get('_profile') or {}).get('learner_type') or 'apprenticeship'
-            _aptem_id, stored = _owned_material(kind, learner['id'], a['group_id'], a['activity_id'])
-            material = _local_pdf_urls(_definition_for(stored), kind, learner['id'], a['group_id'], a['activity_id'])
-            if material.get('reading_html'):
-                parts.append(_part(item, html=material['reading_html']))
-            for media in material.get('media', []):
-                parts.append(_part(item, id=item['id'] + len(parts), url=media['url'], title=media['title']))
-            html = _answers_html(decoded(a['definition'], {}), decoded(a['answers'], {}))
+            if definition.get('catalogue_kind') == 'quiz':
+                _owned_quiz(kind, learner['id'], a['group_id'], a['activity_id'])
+            else:
+                _aptem_id, stored = _owned_material(kind, learner['id'], a['group_id'], a['activity_id'])
+                material = _local_pdf_urls(_definition_for(stored), kind, learner['id'], a['group_id'], a['activity_id'])
+                if material.get('reading_html'):
+                    parts.append(_part(item, html=material['reading_html']))
+                for media in material.get('media', []):
+                    parts.append(_part(item, id=item['id'] + len(parts), url=media['url'], title=media['title']))
+            html = _answers_html(definition, decoded(a['answers'], {}))
             if html:
                 parts.append(_part(item, id=item['id'] + len(parts), title='Saved quiz attempt', html=html))
     elif item.get('component_ref'):

@@ -1,4 +1,4 @@
-"""Read-only coach free slots, combining Outlook working hours and LMS bookings."""
+"""Read-only coach slots using booking hours, Outlook free/busy and LMS bookings."""
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -60,16 +60,30 @@ def catchup_slot_is_free(owner_email, day, start, duration, *, exclude_event_key
     return start.strftime('%H:%M') in free
 
 
-def free_slots(owner_email, day, offset, *, exclude_event_key='', duration=60, uk_working_hours=False):
+def free_slots(owner_email, day, offset, *, exclude_event_key='', exclude_record_id=None,
+               duration=60, uk_working_hours=False, review_hours=False,
+               review_self_record=None):
     from coach_api.views import microsoft_graph_request
     from coach_api.models import CoachCalendarEvent
     from .booking_calendar import booking_date_restriction
+    from coach_api.booking_hours import (
+        REVIEW_DAY_END, REVIEW_DAY_START, validate_review_duration,
+    )
     if booking_date_restriction(day):
         return []
-    # JavaScript getTimezoneOffset is UTC minus the displayed local time.
-    local_zone = timezone(timedelta(minutes=-offset))
+    if review_hours:
+        try:
+            duration = validate_review_duration(duration)
+        except ValueError as exc:
+            raise AvailabilityUnavailable(str(exc)) from exc
+        # Review appointments are London wall time, not browser-local time.
+        local_zone = ZoneInfo('Europe/London')
+    else:
+        # JavaScript getTimezoneOffset is UTC minus the displayed local time.
+        local_zone = timezone(timedelta(minutes=-offset))
     start = datetime.combine(day, time.min, local_zone).astimezone(timezone.utc)
-    end = start + timedelta(days=1)
+    end = datetime.combine(day + timedelta(days=1), time.min, local_zone).astimezone(timezone.utc)
+    interval_count = int((end - start).total_seconds() // (15 * 60))
     try:
         result = microsoft_graph_request('POST', f'users/{quote(owner_email, safe="")}/calendar/getSchedule', payload={
             'schedules': [owner_email], 'startTime': {'dateTime': start.isoformat(), 'timeZone': 'UTC'},
@@ -78,7 +92,14 @@ def free_slots(owner_email, day, offset, *, exclude_event_key='', duration=60, u
         schedule = next((s for s in schedules if str(s.get('scheduleId', '')).lower() == owner_email.lower()), None)
         if not schedule or schedule.get('error'):
             raise ValueError('Missing schedule')
-        if uk_working_hours:
+        if review_hours:
+            # All coaches offer Reviews in the college's London working day.
+            # Personal Outlook hours/days/timezones must not narrow that window;
+            # Outlook free/busy and LMS reservations still protect occupied time.
+            zone = ZoneInfo('Europe/London')
+            work_start, work_end = REVIEW_DAY_START, REVIEW_DAY_END
+            days = {'monday', 'tuesday', 'wednesday', 'thursday', 'friday'}
+        elif uk_working_hours:
             # The college's UK working day, whatever the coach's own Outlook hours say.
             zone, (work_start, work_end) = ZoneInfo('Europe/London'), CATCHUP_WORKING_HOURS
             days = {'monday', 'tuesday', 'wednesday', 'thursday', 'friday'}
@@ -89,38 +110,76 @@ def free_slots(owner_email, day, offset, *, exclude_event_key='', duration=60, u
             work_end = time.fromisoformat(hours['endTime'])
             days = {d.lower() for d in hours['daysOfWeek']}
         view = schedule['availabilityView']
-        if len(view) < 96:
+        if len(view) < interval_count:
             raise ValueError('Incomplete availability')
     except Exception as exc:
         raise AvailabilityUnavailable('Could not check the coach calendar. Please retry before booking.') from exc
+    from coach_api.booking_reservations import calendar_record_occupies_slot
     busy = []
     records = CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email,
         scheduled_date__range=(day - timedelta(days=1), day + timedelta(days=1)),
-        scheduled_time__isnull=False).exclude(status__in=['cancelled', 'not-scheduled', 'failed'])
+        scheduled_time__isnull=False)
+    if hasattr(CoachCalendarEvent, 'SYNC_CANCELLED'):
+        records = records.exclude(sync_state=CoachCalendarEvent.SYNC_CANCELLED)
     if exclude_event_key:
         records = records.exclude(event_key=exclude_event_key)
+    if exclude_record_id is not None:
+        records = records.exclude(pk=exclude_record_id)
     # Existing coach bookings use the timetable's UK wall-clock convention.
     for record in records:
-        at = datetime.combine(record.scheduled_date, record.scheduled_time, ZoneInfo('Europe/London'))
+        if not calendar_record_occupies_slot(record, availability_read=True):
+            continue
+        at = datetime.combine(record.scheduled_date, record.scheduled_time, ZoneInfo('Europe/London')).astimezone(timezone.utc)
         busy.append((at, at + timedelta(minutes=record.duration_minutes or 60)))
     now = datetime.now(timezone.utc)
     earliest = now + timedelta(minutes=CATCHUP_MIN_LEAD_MINUTES) if uk_working_hours else now
     slots = []
+    outlook_busy = None
     # The meeting occupies whole 15-minute blocks of the free/busy view.
     blocks = max(1, -(-int(duration) // 15))
-    for index in range(96 - blocks + 1):
+    for index in range(interval_count - blocks + 1):
         at = start + timedelta(minutes=15 * index)
         until = at + timedelta(minutes=int(duration))
         local = at.astimezone(zone)
         finish = until.astimezone(zone)
-        if at <= earliest or any(v != '0' for v in view[index:index + blocks]):
+        if at <= earliest:
             continue
         if local.strftime('%A').lower() not in days or local.date() != finish.date():
             continue
         if local.time() < work_start or finish.time() > work_end:
             continue
+        if review_hours:
+            review_start = at.astimezone(ZoneInfo('Europe/London'))
+            review_end = until.astimezone(ZoneInfo('Europe/London'))
+            if (review_start.time().replace(tzinfo=None) < REVIEW_DAY_START
+                    or review_end.date() != day
+                    or review_end.time().replace(tzinfo=None) > REVIEW_DAY_END):
+                continue
         if any(at < b and until > a for a, b in busy):
             continue
+        graph_busy = any(v != '0' for v in view[index:index + blocks])
+        if graph_busy:
+            # Only intervals overlapping this exact persisted appointment may
+            # be reconsidered. Unknown provider availability remains blocked.
+            own_start = (datetime.combine(review_self_record.scheduled_date,
+                review_self_record.scheduled_time, ZoneInfo('Europe/London')).astimezone(timezone.utc)
+                if review_hours and review_self_record and review_self_record.scheduled_date
+                and review_self_record.scheduled_time and getattr(review_self_record, 'graph_event_id', '') else None)
+            own_end = own_start + timedelta(minutes=review_self_record.duration_minutes or 60) if own_start else None
+            if (not own_start or not (at < own_end and until > own_start)
+                    or any(v not in '0123' for v in view[index:index + blocks])):
+                continue
+            try:
+                from coach_api.booking_availability import coach_outlook_busy_intervals, CoachAvailabilityUnavailable
+                if outlook_busy is None:
+                    # One identity-aware read per day, not a Graph call for
+                    # every proposed start. Other meetings stay in this list.
+                    outlook_busy = coach_outlook_busy_intervals(
+                        owner_email, day, REVIEW_DAY_START, 480, record=review_self_record)
+            except CoachAvailabilityUnavailable as exc:
+                raise AvailabilityUnavailable(str(exc)) from exc
+            if any(at < b and until > a for a, b in outlook_busy):
+                continue
         slots.append(at.astimezone(local_zone).strftime('%H:%M'))
     return slots
 
@@ -158,7 +217,7 @@ def coach_available_slots(request, kind, pk):
                 status=400,
             )
     else:
-        profile = learner_profile_for_source(learner, pk, active_only=True)
+        profile = learner_profile_for_source(learner, pk, active_only=True, heal=False)
         if not profile or not profile.coach_email:
             return JsonResponse({'error': 'No coach has been assigned to you yet.'}, status=400)
         owner_email = profile.coach_email.strip()
@@ -167,16 +226,54 @@ def coach_available_slots(request, kind, pk):
         offset = int(request.GET.get('timezoneOffsetMinutes', '0'))
         if not -840 <= offset <= 840:
             raise ValueError()
-        # The catch-up picker asks for its own length; the MCM grid keeps one hour.
-        duration = int(request.GET.get('durationMinutes') or 60)
-        if duration not in (15, 30, 45, 60, 90, 120):
+        purpose = request.GET.get('purpose', '')
+        catchup = purpose == 'catch-up'
+        review = purpose == 'review'
+        if review and college_day:
             raise ValueError()
-        catchup = request.GET.get('purpose') == 'catch-up'
+        # Review durations can include a stored/configured value such as 75
+        # minutes. Keep catch-up's existing supported list unchanged.
+        duration_value = request.GET.get('durationMinutes') or 60
+        if review:
+            from coach_api.booking_hours import validate_review_duration
+            duration = validate_review_duration(duration_value)
+        else:
+            duration = int(duration_value)
+            if duration not in (15, 30, 45, 60, 90, 120):
+                raise ValueError()
+        exclude_event_key = ''
+        review_self_record = None
+        if review and request.GET.get('excludeEventKey'):
+            exclude_event_key = request.GET.get('excludeEventKey', '').strip()
+            if len(exclude_event_key) > 255:
+                raise ValueError()
+            from coach_api.models import CoachCalendarEvent
+            from .calendar import coaching_events_for_learner
+            # Resolve through the same authorized source/overlay associations
+            # as the booking endpoint. Profile IDs and enrolment IDs differ.
+            from coach_api.review_sources import ReviewIdentityConflict
+            try:
+                resolved = [event for event in coaching_events_for_learner(learner, profile)
+                            if exclude_event_key in {event.get('calendarEventKey'), event.get('eventKey')}]
+            except ReviewIdentityConflict:
+                return JsonResponse({'error': 'The current Review booking has a conflicting identity. Refresh and retry.'}, status=409)
+            if len(resolved) != 1:
+                return JsonResponse({'error': 'The current Review booking could not be verified. Refresh and retry.'}, status=409)
+            existing = CoachCalendarEvent.objects.filter(
+                event_key=exclude_event_key, owner_email__iexact=owner_email,
+                event_type__in=('mcr', 'progress-review', 'review'),
+            ).first()
+            if existing is None:
+                return JsonResponse({'error': 'The current Review booking could not be verified. Refresh and retry.'}, status=409)
+            review_self_record = existing
     except ValueError:
         return JsonResponse({'error': 'Choose a valid date, timezone and duration.'}, status=400)
     unconfirmed = ''
     try:
-        free = free_slots(owner_email, day, offset, duration=duration, uk_working_hours=catchup)
+        free = free_slots(owner_email, day, offset, duration=duration,
+                          uk_working_hours=catchup, review_hours=review,
+                          exclude_event_key=exclude_event_key,
+                          review_self_record=review_self_record)
     except AvailabilityUnavailable as exc:
         # A first session must stay bookable when Microsoft cannot be reached.
         #
@@ -199,10 +296,8 @@ def coach_available_slots(request, kind, pk):
         unconfirmed = str(exc)
     # ``collegeDay`` asks for the first-session shape: the college's own
     # 09:00-16:00 working day, on the hour, every hour reported with a flag.
-    # Without it the answer stays the 15-minute grid of the coach's own hours,
-    # which is what the MCM picker wants -- a learner rearranging a monthly
-    # meeting around their job is well served by 10:15, and their coach's
-    # working day is the one that meeting happens in.
+    # Without it the answer stays on a 15-minute grid. Reviews use the college's
+    # London hours; legacy callers retain the coach's Outlook working hours.
     #
     # A first session is a different thing: it is the meeting that starts the
     # programme, held in Kent, and it is offered as a short list of hours the
@@ -221,7 +316,7 @@ def coach_available_slots(request, kind, pk):
         if unconfirmed:
             payload['unconfirmed'] = unconfirmed
     else:
-        payload = {'date': day.isoformat(), 'times': free, 'durationMinutes': 60}
+        payload = {'date': day.isoformat(), 'times': free, 'durationMinutes': duration}
     response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
     return response

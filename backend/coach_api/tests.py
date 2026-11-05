@@ -2571,8 +2571,11 @@ class CoachTimetableWindowTests(SimpleTestCase):
 
         self.assertEqual(event["employerEmail"], "employer@example.com")
         self.assertEqual(graph_organizer_mailbox(record, event), "coach@example.com")
-        self.assertEqual(attendees, ["learner@example.com", "employer@example.com"])
-        self.assertNotIn("coach@example.com", attendees)
+        # Organizer mailbox and attendee delivery are separate contracts. The
+        # existing builder explicitly includes the owning coach once.
+        self.assertEqual(attendees, ["learner@example.com", "employer@example.com", "coach@example.com"])
+        self.assertEqual([item["type"] for item in payload["attendees"]], ["required"] * 3)
+        self.assertEqual(len(attendees), len(set(attendees)))
 
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
     @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
@@ -2586,7 +2589,7 @@ class CoachTimetableWindowTests(SimpleTestCase):
         },
     })
     @patch("coach_api.views.build_learner_profile_map", return_value={})
-    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+    @patch("coach_api.views.fetch_caseload_timetable_profiles", return_value=[])
     @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
     @patch("coach_api.views.coach_staff_display_name", return_value="")
     @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
@@ -2595,7 +2598,7 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events,
         coach_staff_display_name,
         fetch_owner_active_learner_profiles,
-        fetch_caseload_dashboard_profiles,
+        fetch_caseload_timetable_profiles,
         build_learner_profile_map,
         resolve_coach_review_events,
         fetch_standalone_event_records,
@@ -2608,10 +2611,11 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events.assert_called_once()
         coach_staff_display_name.assert_called_once_with("coach@example.com")
         fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
-        fetch_caseload_dashboard_profiles.assert_called_once_with("coach@example.com")
+        fetch_caseload_timetable_profiles.assert_called_once_with("coach@example.com")
         build_learner_profile_map.assert_called_once_with([])
         resolve_coach_review_events.assert_called_once_with(
             "coach@example.com", "Med Maher", [], start_date=None, end_date=None,
+            source_schedule_rows=({}, {}),
         )
         fetch_standalone_event_records.assert_called_once_with("coach@example.com")
         fetch_calendar_event_records.assert_not_called()
@@ -2767,9 +2771,9 @@ Learner progress looks strong.
             learner_name="Test Learner",
             learner_email="learner@example.com",
             event_type="mcr",
-            status="completed",
+            status="scheduled",
         )
-        request = self.factory.get("/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts?refresh=1")
+        request = self.factory.post("/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts")
         request.coach_email = "coach@example.com"
 
         def graph_response(_method, path, *, payload=None):
@@ -2804,6 +2808,7 @@ Learner progress looks strong.
 
         with patch("coach_api.views.coach_meeting_artifact_record", return_value=record), \
              patch("coach_api.views.has_graph_credentials", return_value=True), \
+             patch("coach_api.review_attendance_links.saved_links", return_value=[]) as attendance_links, \
              patch("coach_api.views.coach_meeting_graph_target", return_value=("users/coach/onlineMeetings/meeting-1", None)), \
              patch("coach_api.views.fetch_coach_meeting_transcript_content", return_value={
                  "transcript_vtt": "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHello learner.",
@@ -2831,6 +2836,7 @@ Learner progress looks strong.
         self.assertEqual(payload["attendance"]["expectedAbsentCount"], 1)
         self.assertEqual(payload["attendance"]["records"][0]["displayName"], "Learner")
         self.assertEqual(payload["attendance"]["records"][0]["totalAttendanceSeconds"], 1200)
+        attendance_links.assert_called_once_with(record)
         self.assertEqual(
             [(item["role"], item["email"]) for item in payload["attendance"]["expectedAttendees"]],
             [("coach", "coach@example.com"), ("learner", "learner@example.com")],
@@ -2858,6 +2864,7 @@ Learner progress looks strong.
 
         with patch("coach_api.views.coach_meeting_artifact_record", return_value=record), \
              patch("coach_api.views.stored_coach_meeting_snapshot", return_value=stored_snapshot) as stored, \
+             patch("coach_api.review_attendance_links.saved_links", return_value=[]) as attendance_links, \
              patch("coach_api.views.stored_coach_meeting_summary", return_value=None), \
              patch("coach_api.views.fetch_coach_meeting_graph_snapshot") as graph_fetch:
             response = unwrap(coach_timetable_event_artifacts)(request, record.event_key)
@@ -2866,6 +2873,8 @@ Learner progress looks strong.
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["artifacts"][0]["id"], "recording-1")
         self.assertEqual(payload["storage"]["stored"], True)
+        self.assertEqual(payload["attendance"], stored_snapshot["attendance"])
+        attendance_links.assert_called_once_with(record)
         stored.assert_called_once_with(record)
         graph_fetch.assert_not_called()
 
@@ -2883,7 +2892,8 @@ Learner progress looks strong.
             "transcript_vtt": "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nStored transcript.",
             "transcript_content_type": "text/vtt",
         }) as stored, \
-             patch("coach_api.views.has_graph_credentials", return_value=False):
+             patch("coach_api.views.has_graph_credentials", return_value=False), \
+             patch("coach_api.views.coach_meeting_transcript_selection", return_value={"artifactIds": ["transcript-1"], "code": None}):
             response = coach_meeting_artifact_content_response(
                 request,
                 record,
@@ -2910,7 +2920,9 @@ Learner progress looks strong.
         with patch("coach_api.views.stored_coach_meeting_transcript_for_summary", return_value={
             "artifactId": "transcript-1,transcript-2",
             "text": "First transcript segment.\n\nSecond transcript segment.",
-        }) as stored:
+        }) as stored, patch("coach_api.views.coach_meeting_transcript_selection", return_value={
+            "artifactIds": ["transcript-1", "transcript-2"], "code": None,
+        }):
             response = coach_meeting_artifact_content_response(
                 request,
                 record,
@@ -2926,7 +2938,7 @@ Learner progress looks strong.
         )
         self.assertIn("text/plain", response["Content-Type"])
         self.assertIn("transcript.txt", response["Content-Disposition"])
-        stored.assert_called_once_with(record)
+        stored.assert_called_once_with(record, artifact_ids=["transcript-1", "transcript-2"])
 
     def test_progress_review_expected_attendees_include_employer(self):
         record = CoachCalendarEvent(

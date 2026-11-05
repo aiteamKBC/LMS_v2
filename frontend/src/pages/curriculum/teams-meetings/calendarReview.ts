@@ -117,7 +117,7 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
   }).join('');
   const unique = (values: string[] = []) => [...new Set(values.map(value => value.trim().toLowerCase()))];
   const coOrganizers = unique(input.coOrganizers);
-  const presenters = unique(input.presenters).filter(value => !coOrganizers.includes(value));
+  const presenters = unique(input.presenters);
   const attendees = unique(input.attendees).filter(value => !coOrganizers.includes(value) && !presenters.includes(value));
   const list = (name: string, values: string[]) => `<div class="teams-review-role"><div class="teams-review-role-heading"><strong>${name}</strong><span>${values.length}</span></div>${values.length ? `<ul aria-label="${name}" class="teams-review-emails"${values.length > 4 ? ' tabindex="0"' : ''}>${values.map(value => `<li>${escapeHtml(value)}</li>`).join('')}</ul>` : '<p class="teams-review-empty">None</p>'}</div>`;
   const links = input.calendarSeries?.length

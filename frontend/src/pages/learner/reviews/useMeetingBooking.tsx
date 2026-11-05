@@ -19,7 +19,8 @@ export function useMeetingBooking({ learner, rules, attendance, titleOf, setEven
   const [warning, setWarning] = useState('');
   const dialog = session && <BookingErrorBoundary resetKey={session.id} onClose={() => setSession(null)}>
     <MeetingBookingDialog key={session.id} session={session} title={titleOf(session)} learner={learner}
-    rules={rules} attendance={attendance.find(item => item.id === session.id || (session.reviewId && item.id === `imported-review:${session.reviewId}`))} onClose={() => setSession(null)}
+    rules={rules} attendance={attendance.find(item => item.id === session.id || (session.reviewId && item.id === `imported-review:${session.reviewId}`))
+      || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === (session.calendarEventKey || session.eventKey))} onClose={() => setSession(null)}
     onBooked={response => {
       const saved = response.event;
       setEvents(current => [...current.filter(item => item.id !== session.id && item.eventKey !== saved.eventKey),

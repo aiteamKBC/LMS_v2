@@ -19,7 +19,7 @@ from urllib.parse import quote, urlencode, unquote_plus
 from zoneinfo import ZoneInfo
 import unittest
 
-from test_calendar_state_no_db import CalendarFixture, ROOT, Response, functions, package
+from test_calendar_state_no_db import CalendarFixture, ROOT, Response, functions, package, native_calendar_context
 from curriculum_api.session_overrides import (
     apply_session_overrides, override_clock, schedule_override, session_overrides, validate_exception_plan,
 )
@@ -53,6 +53,7 @@ class ManagementTests(CalendarFixture):
         self.base_plan = {'sessions': [dict(sessionNumber=row['session_number'], date=row['scheduled_start'][:10],
             startTime='09:00', endTime='11:00', durationMinutes=120) for row in self.rows], 'slots': []}
         self.v = types.SimpleNamespace(graph_timezone_iana=lambda _: 'Europe/London',
+            module_has_external_teams_calendar=lambda _module, series: series.get('meeting_type') == 'linked-external',
             module_stored_session_count=lambda m: 2,
             module_session_plan_for_count=lambda m, _: apply_session_overrides(copy.deepcopy(self.base_plan), m),
             module_schedule_view=lambda m: m, find_tutor_schedule_conflicts=Mock(return_value=[]),
@@ -73,7 +74,7 @@ class ManagementTests(CalendarFixture):
             signing=types.SimpleNamespace(dumps=sign, loads=lambda token, **_: copy.deepcopy(self.tokens[token])), SALT='test',
             httpx=types.SimpleNamespace(HTTPError=TransportError), transaction=types.SimpleNamespace(atomic=nullcontext),
             __package__='curriculum_api')
-        names = ['saved_operation', 'fingerprint', 'eligible', 'action_preview', 'confirm_action', 'continue_action', 'action_result', 'verified_move']
+        names = ['saved_operation', 'fingerprint', 'eligible', 'require_managed_calendar', 'action_preview', 'confirm_action', 'continue_action', 'action_result', 'verified_move']
         functions(ROOT / 'teams_calendar_actions.py', names, self.ns)
         @contextmanager
         def reader():
@@ -135,6 +136,21 @@ class ManagementTests(CalendarFixture):
             'notifyAttendees': True,
             'acknowledgeNotifications': True,
         }, 'ACTOR-1')
+
+    def test_imported_calendar_cannot_review_a_calendar_mutation(self):
+        self.series['meeting_type'] = 'linked-external'
+        with self.assertRaisesRegex(CalendarStateError, 'original Teams calendar'):
+            self.review()
+        self.ns['graph_action'].assert_not_called()
+        self.ns['store_snapshot'].assert_not_called()
+
+    def test_replacement_after_review_blocks_confirmation_without_graph_write(self):
+        review = self.review()
+        self.v.module_has_external_teams_calendar = lambda _module, _series: True
+        with self.assertRaisesRegex(CalendarStateError, 'original Teams calendar'):
+            self.confirm(review)
+        self.ns['graph_action'].assert_not_called()
+        self.ns['store_snapshot'].assert_not_called()
 
     def test_review_is_read_only_and_uses_exact_occurrence(self):
         review = self.review()
@@ -386,6 +402,7 @@ class ManagementTests(CalendarFixture):
 
 class PureTests(unittest.TestCase):
     def setUp(self):
+        native_calendar_context(self)
         self.socket = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
         self.socket.start()
         self.addCleanup(self.socket.stop)
@@ -513,6 +530,27 @@ class PureTests(unittest.TestCase):
             self.assertEqual(graph.microsoft_graph_request.call_count, 3)
             self.assertFalse(getattr(ns['calendar_action'], 'csrf_exempt', False))
 
+    def test_directory_search_failures_answer_with_a_reason_not_a_crash(self):
+        ns = {'JsonResponse': Response, 'require_role': lambda *roles: (lambda fn: fn), 'require_GET': lambda fn: fn,
+              'logger': Mock(), 'directory_query': lambda value, include_guests=False: 'users?synthetic',
+              'directory_people': lambda data, include_guests=False: data}
+        functions(ROOT / 'teams_directory.py', ['search_teams_directory'], ns)
+        request = types.SimpleNamespace(GET={'q': 'enga'})
+        cases = [
+            (RuntimeError('Microsoft Graph GET users failed: HTTP 403; code=Authorization_RequestDenied'), "isn't allowed to search"),
+            (RuntimeError('Microsoft Graph GET users failed: HTTP 503'), 'Retry or enter a full email address'),
+            (TimeoutError('The read operation timed out'), 'Retry or enter a full email address'),
+        ]
+        for failure, message in cases:
+            graph = types.ModuleType('coach_api.views')
+            graph.microsoft_graph_request = Mock(side_effect=failure)
+            with self.subTest(failure=str(failure)), patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': graph}):
+                response = ns['search_teams_directory'](request)
+                self.assertEqual(response.status_code, 502)
+                self.assertIn(message, response['error'])
+                self.assertNotIn('Authorization_RequestDenied', response['error'])
+                self.assertEqual(response['Cache-Control'], 'no-store, private')
+
     def test_readers_apply_rescheduled_component_dates_and_preserve_other_settings(self):
         module = {'sessions_number': 2, 'session_overrides': {'1': schedule_override(utc_datetime('2026-10-09T11:00:00Z'), 90, ZoneInfo('Europe/London'))}}
         plan = apply_session_overrides({'sessions': [dict(sessionNumber=n, date=day, day='Thursday')
@@ -527,6 +565,7 @@ class PureTests(unittest.TestCase):
             # by `weekNumber`; these plan entries carry none, so every component
             # is matched by the session number it already names.
             'module_session_plan_for_weeks': lambda *_args, **_kwargs: plan,
+            'module_week_delivery_slots': lambda *_args, **_kwargs: ([[row] for row in plan['sessions']], copy.deepcopy(plan['sessions'])),
             'defaultdict': defaultdict,
             'module_session_clock': lambda module, group=None, session_date=None: override_clock(module, session_date) or ('09:00', '11:00', 120),
             # Group-first resolution is its own subject, in
@@ -584,6 +623,7 @@ class PureTests(unittest.TestCase):
             'parse_int': lambda value, default=0: int(value or default),
             'cohort_selected_holidays_by_cohort': lambda _ids: {'COHORT-1': []},
             'module_session_plan_for_weeks': lambda *_args, **_kwargs: copy.deepcopy(plan),
+            'module_week_delivery_slots': lambda *_args, **_kwargs: ([[row] for row in plan['sessions']], copy.deepcopy(plan['sessions'])),
             'module_session_clock': lambda *_args, **_kwargs: ('09:00', '11:00', 120),
             # As above: this call passes no group row of its own.
             'module_delivery_row': lambda module, group=None: module,

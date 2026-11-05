@@ -46,6 +46,8 @@ const STATUS_LABEL_TONE: Record<string, StatusTone> = {
   Attended: 'positive',
   'Absence reported': 'caution',
   'Meeting missed': 'critical',
+  'Awaiting attendance report': 'caution',
+  'Attendance unavailable': 'neutral',
   'Booking needs attention': 'critical',
   'Awaiting update': 'neutral',
   Today: 'info',

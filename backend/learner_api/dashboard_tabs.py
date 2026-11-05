@@ -9,6 +9,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
+from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view
 from .projection_performance import measure_projection
@@ -48,7 +49,7 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
                 'planned_hours': totals['planned']}}
 
 
-def learning_projection(source, owner, records, *, compact_content=False, monthly_assignments=False):
+def learning_projection(source, owner, records, *, compact_content=False, monthly_assignments=False, progress=None):
     from .weekly_learning import build_learning_content_summary
     from .student_activity_access import student_activity_available
     from .student_activity_data import summarize_activities
@@ -56,6 +57,8 @@ def learning_projection(source, owner, records, *, compact_content=False, monthl
     from .student_activity import builder_subject_links
 
     options = {'compact_content': True} if compact_content else {}
+    if progress is not None:
+        options['progress'] = progress
     weekly = build_learning_content_summary(source, source.pk, learning_summary=True, **options)
     detail = {key: weekly.get(key, []) for key in (
         'modules', 'components', 'retiredQuizComponents', 'quizAttempts', 'videoProgress', 'componentProgress')}
@@ -131,6 +134,7 @@ def read_tab(source, kind, tab, request, *, canonical_contract=False):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @learner_journal_view
+@cached_learner_read('dashboard-tab')
 def dashboard_tab(request, kind, pk, tab, canonical_contract=False):
     from .learner_detail import SOURCE_MODELS
     model = SOURCE_MODELS.get(kind)

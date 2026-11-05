@@ -5,12 +5,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { feedbackApi, type LearnerFeedbackListItem } from '@/api/feedback';
 import LearnerFeedbackPage from './page';
 
+const flags = vi.hoisted(() => ({ fullFeedbackEnabled: true }));
+vi.mock('@/lib/featureFlags', () => ({ get LEARNER_FEEDBACK_ENABLED() { return flags.fullFeedbackEnabled; } }));
 vi.mock('@/api/feedback', () => ({ feedbackApi: { myForms: vi.fn() } }));
 const state = {
   account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' },
   resolved: { kind: 'apprenticeship', id: '61' },
 };
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: state.account }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: state.account }, isInitialized: true }) }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => state.resolved }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/mocks/navigation', () => ({ roleNavMap: { learner: { label: 'Learner', items: [], workspaceLabel: 'Workspace' } } }));
@@ -27,35 +29,119 @@ const lecture: LearnerFeedbackListItem = {
 describe('learner feedback categories', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('AppIcon', () => null);
+    flags.fullFeedbackEnabled = true;
     Object.assign(state.account, { role: 'learner', subjectType: 'learner', subjectId: 61, displayName: 'Learner' });
     Object.assign(state.resolved, { kind: 'apprenticeship', id: '61' });
   });
 
-  it('shows every feedback type, then groups attended lectures by module', async () => {
+  it.each([['mid_module', 'mid-module', 'Wellbeing'], ['end_module', 'end-module', 'End-module Feedback']] as const)(
+    'opens %s through its owned delivery and preserves its category', async (formType, category, title) => {
+      flags.fullFeedbackEnabled = true;
+      vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [{ ...lecture, formType, title, sessionTitle: title }] });
+      const user = userEvent.setup();
+      render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
+      await user.click(await screen.findByRole('button', { name: /All feedback types/ }));
+      await user.click(screen.getByRole('option', { name: title }));
+      const requests = screen.getByRole('region', { name: 'All feedback requests' });
+      await user.click(within(requests).getByRole('button', { name: new RegExp(`Start ${title}`) }));
+      expect(screen.getByText(`/learner/feedback/delivery/21?category=${category}`)).toBeVisible();
+    },
+  );
+
+  it('can limit feedback to Live Sessions when other feedback types are explicitly disabled', async () => {
+    flags.fullFeedbackEnabled = false;
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
+      lecture,
+      { ...lecture, id: 7, formType: 'mid_module', title: 'Module midpoint' },
+      { ...lecture, id: 8, formType: 'end_module', title: 'Module end' },
+      { ...lecture, id: 6, deliveryId: null, eventRecipientId: 40, formType: 'post_event', title: 'Event feedback' },
+    ] });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/learner/feedback?category=event']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: /All feedback types/ }));
+    expect(screen.getByRole('option', { name: /Live Sessions Feedback/ })).toBeVisible();
+    expect(screen.queryByRole('option', { name: /Wellbeing/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /End-module Feedback/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Event Feedback/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Event feedback')).not.toBeInTheDocument();
+    expect(screen.queryByText('Module midpoint')).not.toBeInTheDocument();
+    expect(screen.queryByText('Module end')).not.toBeInTheDocument();
+  });
+
+  it.each(['commercial', 'apprenticeship'])('shows every released feedback category and opens an assigned MCM for a %s learner', async learnerType => {
+    state.account.learnerType = learnerType;
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
+      lecture,
+      { ...lecture, id: 5, formType: 'mid_module', title: 'Midpoint feedback' },
+      { ...lecture, id: 6, formType: 'end_module', title: 'End-module feedback' },
+      { ...lecture, id: 7, deliveryId: null, reviewDeliveryId: 71, formType: 'post_mcm_review', title: 'MCM feedback', sessionTitle: 'Synthetic coaching review' },
+      { ...lecture, id: 8, deliveryId: null, reviewDeliveryId: 72, formType: 'post_progress_review', title: 'Progress feedback' },
+      { ...lecture, id: 9, deliveryId: null, eventRecipientId: 40, formType: 'post_event', title: 'Event feedback' },
+      { ...lecture, id: 10, deliveryId: null, formType: 'general', title: 'General feedback' },
+    ] });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
+    const requests = await screen.findByRole('region', { name: 'All feedback requests' });
+    expect(await within(requests).findByText('MCM feedback')).toBeVisible();
+    for (const title of ['Midpoint feedback', 'End-module feedback', 'Progress feedback', 'Event feedback', 'General feedback']) {
+      expect(within(requests).getByText(title)).toBeVisible();
+    }
+    await user.click(screen.getByRole('button', { name: /All feedback types/ }));
+    for (const category of ['Wellbeing', 'End-module Feedback', 'Live Sessions Feedback', 'MCM Feedback', 'Progress Review Feedback', 'Event Feedback', 'General Feedback']) {
+      expect(screen.getByRole('option', { name: new RegExp(category, 'i') })).toBeVisible();
+    }
+    await user.click(screen.getByRole('option', { name: /MCM Feedback/ }));
+    await user.click(within(requests).getByRole('button', { name: /Start Synthetic coaching review/ }));
+    expect(screen.getByText('/learner/feedback/review/71?category=mcm')).toBeVisible();
+    expect(feedbackApi.myForms).toHaveBeenCalledWith(undefined);
+  });
+
+  it('shows a unified request list with type, search, status filters and summary', async () => {
     vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
       lecture,
       { ...lecture, id: 5, deliveryId: 22, sessionTitle: 'Data Foundations — Lecture 1', sessionStartsAt: '2026-09-16T09:00:00Z', status: 'completed' },
       { ...lecture, id: 6, deliveryId: null, eventRecipientId: 40, formType: 'post_event', moduleName: '', title: 'Leadership event', sessionTitle: 'Leadership Day' },
+      { ...lecture, id: 7, deliveryId: null, reviewDeliveryId: 71, formType: 'post_mcm_review', moduleName: '', title: 'MCM feedback', sessionTitle: 'October coaching meeting' },
+      { ...lecture, id: 8, deliveryId: null, reviewDeliveryId: 72, formType: 'post_progress_review', moduleName: '', title: 'Progress review feedback', sessionTitle: 'October progress review' },
     ] });
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
 
-    const types = await screen.findByRole('region', { name: 'Feedback types' });
-    const lectureType = within(types).getByRole('button', { name: /Lecture Feedback/ });
-    const eventType = within(types).getByRole('button', { name: /Event Feedback/ });
-    const generalType = within(types).getByRole('button', { name: /General Feedback/ });
-    expect(within(lectureType).getByText('2')).toBeVisible();
-    expect(within(eventType).getAllByText('1')).toHaveLength(2);
-    expect(within(generalType).getAllByText('0')).toHaveLength(2);
+    const typeFilter = await screen.findByRole('button', { name: /All feedback types/ });
+    expect(screen.getByRole('region', { name: 'Action needed' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Your feedback summary' })).toBeVisible();
 
-    await user.click(lectureType);
+    await user.click(typeFilter);
+    expect(screen.getByRole('option', { name: /Event Feedback/ })).toBeVisible();
+    await user.click(screen.getByRole('option', { name: /Live Sessions Feedback/ }));
     expect(screen.getByText('/learner/feedback?category=lecture')).toBeVisible();
-    const module = screen.getByRole('region', { name: 'Martech - Thur' });
-    expect(within(module).getByText('2 lectures')).toBeVisible();
-    expect(within(module).getByRole('button', { name: /Data Foundations — Lecture 2/ })).toBeVisible();
+    const requests = screen.getByRole('region', { name: 'All feedback requests' });
+    expect(within(requests).getByText('Data Foundations — Lecture 2')).toBeVisible();
+    expect(within(requests).getByText('Data Foundations — Lecture 1')).toBeVisible();
 
-    await user.click(within(module).getByRole('button', { name: /Data Foundations — Lecture 2/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Search feedback' }), 'Lecture 2');
+    expect(within(requests).queryByText('Data Foundations — Lecture 1')).not.toBeInTheDocument();
+    await user.clear(screen.getByRole('textbox', { name: 'Search feedback' }));
+    await user.click(screen.getByRole('button', { name: 'All statuses' }));
+    await user.click(screen.getByRole('option', { name: 'Submitted' }));
+    expect(within(requests).getByRole('button', { name: /View Data Foundations — Lecture 1/ })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Submitted' }));
+    await user.click(screen.getByRole('option', { name: 'All statuses' }));
+    await user.click(within(requests).getByRole('button', { name: /Start Data Foundations — Lecture 2/ }));
     expect(screen.getByText('/learner/feedback/delivery/21?category=lecture')).toBeVisible();
+  });
+
+  it('explains the learner feedback details and limits response visibility to the Engagement Team', async () => {
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [lecture] });
+    render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: 'Helpful details before you submit' })).toBeVisible();
+    for (const detail of ['Related session/module name', 'Event date', 'Deadline to submit', 'Estimated time to complete', 'Who can view it', 'Why this feedback matters', 'Can you resubmit?', 'Can you ignore it?']) {
+      expect(screen.getByText(detail)).toBeVisible();
+    }
+    expect(screen.getAllByText(/Engagement Team/).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Anonymous or named')).not.toBeInTheDocument();
   });
 
   it('preserves learner preview and selected category when staff opens a lecture', async () => {
@@ -67,7 +153,8 @@ describe('learner feedback categories', () => {
 
     expect(await screen.findByText(/Preview is read-only/)).toBeVisible();
     expect(feedbackApi.myForms).toHaveBeenCalledWith('125');
-    await user.click(screen.getByRole('button', { name: /Data Foundations — Lecture 2/ }));
+    const requests = screen.getByRole('region', { name: 'All feedback requests' });
+    await user.click(within(requests).getByRole('button', { name: /Start Data Foundations — Lecture 2/ }));
     expect(screen.getByText('/learner/feedback/delivery/21?learnerId=125&kind=commercial&category=lecture')).toBeVisible();
   });
 });

@@ -1,3 +1,5 @@
+import { LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -27,8 +29,10 @@ import {
 } from '../shared/entities/archive';
 import { duplicateCohortWithGroups } from '../shared/entities/cloneStructure';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-import { ArchiveNotice, useCurriculumArchive } from '../shared/entities/archiveView';
-import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
+import { ArchiveNotice } from '../shared/entities/archiveView';
+import { useCurriculumArchive } from "../shared/entities/archiveView.helpers";
+import { CurriculumStructureWizard, type StructureWizardCreated } from '../shared/entities/structureWizard';
+import { withoutDiscardedRecords } from "../shared/entities/structureWizard.helpers";
 import {
   EntityEmptyState,
   EntityFilterBar,
@@ -76,6 +80,10 @@ const ARCHIVE_COLUMNS = [
 ];
 
 export default function CurriculumCohortsPage() {
+  return <LearnerDirectoryProvider><CurriculumCohortsPageContent /></LearnerDirectoryProvider>;
+}
+
+function CurriculumCohortsPageContent() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     programmes, cohorts, groups, holidays, loading, loaded, refreshing, error, reload, applyLocal,
@@ -423,7 +431,7 @@ export default function CurriculumCohortsPage() {
             )}
             renderRow={cohort => (
               <>
-                <StackedCell
+                <div className="min-w-0 self-center space-y-1"><StackedCell
                   href={`/curriculum/cohorts/${encodeURIComponent(cohort.id)}`}
                   primary={(
                     <span className="flex items-center gap-2">
@@ -433,6 +441,8 @@ export default function CurriculumCohortsPage() {
                   )}
                   secondary={cohort.id}
                 />
+                  <LearnerStatusCounts target={{ scope: 'cohort', id: cohort.id, name: cohort.name }} refreshKey={cohort} />
+                </div>
                 <StackedCell
                   primary={cohort.programme || 'Unassigned programme'}
                   secondary={cohort.durationMonths ? `${cohort.durationMonths} months` : undefined}

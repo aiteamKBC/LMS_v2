@@ -440,6 +440,25 @@ def _target_learner_id(request, kwargs, *, kwarg, query_param, body_field):
         return None
 
 
+def staff_owns_learner(account, learner_id):
+    """Match a staff account to the same enrolment exposed by its /me payload.
+
+    The account's authenticated email is authoritative, never a learner id or
+    email supplied by the client. Keep the staff identity and grants intact.
+    """
+    if (getattr(account, "role", None) != "staff" or getattr(account, "subject_type", None) != "staff"
+            or not learner_id or learner_id <= 0 or not getattr(account, "email", None)):
+        return False
+    from django.db import DatabaseError
+    from .learner_enrolment import existing_learner_record
+
+    try:
+        learner = existing_learner_record(account.email)
+        return learner is not None and learner.pk == learner_id
+    except DatabaseError:
+        return False
+
+
 def coach_owns_learner(account, learner_id):
     """Is this a Coach account and the learner on their own caseload?
 
@@ -534,7 +553,7 @@ def _learner_progress_gate(view, *, kwarg, query_param, body_field, allow_staff,
             return response
 
         # A coach acts like an administrator, but only for their own caseload.
-        # Anyone else on staff keeps the read-only response below.
+        # Other staff may act only on their own linked enrolment.
         if allow_admin and account.role == "staff":
             target_id = _target_learner_id(
                 request, kwargs, kwarg=kwarg, query_param=query_param, body_field=body_field
@@ -545,6 +564,9 @@ def _learner_progress_gate(view, *, kwarg, query_param, body_field, allow_staff,
                 response = view(request, *args, **kwargs)
                 audit_admin_learner_action(request, target_id, response)
                 return response
+            if target_id is not None and staff_owns_learner(account, target_id):
+                request.login_account = account
+                return view(request, *args, **kwargs)
 
         if account.role == "learner":
             target_id = _target_learner_id(
@@ -617,7 +639,8 @@ def learner_self_or_staff(*, kwarg=None, query_param=None, body_field=None):
 def learner_self_or_admin(*, kwarg=None, query_param=None, body_field=None):
     """Learner actions available to their owner or an authenticated administrator.
 
-    Staff previews remain read-only. Administrators may submit, edit and complete
+    Staff may study their own linked enrolment; other staff previews remain
+    read-only. Administrators may submit, edit and complete
     activities for the selected learner; their own account is retained and each
     write is audited. Private account connections continue to use self_only.
     """

@@ -41,7 +41,7 @@ export const ADMIN_POSITION = 'Admin';
 export const TUTOR_POSITION = 'Tutor';
 
 /** Supported access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
-export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'record-monitor' | 'advanced-admin' | 'super-admin';
+export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'record-monitor' | 'advanced-admin' | 'super-admin' | 'support';
 
 /**
  * What each access permits, and where it lands on sign-in.
@@ -58,6 +58,7 @@ export const ACCESS_OPTIONS: {
   home: string;
   icon: string;
 }[] = [
+  { id: 'support', label: 'Support access', description: 'Review and respond to learner support tickets in the LMS.', home: '/support/ticket-queue', icon: 'ri-customer-service-2-line' },
   {
     id: 'advanced-admin', label: 'Advanced Admin access',
     description: 'Review the assigned PCP and ME learners and mark their assessments.',

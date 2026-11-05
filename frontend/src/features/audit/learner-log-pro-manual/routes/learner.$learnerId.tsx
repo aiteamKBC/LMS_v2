@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from '@tanstack/react-router';
+import { AuditLink as Link, navigateAudit } from '@/features/audit/auditNavigation';
 import { useEffect, useState } from "react";
 import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
 import {
@@ -510,7 +511,7 @@ function LearnerProfilePage() {
               onClick={() => {
                 // Deep links have no in-tab history to return to.
                 if (window.history.length > 1) router.history.back();
-                else void router.navigate({ to: "/search" });
+                else void navigateAudit(router, { to: "/search" });
               }}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline"
             >

@@ -5,8 +5,12 @@ const OVERVIEW_ENDPOINT = '/coach_api/coach/attendance';
 const DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 
 export interface BulkSession { id: string; occurrenceStart: string; module: string; sessionTitle: string }
-export interface BulkLearner { learnerId: string; status: 'present' | 'absent' | 'unmarked' | 'upcoming' | 'in_progress' | null; version: string }
-export interface AttendanceGroupOption { id: string; name: string; cohort: string }
+export interface BulkLearner { learnerId: string; status: 'present' | 'absent' | 'unmarked' | 'upcoming' | 'in_progress' | null; version: string; manualStatus?: 'present' | 'absent' | null }
+export interface AttendanceModuleOption {
+  key: string; name: string; learnerIds: string[]; sessionIds: string[];
+  recentByLearner: Record<string, AttendanceRecent[]>;
+}
+export interface AttendanceGroupOption { id: string; name: string; cohort: string; modules?: AttendanceModuleOption[] }
 export interface AttendanceOptions { programmes: Array<{ id: string; name: string; groups: AttendanceGroupOption[] }> }
 export interface AttendanceSessionOption { id: string; date: string; title: string; time: string; status: 'scheduled' | 'completed' }
 export interface AttendanceRecent { date: string; status: 'present' | 'absent' }
@@ -25,7 +29,8 @@ async function attendanceRead<T>(path: string, signal?: AbortSignal): Promise<T>
   if (!response.ok) throw new Error(payload.detail || 'Unable to load attendance.');
   return payload;
 }
-export const fetchAttendanceOptions = (signal?: AbortSignal) => attendanceRead<AttendanceOptions>('options', signal);
+export const fetchAttendanceOptions = (signal?: AbortSignal, programmeId = '') => attendanceRead<AttendanceOptions>(
+  programmeId ? `options?${new URLSearchParams({ programmeId, includeModules: '1' })}` : 'options', signal);
 export const fetchAttendanceContext = (programmeId: string, groupId: string, signal?: AbortSignal) =>
   attendanceRead<AttendanceContextPayload>(`context?${new URLSearchParams({ programmeId, groupId })}`, signal);
 export const fetchAttendanceGroup = (programmeId: string, groupId: string, signal?: AbortSignal) =>
@@ -52,7 +57,7 @@ export async function fetchBulkAttendance(programmeId: string, groupId: string, 
   return payload;
 }
 
-export async function saveBulkAttendance(programmeId: string, groupId: string, sessionOccurrenceId: string, records: Array<{ learnerId: string; status: 'present' | 'absent'; version: string }>): Promise<{ results: BulkAttendanceResult[] }> {
+export async function saveBulkAttendance(programmeId: string, groupId: string, sessionOccurrenceId: string, records: Array<{ learnerId: string; status: 'present' | 'absent' | 'reset'; version: string }>): Promise<{ results: BulkAttendanceResult[] }> {
   const response = await coachFetch('/coach_api/coach/attendance/bulk', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ programmeId, groupId, sessionOccurrenceId, records }),

@@ -17,7 +17,7 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
   ),
 }));
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '41' }) }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 // The wizard itself is not under test: a failed load keeps the page to its
 // chrome, which is all the scroll reset needs.
 vi.mock('@/api/extendedIlr', () => ({ fetchWizardBootstrap: vi.fn(async () => { throw new Error('offline'); }) }));

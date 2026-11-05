@@ -179,6 +179,11 @@ def presentation(context, payload):
     from .monthly_assignment import items, mapping, text, presentation_fingerprint
     from .presentation_design import build_deck, extract_design
     from .presentation_template import build_from_template
+    from .compact_presentation import build_compact_deck, FORMAT
+    from .standard_mcm_presentation import build_standard_deck, FORMAT as STANDARD_FORMAT
+    presentation_format = mapping(payload.get('monthlyAssignment')).get('presentationFormat')
+    compact = presentation_format in (FORMAT, STANDARD_FORMAT)
+    renderer = build_standard_deck if presentation_format == STANDARD_FORMAT else build_compact_deck
     slides = items(mapping(payload.get('monthlyAssignment')).get('slides'))
     if not 1 <= len(slides) <= 200:
         raise ValueError('Add between 1 and 200 slides before exporting.')
@@ -188,9 +193,9 @@ def presentation(context, payload):
     if design:
         _, reference = reference_template(context, design.get('evidenceId'))
         extract_design(reference)
-        content = build_from_template(slides, reference, design)
+        content = renderer(slides, reference, design) if compact else build_from_template(slides, reference, design)
     else:
-        content = build_deck(slides)
+        content = renderer(slides) if compact else build_deck(slides)
     response = HttpResponse(content, content_type='application/vnd.openxmlformats-officedocument.presentationml.presentation')
     response['Content-Disposition'] = 'attachment; filename="monthly-assignment.pptx"'
     response['X-Presentation-Token'] = signing.dumps(presentation_fingerprint(payload), salt='monthly-assignment-pptx')

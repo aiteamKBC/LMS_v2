@@ -282,7 +282,7 @@ def merged_courses(owner, directory, target):
 def excluded_course_refs(courses):
     """An explicit owner exclusion survives later source catalogue recovery."""
     return {str(course['source_course_ref']) for course in courses
-            if (course.get('source_payload') or {}).get('owner_exclusion', {}).get('exclude_from_learning') is True}
+            if ((course.get('source_payload') or {}).get('owner_exclusion') or {}).get('exclude_from_learning') is True}
 
 
 def membership_plan(owner, courses, catalogue, memberships):
@@ -322,8 +322,17 @@ def membership_plan(owner, courses, catalogue, memberships):
 
 
 def read_catalogue(cur):
-    courses = cur.execute("SELECT * FROM curriculum.source_courses WHERE source_system='old_lms' ORDER BY id").fetchall()
-    definitions = cur.execute("SELECT * FROM curriculum.source_activities WHERE source_system='old_lms' ORDER BY id").fetchall()
+    # Omit large content/export bodies; full-row hashes still protect history.
+    courses = cur.execute('''SELECT id,source_system,source_course_ref,source_course_title,
+        curriculum_module_ref,mapping_method,deleted_at,
+        jsonb_build_object('owner_exclusion',source_payload->'owner_exclusion') AS source_payload,
+        md5(to_jsonb(c)::text) AS _row_hash
+        FROM curriculum.source_courses c WHERE source_system='old_lms' ORDER BY id''').fetchall()
+    definitions = cur.execute('''SELECT id,source_system,source_course_id,source_activity_id,
+        source_activity_kind,source_activity_title,source_activity_type,source_section_ref,
+        source_section_title,source_position,curriculum_component_ref,source_material_id,
+        mapping_method,deleted_at,md5(to_jsonb(a)::text) AS _row_hash
+        FROM curriculum.source_activities a WHERE source_system='old_lms' ORDER BY id''').fetchall()
     return courses, definitions
 
 
@@ -345,6 +354,8 @@ def read_state(cur, owner):
                 payload += """||jsonb_build_object('source_payload',jsonb_build_object(
                     'original_source_ref',source_payload->'original_source_ref',
                     'course_display_placement',source_payload->'course_display_placement'))"""
+            if key == 'memberships':
+                payload += "||jsonb_build_object('verified_catalogue_scope',source_payload->'verified_catalogue_scope')"
             if key == 'modules':
                 payload = "jsonb_build_object('id',id)"
             query = cur.connection.cursor()
@@ -366,7 +377,9 @@ def projection_scope():
     return adapter(None)
 
 
-def projected_completions(state, courses, definitions, scope, course_refs=None):
+def projected_items(state, courses, definitions, scope, course_refs=None, *, owned_only=False,
+                    include_routes=False):
+    """Project the same catalogue and explicit learner scope as My Learning."""
     course_by_id = {c['id']: c for c in courses if c['deleted_at'] is None}
     active_defs = {d['id']: d for d in definitions if d['deleted_at'] is None}
     sources, journals, segments = defaultdict(list), defaultdict(list), defaultdict(list)
@@ -389,14 +402,31 @@ def projected_completions(state, courses, definitions, scope, course_refs=None):
                 'segments': segments[p['id']], 'ksbs': [],
                 'completed': scope['counts_as_completed']({**p, 'sources': sources[p['id']]})}
                for p in progress.values()]
-    selected = {cid: c for cid, c in course_by_id.items()
-                if course_refs is None or c['source_course_ref'] in course_refs}
+    memberships = {m['source_course_id']: m for m in state['memberships'] if m['deleted_at'] is None}
+    selected = {cid: {**c, 'verified_catalogue_scope':
+        memberships.get(cid, {}).get('verified_catalogue_scope')
+        if memberships.get(cid, {}).get('source_relationship') == 'historical' else None}
+        for cid, c in course_by_id.items()
+        if (course_refs is None or c['source_course_ref'] in course_refs)
+        and (not owned_only or cid in memberships)}
     catalogue = [{**d, 'source_course_ref': course_by_id[d['source_course_id']]['source_course_ref'],
                   'source_course_title': course_by_id[d['source_course_id']]['source_course_title'],
                   'curriculum_module_ref': course_by_id[d['source_course_id']]['curriculum_module_ref'],
                   'position': d['source_position']}
                  for d in active_defs.values() if d['source_course_id'] in selected]
     items, _, _ = scope['recorded_course_items'](list(selected.values()), catalogue, records, include_catalogue=True)
+    if include_routes:
+        visible = scope['learner_course_catalogue'](list(selected.values()), catalogue)
+        by_route = {(str(d['source_course_ref']), d['source_activity_id']): d for d in visible}
+        routes = {record['id']: {(str(d['source_course_ref']), d['source_activity_id']) for d in placements}
+                  for record, placements in scope['course_record_placements'](by_route, records, include_catalogue=True)
+                  if placements}
+        return items, routes
+    return items
+
+
+def projected_completions(state, courses, definitions, scope, course_refs=None):
+    items = projected_items(state, courses, definitions, scope, course_refs)
     result = defaultdict(set)
     for item in items:
         if item['completed']:
@@ -460,11 +490,25 @@ def activity_kind(ref, fact):
             'slides': 'reading', 'assignment': 'assignment', 'live': 'lecture'}.get(fact.get('material_type'))
 
 
+def original_upload_metadata(fact, zone):
+    """Retain the source post instant, never import/completion/reporting time."""
+    if not fact.get('created_at'):
+        return {}
+    try:
+        instant = source_instant(fact['created_at'], zone).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return {}
+    if not 2020 <= instant.year <= 2035:
+        return {}
+    return {'created_at_utc': instant.isoformat()}
+
+
 def catalogue_plan(verified, courses, definitions):
     """Recover authored content; collapse only proven opposite-kind duplicates."""
     inventory = defaultdict(dict)
     all_refs = defaultdict(set)
     titles = {}
+    uploads = defaultdict(set)
     excluded = excluded_course_refs(courses)
     for source in verified.values():
         for cid, course in source.items():
@@ -476,6 +520,9 @@ def catalogue_plan(verified, courses, definitions):
                 # Unstarted unplaced posts can be stray site content.
                 if fact.get('section_id') or completed(ref, fact):
                     inventory[cid][ref] = fact
+                original = original_upload_metadata(fact, course.get('timezone'))
+                if original:
+                    uploads[(cid, ref)].add(original['created_at_utc'])
     active_courses = {c['source_course_ref']: c for c in courses if c['deleted_at'] is None}
     by_id = {c['id']: c['source_course_ref'] for c in courses}
     active_defs = {(by_id[d['source_course_id']], d['source_activity_id']): d
@@ -500,6 +547,8 @@ def catalogue_plan(verified, courses, definitions):
                     'source_section_ref': str(fact.get('section_id') or ''),
                     'source_section_title': fact.get('section_title') or '',
                     'source_position': fact.get('component_order'),
+                    'source_payload': {'created_at_utc': next(iter(uploads[(cid, ref)]))}
+                        if len(uploads[(cid, ref)]) == 1 else {},
                     'mapping_method': 'verified-legacy-course-inventory'})
     for (cid, ref), definition in active_defs.items():
         if cid in excluded:
@@ -567,7 +616,8 @@ def catalogue_run(args):
                 for definition in plan['definitions']:
                     values = {k: v for k, v in definition.items() if k != 'course_ref'}
                     values['source_course_id'] = by_ref[definition['course_ref']]
-                    values['source_payload'] = Jsonb({'verified_reconciliation': {'run_id': run}})
+                    values['source_payload'] = Jsonb({**definition.get('source_payload', {}),
+                        'verified_reconciliation': {'run_id': run}})
                     ref = definition['source_activity_id']
                     if ref.startswith('material:') and ref.partition(':')[2] in materials:
                         values['source_material_id'] = int(ref.partition(':')[2])
@@ -910,6 +960,43 @@ def learner_partition(verified, manifest_name, index, count):
     return selected, name
 
 
+def content_alias_scopes(memberships, courses, aliases):
+    """Hide content lookup aliases without removing their original quiz banks.
+
+    Historical quiz previews still read embedded definitions through material
+    rows. Keep those rows available to that reader, but exclude their duplicate
+    identities from each historical learner's catalogue. Native scope is never
+    silently converted to a historical inventory.
+    """
+    by_course = defaultdict(set)
+    for item in aliases:
+        by_course[item['course_ref']].add(item['wrong_ref'])
+    course_refs = {course['id']: course['source_course_ref'] for course in courses}
+    updates = []
+    for member in memberships:
+        course = course_refs[member['source_course_id']]
+        refs = by_course.get(course, set())
+        if not refs:
+            continue
+        if member['source_relationship'] != 'historical':
+            raise ValueError('A content alias has a non-historical membership; review its scope.')
+        previous = member.get('verified_catalogue_scope') or {}
+        previous = json.loads(previous) if isinstance(previous, str) else previous
+        if previous and (previous.get('version') != 1
+                or previous.get('basis') != 'verified-legacy-account-inventory'
+                or previous.get('course_ref') != course
+                or not isinstance(previous.get('excluded_activity_refs'), list)):
+            raise ValueError('An existing learner catalogue scope needs review.')
+        old = set(previous.get('excluded_activity_refs', []))
+        if refs <= old:
+            continue
+        updates.append({'id': member['id'], 'learner_id': member['learner_id'],
+            'previous': previous, 'new_exclusions': sorted(refs - old),
+            'scope': {**previous, 'version': 1, 'basis': 'verified-legacy-account-inventory',
+                      'course_ref': course, 'excluded_activity_refs': sorted(old | refs)}})
+    return updates
+
+
 def archive_duplicates(args):
     url, _ = configuration(args.env_file)
     directory = Path(args.snapshot_dir)
@@ -934,18 +1021,78 @@ def archive_duplicates(args):
             [sorted(course_ids), list(verified)]).fetchone()['n']
         if unknown:
             raise ValueError('An affected course has an unverified learner membership.')
+        # Removing a wrong material identity from counts must not remove the
+        # only route used by the historical quiz-content preview. Its correct
+        # quiz identity remains active and already links to the same bank.
+        protected = {row['id'] for row in cur.execute('''SELECT wrong.id
+            FROM curriculum.source_activities wrong
+            JOIN curriculum.source_activities q ON q.source_course_id=wrong.source_course_id
+              AND q.source_system=wrong.source_system AND q.deleted_at IS NULL
+              AND q.source_activity_id='quiz:'||split_part(wrong.source_activity_id,':',2)
+            JOIN curriculum.source_materials m ON m.material_id=wrong.source_material_id
+              AND m.source_system=wrong.source_system AND m.deleted_at IS NULL
+            WHERE wrong.id=ANY(%s) AND wrong.source_activity_kind='material'
+              AND coalesce(m.payload#>>'{quiz,quiz_id}',m.payload->>'quiz_id')=
+                  split_part(q.source_activity_id,':',2)''', [[i['id'] for i in items]]).fetchall()}
+        aliases = [item for item in items if item['id'] in protected]
+        archived = [item for item in items if item['id'] not in protected]
+        memberships = cur.execute('''SELECT id,learner_id,source_course_id,source_relationship,
+            source_payload->'verified_catalogue_scope' AS verified_catalogue_scope,
+            md5(to_jsonb(m)::text) AS _row_hash
+            FROM "Learner".learner_source_course_memberships m
+            WHERE source_course_id=ANY(%s) AND deleted_at IS NULL ORDER BY id''',
+            [sorted(course_ids)]).fetchall()
+        scopes = content_alias_scopes(memberships, courses, aliases)
         fingerprint = digest({'target': target, 'definitions': definitions, 'items': items,
+                              'content_aliases': aliases, 'memberships': memberships, 'scopes': scopes,
                               'source': {k: digest(v) for k, v in verified.items()}})
         result = {'stage': 'duplicate_catalogue', 'target': target, 'fingerprint': fingerprint,
-                  'definitions_to_archive': len(items), 'affected_courses': len(course_ids)}
+                  'definitions_to_archive': len(archived), 'content_aliases_retained': len(aliases),
+                  'memberships_to_scope': len(scopes), 'affected_courses': len(course_ids)}
         if args.apply:
             if target != args.expected_target or fingerprint != args.expected_fingerprint:
                 raise ValueError('Catalogue or source changed since the reviewed preview.')
+            # Every learner's exact lineage/completion preview must have committed
+            # before a shared identity is retired or excluded from its catalogue.
+            manifest_path = directory / 'catalogue-progress-approved-preview.json'
+            if not manifest_path.exists():
+                raise ValueError('Shared cleanup requires the approved learner repair manifest.')
+            manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+            receipts = cur.execute('''SELECT source_counts,result_counts
+                FROM "Learner".activity_sync_runs WHERE status='completed'
+                AND run_kind='verified-legacy-catalogue-progress-v2' ''').fetchall()
+            confirmed = {(str(row['source_counts']['learner_id']), row['source_counts']['source_digest'],
+                          row['result_counts']['fingerprint']) for row in receipts}
+            if manifest['target'] != target or set(manifest['learners']) != {str(k) for k in verified}:
+                raise ValueError('The approved learner manifest has a different scope.')
+            for ident, report in manifest['learners'].items():
+                if report['counts'].get('blocked'):
+                    raise ValueError('A learner repair still has unresolved evidence.')
+                changed = any(n for key, n in report['counts'].items()
+                              if key not in ('blocked', 'unrecorded_extras_excluded'))
+                if changed and (ident, digest(verified[int(ident)]), report['fingerprint']) not in confirmed:
+                    raise ValueError('A required learner repair has not verified and committed.')
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [VERSION + ':catalogue'])
             cur.execute('SELECT id FROM curriculum.source_courses WHERE id=ANY(%s) ORDER BY id FOR UPDATE', [sorted(course_ids)])
+            cur.execute('''SELECT id FROM "Learner".learner_source_course_memberships
+                WHERE id=ANY(%s) ORDER BY id FOR UPDATE''', [[s['id'] for s in scopes]])
+            ids = [i['id'] for i in archived]
+            previous_metadata = cur.execute('''SELECT id,
+                source_payload->'verified_reconciliation' AS previous_reconciliation,
+                source_payload ? 'verified_reconciliation' AS had_reconciliation
+                FROM curriculum.source_activities WHERE id=ANY(%s) ORDER BY id''', [ids]).fetchall()
             run = insert(cur, 'activity_sync_runs', {'run_key': VERSION + ':duplicate-types:' + fingerprint,
-                'run_kind': VERSION, 'status': 'running', 'dry_run': False, 'result_counts': Jsonb(result)})
-            ids = [i['id'] for i in items]
+                'run_kind': VERSION, 'status': 'running', 'dry_run': False, 'result_counts': Jsonb(result),
+                'source_counts': Jsonb({'archived_definitions': archived, 'previous_metadata': previous_metadata,
+                    'retained_content_aliases': aliases, 'membership_scope_changes': scopes})})
+            with conn.pipeline():
+                for scope in scopes:
+                    conn.execute('''UPDATE "Learner".learner_source_course_memberships
+                        SET source_payload=source_payload||%s::jsonb
+                        WHERE id=%s AND learner_id=%s AND deleted_at IS NULL
+                          AND source_relationship='historical' ''',
+                        [Jsonb({'verified_catalogue_scope': {**scope['scope'], 'content_alias_audit_run': run}}),
+                         scope['id'], scope['learner_id']])
             cur.execute('''UPDATE curriculum.source_activities SET deleted_at=now(),
                 source_payload=source_payload||%s::jsonb WHERE id=ANY(%s) AND deleted_at IS NULL
                 AND coalesce(curriculum_component_ref,'')='' ''',
@@ -961,10 +1108,24 @@ def archive_duplicates(args):
                 raise ValueError('An unrelated definition changed.')
             if any(d['deleted_at'] is None for d in final_defs if d['id'] in ids):
                 raise ValueError('Duplicate catalogue cleanup did not verify.')
+            current_memberships = cur.execute('''SELECT id,learner_id,source_course_id,source_relationship,
+                source_payload->'verified_catalogue_scope' AS verified_catalogue_scope,
+                md5(to_jsonb(m)::text) AS _row_hash FROM "Learner".learner_source_course_memberships m
+                WHERE source_course_id=ANY(%s) AND deleted_at IS NULL ORDER BY id''',
+                [sorted(course_ids)]).fetchall()
+            if content_alias_scopes(current_memberships, courses, aliases):
+                raise ValueError('A retained content alias still appears in a learner catalogue.')
+            changed_ids = {scope['id'] for scope in scopes}
+            old_members = {m['id']: m for m in memberships}
+            if (set(old_members) != {m['id'] for m in current_memberships}
+                    or any(old_members[m['id']] != m for m in current_memberships if m['id'] not in changed_ids)):
+                raise ValueError('An unrelated membership changed during duplicate cleanup.')
             result.update(applied=True, audit_run=run, records_deleted=0)
             cur.execute('''UPDATE "Learner".activity_sync_runs SET status='completed',finished_at=now(),
                 updated_at=now(),result_counts=%s WHERE id=%s''', [Jsonb(result), run])
-        (directory / 'duplicates-preview.json').write_text(json.dumps({'result': result, 'items': items}), encoding='utf-8')
+        (directory / 'duplicates-preview.json').write_text(json.dumps({
+            'result': result, 'items': items, 'retained_content_aliases': aliases,
+            'membership_scope_changes': scopes}), encoding='utf-8')
         emit(result)
 
 

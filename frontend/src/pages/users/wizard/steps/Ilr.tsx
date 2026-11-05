@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { useWizard } from '../WizardContext';
-import { useToast } from '@/hooks/useToast';
+import { useWizard } from "../WizardContext";
+import { useToast } from "@/hooks/useToast";
 import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS } from '@/lib/countries';
 import { YES_NO_SELECT } from '@/mocks/enrolment-console';
 import { YesNoRadio, inputClass, btnPrimary, btnSecondary } from '../../components/ui';
@@ -9,7 +9,8 @@ import { useEmployerDetailsPrefill } from './useEmployerDetailsPrefill';
 import { LabeledInput, LabeledSelect, LabeledTextarea, StepHeading } from './fields';
 import { downloadIlrDocument } from './ilrDocument';
 import { IlrText } from './ilrAdditionalText';
-import { FieldError, invalidClass, requiredMessage, useMissingCheck } from '../stepErrors';
+import { FieldError, invalidClass } from '../stepErrors';
+import { requiredMessage, useMissingCheck } from "../stepErrors";
 import { StepItems, type ItemRenderer } from '../layout/StepItems';
 import { useLayout, useStepTitle } from '../layout/useLayout';
 import { useText } from '../layout/textsContext';

@@ -85,6 +85,17 @@ const weekIds = (module: ModuleCatalogueItem) => module.weekStructure.map(item =
 const componentIds = (module: ModuleCatalogueItem, at = 0) => module.weekStructure[at].components.map(item => item.id);
 
 describe('module structure merge', () => {
+  it('merges independently edited component hours without asking about the recalculated declared total', () => {
+    const base = moduleWith([week('W1', [component('C1'), component('C2')])], { declaredTotalOtjh: 2 });
+    const local = moduleWith([week('W1', [component('C1', { expectedOtjh: 2 }), component('C2')])], { declaredTotalOtjh: 3 });
+    const remote = moduleWith([week('W1', [component('C1'), component('C2', { expectedOtjh: 3 })])], { declaredTotalOtjh: 4 });
+    const result = mergeModuleStructures(base, local, remote);
+    expect(result.collisions).toEqual([]);
+    expect(result.module.weekStructure[0].components.map(item => item.expectedOtjh)).toEqual([2, 3]);
+    expect(result.module.declaredTotalOtjh).toBe(5);
+    expect(result.module.totalOtjh).toBe(5);
+  });
+
   // --- 1. different fields on the same item -------------------------------
   it('keeps both editors when they change different fields of one week', () => {
     const base = moduleWith([week('W1', [component('C1')])]);
@@ -135,6 +146,85 @@ describe('module structure merge', () => {
     expect(notices[0]).toMatch(/both changed the title/i);
     expect(notices[0]).toMatch(/Week 1/);
     expect(notices[0]).toMatch(/A title/);
+  });
+
+  // The planner dates weeks by position; neither copy's date is a person's.
+  it('never asks about a week date the session plan stamped on both copies', () => {
+    const base = moduleWith([week('W1', [], { sessionDate: '2026-10-26' }), week('W2', [], { sessionDate: '2026-11-02' })]);
+    const local = moduleWith([week('W1', [], { sessionDate: '2026-11-02', title: 'B title' }), week('W2', [], { sessionDate: '2026-11-09' })]);
+    const remote = moduleWith([week('W1', [], { sessionDate: '2026-10-19' }), week('W2', [], { sessionDate: '2026-10-26' })]);
+
+    const { module, collisions } = mergeModuleStructures(base, local, remote);
+
+    expect(collisions).toEqual([]);
+    expect(module.weekStructure[0].title).toBe('B title');
+  });
+
+  it('never asks about the number of sessions', () => {
+    const base = moduleWith([week('W1', [])], { sessionsNumber: 9 });
+    const local = moduleWith([week('W1', [])], { sessionsNumber: 10 });
+    const remote = moduleWith([week('W1', [])], { sessionsNumber: 11 });
+
+    expect(mergeModuleStructures(base, local, remote).collisions).toEqual([]);
+  });
+
+  it('takes the stored live-session date quietly', () => {
+    const live = (date: string) => component('C1', { type: 'live-session', settings: { sessionDate: date } });
+    const base = moduleWith([week('W1', [live('2026-10-26')])]);
+    const local = moduleWith([week('W1', [live('2026-11-02')])]);
+    const remote = moduleWith([week('W1', [live('2026-10-19')])]);
+
+    const { module, collisions } = mergeModuleStructures(base, local, remote);
+
+    expect(collisions).toEqual([]);
+    expect(module.weekStructure[0].components[0].settings?.sessionDate).toBe('2026-10-19');
+  });
+
+  it('lets a deleted week stay deleted when the planner only re-dated it', () => {
+    const base = moduleWith([week('W1', []), week('W2', [], { sessionDate: '2026-11-02' })]);
+    const local = moduleWith([week('W1', [])]);
+    const remote = moduleWith([week('W1', []), week('W2', [], { sessionDate: '2026-11-09' })]);
+
+    const { module, collisions } = mergeModuleStructures(base, local, remote);
+
+    expect(collisions).toEqual([]);
+    expect(weekIds(module)).toEqual(['W1']);
+  });
+
+  it('accepts a removed week the reader only saw re-dated', () => {
+    const base = moduleWith([week('W1', []), week('W2', [], { sessionDate: '2026-11-02' })]);
+    const local = moduleWith([week('W1', [], { title: 'B title' }), week('W2', [], { sessionDate: '2026-11-09' })]);
+    const remote = moduleWith([week('W1', [])]);
+
+    const { module, collisions } = mergeModuleStructures(base, local, remote);
+
+    expect(collisions).toEqual([]);
+    expect(weekIds(module)).toEqual(['W1']);
+    expect(module.weekStructure[0].title).toBe('B title');
+  });
+
+  it('takes the author\'s own Module settings save on a module field without asking', () => {
+    const base = moduleWith([week('W1', [])], { startDate: '2026-10-05' });
+    const local = moduleWith([week('W1', [], { title: 'B title' })], { startDate: '2026-10-12' });
+    const remote = moduleWith([week('W1', [])], { startDate: '2026-10-19' });
+
+    const own = mergeModuleStructures(base, local, remote, { ownWrite: true });
+    expect(own.collisions).toEqual([]);
+    expect(own.module.startDate).toBe('2026-10-19');
+    expect(own.module.weekStructure[0].title).toBe('B title');
+
+    // From a colleague the same disagreement is still a question.
+    expect(mergeModuleStructures(base, local, remote).collisions).toHaveLength(1);
+  });
+
+  it('still asks when someone edited a week the reader deleted', () => {
+    const base = moduleWith([week('W1', []), week('W2', [])]);
+    const local = moduleWith([week('W1', [])]);
+    const remote = moduleWith([week('W1', []), week('W2', [], { title: 'A renamed it' })]);
+
+    const { collisions } = mergeModuleStructures(base, local, remote);
+
+    expect(collisions.map(item => item.kind)).toEqual(['local-deleted']);
   });
 
   it('names the component, not the payload path, when both edit one component', () => {

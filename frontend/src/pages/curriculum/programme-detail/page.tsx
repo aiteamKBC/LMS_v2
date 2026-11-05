@@ -2,8 +2,10 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { LearnerAssignmentDrawer } from '@/pages/curriculum/shared/entities/LearnerAssignmentDrawer';
+import { LearnerDirectoryProvider } from '@/pages/curriculum/shared/entities/AssignedLearners';
+import { LearnerStatusCounts } from '@/pages/curriculum/shared/entities/LearnerStatusCounts';
 import type { LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
-import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { useRefreshOnRemoteWrite, useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { findByIdentifierThenName, findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
@@ -11,7 +13,8 @@ import { findByIdentifierThenName, findModule, formatProgrammeLevel, namedCurric
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
-import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '@/pages/curriculum/shared/entities/moduleForm';
+import { ModuleFormDrawer, type ModuleFormTarget } from '@/pages/curriculum/shared/entities/moduleForm';
+import { moduleFormTarget } from "@/pages/curriculum/shared/entities/moduleForm.helpers";
 import {
   ScopeAchievementPanel,
   ScopeLearnerAchievementDetail,
@@ -46,6 +49,7 @@ import { formatHoursMinutes, formatSystemTimestamp, hoursToRoundedMinutes, round
 import type {
   CurriculumCohort,
   CurriculumComponent,
+  CurriculumComponentSummaryRow,
   CurriculumGroup,
   CurriculumKsbEntry,
   CurriculumModule,
@@ -64,6 +68,7 @@ import type {
 } from '@/lib/curriculumApi';
 import {
   fetchCurriculumComponents,
+  fetchCurriculumComponentSummary,
   fetchCurriculumLiveSessionOccurrences,
   type CurriculumLiveSessionOccurrence,
   fetchCurriculumProgrammeDetailModules,
@@ -120,7 +125,23 @@ interface Week {
   endDate: string;
   otjh: number;
   components?: ProgrammeWeekComponent[];
+  /** From the component summary while the full list is not loaded; read
+   *  through weekComponentCount / weekPublishedCount, never directly. */
+  componentCount?: number;
+  publishedComponentCount?: number;
   sessions: Session[];
+}
+
+/** The detail document with the component list, or its summary until the list is loaded. */
+type ProgrammeDetailData = CurriculumOverview & { componentSummary?: CurriculumComponentSummaryRow[] | null };
+
+/** How many components a week holds, whichever of the list or the summary it was built from. */
+function weekComponentCount(week: Pick<Week, 'components' | 'componentCount'>) {
+  return week.componentCount ?? (week.components?.length || 0);
+}
+
+function weekPublishedCount(week: Pick<Week, 'components' | 'publishedComponentCount'>) {
+  return week.publishedComponentCount ?? (week.components || []).filter(component => component.status === 'published').length;
 }
 
 type ProgrammeWeekComponent = Partial<CurriculumComponent> & {
@@ -1010,6 +1031,9 @@ function useProgrammeReference(
   return { ready, error, retry: () => setAttempt(value => value + 1) };
 }
 
+/** How long a return to the tab waits after the last read before reading again. */
+const RETURN_REFRESH_MIN_INTERVAL_MS = 30_000;
+
 function useProgrammeDetailData(programmeId: string) {
   const [data, setData] = useState<CurriculumOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1028,95 +1052,124 @@ function useProgrammeDetailData(programmeId: string) {
   // the programme for the length of the detail round trip -- seconds -- which read
   // as the page throwing the edit away. `skipCache` goes with a post-write reload
   // for the usual reason: the caller is asking for the state it just wrote.
-  const load = useCallback(async (
+  //
+  // Only the newest load may touch state. Loads used to run side by side -- one
+  // per focus, one per save -- and whichever answered last won, even when it
+  // was the older question. A load overtaken by a newer one hands its caller
+  // the newer one's result instead, so `await reload()` still means "the screen
+  // now shows the read that started after my write" (the archive flows unhide
+  // their row on exactly that).
+  const generationRef = useRef(0);
+  const latestLoadRef = useRef<Promise<CurriculumOverview | null> | null>(null);
+  const loadInFlightRef = useRef(false);
+  const lastLoadSettledAtRef = useRef(0);
+  const load = useCallback((
     signal?: AbortSignal,
-    options: { silent?: boolean; skipCache?: boolean; revalidate?: boolean } = {},
-  ) => {
-    if (!programmeId) {
-      setData(null);
-      setLoading(false);
-      setModulesLoading(false);
-      setRefreshing(false);
-      return null;
-    }
-    if (options.silent) setRefreshing(true);
-    else {
-      setLoading(true);
-      setModulesLoading(true);
-    }
-    // The detail document comes in two parts, requested side by side: the
-    // shell (programme, cohorts, groups) draws the header and the Cohorts and
-    // Groups tabs while the modules -- the slow part of the build -- are still
-    // being built. Archived cohorts/groups are fetched so the status filter can
-    // reach them; the default view still hides them (see filteredCohorts).
-    // Neither part carries components: this page reads them through
-    // fetchCurriculumComponents (see detailComponents). Each module's
-    // weekStructure is an outline -- buildModuleWeeks reads week ids, numbers,
-    // titles and order and nothing else. Nothing here saves a module from these
-    // rows: the module drawer gets a moduleFormTarget, and a Teams push
-    // re-reads the module's structure.
-    const sectionOptions = { visibility: 'all' as const, skipCache: options.skipCache, revalidate: options.revalidate };
-    const modulesRequest = fetchCurriculumProgrammeDetailModules(programmeId, signal, { ...sectionOptions, view: 'workspace' });
-    // The learner KSB aggregates are expensive on a cold read, so they come
-    // from their own endpoint, started now rather than after the shell.
-    const statsRequest = fetchProgrammeKsbStats(programmeId, signal, {
-      visibility: 'all', revalidate: options.revalidate || options.skipCache,
-    });
-    // Awaited below; these keep a rejection that lands first from going unhandled.
-    modulesRequest.catch(() => undefined);
-    statsRequest.catch(() => undefined);
-    try {
-      const shell = await fetchCurriculumProgrammeDetailShell(programmeId, signal, sectionOptions);
-      if (signal?.aborted) return null;
-      // A silent reload keeps the modules on screen until the new ones land.
-      setData(current => {
-        const keep = options.silent && current ? { modules: current.modules, sessions: current.sessions } : { modules: [], sessions: [] };
-        const next = programmeDetailToOverview({ ...shell, cohorts: [], flat: { ...shell.flat, ...keep } });
-        return current ? { ...next, ksbFrameworks: current.ksbFrameworks, holidays: current.holidays, tutors: current.tutors, coaches: current.coaches } : next;
-      });
-      setError(null);
-      setLoading(false);
-
-      void statsRequest
-        .then((stats) => {
-          if (signal?.aborted) return;
-          setData((current) => {
-            if (!current) return current;
-            const programmes = current.programmes.map((programme) =>
-              programmeReferenceMatches(programme, stats.programmeId)
-                ? { ...programme, ...stats }
-                : programme,
-            );
-            return { ...current, programmes };
-          });
-        })
-        .catch(() => undefined);
-
-      const { flat: { modules, sessions } } = await modulesRequest;
-      if (signal?.aborted) return null;
-      setData(current => (current ? {
-        ...current,
-        modules,
-        sessions,
-        stats: { ...current.stats, modules: modules.length, sessions: sessions.length },
-      } : current));
-      if (options.silent || options.skipCache) setReadRevision(value => value + 1);
-      setModulesLoading(false);
-      return programmeDetailToOverview({ ...shell, cohorts: [], flat: { ...shell.flat, modules, sessions } });
-    } catch (err) {
-      if (signal?.aborted) return null;
-      setError(err instanceof Error ? err.message : 'Unable to load programme detail');
-      // A failed background refresh leaves the good data on screen; only a
-      // failed first load has nothing to show.
-      if (!options.silent) setData(null);
-      return null;
-    } finally {
-      if (!signal?.aborted) {
+    options: { silent?: boolean; skipCache?: boolean; revalidate?: boolean; readAfterWrite?: boolean } = {},
+  ): Promise<CurriculumOverview | null> => {
+    const generation = ++generationRef.current;
+    loadInFlightRef.current = true;
+    const run = (async (): Promise<CurriculumOverview | null> => {
+      const superseded = () => generation !== generationRef.current;
+      // An overtaken caller gets the newest load's outcome rather than its own.
+      const follow = (): Promise<CurriculumOverview | null> => (
+        signal?.aborted || !latestLoadRef.current ? Promise.resolve(null) : latestLoadRef.current
+      );
+      if (!programmeId) {
+        setData(null);
         setLoading(false);
         setModulesLoading(false);
         setRefreshing(false);
+        return null;
       }
-    }
+      if (options.silent) setRefreshing(true);
+      else {
+        setLoading(true);
+        setModulesLoading(true);
+      }
+      // The detail document comes in two parts, requested side by side: the
+      // shell (programme, cohorts, groups) draws the header and the Cohorts and
+      // Groups tabs while the modules -- the slow part of the build -- are still
+      // being built. Archived cohorts/groups are fetched so the status filter can
+      // reach them; the default view still hides them (see filteredCohorts).
+      // Neither part carries components: this page reads them through
+      // fetchCurriculumComponents (see detailComponents). Each module's
+      // weekStructure is an outline -- buildModuleWeeks reads week ids, numbers,
+      // titles and order and nothing else. Nothing here saves a module from these
+      // rows: the module drawer gets a moduleFormTarget, and a Teams push
+      // re-reads the module's structure.
+      const sectionOptions = { visibility: 'all' as const, skipCache: options.skipCache, revalidate: options.revalidate, readAfterWrite: options.readAfterWrite };
+      const modulesRequest = fetchCurriculumProgrammeDetailModules(programmeId, signal, { ...sectionOptions, view: 'workspace' });
+      // The learner KSB aggregates are expensive on a cold read, so they come
+      // from their own endpoint, started now rather than after the shell.
+      const statsRequest = fetchProgrammeKsbStats(programmeId, signal, {
+        visibility: 'all', revalidate: options.revalidate || options.skipCache,
+      });
+      // Awaited below; these keep a rejection that lands first from going unhandled.
+      modulesRequest.catch(() => undefined);
+      statsRequest.catch(() => undefined);
+      try {
+        const shell = await fetchCurriculumProgrammeDetailShell(programmeId, signal, sectionOptions);
+        if (signal?.aborted) return null;
+        if (superseded()) return follow();
+        // A silent reload keeps the modules on screen until the new ones land.
+        setData(current => {
+          const keep = options.silent && current ? { modules: current.modules, sessions: current.sessions } : { modules: [], sessions: [] };
+          const next = programmeDetailToOverview({ ...shell, cohorts: [], flat: { ...shell.flat, ...keep } });
+          return current ? { ...next, ksbFrameworks: current.ksbFrameworks, holidays: current.holidays, tutors: current.tutors, coaches: current.coaches } : next;
+        });
+        setError(null);
+        setLoading(false);
+
+        void statsRequest
+          .then((stats) => {
+            if (signal?.aborted || superseded()) return;
+            setData((current) => {
+              if (!current) return current;
+              const programmes = current.programmes.map((programme) =>
+                programmeReferenceMatches(programme, stats.programmeId)
+                  ? { ...programme, ...stats }
+                  : programme,
+              );
+              return { ...current, programmes };
+            });
+          })
+          .catch(() => undefined);
+
+        const { flat: { modules, sessions } } = await modulesRequest;
+        if (signal?.aborted) return null;
+        if (superseded()) return follow();
+        setData(current => (current ? {
+          ...current,
+          modules,
+          sessions,
+          stats: { ...current.stats, modules: modules.length, sessions: sessions.length },
+        } : current));
+        if (options.silent || options.skipCache || options.readAfterWrite) setReadRevision(value => value + 1);
+        setModulesLoading(false);
+        return programmeDetailToOverview({ ...shell, cohorts: [], flat: { ...shell.flat, modules, sessions } });
+      } catch (err) {
+        if (signal?.aborted) return null;
+        if (superseded()) return follow();
+        setError(err instanceof Error ? err.message : 'Unable to load programme detail');
+        // A failed background refresh leaves the good data on screen; only a
+        // failed first load has nothing to show.
+        if (!options.silent) setData(null);
+        return null;
+      } finally {
+        if (!superseded()) {
+          loadInFlightRef.current = false;
+          lastLoadSettledAtRef.current = Date.now();
+          if (!signal?.aborted) {
+            setLoading(false);
+            setModulesLoading(false);
+            setRefreshing(false);
+          }
+        }
+      }
+    })();
+    latestLoadRef.current = run;
+    return run;
   }, [programmeId]);
 
   useEffect(() => {
@@ -1127,10 +1180,25 @@ function useProgrammeDetailData(programmeId: string) {
 
   // A programme's page is the one most likely to be left open while somebody
   // else edits the same programme -- a second tab, a colleague on another
-  // machine. Re-read on return to the tab and on a cross-tab write, silently and
-  // with `revalidate`: the server drops its payload cache on write, so there is
+  // machine -- and with remote-write tracking switched off, coming back to the
+  // tab is the only way it hears of those edits. Re-read then, silently and with
+  // `revalidate`: the server drops its payload cache on write, so there is
   // nothing to gain from forcing the multi-second detail rebuild.
-  useLiveRefresh(() => {
+  //
+  // But not on every focus. Clicking between DevTools (or any other window) and
+  // the page fires one each time, and each used to start the full set of reads
+  // again on top of the last, until the browser's queue held five rounds at
+  // once. A return read waits for the one in flight and for a quiet spell after
+  // the last read of any kind -- first load, save, Refresh -- to settle.
+  // Saves and the Refresh button call `reload`, which this never gates.
+  useRefreshOnReturn(() => {
+    if (loadInFlightRef.current) return;
+    if (Date.now() - lastLoadSettledAtRef.current < RETURN_REFRESH_MIN_INTERVAL_MS) return;
+    void load(undefined, { silent: true, revalidate: true });
+  }, { enabled: Boolean(programmeId) });
+  // Somebody else's write is new information, so it is never throttled; the
+  // generation check above keeps it from racing whatever is already in flight.
+  useRefreshOnRemoteWrite(() => {
     void load(undefined, { silent: true, revalidate: true });
   }, { enabled: Boolean(programmeId) });
 
@@ -1143,6 +1211,11 @@ function useProgrammeDetailData(programmeId: string) {
     readRevision,
     receiveReference,
     reload: (options?: { silent?: boolean }) => load(undefined, { skipCache: true, ...options }),
+    // After a save through the curriculum API, which moves the server's cache
+    // generation: the server checks that generation in the database and
+    // rebuilds only what the save made stale. Refresh keeps `reload`, which
+    // also picks up writes made outside the curriculum API.
+    reloadAfterSave: (options?: { silent?: boolean }) => load(undefined, { readAfterWrite: true, ...options }),
   };
 }
 
@@ -1177,13 +1250,13 @@ function removeAuthoringDuplicates(modules: CurriculumModule[]) {
   ));
 }
 
-function componentWeekNumber(component: CurriculumComponent) {
+function componentWeekNumber(component: Pick<CurriculumComponent, 'week'>) {
   const label = clean(component.week);
   const match = label.match(/\d+/);
   return match ? Number(match[0]) : 1;
 }
 
-function isComponentForModule(component: CurriculumComponent, liveModule: { id: string; sourceId: number | string; catalogueId?: string; moduleId?: string; moduleCatalogueId?: string; structureId?: string; name: string }) {
+function isComponentForModule(component: Pick<CurriculumComponent, 'moduleCatalogueId' | 'moduleId' | 'module'>, liveModule: { id: string; sourceId: number | string; catalogueId?: string; moduleId?: string; moduleCatalogueId?: string; structureId?: string; name: string }) {
   const componentIdentifierKeys = [component.moduleCatalogueId, component.moduleId].map(normalise).filter(Boolean);
   const moduleIdentifierKeys = [liveModule.moduleCatalogueId, liveModule.catalogueId, liveModule.moduleId, liveModule.structureId, liveModule.id, liveModule.sourceId].map(normalise).filter(Boolean);
   if (componentIdentifierKeys.length) {
@@ -1203,6 +1276,10 @@ function buildModuleWeeks(
   sessions: CurriculumSession[],
   components: CurriculumComponent[] = [],
   authoredWeeks: Array<{ id?: string; weekNumber?: number; number?: number; title?: string; displayOrder?: number }> = [],
+  // Buckets standing in for `components` while the full list is not loaded.
+  // Placed in weeks by exactly the rule a component is, so a week holds the
+  // same count, published count and OTJH either way.
+  componentSummary: CurriculumComponentSummaryRow[] = [],
 ): Week[] {
   const byWeek = new Map<number, CurriculumSession[]>();
   sessions.forEach(session => {
@@ -1223,7 +1300,14 @@ function buildModuleWeeks(
     componentsByWeek.set(weekNumber, [...(componentsByWeek.get(weekNumber) ?? []), component]);
   });
 
-  const weekNumbers = [...new Set([...authoredWeekByNumber.keys(), ...byWeek.keys(), ...componentsByWeek.keys()])].sort((a, b) => a - b);
+  const summaryByWeek = new Map<number, CurriculumComponentSummaryRow[]>();
+  componentSummary.forEach(row => {
+    const authoredWeek = authoredWeeks.find(week => clean(week.id) && clean(week.id) === clean(row.weekId));
+    const weekNumber = Number(authoredWeek?.weekNumber || authoredWeek?.number || componentWeekNumber(row));
+    summaryByWeek.set(weekNumber, [...(summaryByWeek.get(weekNumber) ?? []), row]);
+  });
+
+  const weekNumbers = [...new Set([...authoredWeekByNumber.keys(), ...byWeek.keys(), ...componentsByWeek.keys(), ...summaryByWeek.keys()])].sort((a, b) => a - b);
 
   return weekNumbers.map((weekNumber) => {
     const authoredWeek = authoredWeekByNumber.get(weekNumber);
@@ -1239,11 +1323,23 @@ function buildModuleWeeks(
     // Programme OTJH follows the Module Builder: every component's explicit
     // Expected OTJH contributes, summed as whole minutes so 20m + 20m + 20m
     // reads as 1h here exactly as it does in the builder.
-    const componentOtjh = roundedMinutesToHours(weekComponents.reduce(
-      (sum, component) => sum + Math.max(0, hoursToRoundedMinutes(Number(component.expectedOtjh) || 0)),
-      0,
-    ));
-    const weekTitle = clean(weekComponents.find(component => clean(component.weekTitle))?.weekTitle);
+    // The summary's buckets in the same order the components are sorted in, so
+    // the fallback title comes from the same first component.
+    const weekSummary = [...(summaryByWeek.get(weekNumber) ?? [])].sort((a, b) => {
+      const orderDelta = Number(a.displayOrder ?? 9999) - Number(b.displayOrder ?? 9999);
+      if (orderDelta !== 0) return orderDelta;
+      return clean(a.title).localeCompare(clean(b.title));
+    });
+    const componentOtjh = roundedMinutesToHours(
+      weekComponents.reduce(
+        (sum, component) => sum + Math.max(0, hoursToRoundedMinutes(Number(component.expectedOtjh) || 0)),
+        0,
+      )
+      // Already summed per component as max(0, Math.round(expectedOtjh * 60)).
+      + weekSummary.reduce((sum, row) => sum + Math.max(0, Number(row.otjhMinutes) || 0), 0),
+    );
+    const weekTitle = clean(weekComponents.find(component => clean(component.weekTitle))?.weekTitle)
+      || clean(weekSummary.find(row => clean(row.weekTitle))?.weekTitle);
 
     return {
       id: clean(authoredWeek?.id) || `${moduleId}-week-${weekNumber}`,
@@ -1258,6 +1354,11 @@ function buildModuleWeeks(
       // every one of those errors. The sum is rounded once, at module level.
       otjh: componentOtjh,
       components: weekComponents,
+      ...(weekSummary.length ? {
+        componentCount: weekComponents.length + weekSummary.reduce((sum, row) => sum + (Number(row.count) || 0), 0),
+        publishedComponentCount: weekComponents.filter(component => component.status === 'published').length
+          + weekSummary.reduce((sum, row) => sum + (Number(row.publishedCount) || 0), 0),
+      } : {}),
       sessions: sorted.map(session => ({
         id: session.id,
         title: session.title || moduleName,
@@ -1279,7 +1380,7 @@ function buildModuleWeeks(
   });
 }
 
-function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): { programme: Programme; found: boolean } {
+function buildLiveProgramme(data: ProgrammeDetailData | null, routeId: string): { programme: Programme; found: boolean } {
   const source = findProgramme(data, routeId);
   if (!data || !source) return { programme: EMPTY_PROGRAMME, found: false };
 
@@ -1397,7 +1498,12 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       (isComponentForModule(component, liveModule) || relatedAuthoringModules.some(relatedModule => isComponentForModule(component, relatedModule))) &&
       (!component.programme || isProgrammeMatch(source, component.programme))
     ));
-    const weeksData = buildModuleWeeks(liveModule.id, liveModule.name, moduleSessions, moduleComponents, liveModule.weekStructure || []);
+    // The same membership test as moduleComponents, on the summary's buckets.
+    const moduleComponentSummary = (data.componentSummary ?? []).filter(row => (
+      (isComponentForModule(row, liveModule) || relatedAuthoringModules.some(relatedModule => isComponentForModule(row, relatedModule))) &&
+      (!row.programme || isProgrammeMatch(source, row.programme))
+    ));
+    const weeksData = buildModuleWeeks(liveModule.id, liveModule.name, moduleSessions, moduleComponents, liveModule.weekStructure || [], moduleComponentSummary);
     const fallbackKsbCodes = liveModule.ksbCodes?.length ? liveModule.ksbCodes : [...new Set([
       ...moduleSessions.flatMap(session => session.ksbCodes || []),
       ...moduleComponents.flatMap(component => [
@@ -2245,7 +2351,7 @@ type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverag
 // Actions now carries the "Groups" jump plus Edit and Archive, so the fixed
 // 120px column that fit "Groups" alone is widened to a minmax that keeps room
 // for all three without squeezing them onto a second line.
-const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(330px,auto)]';
+const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_220px_80px_minmax(330px,auto)]';
 /**
  * The date window shown on a module row.
  *
@@ -2288,8 +2394,8 @@ function groupDatesLabel(cohort: { startDate: string; endDate: string; apprentic
 // Actions need room for "Add first module", Edit and Archive on one line. Below
 // this width EntityTable scrolls horizontally instead of squeezing the buttons
 // or turning a single row into an uneven two-line layout.
-const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_minmax(210px,auto)]';
-const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(340px,auto)]';
+const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_220px_minmax(210px,auto)]';
+const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_220px_minmax(340px,auto)]';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: 'Overview',
@@ -2319,11 +2425,22 @@ function isProgrammeDetailTab(value: string | null): value is Tab {
 }
 
 export default function ProgrammeDetailPage() {
+  return <LearnerDirectoryProvider><ProgrammeDetailContent /></LearnerDirectoryProvider>;
+}
+
+function ProgrammeDetailContent() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, loading, modulesLoading, refreshing, error, reload, readRevision, receiveReference } = useProgrammeDetailData(id || '');
-  const [detailComponents, setDetailComponents] = useState<CurriculumComponent[]>([]);
-  const hydratedData = useMemo(() => data ? { ...data, components: detailComponents } : data, [data, detailComponents]);
+  const { data, loading, modulesLoading, refreshing, error, reload, reloadAfterSave, readRevision, receiveReference } = useProgrammeDetailData(id || '');
+  // null until loaded: an empty list is a programme with no components, and
+  // only a loaded list may take over from the summary.
+  const [detailComponents, setDetailComponents] = useState<CurriculumComponent[] | null>(null);
+  const [componentSummary, setComponentSummary] = useState<CurriculumComponentSummaryRow[] | null>(null);
+  const hydratedData = useMemo<ProgrammeDetailData | null>(() => data ? {
+    ...data,
+    components: detailComponents || [],
+    componentSummary: detailComponents ? null : componentSummary,
+  } : data, [data, detailComponents, componentSummary]);
   const { programme: liveProgramme, found } = useMemo(() => buildLiveProgramme(hydratedData, id || ''), [hydratedData, id]);
   const [backendCoverage, setBackendCoverage] = useState<CurriculumKsbCoverageResponse | CurriculumKsbCoverageSummaryResponse | null>(null);
   const [backendCoverageLoading, setBackendCoverageLoading] = useState(false);
@@ -2367,6 +2484,7 @@ export default function ProgrammeDetailPage() {
   const coverageRequestKeyRef = useRef('');
   const learnerOtjhRequestKeyRef = useRef('');
   const componentsRequestKeyRef = useRef('');
+  const componentSummaryRequestKeyRef = useRef('');
   const PROGRAMME = useMemo(() => {
     const sourceLabels = buildKsbSourceLabelMap(data);
     const ksbDescriptions = buildKsbDescriptionLookup(programmeKsbSets, skillsStandards);
@@ -2553,7 +2671,7 @@ export default function ProgrammeDetailPage() {
   // reading as a deliberate assignment.
   const coverageKsbSourceApplied = Boolean(splitProgrammeKsbSource(liveProgramme.ksbProfileSourceId).sourceId);
 
-  const summaryCoverageOnly = tab === 'overview';
+  const summaryCoverageOnly = tab === 'overview' || tab === 'achievement';
   const loadBackendCoverage = useCallback((signal?: AbortSignal) => {
     if (!coverageProgrammeIds.length) return Promise.resolve();
     setBackendCoverageLoading(true);
@@ -2681,8 +2799,10 @@ export default function ProgrammeDetailPage() {
   }, []);
 
   useEffect(() => {
-    setDetailComponents([]);
+    setDetailComponents(null);
+    setComponentSummary(null);
     componentsRequestKeyRef.current = '';
+    componentSummaryRequestKeyRef.current = '';
     coverageRequestKeyRef.current = '';
     learnerOtjhRequestKeyRef.current = '';
     setLearnerOtjh(null);
@@ -2703,7 +2823,43 @@ export default function ProgrammeDetailPage() {
       ...(module.relatedCatalogueIds || []),
     ]).map(value => clean(value)).filter(Boolean))].sort());
 
+  // The Overview reads its component figures from the summary below, so the
+  // full component list -- every component of the programme, ~17k on the
+  // largest -- is only requested once a tab that lists components is opened.
+  // Sticky: going back to the Overview keeps what was loaded, and does not
+  // abort a read that is already on its way.
+  // Achievement owns a paged server projection; it does not consume this list.
+  const [fullComponentsWanted, setFullComponentsWanted] = useState(() => tab !== 'overview' && tab !== 'achievement');
   useEffect(() => {
+    if (tab !== 'overview' && tab !== 'achievement') setFullComponentsWanted(true);
+  }, [tab]);
+  const loadFullComponents = fullComponentsWanted && tab !== 'achievement';
+
+  // Counts, published counts and Expected OTJH per module/week, for every tab
+  // until the full list (if it is ever wanted) has arrived.
+  useEffect(() => {
+    const moduleCatalogueIds: string[] = JSON.parse(componentsScopeKey);
+    if (!moduleCatalogueIds.length) return;
+    const summaryKey = moduleCatalogueIds.join('|');
+    if (componentSummaryRequestKeyRef.current === summaryKey) return;
+    componentSummaryRequestKeyRef.current = summaryKey;
+    const controller = new AbortController();
+    fetchCurriculumComponentSummary(controller.signal, { moduleCatalogueIds, revalidate: readRevision > 0 })
+      .then(rows => { if (!controller.signal.aborted) setComponentSummary(rows); })
+      .catch(error => {
+        if (!controller.signal.aborted) {
+          componentSummaryRequestKeyRef.current = '';
+          console.warn('Unable to load the programme component summary.', error);
+        }
+      });
+    return () => {
+      controller.abort();
+      if (componentSummaryRequestKeyRef.current === summaryKey) componentSummaryRequestKeyRef.current = '';
+    };
+  }, [componentsScopeKey, readRevision]);
+
+  useEffect(() => {
+    if (!loadFullComponents) return;
     const moduleCatalogueIds: string[] = JSON.parse(componentsScopeKey);
     if (!moduleCatalogueIds.length) return;
     const componentsKey = moduleCatalogueIds.join('|');
@@ -2725,7 +2881,7 @@ export default function ProgrammeDetailPage() {
       controller.abort();
       if (componentsRequestKeyRef.current === componentsKey) componentsRequestKeyRef.current = '';
     };
-  }, [componentsScopeKey, readRevision]);
+  }, [componentsScopeKey, readRevision, loadFullComponents]);
 
   const programmeModuleCatalogueIds = useMemo(() => {
     if (!data) return [] as string[];
@@ -2788,7 +2944,7 @@ export default function ProgrammeDetailPage() {
     if (!needsCoverage || !programmeLoaded) return undefined;
     // Overview needs the applied standard's identity and counts. Detailed KSB
     // tabs also use authored descriptions as a fallback for legacy mappings.
-    if (tab === 'overview' && explicitKsbSourceId && standardSource) return undefined;
+    if (summaryCoverageOnly && explicitKsbSourceId && standardSource) return undefined;
     if (programmeKsbSets.length) return undefined;
     const controller = new AbortController();
     fetchCurriculumKsbSets(controller.signal)
@@ -2800,7 +2956,7 @@ export default function ProgrammeDetailPage() {
         if (!controller.signal.aborted) setKsbSetsSettled(true);
       });
     return () => controller.abort();
-  }, [needsCoverage, programmeLoaded, programmeKsbSets.length, explicitKsbSourceId, standardSource, tab]);
+  }, [needsCoverage, programmeLoaded, programmeKsbSets.length, explicitKsbSourceId, standardSource, summaryCoverageOnly]);
 
   useEffect(() => {
     if (!needsCoverage) return undefined;
@@ -2884,7 +3040,7 @@ export default function ProgrammeDetailPage() {
         || (groupCoachFilter === 'assigned' ? hasCoach : !hasCoach);
       return matchesQuery && matchesCoach;
     });
-  }, [activeCohort, archivedGroupIds, groupCoachFilter, groupSearch, groupStatusFilter]);
+  }, [activeCohort, groupCoachFilter, groupSearch, groupStatusFilter]);
 
   // ----------------------------------------------------------------- modules
 
@@ -2909,7 +3065,7 @@ export default function ProgrammeDetailPage() {
       if (archivedModuleIds.has(mod.id)) return false;
       return matchesQuery && matchesCohort && matchesGroup;
     });
-  }, [PROGRAMME.modules, moduleSearch, moduleCohortFilter, moduleGroupFilter, moduleStatusFilter]);
+  }, [PROGRAMME.modules, moduleSearch, moduleCohortFilter, moduleGroupFilter, moduleStatusFilter, archivedModuleIds]);
 
   // ---------------------------------------------------------------- sessions
 
@@ -3076,7 +3232,7 @@ export default function ProgrammeDetailPage() {
       if (!mod) return '';
       return moduleBuilderUrl(mod, PROGRAMME, session.weekId ? { weekId: session.weekId } : undefined);
     };
-  }, [PROGRAMME.modules, PROGRAMME]);
+  }, [PROGRAMME]);
 
   // --------------------------------------------------------------------- KSB
 
@@ -3291,12 +3447,17 @@ export default function ProgrammeDetailPage() {
 
   // ---------------------------------------------------------------- readiness
 
-  const allComponents = useMemo(
-    () => activeModules.flatMap(mod => mod.weeksData.flatMap(wk => wk.components || [])),
+  // Counted per week, so the figures are the same whether the weeks were built
+  // from the component list or, before it is loaded, from its summary.
+  const componentTotal = useMemo(
+    () => activeModules.reduce((total, mod) => total + mod.weeksData.reduce((sum, wk) => sum + weekComponentCount(wk), 0), 0),
     [activeModules],
   );
-  const publishedComponents = allComponents.filter(component => component.status === 'published').length;
-  const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
+  const publishedComponents = useMemo(
+    () => activeModules.reduce((total, mod) => total + mod.weeksData.reduce((sum, wk) => sum + weekPublishedCount(wk), 0), 0),
+    [activeModules],
+  );
+  const contentReadiness = componentTotal ? Math.round((publishedComponents / componentTotal) * 100) : 0;
   const totalOtjh = roundedMinutesToHours(activeModules.reduce((total, mod) => (
     total + hoursToRoundedMinutes(mod.otjh)
   ), 0));
@@ -3320,10 +3481,10 @@ export default function ProgrammeDetailPage() {
   const totalWeeks = activeModules.reduce((total, mod) => total + (mod.weeksData.length || mod.weeks || 0), 0);
   const emptyWeekCount = activeModules
     .flatMap(mod => mod.weeksData)
-    .filter(wk => !(wk.components || []).length).length;
+    .filter(wk => !weekComponentCount(wk)).length;
   // A useful first design slice is tangible rather than percentage-based: at
   // least one module, one authored week and one component learners can consume.
-  const hasMinimumDesign = activeModules.length > 0 && totalWeeks > 0 && allComponents.length > 0;
+  const hasMinimumDesign = activeModules.length > 0 && totalWeeks > 0 && componentTotal > 0;
   const untutoredModules = activeModules.filter(mod => !isStaffAssigned(mod.tutor));
   // Modules whose stored cohort is not one of this programme's cohort records.
   // This page used to invent a cohort row for them, which is why its cohort count
@@ -3418,7 +3579,7 @@ export default function ProgrammeDetailPage() {
       // behind this takes seconds, and a cohort still listed after "Archive"
       // reads as though nothing happened.
       setArchivedCohortIds(previous => new Set(previous).add(cohortItem.id));
-      await reload({ silent: true });
+      await reloadAfterSave({ silent: true });
       setArchivedCohortIds(previous => {
         const next = new Set(previous);
         next.delete(cohortItem.id);
@@ -3436,7 +3597,7 @@ export default function ProgrammeDetailPage() {
   const archiveGroup = async (group: Group) => {
     await archiveGroupWithConfirm(group, group.modules.length, async () => {
       setArchivedGroupIds(previous => new Set(previous).add(group.id));
-      await reload({ silent: true });
+      await reloadAfterSave({ silent: true });
       setArchivedGroupIds(previous => {
         const next = new Set(previous);
         next.delete(group.id);
@@ -3478,13 +3639,13 @@ export default function ProgrammeDetailPage() {
    * confirm.
    */
   const archiveModule = async (mod: Module) => {
-    const componentCount = mod.weeksData.reduce((total, wk) => total + (wk.components?.length || 0), 0);
+    const componentCount = mod.weeksData.reduce((total, wk) => total + weekComponentCount(wk), 0);
     const moduleId = moduleBuilderIdentifier(mod);
     await archiveModuleWithConfirm({ id: moduleId, name: mod.name }, componentCount, async () => {
       // Off the table now; the reload behind this takes seconds and a module
       // still listed after "Archive" reads as though nothing happened.
       setArchivedModuleIds(previous => new Set(previous).add(mod.id));
-      await reload({ silent: true });
+      await reloadAfterSave({ silent: true });
       setArchivedModuleIds(previous => {
         const next = new Set(previous);
         next.delete(mod.id);
@@ -3600,7 +3761,7 @@ export default function ProgrammeDetailPage() {
               : { icon: 'ri-stack-line', label: 'Modules', value: activeModules.length, detail: archivedModuleCount ? `${archivedModuleCount} archived` : untutoredModules.length ? `${untutoredModules.length} need a tutor` : 'All tutored' },
             modulesLoading
               ? { icon: 'ri-calendar-line', label: 'Weeks', value: '…', detail: 'Loading modules' }
-              : { icon: 'ri-calendar-line', label: 'Weeks', value: totalWeeks, detail: `${allComponents.length} components` },
+              : { icon: 'ri-calendar-line', label: 'Weeks', value: totalWeeks, detail: `${componentTotal} components` },
             { icon: 'ri-time-line', label: 'OTJH', value: modulesLoading ? '…' : formatHoursMinutes(totalOtjh) },
             {
               icon: 'ri-node-tree',
@@ -3702,14 +3863,17 @@ export default function ProgrammeDetailPage() {
                 <DetailRow
                   label="Learners"
                   value={(
+                    <span className="flex flex-wrap items-center justify-end gap-2">
+                    <LearnerStatusCounts target={{ scope: 'programme', id: PROGRAMME.sourceId || PROGRAMME.id, name: PROGRAMME.name }} refreshKey={readRevision} />
                     <button
                       type="button"
                       onClick={() => setProgrammeLearnersOpen(open => !open)}
                       className="inline-flex items-center gap-1 font-semibold text-primary-700 underline-offset-2 hover:underline"
                     >
-                      {totalLearners}
+                      View learner progress
                       <AppIcon className={`${programmeLearnersOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></AppIcon>
                     </button>
+                    </span>
                   )}
                 />
                 <DetailRow label="Programme ID" value={<code className="text-[11px]">{clean(PROGRAMME.sourceId) || PROGRAMME.id || '—'}</code>} />
@@ -3757,7 +3921,7 @@ export default function ProgrammeDetailPage() {
                   <div className="grid grid-cols-2 gap-2 border-t border-background-200 pt-4 sm:grid-cols-4">
                     {[
                       { label: 'Weeks', value: totalWeeks },
-                      { label: 'Components', value: allComponents.length },
+                      { label: 'Components', value: componentTotal },
                       { label: 'KSBs unmapped', value: missingKsbCount },
                       { label: 'Authored OTJH', value: formatHoursMinutes(totalOtjh) },
                     ].map(stat => (
@@ -4001,7 +4165,7 @@ export default function ProgrammeDetailPage() {
                         </span>
                       )}
                     </PlainCell>
-                    <PlainCell align="center">{cohortItem.learners}</PlainCell>
+                    <PlainCell align="center"><LearnerStatusCounts target={{ scope: 'cohort', id: cohortItem.id, name: cohortItem.name }} refreshKey={readRevision} /></PlainCell>
                     <PlainCell align="center">{cohortItem.groups.length}</PlainCell>
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
@@ -4113,6 +4277,7 @@ export default function ProgrammeDetailPage() {
                     { label: 'Coach' },
                     { label: 'Delivery' },
                     { label: 'Modules', align: 'center' },
+                    { label: 'Learners', align: 'center' },
                     { label: 'Actions', align: 'right' },
                   ]}
                   gridClass={GROUP_GRID}
@@ -4168,6 +4333,7 @@ export default function ProgrammeDetailPage() {
                           : 'Not scheduled'}
                       </PlainCell>
                       <PlainCell align="center">{group.modules.length}</PlainCell>
+                      <PlainCell align="center"><LearnerStatusCounts target={{ scope: 'group', id: group.id, name: group.name }} refreshKey={readRevision} /></PlainCell>
                       <span className="flex items-center justify-end gap-1.5">
                         <NamedActions
                           actions={[
@@ -4243,6 +4409,7 @@ export default function ProgrammeDetailPage() {
                 { label: 'Components', align: 'center' },
                 { label: 'OTJH', align: 'center' },
                 { label: 'KSBs', align: 'center' },
+                { label: 'Learners', align: 'center' },
                 { label: 'Actions', align: 'right' },
               ]}
               gridClass={MODULE_GRID}
@@ -4265,7 +4432,7 @@ export default function ProgrammeDetailPage() {
                 />
               )}
               renderRow={mod => {
-                const componentCount = mod.weeksData.reduce((total, wk) => total + (wk.components?.length || 0), 0);
+                const componentCount = mod.weeksData.reduce((total, wk) => total + weekComponentCount(wk), 0);
                 const ksbCount = uniqueCleanValues([...mod.ksbTags, ...mod.ksbMapping.map(item => item.ksb)]).length;
                 const workspaceUrl = moduleWorkspaceUrl(mod);
                 const builderUrl = moduleBuilderUrl(mod, PROGRAMME);
@@ -4307,6 +4474,7 @@ export default function ProgrammeDetailPage() {
                     <PlainCell align="center">{componentCount}</PlainCell>
                     <PlainCell align="center">{formatHoursMinutes(mod.otjh)}</PlainCell>
                     <PlainCell align="center">{ksbCount}</PlainCell>
+                    <PlainCell align="center"><LearnerStatusCounts target={{ scope: 'module', id: moduleBuilderIdentifier(mod), name: mod.name }} refreshKey={readRevision} /></PlainCell>
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
                         actions={[{
@@ -4815,9 +4983,9 @@ export default function ProgrammeDetailPage() {
                 />
                 <QualityCheckCard
                   title="Published content"
-                  count={Math.max(0, allComponents.length - publishedComponents)}
+                  count={Math.max(0, componentTotal - publishedComponents)}
                   clearText="Every component is published"
-                  issueText={`${Math.max(0, allComponents.length - publishedComponents)} components are not published`}
+                  issueText={`${Math.max(0, componentTotal - publishedComponents)} components are not published`}
                   icon="ri-draft-line"
                   onClick={() => navigate(moduleBuilderProgrammeUrl)}
                 />
@@ -4852,7 +5020,7 @@ export default function ProgrammeDetailPage() {
         open={programmeDrawerOpen}
         programme={drawerProgramme}
         onClose={() => setProgrammeDrawerOpen(false)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={() => reloadAfterSave({ silent: true })}
       />
       {pendingEditorReference && (
         <EntityDrawer open title="Loading editor options" submitLabel="Retry"
@@ -4875,7 +5043,7 @@ export default function ProgrammeDetailPage() {
         programmes={drawerProgrammes}
         holidays={data?.holidays || []}
         onClose={() => { setCohortDrawerOpen(false); setEditingCohort(null); }}
-        onSaved={() => reload({ silent: true })}
+        onSaved={() => reloadAfterSave({ silent: true })}
       />
       <GroupFormDrawer
         open={groupDrawerCohortId !== null && !pendingEditorReference}
@@ -4885,7 +5053,7 @@ export default function ProgrammeDetailPage() {
         cohorts={data?.cohorts || []}
         coachNames={drawerCoachNames}
         onClose={() => { setGroupDrawerCohortId(null); setEditingGroup(null); }}
-        onSaved={() => reload({ silent: true })}
+        onSaved={() => reloadAfterSave({ silent: true })}
       />
       <ModuleFormDrawer
         open={Boolean(editingModule) && !pendingEditorReference}
@@ -4897,7 +5065,7 @@ export default function ProgrammeDetailPage() {
         holidays={data?.holidays || []}
         tutorNames={drawerTutorNames}
         onClose={() => setEditingModule(null)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={() => reloadAfterSave({ silent: true })}
       />
       {placementPreview && (
         <KsbPlacementPreviewModal

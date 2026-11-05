@@ -49,12 +49,20 @@ class CurriculumChangeLogMiddleware:
         # settings load.
         from .views import (
             begin_curriculum_write_scope,
+            curriculum_write_pending,
             end_curriculum_write_scope,
             record_curriculum_change,
             shared_curriculum_epoch,
         )
 
+        from .cache_scope import affected_programmes, write_seeds
+
         before = shared_curriculum_epoch()
+        # Which programmes this save can change, read before the view so a
+        # module or group moved out of a programme still retires the old one.
+        # None (not an attributable save, or unsure) keeps the global bump.
+        seeds = write_seeds(request.method, request.path[len(CURRICULUM_API_PREFIX):])
+        scopes_before = affected_programmes(seeds) if seeds else None
         # The shared epoch is moved once here, after the view, rather than at
         # each of invalidate_curriculum_cache()'s 94 call sites: a tree save
         # invalidates per written row, and the counter now lives in the database
@@ -63,10 +71,15 @@ class CurriculumChangeLogMiddleware:
         # committed, so no worker can cache pre-write data under a post-write
         # epoch.
         begin_curriculum_write_scope()
+        scopes = None
         try:
             response = self.get_response(request)
+            if scopes_before is not None and curriculum_write_pending():
+                scopes_after = affected_programmes(seeds)
+                if scopes_after is not None:
+                    scopes = scopes_before | scopes_after
         finally:
-            end_curriculum_write_scope()
+            end_curriculum_write_scope(scopes)
         if response.status_code >= 400:
             return response
         after = shared_curriculum_epoch()

@@ -5,7 +5,7 @@
 // pasted into a message. Same component as `/admin/audit-trail/people/:email`,
 // scoped to coach and drawn inside the Coach workspace's chrome.
 import AuditTrailPersonView from '@/features/audit-trail/AuditTrailPersonView';
-import { useCoachAuditScope } from '../page';
+import { useCoachAuditScope } from "../page.helpers";
 
 export default function CoachAuditTrailPersonPage() {
   return <AuditTrailPersonView scope={useCoachAuditScope()} />;

@@ -119,7 +119,11 @@ describe('migrated summary field purpose', () => {
     mount(data);
     const dialog = screen.getByRole('dialog', { name: 'Editing Standard Template' });
     expect(within(dialog).getByText(FAMILY_LABELS[family], { exact: true })).toBeVisible();
-    expect(within(dialog).getByText('Changes apply to future or uninitialised migrated reviews using this Standard Template. Reviews already started keep their saved version.')).toBeVisible();
+    if (family === 'PSP') {
+      expect(within(dialog).getByText(/No signatures are required by default/)).toBeVisible();
+    } else {
+      expect(within(dialog).getByText('Changes apply to migrated reviews using this Standard Template while they are still editable. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.')).toBeVisible();
+    }
     expect(within(dialog).queryByText('Programme', { exact: true })).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Use as AI Meeting Summary' })).not.toBeChecked();
   });
@@ -130,7 +134,7 @@ describe('migrated summary field purpose', () => {
     const dialog = screen.getByRole('dialog', { name: 'Editing Custom Template' });
     expect(within(dialog).getByText('Marketing Executive Level 4')).toBeVisible();
     expect(within(dialog).getByText('PR', { exact: true })).toBeVisible();
-    expect(within(dialog).getByText('This programme-specific copy can be edited independently. Reviews already started keep their saved version.')).toBeVisible();
+    expect(within(dialog).getByText('This programme-specific copy can be edited independently. Working reviews synchronise when opened by the coach or checked on save. Reviews awaiting signatures or completed keep their saved version.')).toBeVisible();
     expect(within(dialog).queryByText(/Changes apply to future or uninitialised/)).not.toBeInTheDocument();
   });
 
@@ -172,8 +176,8 @@ describe('migrated summary field purpose', () => {
     vi.mocked(previewMigratedDefinition).mockImplementation(client.previewMigratedDefinition);
     const onSaved = vi.fn();
     const editor = render(<TemplateEditor template={await client.getMigratedTemplate(1)} programmeName="Programme" onClose={vi.fn()} onSaved={onSaved} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Add question' }));
-    const question = within(screen.getByRole('group', { name: 'Question 2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add question to section 1' }));
+    const question = within(screen.getByRole('group', { name: 'Question 1.2' }));
     expect(question.getByLabelText('Field type')).toHaveValue('13');
     expect(question.getByRole('option', { name: 'Text Multiline' })).toHaveProperty('selected', true);
     expect(question.getByRole('checkbox', { name: 'Required' })).not.toBeChecked();

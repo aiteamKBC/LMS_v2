@@ -36,7 +36,10 @@ const cohorts = [{
 }] as unknown as CurriculumCohort[];
 const groups = [{
   id: 'GROUP-1', name: 'Group A', cohortId: 'COHORT-1', cohort: 'Sept 2026', programme: 'Data Analyst', programmeId: 'PROG-DATA',
-  coach: 'Coach One', status: 'active',
+  coach: 'Coach One', weekDays: 'Wednesday', status: 'active',
+}, {
+  id: 'GROUP-2', name: 'Group B', cohortId: 'COHORT-1', cohort: 'Sept 2026', programme: 'Data Analyst', programmeId: 'PROG-DATA',
+  coach: 'Coach One', weekDays: 'Friday', status: 'active',
 }] as unknown as CurriculumGroup[];
 const modules = [{
   id: 'MOD-1', moduleCatalogueId: 'MOD-1', name: 'Data Foundations', programme: 'Data Analyst', programmeId: 'PROG-DATA',
@@ -117,7 +120,7 @@ describe('curriculum lists keep their place in the URL', { timeout: 20000 }, () 
 
   it('Groups keeps a returning cohort filter while the cohorts are still loading', async () => {
     entitiesStore.set(false);
-    await renderAt(() => import('../../../groups/page'), '/curriculum/groups', '?programme=PROG-DATA&cohort=COHORT-1&q=Group&coach=Coach+One');
+    await renderAt(() => import('../../../groups/page'), '/curriculum/groups', '?programme=PROG-DATA&cohort=COHORT-1&q=Group&coach=Coach+One&deliveryDay=Wednesday');
     expect(await screen.findByPlaceholderText('Search groups, cohorts, coaches...')).toHaveValue('Group');
     expect(address().get('cohort')).toBe('COHORT-1');
 
@@ -125,6 +128,8 @@ describe('curriculum lists keep their place in the URL', { timeout: 20000 }, () 
     await screen.findByText('Group A');
     expect(address().get('cohort')).toBe('COHORT-1');
     expect(address().get('coach')).toBe('Coach One');
+    expect(address().get('deliveryDay')).toBe('Wednesday');
+    expect(screen.queryByText('Group B')).not.toBeInTheDocument();
   });
 
   it('Standards returns with its search and status', async () => {

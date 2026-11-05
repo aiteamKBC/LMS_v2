@@ -6,8 +6,9 @@ import unittest
 from datetime import datetime
 from math import isfinite
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
+from .extra_activity_month import valid_activity_month
 
 ROOT = Path(__file__).parent
 
@@ -19,11 +20,13 @@ def load(filename, scope, names=None):
 
 
 def adapter():
-    scope = dict(datetime=datetime, ZoneInfo=ZoneInfo, json=json, re=re, isfinite=isfinite,
-                 GRADED_PROGRESS_KINDS={'quiz'})
+    scope = dict(datetime=datetime, ZoneInfo=ZoneInfo, UK=ZoneInfo('Europe/London'), json=json, re=re, isfinite=isfinite,
+                 GRADED_PROGRESS_KINDS={'quiz'}, valid_activity_month=valid_activity_month)
     load('progress_rules.py', scope)
+    load('ksb_points.py', scope)
+    load('retake_timing.py', scope)
     load('active_users.py', scope, {'_s', '_number', '_reported_minutes', '_progress_text',
-        '_manual_claimed_seconds', '_progress_record_minutes', 'otjh_progress_dedupe_key',
+        '_selected_timer_seconds', '_manual_claimed_seconds', '_progress_record_minutes', 'otjh_progress_dedupe_key',
         'dedupe_otjh_progress_records', '_component_expected_hours_lookup', 'completed_hours_value_from_progress'})
     load('current_learning.py', scope)
     return scope
@@ -144,6 +147,63 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertIsNone(rows[1]['actual_seconds'])
         self.assertTrue(rows[1]['completed'])
 
+    def test_standalone_quiz_and_material_with_same_id_do_not_share_completion(self):
+        material = {'id': 1, 'completed': False, 'actual_seconds': 600,
+                    'source_payload': {'original_source_ref': 'la:5:9'},
+                    'sources': [{'source_system': 'old_lms', 'source_course_ref': '5', 'source_activity_id': 'material:9'}]}
+        quiz = {'id': 2, 'completed': False, 'actual_seconds': None,
+                'source_payload': {'original_source_ref': 'la:5:9'},
+                'sources': [{'source_system': 'old_lms', 'source_course_ref': '5', 'source_activity_id': 'quiz:9'}]}
+        merge = self.scope['merge_attempts']
+        rows = merge([material, quiz], [self.attempt(catalogue_kind='quiz')])
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(rows[0]['completed'])
+        self.assertTrue(rows[1]['completed'])
+        self.assertEqual(rows[0]['actual_seconds'], 600)
+        self.assertIsNone(rows[1]['actual_seconds'])
+        rows = merge([material, quiz], [self.attempt()])
+        self.assertTrue(rows[0]['completed'])
+        self.assertFalse(rows[1]['completed'])
+
+    def test_new_quiz_result_has_exact_catalogue_route_and_is_idempotent(self):
+        merge = self.scope['merge_attempts']
+        attempt = self.attempt(catalogue_kind='quiz')
+        rows = merge([], [attempt])
+        self.assertEqual(rows[0]['sources'], [{'source_system': 'old_lms', 'source_course_ref': '5', 'source_activity_id': 'quiz:9'}])
+        self.assertEqual(merge(rows, [attempt]), rows)
+        self.assertFalse(rows[0]['accepted'])
+        self.assertIsNone(rows[0]['actual_seconds'])
+
+    def test_indexed_quiz_attempt_preserves_history_and_other_course_fallback(self):
+        link = {'source_system': 'old_lms', 'source_course_ref': '5', 'source_activity_id': 'quiz:9'}
+        record = {'id': 1, 'completed': False, 'accepted': False, 'actual_seconds': 600,
+                  'source_payload': {'original_source_ref': 'la:6:9'},
+                  'sources': [link], 'historical_components': [dict(link)]}
+        original = json.loads(json.dumps(record))
+        merge = self.scope['merge_attempts']
+        rows = merge([record], [self.attempt(catalogue_kind='quiz'), self.attempt(catalogue_kind='quiz')])
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['completed'])
+        self.assertFalse(rows[0]['accepted'])
+        self.assertEqual(rows[0]['actual_seconds'], 600)
+        self.assertEqual(record, original)
+        # A typed link in course 5 does not invalidate the original route in 6.
+        rows = merge([record], [{**self.attempt(), 'group_id': 6}])
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['completed'])
+
+    def test_indexed_typed_lineage_overrides_stale_quiz_reference_in_same_course(self):
+        record = {'id': 1, 'completed': False, 'actual_seconds': 600,
+                  'source_payload': {'original_source_ref': 'subject:quiz:5:9'},
+                  'historical_components': [{'source_system': 'old_lms', 'source_course_ref': 5,
+                                             'source_activity_id': 'material:9'}]}
+        rows = self.scope['merge_attempts']([record], [self.attempt(catalogue_kind='quiz')])
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(rows[0]['completed'])
+        self.assertEqual(rows[0]['actual_seconds'], 600)
+        self.assertTrue(rows[1]['completed'])
+        self.assertIsNone(rows[1]['actual_seconds'])
+
     def test_accepted_extra_activity_once_and_no_drafts(self):
         s = dict(id='extra1', submitted_at=self.native['submitted_at'], activity_type='extra_activity',
                  status='accepted', actual_time_hours=1, ksb_codes=['K1'])
@@ -160,6 +220,39 @@ class CurrentLearningTests(unittest.TestCase):
                           actual_time_hours='02:00:00', ksb_codes=[])
         rows = self.scope['merge_submissions']([], [submission])
         self.assertEqual(rows[0]['actual_seconds'], 7200)
+
+    def test_extra_activity_uses_selected_month_and_keeps_submission_instant(self):
+        submission = dict(id='extra-month', submitted_at='2026-10-23T13:00:00Z',
+                          activity_type='extra_activity', status='accepted', actual_time_hours='1.25', ksb_codes=[])
+        for month in ('2026-09', '2026-11'):
+            with self.subTest(month=month):
+                row = self.scope['merge_submissions']([], [{**submission, 'activity_month': month}])[0]
+                self.assertEqual(row['reporting_month'], month)
+                self.assertEqual(row['actual_seconds'], 4500)
+                self.assertEqual(row['reporting_started_at'].isoformat(), '2026-10-23T14:00:00+01:00')
+                self.assertTrue(row['accepted'])
+        assignment = self.scope['merge_submissions']([], [{**submission, 'activity_type': 'assignment', 'activity_month': '2026-09'}])[0]
+        self.assertEqual(assignment['reporting_month'], '2026-10')
+        legacy = self.scope['merge_submissions']([], [{**submission, 'activity_month': 'invalid'}])[0]
+        self.assertEqual(legacy['reporting_month'], '2026-10')
+
+    def test_selected_month_readers_preserve_learner_scope_and_bulk_parity(self):
+        owners = [{'id': 1, 'enrolment_id': 123, 'learner_type': 'commercial'},
+                  {'id': 2, 'enrolment_id': 124, 'learner_type': 'apprenticeship'}]
+        saved = dict(id='extra-month', submitted_at='2026-10-23T13:00:00Z', activity_type='extra_activity',
+                     status='submitted_for_tutor_review', actual_time_hours='1', ksb_codes=[], activity_month='2026-09')
+        query = Mock(return_value=[saved])
+        self.scope['query'] = query
+        single = self.scope['current_records'](owners[0], [])
+        self.assertIn("full_submission #>> '{monthlyAssignment,month}' AS activity_month", query.call_args.args[0])
+        self.assertEqual(query.call_args.args[1], ['123', 'commercial'])
+        query.return_value = [{**saved, 'learner_id': '123', 'learner_kind': 'commercial'}]
+        bulk = self.scope['current_records_bulk'](owners, {1: [], 2: []})
+        self.assertEqual(bulk[123], single)
+        self.assertEqual(bulk[124], [])
+        self.assertFalse(single[0]['accepted'])
+        self.assertEqual(single[0]['reporting_month'], '2026-09')
+        self.assertIn("full_submission #>> '{monthlyAssignment,month}' AS activity_month", query.call_args.args[0])
 
     def test_reads_are_scoped_to_both_account_and_aptem(self):
         query = Mock(side_effect=[[], [{'name': 'exists'}], [self.attempt()]])
@@ -190,12 +283,13 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertIn('(learner_id,learner_kind) IN', query.call_args_list[0].args[0])
         self.assertIn('(enrolment_id,aptem_id) IN', query.call_args_list[2].args[0])
 
-    def test_dashboard_refresh_reads_new_saved_completion_and_time(self):
+    @patch('coach_api.migrated_otjh.planned_hours_bulk', return_value={})
+    def test_dashboard_refresh_reads_new_saved_completion_and_time(self, _planned):
         scope = self.scope
         load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
-            'recorded_seconds', 'allocations', 'counts_as_completed', 'point_ratio'})
+            'recorded_seconds', 'allocations', 'completion_reporting_instant', 'counts_as_completed', 'point_ratio'})
         scope['number'] = lambda value: float(value or 0)
-        owner = {'id': 1}
+        owner = {'id': 1, 'enrolment_id': 123}
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         saved = []
@@ -209,12 +303,13 @@ class CurrentLearningTests(unittest.TestCase):
         saved.append({**self.native, 'id': 2})
         self.assertEqual(scope['metrics'](123), result)
 
-    def test_quiz_only_completion_does_not_credit_unapproved_hours(self):
+    @patch('coach_api.migrated_otjh.planned_hours_bulk', return_value={})
+    def test_quiz_only_completion_does_not_credit_unapproved_hours(self, _planned):
         scope = self.scope
         load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
-            'recorded_seconds', 'allocations', 'counts_as_completed', 'point_ratio'})
+            'recorded_seconds', 'allocations', 'completion_reporting_instant', 'counts_as_completed', 'point_ratio'})
         scope['number'] = lambda value: float(value or 0)
-        owner = {'id': 1}
+        owner = {'id': 1, 'enrolment_id': 123}
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         record = {'id': 10, 'accepted': False, 'actual_seconds': 3600, 'ksbs': [],

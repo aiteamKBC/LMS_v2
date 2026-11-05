@@ -33,12 +33,13 @@ import {
  * count" would bury the one collision that is real. `recalculateModule` puts
  * every one of them back once the content is settled.
  */
-const DERIVED_MODULE_FIELDS = new Set([
+export const DERIVED_MODULE_FIELDS = new Set([
   'structureRevision',
   'lastUpdated',
   'createdAt',
   'weeks',
   'totalOtjh',
+  'declaredTotalOtjh',
   'ksbCount',
   'lessonCount',
   'quizCount',
@@ -46,7 +47,50 @@ const DERIVED_MODULE_FIELDS = new Set([
   'assignedLearnerCount',
   'sourceModule',
   'deliveryUsages',
+  // recalculateModule raises it to the live-session count and the schedule
+  // stores its own; the live sessions themselves are the sessions.
+  'sessionsNumber',
 ]);
+
+/**
+ * Week fields the session plan stamps on every read and every save.
+ *
+ * Nobody types a week's date: its position in the module decides it. So when a
+ * save elsewhere re-dates the weeks -- or this author's own save does, and the
+ * server's answer comes back through the merge -- the two copies disagree
+ * through no decision of anyone's. Reporting that as "you and someone else
+ * both changed the session date" asks the author to pick between two outputs
+ * of the planner. Mirrors DERIVED_WEEK_FIELDS in curriculum_api/module_merge.py;
+ * the next save re-derives them from the merged order.
+ */
+export const DERIVED_WEEK_FIELDS = new Set([
+  'weekNumber',
+  'moduleId',
+  'sessionDate',
+  'sessionDay',
+  'sessionStartTime',
+  'sessionEndTime',
+  'sessionDurationMinutes',
+  'sessionRescheduled',
+]);
+
+/**
+ * Live-session settings the session plan or the Teams attachment path writes.
+ *
+ * The stored copy wins quietly, as the server's merge does
+ * (PLANNED_SETTING_KEYS in curriculum_api/module_merge.py): it is what the
+ * planner and Microsoft last said, and the author never chose it.
+ */
+const PLANNED_SETTINGS = new Set(
+  ['sessionDate', 'sessionDay', 'sessionTime', 'durationMinutes', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc']
+    .map(key => `weekStructure[*].components[*].settings.${key}`),
+);
+
+function isDerivedWeekField(path: string): boolean {
+  return path.startsWith('weekStructure[*].')
+    && path.split('.').length === 2
+    && DERIVED_WEEK_FIELDS.has(mergePathLeaf(path));
+}
 
 /**
  * Values chosen as a set, merged as a set.
@@ -84,6 +128,12 @@ export interface ModuleMergeResult {
   adopted: number;
   /** One sentence per real disagreement, already readable. */
   notices: string[];
+  /**
+   * The disagreements themselves. Until the reader chooses, the module holds
+   * their version of each; the Module Builder asks them to keep it or take the
+   * other one and does not save over the other editor until they have.
+   */
+  collisions: MergeCollision[];
 }
 
 /** camelCase field name -> something a person would say. */
@@ -197,12 +247,31 @@ export function mergeModuleStructures(
   base: ModuleCatalogueItem | null,
   local: ModuleCatalogueItem,
   remote: ModuleCatalogueItem,
+  options: {
+    /**
+     * The stored copy is this author's own write from another door (Module
+     * settings), not a colleague's. A module-level field both copies moved is
+     * then their latest decision, not a question: theirs -- which is the
+     * author's -- is taken.
+     */
+    ownWrite?: boolean;
+  } = {},
 ): ModuleMergeResult {
-  const { value, collisions, adopted } = mergeRecords(base, local, remote, {
-    ignore: path => DERIVED_MODULE_FIELDS.has(mergePathLeaf(path)) && !path.includes('['),
+  const merged = mergeRecords(base, local, remote, {
+    ignore: path => (DERIVED_MODULE_FIELDS.has(mergePathLeaf(path)) && !path.includes('[')) || isDerivedWeekField(path),
     atomic: path => ATOMIC_MODULE_FIELDS.has(path),
-    preferRemote: path => TEAMS_OWNED_SETTINGS.has(path),
+    preferRemote: path => TEAMS_OWNED_SETTINGS.has(path) || PLANNED_SETTINGS.has(path),
   });
+  let { value, collisions } = merged;
+  const { adopted } = merged;
+  if (options.ownWrite) {
+    const settled = collisions.filter(item => item.kind === 'value' && item.path && !/[.[]/.test(item.path));
+    if (settled.length) {
+      value = { ...value };
+      settled.forEach(item => { (value as unknown as Record<string, unknown>)[item.path] = item.remote; });
+      collisions = collisions.filter(item => !settled.includes(item));
+    }
+  }
   // Weeks keep their own numbering, and the counts, totals and quality score are
   // derived from whatever the merge settled on rather than from either side's
   // copy of them.
@@ -211,7 +280,36 @@ export function mergeModuleStructures(
     module,
     adopted,
     notices: collisions.map(collision => noticeFor(module, collision)),
+    collisions,
   };
+}
+
+/**
+ * One disagreement, as the question the reader has to answer.
+ *
+ * Where the clash is, what the other editor did, and -- when it is short
+ * enough to be useful -- what they wrote. Nothing has been saved over either
+ * of them yet; the two buttons beside this sentence decide.
+ */
+export function conflictQuestion(module: ModuleCatalogueItem, collision: MergeCollision): string {
+  const where = locate(module, collision.path);
+  if (collision.kind === 'remote-deleted') {
+    return `Someone else deleted ${where || 'something'} while you were changing it.`;
+  }
+  if (collision.kind === 'local-deleted') {
+    return `Someone else changed ${where || 'something'} after you deleted it.`;
+  }
+  if (collision.kind === 'reorder') {
+    return where
+      ? `You and someone else put the components in ${where} in different orders.`
+      : 'You and someone else put the weeks in different orders.';
+  }
+  const field = humanField(collision.path);
+  const theirs = shortValue(collision.remote);
+  const at = where ? ` in ${where}` : '';
+  return theirs
+    ? `You and someone else both changed the ${field}${at}. Theirs is "${theirs}".`
+    : `You and someone else both changed the ${field}${at}.`;
 }
 
 /**

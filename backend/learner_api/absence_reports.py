@@ -1,7 +1,9 @@
 """Learner-facing absence report API backed by Coach.coach_absence_report."""
 import hashlib
 import logging
+import re
 import threading
+import traceback
 from datetime import date, datetime, time, timezone as dt_timezone
 from html import escape
 from uuid import uuid4
@@ -66,6 +68,34 @@ def _error(message, status=400):
     return JsonResponse({"error": message}, status=status)
 
 
+def _save_failure(stage, exc, *, evidence_uploaded=False):
+    """Correlate a failed save without exposing SQL parameters or learner details."""
+    cause = exc.__cause__ or exc
+    sqlstate = str(getattr(cause, "sqlstate", "") or "")
+    sqlstate = sqlstate if re.fullmatch(r"[A-Z0-9]{5}", sqlstate) else "APP"
+    reference = f"ABS-{stage}-{sqlstate}-{uuid4().hex[:12].upper()}"
+    diagnostic = getattr(cause, "diag", None)
+
+    def identifier(name):
+        value = getattr(diagnostic, name, None)
+        return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", value) else "-"
+
+    # A PostgreSQL exception's text can contain the entire rejected row, including
+    # the absence reason and evidence. Log locations and safe metadata instead.
+    frames = " > ".join(f"{frame.name}:{frame.lineno}" for frame in traceback.extract_tb(exc.__traceback__)[-12:])
+    logger.error(
+        "absence_save_failed reference=%s stage=%s exception=%s sqlstate=%s "
+        "table=%s constraint=%s column=%s frames=%s",
+        reference, stage, type(exc).__name__, sqlstate, identifier("table_name"),
+        identifier("constraint_name"), identifier("column_name"), frames,
+    )
+    message = (
+        "The evidence was uploaded, but the absence report could not be saved. Please retry."
+        if evidence_uploaded else "The absence report could not be saved. Please retry."
+    )
+    return JsonResponse({"error": message, "code": "absence_report_save_failed", "reference": reference}, status=502)
+
+
 def _source_learner(kind, learner_id):
     model = {"commercial": CommercialUser, "apprenticeship": EnrolmentUser}.get(kind)
     if model is None:
@@ -84,6 +114,21 @@ def _can_report_absence(row):
     return can_report_absence_status(row.get('attendance_status'), row.get('session_date'))
 
 
+def _native_absence_occurrence_id(row):
+    """Resolve a shared display row using the learner's server-side register."""
+    if row.get("source") != "microsoft-teams":
+        return ""
+    occurrence_id = str(row.get("occurrence_id") or row.get("session_id") or "")
+    source_id = str(row.get("attendance_source_occurrence_id") or "")
+    module_id = str(row.get("module_catalogue_id") or "")
+    if (row.get("attendance_source_module_id") and source_id and module_id
+            and occurrence_id == f"{source_id}:{module_id}"):
+        return source_id
+    # Replaced meetings may carry historical evidence from a different occurrence.
+    # A real, current occurrence must retain its own absence identity.
+    return occurrence_id
+
+
 def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
     """Both registers, including real upcoming occurrences, scoped to this learner."""
     rows = [
@@ -93,7 +138,7 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
 
     # Alternatives for every Teams lecture in one batch, not several queries per lecture.
     alternatives = eligible_alternatives_by_occurrence([
-        str(row.get("occurrence_id") or row.get("session_id") or "")
+        _native_absence_occurrence_id(row)
         for row in rows if row.get("source") == "microsoft-teams"
     ])
     result = []
@@ -113,7 +158,7 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
         }
         if row.get("source") == "microsoft-teams":
             item["alternativeSessions"] = alternatives.get(
-                str(row.get("occurrence_id") or row.get("session_id") or ""), []
+                _native_absence_occurrence_id(row), []
             )
         result.append(item)
     return result
@@ -135,6 +180,8 @@ def _resolve_absent_attendance(
     session_date,
     session_time,
     kind=None,
+    *,
+    include_occurrence=False,
 ):
     del session_time  # Source identity/date/title, not a client-supplied time, authorises the report.
     expected_id = str(session_id or "").strip()
@@ -148,7 +195,11 @@ def _resolve_absent_attendance(
     ]
     if len(matches) != 1:
         return None
-    return report_id(matches[0])
+    row = matches[0]
+    attendance_id = report_id(row)
+    if include_occurrence:
+        return attendance_id, _native_absence_occurrence_id(row)
+    return attendance_id
 
 
 def _serialize(report):
@@ -495,7 +546,7 @@ def learner_absence_reports(request, kind, learner_id):
             return _error('Choose a future recording time on or after the lecture date.')
 
     try:
-        attendance_id = _resolve_absent_attendance(
+        resolved = _resolve_absent_attendance(
             learner,
             learner_id,
             session_id,
@@ -503,6 +554,7 @@ def learner_absence_reports(request, kind, learner_id):
             parsed_date,
             parsed_time,
             kind=kind,
+            include_occurrence=True,
         )
     except Exception:
         logger.exception(
@@ -511,8 +563,9 @@ def learner_absence_reports(request, kind, learner_id):
             learner_id,
         )
         return _error("Could not validate the attendance session.", 502)
-    if attendance_id is None:
+    if resolved is None:
         return _error("Choose a valid absent, unmarked, upcoming or in-progress session.")
+    attendance_id, original_occurrence_id = resolved
     try:
         existing = CoachAbsenceReport.objects.filter(attendance_id=attendance_id)
         if existing.exists():
@@ -544,7 +597,6 @@ def learner_absence_reports(request, kind, learner_id):
     except Exception:
         logger.exception("Could not load the learner profile for %s learner %s", kind, learner_id)
         return _error("Could not load your learner profile. Please retry.", 502)
-    original_occurrence_id = session_id[len('teams:'):] if session_id.startswith('teams:') else ''
     if original_occurrence_id and active is None:
         return _error('This live-session absence could not be linked to your learner profile.', 409)
     if recovery_method == ALTERNATIVE_METHOD:
@@ -595,6 +647,7 @@ def learner_absence_reports(request, kind, learner_id):
                 502,
             )
 
+    save_stage = "START"
     try:
         with transaction.atomic():
             if recovery_method == 'catch-up' and not catchup_pending:
@@ -606,6 +659,7 @@ def learner_absence_reports(request, kind, learner_id):
                 # or cancelled target cannot be submitted from a stale dialog.
                 if validate_alternative_occurrence(original_occurrence_id, target_occurrence_id) is None:
                     raise RecoveryPlanError('That alternative session is no longer eligible. Choose another option.')
+            save_stage = "RPT"
             previous_absences = CoachAbsenceReport.objects.filter(learner_id=learner_id).count()
             report = CoachAbsenceReport.objects.create(
                 attendance_id=attendance_id,
@@ -634,6 +688,7 @@ def learner_absence_reports(request, kind, learner_id):
                 previous_absences=previous_absences,
             )
             if original_occurrence_id:
+                save_stage = "LINK"
                 record_reported_absence(
                     database=router.db_for_write(LiveSessionAbsence) or 'default',
                     occurrence_id=original_occurrence_id,
@@ -647,9 +702,11 @@ def learner_absence_reports(request, kind, learner_id):
                     recovery_reference=catchup_event_key or '',
                 )
             if recovery_method == 'recorded':
+                save_stage = "PLAN"
                 _recording_recovery_event(
                     report, learner, active, recording_date, recording_time, recording_duration,
                 )
+            save_stage = "COMMIT"
     except RecoveryPlanError as exc:
         if blob_name:
             try:
@@ -657,7 +714,7 @@ def learner_absence_reports(request, kind, learner_id):
             except Exception:
                 pass
         return _error(str(exc), 409)
-    except IntegrityError:
+    except IntegrityError as exc:
         # Another submission may have saved the same lecture after validation.
         # The unique attendance_id still guarantees a single report.
         if blob_name:
@@ -671,22 +728,14 @@ def learner_absence_reports(request, kind, learner_id):
             existing = None
         if existing is not None:
             return _existing_report_response(existing, learner_id)
-        logger.exception('Could not save absence report')
-        return _error('The absence report could not be saved. Please retry.', 502)
-    except Exception:
-        logger.exception(
-            "Could not save absence report for %s learner %s attendance %s",
-            kind,
-            learner_id,
-            attendance_id,
-        )
+        return _save_failure(save_stage, exc)
+    except Exception as exc:
         if blob_name:
             try:
                 delete_blob(quarantine_container, blob_name)
             except Exception:
                 pass
-            return _error("The evidence was uploaded, but the absence report could not be saved. Please retry.", 502)
-        return _error("The absence report could not be saved. Please retry.", 502)
+        return _save_failure(save_stage, exc, evidence_uploaded=bool(blob_name))
 
     recovery_details = ""
     if recovery_method == 'recorded':

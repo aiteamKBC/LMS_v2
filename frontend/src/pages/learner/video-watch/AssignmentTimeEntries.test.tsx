@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { AssignmentTimeEntries, assignmentMonthBounds, assignmentTimeHours } from './AssignmentTimeEntries';
+import { AssignmentTimeEntries } from './AssignmentTimeEntries';
+import { assignmentMonthBounds, assignmentTimeHours } from "./AssignmentTimeEntries.helpers";
 afterEach(cleanup);
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ bookingCalendar: {
   coveredYears: [2026], bankHolidays: [{ date: '2026-12-25', title: 'Christmas Day' }, { date: '2026-12-28', title: 'Boxing Day (substitute day)' }],

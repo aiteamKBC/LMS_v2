@@ -25,7 +25,7 @@ import {
   teamsMeetingArtifactPreviewUrl,
   weekHeadingTitle,
   weekPlacementLabel,
-  zonedNaiveToUtcIso,
+  previewZonedNaiveToUtcIso,
   type KsbMapping,
   type ModuleCatalogueItem,
   type ModuleWeekSessionPlan,
@@ -50,7 +50,9 @@ import {
 } from '../shared/entities/model';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
-import { buildHolidayShiftPlan, CompactSchedulePreview, WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
+import { CompactSchedulePreview, WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
+import { buildHolidayShiftPlan } from "../shared/entities/sessionShiftPreview.helpers";
+import { liveSessionDriftCause } from '../shared/entities/liveSessionDriftCause';
 import {
   DetailRow,
   EntityEmptyState,
@@ -474,7 +476,7 @@ export default function ModuleWorkspacePage() {
   const plannedOccurrences = useMemo(
     () => (plan?.sessions || []).map((session, index) => ({
       sessionNumber: session.sessionNumber || index + 1,
-      startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || sessionStartTime}`),
+      startDateTimeUtc: previewZonedNaiveToUtcIso(`${session.date}T${session.startTime || sessionStartTime}`),
       durationMinutes: session.durationMinutes || sessionDurationMinutes,
     })),
     [plan, sessionDurationMinutes, sessionStartTime],
@@ -1305,6 +1307,7 @@ function ScheduleDriftNotice({ drifted, teamsUrl }: {
         {drifted.map(session => (
           <li key={session.componentId} className="tabular-nums">
             {formatDateLabel(session.storedDate)} — its week now runs {session.weekDates.map(formatDateLabel).join(' and ')}
+            {liveSessionDriftCause(session) && <span className="block text-amber-800/90">{liveSessionDriftCause(session)?.sentence}</span>}
           </li>
         ))}
       </ul>

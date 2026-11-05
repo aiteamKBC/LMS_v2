@@ -29,6 +29,7 @@
 .home a.headerResource { text-decoration: none; }
 .headerResourceLabel { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 .comingSoon { padding: 2px 5px; border: 1px solid #dab86380; border-radius: 4px; color: #dab863; font-size: 9px; line-height: 1; }
+.feedbackPending { padding: 2px 6px; border-radius: 999px; background: #ef476f; color: #fff; font-size: 9px; font-weight: 800; line-height: 1; box-shadow: 0 0 0 2px #362044; }
 .home .headerAction:disabled { cursor: not-allowed; background: transparent; }
 .notificationBell { position: relative; display: flex; }
 .notificationDot { position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; border-radius: 50%; background: #D7B454; box-shadow: 0 0 0 2px #362044; }
@@ -203,7 +204,7 @@
   .headerActions { gap: 8px; }
   .home .headerAction { gap: 6px; min-height: 40px; padding: 6px; font-size: 10px; }
   .headerAction>svg, .notificationBell>svg { width: 15px; height: 15px; }
-  .comingSoon { font-size: 8px; }
+  .comingSoon, .feedbackPending { font-size: 8px; }
   .headerAction>.headerAvatar { width: 24px; height: 24px; padding: 4px; }
   .headerAction>.profileChevron { width: 10px; height: 10px; }
 

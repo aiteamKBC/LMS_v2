@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { loadRecordingsLibrary, type RecordingsLibrary } from '@/api/sessionResults';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -181,6 +182,10 @@ export default function CurriculumRecordingsPage() {
       workspaceLabel="Curriculum Studio" pageTitle="Session Recordings"
       pageSubtitle="Find a lecture and download its saved recordings">
       <main className="min-h-full bg-background-100 px-4 py-5 sm:px-6 lg:px-7">
+        <nav aria-label="Recording libraries" className="mb-5 flex gap-2 text-sm font-semibold">
+          <span aria-current="page" className="rounded-lg bg-primary-600 px-3 py-2 text-white">Lecture recordings</span>
+          <Link to="/curriculum/coaching-recordings" className="rounded-lg border border-background-200 bg-white px-3 py-2 hover:bg-primary-50">Coach Meetings &amp; Recordings</Link>
+        </nav>
         <div className="mx-auto w-full">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>

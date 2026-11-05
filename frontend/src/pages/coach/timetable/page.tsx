@@ -1,9 +1,13 @@
+import { ukOffsetForDate } from '@/lib/timeZones';
+import { canRescheduleReconciledReview, isImportedPersonalSupportPlan } from '../shared/resolvedReviewRows';
+import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
+import { BookingOnlyNotice } from '@/components/feature/BookingOnlyNotice';
 import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -11,13 +15,14 @@ import { Panel } from '@/components/ui/Panel';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { isImportedJoin, useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { coachFetch } from '@/lib/coachFetch';
 import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '@/pages/coach/shared/reviewInstanceNavigation';
-import { createLearnerReviewAddition, fetchLearnerAdditionReviewTemplates, markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
+import { createLearnerReviewAddition, fetchCoachReviewSlots, fetchLearnerAdditionReviewTemplates, markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
 import type { LearnerAdditionReviewTemplate, LearnerAdditionReasonCode } from '@/api/reviewInstances';
 import {
   buildCoachSourceOptions,
@@ -28,6 +33,7 @@ import {
   NON_REVIEW_SOURCE_FILTER_LABELS,
   type SourceFilter,
 } from './sourceFilters';
+import { buildReviewTypeLookup } from '@/lib/reviewTypeFilters';
 import {
   bookCoachCalendarEvent,
   navigateMeetingWindow,
@@ -73,6 +79,7 @@ function isReviewDetailEvent(event: TimetableEvent) {
 }
 
 function eventDetailsPath(event: TimetableEvent) {
+  if (event.bookingOnly) return null;
   const key = event.eventKey || event.id;
   if (!key) return null;
   if (event.source === 'mcr' || event.source === 'catch-up' || event.source === 'student-support') {
@@ -87,6 +94,7 @@ function eventDetailsPath(event: TimetableEvent) {
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 interface TimetableEvent {
   id: string;
+  bookingOnly?: boolean;
   eventKey?: string;
   title: string;
   type: 'coaching' | 'live-session' | 'review' | 'employer-meeting' | 'welfare' | 'admin' | 'personal';
@@ -113,6 +121,9 @@ interface TimetableEvent {
   status: 'completed' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
   source?: 'mcr' | 'progress-review' | string;
   reviewSource?: 'aptem' | 'curriculum' | string;
+  importedReviewType?: string | null;
+  calendarEventKey?: string | null;
+  reconciledReview?: boolean;
   sourceStatus?: string;
   sequence?: number;
   rawPlanned?: string;
@@ -573,7 +584,7 @@ function formatDateInputValue(year: number, month: number, day: number) {
 
 /* â”€â”€â”€ Donut Ring â”€â”€â”€ */
 type ViewMode = 'month' | 'week' | 'day';
-type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'completed' | 'cancelled';
+type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'ended' | 'completed' | 'cancelled';
 // Source filters (fixed non-review chips + dynamic Review Type buckets) live
 // in ./sourceFilters, which shares its Review bucketing with the learner
 // calendar via @/lib/reviewTypeFilters.
@@ -581,19 +592,33 @@ type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'schedul
 // Unchanged: these are SCHEDULING buckets, not filters. The schedule modal,
 // its copy and its icons are keyed on the routing `source`.
 type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support' | 'lms-introduction';
-const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'completed'];
+const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'ended', 'completed', 'cancelled'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
-  overdue: 'Missed',
+  overdue: 'Overdue',
   'due-soon': 'Due Soon',
   'needs-schedule': 'Not Scheduled',
   scheduled: 'Scheduled',
   'in-progress': 'In Progress',
   'awaiting-signature': 'Awaiting Signature',
+  ended: 'Ended',
   completed: 'Completed',
   cancelled: 'Cancelled',
 };
+
+/** Filter on the same display outcome as the card, without changing the
+ * stored status used by booking actions, signatures or summary metrics. */
+function eventStatusFilter(event: TimetableEvent): StatusFilter {
+  if (event.meetingOutcome === 'completed') return 'completed';
+  if (event.meetingOutcome === 'ended') return 'ended';
+  if (event.status === 'cancelled') return 'cancelled';
+  const key = meetingStatusKey(event);
+  if (key === 'missed-overdue') return 'overdue';
+  if (key === 'pending-due-soon') return 'due-soon';
+  if (key === 'not-scheduled') return 'needs-schedule';
+  return key;
+}
 
 const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support', 'lms-introduction'];
 const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; icon: string; accent: string; surface: string }> = {
@@ -758,7 +783,8 @@ function scheduleLearnerOptionLabel(event: TimetableEvent) {
 }
 
 function isSelectableScheduleEvent(event: TimetableEvent) {
-  if (event.reviewSource === 'aptem') return false;
+  if (event.bookingOnly) return false;
+  if (event.reviewSource === 'aptem') return canRescheduleReconciledReview(event);
   if (!isSchedulableSource(event.source)) return false;
   if (event.source === 'catch-up') {
     return !['completed', 'confirmed', 'in-progress'].includes(event.status);
@@ -767,7 +793,9 @@ function isSelectableScheduleEvent(event: TimetableEvent) {
 }
 
 function canEditScheduleEvent(event: TimetableEvent | null | undefined): event is TimetableEvent {
-  if (event?.reviewSource === 'aptem') return false;
+  if (event?.bookingOnly) return false;
+  if (event && isImportedPersonalSupportPlan(event)) return ['not-scheduled', 'scheduled'].includes(event.status);
+  if (event?.reviewSource === 'aptem') return canRescheduleReconciledReview(event);
   if (!event || !isSchedulableSource(event.source)) return false;
   return !['completed', 'confirmed', 'in-progress', 'awaiting-signature'].includes(event.status);
 }
@@ -812,6 +840,8 @@ function matchesSearchTerm(event: TimetableEvent, searchTerm: string) {
 
   const searchableText = [
     event.title,
+    event.reviewTypeName,
+    event.importedReviewType,
     event.learner,
     event.email,
     event.learnerId,
@@ -849,6 +879,7 @@ export default function CoachTimetablePage() {
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
   const [selectedDay, setSelectedDay] = useState(now.getDate());
+  const [expandedMonthDays, setExpandedMonthDays] = useState<Set<string>>(() => new Set());
   const [selectedEvent, setSelectedEvent] = useState<TimetableEvent | null>(null);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
@@ -868,6 +899,10 @@ export default function CoachTimetablePage() {
   const [createSessionLearnerPickerOpen, setCreateSessionLearnerPickerOpen] = useState(false);
   const [createSessionDate, setCreateSessionDate] = useState('');
   const [createSessionTime, setCreateSessionTime] = useState('09:00');
+  const [createReviewTimes, setCreateReviewTimes] = useState<string[]>([]);
+  const [createReviewAvailabilityLoading, setCreateReviewAvailabilityLoading] = useState(false);
+  const [createReviewAvailabilityError, setCreateReviewAvailabilityError] = useState('');
+  const [createReviewAvailabilityRevision, setCreateReviewAvailabilityRevision] = useState(0);
   const [createSessionDuration, setCreateSessionDuration] = useState(60);
   const [createSessionNotes, setCreateSessionNotes] = useState('');
   const [createSessionBusy, setCreateSessionBusy] = useState(false);
@@ -877,6 +912,9 @@ export default function CoachTimetablePage() {
   // createLearnerReviewAddition -- never a standalone calendar row.
   const [createSessionReviewTemplates, setCreateSessionReviewTemplates] = useState<LearnerAdditionReviewTemplate[]>([]);
   const [createSessionReviewTemplatesLoading, setCreateSessionReviewTemplatesLoading] = useState(false);
+  const [createSessionReviewPolicy, setCreateSessionReviewPolicy] = useState<{ learnerId: string; canAddReview: boolean; detail?: string } | null>(null);
+  const canAddLearnerReview = createSessionReviewPolicy?.learnerId === String(createSessionLearnerId)
+    && createSessionReviewPolicy.canAddReview && !createSessionReviewTemplatesLoading;
   const [createSessionReviewTemplateId, setCreateSessionReviewTemplateId] = useState('');
   const [createSessionReviewTargetDate, setCreateSessionReviewTargetDate] = useState('');
   const [createSessionReviewReasonCode, setCreateSessionReviewReasonCode] = useState<LearnerAdditionReasonCode | ''>('');
@@ -889,11 +927,16 @@ export default function CoachTimetablePage() {
   const [progressReviewCompletionEvent, setProgressReviewCompletionEvent] = useState<TimetableEvent | null>(null);
   const [reviewFormBusy, setReviewFormBusy] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [supportBookingEvent, setSupportBookingEvent] = useState<TimetableEvent | null>(null);
   const [scheduleModalType, setScheduleModalType] = useState<SchedulableSource>('mcr');
   const [scheduleModalLearnerKey, setScheduleModalLearnerKey] = useState('');
   const [scheduleModalEventKey, setScheduleModalEventKey] = useState('');
   const [scheduleModalDate, setScheduleModalDate] = useState('');
   const [scheduleModalTime, setScheduleModalTime] = useState('09:00');
+  const [scheduleReviewTimes, setScheduleReviewTimes] = useState<string[]>([]);
+  const [scheduleReviewAvailabilityLoading, setScheduleReviewAvailabilityLoading] = useState(false);
+  const [scheduleReviewAvailabilityError, setScheduleReviewAvailabilityError] = useState('');
+  const [scheduleReviewAvailabilityRevision, setScheduleReviewAvailabilityRevision] = useState(0);
   const [scheduleModalDuration, setScheduleModalDuration] = useState(60);
   const [scheduleModalBusy, setScheduleModalBusy] = useState(false);
   const [scheduleModalError, setScheduleModalError] = useState<string | null>(null);
@@ -1193,6 +1236,54 @@ export default function CoachTimetablePage() {
   const selectedScheduleEvent = useMemo(() => {
     return scheduleEventOptions.find(event => eventIdentity(event) === scheduleModalEventKey) || scheduleEventOptions[0] || null;
   }, [scheduleEventOptions, scheduleModalEventKey]);
+  const isReviewSchedule = ['mcr', 'progress-review', 'review'].includes(scheduleModalType);
+
+  useEffect(() => {
+    setCreateReviewTimes([]);
+    setCreateReviewAvailabilityError('');
+    setCreateSessionTime('');
+    if (!createSessionOpen || createSessionType !== 'review' || !createSessionLearnerId || !createSessionDate) {
+      setCreateReviewAvailabilityLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setCreateReviewAvailabilityLoading(true);
+    void fetchCoachReviewSlots(createSessionLearnerId, createSessionDate, createSessionDuration, { signal: controller.signal })
+      .then(times => {
+        if (!active) return;
+        setCreateReviewTimes(times);
+        setCreateSessionTime(current => current && times.includes(current) ? current : '');
+      })
+      .catch(error => {
+        if (active) setCreateReviewAvailabilityError(error instanceof Error ? error.message : 'Could not check coach availability. Retry before booking.');
+      })
+      .finally(() => { if (active) setCreateReviewAvailabilityLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [createSessionOpen, createSessionType, createSessionLearnerId, createSessionDate, createSessionDuration, createReviewAvailabilityRevision]);
+
+  useEffect(() => {
+    setScheduleReviewTimes([]);
+    setScheduleReviewAvailabilityError('');
+    if (!scheduleModalOpen || !isReviewSchedule || !selectedScheduleEvent?.learnerId || !scheduleModalDate) {
+      setScheduleReviewAvailabilityLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setScheduleReviewAvailabilityLoading(true);
+    void fetchCoachReviewSlots(selectedScheduleEvent.learnerId, scheduleModalDate, scheduleModalDuration, {
+      excludeEventKey: selectedScheduleEvent.calendarEventKey || selectedScheduleEvent.eventKey,
+      signal: controller.signal,
+    }).then(times => {
+      if (!active) return;
+      setScheduleReviewTimes(times);
+      setScheduleModalTime(current => current && times.includes(current) ? current : '');
+    }).catch(error => {
+      if (active) setScheduleReviewAvailabilityError(error instanceof Error ? error.message : 'Could not check coach availability. Retry before booking.');
+    }).finally(() => { if (active) setScheduleReviewAvailabilityLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [scheduleModalOpen, isReviewSchedule, selectedScheduleEvent?.learnerId, selectedScheduleEvent?.eventKey, selectedScheduleEvent?.calendarEventKey, scheduleModalDate, scheduleModalDuration, scheduleReviewAvailabilityRevision]);
 
   useEffect(() => {
     if (!scheduleModalOpen) return;
@@ -1296,10 +1387,14 @@ export default function CoachTimetablePage() {
   // Chips come from every loaded event so a Review Type's chip stays put
   // (reading 0) as the coach pages between months -- the same way the fixed
   // chips have always behaved. Counts are over the searched visible range.
+  const reviewTypeLookup = useMemo(() => buildReviewTypeLookup(calendarEvents), [calendarEvents]);
   const sourceFilterOptions = useMemo(
     () => buildCoachSourceOptions(calendarEvents, searchedVisibleRangeEvents),
     [calendarEvents, searchedVisibleRangeEvents],
   );
+  useEffect(() => {
+    if (!sourceFilterOptions.some(option => option.value === filterSource)) setFilterSource('all');
+  }, [sourceFilterOptions, filterSource]);
 
   const activeMeetingTypeKeys = useMemo<MeetingTypeKey[]>(() => (
     Array.from(new Set(calendarEvents.map(event => getMeetingTypeKey(event))))
@@ -1307,7 +1402,7 @@ export default function CoachTimetablePage() {
 
   const sourceFilterColor = useCallback((source: SourceFilter) => {
     if (source === 'all') return { accent: '#4F2D7F', background: '#F1ECF8' };
-    const matchingEvent = calendarEvents.find(event => eventMatchesSourceFilter(event, source));
+    const matchingEvent = calendarEvents.find(event => eventMatchesSourceFilter(event, source, reviewTypeLookup));
     const key = matchingEvent ? getMeetingTypeKey(matchingEvent) : source === 'live-session'
       ? 'live-session'
       : source === 'catch-up'
@@ -1316,12 +1411,12 @@ export default function CoachTimetablePage() {
           ? 'support'
           : 'other';
     return calendarColors.meetingTypes[key];
-  }, [calendarColors.meetingTypes, calendarEvents]);
+  }, [calendarColors.meetingTypes, calendarEvents, reviewTypeLookup]);
 
   const statusFilterColor = useCallback((status: StatusFilter) => {
     const key = status === 'all'
       ? 'all'
-      : status === 'overdue'
+      : status === 'overdue' || status === 'ended'
         ? 'missed-overdue'
       : status === 'due-soon'
         ? 'pending-due-soon'
@@ -1341,20 +1436,12 @@ export default function CoachTimetablePage() {
 
   const sourceFilteredVisibleRangeEvents = useMemo(() => {
     if (filterSource === 'all') return searchedVisibleRangeEvents;
-    return searchedVisibleRangeEvents.filter(event => eventMatchesSourceFilter(event, filterSource));
-  }, [filterSource, searchedVisibleRangeEvents]);
+    return searchedVisibleRangeEvents.filter(event => eventMatchesSourceFilter(event, filterSource, reviewTypeLookup));
+  }, [filterSource, searchedVisibleRangeEvents, reviewTypeLookup]);
 
-  const filteredEvents = useMemo(() => sourceFilteredVisibleRangeEvents.filter(e => {
-    if (filterStatus === 'overdue' && !isOverdueMetricEvent(e)) return false;
-    if (filterStatus === 'due-soon' && !isDueSoonMetricEvent(e)) return false;
-    if (filterStatus === 'needs-schedule' && !needsSchedulingMetricEvent(e)) return false;
-    if (filterStatus === 'scheduled' && !isScheduledMetricEvent(e)) return false;
-    if (filterStatus === 'in-progress' && e.status !== 'in-progress') return false;
-    if (filterStatus === 'awaiting-signature' && e.status !== 'awaiting-signature') return false;
-    if (filterStatus === 'completed' && !isCompletedMetricEvent(e)) return false;
-    if (filterStatus === 'cancelled' && e.status !== 'cancelled') return false;
-    return true;
-  }), [filterStatus, sourceFilteredVisibleRangeEvents]);
+  const filteredEvents = useMemo(() => sourceFilteredVisibleRangeEvents.filter(event => (
+    filterStatus === 'all' || eventStatusFilter(event) === filterStatus
+  )), [filterStatus, sourceFilteredVisibleRangeEvents]);
 
   const selectedDayEvents = useMemo(
     () => filteredEvents.filter(ev => ev.dayOfMonth === selectedDay && ev.month === viewMonth && ev.year === viewYear),
@@ -1381,17 +1468,11 @@ export default function CoachTimetablePage() {
         return a.startHour - b.startHour;
       });
   }, [events, todayStartTime]);
-  const statusFilterCounts: Record<StatusFilter, number> = {
-    all: sourceFilteredVisibleRangeEvents.length,
-    overdue: sourceFilteredVisibleRangeEvents.filter(event => isOverdueMetricEvent(event)).length,
-    'due-soon': sourceFilteredVisibleRangeEvents.filter(event => isDueSoonMetricEvent(event)).length,
-    'needs-schedule': sourceFilteredVisibleRangeEvents.filter(needsSchedulingMetricEvent).length,
-    scheduled: sourceFilteredVisibleRangeEvents.filter(isScheduledMetricEvent).length,
-    'in-progress': sourceFilteredVisibleRangeEvents.filter(event => event.status === 'in-progress').length,
-    'awaiting-signature': sourceFilteredVisibleRangeEvents.filter(event => event.status === 'awaiting-signature').length,
-    completed: sourceFilteredVisibleRangeEvents.filter(isCompletedMetricEvent).length,
-    cancelled: sourceFilteredVisibleRangeEvents.filter(event => event.status === 'cancelled').length,
-  };
+  const statusFilterCounts = Object.fromEntries(STATUS_FILTER_ORDER.map(status => [status, 0])) as Record<StatusFilter, number>;
+  sourceFilteredVisibleRangeEvents.forEach(event => {
+    statusFilterCounts.all += 1;
+    statusFilterCounts[eventStatusFilter(event)] += 1;
+  });
   const selectedDayLabel = `${DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, ${selectedDay} ${MONTH_NAMES[viewMonth]}`;
   const activeSourceLabel = sourceFilterOptions.find(option => option.value === filterSource)?.longLabel
     ?? NON_REVIEW_SOURCE_FILTER_LABELS.all;
@@ -1493,15 +1574,21 @@ export default function CoachTimetablePage() {
     }
     let cancelled = false;
     const controller = new AbortController();
+    setCreateSessionReviewPolicy(null);
+    setCreateSessionReviewTemplates([]);
     setCreateSessionReviewTemplatesLoading(true);
     setCreateSessionReviewTemplateId('');
     fetchLearnerAdditionReviewTemplates(createSessionLearnerId, controller.signal)
       .then(body => {
         if (cancelled) return;
-        setCreateSessionReviewTemplates(body.templates);
+        setCreateSessionReviewPolicy({ learnerId: String(body.learnerId), canAddReview: body.canAddReview === true, detail: body.detail });
+        setCreateSessionReviewTemplates(body.canAddReview === true ? body.templates : []);
       })
       .catch(() => {
-        if (!cancelled) setCreateSessionReviewTemplates([]);
+        if (!cancelled) {
+          setCreateSessionReviewTemplates([]);
+          setCreateSessionReviewPolicy({ learnerId: String(createSessionLearnerId), canAddReview: false, detail: 'Review availability could not be checked. Please try again.' });
+        }
       })
       .finally(() => {
         if (!cancelled) setCreateSessionReviewTemplatesLoading(false);
@@ -1521,6 +1608,11 @@ export default function CoachTimetablePage() {
   }, [createSessionBusy]);
 
   const openScheduleModal = useCallback((presetEvent?: TimetableEvent | null) => {
+    if (presetEvent && isImportedPersonalSupportPlan(presetEvent)) {
+      setSupportBookingEvent(presetEvent);
+      setSelectedEvent(null);
+      return;
+    }
     setScheduleModalError(null);
     setScheduleModalNotice(null);
 
@@ -1594,7 +1686,7 @@ export default function CoachTimetablePage() {
     }
 
     setPendingScheduleIntent(null);
-  }, [focusEventOnCalendar, loading, pendingScheduleIntent, schedulableEvents, setCalendarDate]);
+  }, [focusEventOnCalendar, loading, pendingScheduleIntent, schedulableEvents, setCalendarDate, calendarEvents]);
 
   useEffect(() => {
     if (!pendingFocusIntent || loading) return;
@@ -1631,7 +1723,7 @@ export default function CoachTimetablePage() {
         scheduledDate: createSessionDate,
         scheduledTime: createSessionTime,
         durationMinutes: createSessionDuration,
-        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        timezoneOffsetMinutes: ukOffsetForDate(createSessionDate),
         notes: createSessionNotes,
       });
 
@@ -1679,8 +1771,9 @@ export default function CoachTimetablePage() {
   // reuses the SAME scheduleCoachCalendarEvent helper any other generated
   // Review occurrence is booked through -- no duplicated Graph logic here.
   const handleAddLearnerReview = useCallback(async (alsoSchedule: boolean) => {
-    if (!createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate) return;
-    if (alsoSchedule && (!createSessionDate || !createSessionTime)) return;
+    if (!canAddLearnerReview || !createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate) return;
+    if (alsoSchedule && (!createSessionDate || !createSessionTime || createReviewAvailabilityLoading
+      || createReviewAvailabilityError || !createReviewTimes.includes(createSessionTime))) return;
 
     setCreateSessionBusy(true);
     setCreateSessionError(null);
@@ -1721,6 +1814,7 @@ export default function CoachTimetablePage() {
       setCreateSessionBusy(false);
     }
   }, [
+    canAddLearnerReview,
     createSessionDate,
     createSessionDuration,
     createSessionLearnerId,
@@ -1729,6 +1823,9 @@ export default function CoachTimetablePage() {
     createSessionReviewTargetDate,
     createSessionReviewTemplateId,
     createSessionTime,
+    createReviewAvailabilityError,
+    createReviewAvailabilityLoading,
+    createReviewTimes,
     focusEventOnCalendar,
     loadTimetable,
     updateSingleEvent,
@@ -1736,6 +1833,8 @@ export default function CoachTimetablePage() {
 
   const handleModalScheduleSave = useCallback(async () => {
     if (!selectedScheduleEvent?.eventKey) return;
+    if (isReviewSchedule && (scheduleReviewAvailabilityLoading || scheduleReviewAvailabilityError
+      || !scheduleReviewTimes.includes(scheduleModalTime))) return;
 
     setScheduleModalBusy(true);
     setScheduleModalError(null);
@@ -1745,11 +1844,11 @@ export default function CoachTimetablePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          eventKey: selectedScheduleEvent.eventKey,
+          eventKey: selectedScheduleEvent.calendarEventKey || selectedScheduleEvent.eventKey,
           scheduledDate: scheduleModalDate,
           scheduledTime: scheduleModalTime,
           durationMinutes: scheduleModalDuration,
-          timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+          timezoneOffsetMinutes: ukOffsetForDate(scheduleModalDate),
         }),
       });
       const data = await readApiJson<{ event: TimetableEvent; warning?: string }>(response);
@@ -1775,6 +1874,10 @@ export default function CoachTimetablePage() {
     scheduleModalDate,
     scheduleModalDuration,
     scheduleModalTime,
+    isReviewSchedule,
+    scheduleReviewAvailabilityError,
+    scheduleReviewAvailabilityLoading,
+    scheduleReviewTimes,
     selectedScheduleEvent,
     updateSingleEvent,
   ]);
@@ -1859,7 +1962,12 @@ export default function CoachTimetablePage() {
     }
   }, [progressReviewCompletionEvent, updateSingleEvent]);
 
-  const handleJoinSelectedMeeting = useCallback(() => {
+  const joinMeeting = useImportedMeetingJoin({
+    contextKey: `${coach.email}:${coach.isViewingAsCoach}:${selectedEvent?.eventKey || selectedEvent?.id}`,
+    readOnly: coach.isViewingAsCoach, onError: setEventActionError,
+    onStarted: () => { if (selectedEvent) updateSingleEvent({ ...selectedEvent, status: 'in-progress' }); },
+  });
+  const handleJoinSelectedMeeting = useCallback((navigate = true) => {
     if (!selectedEvent) return;
     const url = selectedEvent.meetingLink || selectedEvent.graphWebLink;
     if (!url) {
@@ -1870,8 +1978,12 @@ export default function CoachTimetablePage() {
       );
       return;
     }
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }, [selectedEvent]);
+    if (selectedEvent.bookingOnly) {
+      if (navigate) window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    joinMeeting(selectedEvent, navigate);
+  }, [selectedEvent, joinMeeting]);
 
   const handleEventAction = useCallback(async (action: 'start' | 'complete' | 'sign' | 'cancel') => {
     if (!selectedEvent?.eventKey) return;
@@ -2207,6 +2319,8 @@ export default function CoachTimetablePage() {
                       key={`menu-${option.value}`}
                       type="button"
                       onClick={() => setFilterSource(option.value)}
+                      aria-pressed={isActive}
+                      title={`${option.longLabel} (${option.count})`}
                       className={`calendar-filter-pill inline-flex items-center gap-2 rounded-xl border text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20 ${isActive ? 'border-[#C9B9DD] bg-[#F7F3FB] text-[#4F2D7F] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-[#D8CCE8] hover:bg-slate-50'}`}
                     >
                       <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />
@@ -2224,7 +2338,7 @@ export default function CoachTimetablePage() {
                 <p className="mt-0.5 text-[11px] text-slate-500">Track meeting status at a glance.</p>
               </div>
               <CalendarFilterScrollRow ariaLabel="Status filters">
-                {STATUS_FILTER_ORDER.filter(status => status !== 'overdue').map(status => {
+                {STATUS_FILTER_ORDER.map(status => {
                   const isActive = filterStatus === status;
                   const statusColor = statusFilterColor(status);
                   return (
@@ -2277,6 +2391,9 @@ export default function CoachTimetablePage() {
                       );
                     }
                     const eventsForDay = filteredEvents.filter(e => e.dayOfMonth === day && e.month === viewMonth && e.year === viewYear);
+                    const dayKey = formatDateInputValue(viewYear, viewMonth, day);
+                    const isExpanded = expandedMonthDays.has(dayKey);
+                    const dayEventsId = `coach-day-events-${dayKey}`;
                     const isSel = day === selectedDay;
                     const isTdy = isToday(day, viewMonth, viewYear);
                     const dateValue = new Date(viewYear, viewMonth, day).getTime();
@@ -2313,8 +2430,8 @@ export default function CoachTimetablePage() {
                             </span>
                           )}
                         </div>
-                        <div className="flex w-full flex-1 flex-col gap-1.5 overflow-hidden">
-                          {eventsForDay.slice(0, 3).map(ev => {
+                        <div id={dayEventsId} className="flex w-full flex-1 flex-col gap-1.5 overflow-hidden">
+                          {(isExpanded ? eventsForDay : eventsForDay.slice(0, 3)).map(ev => {
                             const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
                             const eventStatusKey = meetingStatusKey(ev);
                             const eventStatus = calendarColors.statuses[eventStatusKey];
@@ -2343,9 +2460,25 @@ export default function CoachTimetablePage() {
                             );
                           })}
                           {eventsForDay.length > 3 && (
-                            <span className="rounded-md bg-background-100 px-2 py-1 text-[12px] font-semibold text-foreground-500">
-                              +{eventsForDay.length - 3} more
-                            </span>
+                            <button
+                              type="button"
+                              aria-expanded={isExpanded}
+                              aria-controls={dayEventsId}
+                              aria-label={`${isExpanded ? 'Show fewer' : `Show all ${eventsForDay.length}`} events for ${day} ${MONTH_NAMES[viewMonth]} ${viewYear}`}
+                              onClick={event => {
+                                event.stopPropagation();
+                                handleDayClick(day);
+                                setExpandedMonthDays(previous => {
+                                  const next = new Set(previous);
+                                  if (next.has(dayKey)) next.delete(dayKey);
+                                  else next.add(dayKey);
+                                  return next;
+                                });
+                              }}
+                              className="rounded-md bg-background-100 px-2 py-1 text-left text-[12px] font-semibold text-foreground-500 transition-colors hover:bg-primary-100 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                            >
+                              {isExpanded ? 'Show less' : `+${eventsForDay.length - 3} more`}
+                            </button>
                           )}
                         </div>
                         {!hasEvents && (
@@ -2613,9 +2746,10 @@ export default function CoachTimetablePage() {
                           {scheduleActionLabel(selectedEvent)}
                         </button>
                   )}
-                  {selectedEventMeetingUrl && <a href={selectedEventMeetingUrl} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold"><AppIcon className="ri-video-chat-line" />Join meeting</a>}
+                  {selectedEventMeetingUrl && <a href={selectedEventMeetingUrl} onClick={() => handleJoinSelectedMeeting(false)} onAuxClick={e => { if (e.button === 1) handleJoinSelectedMeeting(false); }} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold"><AppIcon className="ri-video-chat-line" />Join meeting</a>}
                 </>}
               >
+                  {selectedEvent.bookingOnly && <BookingOnlyNotice />}
                   <div className="mb-4 overflow-hidden rounded-2xl border border-background-200 bg-white">
                     <div className="grid grid-cols-2 gap-2">
                         <EventDetailTile icon="ri-calendar-line" label="Date" value={formatEventDateLabel(selectedEvent)} />
@@ -2679,6 +2813,8 @@ export default function CoachTimetablePage() {
                     {selectedEventMeetingUrl && (
                       <a
                         href={selectedEventMeetingUrl}
+                        onClick={() => handleJoinSelectedMeeting(false)}
+                        onAuxClick={e => { if (e.button === 1) handleJoinSelectedMeeting(false); }}
                         target="_blank"
                         rel="noreferrer"
                         className="group flex items-center justify-between gap-3 rounded-lg border border-primary-100 bg-gradient-to-r from-primary-50 via-white to-background-50 px-3.5 py-3 text-left transition-smooth hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm"
@@ -2725,7 +2861,7 @@ export default function CoachTimetablePage() {
                       {(selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
                         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-primary-200/70 pt-3">
                           <button
-                            onClick={handleJoinSelectedMeeting}
+                            onClick={() => handleJoinSelectedMeeting()}
                             disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome)}
                             title={selectedEvent.meetingOutcome ? 'This session has ended.' : undefined}
                             className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
@@ -2736,7 +2872,7 @@ export default function CoachTimetablePage() {
                       )}
                     </div>
                   )}
-                  {(selectedEvent.reviewTemplateId || selectedEvent.reviewSource === 'aptem') && (
+                  {!selectedEvent.bookingOnly && (selectedEvent.reviewTemplateId || selectedEvent.reviewSource === 'aptem') && (
                     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-secondary-200 bg-secondary-50 p-4 sm:flex-row sm:items-center">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary-100 text-secondary-700">
                         <AppIcon className="ri-survey-line"></AppIcon>
@@ -2755,7 +2891,7 @@ export default function CoachTimetablePage() {
                       </button>
                     </div>
                   )}
-                  {!isLiveSessionEvent(selectedEvent) && canEditScheduleEvent(selectedEvent) && (
+                  {!isLiveSessionEvent(selectedEvent) && canEditScheduleEvent(selectedEvent) && !isImportedPersonalSupportPlan(selectedEvent) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <h4 className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-foreground-700">
@@ -2803,7 +2939,7 @@ export default function CoachTimetablePage() {
                         {selectedEvent.status === 'scheduled' && (
                         <button
                           onClick={() => {
-                            if (selectedEvent.reviewTemplateId) {
+                            if (selectedEvent.reviewTemplateId || isImportedJoin(selectedEvent)) {
                               handleJoinSelectedMeeting();
                               return;
                             }
@@ -2814,7 +2950,7 @@ export default function CoachTimetablePage() {
                           title={selectedEvent.meetingOutcome ? 'This meeting has ended.' : undefined}
                           className="rounded-lg bg-emerald-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
-                          <AppIcon className="ri-play-circle-line mr-1"></AppIcon>{selectedEvent.reviewTemplateId ? 'Join' : 'Start'}
+                          <AppIcon className="ri-play-circle-line mr-1"></AppIcon>{selectedEvent.reviewTemplateId || isImportedJoin(selectedEvent) ? 'Join' : 'Start'}
                           </button>
                         )}
                         {selectedEvent.status === 'scheduled' && selectedEvent.reviewTemplateId && (
@@ -2829,7 +2965,7 @@ export default function CoachTimetablePage() {
                         )}
                         {selectedEvent.status === 'in-progress' && (selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
                           <button
-                            onClick={handleJoinSelectedMeeting}
+                            onClick={() => handleJoinSelectedMeeting()}
                             disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome)}
                             title={selectedEvent.meetingOutcome ? 'This meeting has ended.' : undefined}
                             className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
@@ -2864,7 +3000,7 @@ export default function CoachTimetablePage() {
                       </div>
                     </div>
                   )}
-                  {selectedEvent.status === 'awaiting-signature' && selectedEvent.source === 'progress-review' && (
+                  {!selectedEvent.bookingOnly && selectedEvent.status === 'awaiting-signature' && selectedEvent.source === 'progress-review' && (
                     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-700">
                         <AppIcon className="ri-pen-nib-line"></AppIcon>
@@ -3246,12 +3382,30 @@ export default function CoachTimetablePage() {
                   <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">
                     {createSessionType === 'review' ? 'Meeting time (for Add & Schedule)' : 'Time'}
                   </span>
-                  <input
-                    type="time"
-                    value={createSessionTime}
-                    onChange={event => setCreateSessionTime(event.target.value)}
-                    className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
-                  />
+                  {createSessionType === 'review' ? (
+                    <>
+                      <select
+                        aria-label="Meeting time (UK time, Europe/London)"
+                        value={createSessionTime}
+                        disabled={createReviewAvailabilityLoading || Boolean(createReviewAvailabilityError) || !createReviewTimes.length}
+                        onChange={event => setCreateSessionTime(event.target.value)}
+                        className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      >
+                        <option value="">{createReviewAvailabilityLoading ? 'Checking coach availability…' : 'Select an available UK time'}</option>
+                        {createReviewTimes.map(time => <option key={time} value={time}>{time}</option>)}
+                      </select>
+                      <span className="mt-1 block text-xs text-foreground-500">UK time (Europe/London)</span>
+                      {createReviewAvailabilityError && <span role="alert" className="mt-1 block text-xs text-red-700">{createReviewAvailabilityError} <button type="button" className="font-semibold underline" onClick={() => setCreateReviewAvailabilityRevision(value => value + 1)}>Retry</button></span>}
+                      {!createReviewAvailabilityLoading && !createReviewAvailabilityError && createSessionDate && !createReviewTimes.length && <span role="status" className="mt-1 block text-xs text-foreground-500">No available Review times for this date and duration.</span>}
+                    </>
+                  ) : (
+                    <input
+                      type="time"
+                      value={createSessionTime}
+                      onChange={event => setCreateSessionTime(event.target.value)}
+                      className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                    />
+                  )}
                 </label>
               </section>
 
@@ -3292,6 +3446,10 @@ export default function CoachTimetablePage() {
                 </div>
               )}
 
+              {createSessionType === 'review' && createSessionReviewPolicy?.learnerId === String(createSessionLearnerId) && createSessionReviewPolicy.detail && (
+                <p role="status" className="text-sm text-foreground-600">{createSessionReviewPolicy.detail}</p>
+              )}
+
               <div className="flex flex-wrap items-center justify-end gap-3 border-t border-background-200/70 pt-3">
                 <button
                   type="button"
@@ -3305,7 +3463,7 @@ export default function CoachTimetablePage() {
                     <button
                       type="button"
                       onClick={() => void handleAddLearnerReview(false)}
-                      disabled={createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate}
+                      disabled={!canAddLearnerReview || createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate}
                       className="inline-flex items-center gap-2 rounded-lg border border-primary-300 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-smooth hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <AppIcon className={`${createSessionBusy ? 'ri-loader-4-line animate-spin' : 'ri-file-add-line'} text-base`}></AppIcon>
@@ -3315,8 +3473,9 @@ export default function CoachTimetablePage() {
                       type="button"
                       onClick={() => void handleAddLearnerReview(true)}
                       disabled={
-                        createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId
+                        !canAddLearnerReview || createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId
                         || !createSessionReviewTargetDate || !createSessionDate || !createSessionTime
+                        || createReviewAvailabilityLoading || Boolean(createReviewAvailabilityError) || !createReviewTimes.includes(createSessionTime)
                       }
                       className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -3533,11 +3692,25 @@ export default function CoachTimetablePage() {
                     </label>
 
                     <label className="block">
-                      <ScheduleFieldLabel>Time</ScheduleFieldLabel>
-                      <ScheduleTimeInput
-                        value={scheduleModalTime}
-                        onChange={setScheduleModalTime}
-                      />
+                      <ScheduleFieldLabel>{isReviewSchedule ? 'Time (UK time · Europe/London)' : 'Time'}</ScheduleFieldLabel>
+                      {isReviewSchedule ? (
+                        <>
+                          <select
+                            aria-label="Schedule time (UK time, Europe/London)"
+                            value={scheduleModalTime}
+                            disabled={scheduleReviewAvailabilityLoading || Boolean(scheduleReviewAvailabilityError) || !scheduleReviewTimes.length}
+                            onChange={event => setScheduleModalTime(event.target.value)}
+                            className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          >
+                            <option value="">{scheduleReviewAvailabilityLoading ? 'Checking coach availability…' : 'Select an available UK time'}</option>
+                            {scheduleReviewTimes.map(time => <option key={time} value={time}>{time}</option>)}
+                          </select>
+                          {scheduleReviewAvailabilityError && <p role="alert" className="mt-1 text-xs text-red-700">{scheduleReviewAvailabilityError} <button type="button" className="font-semibold underline" onClick={() => setScheduleReviewAvailabilityRevision(value => value + 1)}>Retry</button></p>}
+                          {!scheduleReviewAvailabilityLoading && !scheduleReviewAvailabilityError && scheduleModalDate && !scheduleReviewTimes.length && <p role="status" className="mt-1 text-xs text-foreground-500">No available Review times for this date and duration.</p>}
+                        </>
+                      ) : (
+                        <ScheduleTimeInput value={scheduleModalTime} onChange={setScheduleModalTime} />
+                      )}
                     </label>
 
                     <label className="block">
@@ -3597,7 +3770,8 @@ export default function CoachTimetablePage() {
                   <button
                     type="button"
                     onClick={handleModalScheduleSave}
-                    disabled={scheduleModalBusy || !selectedScheduleEvent || !scheduleModalDate || !scheduleModalTime}
+                    disabled={scheduleModalBusy || !selectedScheduleEvent || !scheduleModalDate || !scheduleModalTime
+                      || (isReviewSchedule && (scheduleReviewAvailabilityLoading || Boolean(scheduleReviewAvailabilityError) || !scheduleReviewTimes.includes(scheduleModalTime)))}
                     className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <AppIcon className={`${scheduleModalBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></AppIcon>
@@ -3628,6 +3802,26 @@ export default function CoachTimetablePage() {
         onSave={handleCalendarColorsSave}
         activeMeetingTypeKeys={activeMeetingTypeKeys}
       />
+      {supportBookingEvent && <ImportedReviewBookingDialog
+        event={supportBookingEvent as CoachCalendarEvent}
+        viewingAsCoach={coach.isViewingAsCoach}
+        onClose={() => setSupportBookingEvent(null)}
+        onSaved={(saved, notice, options) => {
+          const day = new Date(`${saved.scheduledDate}T00:00:00`);
+          const [hour, minute] = (saved.scheduledTime || '09:00').split(':').map(Number);
+          const startHour = hour + minute / 60;
+          const updated = { ...supportBookingEvent, ...saved, date: saved.scheduledDate || undefined,
+            year: day.getFullYear(), month: day.getMonth(), dayOfMonth: day.getDate(),
+            dayOfWeek: ((day.getDay() + 6) % 7) as TimetableEvent['dayOfWeek'],
+            startHour, endHour: startHour + (saved.durationMinutes || 60) / 60,
+            isTimeEstimated: false,
+          } as TimetableEvent;
+          updateSingleEvent(updated);
+          focusEventOnCalendar(updated);
+          setEventActionNotice(notice);
+          if (!options?.keepOpen) setSupportBookingEvent(null);
+        }}
+      />}
     </WorkspaceShell>
   );
 }

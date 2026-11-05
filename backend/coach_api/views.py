@@ -1,3 +1,4 @@
+from .review_sources import native_review_creation_policy, require_native_review_creation, ReviewCreationBlocked
 import json
 import logging
 from time import perf_counter
@@ -31,7 +32,7 @@ from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
-from django.views.decorators.http import require_GET, require_http_methods
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from coach_api.auth import (
     attributed_write_view,
@@ -49,9 +50,11 @@ from coach_api.cache.learners import (
     release_caseload_lock,
 )
 from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachDashboardSnapshot, CoachManualAttendance, ImportedReviewInstance
+from coach_api import imported_booking_state
 from coach_api.migrated_reviews import (
     EDITABLE_STATUSES as MIGRATED_EDITABLE_STATUSES,
     booking_event_type as migrated_booking_event_type,
+    has_lms_completion_history,
     initial_local_status, programme_key as migrated_programme_key,
     render_sections as render_migrated_sections,
     review_family as migrated_review_family,
@@ -520,6 +523,19 @@ def review_type_fields_by_template(template_ids) -> dict:
         # never their calendar.
         logger.warning("Could not resolve Review Types for the coach calendar.", exc_info=True)
         return {}
+
+
+def review_titles_by_template(template_ids) -> dict[str, str]:
+    """Read live template names once for a calendar list, including retired templates."""
+    wanted = sorted({clean_text(value) for value in template_ids if clean_text(value)})
+    if not wanted:
+        return {}
+    return {
+        row['id']: clean_text(row.get('name'))
+        for row in curriculum_reviews.get_review_template_rows(
+            f"id in ({', '.join(['%s'] * len(wanted))})", wanted, include_deleted=True,
+        )
+    }
 
 
 def resolve_curriculum_programme_id(programme_name: str | None) -> str | None:
@@ -1058,6 +1074,13 @@ def microsoft_graph_request(
     attendee on each write to a meeting, which turns a routine per-instance
     reconciliation into one message per instance per person.
     """
+    from .graph_transport import GraphRequestError, html_error_details, read_graph_response, retry_after_seconds
+    from curriculum_api.teams_original_calendar import current_calendar
+    original = current_calendar()
+    if original and original.path(path) is not None:
+        return original.request(method, path, payload=payload, headers=extra_headers)
+    if original:
+        original.check_application_request(method, path)
     started = perf_counter()
     settings = get_graph_settings()
     try:
@@ -1087,8 +1110,7 @@ def microsoft_graph_request(
 
     request = urllib_request.Request(url, data=body, headers=headers, method=method.upper())
     try:
-        with urllib_request.urlopen(request, timeout=25) as response:
-            raw = response.read().decode("utf-8")
+        raw = read_graph_response(request, opener=urllib_request.urlopen).decode("utf-8")
     except urllib_error.HTTPError as exc:
         metric_event(
             "graph_call",
@@ -1118,7 +1140,7 @@ def microsoft_graph_request(
                         or ""
                     ).strip()
         except (TypeError, ValueError, json.JSONDecodeError):
-            graph_message = detail[:1500].strip()
+            graph_code, graph_message = html_error_details(detail, exc.code)
         if not request_id and exc.headers:
             request_id = str(
                 exc.headers.get("request-id")
@@ -1132,17 +1154,20 @@ def microsoft_graph_request(
             diagnostics.append(f"message={graph_message}")
         if request_id:
             diagnostics.append(f"request-id={request_id}")
-        raise RuntimeError(
-            f"Microsoft Graph {method.upper()} {path} failed: {'; '.join(diagnostics)}"
+        raise GraphRequestError(
+            f"Microsoft Graph {method.upper()} {path} failed: {'; '.join(diagnostics)}",
+            status=exc.code, retry_after=retry_after_seconds(exc.headers), request_id=request_id,
+            uncertain=getattr(exc, 'graph_write_uncertain', method.upper() not in ('GET', 'HEAD') and exc.code >= 500),
         ) from exc
-    except urllib_error.URLError as exc:
+    except (urllib_error.URLError, TimeoutError) as exc:
         metric_event(
             "graph_call",
             method=method.upper(),
             graph_status="network_error",
             latency_ms=round((perf_counter() - started) * 1000, 1),
         )
-        raise RuntimeError(f"Microsoft Graph {method.upper()} {path} failed: {exc}") from exc
+        raise GraphRequestError(f"Microsoft Graph {method.upper()} {path} failed: Microsoft could not be reached.",
+                                uncertain=method.upper() not in ('GET', 'HEAD')) from exc
 
     metric_event(
         "graph_call",
@@ -2062,11 +2087,22 @@ def fetch_caseload_timetable_profiles(owner_email: str) -> list[LearnerProfile]:
             "lifecycle_status", "coach_name", "coach_email", "start_date", "end_date",
             "gateway_review_date", "learner_type", "enrolment_id", "aptem_id",
         )
-        .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
     rows = [row for row in queryset if clean_text(row.username)]
-    attach_caseload_source_rows(rows)
+    # Calendar projection needs identity, schedule and PR contacts, not full
+    # training plans, evidence or dashboard contract metrics. Keep the source
+    # request-local so review generation can reuse the same identity snapshot.
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows, fields=(
+        "id", "learner_type", "aptem_id", "start_date", "end_date",
+        "learner_start_date", "learner_end_date", "apprenticeship_end_date",
+        "practical_period_end_date", "employer_id", "line_manager",
+        "employer", "organization", "contacts",
+    ))
+    for row in rows:
+        row._caseload_source = resolve_caseload_source_row(
+            row, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
+        )
     return rows
 
 
@@ -2257,6 +2293,7 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
             "otjh_status",
             "programme_status",
             "lifecycle_status",
+            "learner_type",
             "enrolment_id",
             "aptem_id",
         )
@@ -2355,11 +2392,19 @@ def coach_learner_personal_calendar_conflicts(
     scheduled_time: time,
     duration_minutes: int,
     timezone_offset_minutes: int = 0,
+    *, exclude_record=None, business_time_zone=None,
 ) -> bool:
     identity = learner_calendar_source_identity(learner)
     if not identity:
         return False
     kind, source_id = identity
+    exclusion = {} if exclude_record is None else {
+        "exclude_scheduled_date": exclude_record.scheduled_date,
+        "exclude_scheduled_time": exclude_record.scheduled_time,
+        "exclude_duration_minutes": exclude_record.duration_minutes,
+    }
+    if business_time_zone:
+        exclusion["business_time_zone"] = business_time_zone
     return personal_calendar_booking_conflicts(
         kind,
         source_id,
@@ -2367,6 +2412,7 @@ def coach_learner_personal_calendar_conflicts(
         scheduled_time,
         duration_minutes,
         timezone_offset_minutes,
+        **exclusion,
     )
 
 
@@ -2732,7 +2778,15 @@ def apply_latest_learning_activity(payload: dict, activity: dict | None) -> dict
     return payload
 
 
-def fetch_caseload_aptem_ids(learners) -> dict[int, int]:
+class ReviewEnrolmentIdentityUnavailable(DatabaseError):
+    """A successful identity lookup found missing referenced enrolment rows."""
+
+    def __init__(self, profile_ids):
+        super().__init__("Review enrolment identity unavailable")
+        self.profile_ids = frozenset(profile_ids)
+
+
+def fetch_caseload_aptem_ids(learners, *, strict=False) -> dict[int, int]:
     """LearnerProfile id -> Aptem id, loading only the columns that needs.
 
     ``fetch_source_schedule_rows`` answers the same identity question but
@@ -2741,6 +2795,7 @@ def fetch_caseload_aptem_ids(learners) -> dict[int, int]:
     Aptem bridge, so this deferred-column variant keeps the dashboard's first
     paint from paying for columns nobody reads.
     """
+    learners = list(learners or [])
     profile_ids_by_enrolment = {
         int(learner.enrolment_id): int(learner.id)
         for learner in learners or []
@@ -2757,9 +2812,19 @@ def fetch_caseload_aptem_ids(learners) -> dict[int, int]:
         )
         pairs = list(source_rows)
     except DatabaseError as exc:
+        if strict:
+            raise
         logger.warning("Could not resolve caseload Aptem ids: %s", exc)
         return {}
 
+    missing_enrolments = set(profile_ids_by_enrolment) - {int(pk) for pk, _ in pairs}
+    if strict and missing_enrolments:
+        raise ReviewEnrolmentIdentityUnavailable(
+            int(learner.id) for learner in learners
+            if getattr(learner, "id", None) is not None
+            and getattr(learner, "enrolment_id", None) is not None
+            and int(learner.enrolment_id) in missing_enrolments
+        )
     aptem_by_profile: dict[int, int] = {}
     for enrolment_id, aptem_id in pairs:
         profile_id = profile_ids_by_enrolment.get(int(enrolment_id))
@@ -2769,7 +2834,7 @@ def fetch_caseload_aptem_ids(learners) -> dict[int, int]:
     return aptem_by_profile
 
 
-def resolve_effective_aptem_ids(rows) -> tuple[dict[int, int], set[int]]:
+def resolve_effective_aptem_ids(rows, *, strict=False) -> tuple[dict[int, int], set[int]]:
     """Resolve Aptem identity by stable ids only.
 
     Created_users.aptem_id is authoritative when present and the profile copy
@@ -2781,7 +2846,7 @@ def resolve_effective_aptem_ids(rows) -> tuple[dict[int, int], set[int]]:
 
     rows = list(rows or [])
     unresolved = [row for row in rows if getattr(row, "_caseload_source", None) is None]
-    fetched = fetch_caseload_aptem_ids(unresolved) if unresolved else {}
+    fetched = (fetch_caseload_aptem_ids(unresolved, strict=True) if strict else fetch_caseload_aptem_ids(unresolved)) if unresolved else {}
     aptem_by_profile: dict[int, int] = {}
     conflicts: set[int] = set()
     for row in rows:
@@ -6066,6 +6131,7 @@ def build_catchup_calendar_event(
     owner_name: str | None = None,
     learner: LearnerProfile | None = None,
     review_type_fields: dict | None = None,
+    review_titles: dict[str, str] | None = None,
 ) -> dict:
     """``review_type_fields`` is review_type_fields_by_template()'s batch,
     passed by callers shaping a whole list. A single-event caller can omit it
@@ -6093,7 +6159,10 @@ def build_catchup_calendar_event(
         "review": "Review",
     }.get(event_type, event_type.replace("-", " ").title())
     if is_curriculum_review:
-        event_title = resolve_review_display_title(event_type, review_template_id)
+        event_title = (
+            (review_titles.get(review_template_id) or resolve_review_display_title(event_type, None))
+            if review_titles is not None else resolve_review_display_title(event_type, review_template_id)
+        )
     target_date = record.target_date or record.scheduled_date or date.today()
     display_date = record.scheduled_date or target_date
     duration_minutes = record.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES
@@ -6128,6 +6197,7 @@ def build_catchup_calendar_event(
         )
     )
 
+    from .booking_reservations import review_occupies_slot
     return {
         "eventKey": record.event_key,
         "id": record.event_key,
@@ -6162,6 +6232,7 @@ def build_catchup_calendar_event(
         "timeLabel": time_label,
         "isTimeEstimated": is_time_estimated,
         "priority": generated_event_priority(record.status, target_date, display_date),
+        "bookingReserved": review_occupies_slot(record),
         "status": record.status,
         "sourceStatus": schedule_status_label(record.status),
         "rawPlanned": target_date.isoformat(),
@@ -6210,12 +6281,13 @@ def imported_review_calendar_rows(owner_email, event_key, *, lock=False):
     if lock:
         query = query.select_for_update()
     records = list(query[:2])
-    if records:
-        return records
+    from .reconciliation_links import records_for_key
+    records.extend(records_for_key(event_key, lock=lock))
     from .local_mcm_bookings import legacy_mcm_calendar_records
     # As with canonical keys, return a former coach's exact booking so the
     # caller's ownership check blocks a second meeting after reassignment.
-    return legacy_mcm_calendar_records(None, [event_key], lock=lock).get(event_key, [])
+    records.extend(legacy_mcm_calendar_records(None, [event_key], lock=lock).get(event_key, []))
+    return list({record.pk: record for record in records}.values())
 
 
 def fetch_catchup_event_records(owner_email: str) -> list[CoachCalendarEvent]:
@@ -6508,8 +6580,10 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None,
     graph_web_link = clean_text(record.graph_web_link) if meeting_visible else ""
     meeting_provider = clean_text(record.meeting_provider) if meeting_visible else ""
 
+    from .booking_reservations import review_occupies_slot
     event.update(
         {
+            "bookingReserved": review_occupies_slot(record),
             "id": base_event["eventKey"],
             "date": display_date.isoformat(),
             "year": display_date.year,
@@ -7199,7 +7273,7 @@ def serialize_coach_meeting_artifact(artifact_type: str, artifact: dict) -> dict
 
 
 def public_coach_meeting_artifact(artifact: dict) -> dict:
-    return {
+    public = {
         key: value
         for key, value in artifact.items()
         if key not in {
@@ -7210,6 +7284,11 @@ def public_coach_meeting_artifact(artifact: dict) -> dict:
             "transcript_fetch_error",
         }
     }
+    metadata = public.get("metadata")
+    if isinstance(metadata, dict) and "_lms_booking_fingerprint" in metadata:
+        public["metadata"] = {key: value for key, value in metadata.items()
+                               if key != "_lms_booking_fingerprint"}
+    return public
 
 
 def coach_meeting_attendance_seconds(record: dict) -> int:
@@ -7274,26 +7353,9 @@ def serialize_coach_meeting_attendance_report(report: dict, detail: dict) -> dic
 
 
 def coach_meeting_record_learner(record: CoachCalendarEvent) -> LearnerProfile | None:
-    learner_id = getattr(record, "learner_id", None)
-    if learner_id in (None, ""):
-        return None
+    from .review_sources import meeting_profile
     try:
-        learner_id = int(learner_id)
-    except (TypeError, ValueError):
-        return None
-    try:
-        return (
-            LearnerProfile.objects.filter(id=learner_id)
-            .only(
-                "id",
-                "full_name",
-                "email",
-                "programme",
-                "learner_type",
-                "lifecycle_status",
-            )
-            .first()
-        )
+        return meeting_profile(record)
     except DatabaseError:
         return None
 
@@ -7483,6 +7545,11 @@ def apply_teams_attendance_status_transition(record: CoachCalendarEvent, attenda
     joined_at = _review_instance_confirmed_join_at(record, attendance_records)
     if joined_at is None:
         return False
+    from .reconciliation_links import for_calendar
+    # Imported continuation has its own explicit start/submit/sign lifecycle.
+    # Attendance remains stored against this same meeting, never the Native form.
+    if for_calendar(record):
+        return False
     updated = curriculum_review_instances.mark_review_instance_in_progress_from_attendance(
         record.review_instance_id, started_at=joined_at, actor="teams-attendance-sync",
     )
@@ -7669,7 +7736,7 @@ def uploaded_coach_meeting_transcript_text(upload) -> str:
     return transcript_text
 
 
-def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
+def fetch_coach_meeting_transcript_content(base: str, artifact_id: str, *, safe_diagnostics=False) -> dict:
     graph_settings = get_graph_settings()
     path = (
         f"{base}/transcripts/"
@@ -7687,8 +7754,11 @@ def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
         content = graph_response.read()
         graph_response.close()
     except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")
-        logger.warning("Unable to fetch coach Teams transcript content: %s %s", exc.code, detail)
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: transcript content unavailable (HTTP %s).", exc.code)
+        else:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            logger.warning("Unable to fetch coach Teams transcript content: %s %s", exc.code, detail)
         return {
             "transcript_vtt": "",
             "transcript_text": "",
@@ -7696,7 +7766,10 @@ def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
             "transcript_fetch_error": f"Microsoft Graph returned {exc.code} for transcript content.",
         }
     except urllib_error.URLError as exc:
-        logger.warning("Unable to fetch coach Teams transcript content: %s", exc)
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: transcript content unavailable (network).")
+        else:
+            logger.warning("Unable to fetch coach Teams transcript content: %s", exc)
         return {
             "transcript_vtt": "",
             "transcript_text": "",
@@ -7776,12 +7849,14 @@ def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
         with connections[database].cursor() as cursor:
             cursor.execute(
                 f"""
-                SELECT current_summary, status, generated_at, edited_at, edited_by, model, error
+                SELECT current_summary, status, generated_at, edited_at, edited_by, model, error,
+                       graph_event_id, transcript_artifact_id, transcript_hash
                 FROM {COACH_MEETING_SUMMARIES_RELATION}
-                WHERE event_key = %s
+                WHERE event_key = %s AND calendar_event_id = %s AND owner_email = %s
+                  AND learner_id IS NOT DISTINCT FROM %s
                 LIMIT 1
                 """,
-                [record.event_key],
+                [record.event_key, record.pk, clean_email(record.owner_email), record.learner_id],
             )
             row = cursor.fetchone()
     except Exception:
@@ -7790,6 +7865,15 @@ def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
     if not row:
         return None
     summary = parse_jsonish(row[0], {})
+    from .migrated_session_scope import session_provenance
+    if clean_text(row[7]) != clean_text(record.graph_event_id):
+        return None
+    if summary.get('_lmsSession') and summary['_lmsSession'] != session_provenance(record):
+        return None
+    transcript = stored_coach_meeting_transcript_for_summary(record)
+    if (not transcript or clean_text(row[8]) != transcript['artifactId']
+            or clean_text(row[9]) != hashlib.sha256(transcript['text'].encode('utf-8')).hexdigest()):
+        return None
     return {
         "summary": normalize_meeting_summary_payload(summary, record.event_type),
         "status": clean_text(row[1]) or "ready",
@@ -7801,10 +7885,10 @@ def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
     }
 
 
-def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
+def stored_coach_meeting_snapshot(record: CoachCalendarEvent, *, database=None, safe_diagnostics=False) -> dict:
     """Return the latest persisted Teams snapshot without contacting Graph."""
 
-    database = router.db_for_read(CoachCalendarEvent) or "default"
+    database = database or router.db_for_read(CoachCalendarEvent) or "default"
     expected_attendees = coach_meeting_expected_attendees(record)
     empty_tracker = build_coach_meeting_attendance_tracker(
         expected_attendees,
@@ -7845,7 +7929,8 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
                     created_datetime,
                     end_datetime,
                     metadata,
-                    last_seen_at
+                    last_seen_at,
+                    graph_event_id
                 FROM {COACH_MEETING_ARTIFACTS_RELATION}
                 WHERE event_key = %s
                 ORDER BY COALESCE(end_datetime, created_datetime) DESC NULLS LAST, updated_at DESC
@@ -7866,10 +7951,10 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
                     metadata,
                     last_seen_at
                 FROM {COACH_MEETING_ATTENDANCE_REPORTS_RELATION}
-                WHERE event_key = %s
+                WHERE event_key = %s AND graph_event_id = %s
                 ORDER BY COALESCE(meeting_end_datetime, meeting_start_datetime) DESC NULLS LAST, updated_at DESC
                 """,
-                [record.event_key],
+                [record.event_key, record.graph_event_id],
             )
             report_rows = cursor.fetchall()
 
@@ -7899,7 +7984,10 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
             )
             attendance_rows = cursor.fetchall()
     except Exception:
-        logger.exception("Unable to read stored coach Teams snapshot for event_key=%s", record.event_key)
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: stored snapshot unavailable.")
+        else:
+            logger.exception("Unable to read stored coach Teams snapshot for event_key=%s", record.event_key)
         snapshot = dict(empty_snapshot)
         snapshot["errors"] = ["Stored Teams artifacts could not be loaded."]
         snapshot["partial"] = True
@@ -7920,7 +8008,7 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
                 "content_correlation_id": clean_text(row[3]),
                 "created_datetime": row[4].isoformat() if row[4] else "",
                 "end_datetime": row[5].isoformat() if row[5] else "",
-                "metadata": parse_jsonish(row[6], {}),
+                "metadata": {**parse_jsonish(row[6], {}), '_lms_graph_event_id': clean_text(row[8])},
             }
         )
 
@@ -7946,6 +8034,11 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent) -> dict:
                 "attendedCount": max(parse_int(row[4], 0), 0),
                 "absentCount": max(parse_int(row[5], 0), 0),
                 "records": report_records,
+                **({'_lms_verified_online_meeting_id': metadata['_lms_verified_online_meeting_id'],
+                    '_lms_graph_event_id': record.graph_event_id,
+                    **({'_lms_booking_fingerprint': metadata['_lms_booking_fingerprint']}
+                       if metadata.get('_lms_booking_fingerprint') else {})}
+                   if isinstance(metadata, dict) and metadata.get('_lms_verified_online_meeting_id') else {}),
             }
         )
 
@@ -8085,7 +8178,57 @@ def combine_coach_meeting_transcript_rows(rows: list[tuple[str, str]]) -> dict |
     }
 
 
-def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> dict | None:
+def coach_meeting_transcript_selection(record: CoachCalendarEvent) -> dict:
+    from .migrated_session_scope import stored_transcript_selection
+    return stored_transcript_selection(record, stored_coach_meeting_snapshot(record))
+
+
+def native_review_summary_transcript_ids(record: CoachCalendarEvent) -> list[str] | None:
+    """Select all transcripts from a native review's current Teams event.
+
+    None delegates to the existing session-based selection (including imported
+    reviews); an empty list means the native event has no usable transcripts.
+    """
+    if (not clean_text(getattr(record, 'review_instance_id', ''))
+            or not clean_text(getattr(record, 'event_key', '')).startswith('review:')
+            or clean_text(getattr(record, 'event_type', '')).lower() not in {'mcr', 'progress-review'}):
+        return None
+    from .reconciliation_links import for_calendar
+    if for_calendar(record):
+        return None
+    graph_event_id = clean_text(getattr(record, 'graph_event_id', ''))
+    if not graph_event_id:
+        return []
+    from .review_rescheduling import current_evidence
+    snapshot = current_evidence(record, stored_coach_meeting_snapshot(record))
+    transcripts = {}
+    conflicts = set()
+    for artifact in snapshot.get('artifacts') or []:
+        if not isinstance(artifact, dict) or artifact.get('artifact_type') != 'transcript':
+            continue
+        metadata = artifact.get('metadata')
+        if not isinstance(metadata, dict) or metadata.get('_lms_graph_event_id') != graph_event_id:
+            continue
+        artifact_id = clean_text(artifact.get('graph_artifact_id'))
+        if not artifact_id:
+            continue
+        identity = (artifact.get('call_id'), artifact.get('created_datetime'), artifact.get('end_datetime'))
+        if artifact_id in transcripts and transcripts[artifact_id] != identity:
+            conflicts.add(artifact_id)
+        transcripts[artifact_id] = identity
+    return [] if conflicts else sorted(transcripts)
+
+
+def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent, *, artifact_ids=None) -> dict | None:
+    require_all_native_transcripts = False
+    if artifact_ids is None:
+        artifact_ids = native_review_summary_transcript_ids(record)
+        require_all_native_transcripts = artifact_ids is not None
+        if artifact_ids is None:
+            artifact_ids = coach_meeting_transcript_selection(record)['artifactIds']
+    if not artifact_ids:
+        return None
+    artifact_filter = (" AND graph_artifact_id IN (" + ",".join(["%s"] * len(artifact_ids)) + ")") if artifact_ids is not None else ""
     database = router.db_for_read(CoachCalendarEvent) or "default"
     if (
         not coach_meeting_snapshot_tables_ready(database)
@@ -8101,14 +8244,18 @@ def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> d
                 WHERE event_key = %s
                   AND artifact_type = 'transcript'
                   AND transcript_text <> ''
+                  AND graph_event_id = %s
+                  {artifact_filter}
                 ORDER BY COALESCE(created_datetime, end_datetime) ASC NULLS LAST,
                          graph_artifact_id ASC
                 """,
-                [record.event_key],
+                [record.event_key, record.graph_event_id, *(artifact_ids or [])],
             )
             rows = cursor.fetchall()
     except Exception:
         logger.exception("Unable to read stored coach Teams transcript text for event_key=%s", record.event_key)
+        return None
+    if require_all_native_transcripts and {clean_text(row[0]) for row in rows} != set(artifact_ids):
         return None
     return combine_coach_meeting_transcript_rows(rows)
 
@@ -8240,6 +8387,9 @@ def ensure_coach_meeting_summary(
     transcript = stored_coach_meeting_transcript_for_summary(record)
     if not transcript:
         return stored_coach_meeting_summary(record)
+    if (len(transcript['text']) > COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS
+            and native_review_summary_transcript_ids(record) is not None):
+        return None
     transcript_hash = hashlib.sha256(transcript["text"].encode("utf-8")).hexdigest()
 
     try:
@@ -8258,12 +8408,17 @@ def ensure_coach_meeting_summary(
         logger.exception("Unable to inspect coach meeting summary for event_key=%s", record.event_key)
         return None
 
-    if should_reuse_coach_meeting_summary(
+    cached = stored_coach_meeting_summary(record) if existing else None
+    if existing and clean_text(existing[1]) == 'edited':
+        # Retain a historical edited cache unchanged even when its source no
+        # longer matches. It cannot be relabelled as the current session.
+        return cached
+    if cached and should_reuse_coach_meeting_summary(
         existing,
         transcript_hash,
         retry_failed=retry_failed,
     ):
-        return stored_coach_meeting_summary(record)
+        return cached
 
     now = timezone.now()
     try:
@@ -8272,12 +8427,14 @@ def ensure_coach_meeting_summary(
         error = ""
     except Exception as exc:  # noqa: BLE001 - stored as a user-visible sync state
         logger.exception("Unable to generate coach meeting summary for event_key=%s", record.event_key)
-        fallback = existing[2] if existing else {}
+        fallback = cached['summary'] if cached else {}
         summary = normalize_meeting_summary_payload(fallback, record.event_type)
         model = COACH_MEETING_SUMMARY_MODEL
         status = "failed"
         error = clean_text(exc)
 
+    from .migrated_session_scope import session_provenance
+    summary = {**summary, '_lmsSession': session_provenance(record)}
     try:
         with transaction.atomic(using=database), connections[database].cursor() as cursor:
             cursor.execute(
@@ -8335,6 +8492,7 @@ def ensure_coach_meeting_summary(
                     generated_at = EXCLUDED.generated_at,
                     error = EXCLUDED.error,
                     updated_at = EXCLUDED.updated_at
+                WHERE summary_target.status <> 'edited'
                 """,
                 [
                     getattr(record, "id", None),
@@ -8393,8 +8551,21 @@ def persist_coach_meeting_snapshots(
     artifacts: list[dict],
     attendance_reports: list[dict],
     attendance_tracker: dict,
+    imported_refresh: dict | None = None,
+    safe_diagnostics=False,
+    calendar_locked=False,
 ) -> dict:
     """Persist a latest-known Teams snapshot when the manual SQL tables exist."""
+
+    if imported_refresh is not None:
+        from .migrated_session_scope import persist_imported_snapshot
+        snapshot = {**imported_refresh['snapshot'], 'artifacts': artifacts,
+                    'attendanceReports': attendance_reports, 'attendanceTracker': attendance_tracker}
+        return persist_imported_snapshot(record, snapshot,
+            expected_version=imported_refresh['expected_version'], revalidate=imported_refresh.get('revalidate'),
+            preserve_existing=imported_refresh.get('preserve_existing', False),
+            context=imported_refresh.get('context'), start_review=imported_refresh.get('start_review'),
+            session=imported_refresh.get('session'), meeting_id=imported_refresh.get('meeting_id'))
 
     database = router.db_for_write(CoachCalendarEvent) or "default"
     if not coach_meeting_snapshot_tables_ready(database):
@@ -8413,6 +8584,13 @@ def persist_coach_meeting_snapshots(
 
     try:
         with transaction.atomic(using=database), connections[database].cursor() as cursor:
+            if not calendar_locked and record.event_type in {'mcr', 'progress-review'}:
+                # Reschedule and evidence writes serialize on the same parent.
+                # A refresh overtaken during Graph I/O cannot publish a stale slot.
+                from .migrated_session_scope import refresh_basis
+                current = CoachCalendarEvent.objects.using(database).select_for_update().get(pk=record.pk)
+                if refresh_basis(current) != refresh_basis(record):
+                    return {'stored': False, 'reason': 'snapshot_context_changed'}
             for artifact in artifacts:
                 artifact_type = clean_text(artifact.get("artifact_type")).lower()
                 graph_artifact_id = clean_text(artifact.get("graph_artifact_id") or artifact.get("id"))
@@ -8665,13 +8843,22 @@ def persist_coach_meeting_snapshots(
                     ],
                 )
     except Exception:
-        logger.exception("Unable to persist coach Teams meeting snapshots for event_key=%s", record.event_key)
+        if safe_diagnostics:
+            logger.warning("APTEM resource refresh: snapshot persistence failed.")
+        else:
+            logger.exception("Unable to persist coach Teams meeting snapshots for event_key=%s", record.event_key)
         return {"stored": False, "reason": "snapshot_persist_failed"}
 
     return {"stored": True, "syncedAt": synced_at.isoformat()}
 
 
-def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict | None, dict | None, int]:
+def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent, *, target_error_handler=None,
+                                     transcript_collection_fetcher=None,
+                                     transcript_content_selector=None,
+                                     attendance_response_validator=None,
+                                     target_resolver=None,
+                                     independent_resources=False,
+                                     safe_diagnostics=False) -> tuple[dict | None, dict | None, int]:
     """Fetch Teams artifacts and attendance for a coach calendar event.
 
     The returned snapshot is the single source used by the UI endpoint and by
@@ -8683,8 +8870,12 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
         return None, {"detail": "Microsoft Graph credentials are not configured."}, 503
 
     try:
-        base, error_payload = coach_meeting_graph_target(record)
-    except RuntimeError:
+        base, error_payload = (target_resolver or coach_meeting_graph_target)(record)
+    except (RuntimeError, TimeoutError) as exc:
+        if target_error_handler is not None:
+            return target_error_handler(exc)
+        if isinstance(exc, TimeoutError):
+            raise
         logger.exception("Unable to resolve coach meeting artifact target.")
         return (
             None,
@@ -8700,56 +8891,107 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
     artifacts = []
     attendance_reports = []
     errors = []
+    resource_errors = {}
+    transcript_collection_complete = False
+    attendance_collection_complete = False
+    attendance_collection_distinct = True
+    resource_exceptions = (RuntimeError, TimeoutError) if independent_resources else (RuntimeError,)
+    def fetch_failure(resource, exc):
+        status = getattr(getattr(exc, '__cause__', None), 'code', None)
+        if resource_errors.get(resource) != 'permission':
+            resource_errors[resource] = 'permission' if status in {401, 403} else 'fetch'
     event_key = clean_text(record.event_key)
+    def log_failure(resource):
+        if safe_diagnostics or independent_resources:
+            logger.warning("APTEM resource refresh: %s unavailable.", resource)
+        else:
+            logger.exception("Unable to load coach Teams %s for event_key=%s", resource, event_key)
 
     try:
         response = microsoft_graph_request("GET", f"{base}/attendanceReports")
+        if attendance_response_validator is not None:
+            attendance_response_validator(response)
+            attendance_collection_complete = True
+            report_ids = [row['id'] for row in response['value']]
+            attendance_collection_distinct = len(report_ids) == len(set(report_ids))
+        fetched_report_ids = set()
         for report in response.get("value") or []:
             if not isinstance(report, dict):
                 continue
             report_id = clean_text(report.get("id"))
             if not report_id:
                 continue
+            if attendance_response_validator is not None:
+                if report_id in fetched_report_ids:
+                    continue
+                fetched_report_ids.add(report_id)
             try:
                 report_key = urllib_parse.quote(report_id, safe="")
                 detail = microsoft_graph_request(
                     "GET",
                     f"{base}/attendanceReports/{report_key}?$expand=attendanceRecords",
                 )
-            except RuntimeError:
-                logger.exception(
-                    "Unable to load coach Teams attendance report detail for event_key=%s",
-                    event_key,
-                )
+                if attendance_response_validator is not None:
+                    attendance_response_validator(detail, report=report)
+            except resource_exceptions as exc:
+                attendance_collection_complete = False
+                fetch_failure('attendance', exc)
+                log_failure('attendance report detail')
                 errors.append("Microsoft Graph could not return attendance details for this meeting.")
                 continue
             attendance_reports.append(serialize_coach_meeting_attendance_report(report, detail))
-    except RuntimeError:
-        logger.exception(
-            "Unable to load coach Teams attendance reports for event_key=%s",
-            event_key,
-        )
+    except resource_exceptions as exc:
+        attendance_collection_complete = False
+        fetch_failure('attendance', exc)
+        log_failure('attendance reports')
         errors.append("Microsoft Graph could not return attendance reports for this meeting.")
 
     for artifact_type, endpoint in COACH_MEETING_ARTIFACT_ENDPOINTS.items():
         try:
-            response = microsoft_graph_request("GET", f"{base}/{endpoint}")
-        except RuntimeError:
-            logger.exception(
-                "Unable to load coach Teams %s for event_key=%s",
-                endpoint,
-                event_key,
-            )
+            if artifact_type == 'transcript' and transcript_collection_fetcher is not None:
+                response = transcript_collection_fetcher(f"{base}/{endpoint}")
+            else:
+                response = microsoft_graph_request("GET", f"{base}/{endpoint}")
+            if independent_resources and artifact_type == 'recording':
+                if (not isinstance(response, dict) or not isinstance(response.get('value'), list)
+                        or any(not isinstance(row, dict) or not isinstance(row.get('id'), str)
+                               or not row['id'].strip() for row in response['value'])):
+                    raise RuntimeError('Incomplete recording metadata.')
+                if response.get('@odata.nextLink'):
+                    resource_errors[endpoint] = 'incomplete'
+                    errors.append('Recording metadata is incomplete. Retry Check Session; saved resources have been kept.')
+        except resource_exceptions as exc:
+            fetch_failure(endpoint, exc)
+            log_failure(endpoint)
             errors.append(f"Microsoft Graph could not return {endpoint} for this meeting.")
             continue
+        if artifact_type == 'transcript' and attendance_response_validator is not None:
+            rows = response.get('value')
+            transcript_collection_complete = bool(isinstance(rows, list) and not response.get('@odata.nextLink')
+                and all(isinstance(row, dict) and isinstance(row.get('id'), str) and row['id'].strip() for row in rows)
+                and len({row['id'] for row in rows}) == len(rows))
+        selected_transcript_ids = None
+        if artifact_type == 'transcript' and transcript_content_selector is not None:
+            metadata_rows = [serialize_coach_meeting_artifact('transcript', row)
+                for row in response.get('value') or [] if isinstance(row, dict) and clean_text(row.get('id'))]
+            selected_transcript_ids = set(transcript_content_selector(
+                record, attendance_reports, metadata_rows))
         for artifact in response.get("value") or []:
             if isinstance(artifact, dict) and clean_text(artifact.get("id")):
                 serialized_artifact = serialize_coach_meeting_artifact(artifact_type, artifact)
-                if artifact_type == "transcript":
-                    transcript_content = fetch_coach_meeting_transcript_content(
-                        base,
-                        serialized_artifact["graph_artifact_id"],
-                    )
+                if artifact_type == "transcript" and (selected_transcript_ids is None
+                                                       or serialized_artifact['graph_artifact_id'] in selected_transcript_ids):
+                    try:
+                        transcript_content = fetch_coach_meeting_transcript_content(
+                            base,
+                            serialized_artifact["graph_artifact_id"],
+                            **({'safe_diagnostics': True} if safe_diagnostics else {}),
+                        )
+                    except (RuntimeError, TimeoutError) as exc:
+                        if not independent_resources:
+                            raise
+                        fetch_failure('transcripts', exc)
+                        transcript_content = {'transcript_fetch_error': 'Microsoft could not return transcript content. Retry Check Session.'}
                     serialized_artifact.update(transcript_content)
                     if transcript_content.get("transcript_fetch_error"):
                         errors.append(transcript_content["transcript_fetch_error"])
@@ -8783,23 +9025,78 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
         "attendanceTracker": attendance_tracker,
         "errors": errors,
         "partial": bool(errors),
+        "resourceErrors": resource_errors,
     }
+    if attendance_response_validator is not None:
+        snapshot['attendanceCollectionComplete'] = attendance_collection_complete
+        snapshot['attendanceCollectionDistinct'] = attendance_collection_distinct
+        snapshot['transcriptCollectionComplete'] = transcript_collection_complete
     return snapshot, None, 207 if errors else 200
 
 
+def coach_meeting_write_error(request, record):
+    """Generic writes must not bypass the owned Review's lifecycle/adapter."""
+    legacy = clean_text(record.idempotency_key).split(":")
+    imported = record.event_key.startswith("imported-review:")
+    psp_meeting = False
+    if imported:
+        from .personal_support_booking import can_refresh_meeting
+        psp_meeting = can_refresh_meeting(authenticated_coach_email(request), record)
+    if ((imported and not psp_meeting)
+            or (len(legacy) in {5, 6} and legacy[:1] == ["learner-book"]
+                and legacy[1] in {"mcm", "progress-review"})):
+        return JsonResponse({"detail": "Use Check Session in the imported Review.",
+                             "code": "IMPORTED_REVIEW_ACTION_REQUIRED"}, status=409)
+    if record.status not in {"scheduled", "in-progress"}:
+        return JsonResponse({"detail": "This meeting is read-only at its current stage."}, status=409)
+    if record.review_instance_id:
+        instance, error = _authorized_review_instance(request, record.review_instance_id)
+        if error is not None:
+            return error
+        if (instance.get("calendar_event_id") != record.pk
+                or instance.get("learner_id") != record.learner_id
+                or instance.get("review_template_id") != record.review_template_id
+                or instance.get("status") not in {"scheduled", "in-progress"}):
+            return JsonResponse({"detail": "The Review is read-only or its meeting association changed."}, status=409)
+    elif record.review_template_id:
+        return JsonResponse({"detail": "The Review meeting association is incomplete."}, status=409)
+    return None
+
+
 @coach_access_required
-@require_GET
+@require_http_methods(["GET", "POST"])
 def coach_timetable_event_artifacts(request, event_key):
+    from .review_attendance_links import attendance_for_display
     owner_email = authenticated_coach_email(request)
     record = coach_meeting_artifact_record(owner_email, event_key)
     if not record:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
 
-    refresh_requested = clean_text(request.GET.get("refresh")).lower() in {"1", "true", "yes"}
-    if refresh_requested:
-        snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+    # Legacy refresh query parameters are deliberately inert. Only an explicit
+    # CSRF-protected POST may contact providers or persist business state.
+    if request.method == "POST":
+        error = coach_meeting_write_error(request, record)
+        if error is not None:
+            return error
+        # The guard above admits imported keys only for the verified PSP
+        # exception. Native and all other generic callers keep their defaults.
+        imported_psp = record.event_key.startswith("imported-review:")
+        snapshot_options = {}
+        if imported_psp:
+            from .migrated_session_scope import (
+                attendance_reports_for_refresh, scope_snapshot, snapshot_version, validate_attendance_response,
+            )
+            snapshot_options['attendance_response_validator'] = validate_attendance_response
+            previous = stored_coach_meeting_snapshot(record)
+        snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record, **snapshot_options)
         if error_payload:
             return JsonResponse(error_payload, status=status_code)
+        if imported_psp:
+            reports = attendance_reports_for_refresh(record, snapshot, previous)
+            scoped = scope_snapshot(record, {**snapshot, 'attendanceReports': reports})
+            snapshot = {**snapshot, **{key: scoped[key] for key in (
+                'attendance', 'attendanceReports', 'attendanceTracker',
+            )}}
 
         # A manual Teams refresh is the explicit place where we reconcile
         # attendance evidence into review status. Plainly opening details only
@@ -8815,7 +9112,19 @@ def coach_timetable_event_artifacts(request, event_key):
             artifacts=snapshot["artifacts"],
             attendance_reports=snapshot["attendanceReports"],
             attendance_tracker=snapshot["attendanceTracker"],
+            **({'imported_refresh': {'snapshot': snapshot, 'expected_version': snapshot_version(previous),
+                'revalidate': lambda current: coach_meeting_write_error(request, current) is None}}
+               if imported_psp else {}),
         )
+        if storage_status.get('reason') == 'snapshot_context_changed':
+            return JsonResponse({'detail': 'The booking changed while Teams was checked. Retry Check Teams.',
+                                 'code': 'BOOKING_CONFLICT'}, status=409)
+        if imported_psp and not storage_status.get('stored'):
+            reason = storage_status.get('reason')
+            stale = reason in {'snapshot_superseded', 'snapshot_context_changed'}
+            return JsonResponse({'detail': 'Meeting evidence changed or could not be saved. Retry Check Teams.',
+                                 'code': 'BOOKING_CONFLICT' if stale else 'SNAPSHOT_STORAGE_UNAVAILABLE'},
+                                status=409 if stale else 503)
         meeting_summary = ensure_coach_meeting_summary(record, retry_failed=True)
     else:
         snapshot = stored_coach_meeting_snapshot(record)
@@ -8823,6 +9132,12 @@ def coach_timetable_event_artifacts(request, event_key):
         storage_status = snapshot.get("storage") or {"stored": False}
         meeting_summary = stored_coach_meeting_summary(record)
 
+    from .review_rescheduling import previous_bookings, historical_artifacts
+    if previous_bookings(record):
+        from .migrated_session_scope import scope_snapshot
+        original = stored_coach_meeting_snapshot(record) if storage_status.get('stored') else snapshot
+        snapshot = scope_snapshot(record, original)
+        snapshot['artifacts'] += historical_artifacts(record, original)
     return JsonResponse(
         {
             "event": {
@@ -8833,8 +9148,10 @@ def coach_timetable_event_artifacts(request, event_key):
                 "scheduledDate": record.scheduled_date.isoformat() if record.scheduled_date else None,
                 "scheduledTime": format_time_value(record.scheduled_time),
             },
-            "attendance": snapshot["attendance"],
-            "artifacts": [public_coach_meeting_artifact(artifact) for artifact in snapshot["artifacts"]],
+            "attendance": attendance_for_display(record, snapshot["attendance"]),
+            "artifacts": [{**public_coach_meeting_artifact(artifact),
+                           **({'previous_session': True} if artifact.get('previous_session') else {})}
+                          for artifact in snapshot["artifacts"]],
             "meetingSummary": meeting_summary,
             "errors": snapshot["errors"],
             "partial": snapshot["partial"],
@@ -8844,7 +9161,9 @@ def coach_timetable_event_artifacts(request, event_key):
     )
 
 
-def coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id):
+def coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id,
+                                            *, imported_review=False, session=None,
+                                            transcript_ready=True):
     """Stream one Teams artifact for an already-authorised calendar record."""
     artifact_type = clean_text(artifact_type).lower()
     endpoint = COACH_MEETING_ARTIFACT_ENDPOINTS.get(artifact_type)
@@ -8856,9 +9175,97 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
     as_attachment = clean_text(request.GET.get("preview")).lower() not in {"1", "true", "yes"}
     disposition = "attachment" if as_attachment else "inline"
 
+    from .review_rescheduling import historical_content, previous_bookings
+    previous_artifact = None
+    if previous_bookings(record):
+        old_snapshot = stored_coach_meeting_snapshot(record)
+        previous_artifact = historical_content(record, artifact_type, artifact_id, old_snapshot)
+    if previous_artifact and not old_snapshot.get('partial'):
+        if artifact_type == 'transcript':
+            transcript = stored_coach_meeting_transcript(record, artifact_id)
+            if not transcript:
+                return JsonResponse({'detail': 'The saved transcript is unavailable.'}, status=404)
+            response = HttpResponse(transcript['transcript_vtt'],
+                                    content_type=transcript['transcript_content_type'] or 'text/vtt')
+            response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
+            return response
+        from .recording_archive import archived_recording_url
+        archived = archived_recording_url(record.event_key, artifact_id)
+        if archived:
+            return HttpResponseRedirect(archived)
+        if imported_review:
+            from .imported_recording_playback import stream_imported_recording
+            # historical_content already validated this artifact's old session.
+            return stream_imported_recording(request, record,
+                {**old_snapshot, 'selectionError': None}, previous_artifact)
+
+    if imported_review:
+        from .migrated_session_scope import (has_verified_meeting_evidence, scope_snapshot,
+                                             stored_transcript_selection)
+
+        # Imported Review content starts with a stored, source-qualified read.
+        # The selected call may be outside the planned booking; only a saved,
+        # verified recording can become an on-demand Graph playback request.
+        snapshot = stored_coach_meeting_snapshot(record)
+        if snapshot.get('partial') or not (snapshot.get('storage') or {}).get('stored'):
+            return JsonResponse({'detail': 'Saved meeting resources are temporarily unavailable.'}, status=503)
+        meeting_scoped = has_verified_meeting_evidence(snapshot)
+        scoped = scope_snapshot(record, snapshot, session=None if meeting_scoped else session,
+                                meeting_scoped=meeting_scoped)
+        if scoped['selectionError']:
+            return JsonResponse({'detail': 'Meeting resources cannot be matched to one Review session.',
+                                 'code': scoped['selectionError']}, status=409)
+        if artifact_type == 'transcript':
+            if session is not None and not transcript_ready:
+                return JsonResponse({'detail': 'The complete saved transcript is not available yet.',
+                                     'code': 'TRANSCRIPT_INCOMPLETE'}, status=409)
+            selection = stored_transcript_selection(record, snapshot,
+                session=None if meeting_scoped else session, meeting_scoped=meeting_scoped)
+            if selection['code'] in {'TRANSCRIPT_SESSION_AMBIGUOUS', 'MEETING_ARTIFACT_CONFLICT'}:
+                return JsonResponse({'detail': 'The saved transcript association is ambiguous.',
+                                     'code': selection['code']}, status=409)
+            allowed = selection['artifactIds']
+            if (not allowed or (clean_text(artifact_id).lower() != 'combined' and artifact_id not in allowed)):
+                return JsonResponse({'detail': 'The transcript is not available for this Review.',
+                                     'code': 'TRANSCRIPT_UNAVAILABLE'}, status=404)
+            if clean_text(artifact_id).lower() == 'combined':
+                transcript = stored_coach_meeting_transcript_for_summary(record, artifact_ids=allowed)
+                if (not transcript or
+                        set(clean_text(transcript.get('artifactId')).split(',')) != set(allowed)):
+                    return JsonResponse({'detail': 'The saved transcript is unavailable.'}, status=404)
+                response = HttpResponse(transcript['text'], content_type='text/plain; charset=utf-8')
+                response['Content-Disposition'] = f'{disposition}; filename="{safe_event_key}-transcript.txt"'
+                return response
+            stored_transcript = stored_coach_meeting_transcript(record, artifact_id)
+            if not stored_transcript:
+                return JsonResponse({'detail': 'The saved transcript is unavailable.'}, status=404)
+            response = HttpResponse(stored_transcript['transcript_vtt'],
+                                    content_type=stored_transcript['transcript_content_type'] or 'text/vtt')
+            response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
+            return response
+        recording = next((row for row in scoped['artifacts']
+                          if row.get('artifact_type') == 'recording'
+                          and row.get('graph_artifact_id') == artifact_id
+                          and (row.get('metadata') or {}).get('_lms_graph_event_id') == record.graph_event_id), None)
+        if not recording:
+            return JsonResponse({'detail': 'The recording is not available for this Review.'}, status=404)
+        from coach_api.recording_archive import archived_recording_url
+        archived_url = archived_recording_url(event_key, artifact_id)
+        if archived_url:
+            return HttpResponseRedirect(archived_url)
+        from .imported_recording_playback import stream_imported_recording
+        return stream_imported_recording(request, record, scoped, recording)
+
     if artifact_type == "transcript":
+        selection = coach_meeting_transcript_selection(record)
+        if selection['code'] == 'TRANSCRIPT_SESSION_AMBIGUOUS':
+            return JsonResponse({'detail': 'The transcript cannot be matched to one booked session.',
+                                 'code': selection['code']}, status=409)
+        if clean_text(artifact_id).lower() != 'combined' and artifact_id not in selection['artifactIds']:
+            return JsonResponse({'detail': 'The transcript is not available for this session.',
+                                 'code': 'TRANSCRIPT_UNAVAILABLE'}, status=404)
         if clean_text(artifact_id).lower() == "combined":
-            combined_transcript = stored_coach_meeting_transcript_for_summary(record)
+            combined_transcript = stored_coach_meeting_transcript_for_summary(record, artifact_ids=selection['artifactIds'])
             if not combined_transcript:
                 return JsonResponse({"detail": "The combined meeting transcript is not available."}, status=404)
             response = HttpResponse(
@@ -8978,6 +9385,27 @@ def coach_timetable_event_artifact_content(request, event_key, artifact_type, ar
     record = coach_meeting_artifact_record(owner_email, event_key)
     if not record:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+    if event_key.startswith('imported-review:'):
+        definition = _imported_review_definition(owner_email, event_key)
+        if not definition:
+            return JsonResponse({'detail': 'Imported Review is not available for this coach.'}, status=404)
+        family = (definition.get('template') or {}).get('reviewTypeCode')
+        if family in {'aptem_mcm', 'aptem_progress_review'}:
+            from .migrated_intelligence_views import _association
+            from .bound_actual_session import BoundSessionConflict, bound_session
+
+            overlay, linked, _definition = _association(request, event_key)
+            if not overlay or not linked or linked.pk != record.pk:
+                return JsonResponse({'detail': 'Imported meeting association is unavailable.'}, status=404)
+            try:
+                bound = bound_session(linked, overlay=overlay)
+            except BoundSessionConflict:
+                return JsonResponse({'detail': 'The meeting association changed. Reload the Review.',
+                                     'code': 'ACTUAL_SESSION_CLAIM_CONFLICT'}, status=409)
+            return coach_meeting_artifact_content_response(request, linked, event_key,
+                artifact_type, artifact_id, imported_review=True,
+                session=bound.context if bound else None,
+                transcript_ready=(overlay.meeting_intelligence or {}).get('transcriptStatus') == 'available')
     return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
 
 
@@ -8990,7 +9418,11 @@ def coach_timetable_event_summary(request, event_key):
     if not record:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
     if request.method == "GET":
-        return JsonResponse({"meetingSummary": ensure_coach_meeting_summary(record)})
+        return JsonResponse({"meetingSummary": stored_coach_meeting_summary(record)})
+
+    error = coach_meeting_write_error(request, record)
+    if error is not None:
+        return error
 
     database = router.db_for_write(CoachCalendarEvent) or "default"
     if not coach_meeting_summaries_table_ready(database):
@@ -8999,7 +9431,13 @@ def coach_timetable_event_summary(request, event_key):
         payload = parse_json_object(request)
     except ValidationError as exc:
         return validation_error_response(exc)
-    summary = normalize_meeting_summary_payload(payload.get("summary"), record.event_type)
+    # Never retag a historical edited cache as the current session.
+    if not stored_coach_meeting_summary(record):
+        return JsonResponse({'detail': 'No verified summary is available for this session.',
+                             'code': 'SUMMARY_SESSION_MISMATCH'}, status=409)
+    from .migrated_session_scope import session_provenance
+    summary = {**normalize_meeting_summary_payload(payload.get("summary"), record.event_type),
+               '_lmsSession': session_provenance(record)}
     now = timezone.now()
     editor = clean_text(getattr(request, "coach_email", "")) or clean_text(owner_email)
     try:
@@ -9063,8 +9501,27 @@ def coach_timetable_event_summary(request, event_key):
 
 def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCalendarEvent, str]:
     """Cancel local booking state atomically, then reconcile Graph externally."""
+    from . import imported_meeting_ownership as meeting_ownership
+    try:
+        ownership_active = meeting_ownership.required_for_record(record)
+        if ownership_active:
+            meeting_ownership.require_activation_ready()
+    except meeting_ownership.MeetingOwnershipError:
+        raise LearnerCalendarConflict("This imported meeting needs ownership reconciliation before cancellation.") from None
     with transaction.atomic():
         current = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        if ownership_active:
+            try:
+                if not meeting_ownership.required_for_record(current):
+                    raise meeting_ownership.MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT')
+                meeting_ownership.require_cancel_owner(current)
+            except meeting_ownership.MeetingOwnershipError:
+                raise LearnerCalendarConflict("This imported meeting ownership changed. Reload before cancellation.") from None
+        from .reconciliation_links import for_calendar
+        if for_calendar(current):
+            raise LearnerCalendarConflict(
+                "This booking is reconciled to an Aptem Review. Its association must be reviewed before cancellation."
+            )
         instance = None
         if clean_text(current.review_instance_id):
             instance = curriculum_review_instances.get_review_instance(
@@ -9156,6 +9613,11 @@ def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCal
             # the cancellation instead of silently losing the orphan's address.
             current.sync_state = CoachCalendarEvent.SYNC_RECONCILIATION
         else:
+            if ownership_active:
+                try:
+                    meeting_ownership.retire_after_cancel(current)
+                except meeting_ownership.MeetingOwnershipError:
+                    raise LearnerCalendarConflict("The cancellation needs ownership reconciliation.") from None
             current.meeting_link = ""
             current.graph_web_link = ""
             current.graph_event_id = ""
@@ -9183,6 +9645,11 @@ def build_live_session_calendar_event(
     tracked_occurrence = tracked_occurrence or {}
     tracked_series = tracked_series or {}
     tracked_start = tracked_occurrence.get("scheduled_start")
+    def export_instant(value):
+        if not isinstance(value, datetime):
+            return None
+        # Occurrence columns store UTC; legacy naive values use that same contract.
+        return value.replace(tzinfo=value.tzinfo or datetime_timezone.utc).astimezone(datetime_timezone.utc).isoformat()
     event_date = tracked_start.date().isoformat() if isinstance(tracked_start, datetime) else session["date"]
     session_date = date.fromisoformat(event_date)
     module_name = clean_text(row.get("module_name")) or "Live Session"
@@ -9216,6 +9683,9 @@ def build_live_session_calendar_event(
         # The Teams occurrence this slot is tracked by, when one exists; read by
         # live_session_outcomes to show whether the session was attended.
         "occurrenceId": clean_text(tracked_occurrence.get("id")) or None,
+        "timeZone": clean_text(tracked_series.get("timezone")) or timezone.get_default_timezone_name(),
+        "startsAt": export_instant(tracked_start),
+        "endsAt": export_instant(tracked_occurrence.get("scheduled_end")),
         "ownerEmail": owner_email,
         "ownerName": owner_name,
         "learnerId": "",
@@ -9521,20 +9991,27 @@ def collect_live_session_events(
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
     component_links_by_week: dict[str, str] = {}
     live_component_week_ids_by_module: dict[str, set[str]] = {}
+    learner_live_components = []
     # columns= is load-bearing, not an optimisation: curriculum.components is
     # ~18k rows / 39MB (mostly settings_json) on a remote database -- a plain
     # select * here alone accounts for the "Timetable is taking too long to
     # load" timeout coaches were hitting (~23s vs ~0.5s narrowed).
     for component in active_component_rows(authoring_fetch_all(
         AUTHORING_COMPONENTS_TABLE,
+        # Fetch a superset of the live-session types only. The exact normalized
+        # check below still excludes aliases/retired types, without transferring
+        # every quiz, assignment and content component to render a calendar.
+        "type ilike %s", ["%live_session%"],
         ensure_tables=False,
         columns=[
-            "type", "module_catalogue_id", "week_id", "live_sessions_link",
+            "id", "type", "module_catalogue_id", "week_id", "live_sessions_link",
             "deleted_at", "is_programme_deleted", "library_state",
         ],
     )):
         if clean_text(component.get("type")).lower() != "live_session":
             continue
+        if learner_module_ids and component.get("module_catalogue_id") in learner_module_ids:
+            learner_live_components.append(component)
         week_id = clean_text(component.get("week_id"))
         module_id = clean_text(component.get("module_catalogue_id"))
         if module_id and week_id:
@@ -9542,6 +10019,14 @@ def collect_live_session_events(
         meeting_link = clean_text(component.get("live_sessions_link"))
         if week_id and meeting_link:
             component_links_by_week[week_id] = meeting_link
+    shared_calendar_slots = {}
+    if learner_live_components:
+        # Learner assignments may point at a shared module whose Teams records
+        # belong to another module. Use the same card-to-occurrence resolver as
+        # My Learning; a matching ordinal alone can select the wrong meeting.
+        from learner_api.calendar_shared_delivery import read_shared_calendar_slots
+
+        shared_calendar_slots = read_shared_calendar_slots(learner_module_ids, learner_live_components)
     holidays_by_cohort_id: dict[str, list[dict]] = {}
     active_series_by_module: dict[str, dict] = {}
     occurrences_by_series_and_number: dict[tuple[str, int], dict] = {}
@@ -9650,6 +10135,7 @@ def collect_live_session_events(
         live_week_ids = live_component_week_ids_by_module.get(module_catalogue_id) or set()
         has_authored_live_components = bool(live_week_ids)
         planned_live_sessions = []
+        planned_week_counts = {}
         for session in plan["sessions"]:
             week_index = (session["sessionNumber"] - 1) // delivery_days
             week = ordered_weeks[week_index] if week_index < len(ordered_weeks) else None
@@ -9663,31 +10149,34 @@ def collect_live_session_events(
             if has_authored_live_components and week_id not in live_week_ids:
                 continue
             planned_live_sessions.append((session, week, week_id))
+            planned_week_counts[week_id] = planned_week_counts.get(week_id, 0) + 1
 
         for occurrence_number, (session, week, week_id) in enumerate(planned_live_sessions, start=1):
             session_for_event = {**session, "sessionNumber": occurrence_number}
             tracked_occurrence = occurrences_by_series_and_number.get(
                 (tracked_series_id, occurrence_number)
             )
-            tracked_start = (tracked_occurrence or {}).get("scheduled_start")
-            effective_date = tracked_start.date() if isinstance(tracked_start, datetime) else date.fromisoformat(session["date"])
-            if not include_past and effective_date < today:
-                continue
-            events.append(
-                build_live_session_calendar_event(
-                    row,
-                    session_for_event,
-                    programme=programme,
-                    cohort=cohort["name"],
-                    group=group["name"],
-                    owner_email=owner_email or clean_text(tracked_series.get("organizer_email")),
-                    owner_name=owner_name,
-                    week_title=clean_text(week.get("title")) if week else None,
-                    tracked_series=tracked_series,
-                    tracked_occurrence=tracked_occurrence,
-                    component_meeting_link=week_id and component_links_by_week.get(week_id, ""),
-                )
+            event = build_live_session_calendar_event(
+                row,
+                session_for_event,
+                programme=programme,
+                cohort=cohort["name"],
+                group=group["name"],
+                owner_email=owner_email or clean_text(tracked_series.get("organizer_email")),
+                owner_name=owner_name,
+                week_title=clean_text(week.get("title")) if week else None,
+                tracked_series=tracked_series,
+                tracked_occurrence=tracked_occurrence,
+                component_meeting_link=week_id and component_links_by_week.get(week_id, ""),
             )
+            shared_slot = shared_calendar_slots.get(week_id)
+            if shared_slot and not tracked_series_id and planned_week_counts[week_id] == 1:
+                from learner_api.calendar_shared_delivery import apply_shared_calendar_slot
+
+                event = apply_shared_calendar_slot(event, shared_slot)
+            if not include_past and date.fromisoformat(event["date"]) < today:
+                continue
+            events.append(event)
 
     if start_date or end_date:
         events = [
@@ -10039,12 +10528,17 @@ def resolve_coach_review_events(
     end_date: date | None = None,
     source_schedule_rows: tuple[dict, dict] | None = None,
 ) -> dict:
-    """Resolve each learner to exactly one review source by effective Aptem id.
-
-    The one exception: an Aptem-linked learner with no imported Aptem MCM gets
-    Curriculum MCM occurrences (never Curriculum Progress Reviews).
-    """
-    aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners)
+    """An Aptem identity always owns its imported Review source, even if empty."""
+    unavailable_profiles: frozenset[int] = frozenset()
+    try:
+        aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners, strict=True)
+    except ReviewEnrolmentIdentityUnavailable as exc:
+        # A missing linked row affects only its learners. Keep them out of both
+        # source branches; an unknown identity must never become Native fallback.
+        # Real query/connection failures still propagate to the caller.
+        unavailable_profiles = exc.profile_ids
+        learners = [row for row in learners if int(row.id) not in unavailable_profiles]
+        aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners, strict=True)
     aptem_reviews_available = True
     try:
         aptem_events, aptem_contributors = fetch_aptem_review_events(
@@ -10070,32 +10564,40 @@ def resolve_coach_review_events(
         learner for learner in learners
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
     ]
-    # An Aptem-linked learner with no imported Aptem MCM still has monthly
-    # coaching due, so their MCMs come from Curriculum like a native learner's.
-    # Progress Reviews stay Aptem-only. The all-history lookup is the same rule
-    # the learner calendar and booking use, so a date window never changes it.
-    # Fail closed: an unavailable Aptem source never switches anyone to Curriculum.
-    aptem_mcm_profiles = set(aptem_by_profile)
-    if aptem_reviews_available and aptem_by_profile:
-        try:
-            aptem_mcm_profiles = fetch_aptem_mcm_profile_ids(aptem_by_profile)
-        except DatabaseError as exc:
-            logger.warning("Could not load Aptem MCM history for coach timetable: %s", exc)
-            aptem_reviews_available = False
-    mcm_fallback_learners = [
-        learner for learner in learners
-        if int(learner.id) in aptem_by_profile and int(learner.id) not in aptem_mcm_profiles
-    ]
     events: list[dict] = list(aptem_events)
+    # Imported PRs use the same linked employer as native PR invitations.
+    # Resolve once per learner, using the already loaded source identities.
+    learners_by_id = {str(learner.id): learner for learner in learners}
+    employer_attendees: dict[str, dict[str, str]] = {}
+    for index, event in enumerate(events):
+        learner_id = str(event.get("learnerId") or "")
+        learner = learners_by_id.get(learner_id)
+        if learner is None or review_event_category(event) != "progress-review":
+            continue
+        if learner_id not in employer_attendees:
+            source_row = resolve_caseload_source_row(
+                learner, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
+            )
+            employer_attendees[learner_id] = learner_employer_attendee(learner, source_row)
+        attendee = employer_attendees[learner_id]
+        if attendee:
+            events[index] = {**event, "employerName": attendee["name"], "employerEmail": attendee["email"]}
     issues: list[dict[str, str]] = [
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
         for profile_id in sorted(identity_conflicts)
     ]
+    issues.extend(
+        {"learnerId": str(profile_id), "code": "review_identity_unavailable"}
+        for profile_id in sorted(unavailable_profiles)
+    )
     if not aptem_reviews_available:
         issues.extend(
             {"learnerId": str(profile_id), "code": "aptem_reviews_unavailable"}
             for profile_id in sorted(aptem_by_profile)
         )
+    if aptem_reviews_available:
+        issues.extend({"learnerId": str(profile_id), "code": "aptem_source_missing"}
+                      for profile_id in sorted(set(aptem_by_profile) - aptem_contributors))
     counts = {
         "progressReviewRows": sum(1 for event in aptem_events if review_event_category(event) == "progress-review"),
         "mcrRows": sum(1 for event in aptem_events if event["source"] == "mcr"),
@@ -10107,29 +10609,21 @@ def resolve_coach_review_events(
         "curriculumReviewRows": 0,
         "aptemLearners": len(aptem_by_profile),
         "curriculumLearners": len(native_learners),
-        "curriculumMcmFallbackLearners": len(mcm_fallback_learners),
+        "curriculumMcmFallbackLearners": 0,
     }
     review_template_cache: dict[str, list[dict]] = {}
 
-    for learner in [*native_learners, *mcm_fallback_learners]:
-        mcm_only = int(learner.id) in aptem_by_profile
+    for learner in native_learners:
         programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
         template_identifiers = curriculum_review_instances.programme_review_template_identifiers(
             programme_id, template_cache=review_template_cache,
         )
-        if mcm_only:
-            # Aptem stays this learner's primary source: a missing Curriculum
-            # schedule means no fallback, not a review generation issue.
-            if not programme_id or not template_identifiers:
-                continue
-        elif not programme_id:
+        if not programme_id:
             issues.append({"learnerId": str(learner.id), "code": "missing_curriculum_programme"})
         elif not template_identifiers:
             issues.append({"learnerId": str(learner.id), "code": "no_enabled_review_templates"})
 
         review_anchor, anchor_reason = resolve_review_anchor_date(learner.id, commercial_rows, enrolment_rows)
-        if review_anchor is None and mcm_only:
-            continue
         if review_anchor is None:
             log_review_anchor_skip(learner, anchor_reason, programme_id=programme_id, template_cache=review_template_cache)
             counts["reviewAnchorSkipped"] += 1
@@ -10147,16 +10641,14 @@ def resolve_coach_review_events(
             learner.id, commercial_rows, enrolment_rows, learner,
         )
         if not learner_start_date or not learner_end_date or learner_end_date <= learner_start_date:
-            if not mcm_only:
-                issues.append({"learnerId": str(learner.id), "code": "review_schedule_unavailable"})
+            issues.append({"learnerId": str(learner.id), "code": "review_schedule_unavailable"})
             continue
 
         source_row = resolve_caseload_source_row(
             learner, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
         )
         employer_attendee = learner_employer_attendee(learner, source_row)
-        if not mcm_only:
-            counts["learnersWithDates"] += 1
+        counts["learnersWithDates"] += 1
         learner_status = clean_text(getattr(learner, "programme_status", None) or getattr(learner, "status", None))
         window_start = start_date or learner_start_date
         window_end = end_date or learner_end_date
@@ -10176,8 +10668,6 @@ def resolve_coach_review_events(
             },
         ):
             event_type = review_event_type_for_type_code(occurrence.get("reviewTypeCode"))
-            if mcm_only and event_type != "mcr":
-                continue
             event = build_generated_calendar_event(
                 learner=learner,
                 owner_email=owner_email,
@@ -10218,6 +10708,7 @@ def collect_generated_timetable(
     *,
     include_live_sessions: bool = True,
     include_scheduler_queues: bool = True,
+    include_unlinked_bookings: bool = False,
 ) -> dict:
     active_rows = fetch_owner_active_learner_profiles(owner_email)
     review_rows = fetch_caseload_timetable_profiles(owner_email)
@@ -10247,12 +10738,22 @@ def collect_generated_timetable(
         except Exception as exc:
             logger.warning("Could not collect live session events for %s: %s", owner_email, exc)
 
+    source_schedule_rows = None
+    if all(hasattr(row, "_caseload_source") for row in review_rows):
+        commercial_rows, enrolment_rows = {}, {}
+        for row in review_rows:
+            source = row._caseload_source
+            if source is not None:
+                target = commercial_rows if clean_text(getattr(source, "learner_type", None)).casefold() == "commercial" else enrolment_rows
+                target[row.id] = source
+        source_schedule_rows = commercial_rows, enrolment_rows
     resolved_reviews = resolve_coach_review_events(
         owner_email,
         owner_name,
         review_rows,
         start_date=start_date,
         end_date=end_date,
+        source_schedule_rows=source_schedule_rows,
     )
     generated_events: list[dict] = resolved_reviews["events"]
     resolved_counts = resolved_reviews["sourceCounts"]
@@ -10272,8 +10773,9 @@ def collect_generated_timetable(
     aptem_events = [event for event in generated_events if event.get("reviewSource") == "aptem"]
     aptem_record_map, aptem_overlay_map = load_imported_links(aptem_events)
     generated_keys.update(record.event_key for record in aptem_record_map.values() if record)
+    saved_records = fetch_standalone_event_records(owner_email)
     persisted_standalone_records = standalone_review_records(
-        fetch_standalone_event_records(owner_email), review_rows, aptem_profile_ids, linked_keys=generated_keys)
+        saved_records, review_rows, aptem_profile_ids, linked_keys=generated_keys)
     curriculum_events = [event for event in generated_events if event.get("reviewSource") == "curriculum"]
     legacy_keys = [
         build_timetable_event_key(
@@ -10338,6 +10840,18 @@ def collect_generated_timetable(
                                          aptem_overlay_map.get(event["eventKey"])) for event in aptem_events)
     events.extend(persisted_standalone_events)
     events.extend(live_session_events)
+
+    if include_unlinked_bookings:
+        from .calendar_booking_only import unlinked_review_bookings, booking_only_projection
+        unlinked_bookings = unlinked_review_bookings(
+            saved_records, review_rows, aptem_profile_ids, events=events, linked_keys=generated_keys)
+        template_ids = {record.review_template_id for record, _profile in unlinked_bookings}
+        booking_review_types = review_type_fields_by_template(template_ids)
+        booking_review_titles = review_titles_by_template(template_ids)
+        for record, profile in unlinked_bookings:
+            events.append(booking_only_projection(build_catchup_calendar_event(
+                record, owner_name=owner_name, learner=profile,
+                review_type_fields=booking_review_types, review_titles=booking_review_titles), record))
 
     if start_date or end_date:
         filtered_events = []
@@ -10455,6 +10969,13 @@ def lock_learner_calendar(learner_id: int) -> None:
     )
 
 
+def ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_record_id=None):
+    from .booking_availability import lock_coach_calendar, ensure_coach_calendar_available
+    lock_coach_calendar(owner_email)
+    ensure_coach_calendar_available(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                    exclude_record_id=exclude_record_id)
+
+
 def find_learner_calendar_conflict(
     *,
     learner_id: int,
@@ -10465,6 +10986,7 @@ def find_learner_calendar_conflict(
     exclude_record_id: int | None = None,
 ) -> CoachCalendarEvent | None:
     """Return an existing LMS session whose local time overlaps this slot."""
+    from .booking_reservations import OCCUPANCY_FIELDS, calendar_record_occupies_slot
     requested_start = datetime.combine(scheduled_date, scheduled_time)
     requested_end = requested_start + timedelta(minutes=duration_minutes)
     identity = Q(learner_id=learner_id)
@@ -10478,19 +11000,15 @@ def find_learner_calendar_conflict(
         identity,
         scheduled_date__range=(scheduled_date - timedelta(days=1), requested_end.date()),
         scheduled_time__isnull=False,
-        status__in=(
-            CoachCalendarEvent.STATUS_NOT_SCHEDULED,
-            CoachCalendarEvent.STATUS_SCHEDULED,
-            CoachCalendarEvent.STATUS_IN_PROGRESS,
-            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
-        ),
     )
     if exclude_record_id is not None:
         candidates = candidates.exclude(pk=exclude_record_id)
 
     for existing in candidates.only(
-        "id", "event_type", "sequence", "scheduled_date", "scheduled_time", "duration_minutes"
+        "id", "sequence", *OCCUPANCY_FIELDS
     ):
+        if not calendar_record_occupies_slot(existing):
+            continue
         existing_start = datetime.combine(existing.scheduled_date, existing.scheduled_time)
         existing_end = existing_start + timedelta(
             minutes=existing.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES
@@ -10667,9 +11185,11 @@ def reserve_coach_calendar_booking(
                     raise LearnerCalendarConflict("Multiple bookings are linked to this review. Contact support before booking again.")
                 if matches:
                     existing = matches[0]
+                    from .reconciliation_links import for_calendar
+                    reconciliation = for_calendar(existing)
                     if (normalize_email(existing.owner_email) != owner_email
                             or existing.learner_id != learner_id or existing.event_type != "mcr"
-                            or existing.review_template_id or existing.review_instance_id
+                            or ((existing.review_template_id or existing.review_instance_id) and not reconciliation)
                             or existing.status != CoachCalendarEvent.STATUS_SCHEDULED):
                         raise LearnerCalendarConflict("This review already has an incompatible booking.")
                     if (existing.scheduled_date, existing.scheduled_time, existing.duration_minutes) != (
@@ -10709,6 +11229,7 @@ def reserve_coach_calendar_booking(
                 scheduled_time=scheduled_time,
                 duration_minutes=duration_minutes,
             )
+            ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes)
 
             current_max = (
                 CoachCalendarEvent.objects.filter(
@@ -10766,17 +11287,25 @@ def reserve_coach_calendar_booking(
         raise
 
 
+CALENDAR_GRAPH_SYNC_FIELDS = [
+    "sync_state", "last_graph_sync_error", "graph_event_id", "graph_organizer_email",
+    "meeting_provider", "meeting_link", "graph_web_link", "updated_at",
+]
+
+
 def finalize_calendar_graph_sync(record: CoachCalendarEvent, warning: str) -> None:
     record.sync_state = CoachCalendarEvent.SYNC_SYNCED
     record.last_graph_sync_error = public_graph_sync_warning(warning)
-    record.save()
+    # Graph I/O runs outside locks. A concurrent submission may have advanced
+    # the review; never save stale lifecycle/answers/booking fields over it.
+    record.save(update_fields=CALENDAR_GRAPH_SYNC_FIELDS)
 
 
 class CalendarSyncInProgress(RuntimeError):
     pass
 
 
-def sync_scheduled_review_instance(record: CoachCalendarEvent) -> CoachCalendarEvent:
+def sync_scheduled_review_instance(record: CoachCalendarEvent, *, coach_reschedule=False) -> CoachCalendarEvent:
     """Validate the booking link and advance only an unstarted review.
 
     Also used by unchanged reschedule requests, without touching Graph or its
@@ -10786,6 +11315,9 @@ def sync_scheduled_review_instance(record: CoachCalendarEvent) -> CoachCalendarE
         return record
     with transaction.atomic():
         record = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        from .reconciliation_links import require_schedulable
+        if require_schedulable(record, **({'allow_started': True} if coach_reschedule else {})):
+            return record
         instance = curriculum_review_instances.get_review_instance(record.review_instance_id, for_update=True)
         if (
             not instance
@@ -10795,6 +11327,10 @@ def sync_scheduled_review_instance(record: CoachCalendarEvent) -> CoachCalendarE
             or clean_text(instance.get('review_template_id')) != clean_text(record.review_template_id)
         ):
             raise LearnerCalendarConflict("This booking's review link is inconsistent. Please contact support.")
+        if coach_reschedule and record.status == CoachCalendarEvent.STATUS_IN_PROGRESS:
+            from .review_rescheduling import require_started_reschedule
+            require_started_reschedule(record, instance.get('status'))
+            return record
         if (
             record.status != CoachCalendarEvent.STATUS_SCHEDULED
             or instance.get('status') not in {
@@ -10816,6 +11352,7 @@ def sync_scheduled_review_instance(record: CoachCalendarEvent) -> CoachCalendarE
 
 def persist_calendar_sync_reservation(
     candidate: CoachCalendarEvent, *, review_event: dict | None = None,
+    coach_reschedule=False, expected_booking=None, overlay=None,
 ) -> CoachCalendarEvent:
     """Save booking inputs, review linkage and lifecycle before Graph I/O."""
     mutable_fields = (
@@ -10849,12 +11386,33 @@ def persist_calendar_sync_reservation(
     with transaction.atomic():
         lock_learner_calendar(candidate.learner_id)
         record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
+        from .reconciliation_links import require_schedulable
+        reconciliation = require_schedulable(record, **({'allow_started': True} if coach_reschedule else {}))
         if record.sync_state in {
             CoachCalendarEvent.SYNC_SYNCING,
             CoachCalendarEvent.SYNC_RECONCILIATION,
         }:
             raise CalendarSyncInProgress("Calendar event synchronization is already in progress.")
-        if (record.review_instance_id or candidate.review_template_id) and record.status in {
+        rescheduling_started = coach_reschedule and record.status == CoachCalendarEvent.STATUS_IN_PROGRESS
+        if rescheduling_started:
+            from .review_rescheduling import require_started_reschedule, archive_booking
+            if (record.owner_email.casefold() != candidate.owner_email.casefold()
+                    or record.learner_id != candidate.learner_id
+                    or record.event_type != candidate.event_type):
+                raise LearnerCalendarConflict('The booking association changed. Reload the Review.')
+            if overlay is not None:
+                require_started_reschedule(record, overlay.status)
+            else:
+                if not record.review_instance_id:
+                    raise LearnerCalendarConflict('A linked Review is required before rescheduling.')
+                sync_scheduled_review_instance(record, coach_reschedule=True)
+            current_slot = (record.scheduled_date, record.scheduled_time, record.duration_minutes)
+            desired_slot = (candidate.scheduled_date, candidate.scheduled_time, candidate.duration_minutes)
+            if expected_booking is None or current_slot not in (expected_booking, desired_slot):
+                raise LearnerCalendarConflict('This booking changed. Reload before rescheduling.')
+            archive_booking(record, candidate, overlay=overlay)
+            candidate.status = record.status
+        if not rescheduling_started and (record.review_instance_id or candidate.review_template_id) and record.status in {
             CoachCalendarEvent.STATUS_IN_PROGRESS,
             CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
             CoachCalendarEvent.STATUS_COMPLETED,
@@ -10885,17 +11443,21 @@ def persist_calendar_sync_reservation(
                 duration_minutes=candidate.duration_minutes,
                 exclude_record_id=candidate.pk,
             )
+            ensure_coach_booking_available(candidate.owner_email, candidate.scheduled_date, candidate.scheduled_time,
+                                           candidate.duration_minutes, exclude_record_id=candidate.pk)
         for field in mutable_fields:
             if record.review_instance_id and field in {"review_template_id", "occurrence_number"}:
+                continue
+            if reconciliation and field in {"owner_email", "learner_id", "event_type", "sequence", "target_date"}:
                 continue
             setattr(record, field, getattr(candidate, field))
         record.sync_state = CoachCalendarEvent.SYNC_PENDING
         record.save(update_fields=[*mutable_fields, "sync_state", "updated_at"])
-        if review_event is not None and review_event.get("reviewSource") == "aptem":
+        if reconciliation or (review_event is not None and review_event.get("reviewSource") == "aptem"):
             return record
         if review_event is not None and record.review_template_id and not record.review_instance_id:
             ensure_review_instance_for_calendar_record(record, review_event)
-        return sync_scheduled_review_instance(record)
+        return sync_scheduled_review_instance(record, **({'coach_reschedule': True} if rescheduling_started else {}))
 
 
 def synchronize_reserved_calendar_event(
@@ -10903,9 +11465,17 @@ def synchronize_reserved_calendar_event(
     base_event: dict,
 ) -> tuple[CoachCalendarEvent, str, bool]:
     """Claim and synchronise a durable operation without holding DB locks on I/O."""
+    from . import imported_meeting_ownership as meeting_ownership
+    ownership_active = meeting_ownership.enabled_for(base_event)
+    if ownership_active:
+        # A missing migration or incomplete legacy inventory must fail before
+        # POST/PATCH can create an external meeting or send an invitation.
+        meeting_ownership.require_activation_ready()
     with transaction.atomic():
         record = CoachCalendarEvent.objects.select_for_update().get(pk=record_id)
         if record.sync_state == CoachCalendarEvent.SYNC_SYNCED:
+            if ownership_active:
+                meeting_ownership.require_synced_owner(record, base_event)
             return record, "", False
         syncing_is_fresh = (
             record.sync_state == CoachCalendarEvent.SYNC_SYNCING
@@ -10955,7 +11525,7 @@ def synchronize_reserved_calendar_event(
         warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
         record.sync_state = CoachCalendarEvent.SYNC_FAILED
         record.last_graph_sync_error = public_graph_sync_warning(warning)
-        record.save()
+        record.save(update_fields=CALENDAR_GRAPH_SYNC_FIELDS)
         logger.warning(
             "coach_calendar_graph_sync_failed",
             extra={
@@ -10968,7 +11538,13 @@ def synchronize_reserved_calendar_event(
         return record, warning, True
 
     try:
-        finalize_calendar_graph_sync(record, warning)
+        if ownership_active:
+            # The strict Graph reads happen after POST/PATCH, outside DB locks.
+            # The owner and synced calendar state publish in one transaction.
+            target = meeting_ownership.resolve_verified_target(record)
+            meeting_ownership.finalize_owned_booking(record, warning, base_event, target)
+        else:
+            finalize_calendar_graph_sync(record, warning)
     except Exception:
         logger.exception(
             "coach_calendar_graph_finalize_failed",
@@ -11014,7 +11590,7 @@ def synchronize_reserved_calendar_event(
 
 def find_generated_timetable_event(owner_email: str, event_key: str) -> tuple[dict | None, str]:
     payload = collect_generated_timetable(owner_email)
-    event = next((item for item in payload["events"] if item.get("eventKey") == event_key), None)
+    event = next((item for item in payload["events"] if event_key in {item.get("eventKey"), item.get("calendarEventKey")}), None)
     return event, payload["owner_name"]
 
 
@@ -11072,7 +11648,11 @@ def coach_timetable_schedule_event(request):
         return validation_error_response(exc)
 
     if event_key.startswith("imported-review:"):
-        return coach_error(request, code="BOOKING_CONFLICT", message="Open the migrated review and use Book Meeting to schedule it.", status=409)
+        from .reconciliation_links import records_for_key
+        mapped_records = records_for_key(event_key)
+        if len(mapped_records) != 1 or clean_email(mapped_records[0].owner_email) != clean_email(owner_email):
+            return coach_error(request, code="BOOKING_CONFLICT", message="Open the migrated review and use Book Meeting to schedule it.", status=409)
+        event_key = mapped_records[0].event_key
 
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
@@ -11080,7 +11660,8 @@ def coach_timetable_schedule_event(request):
         learner_map = build_learner_profile_map(learner_rows)
         learner = learner_map.get(catchup_record.learner_id)
         if learner and coach_learner_personal_calendar_conflicts(
-            learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+            learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes,
+            exclude_record=catchup_record,
         ):
             return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
         catchup_record.owner_name = owner_name or catchup_record.owner_name
@@ -11192,7 +11773,25 @@ def coach_timetable_schedule_event(request):
         )
         return JsonResponse({"event": updated_event, "warning": warning})
 
-    base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
+    # A saved Native appointment remains manageable by its owner after Aptem
+    # data arrives, even though it is absent from the primary Review list.
+    existing_native = CoachCalendarEvent.objects.filter(
+        event_key=event_key, owner_email__iexact=owner_email,
+        event_type__in={"mcr", "progress-review", "review"},
+        scheduled_date__isnull=False, scheduled_time__isnull=False,
+    ).exclude(review_instance_id="").exclude(review_instance_id__isnull=True).first()
+    try:
+        base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
+    except DatabaseError:
+        if not existing_native:
+            raise
+        base_event = None
+    if not base_event and existing_native:
+        from .reconciliation_links import for_calendar
+        if for_calendar(existing_native):
+            return JsonResponse({"detail": "The reconciled imported Review is unavailable. Reload before rescheduling."}, status=409)
+        base_event = build_booked_calendar_event(existing_native)
+        owner_name = existing_native.owner_name
     if not base_event:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
     if (
@@ -11207,13 +11806,67 @@ def coach_timetable_schedule_event(request):
     if not isinstance(target_date, date):
         return JsonResponse({"detail": "Target date is missing for this event."}, status=400)
 
+    review_booking = (base_event.get("reviewSource") == "aptem"
+                      or clean_text(base_event.get("source")).lower() in {"mcr", "progress-review", "review"})
+    if review_booking:
+        if payload.get("durationMinutes") in (None, ""):
+            return JsonResponse({"detail": "durationMinutes is required for Review bookings."}, status=400)
+        try:
+            from .booking_hours import validate_review_time_precision
+            validate_review_time_precision(payload.get("scheduledTime"))
+        except ValueError as exc:
+            return coach_error(request, code="INVALID_REVIEW_TIME", message=str(exc), status=400)
+
     learner_rows = fetch_owner_active_learner_profiles(owner_email)
     learner_map = build_learner_profile_map(learner_rows)
     base_learner = learner_map.get(int(base_event["learnerId"]))
-    if base_learner and coach_learner_personal_calendar_conflicts(
-        base_learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+    current_review_booking = None
+    review_slot_is_replay = False
+    if review_booking:
+        current_review_booking = CoachCalendarEvent.objects.filter(
+            event_key=event_key, owner_email__iexact=owner_email,
+            learner_id=int(base_event["learnerId"]),
+        ).first()
+        review_slot_is_replay = bool(current_review_booking
+                                     and current_review_booking.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
+                                     and (current_review_booking.scheduled_date,
+                                          current_review_booking.scheduled_time,
+                                          current_review_booking.duration_minutes)
+                                     == (scheduled_date, scheduled_time, duration_minutes))
+        if not review_slot_is_replay:
+            try:
+                from .booking_hours import validate_review_interval
+                validate_review_interval(scheduled_date, scheduled_time, duration_minutes)
+            except ValueError as exc:
+                return coach_error(request, code="INVALID_REVIEW_TIME", message=str(exc), status=400)
+    if base_event.get("reviewSource") != "aptem" and base_event.get("source") in {"mcr", "progress-review", "review"}:
+        existing = CoachCalendarEvent.objects.filter(
+            event_key=event_key, owner_email__iexact=owner_email,
+            learner_id=int(base_event["learnerId"]),
+        ).first()
+        if not (existing and existing.review_instance_id and existing.scheduled_date and existing.scheduled_time):
+            policy = native_review_creation_policy(base_learner)
+            if not policy["canAddReview"]:
+                return JsonResponse(policy, status=409)
+
+    if base_learner and not review_slot_is_replay and coach_learner_personal_calendar_conflicts(
+        base_learner, scheduled_date, scheduled_time, duration_minutes,
+        timezone_offset_minutes, exclude_record=current_review_booking,
+        **({"business_time_zone": "Europe/London"} if review_booking else {}),
     ):
         return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
+    if review_booking and not review_slot_is_replay:
+        try:
+            from .booking_availability import ensure_coach_review_slot_available
+            ensure_coach_review_slot_available(owner_email, scheduled_date, scheduled_time,
+                                               duration_minutes, record=current_review_booking)
+        except LearnerCalendarConflict as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
+        except Exception as exc:
+            from .booking_availability import CoachAvailabilityUnavailable
+            if isinstance(exc, CoachAvailabilityUnavailable):
+                return coach_error(request, code="AVAILABILITY_UNAVAILABLE", message=str(exc), status=503)
+            raise
 
     record, _ = CoachCalendarEvent.objects.get_or_create(
         event_key=event_key,
@@ -11245,8 +11898,26 @@ def coach_timetable_schedule_event(request):
     if first_time_linkage:
         try:
             require_review_template_for_first_linkage(review_template_id)
-        except ReviewTemplateUnavailableError as exc:
-            return JsonResponse({"detail": str(exc)}, status=409)
+        except (ReviewTemplateUnavailableError, ReviewCreationBlocked) as exc:
+            return JsonResponse(getattr(exc, "policy", {"detail": str(exc)}), status=409)
+
+    expected_booking = None
+    if record.status == CoachCalendarEvent.STATUS_IN_PROGRESS:
+        expected = payload.get('expectedBooking')
+        if not isinstance(expected, dict) or base_learner is None:
+            return JsonResponse({'detail': 'Reload the existing booking before rescheduling.'}, status=409)
+        try:
+            expected_validator = ObjectValidator(expected)
+            expected_booking = (
+                expected_validator.iso_date('scheduledDate', required=True),
+                expected_validator.clock_time('scheduledTime', required=True),
+                expected_validator.integer('durationMinutes', required=True, minimum=15, maximum=480),
+            )
+            expected_validator.check()
+        except ValidationError as exc:
+            return validation_error_response(exc)
+        if record.owner_email.casefold() != owner_email.casefold() or record.learner_id != int(base_event['learnerId']):
+            return JsonResponse({'detail': 'The booking association changed. Reload the Review.'}, status=409)
 
     record.owner_email = owner_email
     record.owner_name = owner_name
@@ -11269,9 +11940,11 @@ def coach_timetable_schedule_event(request):
         )
 
     try:
-        record = persist_calendar_sync_reservation(record, review_event=base_event)
-    except ReviewTemplateUnavailableError as exc:
-        return JsonResponse({"detail": str(exc)}, status=409)
+        record = persist_calendar_sync_reservation(record, review_event=base_event,
+            **({"coach_reschedule": True, "expected_booking": expected_booking}
+               if expected_booking is not None else {}))
+    except (ReviewTemplateUnavailableError, ReviewCreationBlocked) as exc:
+        return JsonResponse(getattr(exc, "policy", {"detail": str(exc)}), status=409)
     except LearnerCalendarConflict as exc:
         return JsonResponse({"detail": str(exc)}, status=409)
     except CalendarSyncInProgress:
@@ -11611,6 +12284,11 @@ def coach_timetable_event_action(request):
     record = CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email, event_key=event_key).first()
     if not record:
         return JsonResponse({"detail": "This event has not been scheduled yet."}, status=400)
+    from .reconciliation_links import for_calendar
+    reconciliation = for_calendar(record)
+    if reconciliation:
+        return JsonResponse({"detail": "Use the reconciled imported Review form for lifecycle actions.",
+                             "code": "REVIEW_RECONCILED", "instanceId": reconciliation.overlay.event_key}, status=409)
     if calendar_record_needs_schedule_repair(record):
         save_calendar_sync_warning(
             record,
@@ -12537,6 +13215,7 @@ def coach_timetable(request):
             end_date=end_date,
             include_live_sessions=include_live_sessions,
             include_scheduler_queues=include_scheduler_queues,
+            include_unlinked_bookings=True,
         )
         # Elapsed meetings show Ended, or Completed when the learner attended.
         from .meeting_outcomes import annotate_meeting_outcomes
@@ -12771,13 +13450,13 @@ def coach_performance_metrics_by_coach(
 @require_access(ACCESS_SUPER_ADMIN)
 @require_GET
 def coach_directory_calendar(request):
-    """Return one week's calendar events for every coach in one snapshot read.
+    """Read the overview preview, filling bookings outside its stored window.
 
     The overview used to call the full timetable endpoint once per coach. Each
     call rebuilds live sessions and review schedules from Curriculum, so the
     page waited for the slowest of twenty-plus expensive requests. Dashboard
-    snapshots already hold the same read-only meeting projection; filter their
-    JSON in PostgreSQL and return only the requested week.
+    snapshots hold a bounded preview; filter their JSON in PostgreSQL, then
+    use the normal timetable read only for coaches with missing bookings.
     """
     validator = ObjectValidator(request.GET)
     start_date = validator.iso_date("start")
@@ -12843,6 +13522,8 @@ def coach_directory_calendar(request):
         with connections[database].cursor() as cursor:
             cursor.execute(sql, [sorted(coach_emails), start_date, end_date])
             rows = cursor.fetchall()
+        from .directory_calendar import read_missing_bookings
+        current_bookings = read_missing_bookings(coach_emails, rows, start_date, end_date)
     except DatabaseError:
         logger.exception("coach_directory_calendar_failed")
         return coach_error(
@@ -12874,6 +13555,17 @@ def coach_directory_calendar(request):
         ).values_list("owner_email_key", flat=True)
         if clean_text(value)
     }
+    for email, events in current_bookings.items():
+        # The fallback concerns individual coaching bookings. Keep the existing
+        # curriculum-session projection and replace coaching rows, never append
+        # a second copy of a reconciled/imported Review.
+        live_events = [event for event in events_by_email[email] if event.get('source') == 'live-session']
+        events_by_email[email] = sorted([*live_events, *events], key=lambda event: (
+            event.get('scheduledDate') or event.get('date') or event.get('targetDate') or '',
+            event.get('scheduledTime') or '', event.get('eventKey') or '',
+        ))
+        refreshed_by_email[email] = timezone.now()
+        snapshot_emails.add(email)
     return JsonResponse({
         "calendars": [
             {
@@ -13965,10 +14657,14 @@ MARKING_QUEUE_COLUMNS = """
 
 def serialize_marking_submission(row, *, now=None):
     from learner_api.assignment_attempts import submission_attempts
+    from learner_api.reflection_ksbs import review_summary
     now = now or timezone.now()
     submitted_at = row["submitted_at"]
     elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
     status = "pending" if row["status"] == "submitted_for_tutor_review" else row["status"]
+    ksb_review = review_summary(parse_json_value(row.get('full_submission'), {}))
+    if ksb_review and ksb_review['status'] == 'pending':
+        status = 'ksb_review'
     learner_name = row["learner_name"] or f"Learner {row['learner_id']}"
     initials = "".join(part[:1].upper() for part in learner_name.split()[:2]) or "L"
     return {
@@ -13987,6 +14683,7 @@ def serialize_marking_submission(row, *, now=None):
         "status": status,
         "learningReflection": row["learning_reflection"],
         "ksbCodes": parse_json_value(row["ksb_codes"], []),
+        **({'ksbReview': ksb_review} if ksb_review else {}),
         "ksbWeights": parse_json_value(row["ksb_weights"], {}),
         "ksbExplanations": parse_json_value(row["ksb_explanations"], {}),
         "confidenceBefore": parse_json_value(row["confidence_before"], {}),
@@ -14045,6 +14742,7 @@ def empty_marking_queue_response(owner_email, *, page=1, page_size=25):
 @attributed_write_view
 def coach_marking_queue(request, submission_id=None):
     """List and review complete reflections, scoped and paged in PostgreSQL."""
+    from learner_api.reflection_ksbs import PENDING_KSB_REVIEW_SQL, KsbReviewError
     owner_email = authenticated_coach_email(request)
     requested_owner = normalize_email(owner_email)
     # learning_reflection_submissions.learner_id is populated from
@@ -14088,12 +14786,22 @@ def coach_marking_queue(request, submission_id=None):
                 )
             if not value:
                 return JsonResponse({"detail": "Submission not found."}, status=404)
-            return JsonResponse({"item": serialize_marking_submission(dict(zip(columns, value)))})
+            from .ksb_review import detail_context
+            try:
+                item = detail_context(serialize_marking_submission(dict(zip(columns, value))))
+            except KsbReviewError as exc:
+                return JsonResponse({'detail': str(exc)}, status=exc.status)
+            except DatabaseError:
+                return JsonResponse({'detail': 'The programme KSB list could not be loaded. Please retry.'}, status=503)
+            return JsonResponse({"item": item})
 
         if request.method not in {"PATCH", "POST"}:
             return JsonResponse({"detail": "Method not allowed."}, status=405)
         try:
             payload = parse_json_body(request)
+            if payload.get('action') == 'review_ksbs':
+                from .ksb_review import save_review
+                return save_review(request, submission_id, allowed_learner_ids, payload)
             validator = ObjectValidator(payload)
             decision = validator.text(
                 "decision",
@@ -14134,6 +14842,7 @@ def coach_marking_queue(request, submission_id=None):
                     update "Learner"."learning_reflection_submissions"
                     set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
                     where id = %s and learner_id = any(%s)
+                      and not (""" + PENDING_KSB_REVIEW_SQL + """)
                       and """ + MARKING_QUEUE_EXCLUDE_DRAFTS_SQL + """
                     returning """ + SUBMISSION_AUDIT_SQL + """
                     """,
@@ -14249,7 +14958,10 @@ def coach_marking_queue(request, submission_id=None):
     item_params = list(base_params)
     if status_filter and status_filter != "all":
         statuses = status_groups.get(status_filter, [status_filter])
-        item_clauses.append("status = any(%s)")
+        if status_filter == 'pending':
+            item_clauses.append(f"(status = any(%s) OR ({PENDING_KSB_REVIEW_SQL}))")
+        else:
+            item_clauses.append(f"(status = any(%s) AND NOT ({PENDING_KSB_REVIEW_SQL}))")
         item_params.append(statuses)
     overdue_before = timezone.now() - timedelta(days=MARKING_OVERDUE_DAYS)
     if status_filter == "overdue":
@@ -14265,14 +14977,14 @@ def coach_marking_queue(request, submission_id=None):
                 f"""
                 select count(*) as total_items,
                        count(distinct (learner_kind, learner_id)) as active_learners,
-                       count(*) filter (where status in ('submitted_for_tutor_review', 'escalated')) as pending_items,
-                       count(*) filter (where status in ('accepted', 'partial')) as accepted_items,
+                       count(*) filter (where status in ('submitted_for_tutor_review', 'escalated') OR ({PENDING_KSB_REVIEW_SQL})) as pending_items,
+                       count(*) filter (where status in ('accepted', 'partial') AND NOT ({PENDING_KSB_REVIEW_SQL})) as accepted_items,
                        count(*) filter (where status in ('referred', 'rejected')) as referred_items,
                        count(*) filter (
                            where status = 'submitted_for_tutor_review' and submitted_at <= %s
                        ) as overdue_items,
                        min(submitted_at) filter (
-                           where status in ('submitted_for_tutor_review', 'escalated')
+                           where status in ('submitted_for_tutor_review', 'escalated') OR ({PENDING_KSB_REVIEW_SQL})
                        ) as oldest_submission
                   from "Learner".learning_reflection_submissions
                  where {base_where}
@@ -14306,7 +15018,7 @@ def coach_marking_queue(request, submission_id=None):
                 select {MARKING_QUEUE_COLUMNS}
                   from "Learner".learning_reflection_submissions
                  where {item_where}
-                 order by case when status = 'submitted_for_tutor_review' then 0 else 1 end,
+                 order by case when status = 'submitted_for_tutor_review' OR ({PENDING_KSB_REVIEW_SQL}) then 0 else 1 end,
                           submitted_at asc, id asc
                  limit %s offset %s
                 """,
@@ -14450,9 +15162,13 @@ def coach_review_learner_addition_templates(request):
     if learner is None:
         return JsonResponse({"detail": "Learner not found in your caseload."}, status=404)
 
+    policy = native_review_creation_policy(learner)
+    if not policy["canAddReview"]:
+        return JsonResponse({"learnerId": learner_id, "programmeId": None, "templates": [], **policy})
+
     programme_id = resolve_curriculum_programme_id(learner.programme)
     if not programme_id:
-        return JsonResponse({"learnerId": learner_id, "programmeId": None, "templates": []})
+        return JsonResponse({"learnerId": learner_id, "programmeId": None, "templates": [], **policy})
 
     type_index = curriculum_review_types.review_type_index()
     templates = []
@@ -14465,7 +15181,7 @@ def coach_review_learner_addition_templates(request):
             "reviewTypeCode": clean_text((type_row or {}).get("code")) or None,
             "reviewTypeName": clean_text((type_row or {}).get("name")) or None,
         })
-    return JsonResponse({"learnerId": learner_id, "programmeId": programme_id, "templates": templates})
+    return JsonResponse({"learnerId": learner_id, "programmeId": programme_id, "templates": templates, **policy})
 
 
 @coach_access_required
@@ -14522,6 +15238,10 @@ def coach_review_learner_additions_create(request):
     if learner is None:
         return JsonResponse({"detail": "Learner not found in your caseload."}, status=404)
 
+    policy = native_review_creation_policy(learner)
+    if not policy["canAddReview"]:
+        return JsonResponse(policy, status=409)
+
     programme_id = resolve_curriculum_programme_id(learner.programme)
     if not programme_id:
         return JsonResponse({"detail": "This learner has no Curriculum programme mapping."}, status=422)
@@ -14539,28 +15259,31 @@ def coach_review_learner_additions_create(request):
             {"detail": "That Review template is not enabled for this learner's programme."}, status=404,
         )
 
-    addition = curriculum_review_instances.create_learner_review_addition(
-        review_template_id=review_template_id,
-        programme_id=programme_id,
-        learner_id=learner_id,
-        target_date=target_date,
-        reason_code=reason_code,
-        reason=reason,
-        actor=owner_email or "coach",
-    )
-    occurrence_ref = f"{curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL}:{addition['id']}"
-    instance = curriculum_review_instances.ensure_review_instance(
-        template_row,
-        learner_id=learner_id,
-        learner_kind="",
-        programme_id=programme_id,
-        occurrence_number=None,
-        target_date=target_date,
-        coach_email=owner_email,
-        actor=owner_email or "coach",
-        occurrence_source=curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL,
-        occurrence_ref=occurrence_ref,
-    )
+    try:
+        addition = curriculum_review_instances.create_learner_review_addition(
+            review_template_id=review_template_id,
+            programme_id=programme_id,
+            learner_id=learner_id,
+            target_date=target_date,
+            reason_code=reason_code,
+            reason=reason,
+            actor=owner_email or "coach",
+        )
+        occurrence_ref = f"{curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL}:{addition['id']}"
+        instance = curriculum_review_instances.ensure_review_instance(
+            template_row,
+            learner_id=learner_id,
+            learner_kind="",
+            programme_id=programme_id,
+            occurrence_number=None,
+            target_date=target_date,
+            coach_email=owner_email,
+            actor=owner_email or "coach",
+            occurrence_source=curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL,
+            occurrence_ref=occurrence_ref,
+        )
+    except ReviewCreationBlocked as exc:
+        return JsonResponse(exc.policy, status=409)
     event_key = curriculum_review_instances.review_calendar_event_key_manual(
         learner_id, review_template_id, addition["id"],
     )
@@ -14585,6 +15308,11 @@ def _authorized_review_instance(request, instance_id):
         return None, JsonResponse({"detail": "Review not found."}, status=404)
     if clean_email(instance_row.get("coach_email")) != clean_email(owner_email):
         return None, JsonResponse({"detail": "Review not found."}, status=404)
+    from .reconciliation_links import for_native
+    link = for_native(instance_id)
+    if link and request.method != "GET":
+        return None, JsonResponse({"detail": "Use the reconciled imported Review form.",
+                                   "code": "REVIEW_RECONCILED", "instanceId": link.overlay.event_key}, status=409)
     return instance_row, None
 
 
@@ -14596,6 +15324,7 @@ def _review_instance_calendar_record(instance_row):
     return CoachCalendarEvent.objects.filter(
         pk=calendar_event_id,
         review_instance_id=instance_row.get("id"),
+        learner_id=instance_row.get("learner_id"),
         owner_email__iexact=instance_row.get("coach_email") or "",
     ).first()
 
@@ -14678,6 +15407,15 @@ def _coach_review_instance_definition(instance_row):
         "full_name", "email", "programme", "programme_id",
     ).first()
     definition.update(_review_learner_identity(learner))
+    record = _review_instance_calendar_record(instance_row)
+    if record and record.event_key and (record.meeting_link or record.graph_web_link):
+        definition["calendarMeeting"] = {
+            "eventKey": record.event_key,
+            "source": record.event_type,
+            "status": record.status,
+            "meetingLink": record.meeting_link or "",
+            "graphWebLink": record.graph_web_link or "",
+        }
     source = _review_instance_meeting_summary_source(instance_row, definition)
     if source is not None:
         definition["meetingSummarySource"] = source
@@ -14935,7 +15673,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         review,
         has_normalized_sections=bool(normalized_sections),
     )
-    historical_completed = migrated_source_is_completed(review)
+    source_completed = migrated_source_is_completed(review)
     canonical_event_key = f"{prefix}{review['aptemReviewId']}"
     canonical_owner = owner_email.strip().casefold()
     saved_instance = requested_overlay
@@ -14943,6 +15681,11 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         saved_instance = ImportedReviewInstance.objects.filter(
             owner_email__iexact=canonical_owner, learner_id=profile_id, source_review_id=row["id"],
         ).first()
+        if not saved_instance and ImportedReviewInstance.objects.filter(
+                learner_id=profile_id, source_review_id=row["id"]).first() is not None:
+            # A blocked handover must not look like a fresh form that the new
+            # Coach can initialize over another owner's continuation/history.
+            return None
     source_review_id = getattr(saved_instance, "source_review_id", None)
     overlay_learner_id = getattr(saved_instance, "learner_id", None)
     if saved_instance and isinstance(source_review_id, int):
@@ -14953,6 +15696,9 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     if saved_instance and isinstance(getattr(saved_instance, "event_key", None), str):
         canonical_event_key = saved_instance.event_key
     snapshot = getattr(saved_instance, "template_snapshot", None)
+    # Keep completed LMS forms and their archived correction cycles accessible.
+    # Source-only history and drafts without LMS completion remain historical.
+    historical_completed = source_completed and not has_lms_completion_history(saved_instance)
     migrated_form = not historical_completed and isinstance(snapshot, dict) and bool(snapshot.get("sections"))
     if migrated_form and not getattr(saved_instance, "source_review_id", None):
         return None
@@ -14963,17 +15709,21 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         return {
             **_review_learner_identity(learner),
             "migratedForm": migrated_form,
+            "canReopen": bool(migrated_form and not preview_only
+                              and saved_instance.status in {"completed", "awaiting-signature"}),
             "instance": {"id": canonical_event_key, "learnerId": profile_id,
                          "targetDate": review.get("plannedDate") or ""},
             "historicalReview": review,
         }
     family = migrated_review_family(review.get("type"))
+    psp_initial_status = (clean_text(review.get("status")) if family == "PSP"
+                          and review.get("status") in MIGRATED_EDITABLE_STATUSES else None)
     local_programme_key = migrated_programme_key(
         getattr(learner, "programme_id", None), getattr(learner, "programme", None),
     )
     eligible_for_template = bool(
-        not saved_instance and not historical_completed and not form_available
-        and family and initial_local_status(review.get("status"))
+        not saved_instance and not historical_completed and (not form_available or family == "PSP")
+        and family and (initial_local_status(review.get("status")) or psp_initial_status)
     )
     approved_template = None
     if eligible_for_template:
@@ -15003,7 +15753,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     )
     review_type = clean_text(review.get("type"))
     monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
-    review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
+    review_type_code = ("aptem_psp" if family == "PSP" else
+                        "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review")
     is_mcm = review_type_code == "aptem_mcm"
 
     adapted_sections = []
@@ -15070,7 +15821,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     if migrated_form:
         try:
             from coach_api.migrated_template_sync import active_answers
-            adapted_sections, field_warnings = render_migrated_sections(snapshot, active_answers(snapshot, saved_answers))
+            adapted_sections, field_warnings = render_migrated_sections(
+                snapshot, active_answers(snapshot, saved_answers),
+                answer_audit=(getattr(saved_instance, "meeting_intelligence", None) or {}).get("answerEdits", {}),
+            )
         except ValueError:
             return None
     elif is_template_preview:
@@ -15116,13 +15870,15 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     definition = {
         **_review_learner_identity(learner),
         **({"programme": review["historicalProgramme"]} if historical_completed and review.get("historicalProgramme") else {}),
-        "readOnly": preview_only or summary_only or historical_completed or (
+        "readOnly": preview_only or summary_only or historical_completed or (family == "PSP" and not migrated_form) or (
             migrated_form and saved_instance.status not in MIGRATED_EDITABLE_STATUSES
         ),
         "source": "aptem",
         "formAvailable": form_available,
         "summaryOnly": summary_only,
         "migratedForm": migrated_form,
+        "canReopen": bool(migrated_form and not preview_only
+                          and saved_instance.status in {"completed", "awaiting-signature"}),
         "previewOnly": is_template_preview,
         "noApprovedMigratedTemplate": no_approved_template,
         "migratedPreviewError": preview_error,
@@ -15183,6 +15939,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         from coach_api.migrated_template_sync import snapshot_state
         definition["templateSync"] = snapshot_state(saved_instance)
         definition["answerVersion"] = answer_version(saved_instance)
+        definition["bookingAdoptionVersion"] = _migrated_booking_adoption_version(saved_instance)
+        from .migrated_reopening import revision_number, history as migrated_revision_history
+        definition["reviewRevision"] = revision_number(saved_instance)
+        definition["reopenHistory"] = migrated_revision_history(saved_instance)
         pdf_ready = saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
         definition["pdf"] = {
             "available": pdf_ready,
@@ -15195,7 +15955,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "reason": "",
         "source": "aptem",
         }
-    if not historical_completed and (migrated_form or can_initialize or is_template_preview):
+    if not source_completed and (migrated_form or can_initialize or is_template_preview):
         from .review_sources import booking_for_imported_review, ReviewIdentityConflict
         booking_conflict = False
         try:
@@ -15214,9 +15974,20 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             and calendar.graph_event_id and calendar_record_has_launch_url(calendar)
             and calendar.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
         )
+        from .migrated_rescheduling import can_reschedule
+        from learner_api.booking_calendar import booking_calendar_payload
+        definition["bookingCalendar"] = booking_calendar_payload()
+        from .booking_reservations import review_occupies_slot
         definition["booking"] = {
+            "reserved": bool(association_valid and review_occupies_slot(calendar)),
             "booked": booked,
             "conflict": booking_conflict or bool(calendar and not association_valid),
+            "canReschedule": bool(
+                association_valid and not booking_conflict and not preview_only
+                and migrated_form and booking_template
+                and snapshot_assignment_valid(saved_instance, family, local_programme_key)
+                and can_reschedule(saved_instance, calendar, family=family)
+            ),
             "canAttach": bool(
                 booked and migrated_form and saved_instance and booking_template
                 and snapshot_assignment_valid(saved_instance, family, local_programme_key)
@@ -15238,10 +16009,29 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             "meetingLink": calendar.meeting_link if booked else None,
             "syncState": calendar.sync_state if association_valid else None,
         }
+    from .personal_support_booking import is_personal_support_plan, booking_state
+    if is_personal_support_plan(review.get("type")):
+        from learner_api.booking_calendar import booking_calendar_payload
+        definition["bookingCalendar"] = booking_calendar_payload()
+        _calendar, definition["booking"] = booking_state(
+            canonical_owner, learner, review, saved_instance, preview_only=preview_only,
+        )
     return definition
 
 
-def _owned_migrated_overlay(owner_email, definition, *, lock=False):
+def _owned_migrated_overlay(owner_email, definition, *, lock=False, lock_calendar=False):
+    if lock_calendar:
+        # Status writers later lock/update the booking. Match reconciliation
+        # and rescheduling: learner -> calendar -> overlay, never the reverse.
+        if not lock:
+            raise ValueError("Calendar locking requires an overlay lock.")
+        owned = _owned_migrated_overlay(owner_email, definition)
+        if owned is None:
+            return None
+        lock_learner_calendar(owned.learner_id)
+        from .review_sources import booking_for_overlay
+        booking_for_overlay(owned, lock=True)
+        # Re-read and revalidate below after acquiring the parent locks.
     query = ImportedReviewInstance.objects.filter(
         owner_email__iexact=owner_email.strip().casefold(),
         event_key=definition["instance"]["id"],
@@ -15270,42 +16060,12 @@ def coach_review_instance_initialize(request, instance_id):
         return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
     if not definition.get("canInitialize") or definition.get("readOnly") is False:
         return JsonResponse({"detail": "This imported review cannot be initialized."}, status=409)
-    family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
-    local_status = initial_local_status(definition.get("sourceStatus"))
-    source_id = int(definition["historicalReview"]["id"])
-    with transaction.atomic():
-        from coach_api.migrated_template_sync import lock_template_family
-        lock_template_family(family)
-        template = resolve_migrated_template(definition["migratedProgrammeKey"], family, lock=True)
-        if template is None:
-            return JsonResponse({"detail": "No approved migrated template is assigned."}, status=409)
-        try:
-            from coach_api.migrated_reviews import validate_definition
-            validate_definition(template.definition_json)
-        except ValueError as exc:
-            return JsonResponse({"detail": str(exc)}, status=409)
-        try:
-            from coach_api.migrated_completion import requirements_for_family
-            with transaction.atomic():
-                overlay, created = ImportedReviewInstance.objects.get_or_create(
-                    owner_email=owner_email, event_key=definition["instance"]["id"],
-                    defaults={
-                        "learner_id": definition["instance"]["learnerId"],
-                        "source_review_id": source_id,
-                        "migrated_template": template,
-                        "template_snapshot": migrated_template_snapshot(template),
-                        "signature_requirements": requirements_for_family(family),
-                        "answers": {}, "status": local_status,
-                    },
-                )
-        except IntegrityError:
-            return JsonResponse({"detail": "This source review is already associated with another overlay."}, status=409)
-        if not created and (
-            overlay.learner_id != definition["instance"]["learnerId"]
-            or overlay.source_review_id != source_id
-            or not overlay.template_snapshot
-        ):
-            return JsonResponse({"detail": "An existing overlay has a different source association."}, status=409)
+    from .migrated_initialization import initialize_imported_review
+    try:
+        initialize_imported_review(owner_email, definition)
+    except (ValueError, IntegrityError) as exc:
+        message = str(exc) if isinstance(exc, ValueError) else "This source review is already associated with another overlay."
+        return JsonResponse({"detail": message}, status=409)
     return JsonResponse(_imported_review_definition(owner_email, instance_id))
 
 
@@ -15314,50 +16074,165 @@ def coach_review_instance_local_status(request, instance_id):
     """Start an imported review only after its LMS meeting is verified."""
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    try:
+        payload = parse_json_body(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    calendar_key = payload.get('calendarEventKey')
+    if calendar_key is not None and (not isinstance(calendar_key, str) or not calendar_key):
+        return JsonResponse({'detail': 'A valid calendar event key is required.'}, status=400)
+    if any(payload.get(key) is not None and (not isinstance(payload[key], str) or not payload[key])
+           for key in ('meetingLink', 'scheduledDate', 'scheduledTime')):
+        return JsonResponse({'detail': 'Meeting link and schedule must be valid text values.'}, status=400)
     if not instance_id.startswith("imported-review:"):
-        return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
-    owner_email = authenticated_coach_email(request)
+        # Calendar keys (including legacy/reconciled bookings) are candidates,
+        # never imported source IDs. Resolve through the existing authority.
+        from .background_meeting_sync import imported_context
+        from .review_sources import ReviewIdentityConflict
+        if not calendar_key or calendar_key != instance_id:
+            return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
+        record = CoachCalendarEvent.objects.filter(event_key=calendar_key, owner_email__iexact=owner_email).first()
+        try:
+            context = imported_context(record) if record else None
+        except ReviewIdentityConflict:
+            context = None
+        if not context or not context.get('overlayId'):
+            return JsonResponse({'detail': 'No initialized imported review is associated with this booking.'}, status=409)
+        instance_id = context['reviewKey']
     definition = _imported_review_definition(owner_email, instance_id)
     if not definition:
         return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
     if not definition.get("migratedForm") or definition.get("readOnly"):
         return JsonResponse({"detail": "This imported review is read-only."}, status=409)
-    try:
-        payload = parse_json_body(request)
-    except ValidationError as exc:
-        return validation_error_response(exc)
     if payload.get("status") != ImportedReviewInstance.STATUS_IN_PROGRESS:
         return JsonResponse({"detail": "Only the in-progress transition is available in Phase B."}, status=400)
     with transaction.atomic():
-        overlay = _owned_migrated_overlay(owner_email, definition, lock=True)
+        overlay = _owned_migrated_overlay(owner_email, definition, lock=True, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Imported review association mismatch."}, status=409)
-        if overlay.status != ImportedReviewInstance.STATUS_SCHEDULED:
-            return JsonResponse({"detail": "Only a scheduled review can be started."}, status=409)
-        from coach_api.migrated_template_sync import TemplateSyncConflict, synchronize_definition_locked
-        try:
-            synchronize_definition_locked(overlay, definition)
-        except TemplateSyncConflict as exc:
-            return JsonResponse({"detail": str(exc), "templateSync": exc.response()}, status=409)
         from .review_sources import booking_for_overlay, ReviewIdentityConflict
         try:
             calendar = booking_for_overlay(overlay, lock=True)
         except ReviewIdentityConflict as exc:
             return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
         family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
-        if not calendar or calendar.owner_email.casefold() != owner_email or calendar.event_type != migrated_booking_event_type(family) or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar):
+        if not calendar or (calendar_key is not None and calendar.event_key != calendar_key):
             return coach_error(request, code="BOOKING_CONFLICT", message="Book and confirm the Teams meeting before starting this review.", status=409)
-        overlay.status = ImportedReviewInstance.STATUS_IN_PROGRESS
-        overlay.save(update_fields=["status", "updated_at"])
-        calendar.status = CoachCalendarEvent.STATUS_IN_PROGRESS
-        calendar.save(update_fields=["status", "updated_at"])
+        if (('meetingLink' in payload and payload['meetingLink'] not in {calendar.meeting_link, calendar.graph_web_link})
+                or (payload.get('scheduledDate') and payload['scheduledDate'] != str(calendar.scheduled_date))
+                or (payload.get('scheduledTime') and parse_time_value(payload['scheduledTime']) != calendar.scheduled_time)):
+            return coach_error(request, code='BOOKING_CONFLICT', message='The meeting booking changed. Refresh the review before starting it.', status=409)
+        from .imported_review_start import start_locked
+        from .migrated_reviews import source_is_completed
+        if not start_locked(overlay, calendar, family,
+                            source_completed=source_is_completed(definition.get('historicalReview') or {})):
+            return JsonResponse({'detail': 'Only an initialized, scheduled review with a confirmed booking can be started.'}, status=409)
     return JsonResponse(_imported_review_definition(owner_email, instance_id))
+
+
+def _migrated_booking_adoption_version(overlay):
+    """Draft basis that survives a status-only adoption (including a lost reply).
+
+    Keep the ordinary answerVersion unchanged. A retry may advance that version
+    only if answers, questions and other saved review work still match.
+    """
+    state = {name: getattr(overlay, name, None) for name in (
+        "answers", "template_snapshot", "migrated_template_id", "progress_snapshot",
+        "meeting_intelligence", "signature_requirements",
+    )}
+    return hashlib.sha256(json.dumps(state, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+@coach_access_required
+@require_POST
+def coach_review_instance_adopt_booking(request, instance_id):
+    """Advance an imported form using its verified booking, without Graph I/O.
+
+    Called automatically by the coach workspace. Reads remain read-only, and
+    adopting a past/existing appointment never goes through new-booking rules.
+    """
+    from .review_sources import booking_for_overlay, ReviewIdentityConflict
+    from . import imported_meeting_ownership as meeting_ownership
+
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    if not instance_id.startswith("imported-review:"):
+        return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
+    definition = _imported_review_definition(owner_email, instance_id)
+    if not definition:
+        return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+    try:
+        payload = parse_json_body(request) if request.body else {}
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    expected_version = payload.get("bookingAdoptionVersion")
+    if "bookingAdoptionVersion" in payload and (not isinstance(expected_version, str) or not expected_version):
+        return JsonResponse({"detail": "A valid bookingAdoptionVersion is required."}, status=400)
+    family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
+    if (family not in {"MCM", "PR", "PR_SKILLS_RADAR"}
+            or not definition.get("migratedForm") or definition.get("readOnly")
+            or definition.get("previewOnly")
+            or (definition.get("templateSync") or {}).get("status") == "conflict"
+            or not initial_local_status(definition.get("sourceStatus"))):
+        return JsonResponse({"detail": "This review cannot adopt an existing meeting."}, status=409)
+    try:
+        with transaction.atomic():
+            # Same learner -> calendar -> overlay lock order as start/submit.
+            overlay = _owned_migrated_overlay(owner_email, definition, lock=True, lock_calendar=True)
+            # Recheck the full source/booking resolver under the learner lock;
+            # a second legacy appointment must not be hidden by a canonical key.
+            current = _imported_review_definition(owner_email, instance_id)
+            if (not current or current.get("readOnly") or not current.get("migratedForm")
+                    or current.get("previewOnly") or (current.get("booking") or {}).get("conflict")
+                    or (current.get("templateSync") or {}).get("status") == "conflict"
+                    or migrated_review_family((current.get("historicalReview") or {}).get("type")) != family
+                    or not initial_local_status(current.get("sourceStatus"))):
+                return JsonResponse({"detail": "The review or meeting association changed. Reload the review.",
+                                     "code": "BOOKING_CONFLICT"}, status=409)
+            if (not overlay or overlay.completed_at
+                    or overlay.learner_id != current["instance"]["learnerId"]
+                    or overlay.source_review_id != int(current["historicalReview"]["id"])
+                    or not snapshot_assignment_valid(overlay, family, current.get("migratedProgrammeKey"))
+                    or overlay.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED,
+                                              ImportedReviewInstance.STATUS_SCHEDULED,
+                                              ImportedReviewInstance.STATUS_IN_PROGRESS}):
+                return JsonResponse({"detail": "The review changed. Reload it before linking the meeting."}, status=409)
+            if expected_version is not None and expected_version != _migrated_booking_adoption_version(overlay):
+                return JsonResponse({
+                    "detail": "This review changed in another session. Reopen it and review the latest answers before saving. Your unsaved text has been kept on screen.",
+                    "code": "ANSWER_CONFLICT",
+                }, status=409)
+            calendar = booking_for_overlay(overlay, lock=True)
+            if (not calendar
+                    or calendar.event_key != (current.get("booking") or {}).get("eventKey")
+                    or not imported_booking_state.verified_meeting(
+                        calendar, owner_email=owner_email,
+                        event_type=migrated_booking_event_type(family))):
+                return JsonResponse({"detail": "A verified, synced meeting with a date and time is required.",
+                                     "code": "BOOKING_CONFLICT"}, status=409)
+            if getattr(settings, 'APTEM_MEETING_OWNERSHIP_ENABLED', False):
+                try:
+                    meeting_ownership.require_activation_ready()
+                    meeting_ownership.bind_owned_overlay(calendar, overlay)
+                except meeting_ownership.MeetingOwnershipError:
+                    return JsonResponse({"detail": "The Teams meeting ownership needs reconciliation.",
+                                         "code": "BOOKING_CONFLICT"}, status=409)
+            # Retries never regress an already scheduled/started review or
+            # alter answers, signatures, the source record or calendar identity.
+            if overlay.status == ImportedReviewInstance.STATUS_NOT_SCHEDULED:
+                overlay.status = ImportedReviewInstance.STATUS_SCHEDULED
+                overlay.save(update_fields=["status", "updated_at"])
+            # Return the checked content and its new answerVersion while the
+            # overlay is still locked, so a retry cannot accept a later edit.
+            return JsonResponse(_imported_review_definition(owner_email, instance_id))
+    except ReviewIdentityConflict as exc:
+        return JsonResponse({"detail": str(exc), "code": "BOOKING_CONFLICT"}, status=409)
 
 
 @coach_access_required
 def coach_review_instance_book(request, instance_id):
     """Book one imported review by its Aptem identity, never by a native occurrence."""
-    if request.method != "POST":
+    if request.method not in {"POST", "PATCH"}:
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     if not instance_id.startswith("imported-review:"):
         return coach_error(request, code="BOOKING_CONFLICT", message="Only imported reviews can use this booking action.", status=409)
@@ -15365,6 +16240,12 @@ def coach_review_instance_book(request, instance_id):
     definition = _imported_review_definition(owner_email, instance_id)
     if not definition:
         return coach_error(request, code="UNAUTHORIZED", message="Imported review not found for this coach.", status=404)
+    from .personal_support_booking import is_personal_support_plan, book
+    if is_personal_support_plan((definition.get("historicalReview") or {}).get("type")):
+        return book(request, instance_id, definition)
+    if request.method == "PATCH":
+        from .migrated_rescheduling import reschedule
+        return reschedule(request, instance_id)
     if not initial_local_status(definition.get("sourceStatus")):
         return coach_error(request, code="BOOKING_CONFLICT", message="Historical or unsupported Aptem reviews cannot be booked.", status=409)
     if not definition.get("migratedForm") or definition.get("readOnly"):
@@ -15385,7 +16266,7 @@ def coach_review_instance_book(request, instance_id):
         validator = ObjectValidator(payload)
         scheduled_date = validator.iso_date("scheduledDate", required=True)
         scheduled_time = validator.clock_time("scheduledTime", required=True)
-        duration_minutes = validator.integer("durationMinutes", default=TIMETABLE_DEFAULT_DURATION_MINUTES, minimum=15, maximum=480)
+        duration_minutes = validator.integer("durationMinutes", required=True, minimum=15, maximum=480)
         timezone_offset_minutes = validator.integer("timezoneOffsetMinutes", default=0, minimum=-840, maximum=840)
         if scheduled_date and scheduled_date < date.today():
             validator.error("scheduledDate", "Choose today or a future date.")
@@ -15402,22 +16283,51 @@ def coach_review_instance_book(request, instance_id):
     learner = next((row for row in fetch_caseload_dashboard_profiles(owner_email) if int(getattr(row, "id", 0) or 0) == learner_id), None)
     if learner is None:
         return coach_error(request, code="MISSING_LEARNER", message="The learner could not be resolved.", status=409)
-    if coach_learner_personal_calendar_conflicts(learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes):
+    from .booking_hours import validate_review_interval
+    current_booking = definition.get("booking") or {}
+    same_persisted_slot = bool(
+        current_booking.get("booked")
+        and (current_booking.get("scheduledDate"), current_booking.get("scheduledTime"),
+             current_booking.get("durationMinutes")) == (scheduled_date.isoformat(), scheduled_time.strftime("%H:%M"), duration_minutes)
+    )
+    if not same_persisted_slot:
+        try:
+            validate_review_interval(scheduled_date, scheduled_time, duration_minutes)
+        except ValueError as exc:
+            return coach_error(request, code="INVALID_REVIEW_TIME", message=str(exc), status=400)
+    if not same_persisted_slot and coach_learner_personal_calendar_conflicts(
+        learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes,
+        exclude_record=(definition.get("booking", {}).get("eventKey") and CoachCalendarEvent.objects.filter(
+            event_key=definition["booking"]["eventKey"], owner_email__iexact=owner_email,
+            learner_id=learner_id, event_type=event_type,
+        ).first()),
+        business_time_zone="Europe/London",
+    ):
         return coach_error(request, code="BOOKING_CONFLICT", message="This learner is busy at that time.", status=409)
     target_date = parse_schedule_date(definition["instance"]["targetDate"])
     if not target_date:
         return coach_error(request, code="BOOKING_CONFLICT", message="This review has no valid target date.", status=409)
     from .review_sources import booking_for_imported_review, ReviewIdentityConflict
     try:
+        record_preview = booking_for_imported_review(learner, source_review)
+        placeholder_preview = imported_booking_state.unreserved_placeholder(record_preview)
+        if not same_persisted_slot:
+            from .booking_availability import ensure_coach_review_slot_available
+            ensure_coach_review_slot_available(owner_email, scheduled_date, scheduled_time,
+                                               duration_minutes, record=record_preview if placeholder_preview else None)
         with transaction.atomic():
             lock_learner_calendar(learner_id)
             # Re-resolve the durable source link after taking the learner lock;
             # the definition's earlier booking preview may now be stale.
             record = booking_for_imported_review(learner, source_review, lock=True)
-            if record:
-                if (record.owner_email.casefold() != owner_email
-                    or record.event_type != event_type):
-                    return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
+            if record and (record.owner_email.casefold() != owner_email
+                           or record.event_type != event_type):
+                return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
+            # An abandoned attempt can leave a row that never reserved a slot.
+            # Reserving it is this booking, not a second appointment, so it
+            # takes the reservation path instead of the "already booked" one.
+            placeholder = imported_booking_state.unreserved_placeholder(record)
+            if record and not placeholder:
                 if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
                     return coach_error(request, code="BOOKING_CONFLICT", message="This booking is no longer in a schedulable state.", status=409)
                 if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
@@ -15427,26 +16337,43 @@ def coach_review_instance_book(request, instance_id):
             else:
                 if england_non_delivery_reason(scheduled_date):
                     return coach_error(request, code="BOOKING_CONFLICT", message=england_non_delivery_reason(scheduled_date), status=409)
+                ensure_coach_booking_available(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                               **({"exclude_record_id": record.pk} if placeholder else {}))
                 ensure_learner_calendar_available(
                     learner_id=learner_id, learner_email=clean_text(base_event.get("email")),
                     scheduled_date=scheduled_date, scheduled_time=scheduled_time,
                     duration_minutes=duration_minutes,
+                    **({"exclude_record_id": record.pk} if placeholder else {}),
                 )
-                record = CoachCalendarEvent.objects.create(
-                    event_key=instance_id, idempotency_key=instance_id,
-                    owner_email=owner_email, owner_name=owner_name,
-                    learner_id=learner_id, learner_name=clean_text(base_event.get("learner")),
-                    learner_email=clean_text(base_event.get("email")), event_type=event_type,
+                reserved = dict(
+                    owner_name=owner_name,
+                    learner_name=clean_text(base_event.get("learner")),
+                    learner_email=clean_text(base_event.get("email")),
                     sequence=int(base_event.get("sequence") or 1), target_date=target_date,
                     scheduled_date=scheduled_date, scheduled_time=scheduled_time,
                     duration_minutes=duration_minutes, status=CoachCalendarEvent.STATUS_SCHEDULED,
                     sync_state=CoachCalendarEvent.SYNC_PENDING,
                 )
-    except (LearnerCalendarConflict, ReviewIdentityConflict) as exc:
-        return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
+                if placeholder:
+                    for field, value in reserved.items():
+                        setattr(record, field, value)
+                    if not clean_text(record.idempotency_key):
+                        record.idempotency_key = record.event_key
+                    record.save(update_fields=[*reserved, "idempotency_key", "updated_at"])
+                else:
+                    record = CoachCalendarEvent.objects.create(
+                        event_key=instance_id, idempotency_key=instance_id,
+                        owner_email=owner_email, learner_id=learner_id,
+                        event_type=event_type, **reserved,
+                    )
     except IntegrityError:
         return coach_error(request, code="BOOKING_CONFLICT", message="A concurrent booking won. Reload this review.", status=409)
-    except Exception:
+    except (LearnerCalendarConflict, ReviewIdentityConflict) as exc:
+        return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
+    except Exception as exc:
+        from .booking_availability import CoachAvailabilityUnavailable
+        if isinstance(exc, CoachAvailabilityUnavailable):
+            return coach_error(request, code="AVAILABILITY_UNAVAILABLE", message=str(exc), status=503)
         logger.exception("migrated_review_calendar_reservation_failed")
         return coach_error(request, code="CALENDAR_CREATE_FAILED", message="The calendar operation could not be completed. Reload before retrying.", status=500)
     try:
@@ -15464,6 +16391,65 @@ def coach_review_instance_book(request, instance_id):
             saved.status = ImportedReviewInstance.STATUS_SCHEDULED
             saved.save(update_fields=["status", "updated_at"])
     return JsonResponse(_imported_review_definition(owner_email, instance_id))
+
+
+@coach_access_required
+@require_GET
+def coach_review_availability(request):
+    """Return verified London-time Review slots for a coach and caseload learner."""
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    try:
+        validator = ObjectValidator(request.GET)
+        learner_id = validator.integer("learnerId", required=True, minimum=1)
+        day = validator.iso_date("date", required=True)
+        duration = validator.integer("durationMinutes", required=True, minimum=15, maximum=480)
+        validator.check()
+        from .booking_hours import validate_review_duration
+        duration = validate_review_duration(duration)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    learner = next((row for row in fetch_caseload_dashboard_profiles(owner_email)
+                    if int(getattr(row, "id", 0) or 0) == learner_id), None)
+    if learner is None:
+        return coach_error(request, code="MISSING_LEARNER",
+                           message="The learner is no longer assigned to this coach.", status=404)
+
+    exclude_key = clean_text(request.GET.get("excludeEventKey"))
+    exclude_record_id = None
+    exclude_record = None
+    if exclude_key:
+        record = CoachCalendarEvent.objects.filter(
+            event_key=exclude_key, owner_email__iexact=owner_email, learner_id=learner_id,
+            event_type__in={"mcr", "progress-review", "review"},
+        ).first()
+        if not record:
+            return coach_error(request, code="BOOKING_CONFLICT",
+                               message="The current Review booking could not be verified. Refresh and retry.",
+                               status=409)
+        exclude_record_id = record.pk
+        exclude_record = record
+
+    try:
+        from learner_api.coach_availability import free_slots, uk_offset_minutes
+        times = free_slots(owner_email, day, uk_offset_minutes(day), duration=duration,
+                           review_hours=True, exclude_event_key=exclude_key,
+                           exclude_record_id=exclude_record_id,
+                           review_self_record=exclude_record)
+    except Exception as exc:
+        from learner_api.coach_availability import AvailabilityUnavailable
+        if isinstance(exc, AvailabilityUnavailable):
+            return coach_error(request, code="AVAILABILITY_UNAVAILABLE", message=str(exc), status=503)
+        logger.exception("coach_review_availability_failed")
+        return coach_error(request, code="AVAILABILITY_UNAVAILABLE",
+                           message="Could not check the coach calendar. Please retry before booking.",
+                           status=503)
+    response = JsonResponse({"date": day.isoformat(), "durationMinutes": duration,
+                             "timeZone": "Europe/London", "times": times})
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @coach_access_required
@@ -15493,11 +16479,20 @@ def coach_review_instance_for_event(request):
         return JsonResponse({"detail": "Imported reviews cannot be opened as native reviews."}, status=409)
     record = CoachCalendarEvent.objects.filter(event_key=event_key, owner_email__iexact=owner_email).first()
     if record and clean_text(record.review_instance_id):
+        from .reconciliation_links import for_calendar
+        link = for_calendar(record)
+        if link:
+            return JsonResponse({"instanceId": link.overlay.event_key})
         return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
 
     base_event, _owner_name = find_generated_timetable_event(owner_email, event_key)
     if not base_event:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+
+    try:
+        require_native_review_creation(int(base_event["learnerId"]))
+    except ReviewCreationBlocked as exc:
+        return JsonResponse(exc.policy, status=409)
 
     review_template_id = clean_text(base_event.get("reviewTemplateId")) or (record and clean_text(record.review_template_id))
     if not review_template_id:
@@ -15513,82 +16508,85 @@ def coach_review_instance_for_event(request):
 
     is_manual = base_event.get("occurrenceSource") == curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL
 
-    if record:
-        # Advanced unlinked Review rows are historical data.  Refuse to create
-        # a fabricated not-scheduled instance; legacy review_responses remain
-        # readable through the calendar summary/read path.
-        record.review_template_id = review_template_id
-        record.occurrence_number = None if is_manual else parse_int(
-            base_event.get("occurrenceNumber"), record.sequence,
-        )
-        if record.status in {
-            CoachCalendarEvent.STATUS_IN_PROGRESS,
-            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
-            CoachCalendarEvent.STATUS_COMPLETED,
-        } and not clean_text(record.review_instance_id):
-            try:
-                ensure_review_instance_for_calendar_record(record, base_event)
-            except LegacyReviewReconciliationRequiredError as exc:
-                return JsonResponse({
-                    "detail": str(exc),
-                    "code": exc.code,
-                }, status=409)
-        elif record.status == CoachCalendarEvent.STATUS_SCHEDULED:
-            try:
-                ensure_review_instance_for_calendar_record(record, base_event)
-            except ReviewTemplateUnavailableError as exc:
-                return JsonResponse({"detail": str(exc)}, status=409)
-        else:
-            instance = curriculum_review_instances.ensure_review_instance(
-                template_row,
-                learner_id=int(base_event["learnerId"]),
-                learner_kind='',
-                programme_id=template_row.get("programme_id"),
-                occurrence_number=None if is_manual else parse_int(
-                    base_event.get("occurrenceNumber"),
-                    int(base_event.get("sequence") or 1),
-                ),
-                target_date=target_date,
-                coach_email=owner_email,
-                actor=owner_email or "coach",
-                occurrence_source=base_event.get(
-                    "occurrenceSource",
-                    curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
-                ),
-                occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
+    try:
+        if record:
+            # Advanced unlinked Review rows are historical data.  Refuse to create
+            # a fabricated not-scheduled instance; legacy review_responses remain
+            # readable through the calendar summary/read path.
+            record.review_template_id = review_template_id
+            record.occurrence_number = None if is_manual else parse_int(
+                base_event.get("occurrenceNumber"), record.sequence,
             )
-            if not instance:
-                return JsonResponse({"detail": "This review could not be opened."}, status=400)
-            record.review_instance_id = instance.get("id")
-            record.save(update_fields=[
-                "review_template_id", "occurrence_number", "review_instance_id", "updated_at",
-            ])
-            curriculum_review_instances.link_calendar_event(
-                instance.get("id"), record.pk, actor=owner_email or "coach",
-            )
-        record.refresh_from_db()
-        return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
+            if record.status in {
+                CoachCalendarEvent.STATUS_IN_PROGRESS,
+                CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+                CoachCalendarEvent.STATUS_COMPLETED,
+            } and not clean_text(record.review_instance_id):
+                try:
+                    ensure_review_instance_for_calendar_record(record, base_event)
+                except LegacyReviewReconciliationRequiredError as exc:
+                    return JsonResponse({
+                        "detail": str(exc),
+                        "code": exc.code,
+                    }, status=409)
+            elif record.status == CoachCalendarEvent.STATUS_SCHEDULED:
+                try:
+                    ensure_review_instance_for_calendar_record(record, base_event)
+                except (ReviewTemplateUnavailableError, ReviewCreationBlocked) as exc:
+                    return JsonResponse(getattr(exc, "policy", {"detail": str(exc)}), status=409)
+            else:
+                instance = curriculum_review_instances.ensure_review_instance(
+                    template_row,
+                    learner_id=int(base_event["learnerId"]),
+                    learner_kind='',
+                    programme_id=template_row.get("programme_id"),
+                    occurrence_number=None if is_manual else parse_int(
+                        base_event.get("occurrenceNumber"),
+                        int(base_event.get("sequence") or 1),
+                    ),
+                    target_date=target_date,
+                    coach_email=owner_email,
+                    actor=owner_email or "coach",
+                    occurrence_source=base_event.get(
+                        "occurrenceSource",
+                        curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
+                    ),
+                    occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
+                )
+                if not instance:
+                    return JsonResponse({"detail": "This review could not be opened."}, status=400)
+                record.review_instance_id = instance.get("id")
+                record.save(update_fields=[
+                    "review_template_id", "occurrence_number", "review_instance_id", "updated_at",
+                ])
+                curriculum_review_instances.link_calendar_event(
+                    instance.get("id"), record.pk, actor=owner_email or "coach",
+                )
+            record.refresh_from_db()
+            return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
 
-    instance = curriculum_review_instances.ensure_review_instance(
-        template_row,
-        learner_id=int(base_event["learnerId"]),
-        learner_kind='',
-        programme_id=template_row.get("programme_id"),
-        occurrence_number=None if is_manual else parse_int(
-            base_event.get("occurrenceNumber"), int(base_event.get("sequence") or 1),
-        ),
-        target_date=target_date,
-        coach_email=owner_email,
-        actor=owner_email or "coach",
-        occurrence_source=base_event.get(
-            "occurrenceSource",
-            curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
-        ),
-        occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
-    )
-    if not instance:
-        return JsonResponse({"detail": "This review could not be opened."}, status=400)
-    return JsonResponse({"instanceId": instance.get("id")})
+        instance = curriculum_review_instances.ensure_review_instance(
+            template_row,
+            learner_id=int(base_event["learnerId"]),
+            learner_kind='',
+            programme_id=template_row.get("programme_id"),
+            occurrence_number=None if is_manual else parse_int(
+                base_event.get("occurrenceNumber"), int(base_event.get("sequence") or 1),
+            ),
+            target_date=target_date,
+            coach_email=owner_email,
+            actor=owner_email or "coach",
+            occurrence_source=base_event.get(
+                "occurrenceSource",
+                curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
+            ),
+            occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
+        )
+        if not instance:
+            return JsonResponse({"detail": "This review could not be opened."}, status=400)
+        return JsonResponse({"instanceId": instance.get("id")})
+    except ReviewCreationBlocked as exc:
+        return JsonResponse(exc.policy, status=409)
 
 
 @coach_access_required
@@ -15613,6 +16611,14 @@ def coach_review_instance_detail(request, instance_id):
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
+    from .reconciliation_links import for_native
+    link = for_native(instance_id)
+    if link:
+        definition = _imported_review_definition(authenticated_coach_email(request), link.overlay.event_key,
+                                                 preview_only=is_coach_view_as(request))
+        if not definition:
+            return JsonResponse({"detail": "Imported review not available for this coach."}, status=404)
+        return JsonResponse(definition)
     # Opening this form is not evidence the Teams meeting started -- it used
     # to flip status to in-progress here. The real trigger is a confirmed
     # Microsoft Teams attendance signal; see
@@ -15632,6 +16638,10 @@ def coach_review_instance_previous(request, instance_id):
     """
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    if instance_id.startswith("imported-review:"):
+        from .migrated_previous import previous_review
+        return previous_review(authenticated_coach_email(request), instance_id)
 
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
@@ -15758,7 +16768,8 @@ def coach_review_instance_answers(request, instance_id):
             from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
             from coach_api.migrated_template_sync import TemplateSyncConflict, preserve_inactive_answers, synchronize_definition_locked
             with transaction.atomic():
-                imported = _owned_migrated_overlay(owner_email, definition, lock=True)
+                imported = _owned_migrated_overlay(owner_email, definition, lock=True,
+                    lock_calendar=definition.get("template", {}).get("reviewTypeCode") == "aptem_psp")
                 if not imported or imported.status not in MIGRATED_EDITABLE_STATUSES:
                     return JsonResponse({"detail": "Imported review association or status mismatch."}, status=409)
                 try:
@@ -15766,6 +16777,8 @@ def coach_review_instance_answers(request, instance_id):
                     if synchronize_definition_locked(imported, definition):
                         return JsonResponse({"detail": "The review template changed. Reopen the review to check its latest questions before saving. Your unsaved answers have been kept on screen.", "code": "template_sync_changed"}, status=409)
                     validate_migrated_answers(imported.template_snapshot, answers)
+                    from .migrated_skills_radar import check_role_edits
+                    check_role_edits(imported.template_snapshot, imported.answers or {}, answers, 'advisor')
                 except TemplateSyncConflict as exc:
                     return JsonResponse({"detail": str(exc), "templateSync": exc.response()}, status=409)
                 except AnswerConflict as exc:
@@ -15776,6 +16789,8 @@ def coach_review_instance_answers(request, instance_id):
                                    edited_fields=payload.get("editedFields") if isinstance(payload.get("editedFields"), list) else ())
                 imported.answers = preserve_inactive_answers(imported.template_snapshot, imported.answers or {}, answers)
                 imported.save(update_fields=["answers", "meeting_intelligence", "updated_at"])
+                from .migrated_completion import complete_personal_support_if_ready
+                complete_personal_support_if_ready(imported)
                 # Return answers and their version from the same locked state.
                 return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
         field_ids = {
@@ -15939,7 +16954,12 @@ def coach_review_instance_meeting_summary(request, instance_id):
         attendance_reports=snapshot["attendanceReports"],
         attendance_tracker=snapshot["attendanceTracker"],
     )
-    if not stored_coach_meeting_transcript_for_summary(record):
+    summary_transcript = stored_coach_meeting_transcript_for_summary(record)
+    if not summary_transcript:
+        selection = coach_meeting_transcript_selection(record)
+        if selection['code'] == 'TRANSCRIPT_SESSION_AMBIGUOUS':
+            return summary_error(code=selection['code'],
+                detail='The transcript cannot be matched to one booked session. Your current Review answer has not been changed.', status=409)
         # This is the moment the .vtt upload exists for, so it says so: Teams
         # holds no transcript for a meeting that was moved, not recorded, or
         # still processing, and the coach usually has the file already.
@@ -15950,6 +16970,14 @@ def coach_review_instance_meeting_summary(request, instance_id):
                 "Wait for Teams transcription to finish, upload the .vtt transcript, or enter the summary manually. "
                 "Your current Review answer has not been changed."
             ),
+            status=409,
+        )
+
+    if (len(summary_transcript['text']) > COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS
+            and native_review_summary_transcript_ids(record) is not None):
+        return summary_error(
+            code="teams_transcript_too_long",
+            detail="The combined Teams transcripts are too long to analyse together. Your Review answer has not been changed.",
             status=409,
         )
 
@@ -16077,7 +17105,7 @@ def coach_review_instance_complete(request, instance_id):
             return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
         if definition.get("migratedForm"):
             with transaction.atomic():
-                imported = _owned_migrated_overlay(owner_email, definition, lock=True)
+                imported = _owned_migrated_overlay(owner_email, definition, lock=True, lock_calendar=True)
                 if not imported or imported.status != ImportedReviewInstance.STATUS_IN_PROGRESS:
                     return JsonResponse({"detail": "Only an in-progress migrated review can be submitted."}, status=409)
                 final_answers = payload.get("answers", imported.answers)
@@ -16333,6 +17361,7 @@ def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
         updated = CoachCalendarEvent.objects.filter(
             pk=calendar_event_id,
             status__in={
+                CoachCalendarEvent.STATUS_SCHEDULED,
                 CoachCalendarEvent.STATUS_IN_PROGRESS,
                 CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
             },

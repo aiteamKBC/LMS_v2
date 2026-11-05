@@ -3,7 +3,7 @@ import type { LearnerAttendance } from './learnerAttendance';
 import { peekLearnerJson, readLearnerJson } from './learnerRead';
 import { invalidateWeeklyProgress } from './weeklyLearning';
 
-export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked' | 'awaiting_recording';
+export type LectureStatus = 'completed' | 'late' | 'absent' | 'cancelled' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked' | 'awaiting_recording';
 export interface LectureActivity {
   id: string; title: string; type: string; completed: boolean;
   href?: string; groupId?: number; activityId?: number;
@@ -56,13 +56,27 @@ export interface AttendanceWorkspace {
   recentActivity: { id: string; title: string; at: string; type: string }[];
 }
 const url = (kind: LearnerKind, id: string) => `/learner_api/attendance/${kind}/${id}/lectures/`;
+/** Recovery is a recorded outcome, not merely a difference from raw attendance. */
+export function isMadeUpLecture(row: AttendanceLecture): boolean {
+  const outcome = row.effectiveStatus || row.effectiveAttendanceStatus || row.finalOutcome;
+  return row.attendanceBasis !== 'recorded' && row.effectiveAttendance === 1
+    && (outcome ? outcome === 'made_up' : row.catchupStatus === 'completed');
+}
+
+export function isManuallyConfirmedLecture(row: AttendanceLecture): boolean {
+  const raw = row.rawStatus || row.rawAttendanceStatus;
+  const outcome = row.effectiveStatus || row.effectiveAttendanceStatus || row.finalOutcome;
+  return row.attendanceBasis !== 'recorded' && row.effectiveAttendance === 1
+    && outcome === 'present' && ['absent', 'unmarked', 'pending'].includes(raw || '');
+}
+
 /** Preserve the established lecture display labels while the wire status is canonical. */
 export function attendanceWorkspaceForDisplay(data: AttendanceWorkspace): AttendanceWorkspace {
   return { ...data, lectures: data.lectures.map(row => {
     if ((row.status as string) !== 'present') return row;
     const raw = row.rawStatus || row.rawAttendanceStatus;
     const status: LectureStatus = row.attendanceBasis === 'recorded' ? 'completed'
-      : raw === 'absent' && row.effectiveAttendance === 1 ? 'absent'
+      : isMadeUpLecture(row) ? 'absent'
       : raw === 'late' ? 'late' : 'completed';
     return { ...row, status };
   }) };

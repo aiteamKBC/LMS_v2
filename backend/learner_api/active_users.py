@@ -21,6 +21,7 @@ from django.utils.dateparse import parse_datetime
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .identity import learner_profile_for_source
+from .retake_timing import attempt_order, selected_attempt
 from .mappers import get_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
@@ -139,6 +140,21 @@ def otjh_progress_dedupe_key(record, index=0):
     return f"entry:{index}"
 
 
+def _selected_timer_seconds(record):
+    """An explicit Timer choice keeps its saved duration, including resumed time.
+
+    Older saves can retain unrelated reflection text in reported_time. The
+    selected duration is claimed_seconds; verified_seconds is separate evidence
+    capped to the signed session, which may cover only the resumed portion.
+    """
+    source = _progress_text(record, "timeTrackingSource", "time_tracking_source").lower()
+    if not source.endswith(":timer") or "import" in source:
+        return None
+    seconds = _number(record.get("claimedSeconds") if record.get("claimedSeconds") is not None
+                      else record.get("claimed_seconds"))
+    return seconds if seconds is not None and 0 <= seconds < float("inf") else None
+
+
 def _manual_claimed_seconds(record):
     claimed = _number(
         record.get("claimedSeconds") if record.get("claimedSeconds") is not None
@@ -158,6 +174,10 @@ def _manual_claimed_seconds(record):
 
 def _progress_record_minutes(record):
     """Comparable OTJ value for choosing the best attempt of one activity."""
+    timer_seconds = _selected_timer_seconds(record)
+    if timer_seconds is not None:
+        return timer_seconds / 60
+
     manual_seconds = _manual_claimed_seconds(record)
     if manual_seconds is not None:
         return manual_seconds / 60
@@ -202,6 +222,22 @@ def dedupe_otjh_progress_records(progress):
             candidate_minutes == current_minutes and candidate_is_newer
         ):
             unique[position] = record
+    # New explicit decisions are projected without overwriting timer evidence.
+    # Unlabelled history retains the original best-attempt calculation here.
+    groups = {}
+    for index, row in enumerate(progress):
+        if isinstance(row, dict):
+            groups.setdefault(otjh_progress_dedupe_key(row, index), []).append(row)
+    for key, rows in groups.items():
+        if not any(row.get('retakeTimeChoice') in ('correct', 'add', 'retry') for row in rows):
+            continue
+        ordered = sorted(((index, row) for index, row in enumerate(rows) if row.get('passed') is not False),
+                         key=lambda item: attempt_order(item[1].get('submittedAt'), item[0]))
+        selected, seconds = selected_attempt([{**row, 'seconds': _progress_record_minutes(row) * 60,
+            'mode': row.get('retakeTimeChoice')} for _, row in ordered], default='retry')
+        if selected:
+            unique[positions[key]] = {**selected, 'claimedSeconds': seconds,
+                'reportedTime': f'{seconds / 60:g} minutes', 'timeTrackingSource': 'activity-time-decision:input'}
     return unique
 
 
@@ -538,9 +574,10 @@ def _normalise_component_ksb_mappings(value):
 def completed_hours_value_from_progress(progress, components=None):
     """Unrounded hours the learner has declared, for exact OTJ roll-ups.
 
-    A learner-entered Time spent value (`claimedSeconds` with input provenance)
-    is authoritative when present, followed by the reflection's `reportedTime`.
-    The server-verified timer is used only when neither input was supplied.
+    An explicit Timer choice uses its saved `claimedSeconds`. Otherwise a
+    learner-entered Time spent value (`claimedSeconds` with input provenance)
+    is authoritative, followed by the reflection's `reportedTime`. The verified
+    session timer is used only when neither input was supplied.
 
     Rows predating time tracking carry no verified time at all; those still
     fall back to the authored hours, because dropping them would silently zero
@@ -552,6 +589,10 @@ def completed_hours_value_from_progress(progress, components=None):
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
         component_id = _s(record.get("componentId"))
+        timer_seconds = _selected_timer_seconds(record)
+        if timer_seconds is not None:
+            hours += timer_seconds / 3600
+            continue
         manual_seconds = _manual_claimed_seconds(record)
         if manual_seconds is not None:
             hours += manual_seconds / 3600
@@ -1070,7 +1111,7 @@ def _create_progress_entry(**fields):
     return LearnerProgressEntry.objects.create(**fields)
 
 
-def save_progress_record(learner, record, activity=None):
+def save_progress_record(learner, record, activity=None, *, monthly_assignment=False):
     """Store progress, quiz detail, KSB links, and feed presentation atomically."""
     if learner is None:
         return None
@@ -1112,7 +1153,41 @@ def save_progress_record(learner, record, activity=None):
     with transaction.atomic(using="enrolment"):
         # Serialize writes per learner so two simultaneous submissions cannot
         # claim the same entry/event order.
+        if record.get('retakeTimeChoice') in ('correct', 'add', 'retry'):
+            with connections['enrolment'].cursor() as cursor:
+                lock = ' FOR UPDATE' if connections['enrolment'].vendor == 'postgresql' else ''
+                cursor.execute('SELECT id FROM enrolment."Created_users" WHERE id=%s' + lock, [learner.enrolment_id])
         learner = LearnerProfile.objects.select_for_update().get(pk=learner.pk)
+        from .retake_timing import validate_activity_time
+        authoritative_record = {**record, 'componentType': component_context.get('componentType') or record.get('componentType')}
+        validate_activity_time(authoritative_record, learner.training_plan_progress,
+                               seconds_for=lambda row: _progress_record_minutes(row) * 60, monthly_assignment=monthly_assignment)
+        if 'countedSeconds' in authoritative_record:
+            record['countedSeconds'] = authoritative_record['countedSeconds']
+        if record.get('retakeTimeChoice') in ('correct', 'add', 'retry'):
+            # Add/retry append a new attempt. Only a correction must reject a
+            # signed month; historical/staff-reviewed allocations stay protected.
+            from .manual_time_corrections import require_activity_time_month
+            from old_otjh.repository import query
+            from old_otjh.service import ServiceError
+            reference = ('quiz_ref', str(record['quizId'])) if record.get('quizId') else ('component_ref', component_id)
+            previous = query(f'''SELECT source_system,actual_basis,reporting_month,declared_completed_at,submitted_at
+                FROM "Learner".learner_progress_entries WHERE learner_id=%s AND {reference[0]}=%s AND deleted_at IS NULL''',
+                [learner.pk, reference[1]])
+            from .retake_timing import stamp
+            months = {stamp(record.get('declaredCompletedAt') or record.get('submittedAt')).strftime('%Y-%m')}
+            for entry in previous:
+                if entry.get('source_system') or entry.get('actual_basis') == 'staff:module-progress':
+                    raise ValueError('This activity has historical or staff-reviewed hours. Ask your coach to review its time.')
+                at = entry.get('declared_completed_at') or entry.get('submitted_at')
+                if at:
+                    months.add(entry.get('reporting_month') or stamp(at).strftime('%Y-%m'))
+            for month in months:
+                try:
+                    require_activity_time_month({'id': learner.pk, 'enrolment_id': learner.enrolment_id,
+                                        'aptem_id': learner.aptem_id}, month, record['retakeTimeChoice'])
+                except ServiceError as error:
+                    raise ValueError(str(error)) from error
         next_order = (
             LearnerProgressEntry.objects.filter(learner=learner)
             .aggregate(value=Max("entry_order"))["value"]
@@ -1178,6 +1253,14 @@ def save_progress_record(learner, record, activity=None):
             ),
             component_link_source="direct" if component_id else ("quiz_ref" if _s(record.get("quizId")) else "none"),
         )
+        if record.get('retakeTimeChoice') is not None:
+            from .retake_timing import choice
+            selected = choice(record['retakeTimeChoice'], activity=True)
+            with connections['enrolment'].cursor() as cursor:
+                cursor.execute('''UPDATE "Learner".learner_progress_entries
+                    SET source_payload=coalesce(source_payload,'{}'::jsonb) || %s::jsonb
+                    WHERE id=%s AND learner_id=%s''', [json.dumps({'retakeTimeChoice': selected,
+                        **({'retakeTimeReason': record['retakeTimeReason'].strip()} if record.get('retakeTimeReason') else {})}), progress.pk, learner.pk])
         LearnerProgressKsb.objects.bulk_create(
             [
                 LearnerProgressKsb(
@@ -1436,42 +1519,56 @@ def _coerce_ksb_items(value):
 
 
 def _resolve_programme_id(programme="", training_plan=None):
+    # Shared modules can belong to a different catalogue programme. Resolve the
+    # enrolled programme first so a safeguarding module cannot select its KSBs.
+    programme = _s(programme)
     module_ids = _plan_module_ids(training_plan)
+    if programme:
+        try:
+            with connections["enrolment"].cursor() as cursor:
+                cursor.execute(
+                    "SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
+                    "FROM curriculum.programmes "
+                    "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
+                    "   OR lower(btrim(COALESCE(programme_id, ''))) = lower(%s) "
+                    "   OR lower(%s) LIKE lower(btrim(COALESCE(name, ''))) || ' %%' "
+                    "ORDER BY CASE "
+                    "    WHEN lower(btrim(COALESCE(programme_id, ''))) = lower(%s) THEN 0 "
+                    "    WHEN lower(btrim(COALESCE(name, ''))) = lower(%s) THEN 1 "
+                    "    ELSE 2 END, "
+                    # Retain plan identity when multiple programmes share a
+                    # name, but never let an unrelated module win the lookup.
+                    "    CASE WHEN programme_id IN ("
+                    "        SELECT module.programme_id FROM curriculum.modules module "
+                    "        WHERE module.module_catalogue_id = ANY(%s)"
+                    "    ) THEN 0 ELSE 1 END, updated_at DESC NULLS LAST LIMIT 1",
+                    [programme, programme, programme, programme, programme, module_ids],
+                )
+                row = cursor.fetchone()
+        except DatabaseError as exc:
+            logger.warning("Could not resolve programme id for %s: %s", programme, exc)
+            return ""
+        if row and _s(row[0]):
+            return _s(row[0])
+
     if module_ids:
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
                     "SELECT DISTINCT programme_id FROM curriculum.modules "
                     "WHERE module_catalogue_id = ANY(%s) AND programme_id IS NOT NULL AND programme_id <> '' "
-                    "ORDER BY programme_id LIMIT 1",
+                    "ORDER BY programme_id LIMIT 2",
                     [module_ids],
                 )
-                row = cursor.fetchone()
+                rows = cursor.fetchall()
         except DatabaseError as exc:
             logger.warning("Could not resolve programme id from module snapshot for %s: %s", module_ids, exc)
         else:
-            if row and _s(row[0]):
-                return _s(row[0])
-
-    programme = _s(programme)
-    if not programme:
-        return ""
-    try:
-        with connections["enrolment"].cursor() as cursor:
-            cursor.execute(
-                "SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
-                "FROM curriculum.programmes "
-                "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
-                "   OR lower(btrim(COALESCE(programme_id, ''))) = lower(%s) "
-                "   OR lower(%s) LIKE lower(btrim(COALESCE(name, ''))) || ' %%' "
-                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
-                [programme, programme, programme],
-            )
-            row = cursor.fetchone()
-    except DatabaseError as exc:
-        logger.warning("Could not resolve programme id for %s: %s", programme, exc)
-        return ""
-    return _s(row[0]) if row else ""
+            # Without an enrolment match, only an unambiguous module programme
+            # can supply a fallback. Alphabetical order is not learner identity.
+            if len(rows) == 1 and _s(rows[0][0]):
+                return _s(rows[0][0])
+    return ""
 
 
 def _resolve_linkable_programme_id(programme="", training_plan=None):
@@ -1732,8 +1829,12 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
                 "WHERE (%s <> '' AND programme_id = %s) "
                 "   OR name = %s "
                 "   OR %s LIKE name || ' %%' "
-                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
-                [programme_id, programme_id, programme, programme],
+                "ORDER BY CASE "
+                "    WHEN %s <> '' AND programme_id = %s THEN 0 "
+                "    WHEN name = %s THEN 1 "
+                "    ELSE 2 END, updated_at DESC NULLS LAST LIMIT 1",
+                [programme_id, programme_id, programme, programme,
+                 programme_id, programme_id, programme],
             )
             row = cursor.fetchone()
             source_id = _clean_ksb_profile_source_id(row[0]) if row else ""

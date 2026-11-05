@@ -38,7 +38,8 @@ vi.mock('@/api/auth', async () => {
 // The provider clears the chat session on sign-out; irrelevant here.
 vi.mock('@/api/chat', () => ({ clearChatSession: vi.fn() }));
 
-const { AuthProvider, useAuth } = await import('../useAuth');
+const { AuthProvider } = await import('../useAuth');
+const { useAuth } = await import('../useAuth.helpers');
 
 const ADMIN = {
   id: 1,

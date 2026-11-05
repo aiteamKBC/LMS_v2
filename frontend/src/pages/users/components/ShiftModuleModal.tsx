@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import {
   fetchLearningPlan,
   formatHours,

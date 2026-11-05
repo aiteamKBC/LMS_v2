@@ -747,6 +747,8 @@ export interface CalendarEvent {
   syncWarning?: string;
   /** Imported review identity carried through the same Calendar booking form. */
   bookingReviewId?: string;
+  /** Original Aptem reservation retained while the learner edits its new slot. */
+  bookingSnapshot?: import('@/api/learnerCalendar').ExpectedReviewBooking;
   assignmentMonth?: string;
   /** Catch-up only: starts too soon for the learner to reschedule or cancel it. */
   changeClosed?: boolean;

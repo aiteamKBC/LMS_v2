@@ -5,6 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as curriculumApi from '@/lib/curriculumApi';
 import { CohortFormDrawer } from '../forms';
 
+// Out of the concurrency path, which drawerRecordConcurrency covers: the server
+// reports no version for these records, so their saves go unguarded.
+vi.mock('../recordSnapshot', () => ({
+  fetchCurriculumRecordSnapshot: vi.fn(async () => ({ revision: '', record: null })),
+}));
+
 // England's bank holidays, in the shape `/curriculum/holidays/` serves them:
 // one day each, so start and end are the same date.
 const HOLIDAYS = [

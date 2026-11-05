@@ -5,7 +5,7 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { useTutorIdentity } from '@/hooks/useTutorIdentity';
 import { clearTutorViewAs, setTutorViewAs } from '@/lib/tutorViewAs';
 import { formatHoursMinutes } from '@/lib/format';

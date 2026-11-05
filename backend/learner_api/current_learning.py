@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 from old_otjh.repository import query
 from .active_users import completed_hours_value_from_progress
 from .progress_rules import progress_counts_as_achieved
+from .retake_timing import attempt_order, native_choices, measured_choice
+from .extra_activity_month import valid_activity_month
 
 
 def instant(value):
@@ -68,7 +70,7 @@ def project_current(records, markings):
 
     Planned duration is never substituted for recorded time.
     """
-    result, native = [], {}
+    result, native, candidates = [], {}, []
     retained = {source_reference(p) for p in records if p.get('source_system')}
     # A staff hours correction is scoped to one activity. Retain every attempt
     # as evidence, but do not add native attempt time to the corrected ledger
@@ -80,6 +82,7 @@ def project_current(records, markings):
         p = dict(original)
         if not is_unsynchronised_direct_save(p):
             result.append(p)
+            candidates.append(p)
             continue
         if p.get('kind') == 'activity_event' or not p.get('submitted_at'):
             continue
@@ -101,13 +104,21 @@ def project_current(records, markings):
         p.update(accepted=accepted, completed=accepted, actual_seconds=seconds,
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')
-        # Same component/quiz retries are one activity, not extra earned hours.
-        key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
+        candidates.append(p)
+        # Ordinary retries count the larger duration. Explicit corrections and
+        # additions are applied below without rewriting saved attempt evidence.
+        if p.get('quiz_ref') and p.get('kind') == 'quiz_reading':
+            # Each reading retains its own completion and time, outside the
+            # quiz's retry/correction/addition decisions.
+            key = ('quiz-reading', p['id'])
+        else:
+            key = ('quiz', p['quiz_ref']) if p.get('quiz_ref') else ('component', component) if component else ('entry', p['id'])
+        key = (p.get('learner_id'), *key)
         previous = native.get(key)
-        if previous is None or (accepted, seconds, str(at), str(p['id'])) > (
-                previous['accepted'], previous['actual_seconds'], str(previous['reporting_ended_at']), str(previous['id'])):
+        if previous is None or (accepted, seconds, attempt_order(p['submitted_at'], p['id'])) > (
+                previous['accepted'], previous['actual_seconds'], attempt_order(previous['submitted_at'], previous['id'])):
             native[key] = p
-    return result + list(native.values())
+    return native_choices(result + list(native.values()), candidates)
 
 
 def source_payload_metadata(value):
@@ -122,29 +133,49 @@ def source_reference(record):
 
 
 def merge_attempts(records, attempts):
-    """Use saved course attempts for completion, never manufacture their hours."""
+    """Project completion and independently verified local time beside history."""
     result = [dict(p) for p in records]
+    superseded = set()
     # One record can be reached through several lineage links. Index positions,
     # preserving original row order and merging each matching row only once.
     by_route = {}
-    for index,p in enumerate(result):
+    for index, p in enumerate(result):
         source_ref = source_reference(p)
-        routes = {source_ref} if isinstance(source_ref,str) else set()
+        routes, typed_courses = set(), set()
         for link in [*(p.get('sources') or []), *(p.get('historical_components') or [])]:
             if link.get('source_system') == 'old_lms':
+                course = str(link.get('source_course_ref'))
+                typed_courses.add(course)
                 activity = link.get('source_activity_id')
-                if isinstance(activity,str) and activity.startswith('material:'):
-                    routes.add(f"la:{link.get('source_course_ref')}:{activity[9:]}")
+                if isinstance(activity, str):
+                    if activity.startswith('material:'):
+                        routes.add(f"la:{course}:{activity[9:]}")
+                    elif activity.startswith('quiz:'):
+                        routes.add(f"subject:quiz:{course}:{activity[5:]}")
+        # Typed lineage overrides a historical untyped reference for that
+        # course only. A quiz and a material can share the same numeric id.
+        if isinstance(source_ref, str):
+            parts = source_ref.split(':')
+            course = (parts[1] if len(parts) == 3 and parts[0] == 'la' else
+                      parts[2] if len(parts) == 4 and parts[:2] == ['subject', 'quiz'] else None)
+            if course is not None and course not in typed_courses:
+                routes.add(source_ref)
         for route in routes:
-            by_route.setdefault(route,[]).append(index)
+            by_route.setdefault(route, []).append(index)
     for attempt in attempts:
-        ref = f"la:{attempt['group_id']}:{attempt['activity_id']}"
-        matches = [result[index] for index in by_route.get(ref,())]
+        catalogue_kind = attempt.get('catalogue_kind', 'material')
+        ref = f"{'la' if catalogue_kind == 'material' else 'subject:quiz'}:{attempt['group_id']}:{attempt['activity_id']}"
+        route = {'source_system': 'old_lms', 'source_course_ref': str(attempt['group_id']),
+                 'source_activity_id': f"{catalogue_kind}:{attempt['activity_id']}"}
+        matches = [result[index] for index in by_route.get(ref, ())]
+        has_progress_record = bool(matches)
         if not matches:
             at = instant(attempt['submitted_at'])
-            matches = [{'id': f"subject:{attempt['group_id']}:{attempt['activity_id']}",
+            record_id = (f"subject:{attempt['group_id']}:{attempt['activity_id']}" if catalogue_kind == 'material'
+                         else f"subject:quiz:{attempt['group_id']}:{attempt['activity_id']}")
+            matches = [{'id': record_id,
                 'component_title': attempt.get('title'), 'kind': 'quiz', 'accepted': False,
-                'actual_seconds': None, 'ksbs': [], 'sources': [], 'segments': [],
+                'actual_seconds': None, 'ksbs': [], 'sources': [route], 'segments': [],
                 'source_payload': {'original_source_ref': ref},
                 'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at}]
             result.extend(matches)
@@ -156,7 +187,60 @@ def merge_attempts(records, attempts):
                 old = float(p['achieved_score']) / float(maximum) * 100 if maximum and p.get('achieved_score') is not None else None
                 p['achieved_score'] = max(float(attempt['best_percent']), old) if old is not None else float(attempt['best_percent'])
                 p['total_score'] = 100
-    return result
+        measured = measured_attempt_record(attempt, route, has_accepted_history=any(
+            p.get('accepted') is True and p.get('actual_seconds') is not None for p in matches))
+        if measured and not any(str(p['id']) == measured['id'] for p in result):
+            if measured.pop('retake_replace_existing', False):
+                measured['retake_superseded_ids'] = [str(p['id']) for p in matches if p.get('id')]
+                measured['ksbs'] = sorted({code for old in matches for code in old.get('ksbs', [])})
+                measured['achieved_score'] = attempt.get('best_percent')
+                measured['total_score'] = 100
+                for field in ('module_ref', 'module_title', 'group_ref', 'group_title'):
+                    measured[field] = next((old[field] for old in matches if old.get(field)), None)
+                superseded.update(str(old['id']) for old in matches)
+                measured['hours_only'] = False
+            else:
+                measured['hours_only'] = has_progress_record
+            # Additional time for an existing activity is evidence, not another
+            # activity in programme/recorded-course completion denominators.
+            result.append(measured)
+    return [record for record in result if str(record['id']) not in superseded]
+
+
+def measured_attempt_record(attempt, route, *, has_accepted_history=False):
+    """One selected completed local duration per placement, as for native saves.
+
+    Untimed historical attempts contribute no hours. Keep this row separate
+    from audited source time, and give retries/re-reads a stable identity.
+    """
+    from learner_api.subject_timing import measured_seconds
+    candidates = []
+    saved_attempts = attempt.get('timed_attempts') or []
+    if isinstance(saved_attempts, str):
+        saved_attempts = json.loads(saved_attempts)
+    for saved in saved_attempts:
+        timing = saved.get('timing') or {}
+        seconds = measured_seconds(timing)
+        if saved.get('completed') is True and seconds is not None:
+            candidates.append(saved)
+    if not candidates:
+        return None
+    saved, replace_history = measured_choice(candidates, has_accepted_history)
+    if saved is None:
+        return None
+    timing = saved['timing']
+    at = instant(timing.get('declaredCompletedAt') or timing.get('submittedAt'))
+    if at is None:
+        return None
+    ident = f"subject:timing:{attempt['group_id']}:{attempt.get('catalogue_kind', 'material')}:{attempt['activity_id']}"
+    return {'id': ident, 'component_title': attempt.get('title'),
+        'kind': 'quiz' if attempt.get('catalogue_kind') == 'quiz' else 'component',
+        'accepted': True, 'completed': True, 'actual_seconds': measured_seconds(timing),
+        'actual_basis': 'legacy_activity_manual_time' if timing.get('timeEntrySource') == 'input' else 'legacy_activity_verified_timer',
+        'ksbs': [], 'sources': [route], 'segments': [],
+        'retake_replace_existing': replace_history,
+        'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at, 'reporting_ended_at': at,
+        'source_payload': {'original_source_ref': ident, 'subject_attempt_id': str(saved['id']), 'studyTime': timing}}
 
 
 def merge_submissions(records, submissions):
@@ -176,13 +260,17 @@ def merge_submissions(records, submissions):
         codes = s.get('ksb_codes') or []
         if isinstance(codes, str):
             codes = json.loads(codes)
+        selected_month = s.get('activity_month') if s['activity_type'] == 'extra_activity' else None
+        month = selected_month if valid_activity_month(selected_month) else at.strftime('%Y-%m')
         result.append({'id': f"reflection:{s['id']}", 'component_title': s.get('activity_title'),
             'component_ref': s.get('component_ref'), 'module_title': s.get('module_title'),
             'kind': s['activity_type'], 'accepted': accepted, 'completed': accepted,
             'actual_seconds': actual_time_seconds(s.get('actual_time_hours')),
-            'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at,
+            'reporting_month': month, 'reporting_started_at': at,
             'activity_status': s.get('status'), 'ksbs': codes, 'sources': [], 'segments': [],
             'source_payload': {'original_source_ref': f"reflection:{s['id']}"}})
+        if s['activity_type'] == 'extra_activity':
+            result[-1].update(actual_basis='extra_activity_input', expected_otjh=0)
     return result
 
 
@@ -204,21 +292,30 @@ def attempts_relation_exists():
 def current_records(owner, records):
     submissions = query('''SELECT id,component_ref,progress_entry_id,status,actual_time_hours,
         submitted_at,activity_type,activity_title,module_title,ksb_codes,
+        full_submission #>> '{monthlyAssignment,month}' AS activity_month,
         full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
         FROM "Learner".learning_reflection_submissions
         WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
         ORDER BY submitted_at NULLS FIRST,id''', [str(owner['enrolment_id']), owner.get('learner_type')])
     markings = {str(s['component_ref']): s for s in submissions if s.get('component_ref')}
     projected = merge_submissions(project_current(records, markings), submissions)
+    return merge_attempts(projected, subject_attempt_rows(owner))
+
+
+def subject_attempt_rows(owner, *, timed_only=False):
+    """Owned persisted attempts, shared by full and hours-only projections."""
     if not owner.get('aptem_id') or not attempts_relation_exists():
-        return projected
-    attempts = query('''SELECT group_id,activity_id,bool_or(completed) AS completed,
+        return []
+    return query('''SELECT group_id,activity_id,
+        coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,bool_or(completed) AS completed,
         max(score_percent) AS best_percent,max(submitted_at) AS submitted_at,
-        max(definition->>'title') AS title
+        max(definition->>'title') AS title,
+        jsonb_agg(jsonb_build_object('id',id,'completed',completed,'timing',definition->'studyTime'))
+            FILTER (WHERE definition ? 'studyTime') AS timed_attempts
         FROM "Learner".subject_activity_attempts
-        WHERE enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL
-        GROUP BY group_id,activity_id''', [owner['enrolment_id'], owner['aptem_id']])
-    return merge_attempts(projected, attempts)
+        WHERE enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL'''
+        + (" AND definition ? 'studyTime'" if timed_only else '') + '''
+        GROUP BY group_id,activity_id,coalesce(definition->>'catalogue_kind','material')''', [owner['enrolment_id'], owner['aptem_id']])
 
 
 def current_records_bulk(owners, records_by_learner_id):
@@ -245,6 +342,7 @@ def current_records_bulk(owners, records_by_learner_id):
     params = [value for pair in identity_pairs for value in pair]
     submissions = query(f'''SELECT learner_id,learner_kind,id,component_ref,progress_entry_id,
         status,actual_time_hours,submitted_at,activity_type,activity_title,module_title,ksb_codes,
+        full_submission #>> '{{monthlyAssignment,month}}' AS activity_month,
         full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
         FROM "Learner".learning_reflection_submissions
         WHERE (learner_id,learner_kind) IN ({placeholders})
@@ -287,11 +385,14 @@ def current_records_bulk(owners, records_by_learner_id):
     placeholders = ','.join(['(%s,%s)'] * len(attempt_pairs))
     params = [value for pair in attempt_pairs for value in pair]
     attempts = query(f'''SELECT enrolment_id,aptem_id,group_id,activity_id,
+        coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,
         bool_or(completed) AS completed,max(score_percent) AS best_percent,
-        max(submitted_at) AS submitted_at,max(definition->>'title') AS title
+        max(submitted_at) AS submitted_at,max(definition->>'title') AS title,
+        jsonb_agg(jsonb_build_object('id',id,'completed',completed,'timing',definition->'studyTime'))
+            FILTER (WHERE definition ? 'studyTime') AS timed_attempts
         FROM "Learner".subject_activity_attempts
         WHERE (enrolment_id,aptem_id) IN ({placeholders}) AND submitted_at IS NOT NULL
-        GROUP BY enrolment_id,aptem_id,group_id,activity_id''', params)
+        GROUP BY enrolment_id,aptem_id,group_id,activity_id,coalesce(definition->>'catalogue_kind','material')''', params)
     attempts_by_identity = {pair: [] for pair in attempt_pairs}
     for attempt in attempts:
         key = (int(attempt['enrolment_id']), int(attempt['aptem_id']))

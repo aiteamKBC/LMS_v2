@@ -50,7 +50,7 @@ export function ModuleSessions({ moduleId }: { moduleId: string }) {
     {otherSaved.length > 0 && <aside className="rounded-xl border bg-primary-50/40 p-3 text-sm" aria-label="Other sessions with saved files">
       <p className="font-semibold">Other sessions with saved files</p><div className="mt-2 flex flex-wrap gap-2">{otherSaved.map(session =>
         <button key={session.id} type="button" onClick={() => setSelected(session)} className="rounded-lg border bg-white px-3 py-2 text-primary-700">
-          Session {session.sessionNumber} · {formatSystemTimestamp(session.startsAt)} · {session.fileCount} files
+          {session.itemTitle || `Session ${session.sessionNumber}`} · {formatSystemTimestamp(session.startsAt)} · {session.fileCount} files
         </button>)}</div></aside>}
     <SessionResults seriesId={selected.seriesId} sessionNumber={selected.sessionNumber} moduleId={moduleId} /></div>;
   return <section className="space-y-4" aria-label="Sessions and recordings">
@@ -62,7 +62,7 @@ export function ModuleSessions({ moduleId }: { moduleId: string }) {
     {loading ? <p role="status">Loading saved sessions…</p> : !data?.series.length ? !error && !saved.error && <p className="rounded-xl border bg-white p-6 text-sm">No Teams sessions are linked to this module yet.</p> : data.series.map(series => <div key={series.id} className="overflow-hidden rounded-xl border bg-white">
       <div className="flex items-center justify-between gap-3 border-b bg-primary-50/40 p-4"><strong>{series.title}</strong><button disabled={Boolean(busy) || data.syncAvailable === false} onClick={() => void sync(series.id)} className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy === series.id ? 'Requesting…' : 'Sync attendance & files'}</button></div>
       {data.jobs.filter(job => job.live_session_id === series.id).map(job => <SessionSyncStatus key={job.live_session_id} job={job} />)}
-      <ul className="divide-y">{series.sessions.map(session => <li key={session.id}><button onClick={() => setSelected(session)} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-background-50"><span><strong className="block text-sm">Session {session.sessionNumber}</strong><span className="text-xs text-foreground-500">{formatSystemTimestamp(session.startsAt)}</span></span><span className="text-right text-xs"><span className="block font-semibold">{session.reportReady ? 'Attendance report saved' : 'Awaiting attendance report'}</span><span className="text-foreground-500">{session.fileCount || 0} files · Open session →</span></span></button></li>)}</ul>
+      <ul className="divide-y">{series.sessions.map(session => <li key={session.id}><button onClick={() => setSelected(session)} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-background-50"><span><strong className="block text-sm">{session.itemTitle || `Session ${session.sessionNumber}`}</strong><span className="text-xs text-foreground-500">{session.itemTitle ? `Session ${session.sessionNumber} · ` : ''}{formatSystemTimestamp(session.startsAt)}</span></span><span className="text-right text-xs"><span className="block font-semibold">{session.reportReady ? 'Attendance report saved' : 'Awaiting attendance report'}</span><span className="text-foreground-500">{session.fileCount || 0} files · Open session →</span></span></button></li>)}</ul>
     </div>)}
   </section>;
 }

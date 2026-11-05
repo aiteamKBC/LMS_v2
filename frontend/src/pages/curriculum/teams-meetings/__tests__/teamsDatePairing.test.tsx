@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { ModuleSessionSchedulePreview, teamsCalendarOccurrences } from '../createCalendarForm';
+import { ModuleSessionSchedulePreview } from '../createCalendarForm';
+import { teamsCalendarOccurrences } from "../createCalendarForm.helpers";
 import { calendarReviewHtml } from '../calendarReview';
 import { pairHeldDates } from '../calendarTime';
 
@@ -19,6 +20,20 @@ const held = planned.filter((_, index) => index !== 4);
 const cairoDay = (value: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo' }).format(new Date(value));
 
 describe('pairing the module plan with the Teams calendar by date', () => {
+  it('keeps a linked calendar historical date visible without promising its deletion', () => {
+    const shortened = { ...row, sessions: row.sessions.filter((_, index) => index !== 2),
+      plannedStarts: planned.filter((_, index) => index !== 2), teamsStarts: planned, summary: { liveSessionId: 'LIVE-PAIR' } };
+    const { rerender } = render(<ModuleSessionSchedulePreview row={shortened} preserveExistingDates />);
+    expect(screen.getByText(/The original calendar also holds/)).toHaveTextContent('17 Sept 2026');
+    expect(screen.getByText(/The original calendar also holds/)).toHaveTextContent('kept when this linked calendar is updated');
+    expect(screen.queryByText(/sending removes/)).not.toBeInTheDocument();
+    // The ordinary managed-calendar preview retains its existing contract.
+    rerender(<ModuleSessionSchedulePreview row={shortened} />);
+    expect(screen.getByText(/Teams also holds/)).toHaveTextContent('sending removes it');
+    expect(teamsCalendarOccurrences(shortened)).toHaveLength(9);
+    expect(shortened.teamsStarts).toEqual(planned);
+  });
+
   it('reads one missing session as that session, not as every later one moving', () => {
     const { paired, extra } = pairHeldDates(planned, held, cairoDay);
     expect(paired[4]).toBe('');
@@ -45,7 +60,7 @@ describe('pairing the module plan with the Teams calendar by date', () => {
     render(<ModuleSessionSchedulePreview
       row={{ ...row, plannedStarts: planned, teamsStarts: held, summary: { liveSessionId: 'LIVE-PAIR' } } as never}
       renderActions={renderActions} />);
-    expect(screen.getAllByText('Not on the Teams calendar yet — sending adds it.')).toHaveLength(1);
+    expect(screen.getAllByText('Not on the Teams calendar yet — Update Teams calendar adds it.')).toHaveLength(1);
     expect(screen.queryByText(/Teams still holds/)).not.toBeInTheDocument();
     // The 1 Oct row has no Teams session to act on; 8 Oct acts on 8 Oct's, and
     // 5 Nov -- which Teams does hold -- on its own.

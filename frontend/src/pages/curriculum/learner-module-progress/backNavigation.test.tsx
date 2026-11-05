@@ -9,6 +9,7 @@ vi.mock('@/mocks/navigation', () => ({ curriculumNavItems: [] }));
 vi.mock('@/lib/curriculumApi', () => ({
   fetchCurriculumScopeLearnerKsbImpact: fetchImpact,
   fetchCurriculumScopeLearnerRoster: vi.fn(async () => ({ assignedLearners: [] })),
+  fetchCurriculumJson: vi.fn(async () => ({ weekStructure: [] })),
   saveCurriculumActivityStatus: vi.fn(),
   fetchCurriculumActivityStatusHistory: vi.fn(async () => ({ history: [] })),
 }));
@@ -25,7 +26,7 @@ function openProgress(state?: unknown) {
     { path: '/curriculum/learner-module-progress', element: <LearnerModuleProgressPage /> },
     { path: '*', element: <Catalogue /> },
   ], {
-    initialEntries: [CATALOGUE, { pathname: '/curriculum/learner-module-progress', search: '?moduleId=MOD-1&enrolmentId=91', state }],
+    initialEntries: [CATALOGUE, { pathname: '/curriculum/learner-module-progress', search: '?moduleId=MOD-1&enrolmentId=91&learnerStatus=withdrawn', state }],
     initialIndex: 1,
   });
   render(<RouterProvider router={router} />);
@@ -46,15 +47,15 @@ describe('Back to Students', () => {
     expect(router.state.historyAction).toBe('POP');
   });
 
-  it('still lands on the module when the page was not opened from the learner list', async () => {
+  it('still reopens assignments when the page was not opened from the learner list', async () => {
     openProgress();
     const back = screen.getByRole('link', { name: 'Back to Students' });
-    expect(back).toHaveAttribute('href', '/curriculum/module-builder?module=MOD-1');
+    expect(back).toHaveAttribute('href', '/curriculum/module-builder?learners=MOD-1&learnerStatus=withdrawn');
     fireEvent.click(back);
-    await waitFor(() => expect(screen.getByTestId('catalogue-location')).toHaveTextContent('/curriculum/module-builder?module=MOD-1'));
+    await waitFor(() => expect(screen.getByTestId('catalogue-location')).toHaveTextContent('/curriculum/module-builder?learners=MOD-1&learnerStatus=withdrawn'));
   });
 
-  it('leaves a modified click to the browser, so a new tab opens the module link', () => {
+  it('leaves a modified click to the browser, so a new tab opens the assignments link', () => {
     openProgress({ from: 'module-builder' });
     const back = screen.getByRole('link', { name: 'Back to Students' });
     const event = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });

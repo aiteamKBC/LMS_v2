@@ -467,6 +467,7 @@ def _refresh_staff_role(account):
             account._staff_access_unavailable = True
             return
         account._staff_access = (row.access or '').strip().lower()
+        account._staff_accesses = accesses_for_staff(row)
         derived = role_for_staff(row.position, row.access)
         if derived != account.role:
             account.role = derived

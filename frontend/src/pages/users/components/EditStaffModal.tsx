@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { updateStaffUser, POSITION_OPTIONS, type StaffUserRow } from '@/api/staffUsers';
 import { STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { Modal } from './Modal';

@@ -324,13 +324,9 @@ def submit_component_progress(request, component_id):
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
 
-    # Only the monthly assignment goes through the eight-step submission. Once
-    # an author flags one, the plan's other assignments complete like any other
-    # activity (see assignment_settings).
-    monthly_submission = False
-    if normalise_component_type(live_type or client_type) == "assignment":
-        from .assignment_settings import monthly_assignment_required
-        monthly_submission = bool(assignment_topic) or monthly_assignment_required(component_id, source)
+    # Every assignment uses the monthly submission. Legacy author flags on
+    # this component or elsewhere in the plan must not bypass its checks.
+    monthly_submission = normalise_component_type(live_type or client_type) == "assignment"
     if monthly_submission and not _assignment_form_ready(
         component_id, kind, learner_id, assignment_topic,
     ):
@@ -420,7 +416,19 @@ def submit_component_progress(request, component_id):
         "outsideWorkingHoursConfirmedAt": None,
         "declaredCompletedAt": declared_at.isoformat() if declared_at else None,
         "submissionValidationReason": validation_reason,
+        **{key: payload[key] for key in ('retakeTimeChoice', 'retakeTimeReason', 'retakePreviousSeconds') if key in payload},
     }
+
+    from .retake_timing import validate_activity_time
+    from .active_users import _progress_record_minutes
+    if not monthly_submission:
+        try:
+            validated = {**record, 'componentType': live_type or record['componentType']}
+            validate_activity_time(validated, history, seconds_for=lambda row: _progress_record_minutes(row) * 60)
+            if 'countedSeconds' in validated:
+                record['countedSeconds'] = validated['countedSeconds']
+        except ValueError as exc:
+            return _error(str(exc), 400)
 
     action, _noun = TYPE_ACTIONS.get(component_type, ("Completed activity", "Activity"))
     activity = {
@@ -437,7 +445,9 @@ def submit_component_progress(request, component_id):
     try:
         if monthly_submission:
             from .monthly_assignment import complete_saved_assignment
-            complete_saved_assignment(kind, learner_id, component_id, record, lambda: save_progress_record(active, record, activity), assignment_topic=assignment_topic)
+            complete_saved_assignment(kind, learner_id, component_id, record,
+                lambda: save_progress_record(active, record, {**activity, "detail": record["reportedTime"]}, monthly_assignment=True),
+                assignment_topic=assignment_topic)
         else:
             save_progress_record(active, record, activity)
     except ComponentReferenceError as exc:
@@ -478,7 +488,7 @@ def submit_component_progress(request, component_id):
                 "plannedOtjh": payload.get("plannedOtjh", reported_time),
                 # The marking schema stores decimal hours. ``timeTaken`` above
                 # remains the learner-facing MM:SS clock value.
-                "actualTimeHours": tracking["claimedSeconds"] / 3600,
+                "actualTimeHours": record["claimedSeconds"] / 3600,
                 "progressEntryId": None,
             },
         )

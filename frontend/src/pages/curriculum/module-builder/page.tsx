@@ -1,5 +1,18 @@
+import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { ModuleLearnerCount } from './ModuleLearnerCount';
+import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
+import type { ModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
+import { ModuleFixedHoursCard } from '../shared/components/ModuleHours';
+import { Context as LearnerDirectoryContext, useRefreshAssignedLearners } from '../shared/entities/assignedLearnerDirectory';
+import { sessionDeliveryDate } from '@/lib/deliveryWeek';
+import { EditScope, ModulePresence } from './CollaborativeField';
+import { CollaborationContext } from './collaborationContext';
+import { useModuleCollaboration } from './useModuleCollaboration';
+import { dirtyFields, projectAvailable } from './collaborationProtocol';
+import { ModuleEditReservedError } from './moduleAuthoringData';
+import { confirmModuleSave, sameAuthoredModule } from './confirmModuleSave';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -13,18 +26,16 @@ import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { applyCurriculumLearnerAssignments, fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
+import { fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
   fetchCurriculumKsbSets,
   fetchCurriculumDeliveryScope,
-  fetchCurriculumScopeLearnerRoster,
   fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
-  curriculumLearnerAssignmentId,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
@@ -53,6 +64,8 @@ import {
   MODULE_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
+import { CurriculumVideoUpload } from '../shared/CurriculumVideoUpload';
+import { PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } from '../shared/pendingVideoFiles';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
@@ -61,7 +74,7 @@ import { AiMaterialModal } from './AiMaterialModal';
 import { ModuleLearnerProgressDialog } from './ModuleLearnerProgressDialog';
 import { LearnerAssignmentDrawer } from '../shared/entities/LearnerAssignmentDrawer';
 import { PersonalLearningEntry } from '@/components/feature/PersonalLearningEntry';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { SessionResultsDialog } from '../module-workspace/ModuleSessions';
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
 // The holiday notice, shared with the module workspace so a week touched by a
@@ -73,6 +86,9 @@ import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { mergeModuleStructures } from '../shared/entities/mergeModuleStructure';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
 import { PlaceWeekDrawer } from './PlaceWeekDrawer';
+import { ModuleConflictPanel } from './ModuleConflictPanel';
+import { applyTheirs, conflictsFromCollisions, conflictsFromServer, mergeConflictLists, type ModuleConflict } from './moduleConflicts';
+import { announceModuleWrite, useModuleLiveSync } from './useModuleLiveSync';
 import {
   calculateQualityChecklist,
   componentTypeGroups,
@@ -82,6 +98,7 @@ import {
   createEmptyWeek,
   createNewModule,
   groupWeeksByMonth,
+  moduleWeekDeliveryDate,
   deleteModuleStructure,
   curriculumModuleToCatalogue,
   duplicateModuleStructure,
@@ -109,6 +126,7 @@ import {
   moduleAuthoredLiveSessions,
   applyLiveSessionLinkToComponents,
   replaceModuleTeamsLinks,
+  applyModuleComponentUpdate,
   // Which authored weeks a ticked holiday falls on. States the fact only --
   // the plan is unchanged, and what the week becomes is the author's call.
   weeksTouchedByHoliday,
@@ -127,7 +145,11 @@ import {
   recalculateModule,
   restoreModuleTeamsMeeting,
   ModuleStructureConflictError,
+  CurriculumRequestTimeout,
+  loadModuleStructureChanges,
   saveModuleStructure,
+  serverCopyOf,
+  type ServerStructureCopy,
   uploadComponentResource,
   utcIsoToCalendarParts,
   weekExpectedOtjhTotal,
@@ -184,6 +206,10 @@ import {
 } from './componentAuthoringModel';
 import { RichTextDraft } from './RichTextEditor';
 import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
+import { useOffScheduleRuns } from './useOffScheduleRuns';
+import { offScheduleRunLabel, offScheduleRunSentence } from '../teams-meetings/offScheduleRuns';
+import { reviewDateLabel } from '../teams-meetings/calendarTime';
+import { linkedRecordingsOf, moveComponentToWeek, relinkCopiedComponents, withLinkedRecordings, withRecordingLink, type RecordingLinkContext } from '../shared/entities/liveSessionRecordingLink';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
@@ -228,7 +254,7 @@ const MODULE_CATALOGUE_ID_PATTERN = /^MOD-[A-Z0-9][A-Z0-9_-]*$/i;
  * "Unsaved changes" after a save was turned down says nothing about why, and
  * "Saved" must never appear for a write the backend has not confirmed.
  */
-type WorkspaceSaveStatus = 'saved' | 'pending' | 'manual' | 'saving' | 'saving-more' | 'failed' | 'conflict' | 'locked';
+type WorkspaceSaveStatus = 'saved' | 'pending' | 'manual' | 'saving' | 'saving-more' | 'checking' | 'unconfirmed' | 'failed' | 'conflict' | 'locked';
 
 const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: string; icon: string }> = {
   saved: { text: 'All changes saved', tone: 'text-emerald-700', icon: 'ri-checkbox-circle-line' },
@@ -242,6 +268,8 @@ const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: s
   // claim they were.
   'saving-more': { text: 'Saving... later edits still pending', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
   failed: { text: 'Save failed - your changes are still here', tone: 'text-rose-700', icon: 'ri-error-warning-line' },
+  checking: { text: 'Checking saved changes...', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
+  unconfirmed: { text: 'Save not confirmed - your changes are still here', tone: 'text-amber-700', icon: 'ri-time-line' },
   // Reached only when a refused save could not be merged because the stored
   // version would not read. An ordinary conflict never gets this far: it is
   // merged and re-sent, and the footer goes back to saying "Saving...".
@@ -250,7 +278,7 @@ const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: s
 };
 
 /** A save the backend turned down. `conflict` is never worth retrying as-is. */
-type WorkspaceSaveFailure = { kind: 'error' | 'conflict'; message: string };
+type WorkspaceSaveFailure = { kind: 'error' | 'conflict' | 'unconfirmed'; message: string };
 
 /**
  * The floor between two live reads of the open module's structure.
@@ -303,7 +331,21 @@ const MODULE_CONFLICT_BUSY_NOTICE = 'This module is being saved by someone else 
  * reader read it twice to check it was the same thing. The banner's job here is
  * the button beside it, so it says only what that button is for.
  */
-const MODULE_CONFLICT_BUSY_BANNER = 'Your changes are all still here and were not saved. Load their version to start again from it.';
+// Somebody else changed the same thing this author did. Saving waits for the
+// author to choose, in the panel above the workspace.
+const MODULE_CONFLICT_CHOICE_NOTICE = 'Someone else changed some of the same things you did. Choose which version to keep in the box above the weeks, then save. Nothing of yours has been lost.';
+
+/** Every week and component id in a module, for telling what a save deleted. */
+function moduleItemIds(module: ModuleCatalogueItem): Set<string> {
+  const ids = new Set<string>();
+  module.weekStructure.forEach(week => {
+    ids.add(week.id);
+    week.components.forEach(component => ids.add(component.id));
+  });
+  return ids;
+}
+
+const MODULE_CONFLICT_BUSY_BANNER ='Your changes are all still here and were not saved. Load their version to start again from it.';
 
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
@@ -548,7 +590,7 @@ async function showDuplicateModuleSwal(
   const destination = await Swal.fire({
     title: `Duplicate ${module.title}`,
     html: `
-      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The current learners of the selected Group will be assigned, and future Group learners will inherit it.</p>
+      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The new module starts with no learners; assign them on it afterwards.</p>
       <p style="margin:0 0 12px;text-align:left">Progress, submissions, attendance and files are never copied.</p>
       <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Programme</label>
       <select id="duplicate-programme" class="swal2-select" style="display:flex;width:100%;margin:0">${programmeOptions}</select>
@@ -600,9 +642,14 @@ async function showDuplicateModuleSwal(
   });
   if (!destination.isConfirmed || !destination.value) return null;
   const selected = destination.value as DuplicateDestination;
+  // Independent is the default: a copy usually runs for another group, and a
+  // shared join link would put that group in the original's sessions. Sharing
+  // stays a deliberate choice for groups that really attend together -- it is
+  // the only path that credits both groups' attendance and shows both the
+  // recording.
   const teams = await Swal.fire({
     title: 'Teams meeting and dates',
-    html: '<p style="margin:0 0 12px;text-align:left">Choose whether the duplicate shares the original Teams meeting.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared" checked> Share the same Teams meeting and record</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent"> Create an independent Teams meeting later</label><div id="duplicate-start-date-wrap" style="display:none;text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
+    html: '<p style="margin:0 0 12px;text-align:left">By default the new module has no Teams meeting link; create its own meeting from the new module once it is set up. Share the original meeting only when both groups attend the same sessions together.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent" checked> Independent: no meeting link, create its own meeting later</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared"> Share the same Teams meeting (both groups attend together)</label><div id="duplicate-start-date-wrap" style="text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
     icon: 'question',
     width: 560,
     showCancelButton: true,
@@ -615,18 +662,21 @@ async function showDuplicateModuleSwal(
     didOpen: () => {
       const popup = Swal.getPopup();
       const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent');
+      const shared = popup?.querySelector<HTMLInputElement>('#duplicate-teams-shared');
       const wrap = popup?.querySelector<HTMLElement>('#duplicate-start-date-wrap');
-      independent?.addEventListener('change', () => { if (wrap) wrap.style.display = independent.checked ? 'block' : 'none'; });
+      const sync = () => { if (wrap) wrap.style.display = independent?.checked ? 'block' : 'none'; };
+      independent?.addEventListener('change', sync);
+      shared?.addEventListener('change', sync);
     },
     preConfirm: () => {
       const popup = Swal.getPopup();
       const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent')?.checked;
       const startDate = popup?.querySelector<HTMLInputElement>('#duplicate-start-date')?.value || '';
       if (independent && !startDate) {
-        Swal.showValidationMessage('Choose the Start Date for the independent module.');
+        Swal.showValidationMessage('Choose the Start Date for the new module.');
         return false;
       }
-      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate };
+      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate: independent ? startDate : '' };
     },
   });
   if (!teams.isConfirmed || !teams.value) return null;
@@ -634,7 +684,7 @@ async function showDuplicateModuleSwal(
   if (teamsValue.teamsCopyMode === 'shared') {
     const accepted = await showCurriculumConfirm({
       title: 'Share the Teams meeting?',
-      text: 'The original and duplicate will use the same meeting identity. Links, attendees, invitations, attendance, recordings and later meeting changes can affect both modules.',
+      text: 'Both groups will join the same meeting on the original dates. Links, attendees, invitations, attendance, recordings and later meeting changes affect both modules. Choose this only when the two groups attend together.',
       icon: 'warning',
       confirmButtonText: 'Yes, share the meeting',
       cancelButtonText: 'Go back',
@@ -646,6 +696,12 @@ async function showDuplicateModuleSwal(
 }
 
 export default function ModuleBuilder() {
+  return <LearnerDirectoryProvider><ModuleBuilderContent /></LearnerDirectoryProvider>;
+}
+
+function ModuleBuilderContent() {
+  const refreshAssignedLearners = useRefreshAssignedLearners();
+  const learnerDirectory = useContext(LearnerDirectoryContext);
   const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
@@ -657,6 +713,7 @@ export default function ModuleBuilder() {
   // Kept in the address with the filters (as `q`), so Back from a learner's
   // progress page returns to the catalogue exactly as it was left.
   const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  const [allModules, setAllModules] = useState(() => searchParams.get('catalogue') === 'all');
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
@@ -671,6 +728,8 @@ export default function ModuleBuilder() {
   // Both run the same clash check and the same assignment notification, so the
   // catalogue no longer carries a third change-tutor drawer of its own.
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
+  const videoFiles = usePendingVideoFiles(workingModule?.catalogueId || '');
+  const { uploadSaved: uploadPendingVideos, clear: clearPendingVideos } = videoFiles;
   /**
    * The module as it is *right now*, readable from inside a callback that has
    * already started.
@@ -681,6 +740,7 @@ export default function ModuleBuilder() {
    * every keystroke made while it was in the air -- the same out-of-order
    * overwrite the save path guards against, arriving by a different door.
    */
+  const collaboration = useModuleCollaboration(workingModule?.catalogueId || '', () => { void liveSyncRef.current('live'); });
   const workingModuleRef = useRef<ModuleCatalogueItem | null>(null);
   workingModuleRef.current = workingModule;
   /**
@@ -735,6 +795,7 @@ export default function ModuleBuilder() {
   // figure, so it paints it here and the next successful list read takes over.
   const [learnerCountOverrides, setLearnerCountOverrides] = useState<Record<string, number>>({});
   const learnerAssignmentModuleIdRef = useRef('');
+  const learnerRequestRef = useRef(0);
   const [learnerProgress, setLearnerProgress] = useState<{
     target: LearnerAssignmentTarget;
     impact: CurriculumScopeLearnerKsbImpactResponse;
@@ -746,6 +807,7 @@ export default function ModuleBuilder() {
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveFailure, setSaveFailure] = useState<WorkspaceSaveFailure | null>(null);
+  const [confirmingSave, setConfirmingSave] = useState(false);
   /**
    * Somebody else's save landed on the module this workspace is holding.
    *
@@ -762,6 +824,17 @@ export default function ModuleBuilder() {
    */
   const [remoteUpdate, setRemoteUpdate] = useState<{ revision: string; notices: string[]; adopted: number } | null>(null);
   /**
+   * Things this author and someone else both changed, waiting for the author
+   * to choose. Nothing is saved over the other editor while any is open: the
+   * ref is what the save path reads, the state is what the panel shows.
+   */
+  const [moduleConflicts, setModuleConflictsState] = useState<ModuleConflict[]>([]);
+  const moduleConflictsRef = useRef<ModuleConflict[]>([]);
+  const setModuleConflicts = useCallback((next: ModuleConflict[]) => {
+    moduleConflictsRef.current = next;
+    setModuleConflictsState(next);
+  }, []);
+  /**
    * When the live sync last asked the server for this module's structure.
    *
    * Every curriculum write in the estate reaches this tab as "something
@@ -774,7 +847,14 @@ export default function ModuleBuilder() {
   /** The trailing half of that floor: a tick waiting for the cooldown to pass. */
   const liveSyncPendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Read through a ref so the trailing tick runs today's callback, not the one that scheduled it. */
-  const liveSyncRef = useRef<() => void | Promise<void>>(() => undefined);
+  const liveSyncRef = useRef<(trigger?: 'return' | 'live') => void | Promise<void>>(() => undefined);
+  // A live read that arrived while a save was in flight, run once it settles.
+  const liveSyncAfterSaveRef = useRef<'return' | 'live' | ''>('');
+  // Module settings is open: its own save is read back by its onSaved as this
+  // author's write, so a live read heard meanwhile waits for the drawer to close
+  // rather than reporting that save as somebody else's.
+  const placementOpenRef = useRef(false);
+  const liveSyncAfterPlacementRef = useRef<'return' | 'live' | ''>('');
   /** The live merge, reachable from the save path that is declared above it. */
   const mergeStoredRef = useRef<(structureId: string) => Promise<boolean>>(async () => false);
   /**
@@ -826,6 +906,21 @@ export default function ModuleBuilder() {
    */
   const serverRevisionRef = useRef('');
   /**
+   * The server's own copy of the module at `serverRevisionRef`, item by item
+   * with the fingerprint it gave each one (moduleAuthoringData.serverCopyOf).
+   * Sent with a save so the server can merge it with anyone else's save item
+   * by item, and used by live sync to read only what changed.
+   */
+  const serverCopyRef = useRef<ServerStructureCopy | null>(null);
+  /**
+   * Week and component ids this workspace deleted in its own saves. Bringing
+   * one of those back (undo) is this author's own decision; any other deleted
+   * id a save names is refused by the server rather than silently restored.
+   */
+  const ownDeletedIdsRef = useRef<Set<string>>(new Set());
+  /** Ids someone else deleted that the author chose to keep ("Keep mine"). */
+  const explicitRestoreIdsRef = useRef<Set<string>>(new Set());
+  /**
    * Whether the workspace may save without being asked.
    *
    * Only for a module whose stored structure this workspace actually read. A
@@ -845,6 +940,9 @@ export default function ModuleBuilder() {
   // What it no longer does is send Cache-Control: no-cache on the *mount* read,
   // which forced a rebuild from Neon and cost these two ~9s and ~14s.
   const { modules, loading, error, reload } = useCurriculumModules({ compact: true, revalidate: true });
+  const catalogueActivityKey = modules.map(module => [module.moduleCatalogueId || module.id, module.lastUpdated, module.startDate, module.endDate, module.sourceType].join(':')).join('|');
+  const catalogueAccountScope = JSON.stringify([auth?.account?.id, auth?.account?.role, auth?.account?.access, auth?.tenant?.id]);
+  const catalogueActivity = useCatalogueActivity(catalogueActivityKey, catalogueAccountScope);
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ revalidate: true, visibility: 'all' });
   const programmeDesignUrl = useMemo(() => {
     const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
@@ -1147,11 +1245,28 @@ export default function ModuleBuilder() {
       module,
       deliveryUsageForModuleScope(module as ModuleBuilderListItem, programmeFilter, curriculumProgrammes),
     );
+    placementOpenRef.current = true;
     setPlacementModule(target);
   }, [curriculumProgrammes, programmeFilter]);
 
   const closePlacementForm = useCallback(() => {
+    placementOpenRef.current = false;
     setPlacementModule(null);
+    const deferred = liveSyncAfterPlacementRef.current;
+    liveSyncAfterPlacementRef.current = '';
+    // After the drawer's onSaved has started its own read (it runs in the same
+    // tick as this close), so this one finds the module already up to date.
+    if (deferred) setTimeout(() => { void liveSyncRef.current(deferred); }, 0);
+  }, []);
+
+  // The copy this workspace last agreed on with the server: what Module
+  // settings' PATCH will resize, so the drawer can say what that does first.
+  const storedStructureForPlacement = useCallback((): ModuleCatalogueItem | null => {
+    try {
+      return savedModuleSnapshotRef.current ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem : null;
+    } catch {
+      return null;
+    }
   }, []);
 
   const moduleFormOpen = createOpen || Boolean(placementModule);
@@ -1414,6 +1529,7 @@ export default function ModuleBuilder() {
   // programme they belong to is restored. Once everything has loaded and the
   // name matches nothing, the check runs as before.
   const programmeRestorePending = programmeFilter === 'All'
+    && !filtersTouchedRef.current
     && Boolean(requestedProgramme)
     && (loading || !curriculumProgrammes.length || Boolean(requestedProgrammeOption));
   useEffect(() => {
@@ -1428,15 +1544,20 @@ export default function ModuleBuilder() {
   useEffect(() => {
     if (!filtersTouchedRef.current) return;
     const next = new URLSearchParams(searchParams);
+    // The current filter replaces every programme alias accepted by deep links.
+    // Leaving these behind would restore a cleared programme after a reload.
+    next.delete('programmeId');
+    next.delete('programmeName');
     ([
       ['programme', programmeFilter === 'All' ? '' : programmeFilter],
       ['cohort', cohortFilter],
       ['group', groupFilter],
       ['tutor', tutorFilter],
       ['q', search],
+      ['catalogue', allModules ? 'all' : ''],
     ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
+  }, [allModules, cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
 
   const changeFilter = useCallback((apply: () => void) => {
     filtersTouchedRef.current = true;
@@ -1454,7 +1575,7 @@ export default function ModuleBuilder() {
 
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
-  const filtered = catalogueModules.filter(module => {
+  const matchingModules = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
@@ -1468,6 +1589,8 @@ export default function ModuleBuilder() {
       && (!tutorFilter || normaliseDeepLinkValue(usage.tutor) === normaliseDeepLinkValue(tutorFilter))
     ));
   });
+  const activeModules = matchingModules.filter(module => catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today));
+  const filtered = allModules ? matchingModules : activeModules;
 
   const deliveryStats = useMemo(() => ({
     deliveries: deliveryUsages.length,
@@ -1502,13 +1625,15 @@ export default function ModuleBuilder() {
   const workingModuleSnapshot = useMemo(() => moduleSnapshot(workingModule), [workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
     workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
-  );
+  ) || videoFiles.hasPending;
   const workspaceSaveStatus: WorkspaceSaveStatus = workingModuleProgrammeArchived
     ? 'locked'
     : saving
-      ? (savingSnapshot && workingModuleSnapshot !== savingSnapshot ? 'saving-more' : 'saving')
+      ? (confirmingSave ? 'checking' : savingSnapshot && workingModuleSnapshot !== savingSnapshot ? 'saving-more' : 'saving')
       : saveFailure?.kind === 'conflict'
         ? 'conflict'
+        : saveFailure?.kind === 'unconfirmed'
+          ? 'unconfirmed'
         : saveFailure
           ? 'failed'
           : !hasUnsavedWorkingModuleChanges
@@ -1586,6 +1711,12 @@ export default function ModuleBuilder() {
       // the structure that was just read, so a save based on this copy is
       // accepted only while the module is still that copy.
       serverRevisionRef.current = next.structureRevision || '';
+      // The server's own copy of that version. A Teams restore above moves the
+      // revision past it, and a save then simply leaves it out.
+      serverCopyRef.current = serverCopyOf(remote);
+      ownDeletedIdsRef.current = new Set();
+      explicitRestoreIdsRef.current = new Set();
+      setModuleConflicts([]);
       // This read IS the latest version, so any notice about one left over from
       // the module before this has nothing left to announce. The live-sync
       // cooldown is deliberately NOT armed here: the first write this workspace
@@ -1643,7 +1774,7 @@ export default function ModuleBuilder() {
       setOpeningModule(null);
       setOpeningModuleComplete(false);
     }
-  }, [finishLoadingProgress, resolveModuleScopeLock, setSearchParams]);
+  }, [finishLoadingProgress, resolveModuleScopeLock, setModuleConflicts, setSearchParams]);
 
   /**
    * What happens once the Add module form has written the module.
@@ -1704,12 +1835,16 @@ export default function ModuleBuilder() {
     setSearchParams(previous => {
       const next = new URLSearchParams(previous);
       if (catalogueId) next.set('learners', catalogueId);
-      else next.delete('learners');
+      else {
+        next.delete('learners');
+        next.delete('learnerStatus');
+      }
       return next;
     }, { replace: true });
   }, [setSearchParams]);
 
   const openLearnerAction = useCallback(async (module: ModuleBuilderListItem) => {
+    const request = ++learnerRequestRef.current;
     const identifier = moduleLearnerIdentifier(module);
     if (!identifier) {
       setActionMessage(`Unable to open learner assignments for ${module.title}: no module identifier was returned.`);
@@ -1723,6 +1858,7 @@ export default function ModuleBuilder() {
     setActionMessageRetry(null);
     try {
       const directory = await fetchLearnerAssignments(target);
+      if (request !== learnerRequestRef.current) return null;
       // The assignment directory is the membership authority. The impact
       // endpoint adds OTJH/KSB progress, but may not return a newly/directly
       // assigned learner that has no placement or activity to aggregate yet.
@@ -1740,15 +1876,18 @@ export default function ModuleBuilder() {
           lifecycleStatus: learner.programmeStatus,
         }));
       const assignedCount = assignedLearners.length;
+      if (module.catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [module.catalogueId]: assignedCount }));
       if (assignedCount === 0) {
         setLearnerAssignmentTarget(target);
         return 0;
       }
       const impact = await fetchCurriculumScopeLearnerKsbImpact('module', identifier, { learnerStatus: 'all', moduleProgress: true });
+      if (request !== learnerRequestRef.current) return null;
       setLearnerProgress({ target, impact, assignedLearners });
       rememberOpenLearners(module.catalogueId);
       return assignedCount;
     } catch (err) {
+      if (request !== learnerRequestRef.current) return null;
       setActionMessage(err instanceof Error ? err.message : `Unable to load learners for ${module.title}.`);
       return null;
     }
@@ -1823,13 +1962,15 @@ export default function ModuleBuilder() {
   }, [saveStartedAt, saving]);
 
   useEffect(() => {
-    if (!requestedProgrammeOption || loading || programmeFilter !== 'All') return;
+    // Once the reader changes filters, local state owns the selection. The URL
+    // can still contain the previous programme until the sync effect commits.
+    if (filtersTouchedRef.current || !requestedProgrammeOption || loading || programmeFilter !== 'All') return;
     setProgrammeFilter(requestedProgrammeOption);
   }, [loading, programmeFilter, requestedProgrammeOption]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
+    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || '';
     const requestedKey = requestedModule.trim();
     // Carried only so the not-found message can name the module the way the
     // reader saw it. It is NOT a lookup key: titles are not unique (the same
@@ -1837,7 +1978,7 @@ export default function ModuleBuilder() {
     // only ever guess, and a guess here opens a different module's weeks and
     // OTJH under the name the reader clicked.
     const requestedTitle = (params.get('moduleTitle') || '').trim();
-    const dedupeKey = requestedKey || requestedTitle;
+    const dedupeKey = requestedKey || (requestedTitle ? `title:${requestedTitle}` : '');
     if (!dedupeKey || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
 
     // A canonical id names its module outright -- every link this workspace
@@ -1933,12 +2074,12 @@ export default function ModuleBuilder() {
     void showCurriculumAlert(result.updated
       ? {
         title: `${result.updated} Teams link${result.updated === 1 ? '' : 's'} replaced`,
-        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link. The Teams meetings and their invitations were not changed.`,
+        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link.${result.recordingsSourceModuleId ? ' Reopen the module to load recordings and attendance for dates that match the source calendar.' : ''} The Teams meetings and their invitations were not changed.`,
         icon: 'success',
       }
       : {
         title: 'No links were replaced',
-        text: 'None of the selected weeks has a saved live session with a link to replace. Save the module first if you have just added one.',
+        text: 'None of the selected weeks has a live-session component that can use this link. Save the module first if you have just added one.',
         icon: 'info',
       });
   }, [workingModuleProgrammeArchived]);
@@ -2058,22 +2199,114 @@ export default function ModuleBuilder() {
   // session's Teams meeting and date (`copyComponentToWeek` says why). Client
   // state only, same as `duplicateWeek` -- the normal module save writes the
   // whole week structure.
+  //
+  // A live session copies with its same-week linked recordings, and the copies
+  // are linked to each other. A recording copied on its own keeps its link:
+  // the session it names is still in this module.
   const copyComponentToAnotherWeek = useCallback((component: ModuleComponent, targetWeekId: string) => {
     let copyId = '';
-    updateWorkingModule(module => ({
-      ...module,
-      weekStructure: module.weekStructure.map(week => {
-        if (week.id !== targetWeekId) return week;
-        const copy = cloneComponentToWeek(component, targetWeekId, module.id);
-        copyId = copy.id;
-        return { ...week, components: [...week.components, copy] };
-      }),
-    }));
+    updateWorkingModule(module => {
+      const sourceWeek = module.weekStructure.find(week => week.components.some(item => item.id === component.id));
+      const sources = component.type === 'live-session' && sourceWeek
+        ? [component, ...linkedRecordingsOf(sourceWeek.components, component)]
+        : [component];
+      return {
+        ...module,
+        weekStructure: module.weekStructure.map(week => {
+          if (week.id !== targetWeekId) return week;
+          const copies = relinkCopiedComponents(sources, sources.map(source => cloneComponentToWeek(source, targetWeekId, module.id)), { sameModule: true });
+          copyId = copies[0].id;
+          return { ...week, components: [...week.components, ...copies] };
+        }),
+      };
+    });
     if (!copyId) return;
     // Open the target week and select the copy -- the point of a clone is the
     // edit you make to it, and here that edit happens on a different week.
     setExpandedWeekIds(prev => new Set(prev).add(targetWeekId));
     setSelection({ kind: 'component', weekId: targetWeekId, componentId: copyId });
+  }, [updateWorkingModule]);
+
+  // Everything the recording/live-session link needs beyond one week: this
+  // module's weeks, the other modules a recording may link into (read on
+  // demand, only when an author picks one), and the writes that set a link on
+  // a recording wherever it sits or add one after a live session.
+  const workingModuleLinkId = workingModule ? (workingModule.catalogueId || workingModule.id) : '';
+  const linkWeeks = useMemo(() => (workingModule?.weekStructure || []).map(week => ({
+    id: week.id, label: week.title || `Week ${week.weekNumber}`, components: week.components,
+  })), [workingModule?.weekStructure]);
+  const linkableModules = useMemo(() => catalogueModules
+    .filter(module => module.catalogueId && module.catalogueId !== workingModuleLinkId)
+    .map(module => ({
+      id: module.catalogueId,
+      label: [module.title, module.group || module.cohort || module.programmeName].filter(Boolean).join(' · '),
+      programmeId: module.programmeId || '',
+      programme: module.programmeName || '',
+      cohortId: module.cohortId || '',
+      cohort: module.cohort || '',
+      groupId: module.groupId || '',
+      group: module.group || '',
+    })), [catalogueModules, workingModuleLinkId]);
+  const loadLinkableModuleWeeks = useCallback(async (moduleId: string) => {
+    const structure = await loadModuleStructure(moduleId);
+    if (!structure) throw new Error('That module could not be found.');
+    return structure.weekStructure.map(week => ({ id: week.id, label: week.title || `Week ${week.weekNumber}`, components: week.components }));
+  }, []);
+  const setRecordingLink = useCallback((recordingId: string, liveSessionId: string, moduleId: string) => {
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => ({
+        ...week,
+        components: week.components.map(component => (component.id === recordingId ? withRecordingLink(component, liveSessionId, moduleId) : component)),
+      })),
+    }));
+  }, [updateWorkingModule]);
+  const addLinkedRecording = useCallback((liveSession: ModuleComponent) => {
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => {
+        const index = week.components.findIndex(component => component.id === liveSession.id);
+        if (index < 0) return week;
+        const [, recording] = withLinkedRecordings([liveSession], () => createNamedComponent(week, 'recording-placeholder'));
+        const components = [...week.components];
+        components.splice(index + 1, 0, recording);
+        return { ...week, components };
+      }),
+    }));
+  }, [updateWorkingModule]);
+  const removeLinkedComponents = useCallback((componentIds: string[]) => {
+    const removing = new Set(componentIds);
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => (week.components.some(component => removing.has(component.id))
+        ? { ...week, components: week.components.filter(component => !removing.has(component.id)) }
+        : week)),
+    }));
+  }, [updateWorkingModule]);
+  const recordingLinks = useMemo<RecordingLinkContext>(() => ({
+    moduleId: workingModuleLinkId,
+    weeks: linkWeeks,
+    otherModules: linkableModules,
+    loadModuleWeeks: loadLinkableModuleWeeks,
+    setLink: setRecordingLink,
+    addLinkedRecording,
+    removeComponents: removeLinkedComponents,
+  }), [workingModuleLinkId, linkWeeks, linkableModules, loadLinkableModuleWeeks, setRecordingLink, addLinkedRecording, removeLinkedComponents]);
+
+  // Move to another week. Linked within this module, the live session and all
+  // its recordings move there together, from whatever weeks they were in, in
+  // one update; unlinked, the component moves alone. A link into another
+  // module never moves anything there. Nothing in the settings changes -- an
+  // unbooked session is re-dated by the week plan like any other, and a booked
+  // one keeps its Teams date with the rail's date notice saying it no longer
+  // matches. Client state only, saved with the module like the copy above.
+  const moveComponentToAnotherWeek = useCallback((component: ModuleComponent, targetWeekId: string) => {
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: moveComponentToWeek(module.weekStructure, component.id, targetWeekId, module.catalogueId || module.id),
+    }));
+    setExpandedWeekIds(prev => new Set(prev).add(targetWeekId));
+    setSelection({ kind: 'component', weekId: targetWeekId, componentId: component.id });
   }, [updateWorkingModule]);
 
   const confirmDeleteWeek = async (weekId: string) => {
@@ -2128,10 +2361,21 @@ export default function ModuleBuilder() {
     // on after the `finally` has released the in-flight guard, because the
     // retry is a second save and the overlap guard would otherwise refuse it.
     let retryAfterMerge = '';
+    let retryAfterReservation = false;
+    // What the server said both editors changed, kept for after the merge: the
+    // browser's own merge normally finds the same things, and when it cannot
+    // (a row deleted that this copy never knew of) these are what is asked.
+    let serverConflicts: ModuleConflict[] = [];
     // The backend refuses this with a 400 anyway; saying so here keeps the
     // reader's unsaved work in the workspace instead of round-tripping it.
     if (workingModuleProgrammeArchived) {
       setActionMessage(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
+      return null;
+    }
+    // Someone else changed what this author changed, and they have not chosen
+    // yet. Sending now would decide it for them.
+    if (moduleConflictsRef.current.length && !collaboration.enabled) {
+      setActionMessage(MODULE_CONFLICT_CHOICE_NOTICE);
       return null;
     }
     // The ref rather than the state: identical on an ordinary save, and the
@@ -2148,7 +2392,7 @@ export default function ModuleBuilder() {
       ksbProfileSourceId: workingModuleScopeLock.ksbSourceId || liveModule.ksbProfileSourceId,
     } : liveModule;
     const validationIssues = validateModuleAuthoringStructure(scopedWorkingModule);
-    if (validationIssues.length) {
+    if (validationIssues.length && !collaboration.enabled) {
       setActionMessage(firstValidationMessage(validationIssues));
       return null;
     }
@@ -2169,14 +2413,52 @@ export default function ModuleBuilder() {
     setSaving(true);
     setSaveStartedAt(Date.now());
     setActionMessage(null);
+    setSaveFailure(null);
     const normalisedModule = normaliseComponentTitles(scopedWorkingModule);
     const selectedKsbSourceId = cleanKsbSourceId(workingModuleScopeLock?.locked ? workingModuleScopeLock.ksbSourceId : normalisedModule.ksbProfileSourceId);
-    const moduleToSave = recalculateModule({
+    let moduleToSave = recalculateModule({
       ...normalisedModule,
       ksbProfileSourceId: selectedKsbSourceId && (workingModuleScopeLock?.locked || ksbSourceMatchesModule(selectedKsbSourceId, ksbSets, standards, normalisedModule, curriculumProgrammes))
         ? selectedKsbSourceId
         : '',
     });
+    const base = savedModuleSnapshotRef.current
+      ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem : null;
+    const draftBeforeSave = moduleToSave;
+    let ownership: { editorId: string; proofs: Record<string, string> } | undefined;
+    let pendingFields = false;
+    try {
+      if (collaboration.enabled) {
+        // A disagreement blocks that field, not independent work elsewhere.
+        moduleConflictsRef.current.forEach(conflict => { moduleToSave = applyTheirs(moduleToSave, conflict); });
+        if (!base) throw new Error('Read the saved module before saving collaboratively. Your draft is retained.');
+        const prepared = await collaboration.prepare(base, moduleToSave);
+        moduleToSave = prepared.module;
+        let validationDraft = scopedWorkingModule;
+        moduleConflictsRef.current.forEach(conflict => { validationDraft = applyTheirs(validationDraft, conflict); });
+        const availableIssues = validateModuleAuthoringStructure(projectAvailable(base, validationDraft, prepared.blocked));
+        if (availableIssues.length) {
+          setActionMessage(firstValidationMessage(availableIssues));
+          return null;
+        }
+        ownership = prepared.collaboration;
+        pendingFields = prepared.blocked.length > 0 || moduleConflictsRef.current.length > 0;
+        if (pendingFields) autoSaveArmedRef.current = false;
+        if (pendingFields && !dirtyFields(base, moduleToSave).length) {
+          setActionMessage('These fields are reserved or need your choice. Your draft is retained; other fields remain editable.');
+          return null;
+        }
+      }
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : 'Editing coordination is unavailable. Your draft is retained.');
+      return null;
+    } finally {
+      // Preparation may return before the content-save try/finally below.
+      savingRef.current = false;
+      setSaving(false);
+    }
+    savingRef.current = true;
+    setSaving(true);
     // Exactly what this request carries. Everything below compares against it
     // rather than against "is the module dirty", because those become different
     // questions the moment somebody types while the request is in the air.
@@ -2190,22 +2472,43 @@ export default function ModuleBuilder() {
     // payload -- the one thing a refusal must not do.
     autoSaveAttemptRef.current = sentSnapshot;
     try {
-      setWorkingModule(moduleToSave);
+      if (!pendingFields) setWorkingModule(moduleToSave);
       // The copy the server holds at that revision, so only what the reader
       // changed since is sent and written. Without one -- a module never saved
       // -- the whole structure goes, as it always did.
-      const base = savedModuleSnapshotRef.current
-        ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
-        : null;
-      const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
+
+      let saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
         expectedRevision: serverRevisionRef.current,
+        collaboration: ownership,
         source,
+        importVideoComponentIds: source === 'manual' && !pendingFields && selectedComponent?.type === 'video'
+          ? [selectedComponent.id] : undefined,
         base,
+        // Lets the server merge this save with one that landed first, item by
+        // item, instead of refusing it outright.
+        serverCopy: serverCopyRef.current,
+        restoreIds: [...new Set([...ownDeletedIdsRef.current, ...explicitRestoreIdsRef.current])],
+      }).catch(async (error: unknown) => {
+        if (!(error instanceof CurriculumRequestTimeout)) throw error;
+        setConfirmingSave(true);
+        const confirmed = await confirmModuleSave(moduleToSave, () => loadModuleStructure(moduleToSave.catalogueId, { skipCache: true }));
+        setConfirmingSave(false);
+        if (!confirmed) throw error;
+        return confirmed;
       });
       if (saveRequestRef.current !== requestId) return null;
       // The write landed, so this is the version the next save is measured
       // against, whether or not its result is adopted below.
       serverRevisionRef.current = saved.structureRevision || '';
+      serverCopyRef.current = serverCopyOf(saved);
+      if (base) {
+        // Deleted here by this author: an undo may bring them back.
+        const sent = moduleItemIds(moduleToSave);
+        moduleItemIds(base).forEach(id => { if (!sent.has(id)) ownDeletedIdsRef.current.add(id); });
+      }
+      explicitRestoreIdsRef.current = new Set();
+      // Other tabs of this browser hear it at once rather than on their next poll.
+      announceModuleWrite(moduleToSave.catalogueId);
       setWorkingModule(current => {
         if (!current || current.catalogueId !== moduleToSave.catalogueId) return current;
         // The server normalises what it stores -- session counts, dates, the
@@ -2220,23 +2523,43 @@ export default function ModuleBuilder() {
         // depends only on `current`, so a repeated call cannot leave the two
         // disagreeing.
         const unchangedSinceSent = moduleSnapshot(current) === sentSnapshot;
+        if (pendingFields) {
+          savedModuleSnapshotRef.current = moduleSnapshot(saved);
+          return mergeModuleStructures(moduleToSave, current, saved).module;
+        }
         savedModuleSnapshotRef.current = unchangedSinceSent ? moduleSnapshot(saved) : sentSnapshot;
         return unchangedSinceSent ? saved : current;
       });
+      await collaboration.saved(moduleToSave, workingModuleRef.current || draftBeforeSave);
+      if (!pendingFields) await uploadPendingVideos('module', saved.catalogueId, saved.weekStructure.flatMap(week => week.components), (id, settings, originalSource) => {
+        const apply = (module: ModuleCatalogueItem): ModuleCatalogueItem => ({ ...module,
+          weekStructure: module.weekStructure.map(week => ({ ...week,
+            components: week.components.map(component => withUploadedVideo(component, id, settings, originalSource)),
+          })),
+        });
+        saved = apply(saved);
+        serverCopyRef.current = serverCopyOf(saved);
+        if (savedModuleSnapshotRef.current) savedModuleSnapshotRef.current = moduleSnapshot(apply(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem));
+        setWorkingModule(current => current?.catalogueId === saved.catalogueId ? apply(current) : current);
+      });
       setStorageVersion(version => version + 1);
-      setActionMessage(null);
+      setActionMessage(pendingFields ? 'Available changes saved. Reserved fields and unresolved choices remain in your draft.' : null);
       setSaveFailure(null);
       // No dialog on a successful save. The footer already reads "All changes
       // saved" with a green Saved button, and a modal on every save is an
       // interruption in a screen people save constantly.
       reload();
-      return saved;
+      return pendingFields ? null : saved;
     } catch (err) {
       // Nothing is reset, reloaded or refetched here on purpose. Every refusal
       // leaves the weeks, components, OTJH and KSB mappings the reader has
       // authored exactly where they are -- `savedModuleSnapshotRef` is left
       // alone too, so the workspace still knows it has unsaved work.
-      if (err instanceof ModuleStructureConflictError) {
+      if (err instanceof ModuleEditReservedError && collaboration.enabled && err.fields.length && rebasesLeft > 0) {
+        collaboration.rejectFields(err.fields);
+        retryAfterReservation = true;
+      } else if (err instanceof ModuleStructureConflictError) {
+        serverConflicts = err.conflicts.length ? conflictsFromServer(moduleToSave, err.conflicts) : [];
         // Somebody else's write got there first. Re-sending this payload as it
         // stands would replace every week and component with the pre-edit ones,
         // so it is not re-sent: the stored version is merged into the workspace
@@ -2254,7 +2577,6 @@ export default function ModuleBuilder() {
           // button still works and still rebases.
           autoSaveArmedRef.current = false;
           setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_BUSY_NOTICE });
-          setActionMessage(MODULE_CONFLICT_BUSY_NOTICE);
           // Carries a sentence rather than an empty list, because the banner
           // reads the list to decide what it is: a list makes it the amber
           // "here is what you have to decide", which is what this is, and it is
@@ -2272,33 +2594,50 @@ export default function ModuleBuilder() {
         // archived-programme refusal among them -- from the "Curriculum API
         // returned 400 for /path:" diagnostic CurriculumApiError carries.
         const message = curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to save module structure.');
-        setSaveFailure({ kind: 'error', message });
-        setActionMessage(message);
+        setSaveFailure(err instanceof CurriculumRequestTimeout
+          ? { kind: 'unconfirmed', message: 'The save response was delayed and the saved changes could not be confirmed yet. Your draft is retained. Bunny copy progress is shown separately below.' }
+          : { kind: 'error', message });
         return null;
       }
     } finally {
       if (saveRequestRef.current === requestId) {
         savingRef.current = false;
         setSaving(false);
+        setConfirmingSave(false);
         setSaveStartedAt(null);
         setSavingSnapshot('');
+        // A colleague's save heard while this one was in the air. A retry below
+        // reads the stored module anyway; otherwise it is read now.
+        const pendingLive = liveSyncAfterSaveRef.current;
+        liveSyncAfterSaveRef.current = '';
+        if (pendingLive && !retryAfterMerge) setTimeout(() => { void liveSyncRef.current(pendingLive); }, 0);
       }
     }
     // Only reachable from the conflict branch above: every other path has
     // already returned. The merge installs the stored weeks alongside the
     // reader's and moves the workspace onto the revision that refused this
     // save, which is what makes the second attempt a legal one.
+    if (retryAfterReservation) return persistRef.current(source, rebasesLeft - 1);
     if (retryAfterMerge) {
       const merged = await mergeStoredRef.current(retryAfterMerge).catch(() => false);
+      if (!moduleConflictsRef.current.length && serverConflicts.length) {
+        setModuleConflicts(serverConflicts);
+      }
+      if (moduleConflictsRef.current.length && !collaboration.enabled) {
+        // A real disagreement: the merge has put their side next to this
+        // author's, and nothing goes until the author chooses.
+        autoSaveArmedRef.current = false;
+        setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_CHOICE_NOTICE });
+        return null;
+      }
       if (merged) return persistRef.current(source, rebasesLeft - 1);
       // The stored version could not be read, so the refusal stands and the
       // reader is told, exactly as it was before there was a merge to try.
       autoSaveArmedRef.current = false;
       setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_UNREADABLE_NOTICE });
-      setActionMessage(MODULE_CONFLICT_UNREADABLE_NOTICE);
     }
     return null;
-  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+  }, [collaboration, curriculumProgrammes, ksbSets, reload, selectedComponent?.id, selectedComponent?.type, setModuleConflicts, standards, uploadPendingVideos, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
   /**
    * `persistWorkingModule` and the live merge, readable from inside each other.
    *
@@ -2467,14 +2806,6 @@ export default function ModuleBuilder() {
       if (dialog.teamsCopyMode === 'shared' && source.endDate && dialog.cohort.endDate && source.endDate > dialog.cohort.endDate) {
         throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
       }
-      const roster = await fetchCurriculumScopeLearnerRoster('group', dialog.group.id, { learnerStatus: 'active' });
-      // The scope roster is sourced from LearnerProfile rows.  Assignment
-      // endpoints write the enrolment record, so always prefer the explicit
-      // bridge id; falling back to the profile id keeps old environments
-      // readable while they are being backfilled.
-      const learnerIds = roster.assignedLearners
-        .map(curriculumLearnerAssignmentId)
-        .filter(Boolean);
       let ksbSource: DuplicateKsbSource | undefined;
       if (!sameProgramme) {
         const [allKsbSets, allStandards] = await Promise.all([
@@ -2484,8 +2815,12 @@ export default function ModuleBuilder() {
         ksbSource = duplicateTargetKsbSource(dialog.programme, allKsbSets, allStandards)
           || { sourceType: '', sourceId: '', programmeId: curriculumProgrammeId(dialog.programme), programmeName: dialog.programme.name, entries: [] };
       }
+      // A copy starts with no learners. The original's learners already meet
+      // this content on the original; inheriting or re-assigning them put the
+      // same module on their plan twice, doubling progress and hours. The
+      // manual roster holds only learners someone assigns to the copy later.
       const duplicate = await duplicateModuleStructure(source, {
-        learnerRosterMode: 'inherited',
+        learnerRosterMode: 'manual',
         teamsCopyMode: dialog.teamsCopyMode,
         keepDates: dialog.teamsCopyMode === 'shared',
         startDate: dialog.startDate,
@@ -2509,52 +2844,13 @@ export default function ModuleBuilder() {
             }
           : undefined,
       });
-      const moduleTarget: LearnerAssignmentTarget = { scope: 'module', id: duplicate.catalogueId, name: duplicate.title };
-      const applyAssignments = async (ids: string[]) => applyCurriculumLearnerAssignments(moduleTarget, { add: ids, remove: [] });
-      const assignment = learnerIds.length
-        ? await applyAssignments(learnerIds)
-        : { added: [], removed: [], failed: [], failureMessage: null, abandoned: false, changedCount: 0, moduleCount: 1 };
       const report = duplicate.ksbRemapReport as KsbRemapReport | null | undefined;
       const ksbMessage = report && report.unmatched?.length
         ? ` ${report.matchedCount} KSBs matched; ${report.unmatched.length} need review in the saved remap report.`
         : '';
-      if (assignment.failed.length) {
-        const failed = [...assignment.failed];
-        const retryAssignments = async (failedIds: string[]) => {
-          // Re-read the Group before retrying.  This also upgrades failures
-          // from an older bundle that sent profile ids to the enrolment ids
-          // now accepted by the assignment endpoint.
-          const latestRoster = await fetchCurriculumScopeLearnerRoster(
-            'group', dialog.group.id, { learnerStatus: 'active' },
-          );
-          const wanted = new Set(failedIds.map(String));
-          const retryIds = latestRoster.assignedLearners
-            .filter(learner => wanted.has(String(learner.id)) || wanted.has(String(learner.enrolmentId)))
-            .map(curriculumLearnerAssignmentId);
-          if (!retryIds.length) {
-            throw new Error('No active learners from the selected Group are available to retry.');
-          }
-          return applyAssignments([...new Set(retryIds)]);
-        };
-        setActionMessage(`Module created, but ${failed.length} learner assignment${failed.length === 1 ? '' : 's'} failed.${assignment.failureMessage ? ` ${assignment.failureMessage}` : ''}`);
-        setActionMessageRetry(() => () => {
-          void retryAssignments(failed).then(retry => {
-            if (retry.failed.length) {
-              setActionMessage(`Retry completed with ${retry.failed.length} learner assignment failure${retry.failed.length === 1 ? '' : 's'}.`);
-              setActionMessageRetry(() => () => {
-                void retryAssignments(retry.failed).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
-              });
-            } else {
-              setActionMessage(null);
-              setActionMessageRetry(null);
-              void reload({ silent: true });
-            }
-          }).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
-        });
-      }
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name}. ${assignment.added.length} active Group learner${assignment.added.length === 1 ? '' : 's'} assigned.${ksbMessage}`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners. Use Assign learners on the new module to add them.${ksbMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
@@ -2624,6 +2920,11 @@ export default function ModuleBuilder() {
     // Carrying a revision or an armed auto-save into the next one would have it
     // write the module just closed, or refuse a module it has never read.
     serverRevisionRef.current = '';
+    serverCopyRef.current = null;
+    ownDeletedIdsRef.current = new Set();
+    explicitRestoreIdsRef.current = new Set();
+    liveSyncAfterSaveRef.current = '';
+    setModuleConflicts([]);
     autoSaveArmedRef.current = false;
     autoSaveAttemptRef.current = '';
     // Announced about the module being left. Carrying it into the next one
@@ -2642,7 +2943,7 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     // Browser Forward must reload the module from the restored address.
     deepLinkedModuleRef.current = '';
-  }, []);
+  }, [setModuleConflicts]);
 
   const closeWorkingModule = () => {
     clearWorkingModule();
@@ -2674,6 +2975,8 @@ export default function ModuleBuilder() {
   }, [clearWorkingModule, searchParams, workingModule]);
 
   const restoreSavedWorkingModule = useCallback(() => {
+    collaboration.cancel();
+    clearPendingVideos();
     if (!savedModuleSnapshotRef.current) return workingModule;
     try {
       const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
@@ -2686,7 +2989,7 @@ export default function ModuleBuilder() {
     } catch {
       return workingModule;
     }
-  }, [workingModule]);
+  }, [clearPendingVideos, collaboration, workingModule]);
 
   const applySelectionSafely = useCallback((nextSelection: Selection, moduleOverride?: ModuleCatalogueItem | null) => {
     const source = moduleOverride || workingModule;
@@ -2705,6 +3008,34 @@ export default function ModuleBuilder() {
   }, [workingModule]);
 
   /**
+   * The module as it is stored now.
+   *
+   * Through the changes feed when this workspace holds the server's copy of
+   * the module: the server sends only the weeks and components whose
+   * fingerprints differ, and the rest is rebuilt from the copy -- the same
+   * module a full read returns, in kilobytes. A whole read otherwise, or if
+   * the feed cannot answer. `unchanged` (only with `allowUnchanged`) means the
+   * stored version is the one already held, and nothing was sent at all.
+   */
+  const readStoredModule = useCallback(async (
+    structureId: string,
+    options: { allowUnchanged?: boolean } = {},
+  ): Promise<{ unchanged: true } | { unchanged: false; module: ModuleCatalogueItem | null }> => {
+    const copy = serverCopyRef.current;
+    const current = workingModuleRef.current;
+    if (copy && current && moduleStructureIdentifier(current) === structureId) {
+      try {
+        const changes = await loadModuleStructureChanges(structureId, copy, { allowUnchanged: options.allowUnchanged === true });
+        if (changes && changes.unchanged === false) return { unchanged: false, module: changes.module };
+        if (changes) return { unchanged: true };
+      } catch {
+        // Read whole below: the feed is a shortcut, never the only way.
+      }
+    }
+    return { unchanged: false, module: await loadModuleStructure(structureId, { skipCache: true }) };
+  }, []);
+
+  /**
    * Replace what this workspace holds with the module as it is stored now.
    *
    * The whole structure, not a merge: the weeks and components are the ones the
@@ -2716,11 +3047,11 @@ export default function ModuleBuilder() {
    * showing a confirmation keeps it open and says so instead of reporting a
    * version it never loaded.
    */
-  const adoptStoredModule = useCallback(async () => {
+  const adoptStoredModule = useCallback(async (options: { skipIfUnchanged?: boolean } = {}): Promise<boolean> => {
     const current = workingModule;
-    if (!current) return;
+    if (!current) return false;
     const structureId = moduleStructureIdentifier(current);
-    if (!structureId) return;
+    if (!structureId) return false;
     // The read can overlap an import or another authoring edit. Capture the
     // exact copy we started reading; installing the response unconditionally
     // would put the workspace back onto the older server copy and make a just-
@@ -2731,20 +3062,24 @@ export default function ModuleBuilder() {
     liveSyncSequenceRef.current = sequence;
     // Fresh for the same reason opening a module is: this copy is the one the
     // next save writes back in full, and a cached answer would put pre-write
-    // weeks into a workspace that then stores them.
-    const remote = await loadModuleStructure(structureId, { skipCache: true });
+    // weeks into a workspace that then stores them. Read through the changes
+    // feed when this workspace holds the server's copy, so only what changed
+    // travels.
+    const read = await readStoredModule(structureId, { allowUnchanged: Boolean(options.skipIfUnchanged) });
     // Overtaken while this was in the air. Installing it now would put the
     // workspace back onto a version that has already been superseded, and onto
     // the revision that goes with it -- so the newer read stands and this one
     // is dropped. Not an error: the workspace is up to date, by another route.
-    if (liveSyncSequenceRef.current !== sequence) return;
+    if (liveSyncSequenceRef.current !== sequence) return false;
+    if (read.unchanged !== false) return false;
+    const remote = read.module;
     if (!remote) throw new Error('The saved version of this module could not be read.');
     const latest = workingModuleRef.current;
     if (
       !latest
       || latest.catalogueId !== current.catalogueId
       || moduleSnapshot(latest) !== snapshotAtRead
-    ) return;
+    ) return false;
     const stored = recalculateModule(getDefaultStructure({
       ...current,
       ...remote,
@@ -2755,6 +3090,7 @@ export default function ModuleBuilder() {
     } as ModuleBuilderListItem));
     savedModuleSnapshotRef.current = moduleSnapshot(stored);
     serverRevisionRef.current = stored.structureRevision || remote.structureRevision || '';
+    serverCopyRef.current = serverCopyOf(remote);
     // The stored structure has been read back, which is the one condition that
     // makes saving unprompted safe -- the same condition openModule arms on.
     // It is also how a workspace that was disarmed by a conflict is allowed to
@@ -2763,10 +3099,13 @@ export default function ModuleBuilder() {
     setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? stored : latest));
     if (selection) applySelectionSafely(selection, stored);
     setRemoteUpdate(null);
+    // Taking the stored module whole answers every open question with theirs.
+    setModuleConflicts([]);
     // Nothing of the reader's is waiting any more, so a refusal from before
     // this read is answered rather than left sitting on screen.
     setSaveFailure(null);
-  }, [applySelectionSafely, selection, workingModule]);
+    return true;
+  }, [applySelectionSafely, readStoredModule, selection, setModuleConflicts, workingModule]);
 
   /**
    * Fold the stored module into the one the reader is editing.
@@ -2788,11 +3127,17 @@ export default function ModuleBuilder() {
    * Returns false when nothing was read, so a caller can leave the workspace
    * exactly as it was.
    */
-  const mergeStoredIntoWorkspace = useCallback(async (structureId: string): Promise<boolean> => {
+  const mergeStoredIntoWorkspace = useCallback(async (
+    structureId: string,
+    // The write being read back is this author's own (Module settings): it is
+    // folded in without "someone else" being said anywhere.
+    options: { ownWrite?: boolean } = {},
+  ): Promise<boolean> => {
     liveSyncReadAtRef.current = Date.now();
     const sequence = liveSyncSequenceRef.current + 1;
     liveSyncSequenceRef.current = sequence;
-    const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
+    const read = await readStoredModule(structureId, { allowUnchanged: true }).catch(() => null);
+    const remote = read && read.unchanged === false ? read.module : null;
     // A later read has already answered while this one was in the air, so this
     // reply describes a version of the module that has since been superseded.
     // Reported as a success rather than a failure: the workspace HAS been
@@ -2818,16 +3163,28 @@ export default function ModuleBuilder() {
     const base = savedModuleSnapshotRef.current
       ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
       : null;
-    const { module: merged, notices, adopted } = mergeModuleStructures(base, current, stored);
+    const result = mergeModuleStructures(base, current, stored, { ownWrite: options.ownWrite });
+    const { adopted, collisions } = result;
+    // A delayed response can leave only old derived metadata in the draft.
+    // Once all authored values match, use the confirmed snapshot so the footer
+    // and banner both stop reporting a save that has already completed.
+    const merged = !collisions.length && sameAuthoredModule(result.module, stored) ? stored : result.module;
     // What the server holds is the stored copy, so that is what "saved" means
     // from here: the difference between it and the merged copy is exactly the
     // reader's outstanding work, which is what keeps the footer honest.
     savedModuleSnapshotRef.current = moduleSnapshot(stored);
     serverRevisionRef.current = revision;
+    serverCopyRef.current = serverCopyOf(remote);
+    // A field both of them changed keeps this reader's value on screen, but is
+    // now a question rather than a decision: saving waits until they answer it.
+    const conflicts = collisions.length
+      ? mergeConflictLists(moduleConflictsRef.current, conflictsFromCollisions(merged, collisions))
+      : moduleConflictsRef.current;
+    if (collisions.length) setModuleConflicts(conflicts);
     // The stored structure has been read back, which is the condition that
     // makes saving unprompted safe again -- including for a workspace a
-    // conflict had disarmed.
-    autoSaveArmedRef.current = true;
+    // conflict had disarmed -- unless there is a choice still to make.
+    autoSaveArmedRef.current = !conflicts.length;
     // Ahead of the render, because a save refused for a conflict merges and
     // then re-sends immediately: the retry has to carry the merged module, and
     // the state it would otherwise read is still a render away.
@@ -2837,11 +3194,45 @@ export default function ModuleBuilder() {
     // A refusal from before this read has been answered by it: the payload that
     // was turned down has since been merged with what turned it down.
     setSaveFailure(null);
-    if (!adopted && !notices.length) return true;
-    setRemoteUpdate({ revision, notices, adopted });
+    // The disagreements have their own panel; this line only says that their
+    // other changes arrived.
+    if (adopted && !options.ownWrite) setRemoteUpdate({ revision, notices: [], adopted });
     return true;
-  }, [applySelectionSafely, selection]);
+  }, [applySelectionSafely, readStoredModule, selection, setModuleConflicts]);
   mergeStoredRef.current = mergeStoredIntoWorkspace;
+
+  /**
+   * The author answered one of the questions the conflict panel asks. When the
+   * last is answered, saving resumes: what goes now is a decision, not a guess.
+   */
+  const settleConflict = useCallback((conflict: ModuleConflict) => {
+    const remaining = moduleConflictsRef.current.filter(item => item.key !== conflict.key);
+    setModuleConflicts(remaining);
+    if (!remaining.length) {
+      autoSaveArmedRef.current = true;
+      autoSaveAttemptRef.current = '';
+      setSaveFailure(null);
+      setActionMessage(null);
+    }
+  }, [setModuleConflicts]);
+
+  /** "Keep mine": the author's version stays. A deleted item they kept is restored on save. */
+  const keepMineInConflict = useCallback((conflict: ModuleConflict) => {
+    if (conflict.kind === 'remote-deleted' && conflict.itemId) explicitRestoreIdsRef.current.add(conflict.itemId);
+    settleConflict(conflict);
+  }, [settleConflict]);
+
+  /** "Use theirs": the other editor's version goes into the workspace; nothing else moves. */
+  const takeTheirsInConflict = useCallback((conflict: ModuleConflict) => {
+    const current = workingModuleRef.current;
+    if (current) {
+      const next = applyTheirs(current, conflict);
+      workingModuleRef.current = next;
+      setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? next : latest));
+      if (selection) applySelectionSafely(selection, next);
+    }
+    settleConflict(conflict);
+  }, [applySelectionSafely, selection, settleConflict]);
 
   /**
    * The placement drawer PATCHes the name, dates, tutor and group straight to
@@ -2867,7 +3258,7 @@ export default function ModuleBuilder() {
       await adoptStoredModule().catch(() => undefined);
       return;
     }
-    await mergeStoredIntoWorkspace(structureId);
+    await mergeStoredIntoWorkspace(structureId, { ownWrite: true });
   }, [adoptStoredModule, mergeStoredIntoWorkspace, workingModule]);
 
   /**
@@ -2884,7 +3275,7 @@ export default function ModuleBuilder() {
    * is what lets two people build one module at the same time without either
    * of them losing work or being told to reload.
    */
-  const liveSyncWorkingModule = useCallback(async () => {
+  const liveSyncWorkingModule = useCallback(async (trigger: 'return' | 'live' = 'return') => {
     const current = workingModule;
     // Nothing open: the catalogue behind this is the live surface.
     if (!current) {
@@ -2894,8 +3285,17 @@ export default function ModuleBuilder() {
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
     // A save in flight is already deciding what this module is. Reading now
-    // would race its reply, and whichever landed second would win.
-    if (savingRef.current) return;
+    // would race its reply, and whichever landed second would win -- so the
+    // read waits for the save and runs as soon as it settles, rather than
+    // being dropped with a colleague's write in it.
+    if (savingRef.current) {
+      liveSyncAfterSaveRef.current = trigger;
+      return;
+    }
+    if (placementOpenRef.current) {
+      liveSyncAfterPlacementRef.current = trigger;
+      return;
+    }
     const sinceLastRead = Date.now() - liveSyncReadAtRef.current;
     if (sinceLastRead < LIVE_SYNC_MIN_INTERVAL_MS) {
       // Held back, not dropped. A colleague's only save of the hour landing a
@@ -2904,21 +3304,24 @@ export default function ModuleBuilder() {
       if (!liveSyncPendingRef.current) {
         liveSyncPendingRef.current = setTimeout(() => {
           liveSyncPendingRef.current = null;
-          void liveSyncRef.current();
+          void liveSyncRef.current(trigger);
         }, LIVE_SYNC_MIN_INTERVAL_MS - sinceLastRead);
       }
       return;
     }
     const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
+    // A live poll that finds the module as it already is (this tab's own save,
+    // or a write elsewhere in its group) changes nothing and reloads nothing.
+    // Coming back to the tab still refreshes the catalogue, as it always did.
     if (!dirty) {
       // A failed read leaves the workspace exactly as it was. The next write in
       // the estate, or the reader coming back to the tab, asks again.
-      await adoptStoredModule().catch(() => undefined);
-      reload({ silent: true });
+      const changed = await adoptStoredModule({ skipIfUnchanged: trigger === 'live' }).catch(() => false);
+      if (changed || trigger === 'return') reload({ silent: true });
       return;
     }
-    await mergeStoredIntoWorkspace(structureId);
-    reload({ silent: true });
+    const merged = await mergeStoredIntoWorkspace(structureId).catch(() => false);
+    if (merged || trigger === 'return') reload({ silent: true });
   }, [adoptStoredModule, mergeStoredIntoWorkspace, reload, workingModule]);
 
   liveSyncRef.current = liveSyncWorkingModule;
@@ -2930,6 +3333,16 @@ export default function ModuleBuilder() {
   // back to it. Held off while a module is still opening, because the copy it
   // is about to install is the fresh one anyway.
   useLiveRefresh(liveSyncWorkingModule, { enabled: !openingModule });
+  // Somebody else saving this module, heard within a couple of seconds. Off
+  // unless the server has live sync switched on (CURRICULUM_LIVE_SYNC); the
+  // hook then asks once and stops. Reads only what changed, merges it in, and
+  // leaves the reader's unsaved work, selection, dialogs and scroll alone.
+  useModuleLiveSync({
+    moduleId: workingModule ? moduleStructureIdentifier(workingModule) : '',
+    groupId: workingModule?.groupId || '',
+    enabled: Boolean(workingModule) && !openingModule && !collaboration.connected,
+    onChange: () => { void liveSyncRef.current('live'); },
+  });
 
   const loadRemoteModuleVersion = useCallback(async () => {
     await showCurriculumConfirm({
@@ -2984,10 +3397,21 @@ export default function ModuleBuilder() {
     }
   }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
 
+  const pendingSelectionRef = useRef<{ catalogueId: string; selection: Selection } | null>(null);
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
     setFocusedComponentId('');
-    applySelectionSafely(nextSelection);
-  }, [applySelectionSafely]);
+    pendingSelectionRef.current = { catalogueId: workingModuleRef.current?.catalogueId || '', selection: nextSelection };
+    setSelection(nextSelection);
+  }, []);
+
+  useEffect(() => {
+    const pending = pendingSelectionRef.current;
+    if (!pending) return;
+    pendingSelectionRef.current = null;
+    // A rail can append and select a component in the same event. Validate
+    // after React commits both updates, against the module that owns the click.
+    if (pending.catalogueId === workingModule?.catalogueId) applySelectionSafely(pending.selection, workingModule);
+  }, [selection, workingModule, applySelectionSafely]);
 
   useEffect(() => {
     if (!focusedComponentId) return undefined;
@@ -3134,6 +3558,9 @@ export default function ModuleBuilder() {
 
   if (workingModule) {
     return (
+      <PendingVideoFilesContext.Provider value={videoFiles}>
+      <CollaborationContext.Provider value={collaboration}>
+      <EditScope kind="module" id={workingModule.catalogueId}>
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${workingModule.title} - authoring workspace`} userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="min-h-[calc(100vh-96px)] bg-background-100 px-3 py-4 sm:px-5 lg:px-6">
           <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-4">
@@ -3168,6 +3595,7 @@ export default function ModuleBuilder() {
           <div className="flex flex-wrap justify-end gap-2 py-3">
             <button type="button" onClick={() => setPreviewOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">Preview as learner</button>
             <button type="button" onClick={() => setAiMaterialOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">AI Material</button>
+            <AssignedLearners target={{ scope: 'module', id: workingModule.catalogueId, name: workingModule.title }} />
             <button type="button" onClick={() => setSessionResultsOpen(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">Sessions & Recordings</button>
           </div>
           {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
@@ -3190,11 +3618,13 @@ export default function ModuleBuilder() {
               </button>
             </div>
           )}
-          {(saving || (actionMessage && !deletingModuleId)) && (
+          {(saving || saveFailure || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
+              confirming={confirmingSave}
+              unconfirmed={saveFailure?.kind === 'unconfirmed'}
               elapsedSeconds={saveElapsedSeconds}
-              error={actionMessage && !deletingModuleId ? actionMessage : null}
+              error={(actionMessage && !deletingModuleId ? actionMessage : null) || saveFailure?.message || null}
               module={workingModule}
             />
           )}
@@ -3270,6 +3700,16 @@ export default function ModuleBuilder() {
             </div>
           )}
 
+          {/* What this author and someone else both changed, each with its two
+              choices. Above the weeks rather than over them, so nothing the
+              reader is looking at or typing into moves. */}
+          <ModuleConflictPanel
+            conflicts={moduleConflicts}
+            saveOtherFields={collaboration.enabled}
+            onKeepMine={keepMineInConflict}
+            onUseTheirs={takeTheirsInConflict}
+          />
+
           {workingModuleProgrammeArchived && (
             <ArchivedProgrammeBuilderNotice programmeName={workingModule.programmeName} />
           )}
@@ -3323,6 +3763,8 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
               }))}
               onCopyComponentToWeek={copyComponentToAnotherWeek}
+              onMoveComponentToWeek={moveComponentToAnotherWeek}
+              recordingLinks={recordingLinks}
               onWeekHolidayNoteChange={(weekId, next) => updateWorkingModule(module => ({
                 ...module,
                 weekStructure: module.weekStructure.map(week => (week.id === weekId
@@ -3346,49 +3788,12 @@ export default function ModuleBuilder() {
                       This is the component you opened from Audit Trail.
                     </div>
                   )}
+                  <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
-                    onChange={updates => updateWorkingModule(module => {
-                      const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
-                      const sharesTeamsLink = selectedComponent.type === 'live-session'
-                        && updatedSettings
-                        && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
-                      const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
-                      const selectedUpdates = sharesTeamsLink
-                        ? { ...updates, settings: { ...updatedSettings, liveSessionLinkOverride: '' } }
-                        : updates;
-                      let calendarSeries: NonNullable<TeamsMeetingResult['meeting']['calendarSeries']> = [];
-                      try { calendarSeries = JSON.parse(String(updatedSettings?.teamsCalendarSeries || '[]')); } catch { /* Legacy manual links have no series manifest. */ }
-                      return {
-                        ...module,
-                        weekStructure: module.weekStructure.map(week => ({
-                          ...week,
-                          components: week.components.map(component => {
-                            if (component.id === selectedComponent.id) return { ...component, ...selectedUpdates };
-                            if (sharesTeamsLink && component.type === 'live-session') {
-                              const date = String(component.settings.sessionDate || week.sessionDate || '');
-                              const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
-                                ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)) : '';
-                              const daySeries = calendarSeries.find(series => series.day === day);
-                              if (calendarSeries.length && !daySeries) return component;
-                              return {
-                                ...component,
-                                settings: { ...component.settings, liveSessionUrl: daySeries?.joinUrl || sharedTeamsUrl,
-                                  liveSessionLinkOverride: '',
-                                  ...(daySeries ? {
-                                    teamsMeetingUrl: daySeries.joinUrl, teamsEventId: daySeries.eventId,
-                                    teamsOnlineMeetingId: daySeries.onlineMeetingId || '',
-                                    teamsLiveSessionId: updatedSettings.teamsLiveSessionId,
-                                    teamsCalendarSeries: updatedSettings.teamsCalendarSeries,
-                                  } : {}),
-                                },
-                              };
-                            }
-                            return component;
-                          }),
-                        })),
-                      };
-                    })}
+                    onChange={updates => updateWorkingModule(module =>
+                      applyModuleComponentUpdate(module, selectedComponent.id, updates),
+                    )}
                     onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
                     groupOptions={componentGroupOptions}
                     rulePoints={componentPointsByType[selectedComponent.type]}
@@ -3397,9 +3802,12 @@ export default function ModuleBuilder() {
                     weekSessionTime={selectedWeek.sessionStartTime}
                     uploadResource={uploadComponentForModule}
                     moduleId={workingModule.catalogueId || workingModule.id}
+                    recordingLinks={recordingLinks}
                   />
+                  </EditScope>
                 </ModuleBuilderScrollArea>
               ) : selectedWeek ? (
+                <EditScope kind="week" id={selectedWeek.id}>
                 <ModuleWeekPanel
                   week={selectedWeek}
                   module={workingModule}
@@ -3413,6 +3821,7 @@ export default function ModuleBuilder() {
                   }}
                   onReuseComponents={() => setReusePickerWeekId(selectedWeek.id)}
                 />
+                </EditScope>
               ) : (
                 <EmptyEditor onAddWeek={() => {
                   const week = createEmptyWeek(workingModule.id, 1);
@@ -3422,6 +3831,8 @@ export default function ModuleBuilder() {
               )}
             </div>
 
+              <div className={collaboration.enabled ? 'min-w-0 self-start xl:sticky xl:top-4' : 'contents'}>
+              <ModulePresence collaboration={collaboration} />
               <ApprenticeshipSettings
                 module={workingModule}
                 week={selectedWeek}
@@ -3436,6 +3847,7 @@ export default function ModuleBuilder() {
               onUpdateKsbWeight={(target, mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, target, mappingId, weight))}
               onUpdateKsbWeightClass={(target, mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, target, mappingId, weightClass))}
             />
+              </div>
           </div>
           </fieldset>
           <WorkspaceActionFooter
@@ -3491,6 +3903,7 @@ export default function ModuleBuilder() {
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
           onClose={closePlacementForm}
+          storedStructure={storedStructureForPlacement}
           onSaved={async () => {
             await syncWorkingModuleFromStore();
             await reload({ silent: true });
@@ -3513,7 +3926,8 @@ export default function ModuleBuilder() {
             onAdd={async types => {
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
               if (!week) return;
-              const components = createNamedComponents(week, types);
+              // Each live session arrives with its session recording right after it, linked.
+              const components = withLinkedRecordings(createNamedComponents(week, types), () => createNamedComponent(week, 'recording-placeholder'));
               if (!components.length) return;
               const liveSessions = components.filter(component => component.type === 'live-session').length;
               if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(week.id, liveSessions)))) return;
@@ -3568,6 +3982,22 @@ export default function ModuleBuilder() {
         {replaceTeamsLinksOpen && workingModule && (
           <ReplaceTeamsLinksDialog
             weeks={workingModule.weekStructure}
+            moduleId={workingModule.catalogueId}
+            unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onSeriesLinked={restored => {
+              if (restored.catalogueId !== workingModuleRef.current?.catalogueId) return;
+              const current = workingModuleRef.current;
+              if (savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current) {
+                setActionMessage('The series was linked. Your newer unsaved edits were kept; save or reload this module to refresh its calendar.');
+                setReplaceTeamsLinksOpen(false);
+                return;
+              }
+              const next = recalculateModule({ ...current, ...restored, sourceModule: current.sourceModule || restored.sourceModule });
+              savedModuleSnapshotRef.current = moduleSnapshot(next);
+              serverRevisionRef.current = restored.structureRevision || '';
+              setWorkingModule(next);
+              setReplaceTeamsLinksOpen(false);
+            }}
             onClose={() => setReplaceTeamsLinksOpen(false)}
             onApply={applyTeamsLinkReplacement}
           />
@@ -3617,6 +4047,9 @@ export default function ModuleBuilder() {
           />
         )}
       </WorkspaceShell>
+      </EditScope>
+      </CollaborationContext.Provider>
+      </PendingVideoFilesContext.Provider>
     );
   }
 
@@ -3691,6 +4124,7 @@ export default function ModuleBuilder() {
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
                 <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
+                <span className={`text-[10px] font-semibold ${allModules ? 'text-foreground-500' : 'text-emerald-700'}`}>{allModules ? 'All modules' : 'Active modules'}</span>
               </div>
               <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
             </div>
@@ -3702,6 +4136,7 @@ export default function ModuleBuilder() {
               <SelectMenu
                 ariaLabel="Programme"
                 value={programmeFilter}
+                placeholder={programmeFilter === 'All' ? 'All programmes' : programmeFilter}
                 onChange={value => changeFilter(() => {
                   setProgrammeFilter(value);
                   setCohortFilter('');
@@ -3751,8 +4186,29 @@ export default function ModuleBuilder() {
               />
               <button
                 type="button"
-                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
+                aria-pressed={!allModules}
+                onClick={() => changeFilter(() => setAllModules(false))}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${!allModules ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+              >
+                <AppIcon className="ri-checkbox-circle-line text-sm" />
+                Active
+                <span className="text-[10px]" aria-hidden="true">{catalogueActivity.data ? activeModules.length : '—'}</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={allModules}
+                onClick={() => changeFilter(() => setAllModules(true))}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${allModules ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+              >
+                <AppIcon className="ri-stack-line text-sm" />
+                All modules
+                <span className="text-[10px]" aria-hidden="true">{loading && !modules.length ? '—' : matchingModules.length}</span>
+              </button>
+              <button
+                type="button"
+                disabled={!allModules && !search && programmeFilter === 'All' && !deliveryFiltersActive}
                 onClick={() => changeFilter(() => {
+                  setAllModules(false);
                   setSearch('');
                   setProgrammeFilter('All');
                   setCohortFilter('');
@@ -3766,6 +4222,10 @@ export default function ModuleBuilder() {
               </button>
             </div>
           </div>
+          {catalogueActivity.error && <div role="status" className="flex flex-wrap items-center gap-2 px-4 py-2 text-[12px] text-amber-800">
+            <span>{catalogueActivity.error}</span>
+            <button type="button" onClick={catalogueActivity.reload} className="font-semibold underline">Retry activity check</button>
+          </div>}
           <div className="module-catalogue-scroll max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
             {/* The skeleton stands in for a catalogue that has never been read.
                 Once rows are on screen a re-read keeps them there: somebody
@@ -3773,7 +4233,7 @@ export default function ModuleBuilder() {
                 through their own work, and replacing what they are reading with
                 grey bars loses their scroll position and their place for no
                 reason. The subtitle already says a read is in flight. */}
-            {loading && !modules.length ? (
+            {(loading && !modules.length) || (!allModules && !catalogueActivity.data && !catalogueActivity.error) ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
               <div className="space-y-3">
@@ -3781,6 +4241,8 @@ export default function ModuleBuilder() {
                   <ModuleCatalogueCard
                     key={module.catalogueId}
                     module={module}
+                    active={catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today)}
+                    source={catalogueActivity.data?.[module.catalogueId]?.source || (module.sourceModule?.sourceType === 'mba-legacy' ? 'old_lms' : ['module_authoring', 'authoring', 'training_plan'].includes(module.sourceModule?.sourceType || '') ? 'new_lms' : 'unknown')}
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
@@ -3801,12 +4263,13 @@ export default function ModuleBuilder() {
                   <AppIcon className="ri-search-eye-line text-2xl"></AppIcon>
                 </span>
                 <div>
-                  <p className="text-[13px] font-semibold text-foreground-700">No modules match the current filters.</p>
-                  <p className="mt-1 text-[12px] text-foreground-400">Try changing the search, or the programme, cohort, group or tutor filter.</p>
+                  <p className="text-[13px] font-semibold text-foreground-700">{allModules ? 'No modules match the current filters.' : 'No active modules match the current filters.'}</p>
+                  <p className="mt-1 text-[12px] text-foreground-400">{allModules ? 'Try changing the search, or the programme, cohort, group or tutor filter.' : 'Choose All modules to see other modules, or adjust the current filters.'}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => changeFilter(() => {
+                    setAllModules(false);
                     setSearch('');
                     setProgrammeFilter('All');
                     setCohortFilter('');
@@ -3865,6 +4328,7 @@ export default function ModuleBuilder() {
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
           onClose={closePlacementForm}
+          storedStructure={storedStructureForPlacement}
           onSaved={async () => {
             await reload({ silent: true });
           }}
@@ -3899,15 +4363,25 @@ export default function ModuleBuilder() {
             const catalogueId = learnerAssignmentModuleIdRef.current;
             setLearnerAssignmentTarget(null);
             if (catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [catalogueId]: result.learnerCount }));
+            if (catalogueId) refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
+            if (learnerAssignmentTarget) learnerDirectory?.statusStore.refresh(learnerAssignmentTarget);
             void reload({ silent: true });
           }}
         />
         {learnerProgress && (
           <ModuleLearnerProgressDialog
+            key={learnerProgress.target.id}
             moduleName={learnerProgress.target.name}
             moduleId={learnerProgress.target.id}
             impact={learnerProgress.impact}
             assignedLearners={learnerProgress.assignedLearners}
+            initialStatus={searchParams.get('learnerStatus') || 'all'}
+            onStatusChange={status => setSearchParams(previous => {
+              const next = new URLSearchParams(previous);
+              if (status === 'all') next.delete('learnerStatus');
+              else next.set('learnerStatus', status);
+              return next;
+            }, { replace: true })}
             onClose={() => {
               setLearnerProgress(null);
               rememberOpenLearners('');
@@ -3927,8 +4401,10 @@ export default function ModuleBuilder() {
               setLearnerProgress(current => current
                 ? { ...current, assignedLearners: current.assignedLearners.filter(row => String(row.id) !== learnerId) }
                 : current);
+              learnerDirectory?.statusStore.refresh(learnerProgress.target);
               const catalogueId = learnerAssignmentModuleIdRef.current;
               if (catalogueId) {
+                refreshAssignedLearners?.({ scope: 'module', id: catalogueId, name: '' });
                 setLearnerCountOverrides(previous => ({
                   ...previous,
                   [catalogueId]: Math.max(0, (previous[catalogueId] ?? learnerProgress.assignedLearners.length) - 1),
@@ -3961,17 +4437,20 @@ export default function ModuleBuilder() {
 
 // Only the two states worth taking space for: a save in flight, and one that
 // failed. A finished save says so in the footer and nowhere else.
-function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
+function SaveStatusPanel({ saving, confirming, unconfirmed, elapsedSeconds, error, module }: {
   saving: boolean;
+  confirming: boolean;
+  unconfirmed: boolean;
   elapsedSeconds: number;
   error: string | null;
   module: ModuleCatalogueItem;
 }) {
   const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
-  const tone = error ? 'red' : 'amber';
+  const tone = error && !unconfirmed ? 'red' : 'amber';
   const icon = error ? 'ri-error-warning-line' : 'ri-loader-4-line animate-spin';
-  const title = error ? 'Save failed' : elapsedSeconds > 8 ? 'Still saving module structure' : 'Saving module structure';
-  const message = error
+  const title = confirming ? 'Checking saved changes' : unconfirmed ? 'Save not confirmed'
+    : error ? 'Save failed' : elapsedSeconds > 8 ? 'Still saving module structure' : 'Saving module structure';
+  const message = (confirming ? 'Checking whether your changes reached the LMS. Video copying continues separately.' : error)
     || `${module.weekStructure.length} weeks and ${componentCount} components are being written to the curriculum database. ${elapsedSeconds ? `${elapsedSeconds}s elapsed.` : ''}`;
   const classes = {
     amber: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -4005,7 +4484,7 @@ function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
+function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, saved, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
   hierarchy: ModuleHierarchyInfo | null;
@@ -4029,7 +4508,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
 
   return (
     <div className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-      <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-5">
+      <div className="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between lg:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <button onClick={onBack} className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm shadow-primary-500/20 transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:ring-offset-1" title="Back to modules" aria-label="Back to modules">
             <AppIcon className="ri-arrow-left-line text-base"></AppIcon>
@@ -4044,7 +4523,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:justify-end">
-          <div className="grid grid-cols-3 gap-2">
+          <div role="group" aria-label="Module totals" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {moduleMetrics.map(metric => (
               <div key={metric.label} className="min-w-[78px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
@@ -4053,6 +4532,7 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
                 <div className="mt-0.5 text-[15px] font-heading font-bold text-foreground-950">{metric.value}</div>
               </div>
             ))}
+            <ModuleFixedHoursCard moduleId={module.catalogueId || module.id} totalHours={module.totalOtjh} unsaved={saved === false} />
           </div>
         </div>
       </div>
@@ -4218,7 +4698,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -4233,6 +4713,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
   // The clone button's "copy to another week" option, one component at a time.
   onCopyComponentToWeek: (component: ModuleComponent, targetWeekId: string) => void;
+  onMoveComponentToWeek: (component: ModuleComponent, targetWeekId: string) => void;
+  recordingLinks: RecordingLinkContext;
   /**
    * The curriculum author's hint for a week a holiday lands on, and whether
    * learners see it. Only this rail passes an editor to `WeekHolidayNotice`,
@@ -4268,6 +4750,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   allowMultipleExpanded?: boolean;
 }) {
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
+  // Teams calls on a week's link that were not its session, shown on the week.
+  const offScheduleByWeek = useOffScheduleRuns(module);
   const actualWeekCount = module.weekStructure.length;
   // How many live sessions this module delivers: the live-session components
   // authored into it, and nothing else. A module can run fourteen weeks and
@@ -4304,8 +4788,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   // plan has not loaded yet reads exactly as it did before rather than blank.
   const sessionDatesOf = (week: ModuleWeek): string[] => {
     const run = sessionDatesByWeekId.get(week.id);
+    const mainSessions = week.components.filter(component => component.type === 'live-session' && !component.settings?.extraTeamsMeetingUrl);
+    const delivered = mainSessions.map((component, index) => sessionDeliveryDate(component.settings || {}) || run?.[index] || '').filter(Boolean);
+    if (delivered.length) return delivered;
     if (run?.length) return run;
-    return week.sessionDate ? [cleanText(week.sessionDate).slice(0, 10)] : [];
+    const date = moduleWeekDeliveryDate(week);
+    return date ? [date] : [];
   };
   const deliveryDays = Array.from(new Set([
     ...(module.weeklySchedule || []).map(slot => cleanText(slot.day)),
@@ -4683,70 +5171,83 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   event.preventDefault();
                   onDropReorder(week.id);
                 }}
-                className="group/week flex items-center gap-2.5 px-2.5 py-2.5"
+                className="group/week grid grid-cols-[20px_28px_28px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-2 px-2.5 py-2.5"
               >
                 <button type="button" aria-label="Drag to reorder" className="grid h-7 w-5 shrink-0 place-items-center text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none"><AppIcon className="ri-draggable"></AppIcon></button>
                 <button type="button" onClick={() => toggleExpanded(week.id)} aria-label={expanded ? `Collapse ${week.title || `Week ${week.weekNumber}`}` : `Expand ${week.title || `Week ${week.weekNumber}`}`} aria-expanded={expanded} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
                   <AppIcon className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></AppIcon>
                 </button>
                 <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
-                <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
-                  <p onMouseEnter={showFullTextWhenTruncated} className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
-                  <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
+                <button type="button" onClick={() => onSelectWeek(week.id)} className="min-w-0 text-left">
+                  <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span className="min-w-0 break-words text-[12px] font-bold text-foreground-900 [overflow-wrap:anywhere]">{week.title || `Week ${week.weekNumber}`}</span>
+                    {moduleWeekDeliveryDate(week) && (
+                      <span className="inline-flex flex-wrap items-center gap-x-1 text-[10px] font-medium text-foreground-400">
+                        <AppIcon className="ri-calendar-line shrink-0" />
+                        Delivery:
+                        <time dateTime={moduleWeekDeliveryDate(week)} className="whitespace-nowrap tabular-nums">{formatDateLabel(moduleWeekDeliveryDate(week))}</time>
+                      </span>
+                    )}
+                  </span>
+                </button>
+                <div className="col-span-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pl-7">
+                  <p className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] font-medium text-foreground-400">
                     <span>{activeTypeFilter ? `${shownComponents.length} ${activeTypeLabel} of ${week.components.length}` : `${week.components.length} components`}</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                     <span>{totalOtjh.toFixed(1)}h</span>
-                    {week.sessionDate && (
-                      <>
-                        <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                        <span className="truncate">{formatDateLabel(week.sessionDate)}</span>
-                      </>
-                    )}
                     {!hasDeliveryDate && (
                       <>
                         <span className="h-1 w-1 rounded-full bg-amber-400"></span>
                         <span className="font-semibold text-amber-700">No delivery date this week</span>
                       </>
                     )}
+                    {offScheduleByWeek.has(week.id) && (
+                      <>
+                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
+                        <span className="truncate font-semibold text-amber-700"
+                          title={offScheduleByWeek.get(week.id)!.runs.map(run => offScheduleRunSentence(run, iso => reviewDateLabel(iso, offScheduleByWeek.get(week.id)!.timeZone))).join(' ')}>
+                          {offScheduleRunLabel(offScheduleByWeek.get(week.id)!.runs)}
+                        </span>
+                      </>
+                    )}
                   </p>
-                </button>
-                {/* Duplicating copies the week's components in full. The live
-                    session comes too, but without the booking behind it -- a
-                    copied meeting id is the ORIGINAL's meeting, not a second one
-                    (see `duplicateWeekInModule`) -- so the twin's card carries
-                    the note above until its own meeting is created. */}
-                <button
-                  type="button"
-                  onMouseDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.stopPropagation();
-                    onDuplicateWeek(week.id);
-                  }}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-600 group-hover/week:opacity-100"
-                  title="Duplicate week — copies every component; the live session comes without its Teams meeting"
-                  aria-label={`Duplicate ${week.title || `Week ${week.weekNumber}`}`}
-                >
-                  <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.stopPropagation();
-                    onDeleteWeek(week.id);
-                  }}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover/week:opacity-100"
-                  title="Delete week"
-                  aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
-                >
-                  <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
-                </button>
+                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    {/* Duplicating copies the week's components in full. The live
+                        session comes too, but without the booking behind it -- a
+                        copied meeting id is the ORIGINAL's meeting, not a second one
+                        (see `duplicateWeekInModule`) -- so the twin's card carries
+                        the note above until its own meeting is created. */}
+                    <button
+                      type="button"
+                      onMouseDown={event => event.stopPropagation()}
+                      onClick={event => {
+                        event.stopPropagation();
+                        onDuplicateWeek(week.id);
+                      }}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50 hover:text-primary-600"
+                      title="Duplicate week — copies every component; the live session comes without its Teams meeting"
+                      aria-label={`Duplicate ${week.title || `Week ${week.weekNumber}`}`}
+                    >
+                      <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={event => event.stopPropagation()}
+                      onClick={event => {
+                        event.stopPropagation();
+                        onDeleteWeek(week.id);
+                      }}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 transition-smooth hover:bg-red-50 hover:text-red-600"
+                      title="Delete week"
+                      aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
+                    >
+                      <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
+                    </button>
+                  </div>
+                </div>
               </div>
-              {/* Its own strip rather than a pill on the meta line: the line
-                  already carries three facts at 10px in a narrow rail, and a
-                  fourth pushed the components count onto a second row and
-                  truncated the date to "2…". Here it also survives selection,
-                  which repaints the card primary. */}
+              {/* Holiday notices keep their own strip below the week header,
+                  so their text stays readable alongside the expanded components. */}
               {/* Stated on the week it belongs to, on the card's own
                   background: this week is completely ordinary and its live
                   session runs as authored. Whether it becomes a reading week,
@@ -4770,7 +5271,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
               {pastModuleEndDate && <WeekPastEndDateNotice weekDate={latestWeekDeliveryDate} moduleEndDate={moduleEndDate} />}
               {unbookedCopiedSessions > 0 && <CopiedLiveSessionNotice count={unbookedCopiedSessions} />}
               {expanded && (
-                <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
+                <div className="border-t border-background-200 pb-2 pl-3 pr-2 pt-2">
                   {/* `holidayDates` is drawn from the same slots the week's
                       own notice above uses, so the warning on the week and the
                       warning on its live session always name the same day. It
@@ -4795,6 +5296,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       .filter(other => other.id !== week.id)
                       .map(other => ({ id: other.id, label: other.title || `Week ${other.weekNumber}` }))}
                     onCopyComponentToWeek={onCopyComponentToWeek}
+                    onMoveComponentToWeek={onMoveComponentToWeek}
+                    recordingLinks={recordingLinks}
                   />
                 </div>
               )}
@@ -5197,9 +5700,17 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
   onReuseComponents: () => void;
 }) {
   const totalOtjh = weekExpectedOtjhTotal(week);
+  const offSchedule = useOffScheduleRuns(module).get(week.id);
 
   return (
     <section className="space-y-4">
+      {offSchedule && (
+        <div role="note" className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-900">
+          {offSchedule.runs.map(run => (
+            <p key={`${run.runStartUtc}-${run.runEndUtc}`}>{offScheduleRunSentence(run, iso => reviewDateLabel(iso, offSchedule.timeZone))}</p>
+          ))}
+        </div>
+      )}
       <div className="grid gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -5208,7 +5719,7 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
           </div>
           <div className="mt-1.5">
-            <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
+            <TextInput editField="title" label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -5255,16 +5766,15 @@ function WeekAssignedGroupsSection({ week, module, groupOptions }: {
     .filter(option => !programmeFilter || option.programmeId === programmeFilter || option.programme === programmeFilter)
     .map(option => [option.cohortId || option.cohort || '', option.cohort || option.cohortId || ''] as const)
     .filter(([id]) => Boolean(id))).entries()).map(([id, name]) => ({ id, name })), [groupOptions, programmeFilter]);
-  const visibleGroups = groupOptions.filter(option => (
+  const visibleGroups = useMemo(() => groupOptions.filter(option => (
     (!programmeFilter || option.programmeId === programmeFilter || option.programme === programmeFilter)
     && (!cohortFilter || option.cohortId === cohortFilter || option.cohort === cohortFilter)
-  ));
+  )), [groupOptions, programmeFilter, cohortFilter]);
   const sourceGroup = groupOptions.find(option => (
     normalise(option.key) === normalise(module.groupId)
     || normalise(option.name) === normalise(module.group)
   ));
   const placingGroup = groupOptions.find(option => option.key === placingGroupKey) || null;
-  const visibleGroupKey = visibleGroups.map(option => option.key).join('|');
 
   // The destination stores an independent week with its source `copiedFromId`.
   // Read that provenance once a programme/cohort is narrowed so the section
@@ -5294,7 +5804,7 @@ function WeekAssignedGroupsSection({ week, module, groupOptions }: {
       if (active) setSavedPlacedGroupKeys(matches.filter(Boolean));
     }).catch(() => { if (active) setSavedPlacedGroupKeys([]); });
     return () => { active = false; };
-  }, [cohortFilter, programmeFilter, visibleGroupKey, week.id]);
+  }, [cohortFilter, programmeFilter, visibleGroups, week.id]);
 
   return (
     <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
@@ -5395,8 +5905,8 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
       <div className="space-y-5 p-5">
         <EditorSection title="Identity" icon="ri-edit-line">
-          <TextInput label="Title" value={readableComponentTitle(component.title)} onChange={value => onChange({ title: value })} error={fieldError('title')} />
-          <TextArea label="Description" value={component.description} onChange={value => onChange({ description: value })} rows={4} />
+          <TextInput editField="title" label="Title" value={readableComponentTitle(component.title)} onChange={value => onChange({ title: value })} error={fieldError('title')} />
+          <TextArea editField="description" label="Description" value={component.description} onChange={value => onChange({ description: value })} rows={4} />
         </EditorSection>
 
         <EditorSection title="Component content" icon="ri-file-list-3-line">
@@ -5416,22 +5926,22 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
         <EditorSection title="Completion and reward" icon="ri-checkbox-circle-line">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <NumberInput label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
-            <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
+            <NumberInput editField="expectedOtjh" label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
+            <NumberInput editField="points" label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
           </div>
         </EditorSection>
 
         {showApprenticeshipSettings && (
           <EditorSection title="Apprenticeship settings" icon="ri-settings-3-line">
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-              <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+              <Checkbox editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+              <Checkbox editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
             </div>
             <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
             {/* Only asked for once reflection is required — there is nowhere for
                 the learner's answer to go while the toggle above is off. */}
             {component.reflectionRequired && (
-              <TextArea label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={3} error={fieldError('reflectionQuestion')} />
+              <TextArea editField="reflectionQuestion" label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={3} error={fieldError('reflectionQuestion')} />
             )}
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <SelectInput label="Status" value={String(component.settings.contentStatus ?? 'Draft')} options={CONTENT_STATUSES} onChange={value => onSettingChange('contentStatus', value)} error={fieldError('settings.contentStatus')} />
@@ -5726,6 +6236,9 @@ function TypeSpecificFields({
 
     return (
       <EditorBlock title="Video component">
+        <CurriculumVideoUpload key={`${module.catalogueId}:${component.id}`} targetId={module.catalogueId} componentId={component.id} title={component.title}
+          source={getString('videoUrl') || getString('embedCode')}
+          onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />
         {(getString('legacySourceType') === 'Shortcode' || getString('sourceType') === 'Shortcode' || getBool('legacyUnsupportedSource')) && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
             This component uses a legacy Shortcode source. Shortcode playback is not supported in the new Module Builder, so the original value is preserved until you choose a supported source.
@@ -5861,7 +6374,7 @@ function TypeSpecificFields({
         {/* For a reflection component the question *is* its content, so this is
             the same first-class field the assurance section edits -- not a
             second copy of it in `settings`. */}
-        <TextArea label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={4} />
+        <TextArea editField="reflectionQuestion" label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={4} />
         <NumberInput label="Minimum word count" value={getNumber('minimumWordCount')} min={0} step={50} onChange={value => onSettingChange('minimumWordCount', value)} />
       </EditorBlock>
     );
@@ -5871,7 +6384,7 @@ function TypeSpecificFields({
     return (
       <EditorBlock title="Assignment">
         <TextInput label="Title shown to learners" value={getString('learnerTitle')} onChange={value => onSettingChange('learnerTitle', value)} />
-        <Checkbox label="Monthly assignment (8-step submission)" checked={getBool('isMonthlyAssignment')} onChange={value => onSettingChange('isMonthlyAssignment', value)} />
+        <p className="text-[11px] text-foreground-400">All assignments appear automatically in Monthly submission and use the 8-step submission.</p>
         <AssignmentTopicsEditor value={component.settings.assignmentTopics}
           legacyQuestion={getString('assignmentBrief') || getString('assignmentContent')}
           legacyInstructions={getString('submissionInstructions')}
@@ -6458,12 +6971,12 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           <SettingsSection title="Basic details">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <TextInput label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
-              <SelectInput label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
+              <TextInput editField="title" label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
+              <SelectInput editField="status" label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
               <NumberInput label="Weeks" value={module.weeks} min={1} step={1} onChange={value => resizeWeeks(module, value, onChange)} />
               <NumberInput label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
             </div>
-            <TextArea label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
+            <TextArea editField="description" label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
           </SettingsSection>
 
           <SettingsSection title="KSBs targeted by this module">
@@ -6476,9 +6989,9 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
           </SettingsSection>
 
           <SettingsSection title="Compliance/context fields">
-            <TextArea label="Background" value={module.background} onChange={value => onChange({ background: value })} rows={3} />
-            <TextArea label="EPA Requirements Covered" value={module.epaRequirements.join('\n')} onChange={value => onChange({ epaRequirements: lines(value) })} rows={4} />
-            <TextArea label="Professional Qualification Outcomes" value={module.qualificationOutcomes.join('\n')} onChange={value => onChange({ qualificationOutcomes: lines(value) })} rows={4} />
+            <TextArea editField="background" label="Background" value={module.background} onChange={value => onChange({ background: value })} rows={3} />
+            <TextArea editField="epaRequirements" label="EPA Requirements Covered" value={module.epaRequirements.join('\n')} onChange={value => onChange({ epaRequirements: lines(value) })} rows={4} />
+            <TextArea editField="qualificationOutcomes" label="Professional Qualification Outcomes" value={module.qualificationOutcomes.join('\n')} onChange={value => onChange({ qualificationOutcomes: lines(value) })} rows={4} />
           </SettingsSection>
 
           <SettingsSection title="Completion criteria">
@@ -7947,6 +8460,8 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
 
 function ModuleCatalogueCard({
   module,
+  source,
+  active,
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
@@ -7957,6 +8472,8 @@ function ModuleCatalogueCard({
   onDelete,
 }: {
   module: ModuleBuilderListItem;
+  source: ModuleCatalogueActivity['source'];
+  active: boolean;
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
@@ -7979,15 +8496,6 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
-  // Seeded from the bulk overview count so the badge shows without a click;
-  // a click still refreshes it with the freshest number as the dialog opens.
-  const [assignedLearnerCount, setAssignedLearnerCount] = useState<number | null>(module.assignedLearnerCount ?? null);
-  const [learnersLoading, setLearnersLoading] = useState(false);
-  // The card instance survives a list reload (same key), so a fresh overview
-  // count has to be pushed in rather than only read once at mount.
-  useEffect(() => { setAssignedLearnerCount(module.assignedLearnerCount ?? null); }, [module.assignedLearnerCount]);
-  // Legacy fallbacks retained by the merge were:
-  // weekCount = module.weekStructure.length || module.weeks || 0
 
   return (
     <article className={`group relative overflow-hidden rounded-2xl border bg-background-50 shadow-sm transition-smooth hover:shadow-md ${hasContent ? 'border-foreground-200/70 hover:border-primary-200/80' : 'border-amber-200/70 hover:border-amber-300'}`}>
@@ -8001,6 +8509,14 @@ function ModuleCatalogueCard({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${source === 'old_lms' ? 'bg-blue-50 text-blue-800 ring-blue-200' : source === 'new_lms' ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white ring-violet-400/30 shadow-sm shadow-violet-600/20' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
+                  {source !== 'unknown' && <AppIcon className={`${source === 'new_lms' ? 'ri-stack-line' : 'ri-archive-line'} text-[10px]`} />}
+                  {source === 'old_lms' ? 'Old LMS' : source === 'new_lms' ? 'New LMS' : 'Source not set'}
+                </span>
+                {active && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800 ring-1 ring-emerald-200" title="Started module with a non-cancelled Teams teaching date that has not passed">
+                  <AppIcon className="ri-checkbox-circle-line text-[10px]" />
+                  Active
+                </span>}
                 {!hasContent && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">
                     <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
@@ -8026,26 +8542,7 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-          <button
-            type="button"
-            onClick={async () => {
-              if (learnersLoading) return;
-              setLearnersLoading(true);
-              try {
-                const count = await onLearners();
-                if (count !== null) setAssignedLearnerCount(count);
-              } finally {
-                setLearnersLoading(false);
-              }
-            }}
-            disabled={learnersLoading}
-            aria-busy={learnersLoading}
-            title={assignedLearnerCount === 0 ? 'Assign learners to this module' : assignedLearnerCount === null ? 'Assign learners or view learner progress' : 'View assigned learners and their progress'}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
-          >
-            <AppIcon name={learnersLoading ? 'ri-loader-4-line' : assignedLearnerCount ? 'ri-group-line' : 'ri-user-add-line'} className={learnersLoading ? 'animate-spin' : ''} size={15}></AppIcon>
-            {learnersLoading ? 'Loading learners...' : assignedLearnerCount === 0 ? 'Assign learners' : assignedLearnerCount === null ? 'Learners' : `Learners (${assignedLearnerCount})`}
-          </button>
+          <ModuleLearnerCount moduleId={moduleLearnerIdentifier(module)} moduleName={module.title} onOpen={onLearners} refreshKey={module.sourceModule} />
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}

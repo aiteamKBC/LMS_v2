@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import {  } from '@tanstack/react-router';
+import { AuditLink as Link } from '@/features/audit/auditNavigation';
 import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import Swal from "sweetalert2";
 import { TableCell, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";

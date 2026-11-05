@@ -10,7 +10,9 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ReviewAttendanceBadge } from '../shared/ReviewAttendanceBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { cn } from '@/lib/cn';
 import { type StatusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
@@ -20,13 +22,13 @@ import ProgressReviewPptxModal from '../progress-reviews/components/ProgressRevi
 import { slidesTargetFromEvent } from '../progress-reviews/components/slidesTarget';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import { ReviewAge } from '../shared/ReviewAge';
+import { ReviewCompletedDate, ReviewScheduledDate } from '../shared/ReviewDates';
 import {
   type CoachCalendarEvent,
   eventDisplayDate,
   eventIdentity,
   fetchCoachCalendarEvents,
   formatDateLabel,
-  formatTimeRangeLabel,
   isAtRiskEvent,
   isCompletedEvent,
   isDueSoonEvent,
@@ -35,7 +37,6 @@ import {
   isInProgressEvent,
   isScheduledEvent,
   latestCompletedReviewDate,
-  meetingUrl,
   needsScheduling,
   parseLocalDate,
   scheduleCoachCalendarEvent,
@@ -45,6 +46,9 @@ import {
 import { normalizeResolvedReview, normalizeResolvedReviews, reviewActionMatrix } from '../shared/resolvedReviewRows';
 import { MeetingActionsMenu } from './components/MeetingActionsMenu';
 import styles from './monthlyCoaching.module.css';
+import { ReviewIdentityNotice } from '../shared/ReviewIdentityNotice';
+import ImportedReviewBookingDialog from '../shared/ImportedReviewBookingDialog';
+import type { CoachReviewGenerationIssue } from '../shared/calendarEvents';
 
 const coachNav = roleNavMap.coach;
 
@@ -212,6 +216,8 @@ export default function CoachMonthlyCoaching() {
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [sortOrder, setSortOrder] = useState<'date-asc' | 'date-desc' | 'learner-asc'>('date-desc');
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [importedBookingEvent, setImportedBookingEvent] = useState<CoachCalendarEvent | null>(null);
+  const [bookingNotice, setBookingNotice] = useState<string | null>(null);
   const [scheduleLearnerKeyValue, setScheduleLearnerKeyValue] = useState('');
   const [scheduleLearnerSearch, setScheduleLearnerSearch] = useState('');
   const [scheduleEventKey, setScheduleEventKey] = useState('');
@@ -223,11 +229,13 @@ export default function CoachMonthlyCoaching() {
   const [slidesEvent, setSlidesEvent] = useState<CoachCalendarEvent | null>(null);
   const [slidesError, setSlidesError] = useState<string | null>(null);
   const cacheKey = coachSessionKey('monthly-coaching', coach.email, 'all-months');
-  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
   const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
+  const [issues, setIssues] = useState<CoachReviewGenerationIssue[]>(() => initialCache?.issues || []);
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
   const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -244,13 +252,15 @@ export default function CoachMonthlyCoaching() {
     if (!coach.isInitialized) return;
     if (!coach.email) {
       setEvents([]);
+      setIssues([]);
       setOwnerName(coach.name);
       setError('Coach access is required to load coaching meetings.');
       setLoading(false);
       return;
     }
     const controller = new AbortController();
-    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
+    setIssues(cached?.issues || []);
     if (cached) {
       setEvents(cached.events);
       setOwnerName(cached.ownerName);
@@ -266,7 +276,9 @@ export default function CoachMonthlyCoaching() {
       .then((data) => {
         const nextEvents = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => event.source === 'mcr')));
         const nextOwnerName = data.owner?.name || coach.name;
-        writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName: nextOwnerName });
+        const nextIssues = data.reviewGenerationIssues || [];
+        writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName: nextOwnerName, issues: nextIssues });
+        setIssues(nextIssues);
         setEvents(nextEvents);
         setOwnerName(nextOwnerName);
       })
@@ -452,10 +464,11 @@ export default function CoachMonthlyCoaching() {
     }
   };
 
-  const openMeeting = (event: CoachCalendarEvent) => {
-    const url = meetingUrl(event);
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-  };
+  const openMeeting = useImportedMeetingJoin({
+    contextKey: `${coach.email}:${coach.isViewingAsCoach}`, readOnly: coach.isViewingAsCoach,
+    onError: setJoinError,
+    onStarted: joined => setEvents(current => current.map(row => row.eventKey === joined.eventKey ? { ...row, status: 'in-progress' } : row)),
+  });
 
   // The learner creates and edits their MCM slides; the coach views them.
   // enrolmentId, never learnerId: the slides API keys on the enrolment record.
@@ -492,6 +505,11 @@ export default function CoachMonthlyCoaching() {
   };
 
   const scheduleMeeting = (selectedEvent?: CoachCalendarEvent) => {
+    if (selectedEvent?.reviewSource === 'aptem' || selectedEvent?.aptemReviewId) {
+      setBookingNotice(null);
+      setImportedBookingEvent(selectedEvent);
+      return;
+    }
     const preferred = selectedEvent || schedulableEvents.find(event => needsScheduling(event)) || schedulableEvents[0];
     const learnerKey = preferred ? scheduleLearnerKey(preferred) : '';
     const learner = scheduleLearnerOptions.find(option => option.value === learnerKey);
@@ -545,6 +563,9 @@ export default function CoachMonthlyCoaching() {
           <img src={CALENDAR_IMAGE_URL} alt="" aria-hidden="true" width={312} height={312} />
         </section>
         {error ? <EmptyState variant="error" title="Unable to load coaching meetings." description={error} /> : null}
+        <ReviewIdentityNotice issues={issues} />
+        {joinError ? <p role="alert" className="text-sm text-red-700">{joinError}</p> : null}
+        {bookingNotice ? <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{bookingNotice}</p> : null}
         <section className={styles.controlsCard} aria-label="Coaching meeting filters and summary">
           <div className={styles.toolbar}>
           <div className={styles.monthNav} aria-label="Meeting month">
@@ -571,8 +592,8 @@ export default function CoachMonthlyCoaching() {
             <div className={styles.tableScroll} role="region" aria-label="Coaching meetings table; scroll horizontally on smaller screens" tabIndex={0}>
               <table className={`${styles.table} ${styles.mcmTable}`}>
                 <caption className="sr-only">Coaching meetings for {selectedMonthLabel}</caption>
-                <colgroup><col /><col /><col /><col /><col /><col /><col /></colgroup>
-                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Cohort</th><th scope="col">Last MCM</th><th scope="col">Date &amp; time</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                <colgroup><col /><col /><col /><col /><col /><col /><col /><col /></colgroup>
+                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Cohort</th><th scope="col" title="Latest recorded completion across this learner's monthly coaching reviews, not just this row." tabIndex={0}>Last MCM</th><th scope="col">Scheduled for (UK time)</th><th scope="col" title="When this review form was completed, not when the meeting took place." tabIndex={0}>Completed on</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
                 <tbody>{paginatedEvents.map(event => {
                   const actions = reviewActionMatrix(event);
                   const statusIcon = event.status === 'completed' ? 'ri-checkbox-circle-line' : event.status === 'scheduled' ? 'ri-calendar-line' : event.status === 'awaiting-signature' ? 'ri-edit-line' : 'ri-time-line';
@@ -582,9 +603,11 @@ export default function CoachMonthlyCoaching() {
                       <td>{event.programme || '--'}</td>
                       <td>{event.cohort || event.group || '--'}</td>
                       <td><ReviewAge value={event.learnerId ? lastMcmByLearner.get(event.learnerId) : undefined} label="MCM" /></td>
-                      <td><span className={styles.date}><span>{formatDateLabel(event.scheduledDate || event.targetDate)}</span><span>{formatTimeRangeLabel(event)}</span></span></td>
+                      <td><ReviewScheduledDate event={event} /></td>
+                      <td><ReviewCompletedDate event={event} /></td>
                       <td>
                         <span className={styles.status} data-status={event.status}><AppIcon className={statusIcon} />{statusLabel(event.status)}</span>
+                        <ReviewAttendanceBadge event={event} />
                         {isAtRiskEvent(event) || isDueSoonEvent(event) ? <div className={styles.alerts}>{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}
                       </td>
                       <td onClick={(clickEvent) => clickEvent.stopPropagation()}>
@@ -611,6 +634,19 @@ export default function CoachMonthlyCoaching() {
           <ProgressReviewPptxModal kind="mcm" access="viewer" open target={slidesTargetFromEvent(slidesEvent)} onClose={() => setSlidesEvent(null)} />
         ) : null}
       </PageContainer>
+      {importedBookingEvent ? <ImportedReviewBookingDialog
+        key={`${coach.email}:${eventIdentity(importedBookingEvent)}`}
+        event={importedBookingEvent}
+        viewingAsCoach={coach.isViewingAsCoach}
+        onClose={() => setImportedBookingEvent(null)}
+        onSaved={(updated, notice, options) => {
+          const nextEvents = sortEvents(events.map(event => eventIdentity(event) === eventIdentity(updated) ? updated : event));
+          setEvents(nextEvents);
+          writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName, issues });
+          setBookingNotice(notice);
+          if (!options?.keepOpen) setImportedBookingEvent(null);
+        }}
+      /> : null}
       {scheduleModalOpen ? (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={() => { if (!scheduleBusy) setScheduleModalOpen(false); }}>
           <div role="dialog" aria-modal="true" aria-labelledby="schedule-meeting-title" className="w-full max-w-[620px] rounded-2xl border border-foreground-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>

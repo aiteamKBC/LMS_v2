@@ -3,8 +3,10 @@ import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { downloadLearnerMcmPdf, downloadMigratedReviewForParty, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, signMigratedReviewAsParty, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { downloadLearnerMcmPdf, downloadMigratedReviewForParty, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, retryMigratedMonthlyLogSignature, saveLearnerEventReviewAnswers, saveMigratedReviewPartyAnswers, signLearnerProgressReview, signMigratedReviewAsParty, type LearnerCalendarEvent, type MonthlyLogSignatureSync } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
+import { useAuth } from '@/hooks/useAuth';
+import { needsLearnerMigratedForm } from '@/api/learnerMigratedReview';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -24,10 +26,12 @@ import type { MeetingAttendance } from '@/api/meetingAttendance';
 import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
 import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
 import { useMeetingBooking } from '../reviews/useMeetingBooking';
-import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm';
+import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 import CoachingHome from './CoachingHome';
+import { shouldShowLearnerMeetingRecording } from './recordingVisibility';
 import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import { useCoachingReviewDefinitions } from './useCoachingReviewDefinitions';
 
@@ -60,14 +64,6 @@ function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
   if (session?.reviewTemplateId) return `${session.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(dateOf(session));
   return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
-}
-
-function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
-  return Boolean(
-    session?.eventKey
-    && session?.meetingLink
-    && ['completed', 'awaiting-signature'].includes(session.status),
-  );
 }
 
 function formatTime(value?: string | null): string {
@@ -301,22 +297,33 @@ export default function MonthlyCoachingPage() {
   const [searchParams] = useSearchParams();
   const { sessionId } = useParams<{ sessionId: string }>();
   const { myLearner, learner, sessions, loading, error, refresh } = useReviewSessions('mcr');
+  const { auth, isInitialized } = useAuth();
   const { canProgress } = useLearnerWorkspaceAccess(myLearner.id);
   // Keep the data-driven Aptem review details visible on first open while
   // preserving the existing learning-summary default for legacy meetings.
   const [openSections, setOpenSections] = useState<string[]>(['learning', 'imported-review']);
   const [slidesOpen, setSlidesOpen] = useState(false);
+  const [logSyncResult, setLogSyncResult] = useState<{ eventKey: string; sync?: MonthlyLogSignatureSync } | null>(null);
   const selected = sessions.find((session) => session.id === sessionId) || sessions.find(session => session.reviewSource === 'aptem' && `imported-review:${session.reviewId}` === sessionId) || null;
-  const migratedEvent = isMigratedContinuationEvent(selected);
+  const prepareImported = Boolean(isInitialized && auth.account?.role === 'learner'
+    && String(auth.account.subjectId) === String(myLearner.id)
+    && !searchParams.get('viewAsLearner') && !searchParams.get('viewAsCoach')
+    && needsLearnerMigratedForm(selected));
+  const previewImported = Boolean(isInitialized && auth.account?.role === 'admin'
+    && selected && (isMigratedContinuationEvent(selected) || needsLearnerMigratedForm(selected)));
+  const migratedEvent = isMigratedContinuationEvent(selected) || prepareImported || previewImported;
   const selectedDate = dateOf(selected);
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
     selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent ? (selected?.formEventKey || selected?.eventKey || selected?.id || '') : '',
+    false, prepareImported, previewImported,
   );
   // Monthly Logs belong to the curriculum target month. The scheduled date
   // is only the actual appointment date and may fall in another month.
-  const targetMonth = (selected?.targetDate || selected?.scheduledDate || selected?.date || '').slice(0, 7);
+  const targetMonth = migratedEvent
+    ? reviewInstance.definition?.mcmMonthlyLog?.month || ''
+    : (selected?.targetDate || selected?.scheduledDate || selected?.date || '').slice(0, 7);
   const completedMcm = Boolean(
     selected && targetMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
     ['completed', 'awaiting-signature'].includes(reviewInstance.definition?.instance?.status || selected.status),
@@ -331,14 +338,27 @@ export default function MonthlyCoachingPage() {
   }
   const backHref = `/learner/monthly-coaching?${backParams}`;
   const refreshReview = reviewInstance.refresh;
-  const signLearnerReview = useCallback((signature: string, options?: { applyMonthlyLogSignature?: boolean }) => (migratedEvent
-    ? signMigratedReviewAsParty(selected.formEventKey || selected.eventKey || selected.id, signature)
-    : signLearnerProgressReview(
-    myLearner.kind,
-    myLearner.id,
-    selected?.formEventKey || selected?.eventKey || selected?.id || '',
-    { name: learner?.name || 'Learner', signature, ...options },
-  )).then(() => { refresh(); refreshReview(); }), [learner?.name, myLearner.id, myLearner.kind, refresh, refreshReview, selected?.eventKey, selected?.formEventKey, selected?.id, migratedEvent]);
+  const selectedEventKey = selected?.formEventKey || selected?.eventKey || selected?.id || '';
+  const monthlyLogSync = migratedEvent
+    ? (logSyncResult?.eventKey === selectedEventKey ? logSyncResult.sync : reviewInstance.definition?.mcmMonthlyLog?.sync)
+    : undefined;
+  const signLearnerReview = useCallback(async (signature: string, options?: { applyMonthlyLogSignature?: boolean }) => {
+    if (migratedEvent) {
+      const result = await signMigratedReviewAsParty(selectedEventKey, signature, {
+        ...options, reviewRevision: reviewInstance.definition?.reviewRevision,
+      });
+      setLogSyncResult({ eventKey: selectedEventKey, sync: result.monthlyLogSync });
+    } else {
+      await signLearnerProgressReview(myLearner.kind, myLearner.id, selectedEventKey, { name: learner?.name || 'Learner', signature, ...options });
+    }
+    refresh();
+    refreshReview();
+  }, [learner?.name, myLearner.id, myLearner.kind, refresh, refreshReview, selectedEventKey, migratedEvent, reviewInstance.definition?.reviewRevision]);
+  const retryMonthlyLogSignature = useCallback(async () => {
+    const result = await retryMigratedMonthlyLogSignature(selectedEventKey);
+    setLogSyncResult({ eventKey: selectedEventKey, sync: result.monthlyLogSync });
+    refreshReview();
+  }, [selectedEventKey, refreshReview]);
   const index = selected ? sessions.findIndex((session) => session.id === selected.id) : -1;
   const previous = index > 0 ? sessions[index - 1] : null;
 
@@ -393,13 +413,13 @@ export default function MonthlyCoachingPage() {
             </button>
           )}
         </div>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} mcmMonthlyLog={!migratedEvent && completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : () => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={migratedEvent ? undefined : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} /> : (
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} monthlyLogSync={monthlyLogSync} onRetryMonthlyLogSignature={canProgress && !previewImported && migratedEvent ? retryMonthlyLogSignature : undefined} mcmMonthlyLog={completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={previewImported ? undefined : migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : () => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress && !previewImported ? signLearnerReview : undefined} onSaveAnswers={migratedEvent ? (canProgress && !previewImported ? (answers, version) => saveMigratedReviewPartyAnswers(selected.formEventKey || selected.eventKey || selected.id, answers, version) : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} /> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
               <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 {shouldShowLearnerMeetingRecording(selected) ? (
-                  <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
+                  <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} storedOnly={selected.reviewSource === 'aptem'} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                 ) : null}
                 <div><p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Session participants</p><div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">{initials(learner?.name)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Learner</p><p className="text-sm font-bold text-foreground-900">{learner?.name || '-'}</p></div></div><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-100 text-xs font-bold text-accent-700">{initials(selected.coachName)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Coach</p><p className="text-sm font-bold text-foreground-900">{selected.coachName || '-'}</p></div></div></div></div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'First 30-day period']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>

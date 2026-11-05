@@ -5,12 +5,14 @@
 // ============================================================================
 import { invalidateLearnerDetailCache } from './learnerDetail';
 import { invalidateWizardCacheById } from './extendedIlr';
+import type { ReviewHandover } from './reviewHandover';
 
 const BASE = '/learner_api/learners';
 
 export interface CoachContact {
   coachName: string;
   coachEmail: string;
+  reviewHandover?: ReviewHandover;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

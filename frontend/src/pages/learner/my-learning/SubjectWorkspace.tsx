@@ -20,6 +20,7 @@ import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/training
 import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
 import { PreviousLearningNotice } from './PreviousLearningNotice';
 import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
+import { resolveSubjectWeek } from './subjectLearning';
 export type { SubjectEntry, Subject, CoverMetadata, UnifiedLearningSummary } from './learningSummary';
 
 
@@ -32,13 +33,14 @@ function formatRecordedHours(hours: number) {
 
 
 
-function Progress({ done, total, label = 'Subject progress', showFormula = false, compact = false }: {
-  done: number; total: number; label?: string; showFormula?: boolean; compact?: boolean;
+function Progress({ done, total, label = 'Subject progress', showFormula = false, compact = false, aggregate, transferred }: {
+  done: number; total: number; label?: string; showFormula?: boolean; compact?: boolean; aggregate?: number; transferred?: number;
 }) {
-  const percent = total ? Math.round(done / total * 10000) / 100 : 0;
+  const percent = aggregate ?? (total ? Math.round(done / total * 10000) / 100 : 0);
   return <div className="space-y-2"><div className="flex items-center justify-between gap-2 text-xs"><span className={compact ? 'text-slate-500' : 'text-foreground-500'}>{done} of {total} completed</span><strong className={`shrink-0 tabular-nums ${compact && percent === 100 ? 'text-emerald-700' : 'text-primary-700'}`}>{percent}%</strong></div>
     <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className={`h-1.5 overflow-hidden rounded-full ${compact ? 'bg-slate-100' : 'bg-foreground-100'}`}><div className={`h-full rounded-full motion-safe:transition-[width] ${compact ? percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-primary-500 to-violet-400' : 'bg-primary-500'}`} style={{ width: `${percent}%` }} /></div>
-    {showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
+    {transferred != null ? <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900"><strong>Progress merged.</strong> Completed components from both systems count once. Old LMS progress before transfer: {transferred}% (historical).{!compact && <> The current percentage uses this module's component total, so it may differ. Your recorded hours are preserved.</>}</div>
+      : showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
   </div>;
 }
 
@@ -188,7 +190,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
   const sessionCount = planModule?.educational_session_count;
-  const completedHours = subject.source === 'legacy' || subject.replacementCourseRef
+  const completedHours = subject.source === 'legacy' || subject.replacementCourseRef || subject.transferredProgress != null
     ? subject.acceptedHours ?? null
     : moduleProgress?.hours.actual ?? subject.acceptedHours ?? null;
   const plannedHours = planModule?.total_otjh ?? null;
@@ -205,6 +207,8 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
               : subject.importedCourseRef ? 'Old LMS · Current learning plan' : 'New LMS · Current learning plan'}
           </span>
           {subject.source === 'legacy' && <span className={styles.learningModeBadge} data-source="legacy">Review only</span>}
+          {subject.transferPending && <span className={styles.learningModeBadge}>Transfer pending</span>}
+          {subject.demoProgress && <span className={styles.learningModeBadge}>Demo progress</span>}
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>
@@ -212,6 +216,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           {certificateReady && <span className={styles.certificateBadge}><Award size={13} aria-hidden="true" />Ready</span>}
         </div>
         <h3 className={styles.cardTitle}>{subject.title}</h3>
+        <p className={`${styles.cardCohort} mb-2 text-xs text-foreground-500 break-words`}>Cohort: <span className="font-semibold">{planModule?.cohort_name?.trim() || 'Not available'}</span></p>
         <dl className={styles.moduleDetails} aria-label={`${moduleName} module details`}>
           <div><dt>Tutor</dt><dd>{tutorName}</dd></div>
           <div><dt>Start date</dt><dd>{startDate}</dd></div>
@@ -219,7 +224,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
+        <div className={styles.cardProgress}><Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>
@@ -227,6 +232,10 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
       </div>
     </button>
+    {subject.transferredProgress != null && <div role="status" className={styles.cardTransferNotice}>
+      <CheckCircle2 size={16} aria-hidden="true" />
+      <p><strong>Progress merged.</strong> Completed components from both systems count once. Old LMS progress before transfer: {subject.transferredProgress}% (historical).</p>
+    </div>}
     <SubjectCertificateAction subject={subject} template={template} csrfToken={csrfToken} kind={kind} learnerId={learnerId} />
   </article>;
 }
@@ -244,7 +253,7 @@ export function SubjectCardsSkeleton() {
 }
 
 
-function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, readOnly = false }: { defaultOpen?: boolean; readOnly?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
+function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, readOnly = false, direct = false }: { defaultOpen?: boolean; readOnly?: boolean; direct?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
   const [open, setOpen] = useState(defaultOpen);
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
   const contentId = useId();
@@ -252,27 +261,27 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, 
   const legacy = entry.legacy;
   const canOpenMaterial = legacy?.can_open_material !== false;
   const canReviewQuiz = legacy?.catalogue_kind === 'quiz' && entry.completed;
-  const canOpen = canOpenMaterial || canReviewQuiz;
+  const canOpen = canOpenMaterial || legacy?.catalogue_kind === 'quiz';
   const sourceHref = legacy?.source_material_activity_id && kind && learnerId
     ? `${learningHref('catalogue', kind, learnerId, `legacy:${legacy.group_id}`)}&activity=${encodeURIComponent(legacy.source_material_activity_id)}` : null;
   const score = entry.bestScorePercent ?? legacy?.best_score_percent ?? (legacy?.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
   return <div role="group" aria-label={`${entry.title} activity`} className="border-t border-foreground-100 first:border-t-0"><div className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 p-4 sm:flex sm:flex-wrap sm:items-center">
     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${entry.completed ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-400'}`}>{entry.completed ? <CheckCircle2 size={18} /> : <BookOpen size={16} />}</span>
     <div className="min-w-0 flex-1"><h5 className="text-sm font-semibold text-foreground-900">
-      {legacy && canOpen && kind && learnerId ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
+      {legacy && canOpen && kind && learnerId && !direct ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
         : href ? <Link to={href} className="text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</Link> : entry.title}
     </h5><p className="mt-1 text-xs text-foreground-500">{[entry.category, entry.schedule.date, score != null ? `Best score ${Math.round(score)}%` : ''].filter(Boolean).join(' · ')}</p>
       {legacy?.section_title && <p className="mt-1 text-xs text-foreground-500">Lecture: {legacy.section_title}</p>}
     </div>
     <div className="col-start-2 flex flex-wrap items-center gap-2 sm:ml-auto"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.completed ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{entry.completed ? 'Complete' : 'Not complete'}</span>
-    {legacy && canOpen && kind && learnerId && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{canReviewQuiz ? open ? 'Close quiz' : 'View quiz' : open ? 'Close activity' : 'Open activity'}</button>}
+    {legacy && canOpen && kind && learnerId && !direct && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{canReviewQuiz ? open ? 'Close quiz' : 'View quiz' : open ? 'Close activity' : 'Open activity'}</button>}
     {!legacy && href && <Link to={href} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">Open activity</Link>}
     {sourceHref && <Link to={sourceHref} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">View source material</Link>}
     {((legacy && !canOpen && !sourceHref) || (!legacy && !href)) && <span className="text-xs text-foreground-500">{entry.native?.retired ? 'No longer in this module' : 'Content not available yet'}</span>}</div>
   </div>
     <PreviousLearningNotice learning={entry.native?.previousLearning} kind={kind} learnerId={learnerId} />
     {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'} · Planned: {legacy.planned_hours_mapped ? formatHoursMinutes(legacy.planned) : 'Unavailable'}</p>}
-    <div id={contentId}>{open && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly || canReviewQuiz} reviewQuiz={canReviewQuiz} onProgress={readOnly || canReviewQuiz ? undefined : onProgress} /></div>}</div>
+    <div id={contentId}>{(direct || open) && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly || canReviewQuiz} reviewQuiz={canReviewQuiz} catalogueQuiz={legacy.catalogue_kind === 'quiz'} onProgress={readOnly || canReviewQuiz ? undefined : onProgress} /></div>}</div>
   </div>;
 }
 
@@ -402,7 +411,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     || (active ? planModulesBySubject.get(active.id)?.curriculumSlots : undefined));
   const activeWeek = activityTarget ? weeks.find(week => week.activities.some(entry => entry.id === activityTarget.entry.id))
     : continueCurrentWeek && active ? continuingLearningWeek(active)
-    : selectedWeek ? weeks.find(week => week.id === selectedWeek) : undefined;
+    : selectedWeek ? resolveSubjectWeek(weeks, selectedWeek) : undefined;
   // The header and course cards describe the same complete catalogue. Programme
   // metrics count ledger records, which can omit activities not yet started.
   const total = summary.activityCount;
@@ -436,9 +445,9 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className={styles.textLink}><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>
       <SubjectActivityWorkspace key={`${kind}:${learnerId}:${active.id}`} subject={active} weeks={weeks} requestedWeek={activeWeek?.id}
         requestedActivity={activityTarget?.entry.id} search={search} kind={kind} learnerId={learnerId}
-        progress={<Progress done={active.activities.filter(entry => entry.completed).length} total={active.activities.length} showFormula />}
+        progress={<>{active.demoProgress && <p className="mb-2 text-sm">Demo progress for a transfer rehearsal. No study hours or completed activities are claimed.</p>}<Progress done={active.activities.filter(entry => entry.completed).length} total={active.activities.length} showFormula={!active.demoProgress} aggregate={active.aggregateProgress} transferred={active.transferredProgress} /></>}
         renderWeekProgress={week => <><HolidayNoteHint note={week.weekId ? holidayNotes.get(week.weekId) : undefined} className="mb-2" /><Progress done={week.activities.filter(entry => entry.completed).length} total={week.activities.length} label="Week progress" /></>}
-        renderActivity={entry => <ActivityRow entry={entry} kind={kind} learnerId={learnerId} defaultOpen={entry.id === activityTarget?.entry.id}
+        renderActivity={entry => <ActivityRow entry={entry} kind={kind} learnerId={learnerId} direct
           onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />} />
     </> : activeWeek ? <>
       <button onClick={() => select(active!.id)} className={styles.textLink}><ChevronLeft size={17} />{view === 'map' ? 'Back to timeline' : 'Back to subject'}</button>

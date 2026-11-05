@@ -1,3 +1,5 @@
+import { moduleFormTarget, type ModuleFormDeliveryRef, type ModuleFormTarget } from './moduleForm.helpers';
+export type { ModuleFormTarget } from './moduleForm.helpers';
 // ============================================================================
 // The create/edit form for a Module.
 //
@@ -67,6 +69,8 @@ import {
   weekendDateNotice,
 } from './model';
 import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
+import { isNameOnlyEdit } from './nameOnlyEdit';
+import { weekCountChangeForSave, weekCountChangeText, type StoredWeekStructure } from './weekCountChange';
 import {
   CoEditNotice,
   ColorControl,
@@ -82,104 +86,13 @@ import {
   type MultiSelectOption,
 } from './ui';
 import { useFormFieldMerge, useFormSeedGuard, useRecordGuard, useRecordRebaseRetry } from './useDrawerState';
+import { ModuleHoursTargetField } from '../components/ModuleHours';
+import { useModuleHoursDraft } from '../components/moduleHoursState';
 
 export interface ModuleFormDefaults {
   programmeId?: string;
   cohortId?: string;
   groupId?: string;
-}
-
-interface ModuleFormDeliveryRef {
-  /**
-   * This delivery's own module row id -- the id `/curriculum/modules/<id>` and
-   * the tutor-email ledger both use. A module delivered to three groups is
-   * three rows, and the tick needs to ask about all of them.
-   */
-  deliveryModuleId?: string;
-  programmeId?: string;
-  programme?: string;
-  cohortId?: string;
-  cohort?: string;
-  groupId?: string;
-  group?: string;
-  tutor?: string;
-  startDate?: string;
-  endDate?: string;
-  sessions?: number;
-  weeklySchedule?: CurriculumWeeklySession[];
-  weekDays?: string;
-  startTime?: string;
-  endTime?: string;
-}
-
-/**
- * The module being edited, reduced to what this form reads and writes. Declared
- * rather than reusing `CurriculumModule` because the Module Builder holds its
- * modules as authoring catalogue items â€” same records, different field names â€”
- * and both call sites must end up patching the same canonical id.
- */
-export interface ModuleFormTarget {
-  /** Canonical module catalogue id: what PATCH /curriculum/modules/<id>/ takes. */
-  id: string;
-  name: string;
-  programmeId?: string;
-  programme?: string;
-  cohortId?: string;
-  groupId?: string;
-  sessionsNumber?: number;
-  weeklySchedule?: CurriculumWeeklySession[];
-  sessionHolidays?: CurriculumModule['sessionHolidays'];
-  deliveryWeeks?: number;
-  weekDays?: string;
-  startTime?: string;
-  endTime?: string;
-  weeks?: number;
-  startDate?: string;
-  /** The stored end date, shown until the session-plan preview returns its own. */
-  endDate?: string;
-  tutor?: string;
-  status?: string;
-  notes?: string;
-  color?: string;
-  /** The stored cover image: a URL, or a data: URL for an uploaded file. */
-  coverImage?: string;
-  deliveryUsages?: ModuleFormDeliveryRef[];
-}
-
-/**
- * A saved module reduced to what this form reads, so re-opening it edits the
- * record rather than starting a second one. It lives here, beside the shape it
- * builds, because every door onto this form needs it — the structure wizard
- * stepping back to its module step, and a programme workspace opening one of
- * its module rows.
- */
-export function moduleFormTarget(module: CurriculumModule | undefined | null): ModuleFormTarget | null {
-  if (!module) return null;
-  const id = cleanText(module.moduleCatalogueId) || cleanText(module.catalogueId) || cleanText(module.moduleId) || cleanText(module.id);
-  if (!id) return null;
-  return {
-    id,
-    name: module.name || '',
-    programmeId: module.programmeId,
-    programme: module.programme,
-    cohortId: module.cohortId,
-    groupId: module.groupId,
-    sessionsNumber: module.sessionsNumber,
-    weeklySchedule: module.weeklySchedule,
-    sessionHolidays: module.sessionHolidays,
-    deliveryWeeks: module.deliveryWeeks,
-    weekDays: module.weekDays,
-    startTime: module.startTime,
-    endTime: module.endTime,
-    weeks: module.weeks,
-    startDate: module.startDate,
-    endDate: module.endDate,
-    tutor: module.tutor,
-    status: module.status,
-    notes: module.notes,
-    color: module.color,
-    coverImage: module.coverImage,
-  };
 }
 
 /** What a successful save hands back, so the caller can go straight to the module. */
@@ -267,6 +180,7 @@ export function ModuleFormDrawer({
   onClose,
   onSaved,
   onSavingChange,
+  storedStructure,
 }: {
   open: boolean;
   /** Present when editing; absent when creating. */
@@ -286,6 +200,11 @@ export function ModuleFormDrawer({
   onSaved: (saved: SavedModuleRef) => unknown | Promise<unknown>;
   /** Lets the owning table keep its progress line visible for the whole save. */
   onSavingChange?: (saving: boolean) => void;
+  /**
+   * The module as the server last stored it, from a caller that holds it (the
+   * Module Builder). With it, a save that resizes the weeks says so first.
+   */
+  storedStructure?: () => StoredWeekStructure | null;
 }) {
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
@@ -320,6 +239,7 @@ export function ModuleFormDrawer({
   const [coverImage, setCoverImage] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const moduleHours = useModuleHoursDraft(module?.id, open && !chain?.chained);
   // 'later' lets a brand-new module save with no programme, cohort or group at
   // all -- the same catalogue-draft save `createNewModule` already supports,
   // just no longer blocked by the placement checks below. Only offered on a
@@ -398,7 +318,7 @@ export function ModuleFormDrawer({
   // replaced. The token is the Module Builder's own: this drawer writes through
   // the same structure save, so a Builder save makes an open drawer stale and
   // the other way round.
-  const guard = useRecordGuard<ModuleFormTarget>('module', module?.id, open);
+  const guard = useRecordGuard<ModuleFormTarget>('module', module?.id, open, module);
   // The seeding effect below has to depend on `groups`, `cohorts` and
   // `programmes` to resolve the module's parent chain, and those arrays get a new
   // identity whenever the page refreshes them -- the Module Builder in particular
@@ -833,7 +753,7 @@ export function ModuleFormDrawer({
   // Destructured rather than used through the hook's return value, which is a
   // fresh object every render: the memos below key off the parts that actually
   // move, so a keystroke in the name field does not rebuild the picker.
-  const { verdictFor, bookable, sessionDates, loading: checkingTutors } = useTutorAvailability(
+  const { verdictFor, bookable, sessionDates, loading: checkingTutors, failed: tutorCheckFailed } = useTutorAvailability(
     conflictSlot,
     { enabled: open },
   );
@@ -851,30 +771,50 @@ export function ModuleFormDrawer({
       ? tutorVerdicts.filter(item => item.verdict?.available).map(item => item.tutorName).slice(0, 4)
       : []
   ), [bookable, tutorVerdicts]);
-  const tutorOptions = useMemo<SelectOption[]>(() => tutorVerdicts.map(({ tutorName, verdict }) => {
-    if (!verdict || verdict.available) {
-      return {
-        value: tutorName,
-        label: tutorName,
-        // Only grouped once there is an answer to group by: headings over an
-        // unchecked list would say "free" about names nobody has checked.
-        group: bookable ? 'Free in this slot' : undefined,
-      };
-    }
-    const clash = verdict.conflicts[0];
-    const also = verdict.conflicts.length - 1;
-    return {
-      value: tutorName,
-      label: tutorName,
-      // The reason travels with the row: picking a busy name is still allowed --
-      // the delivery day or the time may be what moves instead -- but not by
-      // accident.
-      description: `${clash.moduleName} ${clash.startTime}-${clash.endTime}${also > 0 ? ` +${also} more` : ''}`,
-      meta: `${verdict.conflicts.reduce((count, item) => count + item.dates.length, 0)} clashes`,
-      icon: 'ri-error-warning-line',
-      group: 'Already teaching then',
-    };
-  }), [bookable, tutorVerdicts]);
+  const tutorOptions = useMemo<SelectOption[]>(() => {
+    const options = tutorVerdicts.map(({ tutorName, verdict }): SelectOption & { rank: number } => {
+      if (verdict?.available) {
+        return { value: tutorName, label: tutorName, group: 'Free in this slot', rank: 0 };
+      }
+      if (verdict) {
+        const clash = verdict.conflicts[0];
+        const also = verdict.conflicts.length - 1;
+        return {
+          value: tutorName,
+          label: tutorName,
+          // The reason travels with the row: picking a busy name is still allowed --
+          // the delivery day or the time may be what moves instead -- but not by
+          // accident.
+          description: `${clash.moduleName} ${clash.startTime}-${clash.endTime}${also > 0 ? ` +${also} more` : ''}`,
+          meta: `${verdict.conflicts.reduce((count, item) => count + item.dates.length, 0)} clashes`,
+          icon: 'ri-error-warning-line',
+          group: 'Already teaching then',
+          rank: 1,
+        };
+      }
+      // No verdict is not a free verdict. Once there is an answer to group by (or
+      // the check itself failed), a name it does not cover is said to be
+      // unchecked; before then the list stays ungrouped, since headings over an
+      // unchecked list would say "free" about names nobody has checked.
+      if (bookable || tutorCheckFailed) {
+        return {
+          value: tutorName,
+          label: tutorName,
+          description: tutorCheckFailed ? 'The availability check failed' : 'Not covered by the availability check',
+          icon: 'ri-question-line',
+          group: 'Not verified',
+          rank: 2,
+        };
+      }
+      return { value: tutorName, label: tutorName, rank: 0 };
+    });
+    // The menu prints a heading whenever the group changes from one row to the
+    // next, so the names are kept together by status (alphabetical within it);
+    // left in name order the headings repeated down the list.
+    return options
+      .sort((left, right) => left.rank - right.rank)
+      .map(({ rank: _rank, ...option }) => option);
+  }, [bookable, tutorCheckFailed, tutorVerdicts]);
   // The field says what it knows: which slot the names were checked against, or
   // what is still missing before anything can be checked. "Checked before it
   // saves" was the old promise, and it is now kept before the save, not by it.
@@ -960,11 +900,13 @@ export function ModuleFormDrawer({
     : '';
   const tutorHint = checkingTutors
     ? 'Checking who is already teaching in this slot...'
-    : bookable
-      ? `Checked against ${sessionDates.length} session${sessionDates.length === 1 ? '' : 's'} using each day's scheduled time.`
-      : groupDeliveryDayMissing
-        ? `${cleanText(selectedGroup?.name) || 'The group'} has no delivery day yet.`
-        : 'Select a Group and set the weeks to check who is free.';
+    : tutorCheckFailed
+      ? 'Could not check who is free in this slot. Saving still checks the tutor for clashes.'
+      : bookable
+        ? `Checked against ${sessionDates.length} session${sessionDates.length === 1 ? '' : 's'} using each day's scheduled time.`
+        : groupDeliveryDayMissing
+          ? `${cleanText(selectedGroup?.name) || 'The group'} has no delivery day yet.`
+          : 'Select a Group and set the weeks to check who is free.';
 
   const changeProgramme = (value: string) => {
     setProgrammeId(value);
@@ -978,19 +920,15 @@ export function ModuleFormDrawer({
   //
   //   * weeks moved      -> the end date is recalculated (the manual one drops);
   //   * end date moved   -> the weeks are recalculated from start -> end;
-  //   * start date moved -> with an end date held by hand, the weeks are
-  //                         recalculated and that end date stays put; with none,
-  //                         the end date is recalculated from the weeks as before.
+  //   * start date moved -> the weeks stay and the end date is recalculated
+  //                         from them (the manual one drops). Moving a run is
+  //                         not shortening it: an edited module's saved end
+  //                         date loads as a manual one, and holding it here
+  //                         turned a five-week module into a one-week one.
   const weeksBetweenDates = (from: string, to: string) => projectModuleWeeks(from, to);
   const changeStartDate = (value: string) => {
     setStartDate(value);
-    const held = cleanText(targetEndDate);
-    const recalculated = held ? weeksBetweenDates(value, held) : 0;
-    // Only when the span is still readable forwards: a start date dragged past
-    // the end date has no week count, and clearing the end date is the honest
-    // answer rather than inventing one.
-    if (recalculated > 0) setSessionsNumber(String(recalculated));
-    else setTargetEndDate('');
+    setTargetEndDate('');
   };
   const changeWeeks = (value: string) => {
     setSessionsNumber(value);
@@ -1082,9 +1020,21 @@ export function ModuleFormDrawer({
   const showSchedule = lockGroup || showPlacement;
 
   const submit = async () => {
+    const hoursError = moduleHours.validate();
+    if (hoursError) { setError(hoursError); return; }
+    // A target-only edit must not reschedule or reload the authored structure.
+    // An explicitly requested tutor email still uses the existing save flow.
+    if (module && !dirty && moduleHours.dirty && (!notifyTutor || tutorFullyEmailed)) {
+      setSaving(true); setError(null);
+      try { await moduleHours.save(); onClose(); }
+      catch (reason) { setError(reason instanceof Error ? reason.message : 'The hours target could not be saved.'); }
+      finally { setSaving(false); }
+      return;
+    }
+    const renameOnly = Boolean(module && isNameOnlyEdit(liveValues, baseline.current));
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
-    if (!lockGroup && !placementOptional) {
+    if (!renameOnly && !lockGroup && !placementOptional) {
       if (!programmeId) { setError('Choose the programme this module belongs to.'); return; }
       if (!cohortId) { setError('Choose the cohort this module runs for.'); return; }
       if (!groupIds.length) { setError('Tick at least one group to run this module.'); return; }
@@ -1093,7 +1043,7 @@ export function ModuleFormDrawer({
     // only mean something once at least one group is actually being attached.
     // An unplaced module (no group ticked, whichever way it got there) saves
     // with none of them.
-    if (selectedGroups.length) {
+    if (!renameOnly && selectedGroups.length) {
       if (!(Number(sessionsNumber) >= 1)) { setError('Set how many weeks the module runs for.'); return; }
       if (!startDate) { setError('Choose the module start date.'); return; }
       if (!endDate) { setError('Choose the module end date.'); return; }
@@ -1242,6 +1192,7 @@ export function ModuleFormDrawer({
     setError(null);
     setTutorConflictGroup(null);
     let failingGroup: CurriculumGroup | null = null;
+    let savingHoursAfterDetails = false;
     try {
       if (module) {
         // Only sent when this drawer actually changed it. The Weeks box is
@@ -1255,7 +1206,7 @@ export function ModuleFormDrawer({
         const primarySchedule = primaryPattern?.days && primaryPattern.startTime && primaryPattern.endTime
           ? primaryPattern.days.split(', ').map(day => ({ day, startTime: primaryPattern.startTime, endTime: primaryPattern.endTime }))
           : [];
-        const patchPayload = {
+        const patchPayload = renameOnly ? { name: trimmed } : {
           name: trimmed,
           notes: description,
           status,
@@ -1285,6 +1236,16 @@ export function ModuleFormDrawer({
           startTime: primaryPattern?.startTime || undefined,
           endTime: primaryPattern?.endTime || undefined,
         };
+        // The server resizes the stored weeks to the count this sends. Said
+        // first, so the author decides -- "No" saves nothing at all.
+        const weekChange = weekCountChangeForSave(storedStructure?.() ?? null, weeksChanged ? weeks : undefined);
+        if (weekChange && !(await showCurriculumConfirm({
+          title: `This module will have ${weekChange.after} weeks instead of ${weekChange.before}`,
+          text: weekCountChangeText(weekChange, weeksChanged),
+          confirmButtonText: 'Yes, save',
+          cancelButtonText: 'No, change nothing',
+          onConfirm: async () => undefined,
+        }))) return;
         // The PATCH merges onto the stored structure, so only what this form
         // owns is sent: the weeks, components and KSB mappings authored in the
         // Module Builder are left exactly as they are.
@@ -1324,6 +1285,9 @@ export function ModuleFormDrawer({
         // numbers. Closing first left a window -- as long as the round-trip, which
         // is seconds on a slow connection -- where reopening the drawer offered the
         // pre-save weeks and saving again wrote them straight back.
+        savingHoursAfterDetails = moduleHours.dirty;
+        await moduleHours.save();
+        savingHoursAfterDetails = false;
         await onSaved({ catalogueId: module.id, name: trimmed, created: false, ...savedParents() });
         const editedEmailNote = await notifyTutorIfAsked();
         // In a chain the wizard owns closing and confirming, so that a run of
@@ -1437,8 +1401,9 @@ export function ModuleFormDrawer({
       // `err.message` instead showed the reader "Curriculum API returned 400
       // for /curriculum/modules/MOD-…/" with the sentence buried after it.
       setError(
-        tutorConflictMessage(err)
-        || curriculumErrorMessage(err, err instanceof Error ? err.message : 'The module could not be saved.'),
+        (savingHoursAfterDetails ? 'Module details were saved, but the hours target was not saved. ' : '')
+        + (tutorConflictMessage(err)
+        || curriculumErrorMessage(err, err instanceof Error ? err.message : 'The module could not be saved.')),
       );
       if (isTutorConflictError(err) && failingGroup) {
         setTutorConflictGroup({ groupId: failingGroup.id, groupName: failingGroup.name });
@@ -1487,7 +1452,7 @@ export function ModuleFormDrawer({
       width={chain?.width || 'w-[760px]'}
       saving={saving}
       error={error}
-      dirty={dirty}
+      dirty={dirty || moduleHours.dirty}
     >
       <CoEditNotice notices={coEdit.notices} onDismiss={coEdit.dismiss} />
       {!module && !lockGroup && !chained && (
@@ -1836,6 +1801,7 @@ export function ModuleFormDrawer({
           alt={`${name || 'Module'} cover`}
         />
       </FormField>
+      {module && !chained && <ModuleHoursTargetField state={moduleHours} disabled={saving} />}
     </EntityDrawer>
   );
 }

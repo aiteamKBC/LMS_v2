@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, CalendarDays, CheckCircle2, FileText } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -10,6 +10,9 @@ import { AssignmentDetailsCard } from './AssignmentDetailsCard';
 import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment, monthName, statusLabels } from './model';
 import { useMonthlyAssignmentPlan } from './useMonthlyAssignmentPlan';
 import styles from './monthlySubmission.module.css';
+import { ExtraActivityInfo } from '@/components/feature/ExtraActivityInfo';
+
+const extraStatusLabels = { ...statusLabels, rejected: 'Rejected', escalated: 'Escalated' };
 
 /** Assigned components use the same delivery dates and month topics as Training Plan. */
 export default function MonthlySubmissionPage() {
@@ -26,7 +29,7 @@ export default function MonthlySubmissionPage() {
   const groups = useMemo(() => {
     const months = real ? groupMonthlyAssignments(real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts) : [];
     for (const activity of extras.activities) {
-      if (activity.status !== 'accepted' || !/^\d{4}-\d{2}$/.test(activity.month) || months.some(item => item.month === activity.month)) continue;
+      if (activity.status === 'draft' || !/^\d{4}-\d{2}$/.test(activity.month) || months.some(item => item.month === activity.month)) continue;
       months.push({ month: activity.month, label: monthName(activity.month), topics: [], planAssignments: [], assignments: [], submitted: 0 });
     }
     if (months.length && !datesUnavailable && !months.some(item => item.month === currentMonth)) {
@@ -40,12 +43,13 @@ export default function MonthlySubmissionPage() {
   const requestedMonth = params.get('month') ?? savedSelection?.month;
   const group = groups.find(item => item.month === requestedMonth)
     || (datesUnavailable ? groups.find(item => !item.month) : undefined) || defaultAssignmentMonth(groups);
-  const view = params.get('view') === 'overdue' ? 'overdue' : 'month';
-  const acceptedExtras = extras.activities.filter(activity => activity.status === 'accepted' && activity.month === group?.month);
+  const view = params.get('view') === 'extras' ? 'extras' : params.get('view') === 'overdue' ? 'overdue' : 'month';
+  const submittedExtras = extras.activities.filter(activity => activity.status !== 'draft' && activity.month === group?.month);
+  const acceptedExtras = submittedExtras.filter(activity => activity.status === 'accepted');
   const visibleAssignments = view === 'overdue'
     ? groups.flatMap(item => item.assignments.filter(assignment => isOverdueAssignment(assignment, today)).map(row => ({ row, sourceGroup: item })))
-    : group?.assignments.map(row => ({ row, sourceGroup: group })) || [];
-  const visibleExtras = view === 'month' ? acceptedExtras : [];
+    : view === 'extras' ? [] : group?.assignments.map(row => ({ row, sourceGroup: group })) || [];
+  const visibleExtras = view === 'extras' ? submittedExtras : view === 'month' ? acceptedExtras : [];
   const requestedAssignment = params.get('assignment')
     ?? (view === 'month' && savedSelection?.month === group?.month ? savedSelection?.assignment : undefined);
   const selectedExtra = visibleExtras.find(item => item.activityId === requestedAssignment)
@@ -55,20 +59,28 @@ export default function MonthlySubmissionPage() {
   const assignment = selectedAssignment?.row;
   const assignmentGroup = selectedAssignment?.sourceGroup;
   const selectedId = selectedExtra?.activityId || assignment?.id;
-  const filterByView = (nextView: 'month' | 'overdue') => {
+  const rememberSelection = (month: string, assignmentId?: string) => {
+    try {
+      sessionStorage.setItem(selectionKey, JSON.stringify({ month, assignment: assignmentId }));
+    } catch { /* URL selection still works without storage. */ }
+  };
+  const filterByView = (nextView: 'month' | 'overdue' | 'extras') => {
     setParams(current => {
       const next = new URLSearchParams(current);
-      if (nextView === 'overdue') next.set('view', 'overdue'); else next.delete('view');
+      if (nextView !== 'month') next.set('view', nextView); else next.delete('view');
       next.delete('status');
       next.delete('assignment');
       return next;
     }, { replace: true });
   };
   const select = (month: string, assignmentId?: string) => {
+    // Save the explicit choice before navigation, including an immediate leave.
+    // Defaults are derived above; a background effect must not navigate over it.
+    if (view !== 'extras') rememberSelection(month, assignmentId);
     setParams(current => {
       const next = new URLSearchParams(current);
       next.set('month', month);
-      next.delete('view');
+      if (view !== 'extras') next.delete('view');
       next.delete('status');
       if (assignmentId) next.set('assignment', assignmentId); else next.delete('assignment');
       return next;
@@ -82,19 +94,6 @@ export default function MonthlySubmissionPage() {
     }, { replace: true });
   };
   const busy = loading || plan.loading;
-  useEffect(() => {
-    if (busy || extras.loading || loadError || plan.errors.length || !kind || !id || !group || !selectedId) return;
-    if (view === 'month') {
-      try { sessionStorage.setItem(selectionKey, JSON.stringify({ month: group.month, assignment: selectedId })); } catch { /* URL selection still works without storage. */ }
-    }
-    if (params.get('month') === group.month && params.get('assignment') === selectedId) return;
-    setParams(current => {
-      const next = new URLSearchParams(current);
-      next.set('month', group.month);
-      next.set('assignment', selectedId);
-      return next;
-    }, { replace: true });
-  }, [busy, extras.loading, loadError, plan.errors.length, kind, id, group, selectedId, selectionKey, view, params, setParams]);
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel}
     pageTitle="Monthly submission" pageSubtitle="Your assignment, evidence and coaching preparation" userName={real?.name || 'Learner'} userRole="Learner">
     <main className={`page-container ${styles.page}`}>
@@ -126,7 +125,7 @@ export default function MonthlySubmissionPage() {
                     {monthName(item.month)}{item.label !== monthName(item.month) ? ` — ${item.label}` : ''}
                   </option>)}
                 </select>
-              </label><Link className={`${styles.primary} ${styles.extraActivityButton}`} to={`/learner/monthly-submission/${kind}/${id}/extra-activities`}>+ Extra activities</Link></div>
+              </label><div><Link className={`${styles.primary} ${styles.extraActivityButton}`} to={`/learner/monthly-submission/${kind}/${id}/extra-activities`}>+ Extra activities</Link><ExtraActivityInfo /></div></div>
             </section>
             <div className={styles.assignmentWorkspace}>
             <div className={styles.assignmentDetail}>
@@ -135,7 +134,10 @@ export default function MonthlySubmissionPage() {
               <header className={styles.heroHeader}>
                 <div className={styles.heroHeading}><span className={styles.heroIcon}><FileText size={24} aria-hidden="true" /></span>
                   <div><p className={styles.eyebrow}>Your extra activity · {monthName(group.month)}</p><h2>{selectedExtra.title}</h2></div></div>
-                <span className={styles.status} data-status="accepted"><CheckCircle2 size={15} aria-hidden="true" />Accepted</span>
+                <span className={styles.status} data-status={selectedExtra.status}>
+                  {selectedExtra.status === 'accepted' && <CheckCircle2 size={15} aria-hidden="true" />}
+                  {extraStatusLabels[selectedExtra.status] || selectedExtra.status.replaceAll('_', ' ')}
+                </span>
               </header>
               <div className={styles.extraDetailsBody}>
                 <div className={styles.extraDetailsContent}>
@@ -148,6 +150,7 @@ export default function MonthlySubmissionPage() {
                 </div>
                 <aside className={styles.extraMetadata} aria-label="Extra activity information">
                   <h3>Submission details</h3><dl>
+                    {selectedExtra.addedBy && <div><dt>Added by coach</dt><dd>{selectedExtra.addedBy}</dd></div>}
                     <div><dt>Submitted</dt><dd>{selectedExtra.submittedAt ? new Date(selectedExtra.submittedAt).toLocaleString('en-GB', { timeZone: 'Europe/London' }) + ' (UK time)' : 'Date unavailable'}</dd></div>
                     {selectedExtra.hours && <div><dt>Hours claimed</dt><dd>{selectedExtra.hours} {Number(selectedExtra.hours) === 1 ? 'hour' : 'hours'}</dd></div>}
                     {selectedExtra.ksbs.length > 0 && <div><dt>KSBs claimed</dt><dd className={styles.extraKsbTags}>{selectedExtra.ksbs.map((code, index) => <span key={`${code}:${index}`}>{code}</span>)}</dd></div>}
@@ -156,18 +159,19 @@ export default function MonthlySubmissionPage() {
               </div>
             </section>}
             </div>
-            <section className={styles.assignmentSection} aria-label={view === 'overdue' ? 'Overdue assignments' : `Assignments for ${group.label}`}>
+            <section className={styles.assignmentSection} aria-label={view === 'extras' ? `Extra activities for ${group.label}` : view === 'overdue' ? 'Overdue assignments' : `Assignments for ${group.label}`}>
               <div className={styles.filterToolbar}>
-                <div className={styles.statusFilters} role="group" aria-label="Filter assignments by time">
-                  {(['month', 'overdue'] as const).map(option => <button key={option} type="button"
+                <div className={styles.statusFilters} role="group" aria-label="Filter submissions">
+                  {(['month', 'overdue', 'extras'] as const).map(option => <button key={option} type="button"
                     aria-pressed={view === option} onClick={() => filterByView(option)}>
-                    {option === 'month' ? 'This month' : 'Overdue'}
+                    {option === 'extras' ? 'Extra activities' : option === 'month' ? 'This month' : 'Overdue'}
                   </button>)}
                 </div>
-                <span className={styles.assignmentCount}>{view === 'overdue' ? `${visibleAssignments.length} overdue assignments` : `${visibleAssignments.length} of ${group.assignments.length} assignments${acceptedExtras.length > 0 ? ` · ${visibleExtras.length} of ${acceptedExtras.length} extra activities` : ''}`}</span>
+                <span className={styles.assignmentCount}>{view === 'extras' ? (extras.loading ? 'Loading extra activities…' : extras.error ? 'Extra activities unavailable' : `${visibleExtras.length} extra ${visibleExtras.length === 1 ? 'activity' : 'activities'} submitted`) : view === 'overdue' ? `${visibleAssignments.length} overdue assignments` : `${visibleAssignments.length} of ${group.assignments.length} assignments${acceptedExtras.length > 0 ? ` · ${visibleExtras.length} of ${acceptedExtras.length} extra activities` : ''}`}</span>
               </div>
               {view === 'month' && !group.month && <p className={styles.unscheduled}>These assignments do not have a confirmed Training Plan date yet.</p>}
-              {!visibleAssignments.length && !visibleExtras.length && <p className={styles.filterEmpty} role="status">{view === 'overdue' ? 'No overdue assignments with a confirmed due date.' : 'No assignments for this month. Choose another month or check Overdue.'}</p>}
+              {view === 'extras' && extras.loading && <p role="status">Loading extra activities…</p>}
+              {!visibleAssignments.length && !visibleExtras.length && !(view === 'extras' && (extras.loading || extras.error)) && <p className={styles.filterEmpty} role="status">{view === 'extras' ? 'No extra activities submitted this month.' : view === 'overdue' ? 'No overdue assignments with a confirmed due date.' : 'No assignments for this month. Choose another month or check Overdue.'}</p>}
               <div className={styles.assignmentGrid}>{visibleAssignments.map(({ row, sourceGroup }) => <button type="button" key={row.id}
                 className={styles.assignment} aria-pressed={row.id === assignment?.id} onClick={() => view === 'overdue' ? selectOverdueAssignment(row.id) : select(sourceGroup.month, row.id)}>
                 <span className={styles.assignmentTop}><span className={styles.assignmentIcon}><FileText size={19} aria-hidden="true" /></span>
@@ -179,7 +183,7 @@ export default function MonthlySubmissionPage() {
               </button>)}{visibleExtras.map(activity => <button type="button" key={activity.activityId}
                 className={styles.assignment} aria-pressed={activity.activityId === selectedExtra?.activityId} onClick={() => select(group.month, activity.activityId)}>
                 <span className={styles.assignmentTop}><span className={styles.assignmentIcon}><FileText size={19} aria-hidden="true" /></span>
-                  <span className={styles.status} data-status="accepted">Accepted</span></span>
+                  <span className={styles.status} data-status={activity.status}>{extraStatusLabels[activity.status] || activity.status.replaceAll('_', ' ')}</span></span>
                 <strong>Extra Activity · {activity.title}</strong><span className={styles.assignmentTopic}>{monthName(activity.month)}</span>
                 <span className={styles.assignmentBottom}><span>{activity.hours ? `${activity.hours} hours claimed` : 'Hours not specified'}</span>
                   <span>{activity.activityId === selectedExtra?.activityId ? <><CheckCircle2 size={15} aria-hidden="true" />Selected</> : <>View details<ArrowUpRight size={15} aria-hidden="true" /></>}</span></span>

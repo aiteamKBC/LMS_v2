@@ -9,11 +9,11 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 
 from curriculum_api.models import LiveSession, LiveSessionOccurrence, ModuleAuthoringModule
-from learner_api.attendance_lectures import attendance_read_contract, lecture_register
+from .bulk_register import learner_contract as attendance_read_contract, learner_rows as lecture_register
 from learner_api.attendance_rules import canonical_status
 from .auth import coach_access_required
 from .attendance_group import compact_recent
-from .attendance_sessions import assigned_module_ids
+from .bulk_register import saved_module_ids as assigned_module_ids
 from .validation import ValidationError
 from .models import CoachAttendanceSourceAdjustment
 
@@ -73,10 +73,11 @@ def current_row(profile, occurrence_id, lock=False):
     source = getattr(profile, '_caseload_source', None)
     if source is None:
         raise BulkError('Learner attendance source is no longer available.', 409)
-    rows = lecture_register(source, learner_profile_id=profile.id, apply_adjustments=False)
+    rows = lecture_register(source, learner_profile_id=profile.id, apply_adjustments=False,
+                            occurrence_id=occurrence_id, lock=lock)
     row = next((row for row in rows if row.get('source') == 'microsoft-teams' and str(row['session_id']) == occurrence_id), None)
     if row is None:
-        raise BulkError('Occurrence is no longer assigned to this learner.', 409)
+        raise BulkError('No saved attendance record is available for this learner and occurrence.', 409)
     query = CoachAttendanceSourceAdjustment.objects.filter(
         learner_id=profile.id, source='microsoft-teams', source_id=occurrence_id)
     adjustment = (query.select_for_update() if lock else query).first()
@@ -115,14 +116,16 @@ def write_records(profiles, occurrence_id, records, owner):
             raise BulkError('Each attendance record must be an object.')
         learner_id = str(record.get('learnerId', ''))
         status = record.get('status')
-        if learner_id in seen or status not in {'present', 'absent'}:
-            raise BulkError('Use distinct learners and present or absent statuses.')
+        if learner_id in seen or status not in {'present', 'absent', 'reset'}:
+            raise BulkError('Use distinct learners and present, absent or reset actions.')
         seen.add(learner_id)
         profile = profiles.get(learner_id)
         if profile is None:
             raise BulkError('Learner is outside your caseload or selected programme/group.', 403)
         row, adjustment, version = current_row(profile, occurrence_id, lock=True)
-        same = adjustment is not None and not adjustment.is_deleted and adjustment.status == status
+        desired = '' if status == 'reset' else status
+        same = ((adjustment is None and status == 'reset') or
+                (adjustment is not None and not adjustment.is_deleted and adjustment.status == desired))
         # Retries after a lost response succeed; different stale edits conflict.
         if record.get('version') != version and not same:
             raise BulkError('Attendance changed since loading. Reload the session before applying your changes.', 409)
@@ -133,7 +136,7 @@ def write_records(profiles, occurrence_id, records, owner):
         if not same:
             CoachAttendanceSourceAdjustment.objects.update_or_create(
                 learner_id=int(learner_id), source='microsoft-teams', source_id=occurrence_id,
-                defaults={'status': status, 'is_deleted': False, 'owner_email': owner, 'updated_by': owner})
+                defaults={'status': '' if status == 'reset' else status, 'is_deleted': False, 'owner_email': owner, 'updated_by': owner})
             action = 'updated' if adjustment else 'created'
         results.append({'learnerId': learner_id, 'status': status, 'action': action})
     return results
@@ -182,10 +185,11 @@ def coach_bulk_attendance(request):
                 raw = lecture_register(source, learner_profile_id=profile.id, apply_adjustments=False)
                 if not any(row.get('source') == 'microsoft-teams' and str(row['session_id']) == occurrence_id for row in raw):
                     continue
-                _, _, version = current_row(profile, occurrence_id)
+                _, adjustment, version = current_row(profile, occurrence_id)
                 contract = attendance_read_contract(source, learner_profile_id=profile.id)
                 session = next((row for row in contract['history'] if row['source'] == 'microsoft-teams' and row['sourceId'] == occurrence_id), None)
-                learners.append({'learnerId': str(profile.id), 'status': session['status'] if session else 'unmarked', 'version': version})
+                learners.append({'learnerId': str(profile.id), 'status': session['status'] if session else 'unmarked', 'version': version,
+                                 'manualStatus': adjustment.status if adjustment and not adjustment.is_deleted and adjustment.status else None})
             return JsonResponse({'learners': learners, 'warnings': warnings})
         records = payload.get('records')
         if not occurrence_id or not isinstance(records, list) or not records or len(records) > 1000:
@@ -201,10 +205,11 @@ def coach_bulk_attendance(request):
                     contract = attendance_read_contract(profile._caseload_source, learner_profile_id=profile.id)
                     session = next(row for row in contract['history']
                                    if row['source'] == 'microsoft-teams' and row['sourceId'] == occurrence_id)
-                    _, _, version = current_row(profile, occurrence_id)
+                    _, adjustment, version = current_row(profile, occurrence_id)
                     result.update(status=session['status'], version=version,
                                   sessionOccurrenceId=occurrence_id, attendanceRecord=session,
-                                  recent=compact_recent(contract))
+                                  recent=compact_recent(contract),
+                                  manualStatus=adjustment.status if adjustment and not adjustment.is_deleted and adjustment.status else None)
         from .attendance_context import clear_context_cache
         clear_context_cache()
         return JsonResponse({'ok': True, 'results': results})

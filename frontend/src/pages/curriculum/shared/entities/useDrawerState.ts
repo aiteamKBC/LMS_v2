@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchCurriculumRevisions, recordConflict, type CurriculumRecordKind } from '@/lib/curriculumApi';
+import { recordConflict, type CurriculumRecordKind } from '@/lib/curriculumApi';
 import { sameFormValues } from './model';
+import { fetchCurriculumRecordSnapshot } from './recordSnapshot';
 
 /**
  * What a drawer should do with the record values it has just computed.
@@ -207,8 +208,9 @@ export const RECORD_REBASE_LIMIT = 3;
 
 export interface RecordGuard<TRecord> {
   /**
-   * The stored record a refusal handed back, for the seeding effect to merge
-   * in place of the one the drawer was opened with. Null the rest of the time.
+   * The stored record for the seeding effect to seed or merge in place of the
+   * one the drawer was opened with: the one a refusal handed back, otherwise
+   * the one read with the current token. Null until either exists.
    */
   stored: TRecord | null;
   /** Changes when a refusal has been taken, to drive the retry. */
@@ -216,9 +218,10 @@ export interface RecordGuard<TRecord> {
   /**
    * Run a save under the guard.
    *
-   * `run` is given the token to send, or '' when this record has none -- a
-   * record whose revision could not be read saves unguarded, exactly as it did
-   * before any of this existed, rather than being blocked.
+   * `run` is given the token to send, or '' when the server says this record
+   * has none -- such a record saves unguarded, as it did before any of this
+   * existed. A token that could not be *read* is different: the save is
+   * refused with a sentence rather than run unchecked.
    *
    * Answers `{ saved: true }` when it landed. `{ saved: false }` means somebody
    * else got there first: the stored record is now on `stored` for the drawer
@@ -243,44 +246,137 @@ export interface RecordGuard<TRecord> {
  *
  * Nothing here depends on the live-update poll. Polling still decides how soon
  * a colleague's change *appears*; it no longer decides whether it survives.
+ *
+ * The token and the values it vouches for are read together. The drawer was
+ * opened from the cached overview, which can be well behind the table; a fresh
+ * token paired with those stale fields would let a reader who changed nothing
+ * save the old values straight over a colleague's work. So the stored record
+ * arrives with the token, the drawer seeds (or, mid-edit, merges) from it, and
+ * the token is only adopted once that has rendered. `source` is the record the
+ * drawer was opened with: when the page refreshes it, both are read again so
+ * the colleague's change still appears, and its derived fields fill in what
+ * the stored record does not carry.
  */
 export function useRecordGuard<TRecord>(
   kind: CurriculumRecordKind,
   recordId: string | undefined,
   open: boolean,
+  source?: TRecord | null,
 ): RecordGuard<TRecord> {
   const revisionRef = useRef('');
   const attemptsRef = useRef(0);
+  // The read the token is waiting on, so a save waits for it too.
+  const readRef = useRef<Promise<void> | null>(null);
+  // Moves each time a token is adopted, i.e. each time the form was re-seeded
+  // from a stored record. A save that watched it move was built before that.
+  const adoptedRef = useRef(0);
+  // The last read failed: there is no token, and nothing says none is needed.
+  const unreadRef = useRef(false);
   const [stored, setStored] = useState<TRecord | null>(null);
+  const [snapshot, setSnapshot] = useState<TRecord | null>(null);
   const [rebase, setRebase] = useState(0);
   const [exhausted, setExhausted] = useState(false);
+  // Content, not identity: the list behind the drawer hands over a new object
+  // on every refresh, and only a real change is worth another read.
+  const sourceKey = useMemo(() => (source ? JSON.stringify(source) : ''), [source]);
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  // What the drawer is seeding from right now; set below, once it is known.
+  const shownRef = useRef<TRecord | null>(null);
+  // A token waiting for the drawer to render the record it describes.
+  const adoptingRef = useRef<{ revision: string; done: () => void } | null>(null);
+  const [adoptTick, setAdoptTick] = useState(0);
+
+  const read = useCallback((signal: AbortSignal): Promise<void> => {
+    if (!recordId) return Promise.resolve();
+    const pending = (async () => {
+      try {
+        const fresh = await fetchCurriculumRecordSnapshot<TRecord>(kind, recordId, signal);
+        if (signal.aborted) return;
+        const candidate = fresh.record && sourceRef.current
+          ? { ...sourceRef.current, ...fresh.record }
+          : fresh.record;
+        // Re-seed only when the stored record says something the drawer is not
+        // already showing. An identical re-seed changes nothing on screen, but
+        // lands on a pristine form and can swallow a keystroke typed that frame.
+        if (candidate && !sameFormValues(
+          candidate as Record<string, unknown>,
+          shownRef.current as Record<string, unknown> | null,
+        )) {
+          unreadRef.current = false;
+          // The token must not be sendable until the values it describes are
+          // the ones a save would send, so it is handed to the adoption effects
+          // below rather than set here. Settles early if this read is replaced.
+          await new Promise<void>(resolve => {
+            adoptingRef.current?.done();
+            adoptingRef.current = { revision: fresh.revision, done: resolve };
+            signal.addEventListener('abort', () => resolve(), { once: true });
+            // Read after any refusal's record, so at least as new: it replaces it.
+            setStored(null);
+            setSnapshot(fresh.record);
+          });
+          return;
+        }
+        revisionRef.current = fresh.revision;
+        unreadRef.current = false;
+      } catch {
+        // Keep whatever token is held: it still describes what is on screen.
+        if (!signal.aborted) unreadRef.current = true;
+      }
+    })();
+    readRef.current = pending;
+    return pending;
+  }, [kind, recordId]);
 
   useEffect(() => {
     revisionRef.current = '';
     attemptsRef.current = 0;
+    unreadRef.current = false;
+    readRef.current = null;
+    adoptingRef.current?.done();
+    adoptingRef.current = null;
     setStored(null);
+    setSnapshot(null);
     setExhausted(false);
+  }, [kind, open, recordId]);
+
+  useEffect(() => {
     if (!open || !recordId) return undefined;
     const controller = new AbortController();
-    // Wrapped rather than chained off the call: a token that cannot be read is
-    // never a reason to stop somebody saving, and that has to hold however the
-    // read fails -- including before it returns a promise at all. The drawer
-    // then falls back to the unguarded write it has always done, and to the
-    // poll-and-merge that was its only protection before any of this.
-    (async () => {
-      try {
-        const revisions = await fetchCurriculumRevisions({ [kind]: [recordId] }, controller.signal);
-        revisionRef.current = revisions[kind]?.[recordId] || '';
-      } catch {
-        revisionRef.current = '';
-      }
-    })();
+    void read(controller.signal);
     return () => controller.abort();
-  }, [kind, open, recordId]);
+  }, [open, read, recordId, sourceKey]);
 
   const save = useCallback(async <T extends { revision?: string }>(
     run: (expectedRevision: string) => Promise<T>,
   ): Promise<{ saved: boolean; result?: T }> => {
+    const seenBefore = adoptedRef.current;
+    // Settle whatever read is in flight, including one that started while this
+    // one was waiting.
+    for (let pending = readRef.current; pending; pending = readRef.current === pending ? null : readRef.current) {
+      await pending;
+    }
+    // A failed read is tried once more here. If that fails too, nothing is
+    // written: saving unchecked is exactly how a stale copy overwrites.
+    if (unreadRef.current) await read(new AbortController().signal);
+    if (unreadRef.current) {
+      throw new Error(
+        'Nothing was saved, because the latest saved version could not be checked. '
+        + 'Your changes are still here - try again in a moment.',
+      );
+    }
+    if (adoptedRef.current !== seenBefore) {
+      // The form has just been seeded from the stored record, and the values
+      // this save was handed predate that. Send what the merge produced instead.
+      if (attemptsRef.current >= RECORD_REBASE_LIMIT) {
+        attemptsRef.current = 0;
+        setExhausted(true);
+        throw new Error('This record keeps changing while you save it. Your changes are still here - try again.');
+      }
+      attemptsRef.current += 1;
+      setRebase(count => count + 1);
+      return { saved: false };
+    }
     try {
       const result = await run(revisionRef.current);
       revisionRef.current = result?.revision || '';
@@ -305,9 +401,37 @@ export function useRecordGuard<TRecord>(
       setRebase(count => count + 1);
       return { saved: false };
     }
-  }, [kind]);
+  }, [kind, read]);
 
-  return { stored, rebase, save, exhausted };
+  // Memoised: the seeding effect depends on this, and a new object every render
+  // would re-run it every render.
+  const current = useMemo<TRecord | null>(() => {
+    if (stored) return stored;
+    if (!snapshot) return null;
+    return source ? { ...source, ...snapshot } : snapshot;
+    // `source` by content: see sourceKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stored, snapshot, sourceKey]);
+  shownRef.current = current ?? source ?? null;
+
+  // Adopting a token takes two commits, and the timing is the point. The commit
+  // that carries the new record runs the drawer's seeding effect, whose setters
+  // render the merged values one render later; this effect's tick is batched
+  // into that same render. The effect after it is therefore the first moment a
+  // save would send what the token describes.
+  useEffect(() => {
+    if (adoptingRef.current) setAdoptTick(count => count + 1);
+  }, [current]);
+  useEffect(() => {
+    const adopting = adoptingRef.current;
+    if (!adoptTick || !adopting) return;
+    adoptingRef.current = null;
+    revisionRef.current = adopting.revision;
+    adoptedRef.current += 1;
+    adopting.done();
+  }, [adoptTick]);
+
+  return { stored: current, rebase, save, exhausted };
 }
 
 /**

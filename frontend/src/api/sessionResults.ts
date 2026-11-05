@@ -1,7 +1,8 @@
 import { learningFetch, personalLearningUrl } from '@/lib/personalLearning';
 import { coachFetch } from '@/lib/coachFetch';
 import type { LearnerKind } from './learnerDetail';
-import { invalidateLearnerReads } from './learnerRead';
+import { invalidateLearnerReads, withCallerSignal } from './learnerRead';
+import { createCachedResource } from './cachedRequest';
 
 export interface SessionPerson {
   email: string; name: string; seconds: number; expected: boolean;
@@ -69,6 +70,8 @@ export interface SessionResult {
   learningOutcome?: 'present' | 'recorded' | 'awaiting_recording' | 'upcoming' | 'in_progress' | 'unmarked';
   id: string; seriesId: string; sessionNumber: number; startsAt: string; endsAt: string;
   title?: string; actualStartsAt?: string | null; actualEndsAt?: string | null;
+  /** Title of the Course structure item linked to this session; null when none or ambiguous. */
+  itemTitle?: string | null;
   runs?: { startsAt: string; endsAt: string }[];
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
   attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
@@ -82,8 +85,24 @@ export interface ModuleSessionResults {
   series: { id: string; title: string; sessions: SessionResult[] }[];
   jobs: SessionSyncJob[];
 }
+/** Matches CATEGORIES in backend/curriculum_api/session_sync_issues.py. */
+export type SessionSyncIssueCategory = 'not_found' | 'access_denied' | 'authentication' | 'rate_limited'
+  | 'service_unavailable' | 'network' | 'storage' | 'link_repair' | 'unknown';
+/** Staff only. One outstanding problem from the last failed sync; diagnostics never include URLs or tokens. */
+export interface SessionSyncIssue {
+  category: SessionSyncIssueCategory;
+  fileType: 'recording' | 'transcript' | 'attendance' | null;
+  artifactId: string | null; sessionNumber: number | null; httpStatus: number | null;
+  stage: string | null; errorType: string | null; occurredAt: string | null; detail: string;
+  /** The course week whose live-session component links this session; null when none or ambiguous. */
+  week?: { number: number | null; title: string } | null;
+  /** Title of the linked Course structure item; null when none or ambiguous. */
+  sessionTitle?: string | null;
+}
 export interface SessionSyncJob {
   live_session_id: string; state: string; last_error: string;
+  /** Absent from servers older than the categorised errors; last_error is the fallback. */
+  issues?: SessionSyncIssue[];
   started_at?: string | null; finished_at?: string | null;
   progress?: {
     filesReady: number; totalFiles: number;
@@ -96,15 +115,38 @@ export interface SessionSyncJob {
 }
 export interface SessionLearner { kind: LearnerKind; id: string }
 const adminBase = '/curriculum_api/curriculum/session-results';
+export interface SessionAttendanceCorrection {
+  learnerProfileId: number; email?: string; manualStatus: 'present' | 'absent' | null; version: string;
+}
+const correctionUrl = (seriesId: string, number: number) =>
+  `${adminBase}/${encodeURIComponent(seriesId)}/sessions/${number}/attendance-correction/`;
+export const loadSessionAttendanceCorrections = (seriesId: string, number: number, moduleId: string, signal?: AbortSignal) =>
+  read<{ corrections: SessionAttendanceCorrection[]; editable: boolean }>(`${correctionUrl(seriesId, number)}?moduleId=${encodeURIComponent(moduleId)}`, signal);
+export async function saveSessionAttendanceCorrection(seriesId: string, number: number, moduleId: string,
+  correction: SessionAttendanceCorrection, action: 'present' | 'absent' | 'reset') {
+  const response = await coachFetch(correctionUrl(seriesId, number), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moduleId, learnerProfileId: correction.learnerProfileId, version: correction.version, action }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || 'Attendance correction could not be saved.');
+  invalidateLearnerReads();
+  return payload as SessionAttendanceCorrection;
+}
 export const sessionBase = (seriesId: string, learner?: SessionLearner) => learner
   ? `/learner_api/session-results/${learner.kind}/${encodeURIComponent(learner.id)}/${encodeURIComponent(seriesId)}`
   : `${adminBase}/${encodeURIComponent(seriesId)}`;
 
-async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await learningFetch(url, { credentials: 'include', cache: 'no-store', signal });
+const savedResults = createCachedResource('saved-session-results', async (url: string) => {
+  const response = await learningFetch(url, { credentials: 'include', cache: 'no-store' });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Saved results could not be loaded.');
-  return result as T;
+  return result;
+}, 0);
+
+function read<T>(url: string, signal?: AbortSignal): Promise<T> {
+  if (signal?.aborted) return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+  return withCallerSignal(savedResults.read(url) as Promise<T>, signal);
 }
 export const loadModuleSessions = (moduleId: string, signal?: AbortSignal) =>
   read<ModuleSessionResults>(`/curriculum_api/curriculum/modules/${encodeURIComponent(moduleId)}/session-results/`, signal);
@@ -118,10 +160,15 @@ export interface RecordingWatchState { watchedSeconds: number; durationSeconds: 
 const watchUrl = (seriesId: string, file: SessionFile, learner: SessionLearner) =>
   `${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/watch/`;
 /** Viewing so far, plus the CSRF token for reports (learners cannot read /coach_api/csrf). */
-export async function loadRecordingWatch(seriesId: string, file: SessionFile, learner: SessionLearner, signal?: AbortSignal) {
-  const response = await fetch(watchUrl(seriesId, file, learner), { credentials: 'include', signal });
+const watchReads = createCachedResource('recording-watch', async (url: string) => {
+  const response = await fetch(url, { credentials: 'include' });
   if (!response.ok) throw new Error(`Viewing time is unavailable (${response.status}).`);
   return response.json() as Promise<RecordingWatchState>;
+}, 0);
+
+export function loadRecordingWatch(seriesId: string, file: SessionFile, learner: SessionLearner, signal?: AbortSignal) {
+  if (signal?.aborted) return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+  return withCallerSignal(watchReads.read(watchUrl(seriesId, file, learner)), signal);
 }
 /** Report seconds of a recording the learner played since the last report (learner view only). */
 export async function recordRecordingWatch(seriesId: string, file: SessionFile, learner: SessionLearner,
@@ -131,6 +178,7 @@ export async function recordRecordingWatch(seriesId: string, file: SessionFile, 
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' },
   });
   if (!response.ok) throw new Error(`Viewing time could not be saved (${response.status}).`);
+  watchReads.invalidate(watchUrl(seriesId, file, learner));
   invalidateLearnerReads();
   return response.json() as Promise<{ watchedSeconds: number; durationSeconds: number }>;
 }
@@ -142,6 +190,7 @@ export async function requestSessionSync(seriesId: string) {
   const response = await coachFetch(`${adminBase}/${encodeURIComponent(seriesId)}/sync/`, { method: 'POST' });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not request synchronization.');
+  savedResults.invalidate();
   return result as { state: 'queued'; message: string };
 }
 
@@ -156,6 +205,7 @@ export async function linkAttendanceAlias(seriesId: string, sessionNumber: numbe
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not link the reported email.');
+  savedResults.invalidate();
   return result as { aliasEmail: string; sourceRecordIds: string[]; learnerProfileId: number; learnerEmail: string; learnerName: string;
     action?: 'link' | 'change' | 'unlink'; scope?: 'module' | 'session'; recalculation?: 'complete' | 'failed' | 'pending' };
 }
@@ -166,6 +216,7 @@ export async function setRecordingVisibility(seriesId: string, artifactId: strin
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not update recording visibility.');
+  savedResults.invalidate();
 }
 
 /** Where a recording's saved copy stands, from the archive row a sync persisted. */

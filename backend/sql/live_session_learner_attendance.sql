@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS curriculum.live_session_learner_attendance (
     CONSTRAINT curriculum_live_learner_attendance_seconds_valid
         CHECK (attended_seconds >= 0),
     CONSTRAINT curriculum_live_learner_attendance_uniq
-        UNIQUE (occurrence_id, learner_profile_id)
+        UNIQUE (occurrence_id, learner_profile_id, module_catalogue_id)
 );
 
 ALTER TABLE curriculum.live_session_learner_attendance

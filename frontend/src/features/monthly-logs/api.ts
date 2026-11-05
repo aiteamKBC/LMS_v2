@@ -1,12 +1,15 @@
 import { readLearnerJson, invalidateLearnerReads } from '@/api/learnerRead';
 import { coachViewAs } from '@/lib/coachViewAs';
-import type { ActivityContent, JournalSummary, MonthDetail, MonthState, SignatureCaptureMethod } from '@/features/old-otjh/api';
+import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
+import type { Activity, ActivityContent, JournalSummary, MonthDetail, MonthState, SignatureCaptureMethod } from '@/features/old-otjh/api';
 
 export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null };
 export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null; demo_only?: boolean };
+export type UnallocatedActivity = Pick<Activity, 'id' | 'title' | 'actual_hours' | 'actual_hours_recorded'>;
 export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
   training_plan_totals?: { accepted_hours: number; planned_hours: number | null };
+  unallocated_activities?: UnallocatedActivity[];
 };
 /** The per-month hour totals the dashboard reads; a LogSummary satisfies it. */
 export type MonthlyLogHours = {
@@ -38,6 +41,18 @@ export async function getLogContent(id: string, month: string, rowId: number, pe
   })) };
 }
 export const getLogLearners = () => read<{ learners: LogLearner[] }>('learners/');
+
+export async function correctLogManualTime(id: string, month: string, progressId: number,
+  input: { seconds: number; revision: string; reason: string }, csrfToken: string, perspective: LogPerspective) {
+  const response = await fetch(url(`${id}/${month}/manual-time/${progressId}/`, perspective), {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }, body: JSON.stringify(input),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.detail || !data?.correction) throw new Error(data?.error || 'Could not correct the manual time. Please try again.');
+  invalidateLearnerDetailCache(data.correction.learner_kind, data.correction.learner_id);
+  return data.detail as LogDetail;
+}
 
 export async function completeLogMonth(id: string, month: string, csrfToken: string, perspective: LogPerspective = 'learner') {
   const response = await fetch(url(`${id}/${month}/complete/`, perspective), {

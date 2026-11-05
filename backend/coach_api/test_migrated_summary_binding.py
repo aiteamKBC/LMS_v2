@@ -1,6 +1,8 @@
 """Synthetic binding/persistence and ordered race tests; Graph and AI are mocked."""
 from copy import deepcopy
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+from django.conf import settings
 from inspect import unwrap
 from io import BytesIO
 import json
@@ -13,7 +15,8 @@ from pypdf import PdfReader
 
 from . import migrated_completion_views as lifecycle, migrated_intelligence_views as intelligence, views
 from .migrated_completion import build_pdf, ensure_document
-from .migrated_reviews import meeting_summary_field, render_sections
+from .migrated_reviews import meeting_summary_field, render_sections, validate_answers
+from .migrated_session_scope import validate_attendance_response
 from .migrated_summary_binding import answer_version, binding_state, populate_answer, preserve_original
 from .migrated_templates import serialize_template, snapshot_for, validate_managed_definition
 from .models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewTemplate
@@ -28,6 +31,27 @@ DEFINITION = {"sections": [{"key": "meeting", "title": "Meeting discussion", "or
 
 
 class MigratedBindingValidationTests(SimpleTestCase):
+    def test_only_mcm_summary_accepts_unlimited_text_on_save_and_submission(self):
+        text = 'Discussion and agreed actions.\n' * 1000
+        for family in ('MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP', None):
+            for kind in (1, 13):
+                definition = deepcopy(DEFINITION)
+                definition['templateSource'] = {'family': family}
+                definition['sections'][0]['fields'][0]['aptemType'] = kind
+                for completing in (False, True):
+                    with self.subTest(family=family, kind=kind, completing=completing):
+                        answers = {'recap': text, 'other': 'Preserve this answer'}
+                        if family == 'MCM':
+                            self.assertEqual(validate_answers(definition, answers, completing=completing), answers)
+                        else:
+                            with self.assertRaisesRegex(ValueError, '4000'):
+                                validate_answers(definition, answers, completing=completing)
+                with self.subTest(family=family, kind=kind):
+                    with self.assertRaises(ValueError):
+                        validate_answers(definition, {'recap': ['Not text']})
+                    with self.assertRaisesRegex(ValueError, '4000'):
+                        validate_answers(definition, {'other': text})
+
     def test_only_two_text_types_accept_binding(self):
         for kind in (1, 13, 2, 4, 5, 6, 11, 99):
             with self.subTest(kind=kind):
@@ -103,21 +127,58 @@ class MigratedBindingFlowTests(TestCase):
             scheduled_time=time(10), duration_minutes=30, graph_event_id="synthetic", sync_state="synced", status="in-progress")
         self.definition = {"migratedForm": True, "readOnly": False, "instance": {"id": self.overlay.event_key, "learnerId": 42},
             "historicalReview": {"id": "7001", "type": "Monthly Coaching Meeting"}, "template": {"reviewTypeCode": "aptem_mcm"}}
-        self.snapshot = {"artifacts": [], "attendanceReports": [], "attendanceTracker": {"tracker": []},
-            "attendance": {"reports": [], "records": []}, "errors": [], "partial": False}
+        report_start = datetime.combine(self.calendar.scheduled_date, self.calendar.scheduled_time,
+                                        ZoneInfo(settings.TIME_ZONE))
+        ended_report = {"id": "synthetic-ended-report", "records": [],
+                        "meetingStartDateTime": report_start.isoformat(),
+                        "meetingEndDateTime": (report_start + timedelta(minutes=20)).isoformat()}
+        self.snapshot = {"artifacts": [], "attendanceReports": [ended_report],
+            "attendanceTracker": {"tracker": []},
+            "attendance": {"reports": [ended_report], "records": []}, "errors": [], "partial": False}
 
-    def check(self, *, summary=None, transcript="Synthetic transcript", ai_error=None, during_fetch=None, snapshot=None):
-        def fetch(_record):
+    def check(self, *, summary=None, transcript="Synthetic transcript", ai_error=None, during_fetch=None, during_generation=None, snapshot=None):
+        saved = deepcopy(self.snapshot)
+        def fetch(_record, *, target_error_handler, transcript_collection_fetcher, transcript_content_selector,
+                  attendance_response_validator, independent_resources, target_resolver):
+            self.assertIs(independent_resources, True)
+            self.assertIs(target_error_handler, intelligence._graph_target_failure)
+            self.assertIs(transcript_collection_fetcher, intelligence._transcript_collection)
+            self.assertIs(attendance_response_validator, validate_attendance_response)
+            self.assertTrue(callable(transcript_content_selector))
+            self.assertEqual(target_resolver(_record), ('synthetic/onlineMeetings/synthetic-meeting', None))
             if during_fetch:
                 during_fetch()
-            return deepcopy(snapshot or self.snapshot), None, 200
+            current = deepcopy(snapshot or self.snapshot)
+            if transcript and not current['artifacts']:
+                # The transcript double must include the evidence used to select its session.
+                start = datetime.combine(self.calendar.scheduled_date, self.calendar.scheduled_time, ZoneInfo(settings.TIME_ZONE))
+                current['artifacts'] = [{'artifact_type': 'transcript', 'graph_artifact_id': 'artifact-one',
+                    'created_datetime': start.isoformat(), 'end_datetime': (start + timedelta(minutes=20)).isoformat(),
+                    'call_id': 'synthetic-call', 'transcript_text': transcript,
+                    'transcript_vtt': f'WEBVTT\n\n{transcript}'}]
+            return current, None, 200
+        def persist(_record, **kwargs):
+            saved.update(artifacts=deepcopy(kwargs['artifacts']), attendanceReports=deepcopy(kwargs['attendance_reports']),
+                         attendanceTracker=deepcopy(kwargs['attendance_tracker']), partial=False)
+            return {'stored': True}
+        def generate(*_):
+            if during_generation:
+                during_generation()
+            if ai_error:
+                raise ai_error
+            return summary or {"overview": "Original AI facts"}, "test-model"
         with patch.object(intelligence, "_coach_review", return_value=(OWNER, self.definition)), \
+             patch('coach_api.actual_session_resolution.review_meeting_target',
+                   side_effect=lambda _record, *, identity_out: (
+                       identity_out.update(target=SimpleNamespace(online_meeting_id='synthetic-meeting'))
+                       or ('synthetic/onlineMeetings/synthetic-meeting', None))), \
              patch.object(views, "fetch_coach_meeting_graph_snapshot", side_effect=fetch), \
-             patch.object(views, "persist_coach_meeting_snapshots", return_value={"stored": True}), \
-             patch.object(views, "stored_coach_meeting_snapshot", return_value=self.snapshot), \
+             patch.object(views, "persist_coach_meeting_snapshots", side_effect=persist), \
+             patch.object(views, "stored_coach_meeting_snapshot", side_effect=lambda *a, **kw: deepcopy(saved)), \
              patch.object(views, "stored_coach_meeting_transcript_for_summary", return_value={"artifactId": "artifact-one", "text": transcript} if transcript else None), \
-             patch.object(views, "openai_meeting_summary", side_effect=ai_error, return_value=(summary or {"overview": "Original AI facts"}, "test-model")) as ai:
-            response = unwrap(intelligence.migrated_review_check_session)(self.factory.post("/"), self.overlay.event_key)
+             patch.object(views, "openai_meeting_summary", side_effect=generate) as ai:
+            response = unwrap(intelligence.migrated_review_check_session)(self.factory.post("/",
+                data=json.dumps({'generateSummary': True}), content_type='application/json'), self.overlay.event_key)
         self.overlay.refresh_from_db()
         return response, ai
 
@@ -148,6 +209,23 @@ class MigratedBindingFlowTests(TestCase):
         self.assertEqual(self.overlay.template_snapshot, before)
         self.assertEqual(self.overlay.status, "in-progress")
         ai.assert_called_once()
+
+    def test_changed_graph_target_cannot_reuse_suggestion_or_overwrite_saved_answer(self):
+        self.check()
+        saved = deepcopy(self.overlay.answers)
+        original = deepcopy(self.overlay.meeting_intelligence['summary'])
+        self.calendar.graph_event_id = 'replacement-event'
+        self.calendar.save(update_fields=['graph_event_id'])
+        response, ai = self.check()
+        data = json.loads(response.content)
+        self.assertEqual(response.status_code, 207)
+        self.assertIn('SUMMARY_SESSION_MISMATCH', data['intelligence']['errorCodes'])
+        self.assertIsNone(data['meetingSummary'])
+        self.assertNotIn('suggestionText', data['summaryBinding'])
+        self.assertFalse(data['summaryBinding'].get('replacementAvailable', False))
+        self.assertEqual(self.overlay.answers, saved)
+        self.assertEqual(self.overlay.meeting_intelligence['summary'], original)
+        ai.assert_not_called()
 
     def test_zero_binding_old_snapshot_is_not_retrofitted(self):
         self.overlay.template_snapshot["sections"][0]["fields"][0].pop("semanticKey")
@@ -217,15 +295,43 @@ class MigratedBindingFlowTests(TestCase):
         self.assertEqual(self.overlay.answers["recap"], "")
         self.assertEqual(binding_state(self.overlay)["state"], "COACH_CLEARED")
 
-    def test_overflow_retains_full_original_and_returns_manual_shortening_text(self):
-        text = "X" * 4001
+    def test_long_mcm_summary_populates_and_saves_without_truncation(self):
+        text = '\n'.join(['Discussion and actions.'] * 1000)
         response, _ = self.check(summary={"overview": text})
         binding = json.loads(response.content)["summaryBinding"]
-        self.assertEqual(binding["status"], "summary-too-long")
+        self.assertEqual(binding["status"], "populated")
         self.assertEqual(binding["suggestionText"], text)
-        self.assertNotIn("recap", self.overlay.answers)
+        self.assertFalse(binding['summaryTooLong'])
+        self.assertEqual(self.overlay.answers, {'recap': text, 'other': 'Keep this answer'})
         self.assertEqual(self.overlay.meeting_intelligence["aiSummaryOriginal"]["overview"], text)
-        self.assertEqual(self.save({**self.overlay.answers, "recap": "Shortened manually"}).status_code, 200)
+        edited = text + '\nCoach addition.\n'
+        self.assertEqual(self.save({**self.overlay.answers, 'recap': edited}).status_code, 200)
+        self.assertEqual(self.overlay.answers, {'recap': edited, 'other': 'Keep this answer'})
+        self.assertEqual(binding_state(self.overlay)['state'], 'COACH_EDITED')
+        self.overlay.status = 'completed'
+        self.overlay.completed_at = timezone.now()
+        signatures = [SimpleNamespace(role=role, signer_name='Synthetic signer',
+            signed_at=timezone.now(), signature=PNG) for role in ('advisor', 'participant')]
+        with patch.object(type(self.overlay), 'migrated_signatures') as relation:
+            relation.all.return_value = signatures
+            content = build_pdf(self.overlay, learner_name='Synthetic',
+                learner_email='learner@example.invalid', programme='Synthetic programme',
+                scheduled_date='2026-11-04', coach_name='Coach')
+        pdf_text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(content)).pages)
+        self.assertEqual(pdf_text.count('Discussion and actions.'), 1000)
+        self.assertIn('Coach addition.', pdf_text)
+
+    def test_progress_review_summary_still_returns_manual_shortening_text(self):
+        self.overlay.template_snapshot['templateSource']['family'] = 'PR'
+        self.overlay.save(update_fields=['template_snapshot'])
+        text = 'X' * 4001
+        response, _ = self.check(summary={'overview': text})
+        binding = json.loads(response.content)['summaryBinding']
+        self.assertEqual(binding['status'], 'summary-too-long')
+        self.assertEqual(binding['suggestionText'], text)
+        self.assertTrue(binding['summaryTooLong'])
+        self.assertNotIn('recap', self.overlay.answers)
+        self.assertEqual(self.overlay.meeting_intelligence['aiSummaryOriginal']['overview'], text)
 
     def test_exact_limit_populates(self):
         self.check(summary={"overview": "X" * 4000})
@@ -249,8 +355,10 @@ class MigratedBindingFlowTests(TestCase):
 
     def test_transcript_error_preserves_existing_answer(self):
         self.save({"recap": "Coach answer"})
+        start = datetime.combine(self.calendar.scheduled_date, self.calendar.scheduled_time, ZoneInfo(settings.TIME_ZONE))
         snapshot = {**self.snapshot, "errors": ["Failed to get transcripts"], "artifacts": [
-            {"artifact_type": "transcript", "transcript_fetch_error": "unavailable"}]}
+            {"artifact_type": "transcript", "graph_artifact_id": "artifact-one", "created_datetime": start.isoformat(),
+             "end_datetime": (start + timedelta(minutes=20)).isoformat(), "transcript_fetch_error": "unavailable"}]}
         response, ai = self.check(snapshot=snapshot, transcript=None)
         self.assertEqual(response.status_code, 207)
         ai.assert_not_called()
@@ -374,8 +482,11 @@ class MigratedBindingFlowTests(TestCase):
                   "historicalReview": {"id": "7002", "type": "Monthly Coaching Meeting"}, "instance": {"id": "imported-review:new", "learnerId": 42}}
         request = self.factory.post("/")
         request.coach_email = OWNER
-        with patch.object(views, "_imported_review_definition", return_value=source):
+        with patch.object(views, "_imported_review_definition", return_value=source), \
+                patch.object(views.LearnerProfile.objects, 'filter') as profiles:
+            profiles.return_value.values_list.return_value.first.return_value = OWNER
             self.assertEqual(unwrap(views.coach_review_instance_initialize)(request, source["instance"]["id"]).status_code, 200)
+        profiles.assert_called_once_with(pk=42)
         initialized = ImportedReviewInstance.objects.get(source_review_id=7002)
         frozen = deepcopy(initialized.template_snapshot)
         self.template.definition_json["sections"][0]["fields"][0].pop("semanticKey")
@@ -412,8 +523,12 @@ class MigratedBindingFlowTests(TestCase):
             definition = {**self.definition, "sections": sections, "summaryBinding": {"state": "COACH_EDITED", "editedBy": OWNER}, "answerVersion": "private"}
             with patch.object(lifecycle, "authenticate_request", return_value=SimpleNamespace(role=role)), \
                  patch.object(lifecycle, "_party_overlay", return_value=self.overlay), \
-                 patch.object(views, "_imported_review_definition", return_value=definition):
+                 patch.object(views, "_imported_review_definition", return_value=definition) as reader, \
+                 patch.object(lifecycle.LearnerProfile.objects, 'filter') as profiles:
+                profile = SimpleNamespace(pk=self.overlay.learner_id)
+                profiles.return_value.first.return_value = profile
                 response = lifecycle.migrated_review_party_detail(self.factory.get("/"), self.overlay.event_key)
+            reader.assert_called_once_with(OWNER, self.overlay.event_key, learners=[profile])
             data = json.loads(response.content)
             self.assertTrue(data["readOnly"])
             self.assertEqual(data["sections"][0]["fields"][0]["answer"], "Saved final summary")

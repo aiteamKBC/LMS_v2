@@ -25,6 +25,19 @@ const definition = (source = 'aptem'): LearnerReviewDefinition => ({
   signatures: { advisor: { required: true, signed: true }, participant: { required: true, signed: true }, employer: { required: false, signed: false }, referrer: { required: false, signed: false } },
 });
 
+function editableDefinition() {
+  const data = definition();
+  data.readOnly = false;
+  data.migratedForm = true;
+  data.answerVersion = 'saved-v1';
+  data.instance!.status = 'in-progress';
+  data.sections[0].fields.push(
+    { id: 'reflection', title: 'Your reflection', fieldType: 'text', required: true, displayOrder: 2, configuration: { respondentRoles: ['participant'] }, answer: 'Draft reflection' },
+    { id: 'action', title: 'Recorded action', fieldType: 'action_button', required: false, displayOrder: 3, configuration: {} },
+  );
+  return data;
+}
+
 describe('imported learner presentation', () => {
   it('formats learner information, retains labels and avoids duplicate raw export text', () => {
     render(<ImportedReviewSection section={section('Learner information', [{ label: 'Name', value: 'Alex Example' }, { label: 'PROGRAMMESTARTDATE', value: '2024-10-18T00:00:00' }, { label: 'Programme', value: 'Example programme' }], 'Name: Alex Example\nPROGRAMMESTARTDATE: 2024-10-18T00:00:00')} />);
@@ -117,16 +130,38 @@ describe('imported learner presentation', () => {
   });
 
   it('retains permitted overlay editing, action fields and saves only learner answers', async () => {
-    const data = definition(); data.readOnly = false; data.migratedForm = true; data.instance!.status = 'in_progress';
-    data.sections[0].fields.push({ id: 'reflection', title: 'Your reflection', fieldType: 'text', required: true, displayOrder: 2, configuration: { respondentRoles: ['participant'] }, answer: 'Draft reflection' },
-      { id: 'action', title: 'Recorded action', fieldType: 'action_button', required: false, displayOrder: 3, configuration: {} });
-    const save = vi.fn().mockResolvedValue(data);
+    const data = editableDefinition();
+    const saved = editableDefinition();
+    saved.answerVersion = 'saved-v2';
+    saved.sections[0].fields.find(field => field.id === 'reflection')!.answer = 'Updated reflection';
+    const save = vi.fn().mockResolvedValue(saved);
     render(<LearnerReviewInstanceForm definition={data} onSaveAnswers={save} />);
     const input = await screen.findByDisplayValue('Draft reflection'); expect(input).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Recorded action' })).toBeDisabled();
     fireEvent.change(input, { target: { value: 'Updated reflection' } }); fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
-    await waitFor(() => expect(save).toHaveBeenCalledWith({ reflection: 'Updated reflection' }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ reflection: 'Updated reflection' }, 'saved-v1'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save my answers' })).toBeEnabled());
+    expect(screen.getByDisplayValue('Updated reflection')).toBeVisible();
+    expect(screen.getByText('Alex Example')).toBeVisible();
     expect(screen.getByText('18/10/2024')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    await waitFor(() => expect(save).toHaveBeenNthCalledWith(2, { reflection: 'Updated reflection' }, 'saved-v2'));
+    expect(data.sections[0].fields.find(field => field.id === 'reflection')!.answer).toBe('Draft reflection');
+  });
+
+  it('preserves the learner draft and saved read-only answers when a version conflict rejects a save', async () => {
+    const data = editableDefinition();
+    const before = JSON.stringify(data);
+    const save = vi.fn().mockRejectedValue(new Error('This review changed. Reopen it before saving.'));
+    render(<LearnerReviewInstanceForm definition={data} onSaveAnswers={save} />);
+    fireEvent.change(await screen.findByDisplayValue('Draft reflection'), { target: { value: 'Unsaved reflection' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    expect(await screen.findByText('This review changed. Reopen it before saving.')).toBeVisible();
+    expect(screen.getByDisplayValue('Unsaved reflection')).toBeEnabled();
+    expect(screen.getByText('Alex Example')).toBeVisible();
+    expect(screen.getByText('18/10/2024')).toBeVisible();
+    expect(save).toHaveBeenCalledExactlyOnceWith({ reflection: 'Unsaved reflection' }, 'saved-v1');
+    expect(JSON.stringify(data)).toBe(before);
   });
 
   it('leaves native form fields in their existing renderer', async () => {

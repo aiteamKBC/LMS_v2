@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type ReactNode,
@@ -11,12 +12,19 @@ import { CreateProgressPanel } from './CreateProgressPanel';
 import { LeftoverSlotsPanel } from './LeftoverSlotsPanel';
 import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
 import { MeetingScopePanel } from './MeetingScopePanel';
+import { ExternalCalendarPanel } from './ExternalCalendarPanel';
+import { ImportedCalendarUpdatePanel } from './ImportedCalendarUpdatePanel';
+import { OrganizationCalendarConnectionPanel } from './OrganizationCalendarConnectionPanel';
+import { ImportedParticipantsPanel } from './ImportedParticipantsPanel';
 import { pendingInvitations } from './attendeeComparison';
-import { emailList } from '../module-builder/EmailChipsInput';
+import { emailList } from '../module-builder/EmailChipsInput.helpers';
 import { forwardScheduleEmail } from './forwardScheduleEmail';
 import { updateProgressSteps } from './updateProgress';
+import { reviewDateLabel } from './calendarTime';
+import { OffScheduleRunDetails } from './OffScheduleRunDetails';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { formatSystemTimestamp } from '@/lib/format';
 import { Modal } from '@/pages/users/components/Modal';
 import {
@@ -26,15 +34,8 @@ import {
   type TeamsMeetingArtifact,
   type TeamsRecordingEventInput,
 } from '../module-builder/moduleAuthoringData';
-import {
-  TEAMS_LANGUAGE_OPTIONS,
-  TEAMS_LOBBY_OPTIONS,
-  TEAMS_RECORDING_OPTIONS,
-  ModuleSessionSchedulePreview,
-  TeamsCalendarFormBody,
-  TeamsMeetingOptionFields,
-  TeamsPeopleFields,
-} from './createCalendarForm';
+import { ModuleSessionSchedulePreview, TeamsCalendarFormBody, TeamsMeetingOptionFields, TeamsPeopleFields } from './createCalendarForm';
+import { TEAMS_LANGUAGE_OPTIONS, TEAMS_LOBBY_OPTIONS, TEAMS_RECORDING_OPTIONS } from './createCalendarForm.helpers';
 import {
   EntityDrawer,
   FormField,
@@ -370,6 +371,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const [forwardError, setForwardError] = useState('');
   const [forwardNotice, setForwardNotice] = useState('');
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
+  const actionFeedbackId = useId();
+  const actionFeedbackRef = useRef<HTMLParagraphElement>(null);
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
   // cancelled there, which changes which calendar runs it.
@@ -385,14 +388,26 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     graphStatus, checkGraphConfiguration,
     checkCalendarAction, selectedForDisplay, createCalendar, createDrawer, createRecovery,
     createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover,
-    runCalendarSync, calendarSyncing, autoSyncEnabled, setAutoSyncEnabled,
+    runCalendarSync, calendarSyncing, calendarCheckRevisions, autoSyncEnabled, setAutoSyncEnabled,
     detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, addedInvitees, updateDrawer, pushDates, resendSchedule,
-    selectedScopeRows, chooseMeetingScope,
+    selectedScopeRows, chooseMeetingScope, reattach, externalCalendar, calendarLinksLoading, calendarLinksError,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
+    originalCalendar, originalCalendarBlocked, refreshOriginalCalendar,
   } = workspace;
+  const actionBlockedReason = blockedReason
+    || (!graphConfigured ? 'Microsoft Teams is not connected. Check the Microsoft connection, then try again.' : '')
+    || (originalCalendarBlocked ? 'The original calendar is not ready to edit. Check its connection and permissions above, then try again.' : '')
+    || (externalCalendar && !selected?.summary ? 'Check this module\'s saved meeting links before updating its existing Teams calendar.' : '')
+    || (selected && !(selectedForDisplay || selected).sessions.length
+      ? 'This module has no saved live sessions. Add a Live session, save the module, then reopen Teams.' : '');
+  const actionError = selected?.summary ? updateDrawer.error
+    : createProgress || (createRecovery && createRecovery.phase !== 'failed') ? ''
+      : createRecovery?.phase === 'failed' ? createRecovery.message : createDrawer.error;
+  const actionMessage = actionBlockedReason || actionError;
+  const explainBlockedAction = () => actionFeedbackRef.current?.focus({ preventScroll: true });
   // Who the author has typed in but not saved. Named under the comparison so a
   // reader can see why Microsoft does not have them.
   const pendingInvitees = selected
@@ -450,8 +465,13 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             /* The footer drives the module's own calendar. The second tab has
                its own button inside it, so this is hidden rather than left
                there acting on a calendar the reader is not looking at. */
-            footer={!teamsLoaded || onSecondTab ? undefined : (
+            footer={!teamsLoaded || calendarLinksLoading || calendarLinksError || onSecondTab ? undefined : (
               <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                {actionMessage && <p id={actionFeedbackId} ref={actionFeedbackRef} role="status" aria-live="polite" aria-atomic="true"
+                  aria-label="Teams calendar action" tabIndex={-1}
+                  className="w-full max-h-32 overflow-y-auto rounded-lg border border-primary-200 bg-primary-50 p-3 text-[12px] font-semibold leading-relaxed text-foreground-700 outline-none focus:ring-2 focus:ring-primary-300">
+                  <AppIcon className="ri-information-line mr-1.5" aria-hidden="true" />{actionMessage}
+                </p>}
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
                     Closing is the title bar's X — no second Close down here. */}
@@ -483,13 +503,15 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     )}
                   </p>
                 )}
-            {selected.summary ? (
+            {externalCalendar && !selected.summary ? (
+              <button type="button" disabled className="inline-flex h-10 items-center rounded-lg bg-primary-600 px-4 text-xs font-bold text-white opacity-40">Update Teams calendar</button>
+            ) : selected.summary ? (
                   <div className="flex w-full flex-wrap items-center justify-end gap-2">
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
-                      disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
+                      disabled={Boolean(busy) || Boolean(updateProgress) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-line text-sm"></AppIcon>Edit session dates</button>
                     <button type="button" onClick={() => openCalendarAction('cancel')}
-                      disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
+                      disabled={Boolean(busy) || Boolean(updateProgress) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-[12px] font-bold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-close-circle-line text-sm"></AppIcon>Cancel series</button>
                     <button type="button" onClick={() => void checkCalendarAction()} disabled={Boolean(busy) || Boolean(updateProgress) || !graphConfigured}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className={busy ? 'ri-loader-4-line animate-spin text-sm' : 'ri-refresh-line text-sm'}></AppIcon>{busy ? 'Checking…' : 'Check action status'}</button>
@@ -500,14 +522,14 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                         invites, which is what an author reaches for when the
                         first email was missed rather than when a date moved. */}
                     <button type="button" onClick={() => void resendSchedule(selectedForDisplay || selected)}
-                      disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
+                      disabled={Boolean(busy) || Boolean(updateProgress) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || updateDrawer.saving || !graphConfigured}
                       title="Send the full schedule email -- the complete timetable and join links, the same message a new calendar sends -- to every invited learner, the organiser, the co-organisers and the presenters. They are all emailed, including anyone who already received it. The Teams calendar is not changed."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40">
                       <AppIcon className={busy === `${selected.catalogueId}:resend` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-mail-send-line text-sm'}></AppIcon>
                       Email the schedule to everyone as the original creation email (not an update)
                     </button>
                     <button type="button" onClick={() => { setForwardOpen(true); setForwardError(''); setForwardNotice(''); }}
-                      disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
+                      disabled={Boolean(busy) || Boolean(updateProgress) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || updateDrawer.saving || !graphConfigured}
                       title="Email the current timetable and Teams join links to the addresses you choose. This is an LMS email: it does not add the meeting to anyone's Outlook calendar."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40">
                       <AppIcon className="ri-mail-line text-sm"></AppIcon>
@@ -523,12 +545,15 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <button
                       type="button"
                       onClick={() => {
+                        if (actionBlockedReason) { explainBlockedAction(); return; }
                         if (!updateConfirmOpen) { setUpdateConfirmOpen(true); return; }
                         void pushDates(selectedForDisplay || selected);
                       }}
                       // Waits for the calendar's own read, so the invitation
                       // fields it sends with the dates hold the saved values.
-                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
+                      disabled={Boolean(busy) || Boolean(updateProgress) || detailLoading || updateDrawer.saving}
+                      aria-disabled={Boolean(actionBlockedReason)}
+                      aria-describedby={actionMessage ? actionFeedbackId : undefined}
                       title="Move the Teams calendar onto this module's stored session dates, holiday shifts included, with any changes to the invitations below."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -562,11 +587,16 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void createCalendar(selected)}
+                    onClick={() => {
+                      if (actionBlockedReason) { explainBlockedAction(); return; }
+                      void createCalendar(selected);
+                    }}
                     // While a lost Create is being checked, still running, or ended
                     // uncertain, a second Create is exactly what must not be sent.
-                    disabled={!(selectedForDisplay || selected).sessions.length || createDrawer.saving || Boolean(busy) || Boolean(blockedReason) || !graphConfigured
+                    disabled={createDrawer.saving || Boolean(busy)
                       || Boolean(createRecovery && createRecovery.phase !== 'failed')}
+                    aria-disabled={Boolean(actionBlockedReason)}
+                    aria-describedby={actionMessage ? actionFeedbackId : undefined}
                     title="Create one Teams meeting on each of this module's stored session dates."
                     className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -604,24 +634,25 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 ))}
               </div>
             )}
-            {onSecondTab ? secondTab?.render() : !teamsLoaded ? (
-              teamsError ? (
+            {onSecondTab ? secondTab?.render() : !teamsLoaded || calendarLinksLoading || calendarLinksError ? (
+              calendarLinksError || teamsError ? (
                 <div className="space-y-3">
-                  <p role="alert" className="text-sm text-red-700">{teamsError}</p>
-                  <button type="button" onClick={() => void loadTeamsState()}
+                  <p role="alert" className="text-sm text-red-700">{calendarLinksError || teamsError}</p>
+                  <button type="button" onClick={() => { refreshScopes(); void loadTeamsState(); }}
                     className="rounded-lg border px-3 py-2 text-[12px] font-bold">Try again</button>
                 </div>
               ) : (
                 <p role="status" className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500">
                   <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-                  Loading this module&rsquo;s session dates and Teams calendar…
+                  Loading this module&rsquo;s session dates and Teams calendar, and checking its existing Teams links…
                 </p>
               )
             ) : (<>
             {/* Where this module stands, in the same chips the table uses. */}
             <div className="mb-4 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide">
               <span className={`inline-flex items-center rounded-full border px-2.5 py-1 ${STATE_TONES[selected.state]}`}>
-                {STATE_LABELS[selected.state]}
+                <span className="mr-1 normal-case">Module plan:</span>
+                {externalCalendar && !selected.summary ? 'Existing link · dates unconfirmed' : STATE_LABELS[selected.state]}
               </span>
               <span className="inline-flex items-center rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-foreground-600">
                 {(selectedForDisplay || selected).sessions.length} module session{(selectedForDisplay || selected).sessions.length === 1 ? '' : 's'}
@@ -660,11 +691,22 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             <MeetingScopePanel
               rows={selectedScopeRows}
               busy={busy}
-              disabled={Boolean(blockedReason) || Boolean(updateProgress) || createDrawer.saving || updateDrawer.saving}
+              disabled={(Boolean(blockedReason) || originalCalendarBlocked) || Boolean(updateProgress) || createDrawer.saving || updateDrawer.saving}
               onChoose={(componentId, scope) => void chooseMeetingScope(componentId, scope)}
+              externalCalendar={Boolean(externalCalendar)}
             />
 
-            {selected.summary ? updateProgress ? (
+            {externalCalendar && !selected.summary ? (
+              <ExternalCalendarPanel
+                key={selected.catalogueId}
+                calendar={externalCalendar}
+                row={selectedForDisplay || selected}
+                onReattach={() => void reattach(selected)}
+                onUpdated={async () => { await loadTeamsState(); if (selected.summary) await loadDetail(selected.summary.liveSessionId); notifyChanged(selected.catalogueId); }}
+                busy={Boolean(busy)}
+                disabled={Boolean(blockedReason)}
+              />
+            ) : selected.summary ? updateProgress ? (
               <CreateProgressPanel
                 moduleName={selected.name}
                 sessionCount={(selectedForDisplay || selected).sessions.length}
@@ -679,6 +721,16 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
               />
             ) : (
               <div className="space-y-4">
+                {originalCalendar?.loading && <p role="status" className="text-xs text-foreground-600">Checking the original Teams calendar?</p>}
+                {(originalCalendar?.error || (originalCalendar?.data?.status !== 'editable' && originalCalendar?.data?.message)) && <p role="alert" className="text-xs text-red-700">{originalCalendar.error || originalCalendar.data?.message}</p>}
+                {originalCalendar && !originalCalendar.loading && (originalCalendarBlocked || updateDrawer.error) && <button type="button" onClick={refreshOriginalCalendar} className="text-xs font-bold text-primary-700 underline">Retry calendar check</button>}
+                {externalCalendar && selected.summary && <OrganizationCalendarConnectionPanel
+                  key={`organization:${selected.summary.liveSessionId}`} liveSessionId={selected.summary.liveSessionId}
+                  disabled={Boolean(blockedReason) || Boolean(busy)} onChanged={refreshOriginalCalendar} />}
+                {originalCalendar?.data?.connectionRequired && originalCalendar.data.connectionKind === 'user' && selected.summary && <ImportedCalendarUpdatePanel
+                  connectionOnly liveSessionId={selected.summary.liveSessionId} disabled={Boolean(blockedReason) || Boolean(busy)}
+                  editorConnectionKind={originalCalendar.data.connectionKind || 'group'} onEditorConnected={refreshOriginalCalendar}
+                  onUpdated={async () => { refreshOriginalCalendar(); }} />}
                 {/* Invitations are edited beside the people they name, rather
                     than from a button on every table row. */}
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -754,6 +806,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 <ModuleSessionSchedulePreview
                   row={selectedForDisplay || selected}
                   title="Module dates sent to Teams"
+                  preserveExistingDates={Boolean(externalCalendar?.originalSeriesId)}
                   holidayLabelFor={holidayLabelFor}
                   renderActions={(index, durationMinutes, teamsUtc) => {
                     const plannedUtc = (selectedForDisplay || selected).plannedStarts[index] || '';
@@ -791,10 +844,10 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       <span className="flex flex-wrap items-center justify-end gap-2">
                       {occurrence?.status === 'scheduled' && !occurrence.actual_start && !occurrence.attendance_report_id && !occurrence.participant_count && (
                         <>
-                          <button type="button" disabled={Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
+                          <button type="button" disabled={Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
                             onClick={() => openCalendarAction('reschedule', occurrence.session_number)}
                             className="inline-flex h-8 items-center gap-1 rounded-lg border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-time-line text-sm"></AppIcon>Edit time</button>
-                          <button type="button" disabled={Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
+                          <button type="button" disabled={Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
                             onClick={() => openCalendarAction('cancel', occurrence.session_number)}
                             className="inline-flex h-8 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-[11px] font-bold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-close-circle-line text-sm"></AppIcon>Cancel session</button>
                         </>
@@ -824,9 +877,15 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     if (!occurrence) return null;
                     const attended = occurrence.participant_count || occurrence.attendance?.length || 0;
                     const artifacts = occurrence.artifacts || [];
-                    if (!attended && !artifacts.length) return null;
+                    // A call on this link that was not this session (the link tried
+                    // early, another day's use) is said, with both dates, even before
+                    // the session runs: Teams lists it as the meeting being held then.
+                    const offSchedule = occurrence.off_schedule_runs || [];
+                    if (!attended && !artifacts.length && !offSchedule.length) return null;
                     return (
                       <>
+                        <OffScheduleRunDetails runs={offSchedule}
+                          when={iso => reviewDateLabel(iso, detail?.series.timeZoneIana || 'Europe/London')} />
                         {Boolean(attended) && (
                           <span className="font-semibold text-foreground-600">{attended} attended</span>
                         )}
@@ -893,10 +952,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   <div>
                     <h3 id="teams-invitations-heading" className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Invitations and meeting settings</h3>
                     <p className="mt-1 text-[11px] text-foreground-500">
-                      Only what you change here is updated, and the join link stays the same, and no session date moves. Save without notifying sends nothing to anybody. Save and invite added people sends the Teams invitation and the schedule email to the people you added, and to nobody else.
+                      Only the people and settings you change here are updated. Session dates and join links stay unchanged. Save without notifying sends no LMS email; Microsoft may still send a calendar update. Save and invite added people also requests invitations and schedule emails for the people you add.
                     </p>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  {originalCalendarBlocked && originalCalendar && !originalCalendar.loading && <>
+                    <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                      The original invitation list is not verified. Saved LMS fields below are read-only and may be incomplete. Connect the original calendar before saving; a failed read does not mean nobody is invited.
+                    </p>
+                    <ImportedParticipantsPanel key={originalCalendar.id} liveSessionId={originalCalendar.id}
+                      savedOrganizer={selected.summary.organizerEmail} />
+                  </>}
+                  <fieldset disabled={originalCalendarBlocked} className="grid gap-4 sm:grid-cols-2 disabled:opacity-60">
                     <FormField label="Organizer Microsoft 365 email" hint="This organizer owns the existing calendar.">
                       <input aria-label="Organizer" readOnly value={updateDrawer.form.organizerEmail}
                         className="h-11 w-full rounded-lg border border-background-200 bg-background-100 px-3 text-[13px]" />
@@ -907,9 +973,9 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       patch={updateDrawer.patch}
                       prefilling={invitedPrefilling}
                       prefillNotice={prefillNotice}
-                      onPrefill={() => void prefillInvitees(selected, updateDrawer.patch)}
+                      onPrefill={() => void prefillInvitees(selected, updateDrawer.patch, 'update')}
                     />
-                  </div>
+                  </fieldset>
                   {/* Beside the fields it reports on, and above Save rather
                       than in its row: pressing it is not a step towards
                       saving, and it stays available when Save is not. */}
@@ -918,7 +984,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     comparing={comparing}
                     error={comparisonError}
                     pending={pendingInvitees}
-                    disabled={Boolean(blockedReason) || !graphConfigured}
+                    disabled={(Boolean(blockedReason) || originalCalendarBlocked) || !graphConfigured}
                     onCompare={() => void compareAttendees(selected)}
                   />
                   {/* Three separate questions, never folded into one status: have
@@ -949,13 +1015,14 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                         link integrity, lifecycle and attribution for every session. */}
                     <CalendarHealthPanel
                       liveSessionId={selected.summary?.liveSessionId || ''}
+                      refreshKey={calendarCheckRevisions[selected.summary?.liveSessionId || ''] || 0}
+                      planSessionCount={(selectedForDisplay || selected).sessions.length}
                       disabled={!graphConfigured}
                     />
                   </section>
-                  {updateDrawer.error && <InlineError message={updateDrawer.error} />}
                   {addedInvitees(selected).length > 0 && (
                     <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold text-amber-900">
-                      With Save without notifying, added people will be saved to the Teams meeting but will not receive an invitation or LMS email. Use Save and invite added people to send them both.
+                      Save without notifying saves added people without an LMS email. Microsoft may still send a calendar update. Use Save and invite added people to request their Teams invitation and schedule email.
                     </p>
                   )}
                   <div className="flex flex-wrap items-center justify-end gap-3">
@@ -963,8 +1030,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <button
                       type="button"
                       onClick={() => void saveInvitations(selected)}
-                      disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
-                      title="Save only these invitation and setting changes. Nobody is emailed, including people you add, and every session date stays where Teams holds it."
+                      disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
+                      title="Save people and settings without an LMS email. Microsoft may send a calendar update. Session dates and join links stay unchanged."
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <AppIcon className={updateDrawer.saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-save-line text-sm'}></AppIcon>
@@ -974,7 +1041,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       <button
                         type="button"
                         onClick={() => void saveInvitations(selected, { invite: true })}
-                        disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
+                        disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
                         title="Save these changes, then send the Teams invitation and the schedule email to the people you added. Nobody already invited is contacted, and no session date moves."
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -1027,11 +1094,6 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   prefillNotice={prefillNotice}
                   onPrefill={() => void prefillInvitees(selected, createDrawer.patch)}
                 />
-                {createRecovery?.phase === 'failed' ? (
-                  <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                    <p className="font-semibold">{createRecovery.message}</p>
-                  </div>
-                ) : createDrawer.error && <InlineError message={createDrawer.error} />}
               </div>
               )
             )}

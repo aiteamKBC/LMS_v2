@@ -267,9 +267,9 @@ def learner_action_access(request):
     The learner workspace asks this to decide between its working and read-only
     views. It answers with the rule ``permissions.learner_self_or_admin``
     enforces on every write: the learner, an administrator, or the learner's
-    own coach.
+    own coach, or a staff account studying its own linked enrolment.
     """
-    from .permissions import coach_owns_learner
+    from .permissions import coach_owns_learner, staff_owns_learner
 
     account = authenticate_request(request)
     if account is None:
@@ -282,6 +282,7 @@ def learner_action_access(request):
         account.role == "admin"
         or (account.role == "learner" and account.subject_id == learner_id)
         or coach_owns_learner(account, learner_id)
+        or staff_owns_learner(account, learner_id)
     )
     response = JsonResponse({"canAct": bool(can_act)})
     response["Cache-Control"] = "private, no-store"

@@ -59,6 +59,7 @@ class QuizReviewTests(unittest.TestCase):
         self.repository = SimpleNamespace(query=self.query, DB='enrolment',
                                           _query_alias=SimpleNamespace(get=lambda: 'isolated'))
         self.scope = load(ROOT / 'legacy_quiz_review.py', {'read_review'}, dict(json=json,
+            subject_store=SimpleNamespace(state=Mock(return_value={'ready': True, 'progress': [], 'history': []})),
             canonical_learning=self.canonical, repository=self.repository,
             connections={'isolated': SimpleNamespace(cursor=lambda: nullcontext(self.cursor))},
             imported_quiz=imported_quiz, public_quiz=public_quiz, quiz_definition=quiz_definition))
@@ -80,7 +81,8 @@ class QuizReviewTests(unittest.TestCase):
         self.assertNotIn('correct_answer', json.dumps(result))
         self.assertNotIn('awarded_score', json.dumps(result))
         self.assertEqual(self.cursor.execute.call_args.args[1], [50, '60'])
-        self.assertEqual(self.query.call_args.args[1], [7, 50, 60])
+        self.assertEqual(self.query.call_args.args[1], ['60', 60, 7, 50])
+        self.assertIn('activity.quiz_id::text=%s', self.query.call_args.args[0])
         self.assertTrue(self.query.call_args.args[0].lstrip().startswith('SELECT'))
         self.assertEqual(self.catalogue.call_args.args[0], 9)
         self.assertEqual(self.catalogue.call_args.kwargs, {'owner': self.owner})
@@ -150,6 +152,35 @@ class QuizReviewTests(unittest.TestCase):
                     self.review()
                 self.assertEqual(caught.exception.status, 409)
 
+    def test_unfinished_quiz_can_be_graded_without_exposing_keys(self):
+        self.item['completed'] = False
+        self.query.return_value = []
+        result = self.scope['read_review'](self.owner, 50, 60, allow_attempts=True)
+        self.assertTrue(result['can_attempt'])
+        self.assertTrue(result['persistence_ready'])
+        self.assertFalse(result['completed'])
+        self.assertNotIn('solution_ids', json.dumps(result))
+        self.scope['subject_store'].state.assert_called_once_with(9, 11, 60, group_id=50, catalogue_kind='quiz')
+
+    def test_saved_pass_is_review_only_and_same_id_material_cannot_complete_quiz(self):
+        self.item['completed'] = False
+        saved = self.scope['subject_store'].state.return_value
+        saved['progress'] = [{'group_id': 50, 'activity_id': 60, 'catalogue_kind': 'material', 'completed': True}]
+        self.assertTrue(self.scope['read_review'](self.owner, 50, 60, allow_attempts=True)['can_attempt'])
+        saved['progress'][0]['catalogue_kind'] = 'quiz'
+        result = self.scope['read_review'](self.owner, 50, 60, allow_attempts=True)
+        self.assertTrue(result['completed'])
+        self.assertFalse(result['can_attempt'])
+
+    def test_missing_grading_keys_or_unavailable_store_disable_new_attempt(self):
+        self.item['completed'] = False
+        self.export['quiz_definition']['questions'][0]['correct_answers'] = []
+        self.assertFalse(self.scope['read_review'](self.owner, 50, 60, allow_attempts=True)['can_attempt'])
+        self.scope['subject_store'].state.return_value['ready'] = False
+        result = self.scope['read_review'](self.owner, 50, 60, allow_attempts=True)
+        self.assertFalse(result['persistence_ready'])
+        self.assertFalse(result['can_attempt'])
+
 
 class QuizReviewEndpointTests(unittest.TestCase):
     def setUp(self):
@@ -166,6 +197,7 @@ class QuizReviewEndpointTests(unittest.TestCase):
         modules.start(); self.addCleanup(modules.stop)
         model = SimpleNamespace(all_learners=Mock(), DoesNotExist=LookupError)
         model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id=11, email=self.owner['email'])
+        self.staff_owns = Mock(return_value=False)
         scope = dict(__package__='learner_api', functools=functools, JsonResponse=JsonResponse,
             require_GET=require_GET, learner_journal_view=lambda view: view,
             authenticate_request=lambda request: request.account, _auth_gate_enabled=lambda: True,
@@ -173,7 +205,8 @@ class QuizReviewEndpointTests(unittest.TestCase):
             _unauthenticated=lambda _: JsonResponse({}, status=401),
             _read_only_learner_view=lambda: JsonResponse({}, status=403),
             SOURCE_MODELS={'commercial': model, 'apprenticeship': model},
-            student_activity_available=lambda _: True, DatabaseError=RuntimeError)
+            student_activity_available=lambda _: True, DatabaseError=RuntimeError, get_token=lambda _: 'synthetic-csrf',
+            coach_owns_learner=lambda *_: False, staff_owns_learner=self.staff_owns)
         load(ROOT.parent / 'login/permissions.py', {'_learner_progress_gate', 'learner_self_or_staff'}, scope)
         load(ROOT / 'student_activity.py', {'_error', '_private', '_emails_match'}, scope)
         load(ROOT / 'student_activity.py', {'student_activity'}, scope, decorated=True)
@@ -192,7 +225,8 @@ class QuizReviewEndpointTests(unittest.TestCase):
                     response = self.request(role=role, kind=kind)
                     self.assertEqual(response.status_code, 200)
                     self.assertEqual(response['Cache-Control'], 'private, no-store')
-                    self.review.read_review.assert_called_with(self.owner, 50, 60)
+                    self.review.read_review.assert_called_with(self.owner, 50, 60, allow_attempts=True)
+                    self.assertEqual(json.loads(response.content)['csrf_token'], 'synthetic-csrf')
 
     def test_other_learners_and_unprivileged_roles_cannot_read_answers(self):
         for role, subject, status in (('learner', 10, 404), ('coach', 9, 403),
@@ -205,6 +239,22 @@ class QuizReviewEndpointTests(unittest.TestCase):
     def test_review_endpoint_rejects_writes(self):
         self.assertEqual(self.request(method='POST').status_code, 405)
         self.review.read_review.assert_not_called()
+
+    def test_unfinished_quiz_actions_follow_existing_write_roles(self):
+        for role, expected in [('learner', True), ('admin', True), ('staff', False)]:
+            self.review.read_review.return_value = {'completed': False, 'can_attempt': True}
+            self.assertEqual(json.loads(self.request(role=role).content)['can_attempt'], expected)
+
+    def test_linked_staff_attempt_requires_ownership_and_an_available_quiz(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for owns, available, expected in ((True, True, True), (False, True, False), (True, False, False)):
+                with self.subTest(kind=kind, owns=owns, available=available):
+                    self.staff_owns.return_value = owns
+                    self.review.read_review.return_value = {'completed': False, 'can_attempt': available}
+                    response = self.request(role='staff', kind=kind)
+                    self.assertEqual(json.loads(response.content)['can_attempt'], expected)
+                    if available:
+                        self.assertEqual(self.staff_owns.call_args.args[1], 9)
 
     def test_invalid_references_do_not_reach_reader(self):
         for quiz in ('0', '-2', 'bad', '9223372036854775808'):

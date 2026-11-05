@@ -14,12 +14,13 @@ from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
 from .attendance_identity import identity_check, staff_roles
-from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster
+from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot
 from .attendance_link_store import identity_rules, save_rule
 from .session_results_policy import attendance_display_name, attendance_name_key, session_roster, attendance_csv, instant, session_runs
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
 from .session_sync_runtime import start_requested_sync
 from .session_transfer_progress import summarize_transfers
+from .session_sync_issues import sync_issues
 
 log = logging.getLogger(__name__)
 
@@ -150,7 +151,11 @@ def college_tenant_id():
 
 
 def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
-    """Destination roster rows whose replaced link resolves to these source occurrences."""
+    """Destination roster rows whose replaced link resolves to these source occurrences.
+
+    A separately booked one-off uses this module's roster, while the original
+    meeting's saved attendance stays attached to its own historical occurrence.
+    """
 
     if not module_catalogue_id or not source_occurrence_ids:
         return []
@@ -162,7 +167,9 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
         FROM curriculum.live_session_occurrences o
         JOIN curriculum.live_sessions s ON s.id=o.live_session_id
         {REPLACED_ATTENDANCE_LATERAL_SQL}
-        LEFT JOIN curriculum.live_session_learner_attendance r ON r.occurrence_id=o.id
+        LEFT JOIN curriculum.live_session_learner_attendance r
+          ON r.occurrence_id=o.id AND r.module_catalogue_id=s.module_catalogue_id
+          AND NOT coalesce(replaced_attendance.additional_meeting,false)
         WHERE s.module_catalogue_id=%s
           AND replaced_attendance.occurrence_id=ANY(%s)
         ORDER BY r.learner_name,r.learner_profile_id''', [
@@ -200,8 +207,14 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
           AND lower(btrim(source_o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
         ORDER BY source_o.id''', [module_catalogue_id, source_occurrence_ids])
     # Keep an association marker for a valid meeting even with an empty roster.
+    saved = read('''SELECT occurrence_id,learner_profile_id,learner_email,learner_name,
+        attendance_status,recovery_status,attended_seconds,attendance_report_id,first_join_at,last_leave_at
+        FROM curriculum.live_session_learner_attendance
+        WHERE module_catalogue_id=%s AND occurrence_id=ANY(%s)''',
+        [module_catalogue_id, [item['id'] for item in occurrences]]) if occurrences else []
     return ([{'source_occurrence_id': occurrence['id'], 'learner_profile_id': None}
              for occurrence in occurrences]
+            + [{**row, 'source_occurrence_id': row['occurrence_id']} for row in saved]
             + effective_module_register_rows(module_catalogue_id, occurrences))
 
 
@@ -228,12 +241,18 @@ def merge_session_register_rows(rows):
     return [by_email[email] for email in sorted(by_email)]
 
 
-def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False):
+def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False, occurrence_ids=None, use_saved_outcomes=True):
     params = [series['id']]
     where = ''
     if session_number is not None:
         where = ' AND session_number=%s'
         params.append(session_number)
+    if occurrence_ids is not None:
+        ids = sorted({str(value) for value in occurrence_ids if value})
+        if not ids:
+            return []
+        where += ' AND id=ANY(%s)'
+        params.append(ids)
     occurrences = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s' + where + ' ORDER BY session_number,id', params)
     ids = [item['id'] for item in occurrences]
     if not ids:
@@ -242,7 +261,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     register_rows = read('''SELECT occurrence_id,learner_profile_id,learner_email,learner_name,
         attendance_status,recovery_status,attended_seconds,attendance_report_id,first_join_at,last_leave_at
         FROM curriculum.live_session_learner_attendance
-        WHERE occurrence_id=ANY(%s) ORDER BY learner_name,learner_profile_id''', [ids])
+        WHERE occurrence_id=ANY(%s) AND module_catalogue_id=%s
+        ORDER BY learner_name,learner_profile_id''', [ids, series.get('module_catalogue_id')])
     context_register_rows = []
     if not module_catalogue_id and email is not None:
         shared = series.get('learner_shared_module_ids') or []
@@ -390,7 +410,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             # Reporting rows can lag behind the source report. Preserve saved
             # matches, but never let saved absence erase current presence.
             # Reviewed identity decisions still take precedence over old rows.
-            if not (rules or aliases or identity_links or name_decisions) and person.get('status') != 'present':
+            if use_saved_outcomes and not (rules or aliases or identity_links or name_decisions) and person.get('status') != 'present':
                 person.update(
                     seconds=max(0, int(saved.get('attended_seconds') or 0)),
                     status=status,
@@ -405,6 +425,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
         unmatched_records = [] if email is not None else [
             row for row in reviewed_records
             if (str(row.get('email') or '').strip().casefold() not in expected or row.get('identityReviewRequired'))
+            and (str(row.get('email') or '').strip().casefold() in expected or not attendance_bot(row))
             and (str(row.get('email') or '').strip().casefold() not in known_emails
                  or str(row.get('email') or '').strip().casefold() in expected)
             and str(row.get('email') or '').strip().casefold() not in protected_emails
@@ -583,7 +604,8 @@ def link_attendance_alias(request, series_id, session_number):
                 return JsonResponse({'error': 'This session is not linked to that module.'}, status=400)
         else:
             roster = read('''SELECT learner_profile_id,learner_email,learner_name
-                FROM curriculum.live_session_learner_attendance WHERE occurrence_id=%s''', [occurrence['id']])
+                FROM curriculum.live_session_learner_attendance
+                WHERE occurrence_id=%s AND module_catalogue_id=%s''', [occurrence['id'], module_id])
             roster += effective_module_register_rows(module_id, [occurrence])
         candidate = next((row for row in roster if row.get('learner_profile_id') == learner_profile_id), None)
         if action != 'unlink' and (not candidate or not candidate.get('learner_email')):
@@ -695,7 +717,8 @@ def link_attendance_alias(request, series_id, session_number):
 def add_sync_progress(jobs):
     if not jobs:
         return
-    rows = read('''SELECT o.live_session_id,o.session_number,a.artifact_type,r.status,
+    rows = read('''SELECT o.live_session_id,o.session_number,a.id,a.artifact_type,r.status,
+        r.last_error,r.updated_at,
         CASE WHEN a.metadata::jsonb->'lmsArchiveProgress'->>'leaseId'=j.lease_id
             THEN (a.metadata::jsonb->'lmsArchiveProgress')-'leaseId' ELSE NULL END AS transfer
         FROM curriculum.live_session_artifacts a
@@ -705,9 +728,73 @@ def add_sync_progress(jobs):
         WHERE o.live_session_id=ANY(%s) AND a.artifact_type IN ('recording','transcript')''',
         [[job['live_session_id'] for job in jobs]])
     for job in jobs:
-        job['progress'] = summarize_transfers([row for row in rows if row['live_session_id'] == job['live_session_id']])
+        own = [row for row in rows if row['live_session_id'] == job['live_session_id']]
+        job['progress'] = summarize_transfers(own)
         if job['state'] not in {'running', 'failed'}:
             job['progress']['transfer'] = None
+        # Staff-only: plain categories for what still needs attention. last_error
+        # is kept unchanged for older callers.
+        job['issues'] = sync_issues(
+            {**job, 'finished_at': instant(job.get('finished_at'))},
+            [{**row, 'updated_at': instant(row.get('updated_at'))} for row in own])
+    add_issue_weeks(jobs)
+
+
+def linked_session_items(series_ids):
+    """The live-session item each Teams session is linked to, by (series, session number).
+
+    A session is named only from the Course structure item that links its
+    occurrence (or its series and session number). The title is given only
+    when the linked items agree on one; the week only when they sit in one
+    week. Nothing is guessed from dates.
+    """
+    if not series_ids:
+        return {}
+    rows = read('''SELECT DISTINCT o.live_session_id,o.session_number,c.id AS component_id,c.title,
+            w.id AS week_id,w.week_number,w.title AS week_title
+        FROM curriculum.live_session_occurrences o
+        JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+        JOIN curriculum.components c ON c.module_catalogue_id=s.module_catalogue_id
+          AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
+          AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
+          AND coalesce(c.library_state,'')<>'library'
+          AND (c.settings_json->>'teamsOccurrenceId'=o.id::text
+               OR (c.settings_json->>'teamsLiveSessionId'=o.live_session_id::text
+                   AND c.settings_json->>'teamsSessionNumber'=o.session_number::text))
+        JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+          AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
+          AND coalesce(w.library_state,'')<>'library'
+        WHERE o.live_session_id=ANY(%s)''', [sorted(set(series_ids))])
+    titles, weeks = defaultdict(set), defaultdict(dict)
+    for row in rows:
+        key = (row['live_session_id'], row['session_number'])
+        titles[key].add(str(row.get('title') or '').strip())
+        weeks[key][row['week_id']] = {'number': row['week_number'], 'title': row['week_title'] or ''}
+    items = {}
+    for key in set(titles) | set(weeks):
+        named = titles[key] - {''}
+        items[key] = {'title': next(iter(named)) if len(titles[key]) == 1 and named else None,
+                      'week': next(iter(weeks[key].values())) if len(weeks[key]) == 1 else None}
+    return items
+
+
+def add_issue_weeks(jobs):
+    """Name the linked item and course week of each session with an outstanding issue."""
+    wanted = {job['live_session_id'] for job in jobs
+              for issue in job.get('issues') or [] if issue.get('sessionNumber') is not None}
+    if not wanted:
+        return
+    try:
+        items = linked_session_items(wanted)
+    except DatabaseError:
+        # The names are a convenience; the issue itself must still be shown.
+        log.warning('Could not read the linked items for sync issues.', exc_info=True)
+        return
+    for job in jobs:
+        for issue in job.get('issues') or []:
+            found = items.get((job['live_session_id'], issue.get('sessionNumber'))) or {}
+            issue['week'] = found.get('week')
+            issue['sessionTitle'] = found.get('title')
 
 
 @require_GET
@@ -732,6 +819,14 @@ def module_results(request, module_id):
             item['title'] = next((row.get('module_title') or '' for row in series if row['id'] == item['seriesId']), '')
             for key in ('startsAt', 'endsAt', 'syncedAt'):
                 item[key] = instant(item[key])
+        try:
+            items = linked_session_items(ids)
+        except DatabaseError:
+            log.warning('Could not read the linked items for module sessions.', exc_info=True)
+            items = {}
+        for item in occurrences:
+            # The Course structure item's own name; the list falls back to "Session N".
+            item['itemTitle'] = (items.get((item['seriesId'], item['sessionNumber'])) or {}).get('title')
         results = [{'id': row['id'], 'title': row['module_title'],
                     'sessions': [item for item in occurrences if item['seriesId'] == row['id']]} for row in series]
         payload = {'series': results, 'jobs': [], 'presenceThresholdSeconds': 180, 'syncAvailable': True}
@@ -777,12 +872,17 @@ def admin_session(request, series_id, session_number):
         return unavailable()
 
 
-def learner_series(kind, learner_id, series_id):
+def learner_series(kind, learner_id, series_id, linked_recordings=False):
     """The learner and a series from one of their assigned modules, else (None, None).
 
     A module duplicated to share another module's Teams meeting has no series
     of its own, so its learners are matched through the source module. The
     duplicates that led here are kept on the row as ``learner_shared_module_ids``.
+
+    With ``linked_recordings`` (recording/transcript endpoints only, never Join),
+    a series in another group's module is also returned when a session recording
+    in one of the learner's modules links to it, carrying the linked
+    ``linked_session_numbers`` -- the only sessions the caller may then serve.
     """
     from learner_api.learner_detail import SOURCE_MODELS
     from learner_api.attendance_lectures import read_assigned_modules, shared_teams_sources
@@ -802,22 +902,41 @@ def learner_series(kind, learner_id, series_id):
     if owner in modules:
         return learner, series
     shared = sorted(alias for alias, sources in shared_teams_sources(modules).items() if owner in sources)
-    if not shared:
-        return None, None
-    return learner, {**series, 'learner_shared_module_ids': shared}
+    if shared:
+        return learner, {**series, 'learner_shared_module_ids': shared}
+    from learner_api.replaced_teams_attendance import additional_module_context
+    additional = additional_module_context(modules, series, read)
+    if additional:
+        return learner, {**series, 'learner_shared_module_ids': additional,
+                         'linked_session_numbers': {1}, 'additional_meeting_access': True}
+    if linked_recordings:
+        from .linked_recording_access import linked_session_numbers
+        numbers = linked_session_numbers(modules, series_id)
+        if numbers:
+            return learner, {**series, 'linked_session_numbers': numbers}
+    return None, None
 
 
 @require_GET
 @learner_self_or_staff(kwarg='learner_id')
 def learner_results(request, kind, learner_id, series_id, session_number):
     try:
-        learner, series = learner_series(kind, learner_id, series_id)
-        if not series:
+        learner, series = learner_series(kind, learner_id, series_id, linked_recordings=True)
+        restricted = bool(series) and 'linked_session_numbers' in series
+        linked = restricted and not series.get('additional_meeting_access')
+        if not series or (restricted and session_number not in series['linked_session_numbers']):
             return JsonResponse({'error': 'Session not found.'}, status=404)
         sessions = result_rows(series, session_number=session_number, email=str(learner.email or '').strip().casefold())
+        if linked:
+            # Recording and transcript only: no attendance from another group's
+            # register, not even a row that names this learner.
+            for session in sessions:
+                session['attendance'] = []
         from learner_api.recorded_attendance import saved_delivery_mode, apply_recorded_attendance
         from learner_api.attendance_rules import attendance_outcome
-        mode = saved_delivery_mode(learner_id) if sessions else 'live'
+        # Another group's session, shown only for its recording: it is not the
+        # learner's to attend, so no recorded-attendance outcome is projected.
+        mode = saved_delivery_mode(learner_id) if sessions and not linked else 'live'
         for session in sessions:
             session['attendanceMode'] = mode
             if mode != 'lazy':
@@ -907,6 +1026,8 @@ def learner_join(request, kind, learner_id, series_id, session_number):
     import uuid
     try:
         learner, series = learner_series(kind, learner_id, series_id)
+        if series and 'linked_session_numbers' in series and session_number not in series['linked_session_numbers']:
+            return learner_join_failure(kind, learner_id, 'not-found')
         rows = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s AND session_number=%s', [series_id, session_number]) if series else []
         if len(rows) != 1:
             return learner_join_failure(kind, learner_id, 'not-found')
@@ -1045,7 +1166,11 @@ def admin_content(request, series_id, artifact_id):
 @learner_self_or_staff(kwarg='learner_id')
 def learner_content(request, kind, learner_id, series_id, artifact_id):
     try:
-        _learner, series = learner_series(kind, learner_id, series_id)
+        _learner, series = learner_series(kind, learner_id, series_id, linked_recordings=True)
+        if series and 'linked_session_numbers' in series:
+            from .linked_recording_access import linked_artifact_allowed
+            if not linked_artifact_allowed(series, artifact_id):
+                series = None
         if not series:
             return JsonResponse({'error': 'Session not found.'}, status=404)
         return stored_content(request, series_id, artifact_id, learner_view=True)

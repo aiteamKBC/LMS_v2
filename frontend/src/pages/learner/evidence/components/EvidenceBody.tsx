@@ -3,7 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { getEvidenceDownloadUrl, uploadEvidence, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
-import { formatHoursMinutes } from '@/lib/format';
+import { formatHoursMinutes, formatSystemTimestamp, systemDateParts } from '@/lib/format';
 import type { HistoricalEvidenceItem } from '@/api/historicalEvidence';
 import { HistoricalEvidencePreview } from './HistoricalEvidencePreview';
 import { EvidenceGroups } from './EvidenceGroups';
@@ -111,6 +111,10 @@ function recordStatus(scanStatus: string, markingStatus?: string): EvidenceStatu
 
 function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
   const details = record.trainingPlanDetails || {};
+  const uploadDate = record.uploadedAt ? systemDateParts(record.uploadedAt) : null;
+  const uploaded = record.uploadedAt
+    ? formatSystemTimestamp(record.uploadedAt, { day: '2-digit', month: '2-digit', year: 'numeric' }) || 'Date unavailable'
+    : 'Date unavailable';
   const weekLabel = details.weekTitle || 'General evidence';
   const weekMatch = weekLabel.match(/\d+/);
   const week = weekMatch ? Number(weekMatch[0]) : 0;
@@ -135,12 +139,12 @@ function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
     // Older responses omit the flag; a missing value means deletable, leaving
     // the server as the one that decides.
     canDelete: record.canDelete !== false,
-    date: formatEvidenceDate(record.uploadedAt),
+    date: uploaded,
     sortDate: record.uploadedAt ? new Date(record.uploadedAt).getTime() : 0,
-    month: evidenceMonth(record.uploadedAt),
+    month: uploadDate ? `${uploadDate.year}-${String(uploadDate.month).padStart(2, '0')}` : '',
     description: details.evidenceDescription || `Uploaded file: ${record.filename}`,
     progress: status === 'Validated' ? 100 : status === 'Needs work' ? 0 : 50,
-    documents: [{ name: record.filename, status: docStatus, size: formatBytes(record.sizeBytes), uploaded: formatEvidenceDate(record.uploadedAt) }],
+    documents: [{ name: record.filename, status: docStatus, size: formatBytes(record.sizeBytes), uploaded }],
     note: record.sectionRef ? `Evidence reference: ${record.sectionRef}` : undefined,
   };
 }
@@ -719,7 +723,7 @@ export function EvidenceBody({
               <MetaBox label="Week" value={selectedItem.weekLabel} />
               <MetaBox label="Status" value={STATUS_CONFIG[selectedItem.status].label} />
               <MetaBox label="Session" value={selectedItem.sessionType || 'N/A'} />
-              <MetaBox label="Submitted" value={selectedItem.date} />
+              <MetaBox label="Uploaded on" value={selectedItem.date} />
               {selectedItem.otjh > 0 && <MetaBox label="OTJH" value={formatHoursMinutes(selectedItem.otjh)} />}
             </div>
             {selectedItem.ksb.length > 0 && <div>

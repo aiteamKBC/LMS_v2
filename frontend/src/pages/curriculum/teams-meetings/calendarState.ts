@@ -10,16 +10,16 @@ export interface CalendarSyncResult {
   /** On Teams but not in the module plan. Reported only; never cancelled by the check. */
   leftovers?: TeamsLeftoverSlot[];
   /**
-   * Sessions Microsoft shows cancelled (in Outlook, by anybody) that the LMS
-   * still holds. Reported only: the check never cancels anything, and the
-   * author records the cancellation with Cancel if it should stand.
+   * Kept for older responses. Eligible sessions are now recorded locally when
+   * Microsoft confirms their cancellation; ineligible historical sessions may
+   * still be reported here for review.
    */
   cancelledInMicrosoft?: number[];
   /** The whole calendar shows cancelled in Microsoft; still active in the LMS. */
   seriesCancelledInMicrosoft?: boolean;
 }
 
-/** Reads Microsoft status and reports it; never cancels anything and sends no email. */
+/** Reads Microsoft status, reconciles eligible local occurrences and sends no email. */
 export async function syncTeamsCalendarState(liveSessionId: string): Promise<CalendarSyncResult> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 60000);

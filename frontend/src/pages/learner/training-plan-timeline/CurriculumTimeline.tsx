@@ -1,7 +1,7 @@
 import { CalendarDays, CalendarOff, Video } from 'lucide-react';
 import type { PlanCurriculumSlot, PlanSession } from '@/api/trainingPlanDashboard';
 import { buildCurriculumTimeline, groupCurriculumTimeline } from './model';
-import { dateLabel, monthLabel, sessionTime } from './presentation';
+import { dateLabel, monthLabel, sessionTime } from "./presentation.helpers";
 import layout from './CurriculumTimeline.module.css';
 
 /**

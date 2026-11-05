@@ -9,7 +9,7 @@ const { denied, auth } = vi.hoisted(() => {
   const denied = new Set<string>();
   return { denied, auth: { canSeeNavItem: (id: string) => !denied.has(id) } };
 });
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => auth }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 
 function CurrentPath() {
   return <output data-testid="current-path">{useLocation().pathname}</output>;

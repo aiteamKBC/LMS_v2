@@ -7,6 +7,9 @@
 // GETs /curriculum_api/curriculum/presentations/slides/?src=<upload path>.
 // ============================================================================
 
+import { createCachedResource } from './cachedRequest';
+import { withCallerSignal } from './learnerRead';
+
 const ENDPOINT = '/curriculum_api/curriculum/presentations/slides/';
 
 export type SlideAlign = 'left' | 'center' | 'right' | 'justify';
@@ -106,10 +109,10 @@ export interface SlideDeck {
  * an absolute URL on this origin). Rejects with the server's own message, which
  * is written to be shown to the learner — a missing file or a legacy .ppt both
  * come back as an explanation rather than a failure. */
-export async function fetchSlideDeck(src: string, signal?: AbortSignal): Promise<SlideDeck> {
+async function loadSlideDeck(src: string): Promise<SlideDeck> {
   let response: Response;
   try {
-    response = await fetch(`${ENDPOINT}?src=${encodeURIComponent(src)}`, { signal });
+    response = await fetch(`${ENDPOINT}?src=${encodeURIComponent(src)}`);
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new Error('The slides could not be loaded — the server could not be reached.');
@@ -119,4 +122,11 @@ export async function fetchSlideDeck(src: string, signal?: AbortSignal): Promise
     throw new Error(data?.error || `The slides could not be loaded (${response.status}).`);
   }
   return data;
+}
+
+const decks = createCachedResource('slide-decks', loadSlideDeck, 30_000, 20);
+
+export function fetchSlideDeck(src: string, signal?: AbortSignal): Promise<SlideDeck> {
+  if (signal?.aborted) return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+  return withCallerSignal(decks.read(src), signal);
 }

@@ -18,7 +18,6 @@ const CURRICULUM_ROUTE_IMPORTS: Record<string, () => Promise<unknown>> = {
   '/curriculum/ksb-mapping': () => import('@/pages/curriculum/ksb-mapping/page'),
   '/curriculum/standards': () => import('@/pages/curriculum/standards/page'),
   '/curriculum/checkpoints': () => import('@/pages/curriculum/checkpoints/page'),
-  '/curriculum/ksb-frameworks': () => import('@/pages/curriculum/ksb-frameworks/page'),
   '/curriculum/published': () => import('@/pages/curriculum/published/page'),
   '/curriculum/reports': () => import('@/pages/curriculum/reports/page'),
   '/curriculum/version-control': () => import('@/pages/curriculum/version-control/page'),

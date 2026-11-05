@@ -9,7 +9,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
 
 const account = { role: 'learner', learnerType: 'apprenticeship', subjectId: 41, displayName: 'Test Learner' };
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account } }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));

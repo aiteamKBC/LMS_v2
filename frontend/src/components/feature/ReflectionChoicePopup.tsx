@@ -23,6 +23,8 @@ export function ReflectionChoicePopup({
   onFinishWithoutReflection,
   submitting = false,
   error = null,
+  onRecoverTiming,
+  recoveringTiming = false,
 }: {
   noun: string;
   onCancel: () => void;
@@ -30,6 +32,8 @@ export function ReflectionChoicePopup({
   onFinishWithoutReflection: () => void;
   submitting?: boolean;
   error?: string | null;
+  onRecoverTiming?: () => void;
+  recoveringTiming?: boolean;
 }) {
   return (
     <div className="fixed inset-0 z-[100] grid place-items-center px-4 py-6">
@@ -70,6 +74,10 @@ export function ReflectionChoicePopup({
             {submitting ? 'Finishing...' : 'No, finish without reflection'}
           </button>
           {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-left text-xs font-semibold text-red-700">{error}</p>}
+          {error && onRecoverTiming && <button type="button" onClick={onRecoverTiming} disabled={submitting || recoveringTiming}
+            className="w-full rounded-xl border border-primary-300 px-4 py-3 text-sm font-semibold text-primary-700">
+            {recoveringTiming ? 'Restoring...' : 'Restore saved time'}
+          </button>}
           <button
             type="button"
             onClick={onCancel}

@@ -132,6 +132,16 @@ export function clearAllCachedResources(): void {
   inFlight.clear();
 }
 
+/** Drop every entry whose key mentions `fragment`, in every resource. Leaving a
+ * personal course uses its identity: each of its reads carries it in the URL. */
+export function clearCachedResourcesContaining(fragment: string): void {
+  if (!fragment) return;
+  const encoded = encodeURIComponent(fragment);
+  const matches = (key: string) => key.includes(fragment) || key.includes(encoded);
+  caches.forEach(cache => [...cache.keys()].filter(matches).forEach(key => cache.delete(key)));
+  inFlight.forEach(pending => [...pending.keys()].filter(matches).forEach(key => pending.delete(key)));
+}
+
 /** Invalidate one registered resource even when its consuming page is unmounted. */
 export function invalidateCachedResource(name: string): void {
   caches.get(name)?.clear();

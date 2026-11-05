@@ -2,6 +2,7 @@ import type { MarkingSubmission } from '../types/marking.types';
 import type { MarkingKind } from '@/lib/markingKind';
 
 export function markingStatusLabel(status: string, isOverdue = false) {
+  if (status === 'ksb_review') return 'KSB review required';
   if (isOverdue) return 'Overdue';
   if (status === 'accepted') return 'Accepted';
   if (status === 'partial') return 'Partially awarded';

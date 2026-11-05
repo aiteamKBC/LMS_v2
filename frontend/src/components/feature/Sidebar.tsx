@@ -70,7 +70,7 @@ import {
   type LucideIcon,
   Lock,
 } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { LEARNER_LOGO_URL, LEARNER_SIDEBAR_PATTERN_URL, LEARNER_SIDEBAR_COLLAPSED_WIDTH, LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
 import { SignOutConfirmModal } from './Header';
 
@@ -100,6 +100,10 @@ export interface SidebarNavItem {
   icon: string;
   /** Leaf destination. Navigation groups intentionally omit it. */
   href?: string;
+  /** Optional router state forwarded when opening this destination. */
+  state?: unknown;
+  /** Optional page-resolved selection for destinations with query-string tabs. */
+  active?: boolean;
   /**
    * Existing routes that belong to this destination without changing their
    * public URL. Hub-style navigation uses these aliases to keep one of the five
@@ -292,7 +296,7 @@ function NavItemLink({ item, className, children, ...rest }: {
     );
   }
   return (
-    <Link to={item.href ?? '#'} {...externalLinkProps(item)} className={className} {...rest}>
+    <Link to={item.href ?? '#'} state={item.state} {...externalLinkProps(item)} className={className} {...rest}>
       {children}
     </Link>
   );
@@ -436,6 +440,9 @@ export function Sidebar({
 
   const isActive = useCallback((href?: string, matchPaths: string[] = []) => {
     if (!href) return false;
+    const explicitActive = filteredNavItems.flatMap(item => [item, ...(item.children ?? [])])
+      .find(item => item.href === href)?.active;
+    if (explicitActive !== undefined) return explicitActive;
     const [hrefPath] = href.split('?');
     const current = `${location.pathname}${location.search}`;
     if (href.includes('?')) return current === href;
@@ -453,7 +460,7 @@ export function Sidebar({
       candidate.length > href.length
       && (location.pathname === candidate || location.pathname.startsWith(candidate + '/'))
     );
-  }, [location.pathname, location.search, navHrefs, queryMatchedHref]);
+  }, [filteredNavItems, location.pathname, location.search, navHrefs, queryMatchedHref]);
 
   // Keep the section containing the current route open when navigation is
   // supplied dynamically by the active role/configuration.

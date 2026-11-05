@@ -17,7 +17,7 @@ export type TeamsMeetingModuleContext = ModuleCatalogueItem & {
 
 const UNSAVED_WEEK_MEETING_REASON = 'This module has unsaved changes. An additional meeting is attached to a live session as it is STORED, so a week or a live session that exists only in this tab has nothing to attach to. Close this, press Save, then reopen the calendar.';
 
-const UNSAVED_REASON = 'This module has unsaved changes. The Teams calendar is built from the module’s saved sessions and writes its join links back into them, so nothing here can be sent until the module is saved. Close this, press Save, then reopen the calendar. Viewing and syncing still work.';
+const UNSAVED_REASON = 'This module has unsaved changes. Close this window, press Save in Module Builder, then reopen Teams. Save draft only saves this meeting form.';
 
 /**
  * A module's Teams calendar, opened from the Module Builder.

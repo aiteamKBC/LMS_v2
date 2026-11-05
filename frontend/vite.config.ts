@@ -83,6 +83,11 @@ export default defineConfig(({ mode }) => {
     }),
   ],
   base,
+  optimizeDeps: {
+    // Shared by Users, onboarding and audit signatures. Prepare it at startup
+    // so opening a lazy page does not first discover/rebundle this dependency.
+    include: ['signature_pad'],
+  },
   build: {
     // Production ships no source maps. The bundle previously emitted 297 .map files
     // (~22 MB, 71% of the build output) reachable from the deployed site, which hands

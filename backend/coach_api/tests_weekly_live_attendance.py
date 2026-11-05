@@ -22,6 +22,19 @@ def lecture(**over):
 
 
 class WeeklyLiveAttendanceTests(SimpleTestCase):
+    def test_manual_only_session_hours_keep_their_week_without_provider_attendance(self):
+        credit = {'moduleId': 'M1', 'componentId': 'C1', 'occurrenceId': '', 'hours': 2.5,
+                  'sessionDate': '2026-10-14', 'timeTrackingSource': 'manual_attendance'}
+        with patch('learner_api.attendance_lectures.lecture_register', return_value=[]), \
+             patch('learner_api.live_session_progress.read_live_credits', return_value=[credit]) as read:
+            rows, credits = read_weekly_live_evidence(SimpleNamespace(pk=7), {'id': 70}, ['M1'], ['M1'])
+        self.assertEqual(rows, [])
+        self.assertEqual(credits, [credit])
+        self.assertTrue(credit_in_week(credits[0], WEEK))
+        read.assert_called_once()
+        hours = add_live_activity_hours({'M1': {'components': {}, 'quizzes': {}}}, [], credits)
+        self.assertEqual(hours['M1']['components']['C1'], 2.5)
+
     def test_reader_reuses_learner_register_with_assigned_scope_and_source_identity(self):
         source = SimpleNamespace(pk=7)
         credit = {'moduleId': 'M1', 'componentId': 'C1', 'occurrenceId': 'O1', 'hours': 2}

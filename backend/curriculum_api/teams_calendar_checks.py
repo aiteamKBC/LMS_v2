@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode, urlparse
 from zoneinfo import ZoneInfo
+from config.time_zones import local_clock_to_utc
 
 
 class CalendarMismatch(RuntimeError):
@@ -38,7 +39,8 @@ def calendar_targets(payload, start, duration, repeat, count, zone_name):
     else:
         local = utc_datetime(start).astimezone(ZoneInfo(zone_name))
         for index in range(count if repeat != 'none' else 1):
-            instant = local.astimezone(timezone.utc)
+            instant = (local.astimezone(timezone.utc) if index == 0 else
+                       local_clock_to_utc(local.replace(tzinfo=None), zone_name))
             targets.append({'session_number': index + 1, 'start': instant, 'end': instant + timedelta(minutes=duration)})
             local += timedelta(days=7 if repeat == 'weekly' else 1)
             while repeat == 'weekdays' and local.weekday() > 4:
@@ -153,8 +155,8 @@ def event_instant(event, field):
                    'W. Europe Standard Time': 'Europe/Berlin', 'Romance Standard Time': 'Europe/Paris',
                    'Arabian Standard Time': 'Asia/Dubai'}
         try:
-            raw = raw.replace(tzinfo=ZoneInfo(aliases.get(name, name)))
-        except KeyError as exc:
+            raw = local_clock_to_utc(raw, aliases.get(name, name))
+        except ValueError as exc:
             raise CalendarMismatch('Microsoft returned an unsupported calendar time zone.') from exc
     return raw.astimezone(timezone.utc)
 

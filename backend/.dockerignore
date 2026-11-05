@@ -1,0 +1,31 @@
+# Files Docker must NOT copy into the backend image.
+
+# Secrets: settings come from AWS Secrets Manager in ECS
+.env
+.env.*
+*.pem
+*.key
+
+# Generated data-fix / audit reports (may contain learner data)
+reports/
+
+# Local Python environments and caches
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local databases, logs, downloads
+*.sqlite3
+*.log
+aptem_downloads/
+
+# Editor / VCS
+.git
+.vscode
+.idea
+
+# The Docker files themselves
+Dockerfile
+.dockerignore

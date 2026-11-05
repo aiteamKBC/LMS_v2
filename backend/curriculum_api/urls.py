@@ -1,14 +1,25 @@
 from django.urls import path
+from .video_imports import component_video, tracked_save
 from coach_api import migrated_template_views
 
 from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from .archive_index import curriculum_archive_index
+from .record_snapshots import curriculum_record_snapshot
+from .module_live import curriculum_live, curriculum_module_changes
+from .module_collaboration import collaboration_configuration
+from . import learner_directory
+from . import learner_directory_details
 from .teams_attendee_compare import teams_meeting_attendee_comparison
 from .teams_permission_check import teams_meeting_permission_check
+from .teams_imported_participants import imported_meeting_participants
+from .teams_imported_calendar_update import imported_calendar_update
+from .teams_imported_calendar_auth import imported_calendar_connect, imported_calendar_connection
 from .teams_dial_in import teams_meeting_dial_in
 from .teams_options_retry import teams_meeting_options_retry
 from .teams_endpoint_guard import teams_staff_required
+from .teams_existing_series import existing_series
 from .teams_create_guard import teams_create_status, teams_meeting_collection
 from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
@@ -18,10 +29,12 @@ from .bulk_attendance_learners import bulk_attendance_learners
 from .bulk_attendance_kbc_history import (
     bulk_attendance_kbc_history,
     bulk_attendance_kbc_recent,
+    bulk_attendance_day_learners,
+    bulk_attendance_kbc_month_records,
     bulk_attendance_save_attendance,
 )
 from .bulk_attendance_live_day import bulk_attendance_live_day
-from .bulk_attendance_live_day_records import bulk_attendance_live_day_records
+from .bulk_attendance_live_day_records import bulk_attendance_live_day_records, bulk_attendance_live_month_records
 from .teams_calendar_actions import calendar_action
 from .teams_week_meeting import (
     curriculum_live_session_meeting_scope,
@@ -29,17 +42,30 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting_detail,
 )
 from . import recordings_library, session_results, tutor_notifications, recordings_day, recordings_calendar, recordings_external
+from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 from .home_summary import curriculum_home_summary
+from .module_hours import module_target
+from .catalogue_activity import catalogue_activity
 
 
 urlpatterns = [
+    path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
+    path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),
+    path('curriculum/learner-directory/counts/', learner_directory.counts),
+    path('curriculum/learner-directory/learners/', learner_directory.learners),
+    path('curriculum/learner-directory/progress/', learner_directory_details.progress),
+    path('curriculum/learner-directory/membership/', learner_directory_details.membership),
+    path('curriculum/modules/<str:module_id>/collaboration/', collaboration_configuration, name='module-collaboration'),
     path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
     path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
     path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
+    path('curriculum/bulk-attendance/kbc-month-records/', bulk_attendance_kbc_month_records, name='curriculum-bulk-attendance-kbc-month-records'),
+    path('curriculum/bulk-attendance/day-learners/', bulk_attendance_day_learners, name='curriculum-bulk-attendance-day-learners'),
     path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
     path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
     path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),
+    path('curriculum/bulk-attendance/live-month-records/', bulk_attendance_live_month_records, name='curriculum-bulk-attendance-live-month-records'),
     path('curriculum/modules/<str:module_id>/learners/<int:learner_id>/activities/<str:component_id>/status/', activity_status),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
@@ -61,6 +87,7 @@ urlpatterns = [
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/day-results/', recordings_day.lecture_day_results),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-correction/', session_attendance_correction),
     path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/', session_results.admin_content),
     path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/visibility/', session_results.recording_visibility),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance.csv', session_results.export_attendance),
@@ -77,6 +104,8 @@ urlpatterns = [
     path('curriculum/review-types/<str:review_type_id>/', review_types.curriculum_review_type_detail, name='curriculum-review-type-detail'),
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
+    # The Archive page's one read: every archived record, a page at a time.
+    path('curriculum/archive/', curriculum_archive_index, name='curriculum-archive-index'),
     path('curriculum/home-summary/', curriculum_home_summary, name='curriculum-home-summary'),
     path('curriculum/delivery-scope/', views.curriculum_delivery_scope, name='curriculum-delivery-scope'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
@@ -84,6 +113,11 @@ urlpatterns = [
     # to nothing in cost: one Redis read, no database.
     path('curriculum/cache-epoch/', views.curriculum_cache_epoch, name='curriculum-cache-epoch'),
     path('curriculum/revisions/', views.curriculum_record_revisions, name='curriculum-record-revisions'),
+    # The record a drawer edits and its token, read together so they agree.
+    path('curriculum/record-snapshot/', curriculum_record_snapshot, name='curriculum-record-snapshot'),
+    # Module Builder live sync: the counters an open module watches, off unless
+    # CURRICULUM_LIVE_SYNC=true. See module_live.
+    path('curriculum/live/', curriculum_live, name='curriculum-live'),
     path('curriculum/preview/cohort-end-date/', views.curriculum_preview_cohort_end_date, name='curriculum-preview-cohort-end-date'),
     path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan, name='curriculum-preview-module-session-plan'),
     path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability, name='curriculum-preview-tutor-availability'),
@@ -142,18 +176,21 @@ urlpatterns = [
     path('curriculum/quality/versions/<str:entity_type>/<path:entity_id>/', quality.curriculum_quality_record_history, name='curriculum-quality-record-history'),
     path('curriculum/standards/', views.curriculum_standards, name='curriculum-standards'),
     path('curriculum/standards/<str:identifier>/', views.curriculum_standard_detail, name='curriculum-standard-detail'),
-    path('curriculum/modules/', views.curriculum_module_collection, name='curriculum-modules'),
+    path('curriculum/modules/', tracked_save(views.curriculum_module_collection, 'module'), name='curriculum-modules'),
     path('curriculum/modules/resolve-structures/', views.curriculum_module_structure_resolve, name='curriculum-module-structure-resolve'),
     # Before the '<str:identifier>' route below, or 'archived' is read as a module id.
     path('curriculum/modules/archived/', views.curriculum_archived_modules, name='curriculum-modules-archived'),
     path('curriculum/modules/<str:module_catalogue_id>/archived-structure/', views.curriculum_archived_module_structure, name='curriculum-module-archived-structure'),
     path('curriculum/modules/<str:identifier>/restore/', views.curriculum_module_restore, name='curriculum-module-restore'),
-    path('curriculum/modules/<str:module_catalogue_id>/structure/', views.curriculum_module_structure, name='curriculum-module-structure'),
+    path('curriculum/modules/<str:module_catalogue_id>/structure/', tracked_save(views.curriculum_module_structure, 'module'), name='curriculum-module-structure'),
+    # What changed since the copy an open Module Builder holds (read-only POST).
+    path('curriculum/modules/<str:module_catalogue_id>/changes/', curriculum_module_changes, name='curriculum-module-changes'),
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', teams_staff_required(views.curriculum_module_teams_meeting_restore), name='curriculum-module-teams-meeting-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-links/', teams_staff_required(views.curriculum_module_teams_links_replace), name='curriculum-module-teams-links-replace'),
+    path('curriculum/modules/<str:module_catalogue_id>/teams-existing-series/', teams_staff_required(existing_series), name='curriculum-module-teams-existing-series'),
     # A one-off meeting on a single week, with its own organiser and guests.
     # Separate from the module's calendar above in both directions -- see
     # teams_week_meeting.py.
@@ -166,33 +203,46 @@ urlpatterns = [
     # that delivers it, and what they achieved against this module's components.
     path('curriculum/modules/<str:module_catalogue_id>/learner-roster/', views.curriculum_module_learner_roster, name='curriculum-module-learner-roster'),
     path('curriculum/modules/<str:module_catalogue_id>/learner-ksb-impact/', views.curriculum_module_learner_ksb_impact, name='curriculum-module-learner-ksb-impact'),
-    path('curriculum/modules/<str:module_catalogue_id>/components/<str:component_id>/', views.curriculum_module_component_detail, name='curriculum-module-component-detail'),
+    path('curriculum/modules/<str:module_catalogue_id>/components/<str:component_id>/', tracked_save(views.curriculum_module_component_detail, 'module'), name='curriculum-module-component-detail'),
     path('curriculum/modules/<str:module_catalogue_id>/weeks/<str:week_id>/', views.curriculum_module_week_detail, name='curriculum-module-week-detail'),
     path('curriculum/modules/<str:identifier>/', views.curriculum_module_detail, name='curriculum-module-detail'),
-    path('curriculum/module-catalogue/', views.curriculum_module_collection, name='curriculum-module-catalogue'),
+    path('curriculum/module-catalogue/', tracked_save(views.curriculum_module_collection, 'module'), name='curriculum-module-catalogue'),
     path('curriculum/module-catalogue/<str:identifier>/', views.curriculum_module_detail, name='curriculum-module-catalogue-detail'),
-    path('curriculum/week-templates/', views.curriculum_week_template_collection, name='curriculum-week-templates'),
-    path('curriculum/week-templates/<str:identifier>/', views.curriculum_week_template_detail, name='curriculum-week-template-detail'),
+    path('curriculum/week-templates/', tracked_save(views.curriculum_week_template_collection, 'template'), name='curriculum-week-templates'),
+    path('curriculum/week-templates/<str:identifier>/', tracked_save(views.curriculum_week_template_detail, 'template'), name='curriculum-week-template-detail'),
+    path('curriculum/videos/<str:kind>/<str:target_id>/<str:component_id>/', component_video, name='curriculum-component-video'),
     path('curriculum/week-components/<str:component_id>/upload/', views.curriculum_week_component_upload, name='curriculum-week-component-upload'),
     # Must precede curriculum/components/<component_id>/, or "library" would be
     # captured as a component id.
     path('curriculum/components/library/', views.curriculum_component_library, name='curriculum-component-library'),
-    path('curriculum/components/', views.curriculum_component_collection, name='curriculum-components'),
+    path('curriculum/components/summary/', views.curriculum_component_summary, name='curriculum-component-summary'),
+    path('curriculum/components/', tracked_save(views.curriculum_component_collection, 'component'), name='curriculum-components'),
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
-    path('curriculum/components/<str:component_id>/', views.curriculum_component_detail, name='curriculum-component-detail'),
+    path('curriculum/components/<str:component_id>/', tracked_save(views.curriculum_component_detail, 'component'), name='curriculum-component-detail'),
     path('curriculum/teams-meetings/', teams_staff_required(teams_meeting_collection), name='curriculum-teams-meeting'),
     path('curriculum/teams-meetings/create-status/', teams_create_status, name='curriculum-teams-create-status'),
     path('curriculum/teams-meetings/create-draft/', teams_staff_required(teams_create_draft), name='curriculum-teams-create-draft'),
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', teams_staff_required(views.curriculum_teams_meeting_schedule), name='curriculum-teams-meeting-schedule'),
+    path('curriculum/teams-meetings/<str:live_session_id>/off-schedule-runs/', teams_staff_required(views.curriculum_teams_meeting_off_schedule_runs), name='curriculum-teams-meeting-off-schedule-runs'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/forward-email/', forward_schedule_email, name='curriculum-teams-forward-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),
     path('curriculum/teams-meetings/<str:live_session_id>/permission-check/', teams_meeting_permission_check, name='curriculum-teams-permission-check'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-participants/', imported_meeting_participants, name='curriculum-teams-imported-participants'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/connection/', imported_calendar_connection, name='curriculum-teams-imported-calendar-connection'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/connect/', imported_calendar_connect, name='curriculum-teams-imported-calendar-connect'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/preview/', imported_calendar_update, {'stage': 'preview'}, name='curriculum-teams-imported-calendar-preview'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/confirm/', imported_calendar_update, {'stage': 'confirm'}, name='curriculum-teams-imported-calendar-confirm'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/status/', imported_calendar_update, {'stage': 'status'}, name='curriculum-teams-imported-calendar-status'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/edit-read/', imported_calendar_update, {'stage': 'edit-read'}, name='curriculum-teams-imported-edit-read'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/edit-preview/', imported_calendar_update, {'stage': 'edit-preview'}, name='curriculum-teams-imported-edit-preview'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/edit-confirm/', imported_calendar_update, {'stage': 'edit-confirm'}, name='curriculum-teams-imported-edit-confirm'),
+    path('curriculum/teams-meetings/<str:live_session_id>/imported-calendar/edit-status/', imported_calendar_update, {'stage': 'edit-status'}, name='curriculum-teams-imported-edit-status'),
     path('curriculum/teams-meetings/<str:live_session_id>/dial-in/', teams_staff_required(teams_meeting_dial_in), name='curriculum-teams-dial-in'),
     path('curriculum/teams-meetings/<str:live_session_id>/retry-options/', teams_meeting_options_retry, name='curriculum-teams-retry-options'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', teams_staff_required(views.curriculum_teams_meeting_occurrence_schedule), name='curriculum-teams-meeting-occurrence-schedule'),

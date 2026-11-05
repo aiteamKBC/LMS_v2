@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerCalendarEvents, type BookingCalendarRules, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchLearnerReviewSessions } from '@/api/reviewSessions';
+import { LearnerReadError } from '@/api/learnerRead';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { reviewCategory } from '@/lib/reviewCategory';
@@ -34,7 +36,7 @@ export function isMigratedContinuationEvent(event: LearnerCalendarEvent | null):
 }
 
 /** Programme sessions remain usable if the learning summary is unavailable. */
-export function useReviewSessions(source: ReviewSessionSource) {
+export function useReviewSessions(source: ReviewSessionSource, summary = false) {
   const myLearner = useLinkedLearner();
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
   const [currentCoach, setCurrentCoach] = useState<{ name: string; email: string } | null>(null);
@@ -44,16 +46,18 @@ export function useReviewSessions(source: ReviewSessionSource) {
   const [calendarError, setCalendarError] = useState('');
   const [detailError, setDetailError] = useState('');
   const [revision, setRevision] = useState(0);
+  const loaded = useRef(false);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
   useLiveRefresh(refresh, { match: isReviewSessionWrite });
 
   useEffect(() => {
+    loaded.current = false;
     setLearner(null);
     setCurrentCoach(null);
     setEvents([]);
     setBookingCalendar(null);
     setLoading(true);
-  }, [myLearner.kind, myLearner.id, source]);
+  }, [myLearner.kind, myLearner.id, source, summary]);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,23 +67,31 @@ export function useReviewSessions(source: ReviewSessionSource) {
     // page reload and restarting its recording request.
     setCalendarError('');
     setDetailError('');
+    setLoading(!loaded.current);
     void fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true })
       .then(detail => { if (!cancelled) setLearner(detail); })
       .catch(() => { if (!cancelled) setDetailError('Could not load the learner summary. Please try again.'); });
     // The server owns source selection and attaches local continuation state.
     // Never add a second history stream or infer a Curriculum fallback here.
-    void fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
+    const read = source === 'progress-review'
+      ? fetchLearnerReviewSessions(myLearner.kind, myLearner.id, summary)
+      : fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true });
+    void read
       .then(calendar => {
         if (cancelled) return;
+        loaded.current = true;
         setBookingCalendar(calendar.bookingCalendar || null);
         setCurrentCoach(calendar.currentCoach || null);
         setEvents(calendar.events);
         setLoading(false);
       })
-      .catch(() => { if (!cancelled) setCalendarError('Could not load programme sessions. Please try again.'); })
+      .catch(error => {
+        if (!cancelled) setCalendarError(error instanceof LearnerReadError && error.code === 'timeout'
+          ? error.message : 'Could not load programme sessions. Please try again.');
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [myLearner.kind, myLearner.id, revision, source]);
+  }, [myLearner.kind, myLearner.id, revision, source, summary]);
 
   const sessions = useMemo(() => events.filter(event => isReviewSession(event, source))
     .sort((a, b) => (a.date || a.targetDate || '').localeCompare(b.date || b.targetDate || '') || a.sequence - b.sequence || a.eventKey.localeCompare(b.eventKey)), [events, source]);

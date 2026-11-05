@@ -25,6 +25,8 @@ export function previewComponent(component: ModuleComponent): JourneyComponent {
     expectedOtjh: component.expectedOtjh, description: component.description,
     videoUrl: setting('videoUrl') || uploaded || embed, audioUrl: audio,
     contentHtml: setting('readingContent'), hasReadingContent: Boolean(setting('readingContent')),
+    // Same rule as the learner API: only a video's lesson content is shown.
+    lessonContentHtml: component.type === 'video' ? setting('lessonContent') : '',
     resourceUrl: resource,
     fileName: setting('fileName') || setting('uploadedFileName') || setting('assignmentFileName'),
     // The whole ordered set, falling back to the single file the component has

@@ -20,13 +20,33 @@ from django.test import RequestFactory, SimpleTestCase, override_settings
 from . import feedback, feedback_delivery, hooks, permissions, services, views
 
 
-@override_settings(LEARNER_FEEDBACK_ENABLED=True)
+@override_settings(DEBUG=True, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=True)
 class FeedbackValidationTests(SimpleTestCase):
-    def test_disabled_feedback_is_hidden_from_learner_but_not_staff_preview(self):
-        with self.settings(LEARNER_FEEDBACK_ENABLED=False):
-            with _patched(_account(role='learner', subject_type='learner')):
+    def setUp(self):
+        # These existing transport tests isolate each delivery source. The
+        # module scheduler has its own date/membership regression suite.
+        self.patch_module_sync = mock.patch.object(feedback, 'sync_module_feedback')
+        self.patch_module_sync.start()
+        self.addCleanup(self.patch_module_sync.stop)
+
+    def test_explicitly_disabled_release_hides_feedback_but_staff_preview_remains_available(self):
+        with self.settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=False, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False):
+            recipients = mock.MagicMock()
+            recipients.filter.return_value.filter.return_value.order_by.return_value = []
+            with (
+                _patched(_account(role='learner', subject_type='learner')),
+                mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=recipients),
+                mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[]),
+                mock.patch.object(feedback, '_sync_review_feedback_deliveries') as review_sync,
+                mock.patch.object(feedback, '_forms_queryset') as general_forms,
+            ):
                 response = feedback.learner_forms(RequestFactory().get('/'))
-            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(json.loads(response.content), {'forms': []})
+            recipients.filter.assert_not_called()
+            review_sync.assert_not_called()
+            general_forms.assert_not_called()
+            feedback.sync_module_feedback.assert_not_called()
 
             with _patched(_account(role='staff', subject_type='staff')):
                 self.assertFalse(feedback._learner_feedback_disabled(RequestFactory().get('/')))
@@ -62,6 +82,7 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback_delivery.EnrolmentUser.all_learners, 'filter', return_value=[learner]),
             mock.patch.object(feedback_delivery, '_form_for_occurrence', return_value=form),
             mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'update_or_create', return_value=(delivery, True)) as delivery_upsert,
+            mock.patch.object(feedback_delivery, '_pin_delivery_questions') as pin_questions,
             mock.patch.object(feedback_delivery.FeedbackDeliveryRecipient.objects, 'update_or_create', return_value=(mock.Mock(), True)) as recipient_upsert,
             mock.patch.object(feedback_delivery.FeedbackDeliveryRecipient.objects, 'filter', return_value=stale_recipients),
             mock.patch.object(feedback_delivery.transaction, 'atomic', return_value=atomic),
@@ -70,8 +91,9 @@ class FeedbackValidationTests(SimpleTestCase):
                 occurrence, [feedback_delivery.Attendee('7', 'ATT-7')], attendance_finalized=True,
             )
 
-        delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY)
+        delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY, create_defaults=mock.ANY)
         self.assertIs(delivery_upsert.call_args.kwargs['defaults']['form'], form)
+        pin_questions.assert_called_once_with(delivery, form)
         recipient_upsert.assert_called_once_with(delivery=delivery, learner_id='7', defaults=mock.ANY)
         self.assertEqual(result['deliveryIds'], [11])
         self.assertEqual(result['recipientsMatched'], 1)
@@ -230,16 +252,18 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(form.module_catalogue_id, '')
 
     def test_existing_delivery_keeps_the_template_version_used_by_that_lecture(self):
-        historical = SimpleNamespace(id=4, version=1)
+        created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        historical = SimpleNamespace(id=4, version=1, created_at=created_at)
         existing = SimpleNamespace(form=historical)
         with mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_related') as selected:
             selected.return_value.filter.return_value.first.return_value = existing
-            chosen = feedback_delivery._form_for_occurrence('OCC-1', 'MOD-1')
+            chosen = feedback_delivery._form_for_occurrence('OCC-1', 'MOD-1', created_at)
         self.assertIs(chosen, historical)
 
     def test_module_template_overrides_all_modules_template(self):
-        module_form = SimpleNamespace(id=8)
-        global_form = SimpleNamespace(id=7)
+        created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        module_form = SimpleNamespace(id=8, created_at=created_at)
+        global_form = SimpleNamespace(id=7, created_at=created_at)
         module_query = mock.MagicMock()
         module_query.order_by.return_value.first.return_value = module_form
         global_query = mock.MagicMock()
@@ -251,12 +275,13 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback_delivery.FeedbackForm.objects, 'filter', return_value=available),
         ):
             selected.return_value.filter.return_value.first.return_value = None
-            chosen = feedback_delivery._form_for_occurrence('OCC-2', 'MOD-1')
+            chosen = feedback_delivery._form_for_occurrence('OCC-2', 'MOD-1', created_at)
         self.assertIs(chosen, module_form)
         self.assertEqual(available.filter.call_count, 1)
 
     def test_all_modules_template_is_used_when_module_has_no_override(self):
-        global_form = SimpleNamespace(id=7)
+        created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        global_form = SimpleNamespace(id=7, created_at=created_at)
         module_query = mock.MagicMock()
         module_query.order_by.return_value.first.return_value = None
         global_query = mock.MagicMock()
@@ -268,7 +293,7 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback_delivery.FeedbackForm.objects, 'filter', return_value=available),
         ):
             selected.return_value.filter.return_value.first.return_value = None
-            chosen = feedback_delivery._form_for_occurrence('OCC-3', 'MOD-2')
+            chosen = feedback_delivery._form_for_occurrence('OCC-3', 'MOD-2', created_at)
         self.assertIs(chosen, global_form)
         self.assertEqual(available.filter.call_count, 2)
 
@@ -323,7 +348,7 @@ class FeedbackValidationTests(SimpleTestCase):
 
     def test_recipient_rows_show_attendance_learner_lecture_and_response(self):
         form = SimpleNamespace(id=19, form_type='post_lecture', template_key='template-1')
-        delivery_form = SimpleNamespace(version=1)
+        delivery_form = SimpleNamespace(version=1, form_type='post_lecture')
         delivery = SimpleNamespace(
             id=3, occurrence_key='martech-2026-09-24',
             session_title='Martech - Thur - Session 1', module_name='Martech - Thur',
@@ -432,7 +457,7 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(summaries[1]['responseCount'], 1)
 
     def test_staff_can_filter_form_recipients_by_lecture(self):
-        form = SimpleNamespace(id=19)
+        form = SimpleNamespace(id=19, form_type='post_lecture')
         rows = [
             {'key': 'delivery-3-1', 'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'learnerName': 'First Learner', 'email': 'first@example.test', 'programme': 'Marketing', 'responseStatus': 'completed'},
             {'key': 'delivery-4-2', 'deliveryId': 4, 'occurrenceKey': 'newer', 'sessionTitle': 'Session 2', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-24T09:30:00+00:00', 'learnerName': 'Second Learner', 'email': 'second@example.test', 'programme': 'Marketing', 'responseStatus': 'not_started'},
@@ -482,8 +507,8 @@ class FeedbackValidationTests(SimpleTestCase):
 
     def test_staff_view_as_sees_attendance_recipient_delivery(self):
         form = SimpleNamespace(
-            id=19, title='Lecture feedback', description='Tell us about the lecture',
-            due_date=None,
+            id=19, title='Lecture feedback', description='Tell us about the lecture', form_type='post_lecture',
+            due_date=None, created_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
         )
         delivery = SimpleNamespace(
             id=21, form=form, session_title='Martech - Thur - Session 1',
@@ -506,12 +531,17 @@ class FeedbackValidationTests(SimpleTestCase):
         event_recipient_query.filter.return_value = event_recipient_query
         event_recipient_query.distinct.return_value = event_recipient_query
         event_recipient_query.order_by.return_value = []
+        review_delivery_query = mock.MagicMock()
+        review_delivery_query.filter.return_value = review_delivery_query
+        review_delivery_query.order_by.return_value = []
         with (
             _patched(_account(role='staff', subject_type='staff')),
             mock.patch.object(feedback, '_forms_queryset', return_value=forms_query),
             mock.patch.object(feedback.FeedbackResponse.objects, 'filter', side_effect=[[], []]),
             mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=recipient_query),
             mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_recipient_query),
+            mock.patch.object(feedback.FeedbackReviewDelivery.objects, 'select_related', return_value=review_delivery_query),
+            mock.patch.object(feedback, '_sync_review_feedback_deliveries'),
         ):
             response = feedback.learner_forms(RequestFactory().get('/?learnerId=61'))
 
@@ -549,6 +579,9 @@ class FeedbackValidationTests(SimpleTestCase):
         campaign_query = mock.MagicMock()
         campaign_query.filter.return_value = campaign_query
         campaign_query.order_by.return_value = [SimpleNamespace(form=form)]
+        review_delivery_query = mock.MagicMock()
+        review_delivery_query.filter.return_value = review_delivery_query
+        review_delivery_query.order_by.return_value = []
         with (
             _patched(_account(role='learner', subject_type='learner', subject_id='61')),
             mock.patch.object(feedback, '_forms_queryset', return_value=forms_query),
@@ -556,6 +589,8 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=delivery_query),
             mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_recipient_query),
             mock.patch.object(feedback.FeedbackEventCampaign.objects, 'select_related', return_value=campaign_query),
+            mock.patch.object(feedback.FeedbackReviewDelivery.objects, 'select_related', return_value=review_delivery_query),
+            mock.patch.object(feedback, '_sync_review_feedback_deliveries'),
         ):
             response = feedback.learner_forms(RequestFactory().get('/'))
 

@@ -12,16 +12,21 @@ export interface JourneyComponent {
   ksbMappingCount?: number | null;
   ksbMappings?: ComponentKsbMapping[];
   componentId?: string | null;
+  /** Display-only grouping within the authored week; child IDs remain canonical. */
+  pointNumber?: number | null;
   type?: string | null;
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
-  /** The author flagged this as the monthly (eight-step) assignment. */
+  /** Legacy author flag; every assignment now uses monthly submission. */
   monthlyAssignment?: boolean;
   assignmentBrief?: string | null;
   assignmentBriefHtml?: string | null;
   videoUrl?: string | null;
+  alternativeYouTubeUrl?: string | null;
   audioUrl?: string | null;
   contentHtml?: string | null;
+  /** A video's authored lesson content (HTML or plain text), shown under the player. */
+  lessonContentHtml?: string | null;
   hasReadingContent?: boolean;
   fileName?: string | null;
   /** Ordered attachments; entry 0 is `resourceUrl`. */
@@ -40,6 +45,7 @@ export interface JourneyComponent {
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
   teamsSessionNumber?: number | null;
+  additionalMeeting?: boolean;
   recordingSeriesId?: string | null;
   recordingSessionNumber?: number | null;
   recordingDate?: string | null;
@@ -107,22 +113,15 @@ export function componentRequiresEvidence(type: string | null | undefined): bool
 
 type MonthlyAssignmentCandidate = { type?: string | null; monthlyAssignment?: boolean | null };
 
-/** Has an author flagged any assignment in this learner's plan as the monthly assignment? */
-export function monthlyAssignmentFlagsInUse(components: readonly MonthlyAssignmentCandidate[] | null | undefined): boolean {
-  return Boolean(components?.some(component => componentRequiresEvidence(component.type) && component.monthlyAssignment === true));
-}
-
-/** Is this the assignment learners submit through the eight-step monthly
- * submission (and list under Monthly submission)? Until an author flags one,
- * every assignment is. Once any assignment in the plan is flagged, only the
- * flagged ones are and the others are completed like any other activity.
- * learner_api.assignment_settings applies the same rule on completion. */
+/** Every assignment appears in Monthly submission and uses its eight-step
+ * submission, regardless of legacy author flags elsewhere in the plan.
+ * Keep the plan argument for existing callers; eligibility depends only on type.
+ * learner_api.components enforces the same rule using the master component type. */
 export function isMonthlyAssignment(
   component: MonthlyAssignmentCandidate | null | undefined,
-  components: readonly MonthlyAssignmentCandidate[] | null | undefined,
+  _components?: readonly MonthlyAssignmentCandidate[] | null,
 ): boolean {
-  if (!component || !componentRequiresEvidence(component.type)) return false;
-  return component.monthlyAssignment === true || !monthlyAssignmentFlagsInUse(components);
+  return Boolean(component && componentRequiresEvidence(component.type));
 }
 
 export interface ComponentCriteria {
@@ -407,6 +406,8 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   if (type === 'quiz') return false; // Unlinked builder placeholders have no quiz to attempt.
   const hasDescription = hasText(c.description);
   if (type === 'video') return hasUrl(c.videoUrl) || Boolean(c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate);
+  // A session recording linked to its live session plays that session's recording.
+  if (type === 'recording_placeholder' && c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate) return true;
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
   if (type === 'reading') return c.hasReadingContent === true || hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
@@ -444,6 +445,7 @@ export function isOpenableComponent(c: JourneyComponent): boolean {
   return hasComponentContent(c);
 }
 export interface JourneyWeek {
+  weekId?: string;
   week: string;
   otjh: number;
   components: JourneyComponent[];
@@ -683,15 +685,15 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             && (w.weekId ? c.weekId === w.weekId : c.week === w.week))
           .map((c) => ({
             title: c.component, expectedOtjh: c.expectedOtjh, isQuiz: c.isQuiz, quizMeta: c.quizMeta,
-            moduleId: c.moduleId, weekId: c.weekId,
+            moduleId: c.moduleId, weekId: c.weekId, pointNumber: c.pointNumber,
             ksbWeightTotal: c.ksbWeightTotal, ksbMappingCount: c.ksbMappingCount,
             ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
             assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml, assignmentTopics: c.assignmentTopics,
             monthlyAssignment: c.monthlyAssignment,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
-            audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
-            hasReadingContent: c.hasReadingContent,
+            audioUrl: c.audioUrl, alternativeYouTubeUrl: c.alternativeYouTubeUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
+            hasReadingContent: c.hasReadingContent, lessonContentHtml: c.lessonContentHtml,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
             attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,
             previousLearning: c.previousLearning,
@@ -702,6 +704,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             teamsSessionNumber: c.teamsSessionNumber,
+            additionalMeeting: c.additionalMeeting,
             recordingSeriesId: c.recordingSeriesId,
             recordingSessionNumber: c.recordingSessionNumber,
             recordingDate: c.recordingDate,
@@ -716,6 +719,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
           }));
         return {
           week: w.week,
+          ...(w.weekId ? { weekId: w.weekId } : {}),
           // Quiz duration remains available to the quiz runner and is credited
           // as actual learner time after submission. It is not planned OTJH.
           otjh: components.reduce(

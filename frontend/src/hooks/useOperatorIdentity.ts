@@ -1,4 +1,4 @@
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 
 /**
  * The signed-in staff member's display name + role label, for the

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildHolidayShiftPlan, type HolidayShiftSessionLike } from '../sessionShiftPreview';
+import { type HolidayShiftSessionLike } from '../sessionShiftPreview';
+import { buildHolidayShiftPlan } from "../sessionShiftPreview.helpers";
 
 function session(date: string, skippedHolidays: string[] = []): HolidayShiftSessionLike {
   return { date, skippedHolidays };

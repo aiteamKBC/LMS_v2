@@ -134,6 +134,27 @@ describe('applyModuleWeekSessionPlan re-dates a live session with its week', () 
 });
 
 describe('moduleLiveSessionDateDrift reports only what the planner could not move', () => {
+  it('still reports an explicitly rescheduled session even when its old date is another slot in the same week', () => {
+    const module = moduleWith([{ id: 'WEEK-1', sessions: [{ id: 'BOOKED', settings: {
+      sessionDate: '2026-10-05', teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1,
+    } }] }]);
+    const plan = { sessions: [
+      { sessionNumber: 1, weekNumber: 1, date: '2026-10-09', day: 'Friday', skippedHolidays: [], rescheduled: true },
+      { sessionNumber: 2, weekNumber: 1, date: '2026-10-05', day: 'Monday', skippedHolidays: [] },
+    ] };
+    expect(moduleLiveSessionDateDrift(module, plan).get('BOOKED')).toMatchObject({
+      storedDate: '2026-10-05', weekDates: ['2026-10-09'],
+    });
+  });
+
+  it('does not report drift when the booked date fits its authored slot but the Teams number omits another week', () => {
+    const module = moduleWith([
+      { id: 'WELCOME', sessions: [] },
+      { id: 'TEACHING', sessions: [{ id: 'LIVE', settings: { sessionDate: '2026-10-09', teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1 } }] },
+    ]);
+    expect(moduleLiveSessionDateDrift(module, planOf([1, '2026-10-02'], [2, '2026-10-09'])).size).toBe(0);
+  });
+
   it('names a confirmed Teams booking whose week has moved on', () => {
     const drift = moduleLiveSessionDateDrift(
       moduleWith([{ id: 'WEEK-1', sessions: [{ id: 'COMP-BOOKED', settings: {
@@ -155,6 +176,21 @@ describe('moduleLiveSessionDateDrift reports only what the planner could not mov
       planOf([1, '2026-10-09']),
     );
     expect(drift.size).toBe(0);
+  });
+
+  it('still names a booking whose module starts after the opening week s delivery day', () => {
+    // Starts Sunday 4 Oct, delivers Wednesdays: the opening Mon-Sun week has no
+    // delivery day, so by position week 1 owns no date -- yet its header shows
+    // session 1's 7 Oct, and the booked session on 4 Sept must still say so.
+    const drift = moduleLiveSessionDateDrift(
+      moduleWith([
+        { id: 'WEEK-1', sessions: [{ id: 'COMP-1', settings: { sessionDate: '2026-09-04', teamsLiveSessionId: 'LIVE-1', teamsSessionNumber: 1 } }] },
+        { id: 'WEEK-2', sessions: [{ id: 'COMP-2', settings: { sessionDate: '2026-09-11', teamsLiveSessionId: 'LIVE-1', teamsSessionNumber: 2 } }] },
+      ]),
+      planOf([2, '2026-10-07'], [3, '2026-10-14']),
+    );
+    expect(drift.get('COMP-1')).toMatchObject({ storedDate: '2026-09-04', weekDates: ['2026-10-07'] });
+    expect(drift.get('COMP-2')).toMatchObject({ storedDate: '2026-09-11', weekDates: ['2026-10-14'] });
   });
 
   it('leaves a booking alone when it sits on any of its week s delivery days', () => {

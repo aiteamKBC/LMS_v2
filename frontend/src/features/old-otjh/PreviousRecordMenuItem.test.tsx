@@ -7,7 +7,7 @@ import { getWorkspaceRecordLink } from './api';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
 
 const state = vi.hoisted(() => ({ account: { id: 1, role: 'learner', hasLegacyRecord: true } }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: state }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: state }) }));
 vi.mock('./api', () => ({ getWorkspaceRecordLink: vi.fn() }));
 function Location() { return <output data-testid="path">{useLocation().pathname}</output>; }
 let client: QueryClient;

@@ -508,10 +508,13 @@ class FlashCardView(models.Model):
 class FeedbackForm(models.Model):
     STATUS_CHOICES = [('draft', 'Draft'), ('published', 'Published'), ('closed', 'Closed')]
     TYPE_CHOICES = [
-        ('general', 'General'), ('post_lecture', 'Post-lecture'),
+        ('general', 'General'), ('post_lecture', 'Live Sessions Feedback'),
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
-        ('information_session', 'Information Session'),
-        ('commitment_meeting', 'Commitment Meeting'),
+        ('post_mcm_review', 'MCM Feedback'),
+        ('post_progress_review', 'Progress Review Feedback'),
+        ('post_progress_review_employer', 'Progress Review – Employer Feedback'),
+        ('mid_module', 'Wellbeing'),
+        ('end_module', 'End-module Feedback'),
     ]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
 
@@ -556,6 +559,7 @@ class FeedbackSection(models.Model):
     title = models.CharField(max_length=255)
     icon = models.CharField(max_length=80, blank=True, default='ri-file-list-3-line')
     description = models.TextField(blank=True, default='')
+    questions_per_delivery = models.PositiveIntegerField(null=True, blank=True)
     sort_order = models.IntegerField(default=0)
 
     class Meta:
@@ -595,7 +599,7 @@ class FeedbackAssignment(models.Model):
 
 
 class FeedbackDelivery(models.Model):
-    """One published post-lecture template delivered for one lecture occurrence."""
+    """A versioned template delivered for a lecture or module checkpoint."""
 
     STATUS_CHOICES = [('open', 'Open'), ('closed', 'Closed'), ('cancelled', 'Cancelled')]
 
@@ -612,9 +616,11 @@ class FeedbackDelivery(models.Model):
     module_catalogue_id = models.CharField(max_length=255)
     module_name = models.CharField(max_length=500, blank=True, default='')
     session_title = models.CharField(max_length=500, blank=True, default='')
+    tutor_name = models.CharField(max_length=255, blank=True, default='')
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
     available_at = models.DateTimeField()
+    question_set_pinned = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -624,8 +630,22 @@ class FeedbackDelivery(models.Model):
         db_table = 'Feedback"."feedback_deliveries'
 
 
+class FeedbackDeliveryQuestion(models.Model):
+    """The question set drawn once for a lecture, shared by its recipients."""
+
+    delivery = models.ForeignKey(
+        FeedbackDelivery, on_delete=models.CASCADE, related_name='selected_questions', db_column='delivery_id',
+    )
+    question = models.ForeignKey(FeedbackQuestion, on_delete=models.PROTECT, db_column='question_id')
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_delivery_questions'
+
+
 class FeedbackDeliveryRecipient(models.Model):
-    """A learner made eligible by finalized attendance for one delivery."""
+    """A learner eligible by lecture attendance or module assignment."""
 
     delivery = models.ForeignKey(FeedbackDelivery, on_delete=models.CASCADE, related_name='recipients', db_column='delivery_id')
     learner_id = models.CharField(max_length=100)
@@ -633,12 +653,77 @@ class FeedbackDeliveryRecipient(models.Model):
     programme = models.CharField(max_length=255, blank=True, default='')
     attendance_reference = models.CharField(max_length=255, blank=True, default='')
     assigned_at = models.DateTimeField(auto_now_add=True)
+    # Module checkpoints may move independently for learners who have not
+    # started a response. Lecture recipients continue using the delivery date.
+    available_at = models.DateTimeField(null=True, blank=True)
     due_date = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_delivery_recipients'
+
+
+class FeedbackDeliveryQuestionOverride(models.Model):
+    """One recipient's corrected question, without rewriting a started response."""
+
+    recipient = models.ForeignKey(
+        FeedbackDeliveryRecipient, on_delete=models.PROTECT, related_name='question_overrides',
+        db_column='recipient_id',
+    )
+    original_question = models.ForeignKey(
+        FeedbackQuestion, on_delete=models.PROTECT, related_name='+', db_column='original_question_id',
+    )
+    replacement_question = models.ForeignKey(
+        FeedbackQuestion, on_delete=models.PROTECT, related_name='+', db_column='replacement_question_id',
+    )
+    effective_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_delivery_question_overrides'
+
+
+class FeedbackReviewDelivery(models.Model):
+    """One future completed imported review pinned to its feedback template."""
+
+    form = models.ForeignKey(
+        FeedbackForm, on_delete=models.PROTECT, related_name='review_deliveries', db_column='form_id',
+    )
+    source_review_id = models.BigIntegerField(unique=True)
+    aptem_review_id = models.TextField(blank=True, default='')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255, blank=True, default='')
+    review_type = models.CharField(max_length=255)
+    review_name = models.CharField(max_length=500, blank=True, default='')
+    completed_at = models.DateTimeField()
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_review_deliveries'
+
+
+class FeedbackEmployerReviewDelivery(models.Model):
+    """Employer assignment, preserved even while its account link is missing."""
+
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='employer_review_deliveries')
+    source_review_id = models.BigIntegerField(unique=True)
+    aptem_review_id = models.TextField(blank=True, default='')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255, blank=True, default='')
+    review_type = models.CharField(max_length=255)
+    review_name = models.CharField(max_length=500, blank=True, default='')
+    completed_at = models.DateTimeField()
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    employer_id = models.BigIntegerField(null=True, blank=True)
+    employer_name = models.CharField(max_length=255, blank=True, default='')
+    employer_email = models.TextField(blank=True, default='')
+    pending_reason = models.CharField(max_length=80, blank=True, default='missing_employer_link')
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_employer_review_deliveries'
 
 
 class FeedbackEventCampaign(models.Model):
@@ -681,63 +766,6 @@ class FeedbackEventRecipient(models.Model):
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_event_recipients'
-
-
-class FeedbackExternalCampaign(models.Model):
-    """A named Information Session or Commitment Meeting feedback campaign."""
-
-    TYPE_CHOICES = [
-        ('information_session', 'Information Session'),
-        ('commitment_meeting', 'Commitment Meeting'),
-    ]
-    STATUS_CHOICES = [('draft', 'Draft'), ('open', 'Open'), ('closed', 'Closed')]
-
-    campaign_type = models.CharField(max_length=40, choices=TYPE_CHOICES)
-    name = models.CharField(max_length=255)
-    session_date = models.DateField()
-    form = models.ForeignKey(
-        FeedbackForm, on_delete=models.PROTECT, related_name='external_campaigns', db_column='form_id',
-    )
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
-    created_by = models.CharField(max_length=255)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        managed = False
-        db_table = 'Feedback"."feedback_external_campaigns'
-
-
-class FeedbackExternalRecipient(models.Model):
-    """One non-LMS recipient with a personal bearer-token feedback link."""
-
-    STATUS_CHOICES = [
-        ('pending', 'Pending'), ('sent', 'Sent'), ('opened', 'Opened'),
-        ('submitted', 'Submitted'), ('failed', 'Failed'),
-    ]
-
-    campaign = models.ForeignKey(
-        FeedbackExternalCampaign, on_delete=models.CASCADE, related_name='recipients', db_column='campaign_id',
-    )
-    response = models.OneToOneField(
-        'FeedbackResponse', on_delete=models.PROTECT, related_name='external_recipient',
-        db_column='response_id', null=True, blank=True,
-    )
-    recipient_name = models.CharField(max_length=255)
-    recipient_email = models.EmailField(max_length=320)
-    token_hash = models.CharField(max_length=64, null=True, blank=True)
-    token_expires_at = models.DateTimeField(null=True, blank=True)
-    delivery_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    invitation_sent_at = models.DateTimeField(null=True, blank=True)
-    opened_at = models.DateTimeField(null=True, blank=True)
-    submitted_at = models.DateTimeField(null=True, blank=True)
-    invitation_error = models.TextField(blank=True, default='')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        managed = False
-        db_table = 'Feedback"."feedback_external_recipients'
 
 
 class EventEmailTemplate(models.Model):
@@ -836,6 +864,14 @@ class FeedbackResponse(models.Model):
     rsvp_recipient = models.ForeignKey(
         EventRsvpRecipient, on_delete=models.PROTECT, related_name='responses',
         db_column='rsvp_recipient_id', null=True, blank=True,
+    )
+    review_delivery = models.ForeignKey(
+        FeedbackReviewDelivery, on_delete=models.PROTECT, related_name='responses',
+        db_column='review_delivery_id', null=True, blank=True,
+    )
+    employer_review_delivery = models.ForeignKey(
+        FeedbackEmployerReviewDelivery, on_delete=models.PROTECT, related_name='responses',
+        db_column='employer_review_delivery_id', null=True, blank=True,
     )
     learner_id = models.CharField(max_length=100, blank=True, default='')
     learner_name = models.CharField(max_length=255)

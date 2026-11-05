@@ -2,6 +2,7 @@ import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { coachFetch } from '@/lib/coachFetch';
 import { reviewCategory } from '@/lib/reviewCategory';
 import { withCoachViewAs } from '@/lib/coachViewAs';
+import type { ReviewAttendance } from '@/lib/reviewAttendance';
 
 interface CoachCalendarFetchOptions {
   start?: string;
@@ -34,7 +35,9 @@ export type CoachCalendarStatus =
   | 'not-scheduled';
 
 export interface CoachCalendarEvent {
+  reviewAttendance?: ReviewAttendance;
   id: string;
+  bookingOnly?: boolean;
   eventKey?: string;
   title: string;
   type: 'coaching' | 'review' | string;
@@ -90,6 +93,7 @@ export interface CoachCalendarEvent {
   effectiveLmsStatus?: string;
   calendarEventId?: string;
   calendarEventKey?: string | null;
+  reconciledReview?: boolean;
   formEventKey?: string;
   reviewerName?: string | null;
   hasReviewForm?: boolean;
@@ -160,6 +164,11 @@ export interface CoachMeetingArtifact {
   created_datetime?: string;
   end_datetime?: string;
   metadata?: Record<string, unknown>;
+  /** False when an imported recording has no archived copy. */
+  content_available?: boolean;
+  /** Saved, verified APTEM metadata permits an on-demand Teams playback attempt. */
+  graph_playback_candidate?: boolean;
+  previous_session?: boolean;
 }
 
 export interface CoachMeetingAttendanceRecord {
@@ -187,6 +196,8 @@ export interface CoachMeetingExpectedAttendee {
 }
 
 export interface CoachMeetingAttendanceTrackerRow {
+  coachVerification?: { id: number; confirmedBy: string; confirmedAt: string; reason: string };
+  linkedEmail?: string;
   id: string;
   role: 'coach' | 'learner' | 'employer' | 'attendee' | string;
   name: string;
@@ -213,6 +224,7 @@ export interface CoachMeetingAttendanceReport {
 }
 
 export interface CoachMeetingAttendanceSummary {
+  linkWarning?: string;
   reports: CoachMeetingAttendanceReport[];
   records: CoachMeetingAttendanceRecord[];
   expectedAttendees?: CoachMeetingExpectedAttendee[];
@@ -255,6 +267,12 @@ export interface CoachMeetingSummary {
   error?: string;
 }
 
+export interface MigratedSummaryGenerationError {
+  code: string;
+  message: string;
+  requestId: string;
+}
+
 export interface MigratedSummaryBinding {
   fieldKey?: string;
   state?: 'NEVER_POPULATED' | 'AI_POPULATED_UNEDITED' | 'COACH_EDITED' | 'COACH_CLEARED';
@@ -266,8 +284,11 @@ export interface MigratedSummaryBinding {
   suggestionSource?: 'teams' | 'uploaded_transcript';
   generatedAt?: string;
   generationStatus?: 'ready' | 'failed' | 'unavailable';
+  generationAttemptedAt?: string | null;
+  generationError?: MigratedSummaryGenerationError;
   replacementAvailable?: boolean;
   transcriptTruncated?: boolean;
+  provisional?: boolean;
   summaryTooLong?: boolean;
 }
 
@@ -282,8 +303,13 @@ export interface CoachMeetingArtifactsResponse {
     recordingStatus: string;
     transcriptStatus: string;
     summaryStatus: string;
+    summaryProvisional?: boolean;
+    generationError?: MigratedSummaryGenerationError | null;
     transcriptArtifactId?: string | null;
     errorCodes: string[];
+    meetingEndStatus?: 'pending' | 'attendance-confirmed' | 'scheduled-end-reached' | null;
+    meetingEndCode?: 'MEETING_END_PENDING' | null;
+    resourceErrors?: Record<string, string>;
   };
   event?: {
     eventKey: string;
@@ -303,6 +329,8 @@ export interface CoachMeetingArtifactsResponse {
     reason?: string;
     syncedAt?: string;
   };
+  /** Imported party portals read saved evidence; only a Coach can refresh Teams. */
+  resourceMode?: 'stored';
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -421,10 +449,9 @@ export async function fetchCoachMeetingArtifacts(
   signal?: AbortSignal,
   options: { refresh?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
-  const query = options.refresh ? '?refresh=1' : '';
   const response = await coachFetch(
-    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts${query}`,
-    { signal },
+    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts`,
+    { signal, ...(options.refresh ? { method: 'POST' } : {}) },
   );
   return readJsonResponse<CoachMeetingArtifactsResponse>(response);
 }
@@ -467,6 +494,11 @@ export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form
       scheduledDate: form.date,
       scheduledTime: form.time,
       durationMinutes: form.durationMinutes,
+      ...(event.status === 'in-progress' ? { expectedBooking: {
+        scheduledDate: event.scheduledDate,
+        scheduledTime: event.scheduledTime,
+        durationMinutes: event.durationMinutes,
+      } } : {}),
     }),
   });
   const data = await readJsonResponse<{ event: CoachCalendarEvent; warning?: string }>(response);

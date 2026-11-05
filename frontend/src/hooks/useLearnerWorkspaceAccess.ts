@@ -5,8 +5,9 @@ import { parsePersonalLearning } from '@/lib/personalLearning';
 /**
  * Whether the person looking at a learner's workspace may act *as* that learner.
  *
- * Learners can work on their own record. Administrators, and coaches for the
- * learners on their own caseload, can use the same actions for a selected
+ * Learners, including staff with a linked enrolment, can work on their own
+ * record. Administrators, and coaches for learners on their own caseload,
+ * can use the same actions for a selected
  * learner, with their own account retained in the server audit trail. Other
  * staff and employer previews remain read-only.
  * `login.permissions.learner_self_or_admin` enforces the same rule at the API.
@@ -50,6 +51,7 @@ export function useLearnerWorkspaceAccess(
   const { auth, isInitialized } = useAuth();
   const account = auth.account;
   const personal = parsePersonalLearning(learnerId);
+  const validLearner = Number.isSafeInteger(Number(learnerId)) && Number(learnerId) > 0;
 
   const isSelf = Boolean(
     account
@@ -59,6 +61,10 @@ export function useLearnerWorkspaceAccess(
       // single Created_users table, so the learner kind is not part of it.
       && String(account.subjectId) === String(learnerId ?? ''),
   );
+  // /me resolves this link on the server while retaining the staff account.
+  // The API independently checks ownership again on every learning action.
+  const isStaffSelf = validLearner && account?.role === 'staff' && account.subjectType === 'staff'
+    && String(account.learnerRecordId) === String(learnerId);
 
   // No server account once the session has resolved means the landing page's
   // "explore this section" shortcut (`useAuth.previewAs`), which sets local UI
@@ -70,12 +76,11 @@ export function useLearnerWorkspaceAccess(
   // Fail closed until the session resolves: a staff viewer who clicks in the
   // first frame must not get through. The learner loses nothing by it, since
   // every one of these actions is a deliberate click, not an auto-submit.
-  const validLearner = Number.isSafeInteger(Number(learnerId)) && Number(learnerId) > 0;
   const isAdmin = account?.role === 'admin' && validLearner;
 
   // Whether a learner is on a coach's caseload is only known to the server, so
   // a coach asks it. Fail closed: no answer yet, or any error, is read-only.
-  const coachKey = isInitialized && !personal && validLearner && account?.role === 'staff'
+  const coachKey = isInitialized && !personal && !isStaffSelf && validLearner && account?.role === 'staff'
     && (account.accesses ?? [account.access]).includes('coach')
     ? `${account.id}:${learnerId}` : null;
   const [coachAnswer, setCoachAnswer] = useState<{ key: string; canAct: boolean } | null>(null);
@@ -92,7 +97,7 @@ export function useLearnerWorkspaceAccess(
 
   const canProgress = personal
     ? isInitialized && account?.role === 'admin' && account.id === personal.accountId
-    : isDemoPreview || (isInitialized && (isSelf || isAdmin || isOwnCoach));
+    : isDemoPreview || (isInitialized && (isSelf || isStaffSelf || isAdmin || isOwnCoach));
 
   // Like the session itself: no read-only banner while the coach answer is pending.
   const pending = coachKey !== null && !coachAnswered;

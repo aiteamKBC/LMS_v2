@@ -1,4 +1,50 @@
+import uuid
+
 from django.db import models
+from django.utils import timezone
+
+
+class CurriculumVideoImport(models.Model):
+    """Durable import identity, source and outcome; no learner records."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    target_kind = models.CharField(max_length=16)
+    target_id = models.CharField(max_length=128)
+    component_id = models.CharField(max_length=128)
+    fingerprint = models.CharField(max_length=64, unique=True)
+    title = models.TextField()
+    source_url = models.TextField(blank=True, default='')
+    source_at_start = models.TextField(blank=True, default='')
+    scope = models.JSONField(default=dict)
+    library_id = models.CharField(max_length=32, default='798153')
+    collection_id = models.CharField(max_length=64, blank=True, default='')
+    video_id = models.CharField(max_length=64, blank=True, default='')
+    status = models.CharField(max_length=24, default='queued', db_index=True)
+    error = models.TextField(blank=True, default='')
+    lease_until = models.DateTimeField(null=True, blank=True)
+    requested_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum_video_import'
+
+
+class CurriculumVideoChange(models.Model):
+    """Database-captured source changes awaiting the Bunny import worker."""
+
+    target_kind = models.CharField(max_length=16)
+    target_id = models.CharField(max_length=128)
+    component_id = models.CharField(max_length=128)
+    previous_settings = models.JSONField(default=dict)
+    settings = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+    available_at = models.DateTimeField(default=timezone.now, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    error = models.TextField(blank=True, default='')
+
+    class Meta:
+        db_table = 'curriculum_video_change'
 
 
 class ModuleAuthoringModule(models.Model):
@@ -316,6 +362,7 @@ class LiveSessionLearnerAttendance(models.Model):
     ]
 
     occurrence_id = models.CharField(max_length=128, db_index=True)
+    session_date = models.DateField(null=True, blank=True, editable=False)
     live_session_id = models.CharField(max_length=128, db_index=True)
     module_catalogue_id = models.CharField(max_length=128, db_index=True)
     learner_profile_id = models.BigIntegerField(db_index=True)
@@ -336,7 +383,7 @@ class LiveSessionLearnerAttendance(models.Model):
         managed = False
         constraints = [
             models.UniqueConstraint(
-                fields=['occurrence_id', 'learner_profile_id'],
+                fields=['occurrence_id', 'learner_profile_id', 'module_catalogue_id'],
                 name='curriculum_live_learner_attendance_uniq',
             ),
         ]

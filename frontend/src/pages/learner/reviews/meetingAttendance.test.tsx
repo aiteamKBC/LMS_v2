@@ -13,7 +13,7 @@ import { ProgressReviewsListPage } from '../progress-reviews/page';
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }), useLinkedLearner: () => ({ kind: 'apprenticeship', id: '12' }) }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
-vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
+vi.mock("@/pages/coach/progress-reviews/page.helpers", () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
 let events: LearnerCalendarEvent[];
 let state: MeetingAttendance[];
 let posts: { url: string; init?: RequestInit }[];
@@ -48,7 +48,7 @@ beforeEach(() => {
       expect(url).toContain('scope=meetings');
       return new Response(JSON.stringify({ results: [], missedSessions: state.map(item => ({ id: item.absenceSessionId, sessionId: `meeting:12:${item.id}`, title: item.title, dateIso: item.date, startTime: '10:00', endTime: '11:30', coach: 'Coach', module: '', sessionType: 'mcr' })) }));
     }
-    if (url.includes('/calendar/')) return new Response(JSON.stringify({ events }));
+    if (url.includes('/calendar/') || url.includes('/review-sessions/')) return new Response(JSON.stringify({ events }));
     if (url.includes('/curriculum/cache-epoch/')) return new Response(JSON.stringify({ epoch: 0, changes: [] }));
     throw new Error(`Unexpected read: ${url}`);
   }));

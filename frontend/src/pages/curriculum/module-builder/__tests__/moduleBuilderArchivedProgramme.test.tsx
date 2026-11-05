@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
@@ -24,7 +25,7 @@ const loadModuleStructure = vi.fn();
 
 // The workspace reads the signed-in account. Without this the page throws on
 // its first line and every case below fails before it asserts anything.
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 
@@ -56,6 +57,7 @@ vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
 vi.mock('../moduleAuthoringData', async importOriginal => ({
   ...(await importOriginal<typeof import('../moduleAuthoringData')>()),
   loadModuleStructure: (...args: unknown[]) => loadModuleStructure(...(args as [])),
+  loadModuleWeekSessionPlan: vi.fn(async () => null),
   saveModuleStructure: (...args: unknown[]) => saveModuleStructure(...(args as [])),
 }));
 
@@ -67,6 +69,8 @@ const programmes = [
   { id: 'program-live', sourceId: 'PROG-LIVE', name: 'Live Programme', status: 'active', isArchived: false },
   { id: 'program-dead', sourceId: 'PROG-DEAD', name: 'Dead Programme', status: 'archived', isArchived: true },
 ] as CurriculumProgramme[];
+
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 const modules = [
   {
@@ -171,7 +175,7 @@ async function openBuilderOn(moduleId: string) {
     </MemoryRouter>,
   );
   await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith(moduleId, { revalidate: true }));
-  await screen.findByText('Authored Week One');
+  await screen.findByRole('textbox', { name: 'Week title' });
   return view;
 }
 
@@ -179,6 +183,7 @@ const ARCHIVED_NOTICE = 'This module belongs to an archived programme. Restore t
 
 describe('Module Builder under an archived programme', { timeout: 20000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     reload.mockClear();
     saveModuleStructure.mockReset();
     loadModuleStructure.mockReset();
@@ -201,8 +206,8 @@ describe('Module Builder under an archived programme', { timeout: 20000 }, () =>
 
     expect(await screen.findByText(ARCHIVED_NOTICE)).toBeInTheDocument();
     // Nothing was cleared or replaced.
-    expect(screen.getByText('Authored Week One')).toBeInTheDocument();
-    expect(screen.getByText('Authored Week Two')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Week title' })).toHaveValue('Authored Week One');
+    expect(screen.getByRole('button', { name: /^Authored Week Two\b/ })).toBeInTheDocument();
 
     const structure = screen.getByTestId('module-builder-structure');
     expect(structure).toBeDisabled();
@@ -212,7 +217,7 @@ describe('Module Builder under an archived programme', { timeout: 20000 }, () =>
 
     const save = screen.getByTestId('module-builder-save');
     expect(save).toBeDisabled();
-    expect(screen.getByText('Read-only — archived programme')).toBeInTheDocument();
+    expect(screen.getByTestId('module-builder-save-state')).toHaveTextContent('Read-only - archived programme');
 
     fireEvent.click(save);
     expect(saveModuleStructure).not.toHaveBeenCalled();
@@ -230,7 +235,8 @@ describe('Module Builder under an archived programme', { timeout: 20000 }, () =>
 
     // And an edit really does land.
     fireEvent.click(within(structure).getByRole('button', { name: 'Week' }));
-    await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('module-builder-save-state')).toHaveTextContent('Unsaved changes'));
+    expect(screen.getByTestId('module-builder-save')).toBeEnabled();
   });
 
   it('keeps unsaved work when the backend rejects the save because the programme became archived', async () => {
@@ -252,7 +258,7 @@ describe('Module Builder under an archived programme', { timeout: 20000 }, () =>
 
     const structure = screen.getByTestId('module-builder-structure');
     fireEvent.click(within(structure).getByRole('button', { name: 'Week' }));
-    await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('module-builder-save-state')).toHaveTextContent('Unsaved changes'));
 
     fireEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalled());
@@ -261,9 +267,11 @@ describe('Module Builder under an archived programme', { timeout: 20000 }, () =>
     expect(await screen.findByText(/belongs to an archived programme/)).toBeInTheDocument();
     // Local work survived: the authored weeks are all still there, including the
     // one added after the Builder was opened, and the module is still dirty.
-    expect(screen.getByText('Authored Week One')).toBeInTheDocument();
-    expect(screen.getByText('Authored Week Two')).toBeInTheDocument();
-    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Authored Week One\b/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Authored Week Two\b/ })).toBeInTheDocument();
+    expect(screen.getByTestId('module-builder-save-state')).toHaveTextContent('Save failed - your changes are still here');
+    expect(saveModuleStructure.mock.calls[0][1].weekStructure).toHaveLength(3);
+    expect(screen.getByTestId('module-builder-save')).toBeEnabled();
     // Nothing refetched over the top of it either.
     expect(reload).not.toHaveBeenCalled();
     expect(loadModuleStructure).toHaveBeenCalledTimes(1);

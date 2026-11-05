@@ -322,8 +322,10 @@ class ActivityStatusTests(SimpleTestCase):
             'learnerActivityPlan': [{'learnerId': learner, 'componentId': 'c1', 'componentType': 'reading'} for learner in (1, 2)]}
         with patch.object(status, 'load_records', return_value=rows), patch.object(status, 'query', return_value=[]):
             status.enrich(payload, None)
-        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0.75)
-        self.assertEqual([row['achievedOtjh'] for row in payload['activityLogOtjh']['learners']], [0.25, 0.5])
+        # Current-only percentages, with retained hours reported separately.
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0.5)
+        self.assertEqual(payload['activityLogOtjh']['historicalTotal'], 0.25)
+        self.assertEqual([row['achievedOtjh'] for row in payload['activityLogOtjh']['learners']], [0, 0.5])
         self.assertEqual(payload['activityLogOtjh']['unallocatedAcceptedRecords'], 0)
         self.assertEqual(payload['activityLogProgress']['learners'][0]['earlierOtjh'], 0.25)
 
@@ -351,10 +353,12 @@ class ActivityStatusTests(SimpleTestCase):
         with patch.object(status, 'query', side_effect=scoped_read):
             status.enrich(payload, None)
         summary = payload['activityLogOtjh']
-        self.assertEqual(summary['achievedTotal'], 3.5)
-        self.assertEqual(summary['unallocatedAcceptedRecords'], 2)
+        self.assertEqual(summary['achievedTotal'], 3)
+        self.assertEqual(summary['historicalTotal'], 0.5)
+        self.assertEqual(summary['historicalUnallocatedRecords'], 1)
+        self.assertEqual(summary['unallocatedAcceptedRecords'], 1)
         self.assertEqual([(row['achievedOtjh'], row['unallocatedAcceptedRecords'])
-                          for row in summary['learners']], [(1.5, 2), (2, 0)])
+                          for row in summary['learners']], [(1, 1), (2, 0)])
         self.assertEqual(len(self.query('SELECT * FROM learner_progress_entries')), 9)
 
     def test_enrichment_queries_are_bounded_and_unstarted_rows_and_log_totals_remain_consistent(self):
@@ -374,6 +378,53 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(payload['learnerActivityPlan'][0]['displayStatus'],'not_started')
         self.assertEqual(payload['learnerActivityPlan'][1]['calculatedStatus'],'not_started')
         self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1)
+
+    def test_enrichment_uses_completed_ledger_record_instead_of_stale_unstarted_trace(self):
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [{'learnerId': 1, 'plannedOtjh': 1}]},
+                   'learnerActivityPlan': [{'learnerId': 1, 'componentId': 'c1', 'componentType': 'reading',
+                                            'calculatedStatus': 'not_started'}]}
+        rows = [{'id': 1, 'learner_id': 1, 'component_ref': 'old-c1', 'curriculum_component_ref': 'c1',
+                 'actual_seconds': 1800, 'accepted': True}]
+        with patch.object(status, 'load_records', return_value=rows), patch.object(status, 'query', return_value=[]):
+            status.enrich(payload, None)
+        self.assertEqual(payload['learnerActivityPlan'][0]['calculatedStatus'], 'completed')
+        self.assertEqual(payload['activityLogProgress']['completedActivities'], 1)
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0.5)
+
+    def test_enrichment_does_not_keep_stale_completed_trace_when_ledger_has_no_completion(self):
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [{'learnerId': 1, 'plannedOtjh': 1}]},
+                   'learnerActivityPlan': [{'learnerId': 1, 'componentId': 'c1', 'componentType': 'reading',
+                                            'calculatedStatus': 'completed'}]}
+        with patch.object(status, 'load_records', return_value=[]), patch.object(status, 'query', return_value=[]):
+            status.enrich(payload, None)
+        self.assertEqual(payload['learnerActivityPlan'][0]['displayStatus'], 'not_started')
+        self.assertEqual(payload['activityLogProgress']['completedActivities'], 0)
+
+    def test_module_read_ignores_deleted_and_feed_rows_and_resolves_blank_corrected_reference(self):
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,component_ref,curriculum_component_ref,kind,accepted,actual_seconds)
+            VALUES (1,'c1','','component',true,1800)''')
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,component_ref,kind,accepted,actual_seconds,deleted_at)
+            VALUES (1,'c1','component',true,3600,'2026-10-01')''')
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,component_ref,kind,accepted,actual_seconds)
+            VALUES (1,'c1','activity_event',true,7200)''')
+        rows = status.load_records([1], ['c1'])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(status.component_reference(rows[0]), 'c1')
+        self.assertEqual(status.facts(rows)['acceptedOtjh'], 0.5)
+
+    def test_staff_edit_with_blank_corrected_reference_updates_the_scoped_existing_record(self):
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,enrolment_id,component_ref,curriculum_component_ref,kind,accepted,actual_seconds,feedback)
+            VALUES (1,91,' c1 ','','component',true,1800,'Original feedback')''')
+        self.save(self.payload())
+        rows = self.query('SELECT * FROM learner_progress_entries')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['actual_seconds'], 3617)
+        self.assertEqual(rows[0]['feedback'], 'Original feedback')
+        self.assertEqual(rows[0]['component_ref'], ' c1 ')
 
     def test_enrichment_counts_module_ref_rows_once_and_reports_completion(self):
         payload = {'identifier':'MOD-1', 'otjhAchievement':{'learners':[{'learnerId':1,'plannedOtjh':10}]},
@@ -397,7 +448,8 @@ class ActivityStatusTests(SimpleTestCase):
         progress = payload['activityLogProgress']['learners'][0]
         self.assertEqual((progress['completedActivities'], progress['totalActivities']), (1, 2))
         self.assertEqual((progress['earlierRecords'], progress['earlierOtjh']), (1, 0.5))
-        self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1.5)
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1)
+        self.assertEqual(payload['activityLogOtjh']['historicalTotal'],0.5)
 
     def test_endpoint_denies_unauthenticated_and_unauthorized_roles_and_preserves_csrf(self):
         factory = RequestFactory()

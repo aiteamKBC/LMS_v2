@@ -6,7 +6,7 @@ import { advancedAdminLearners, type AdvancedAdminLearner } from '@/api/advanced
 import AdvancedAdminWorkspace from './page';
 
 vi.mock('@/api/advancedAdmin', () => ({ advancedAdminLearners: vi.fn() }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { displayName: 'Reviewer' } } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { displayName: 'Reviewer' } } }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main>,
 }));

@@ -7,6 +7,8 @@ import {
   reasonHeadline,
   ukDateKey,
   workingRuleFailure,
+  WORKING_DAY_START_HOUR,
+  WORKING_DAY_END_HOUR,
   type WorkingRuleReason,
 } from '@/lib/completionValidation';
 
@@ -18,9 +20,9 @@ import {
 // percentage, no history entry. The learner picks the date and time the work
 // was actually done at, and Final Submit sends that instant to be written.
 //
-// A selection outside the working rules is only warned about, never blocked:
-// the learner can still Final Submit it. The server refuses only an unusable
-// (unreadable or future) instant.
+// Clock choices are limited to 08:00 through 17:00 inclusive. The closing
+// instant, weekend and holiday warnings remain advisory; the server also
+// rejects future instants.
 // ============================================================================
 
 interface CompletionTimeDialogProps {
@@ -58,14 +60,18 @@ export function CompletionTimeDialog({
   closeRef.current = onClose;
 
   const [day, setDay] = useState('');
-  const [time, setTime] = useState('');
+  const [hour, setHour] = useState('');
+  const [minute, setMinute] = useState('');
+  const time = hour && minute ? `${hour}:${minute}` : '';
   const [touched, setTouched] = useState(false);
 
   const failure = useMemo(
     () => (day && time ? workingRuleFailure(day, time, holidays) : null),
     [day, time, holidays],
   );
-  const complete = Boolean(day && time);
+  const complete = Boolean(day && /^\d{2}:\d{2}$/.test(time)
+    && time >= `${String(WORKING_DAY_START_HOUR).padStart(2, '0')}:00`
+    && time <= `${WORKING_DAY_END_HOUR}:00`);
   const canSubmit = complete && !submitting;
 
   useEffect(() => {
@@ -147,7 +153,7 @@ export function CompletionTimeDialog({
 
         <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-5 sm:p-6">
           <div role="note" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-            <p className="font-bold">The selected completion time is outside official working rules.</p>
+            <p className="font-bold">Your first submission was outside official working rules.</p>
             <p className="mt-1 text-xs font-semibold">Reason: {reasonHeadline(reason, holidayName)}</p>
             <p className="mt-2 text-xs leading-5 text-amber-900/80">
               Your activity has not been completed yet. Select the date and time you
@@ -173,19 +179,42 @@ export function CompletionTimeDialog({
               <label htmlFor={timeId} className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-foreground-500">
                 Completion time
               </label>
-              <input
-                id={timeId}
-                type="time"
-                value={time}
-                onChange={event => { setTime(event.target.value); setTouched(true); }}
-                className="w-full rounded-xl border border-foreground-300 px-3 py-2.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
-              />
+              <div className="flex gap-2">
+                <select
+                  id={timeId}
+                  value={hour}
+                  onChange={event => {
+                    setHour(event.target.value);
+                    if (event.target.value === String(WORKING_DAY_END_HOUR)) setMinute('00');
+                    setTouched(true);
+                  }}
+                  className="w-full rounded-xl border border-foreground-300 px-3 py-2.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
+                >
+                  <option value="">Hour</option>
+                  {Array.from({ length: WORKING_DAY_END_HOUR - WORKING_DAY_START_HOUR + 1 }, (_, index) => index + WORKING_DAY_START_HOUR).map(value => (
+                    <option key={value} value={String(value).padStart(2, '0')}>
+                      {value % 12 || 12} {value < 12 ? 'AM' : 'PM'}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Completion minutes"
+                  value={minute}
+                  onChange={event => { setMinute(event.target.value); setTouched(true); }}
+                  className="w-full rounded-xl border border-foreground-300 px-3 py-2.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
+                >
+                  <option value="">Minute</option>
+                  {Array.from({ length: hour === String(WORKING_DAY_END_HOUR) ? 1 : 60 }, (_, index) => String(index).padStart(2, '0')).map(value => (
+                    <option key={value} value={value}>{value}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
           <p className="text-xs leading-5 text-foreground-500">
-            Official working hours are Monday to Friday, 07:00-19:00 UK time, excluding
-            bank holidays.
+            Official working hours are Monday to Friday, from 08:00 to before 17:00 UK
+            time, excluding bank holidays.
           </p>
 
           {serverError ? (

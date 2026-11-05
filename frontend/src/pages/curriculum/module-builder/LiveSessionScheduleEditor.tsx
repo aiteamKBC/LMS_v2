@@ -56,15 +56,17 @@ export function LiveSessionScheduleEditor({ component }: { component: ModuleComp
         </button>
       </div>
       {showDialIn && dialIn && (
-        <dl className="mt-1.5 space-y-0.5 px-1 text-[11px] text-foreground-500">
-          <div className="flex gap-1">
-            <dt>Meeting ID:</dt>
-            <dd className="font-semibold text-foreground-800">{formatMeetingId(dialIn.meetingId)}</dd>
+        <dl className="mt-2 flex flex-wrap gap-2">
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[12px]">
+            <AppIcon className="ri-hashtag text-primary-600"></AppIcon>
+            <dt className="font-medium text-primary-700">Meeting ID</dt>
+            <dd className="font-mono font-bold tracking-wide text-primary-900 select-all">{formatMeetingId(dialIn.meetingId)}</dd>
           </div>
           {dialIn.passcode && (
-            <div className="flex gap-1">
-              <dt>Passcode:</dt>
-              <dd className="font-semibold text-foreground-800">{dialIn.passcode}</dd>
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[12px]">
+              <AppIcon className="ri-lock-password-line text-amber-600"></AppIcon>
+              <dt className="font-medium text-amber-700">Passcode</dt>
+              <dd className="font-mono font-bold tracking-wide text-amber-900 select-all">{dialIn.passcode}</dd>
             </div>
           )}
         </dl>

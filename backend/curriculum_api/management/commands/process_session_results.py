@@ -19,7 +19,7 @@ def sync_post_lecture_feedback(series_id):
         sync_post_lecture_feedback_from_attendance(live_session_ids=[series_id])
     except Exception as feedback_failure:
         logging.getLogger(__name__).warning(
-            'Post-lecture feedback sync failed for %s: %s',
+            'Live Sessions Feedback sync failed for %s: %s',
             series_id, type(feedback_failure).__name__,
         )
 
@@ -153,4 +153,7 @@ class Command(BaseCommand):
             failed += bool(error)
         self.stdout.write(f'Processed {processed} session jobs; {failed} need retry.')
         if failed:
-            raise CommandError('Some session jobs need retry; saved results remain available.')
+            error = CommandError('Some session jobs need retry; saved results remain available.')
+            error.session_jobs_need_retry = True
+            error.failed_jobs = failed
+            raise error

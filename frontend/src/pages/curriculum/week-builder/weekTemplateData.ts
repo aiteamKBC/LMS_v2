@@ -31,8 +31,8 @@ export type { KsbMapping, ModuleComponent, ModuleComponentType, ModuleStatus };
 // --- Week-builder component palette -----------------------------------------
 // The week builder curates its own set of offered component types, independent
 // of the module builder's `componentTypes`. Notably it presents ONE video type
-// (the rich `video` one) instead of separate Video + Recording Placeholder, and
-// it offers Assignment.
+// (the rich `video` one), a Session Recording that links to a live session
+// (see shared/entities/liveSessionRecordingLink.ts), and it offers Assignment.
 //
 // That single type used to be labelled "Recorded Session" here, which described
 // only one of the things it holds: the same component takes a YouTube link, an
@@ -58,6 +58,7 @@ export function weekAutoTitleLabels(type: string): readonly string[] {
 
 export const WEEK_BUILDER_TYPES: ModuleComponentType[] = [
   'live-session',
+  'recording-placeholder',
   'video',
   'reading',
   'podcast',
@@ -158,6 +159,8 @@ export interface WeekTemplate {
 
 /** Body accepted by create/update. Components reuse ModuleComponent verbatim. */
 export interface WeekTemplateInput {
+  /** The selected video is copied/retried as part of a successful Save. */
+  importVideoComponentIds?: string[];
   /**
    * The version the editor read, sent back so the server can refuse a save
    * built on a template somebody else has already replaced. Omitted means "do

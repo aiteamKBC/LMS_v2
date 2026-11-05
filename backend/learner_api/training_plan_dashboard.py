@@ -597,7 +597,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
     actual, modules, sessions = [], [], []
     progress_records = []
     historical = None
-    targets = targets if targets is not None else (canonical_learning.targets_for(owner) if owner is not None and section not in ('weekly', 'my-learning') else {})
+    targets = targets if targets is not None else (canonical_learning.targets_for(owner) if owner is not None and section not in ('weekly', 'my-learning', 'learning') else {})
     contract_data = {
         'months': {
             month: {'label': month, 'topics': [], 'planned': hours, 'source': 'ssot'}

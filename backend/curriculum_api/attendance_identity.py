@@ -197,7 +197,7 @@ def account_reason(account, status, linked_by):
         if linked_by == 'alias':
             text += ' Staff linked this account to the learner.'
         elif linked_by == 'name':
-            text += ' It counts for this learner only because the Teams name matches exactly.'
+            text += ' It counts for this learner because the Teams name was matched automatically within the session learner list.'
         return text
     if status == 'unverified-guest':
         text = ('Joined by phone' if account['accountType'] == 'phone dial-in'
@@ -206,7 +206,7 @@ def account_reason(account, status, linked_by):
         if account['enteredEmail']:
             text += f" The email {account['enteredEmail']} was typed in, not verified."
         if linked_by == 'name':
-            text += ' It counts for this learner only because the Teams name matches exactly; that is not proof of identity.'
+            text += ' It counts for this learner because the Teams name was matched automatically within the session learner list; that is not proof of identity.'
         return text
     if account['verification'] == 'verified':
         if account['tenant'] == 'external':
@@ -224,7 +224,7 @@ def identity_check(records, *, learners, aliases, reviewed_links, name_match, st
 
     learners: {learner email: {'name', 'learnerProfileId'}} from the saved register.
     aliases: {alias email: learner email}; reviewed_links: {row id: learner email};
-    name_match(row) -> learner email or None, the register's saved exact-name rule.
+    name_match(row) -> learner email or None, the register's automatic name decision.
     staff: {email: [LMS role labels]} from the series and module.
     """
 

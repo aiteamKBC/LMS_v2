@@ -1,4 +1,5 @@
 import { SYSTEM_TIME_ZONE } from './format';
+import { WORKING_DAY_START_HOUR, WORKING_DAY_END_HOUR } from './completionValidation';
 
 /** One closed date range. `label` names the holiday when the scoped
  *  (componentId) endpoint answered; the unscoped answer carries no names. */
@@ -49,7 +50,7 @@ export function componentAccessWindow(at: Date | number = new Date(), holidays: 
   const holiday = holidays.some(range => range.start <= day && day <= range.end);
   const outsideReason = holiday ? 'holiday' : weekend
     ? 'weekend'
-    : hour < 7 || hour >= 19
+    : hour < WORKING_DAY_START_HOUR || hour >= WORKING_DAY_END_HOUR
       ? 'outside-hours'
       : null;
 

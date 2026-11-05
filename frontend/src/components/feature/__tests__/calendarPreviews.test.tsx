@@ -47,12 +47,36 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date(2026, 8, 23, 9, 0, 0));
   vi.clearAllMocks();
+  vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ events: [fixtures.event] })));
   vi.stubGlobal('AppIcon', AppIcon);
   vi.stubGlobal('React', React);
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('staff calendar previews', () => {
+  it('shows an unlinked confirmed coach booking without Review or schedule actions', async () => {
+    const booking = { ...fixtures.event, source: 'mcr', bookingOnly: true, reviewSource: 'unlinked-booking' };
+    vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ events: [booking] })));
+    const user = userEvent.setup();
+    render(<MemoryRouter><CoachTimetablePage /></MemoryRouter>);
+    await user.click((await screen.findAllByRole('button', { name: /Coaching appointment/ }))[0]);
+    const dialog = screen.getByRole('dialog', { name: 'Coaching appointment' });
+    expect(within(dialog).getByText(/Confirmed booking only/)).toBeVisible();
+    expect(within(dialog).queryByRole('button', { name: /View details|Open form|Reschedule|Edit schedule|Complete|Sign|Start|Cancel/i })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: /^Join meeting$/i })).toHaveAttribute('href', booking.meetingLink);
+    expect(vi.mocked(coachFetch).mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
+
+  it('labels booking-only entries in the all-coaches calendar', async () => {
+    vi.mocked(fetchAllCoachesCalendarEvents).mockResolvedValueOnce({
+      calendars: [{ email: fixtures.coach.email, events: [{ ...fixtures.event, bookingOnly: true, status: 'scheduled', priority: 'normal', learnerType: 'commercial' }] }],
+      missingCoaches: [],
+    });
+    render(<AllCoachesCalendar coaches={[fixtures.coach]} onOpenCoach={vi.fn()} />);
+    await userEvent.setup().click((await screen.findAllByRole('button', { name: /Test learner/ }))[0]);
+    expect(within(screen.getByRole('dialog')).getByText(/Confirmed booking only/)).toBeVisible();
+  });
+
   it.each(['Month', 'Week', 'Day'])('opens a coach event from %s and exposes its edit action', async view => {
     const user = userEvent.setup();
     render(<MemoryRouter><CoachTimetablePage /></MemoryRouter>);

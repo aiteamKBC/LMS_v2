@@ -6,7 +6,7 @@ import re
 from django.utils import timezone
 
 from .migrated_summary_binding import binding_state, populate_answer, preserve_original
-from .migrated_reviews import TEXT_ANSWER_LIMIT
+from .migrated_reviews import meeting_summary_field, text_answer_limit
 
 
 TIMING = re.compile(r"(?P<start>(?:\d{2,}:)?\d{2}:\d{2}\.\d{3})[ \t]+-->[ \t]+(?P<end>(?:\d{2,}:)?\d{2}:\d{2}\.\d{3})(?:[ \t]+[^\n]*)?")
@@ -99,11 +99,59 @@ def summary_binding_response(overlay):
     provenance = latest.get("provenance") or {}
     if isinstance(latest.get("summary"), dict):
         text = meeting_summary_plain_text(latest["summary"])
+        limit = text_answer_limit(overlay.template_snapshot, meeting_summary_field(overlay.template_snapshot))
         result.update(suggestionText=text, suggestionSource=provenance.get("source"),
-                      summaryTooLong=len(text) > TEXT_ANSWER_LIMIT,
+                      provisional=bool(provenance.get('source') == 'teams' and provenance.get('provisional')),
+                      summaryTooLong=limit is not None and len(text) > limit,
                       generatedAt=provenance.get("generatedAt"), transcriptTruncated=bool(provenance.get("transcriptTruncated")),
                       replacementAvailable=bool(text and text != result.get("answer") and result["state"] != "NEVER_POPULATED"))
     elif result.get("status") == "summary-too-long":
         result["suggestionText"] = meeting_summary_plain_text(state.get("aiSummaryOriginal") or {})
-    result["generationStatus"] = (state.get("summaryGeneration") or {}).get("status")
+    generation = state.get("summaryGeneration") or {}
+    latest_status = generation_status(state)
+    result["generationStatus"] = latest_status if latest_status in {"ready", "failed", "unavailable"} else None
+    result["generationAttemptedAt"] = generation.get("attemptedAt")
+    if result["generationStatus"] == "failed" and generation.get("error"):
+        result["generationError"] = generation["error"]
+    if result.get('suggestionText') and provenance.get('source') != 'uploaded_transcript':
+        # All callers (including initial form load) must validate a Teams cache;
+        # an invalid suggestion must not remain available as a replacement.
+        from django.db import DatabaseError
+        from .review_sources import booking_for_overlay
+        from .migrated_session_scope import (has_verified_meeting_evidence,
+                                             stored_transcript_selection, summary_matches_session)
+        from .views import stored_coach_meeting_snapshot, stored_coach_meeting_transcript_for_summary
+        try:
+            record = booking_for_overlay(overlay)
+            transcript = None
+            if record:
+                saved = stored_coach_meeting_snapshot(record)
+                if has_verified_meeting_evidence(saved) and not state.get('actualSession'):
+                    selection = stored_transcript_selection(record, saved, meeting_scoped=True)
+                    if selection['code'] is None:
+                        transcript = stored_coach_meeting_transcript_for_summary(
+                            record, artifact_ids=selection['artifactIds'])
+                else:
+                    transcript = stored_coach_meeting_transcript_for_summary(record)
+            verified = bool(record and summary_matches_session(
+                {**provenance, 'sessionProvenance': state.get('sessionProvenance')}, record,
+                transcript))
+        except DatabaseError:
+            verified = False
+        if not verified:
+            result.pop('suggestionText', None)
+            result['replacementAvailable'] = False
+            result['generationStatus'] = 'unavailable'
+            result['sessionCode'] = 'SUMMARY_SESSION_MISMATCH'
+            result['message'] = 'The stored suggestion cannot be verified for this session. Your saved answer is unchanged.'
     return result
+
+
+def generation_status(state):
+    """Latest attempt drives presentation; keep older summary/provenance intact."""
+    status = (state.get("summaryGeneration") or {}).get("status")
+    if status in {"ready", "failed", "unavailable"}:
+        return status
+    if isinstance((state.get("latestSummarySuggestion") or {}).get("summary"), dict):
+        return "ready"
+    return state.get("summaryStatus", "not-generated")

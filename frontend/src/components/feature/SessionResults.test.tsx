@@ -21,6 +21,91 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock); fetchM
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Saved session results', () => {
+  it('filters by displayed attendance and manual corrections, with normalized search', async () => {
+    const absent = { ...session.attendance[0], email: 'absent@example.invalid', name: 'Absent Learner', status: 'absent', rawStatus: 'absent' };
+    const corrected = { ...absent, email: 'corrected@example.invalid', name: 'Corrected Learner' };
+    fetchMock.mockImplementation(url => String(url).includes('attendance-correction')
+      ? ok({ editable: true, corrections: [{ learnerProfileId: 9, email: corrected.email, manualStatus: 'present', version: 'v1' }] })
+      : ok({ sessions: [{ ...session, attendance: [...session.attendance, absent, corrected] }] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} moduleId="M" /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    await screen.findByRole('button', { name: 'Edit attendance for Corrected Learner' });
+    const filter = screen.getByRole('combobox', { name: 'Filter attendance' });
+    fireEvent.change(filter, { target: { value: 'present' } });
+    expect(screen.getByText('Learner One')).toBeInTheDocument();
+    expect(screen.getByText('Corrected Learner')).toBeInTheDocument();
+    expect(screen.queryByText('Absent Learner')).not.toBeInTheDocument();
+    fireEvent.change(filter, { target: { value: 'absent' } });
+    expect(screen.getByText('Absent Learner')).toBeInTheDocument();
+    expect(screen.queryByText('Corrected Learner')).not.toBeInTheDocument();
+    fireEvent.change(filter, { target: { value: 'manual' } });
+    expect(screen.getByText('Corrected Learner')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search attendance'), { target: { value: '  CORRECTED@EXAMPLE.INVALID  ' } });
+    expect(screen.getByText('Corrected Learner')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search attendance'), { target: { value: 'missing' } });
+    expect(screen.getByText('No learners match these filters.')).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
+  it('searches unresolved guests without changing the matching candidate roster', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      unmatchedAttendance: [
+        { ...session.attendance[0], name: 'Guest Alpha', email: '', sourceRecordIds: ['A'] },
+        { ...session.attendance[0], name: 'Guest Beta', email: 'beta@example.invalid', sourceRecordIds: ['B'] },
+      ], attendanceCandidates: [{ learnerProfileId: 7, name: 'Learner One', email: session.attendance[0].email }],
+    }] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review unmatched participants (2)' }));
+    fireEvent.change(screen.getByLabelText('Search attendance'), { target: { value: ' BETA@EXAMPLE.INVALID ' } });
+    expect(screen.queryByText('Guest Alpha')).not.toBeInTheDocument();
+    expect(screen.getByText('Guest Beta')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review unmatched participants (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Learner One/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search attendance'), { target: { value: 'missing' } });
+    expect(screen.getByText('No unmatched participants match your search.')).toBeInTheDocument();
+  });
+
+  it('saves a module-scoped manual correction and resets it without changing Teams evidence', async () => {
+    let manualStatus: 'present' | null = null;
+    fetchMock.mockImplementation((url) => String(url).includes('attendance-correction')
+      ? ok({ editable: true, corrections: [{ learnerProfileId: 7, email: session.attendance[0].email, manualStatus, version: 'v1' }] })
+      : ok({ sessions: [session] }));
+    vi.mocked(coachFetch).mockImplementation(async (_url, init) => {
+      const payload = JSON.parse(String(init?.body));
+      manualStatus = payload.action === 'reset' ? null : 'present';
+      return new Response(JSON.stringify({ learnerProfileId: 7, manualStatus, version: 'v1' }));
+    });
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} moduleId="MODULE" /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    const edit = await screen.findByRole('button', { name: /Edit attendance for/ });
+    fireEvent.click(edit);
+    fireEvent.click(screen.getByRole('button', { name: /Mark present/ }));
+    await screen.findByText('Manually adjusted', { selector: 'span' });
+    expect(JSON.parse(String(vi.mocked(coachFetch).mock.calls[0][1]?.body))).toEqual({
+      moduleId: 'MODULE', learnerProfileId: 7, version: 'v1', action: 'present',
+    });
+    await waitFor(() => expect(edit).toBeEnabled());
+    fireEvent.click(edit);
+    fireEvent.click(screen.getByRole('button', { name: /Reset manual correction/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm reset' }));
+    await waitFor(() => expect(screen.queryByText('Manually adjusted', { selector: 'span' })).not.toBeInTheDocument());
+    expect(JSON.parse(String(vi.mocked(coachFetch).mock.calls[1][1]?.body)).action).toBe('reset');
+  });
+
+  it('keeps correction errors visible without reporting a successful save', async () => {
+    fetchMock.mockImplementation((url) => String(url).includes('attendance-correction')
+      ? ok({ editable: true, corrections: [{ learnerProfileId: 7, email: session.attendance[0].email, manualStatus: null, version: 'v1' }] })
+      : ok({ sessions: [session] }));
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ error: 'Attendance changed in another window.' }), { status: 409 }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} moduleId="MODULE" /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Edit attendance for/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Mark absent/ }));
+    await screen.findByText(/Attendance changed in another window/);
+    expect(screen.queryByText('Manually adjusted', { selector: 'span' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reload corrections' })).toBeEnabled();
+  });
   it('shows the two event recordings on 2 October and the two lecture recordings on 9 October', async () => {
     const dated = { ...session, startsAt: '2026-10-09T08:00:00Z',
       artifacts: [
@@ -419,7 +504,8 @@ describe('Saved session results', () => {
     expect(await screen.findByText('The recording and attendance for this session are saved.')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('View background sync notice'));
-    expect(screen.getByText(/The last sync for this meeting series reported an issue/)).toHaveTextContent('Recording storage needs retry.');
+    expect(screen.getByText(/The last sync for this meeting series reported an issue/)).toBeInTheDocument();
+    expect(screen.getByText('Recording storage needs retry.')).toBeInTheDocument();
     expect(screen.getByLabelText('Session recording 1')).toBe(video);
     expect(coachFetch).not.toHaveBeenCalled();
   });
@@ -464,7 +550,7 @@ describe('Saved session results', () => {
     expect(screen.queryByLabelText('Session recording 1')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'attendance' }));
     expect(screen.getByText('Learner One')).toBeInTheDocument();
-    expect(screen.getAllByText('Present')).toHaveLength(1);
+    expect(screen.getAllByRole('cell', { name: 'Present' })).toHaveLength(1);
     expect(coachFetch).not.toHaveBeenCalled();
   });
 
@@ -495,6 +581,18 @@ describe('Module session index', () => {
     fireEvent.click(screen.getByRole('button', { name: /Session 6.*4 files/ }));
     await waitFor(() => expect(fetchMock.mock.calls.some(call => call[0].endsWith('/sessions/6/?moduleId=M1'))).toBe(true));
     expect(coachFetch).not.toHaveBeenCalled();
+  });
+
+  it('names each session by its linked Course structure item, keeping the number beside it', async () => {
+    fetchMock.mockImplementation((url: string) => ok(url.includes('/modules/')
+      ? { series: [{ id: 'S1', title: 'Example', sessions: [{ ...session, itemTitle: 'Week 01 | Join the LIVE session' },
+        { ...session, id: 'O2', sessionNumber: 2, itemTitle: null }] }], jobs: [] }
+      : { sessions: [session] }));
+    render(<ModuleSessions moduleId="M1" />);
+    expect(await screen.findByText('Week 01 | Join the LIVE session')).toBeInTheDocument();
+    expect(screen.getByText(/^Session 1 · /)).toBeInTheDocument();
+    // No single linked item: the plain number is kept, never a guessed name.
+    expect(screen.getByText('Session 2')).toBeInTheDocument();
   });
 
   it('refreshes sync status immediately while keeping session details lazy', async () => {

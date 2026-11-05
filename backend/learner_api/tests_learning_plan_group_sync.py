@@ -35,7 +35,7 @@ MODULE_ROWS = [
 def _learner(plan=None):
     return SimpleNamespace(
         id=19, pk=19, username="Learner", programme="MBA", cohort="C1", group="G1",
-        programme_status="Delivery", learning_plan=plan, training_plan=None, save=Mock(),
+        programme_status="Delivery", learning_plan=plan, training_plan=None, free_courses=[], save=Mock(),
     )
 
 

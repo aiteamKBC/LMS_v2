@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, X } from 'lucide-react';
 import type { DisplayTimelineModule } from './model';
 import { CurriculumTimeline } from './CurriculumTimeline';
-import { dateLabel, hours, moduleStatus, sessionTime } from './presentation';
+import { dateLabel, hours, moduleStatus, sessionTime } from "./presentation.helpers";
 import layout from './ModuleTimeline.module.css';
 
 export function TimelineInspector({ module, coach, href, onClose }: { module: DisplayTimelineModule; coach: string; href?: string; onClose: () => void }) {

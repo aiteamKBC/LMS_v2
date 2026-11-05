@@ -343,6 +343,29 @@ class LoginAudit(models.Model):
         return f"{self.event} {self.email} {'ok' if self.succeeded else 'fail'}"
 
 
+class Announcement(models.Model):
+    """A site-wide banner shown to everyone between two times — login."Announcements".
+
+    Authored from the Super Admin console. Shown on every page, signed in or
+    not, while ``Starts_at <= now < Ends_at``; ended rows stay as the record of
+    what the platform told people and when.
+    """
+
+    id = models.BigAutoField(primary_key=True, db_column="id")
+    message = models.TextField(db_column="Message")
+    # "#RRGGBB" — the banner's background; the SPA picks a readable text colour.
+    background_color = models.CharField(db_column="Background_color", max_length=7)
+    starts_at = models.DateTimeField(db_column="Starts_at")
+    ends_at = models.DateTimeField(db_column="Ends_at")
+    created_by = models.TextField(db_column="Created_by", null=True, blank=True)
+    created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
+    updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'login"."Announcements'
+
+
 # Event names used in LoginAudit.event.
 EVENT_LOGIN = "login"
 EVENT_LOGOUT = "logout"

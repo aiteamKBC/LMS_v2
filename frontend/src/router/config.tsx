@@ -1,9 +1,10 @@
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
-import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED } from "@/lib/featureFlags";
+import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_ENABLED } from "@/lib/featureFlags";
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
+import { LearnerFeedbackFormRoute } from "./LearnerFeedbackFormRoute";
 import { studentWorkspaceRoutes } from "./studentWorkspaceRoutes";
 
 // Route components are code-split: each page becomes its own chunk, fetched on
@@ -30,6 +31,7 @@ const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notificati
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
+const AdminAnnouncementsPage = lazyRoute(() => import("../pages/admin/announcements/page"));
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
@@ -46,9 +48,9 @@ const AuditSelectPage = lazyRoute(() => import("../pages/workspace/audit-select/
 const BadgeDetailPage = lazyRoute(() => import("../pages/learner/rewards/badge-detail/page"));
 const BoardPage = lazyRoute(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPortalPage"));
+const EmployerFeedbackPage = lazyRoute(() => import("../pages/employer/EmployerFeedbackPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
-const SessionFeedbackPage = lazyRoute(() => import("../pages/session-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
@@ -65,6 +67,7 @@ const ClubsPage = lazyRoute(() => import("../pages/learner/clubs/page"));
 const CoachAiMarking = lazyRoute(() => import("../pages/coach/ai-marking/page"));
 const CoachAttendance = lazyRoute(() => import("../pages/coach/attendance/page"));
 const CoachSupportTickets = lazyRoute(() => import("../pages/coach/support-tickets/page"));
+const CoachInfoSource = lazyRoute(() => import("../pages/coach/info-source/page"));
 const CoachAttendanceProfile = lazyRoute(() => import("../pages/coach/attendance-profile/page"));
 const CoachCaseFiles = lazyRoute(() => import("../pages/coach/case-files/page"));
 const CoachCaseload = lazyRoute(() => import("../pages/coach/caseload/page"));
@@ -90,8 +93,9 @@ const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/revi
 const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
+const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
+const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
-const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
@@ -105,6 +109,7 @@ const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/en
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
 const CurriculumRecordings = lazyRoute(() => import("../pages/curriculum/recordings/page"));
+const CoachingRecordings = lazyRoute(() => import("../pages/coaching-recordings/page"));
 const CurriculumProgrammes = lazyRoute(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazyRoute(() => import("../pages/curriculum/published/page"));
 const CurriculumQAPage = lazyRoute(() => import("../pages/curriculum/curriculum-qa/page"));
@@ -222,6 +227,7 @@ const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder
 const LearnerModuleProgressPage = lazyRoute(() => import("../pages/curriculum/learner-module-progress/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submission/ExtraActivityPage"));
+const CoachExtraActivitiesPage = lazyRoute(() => import("../pages/coach/extra-activities/page"));
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
@@ -276,6 +282,7 @@ const SafeguardingQAAudit = lazyRoute(() => import("@/pages/safeguarding/qa-audi
 const SafeguardingReferrals = lazyRoute(() => import("@/pages/safeguarding/referrals/page"));
 const SafeguardingReports = lazyRoute(() => import("@/pages/safeguarding/reports/page"));
 const SessionCalendarPage = lazyRoute(() => import("../pages/curriculum/session-calendar/page"));
+const ProgressTransfersPage = lazyRoute(() => import("../pages/curriculum/progress-transfers/page"));
 const StarredMessagesPage = lazyRoute(() => import("../pages/starred-messages/page"));
 const SupportDashboard = lazyRoute(() => import("@/pages/workspace/support/page"));
 const SupportEscalations = lazyRoute(() => import("@/pages/support/escalations/page"));
@@ -330,10 +337,6 @@ const routes: RouteObject[] = [
   {
     path: "/event-feedback",
     element: <EventFeedbackPage />,
-  },
-  {
-    path: "/session-feedback",
-    element: <SessionFeedbackPage />,
   },
   {
     path: "/event-rsvp",
@@ -528,6 +531,25 @@ const routes: RouteObject[] = [
     element: <EmployerPortalPage />,
   },
   {
+    // The two sidebar sections. Same page component, which reads the section
+    // from the path; the static segments outrank the :kind/:learnerId and
+    // documents patterns below, so those keep matching their own pages.
+    path: "/employers/:employerId/learners",
+    element: <EmployerPortalPage />,
+  },
+  {
+    path: "/employers/:employerId/reviews",
+    element: <EmployerPortalPage />,
+  },
+  {
+    path: "/employers/:employerId/feedback",
+    element: <EmployerFeedbackPage />,
+  },
+  {
+    path: "/employers/:employerId/feedback/:deliveryId",
+    element: <EmployerFeedbackPage />,
+  },
+  {
     // Every document across the employer's learners.
     path: "/employers/:employerId/documents",
     element: <EmployerDocumentsPage />,
@@ -648,15 +670,19 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/feedback",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
+    element: LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
+  },
+  {
+    path: "/learner/feedback/review/:reviewDeliveryId",
+    element: <LearnerFeedbackFormRoute><LearnerFeedbackFormPage /></LearnerFeedbackFormRoute>,
   },
   {
     path: "/learner/feedback/:formId",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+    element: <LearnerFeedbackFormRoute><LearnerFeedbackFormPage /></LearnerFeedbackFormRoute>,
   },
   {
     path: "/learner/feedback/delivery/:deliveryId",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+    element: LEARNER_FEEDBACK_ENABLED || LEARNER_POST_LECTURE_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
     path: "/learner/catchup",
@@ -737,6 +763,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/monthly-cycle",
     element: <MonthlyLogsPage />,
+  },
+  {
+    path: "/learner/extra-activities",
+    element: <ExtraActivityPage />,
   },
   {
     path: "/learner/monthly-submission",
@@ -916,12 +946,24 @@ const routes: RouteObject[] = [
     element: <CoachSupportTickets />,
   },
   {
+    path: "/coach/info-source",
+    element: <CoachInfoSource />,
+  },
+  {
     path: "/coach/absence-reports",
     element: <Navigate to="/coach/attendance" replace />,
   },
   {
     path: "/coach/catchup-queue",
     element: <CoachCatchupQueue />,
+  },
+  {
+    path: "/coach/extra-activities",
+    element: <CoachExtraActivitiesPage />,
+  },
+  {
+    path: "/coach/extra-activities/:submissionId",
+    element: <CoachMarkingReviewPage />,
   },
   {
     path: "/coach/marking-queue",
@@ -938,6 +980,10 @@ const routes: RouteObject[] = [
   {
     path: "/coach/monthly-coaching",
     element: <CoachMonthlyCoaching />,
+  },
+  {
+    path: "/coach/recordings",
+    element: <CoachingRecordings workspace="coach" />,
   },
   {
     path: "/coach/meetings/:eventKey",
@@ -1054,6 +1100,10 @@ const routes: RouteObject[] = [
     element: <AdminSystemSettingsPage />,
   },
   {
+    path: "/admin/announcements",
+    element: <AdminAnnouncementsPage />,
+  },
+  {
     path: "/admin/platform-report",
     element: <PlatformReportPage />,
   },
@@ -1107,6 +1157,14 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/bulk-attendance",
     element: <CurriculumBulkAttendance />,
+  },
+  {
+    path: "/curriculum/progress-transfers",
+    element: <Navigate to="/users/progress-transfers" replace />,
+  },
+  {
+    path: "/users/progress-transfers",
+    element: <ProgressTransfersPage />,
   },
   {
     path: "/curriculum/quality",
@@ -1215,6 +1273,18 @@ const routes: RouteObject[] = [
     // Every saved live-session recording, by module, group and week. Read only.
     path: "/curriculum/recordings",
     element: <CurriculumRecordings />,
+  },
+  {
+    path: "/curriculum/coaching-recordings",
+    element: <CoachingRecordings />,
+  },
+  {
+    path: "/curriculum/coaching-recordings/reviews",
+    element: <CoachingQualityReviewsPage />,
+  },
+  {
+    path: "/curriculum/quality/forms",
+    element: <CoachingQualityFormsPage />,
   },
   {
     // The bank holiday calendar: GOV.UK holidays stay synced here, and extra
@@ -1363,10 +1433,6 @@ const routes: RouteObject[] = [
   {
     path: "/tutor/reports",
     element: <TutorReportsPage />,
-  },
-  {
-    path: "/curriculum/ksb-frameworks",
-    element: <CurriculumKsbFrameworksPage />,
   },
   {
     path: "/curriculum/version-control",
@@ -1810,8 +1876,6 @@ const routes: RouteObject[] = [
  *  - "/" and "/login" are the sign-in form itself.
  *  - "/event-feedback" opens a token-scoped form for an event attendee; an LMS
  *    account is not required and the backend still validates the personal token.
- *  - "/session-feedback" opens a one-recipient Information Session or Commitment
- *    Meeting feedback link; the backend validates its personal token.
  *  - "/forgot-password", "/set-password", "/reset-password" are reached from an
  *    emailed link by someone who by definition cannot sign in yet; each carries
  *    its own single-use token, which the backend validates.
@@ -1831,7 +1895,6 @@ const PUBLIC_PATHS = new Set([
   "/",
   "/login",
   "/event-feedback",
-  "/session-feedback",
   "/event-rsvp",
   "/event-check-in",
   "/access-required",

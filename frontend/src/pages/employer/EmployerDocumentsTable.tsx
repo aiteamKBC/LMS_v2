@@ -5,8 +5,8 @@ import type { EmployerOwnedItem } from '@/api/employerPortal';
 import { compareSignable, documentState as stateOf, targetKey, type SigningTarget } from './useEmployerSigning';
 import styles from './EmployerDocumentsPage.module.css';
 
-type Filter = 'to-sign' | 'waiting' | 'signed' | 'all';
-type DisplayState = Exclude<Filter, 'all'> | 'waiting-learner';
+export type DocumentFilter = 'to-sign' | 'waiting' | 'signed' | 'all';
+type DisplayState = Exclude<DocumentFilter, 'all'> | 'waiting-learner';
 type IconComponent = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 
 function displayStateOf(item: EmployerOwnedItem): DisplayState {
@@ -15,7 +15,7 @@ function displayStateOf(item: EmployerOwnedItem): DisplayState {
   return item.kind === 'review' ? 'waiting-learner' : 'waiting';
 }
 
-const FILTERS: { key: Filter; label: string }[] = [
+const FILTERS: { key: DocumentFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'to-sign', label: 'To sign' },
   { key: 'waiting', label: 'Waiting on others' },
@@ -94,7 +94,7 @@ function DocumentStatus({ item }: { item: EmployerOwnedItem }) {
   const content = {
     'to-sign': { label: 'Awaiting your signature', Icon: Clock3 },
     waiting: { label: 'Waiting on others', Icon: Clock3 },
-    'waiting-learner': { label: 'Waiting on learner', Icon: UserRound },
+    'waiting-learner': { label: 'Awaiting completion', Icon: Clock3 },
     signed: { label: 'Signed', Icon: CheckCircle2 },
   }[state];
   const Icon = content.Icon;
@@ -118,29 +118,20 @@ function DocumentAction({
   onSign: () => void;
   onShow: () => void;
 }) {
-  if (item.kind === 'review' && item.migratedForm && item.signed && !item.completed) {
-    return <span className={styles.actionNote}>Signed · awaiting final completion</span>;
-  }
-
-  if (item.signed) {
-    return (
+  return (
+    <div className={styles.documentActions}>
       <button type="button" onClick={onShow} disabled={opening} className={styles.showButton}>
         {opening ? <LoaderCircle className={styles.buttonSpinner} aria-hidden /> : <FileText aria-hidden />}
-        {opening ? 'Opening…' : 'Show document'}
+        {opening ? 'Opening…' : 'Preview'}
       </button>
-    );
-  }
-
-  if (item.signable) {
-    return (
-      <button type="button" onClick={onSign} className={styles.signButton}>
-        <FileSignature aria-hidden />
-        Sign
-      </button>
-    );
-  }
-
-  return <span className={styles.actionNote}>Awaiting completion by the learner</span>;
+      {!item.signed && item.signable && (
+        <button type="button" onClick={onSign} className={styles.signButton}>
+          <FileSignature aria-hidden />
+          Sign
+        </button>
+      )}
+    </div>
+  );
 }
 
 function DocumentListRow({
@@ -165,7 +156,7 @@ function DocumentListRow({
           {item.kind === 'review' ? <FileCheck2 /> : <FileText />}
         </span>
         <span className={styles.documentCopy}>
-          <span className={styles.documentName} title={item.label}>{item.label}</span>
+          <button type="button" onClick={onShow} className={styles.documentName} title={`Preview ${item.label}`}>{item.label}</button>
           <span className={styles.documentMeta}>
             <Link to={learnerHref}>{item.learner.name || 'Learner'}</Link>
             <span aria-hidden>·</span>
@@ -179,7 +170,12 @@ function DocumentListRow({
         <time>{itemDate(item)}</time>
       </div>
 
-      <div className={styles.statusCell} data-label="Status"><DocumentStatus item={item} /></div>
+      <div className={styles.statusCell} data-label="Status">
+        <DocumentStatus item={item} />
+        {item.kind === 'review' && item.migratedForm && item.signed && !item.completed && (
+          <span className={styles.statusNote}>Awaiting final completion</span>
+        )}
+      </div>
       <div className={styles.partiesCell} data-label="Parties"><PartyPills item={item} /></div>
 
       <div className={styles.actionCell}>
@@ -196,15 +192,18 @@ function DocumentListRow({
   );
 }
 
-export function EmployerDocumentsTable({ items, employerId, opening, onSign, onShow, search = '' }: {
+export function EmployerDocumentsTable({ items, employerId, opening, onSign, onShow, search = '', filter: ownedFilter }: {
   items: EmployerOwnedItem[];
   employerId: string;
   opening: string | null;
   onSign: (target: SigningTarget) => void;
   onShow: (target: SigningTarget) => void;
   search?: string;
+  /** Supplied when the page's own counts are the filter control; omitted keeps these chips. */
+  filter?: DocumentFilter;
 }) {
-  const [filter, setFilter] = useState<Filter>('all');
+  const [ownFilter, setOwnFilter] = useState<DocumentFilter>('all');
+  const filter = ownedFilter ?? ownFilter;
   const counts = { 'to-sign': 0, waiting: 0, signed: 0, all: items.length };
   for (const item of items) counts[stateOf(item)] += 1;
   const query = search.trim().toLowerCase();
@@ -215,22 +214,24 @@ export function EmployerDocumentsTable({ items, employerId, opening, onSign, onS
   const target = (item: EmployerOwnedItem): SigningTarget => ({ item, kind: item.learner.kind, learnerId: item.learner.id });
   return (
     <section className={styles.documentsSection} aria-label="Documents">
-      <div className={styles.toolbar}>
-        <nav className={styles.filters} aria-label="Filter documents">
-          {FILTERS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setFilter(item.key)}
-              aria-pressed={filter === item.key}
-              className={filter === item.key ? styles.activeFilter : ''}
-            >
-              {item.label}
-              <span>{counts[item.key]}</span>
-            </button>
-          ))}
-        </nav>
-      </div>
+      {ownedFilter === undefined && (
+        <div className={styles.toolbar}>
+          <nav className={styles.filters} aria-label="Filter documents">
+            {FILTERS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setOwnFilter(item.key)}
+                aria-pressed={filter === item.key}
+                className={filter === item.key ? styles.activeFilter : ''}
+              >
+                {item.label}
+                <span>{counts[item.key]}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
 
       {visible.length === 0 ? (
         <div className={styles.emptyState}>

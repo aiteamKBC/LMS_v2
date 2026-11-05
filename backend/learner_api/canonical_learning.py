@@ -89,7 +89,8 @@ def profile(learner_id):
     records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
         l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
-        u."Planned_hours" AS programme_planned_hours
+        u."Planned_hours" AS programme_planned_hours,
+        EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=%s''', [learner_id])
@@ -172,7 +173,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     if lineage_only:
         payload = '''CASE WHEN jsonb_typeof(p.source_payload)='object'
             THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
-                 jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref'))
+                 jsonb_build_object('retakeTimeChoice',p.source_payload->'retakeTimeChoice','original_source_ref',p.source_payload->'original_source_ref'))
             ELSE to_jsonb(p) END'''
     if dashboard_metadata or (training_summary and not catalogue_summary):
         # Dashboard summaries need the course's introduction marker and the
@@ -181,7 +182,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         # source_payload_metadata supports encoded JSON without unsafe SQL casts.
         payload = '''CASE WHEN jsonb_typeof(p.source_payload)='object'
             THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
-            jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref',
+            jsonb_build_object('retakeTimeChoice',p.source_payload->'retakeTimeChoice','original_source_ref',p.source_payload->'original_source_ref',
                 'course_display_placement',jsonb_build_object(
                     'course_id',p.source_payload->'course_display_placement'->'course_id',
                     'section',p.source_payload->'course_display_placement'->'section'),
@@ -194,7 +195,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         columns = ','.join('progress.' + field for field in (
             'id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
             'component_title', 'component_type', 'quiz_ref', 'passed', 'reported_time',
-            'submitted_at', 'started_at', 'time_tracking_source', 'claimed_seconds',
+            'submitted_at', 'declared_completed_at', 'started_at', 'time_tracking_source', 'claimed_seconds',
             'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
             'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
             'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
@@ -202,14 +203,14 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             # Narrow evidence before materialising/serialising the canonical
             # CTE row, rather than putting its full body in to_jsonb(p) first.
             columns += """,CASE WHEN jsonb_typeof(progress.source_payload)='object'
-                THEN jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')
+                THEN jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->'original_source_ref')
                 ELSE progress.source_payload END AS source_payload,
                 progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"""
             payload = 'to_jsonb(p)'
         elif training_summary or monthly_summary:
             columns += ",progress.source_payload,progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"
         else:
-            columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
+            columns += ",jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
     segment_payload = "jsonb_build_object('id',s.id)" if training_summary else 'to_jsonb(s)'
     historical_payload = ("jsonb_build_object('source_system',h.source_system,"
         "'source_course_ref',h.source_course_ref,'source_activity_id',h.source_activity_id)"
@@ -227,7 +228,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             FROM "Learner".learner_progress_entries progress
             WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
         ){ksb_cte}, reporting_segments AS (
-            SELECT s.progress_id,jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id) AS payload
+            SELECT s.progress_id,{"'[{}]'::jsonb" if catalogue_summary else f"jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id)"} AS payload
             FROM "Learner".learner_activity_reporting_segments s
             JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
             GROUP BY s.progress_id
@@ -292,6 +293,12 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])
         loaded.append(item)
+    transfer_state = None
+    if owner.get('progress_transfer_active'):
+        from .progress_transfer_store import read_state
+        from .progress_transfer_policy import frozen_records
+        transfer_state = read_state(owner['enrolment_id'], include_records=True)
+        loaded = frozen_records(loaded, transfer_state, entry_ids=entry_ids)
     with projection_stage('ledger_reconcile'):
         current = current_records(owner, loaded)
     with projection_stage('ledger_completion'):
@@ -302,25 +309,31 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             # retained in the journal learner view only.
             for record in result:
                 record['completed'] = counts_as_completed(record)
+    if transfer_state is not None:
+        result = frozen_records(result, transfer_state, entry_ids=entry_ids)
     return result
 
 
 def weekly_hour_records(owner):
     """Hours-only projection; retain learner-wide facts needed by native dedupe.
 
-    Attempts/source completion cannot change accepted ledger seconds. Only
-    unsynchronised direct saves need current assignment markings. Reporting
+    Stored, measured legacy attempts contribute separate evidence without
+    changing accepted ledger seconds. Only unsynchronised direct saves need
+    current assignment markings. Reporting
     segments are a presence gate here, never additional hour allocations.
     """
-    from .current_learning import project_current
+    if owner.get('progress_transfer_active'):
+        return entries_for(owner, lineage_only=True)
+    from .current_learning import project_current, merge_attempts, subject_attempt_rows
+    from .canonical_hours import extra_activity_hour_records
     fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
-              'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at',
+              'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at', 'declared_completed_at',
               'started_at', 'time_tracking_source', 'claimed_seconds', 'verified_seconds',
               'source_system', 'component_link_source', 'actual_seconds', 'accepted')
     records = query('''SELECT ''' + ','.join('progress.' + field for field in fields) + ''',
         to_jsonb(progress)->>'actual_basis' AS actual_basis,
         CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN
-          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')
+          jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->'original_source_ref')
           ELSE progress.source_payload END AS source_payload,
         CASE WHEN EXISTS(SELECT 1 FROM "Learner".learner_activity_reporting_segments s
             WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id AND s.learner_id=%s)
@@ -340,35 +353,110 @@ def weekly_hour_records(owner):
               AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
             [str(owner['enrolment_id']), owner.get('learner_type'), pending])
         markings = {str(row['component_ref']): row for row in submissions}
-    return progress_records_with_completion(records, project_current(records, markings))
+    projected = project_current(records, markings)
+    projected = merge_attempts(projected, subject_attempt_rows(owner, timed_only=True))
+    projected.extend(extra_activity_hour_records([owner])[owner['id']])
+    return progress_records_with_completion(records, projected)
 
 
 def progress_records_with_completion(records, current):
-    """Enrich progress completion without replacing stored hours or adding rows.
+    """Enrich completion while preserving stored hours and historical dates.
 
     Counts, acceptance, seconds and reporting months belong to progress entries.
     Newer attempts may still supply completion and scores for those same entries.
-    Unpersisted submissions cannot become extra accepted-hour records on a read.
+    Standalone extra activities use their saved coach decision and entered time;
+    they have no curriculum plan or separate progress save. Other submissions
+    cannot introduce additional accepted-hour records on a read.
+    Server-measured, persisted legacy attempts are separate timed evidence;
+    their stable placement IDs prevent retries from duplicating those hours.
+    Untimed persisted course completions also survive, but never become OTJ
+    reporting rows or accepted hours.
 
     The exception is a stored direct LMS save that nothing has given seconds
     yet: its projected time and decision are the only record of that learning,
     so they fill the empty ledger fields rather than leaving it at zero hours.
     """
     by_id = {str(record['id']): record for record in current}
+    superseded = {str(ident) for record in current for ident in record.get('retake_superseded_ids', [])}
     result = []
     for record in records:
+        if str(record['id']) in superseded:
+            continue
         latest = by_id.get(str(record['id']), {})
         fields = ('completed', 'achieved_score', 'total_score')
-        if is_unsynchronised_direct_save(record):
+        if is_unsynchronised_direct_save(record) or latest.get('retake_timing_applied'):
             fields += ('accepted', 'actual_seconds', 'activity_status', 'reporting_month',
-                       'reporting_started_at', 'reporting_ended_at')
+                       'reporting_started_at', 'reporting_ended_at', 'reporting_timestamp_label',
+                       'retake_timing_applied', 'completion_reporting_date')
         result.append({**record, **{key: latest[key] for key in fields if key in latest}})
+    existing = {str(record['id']) for record in records}
+    timed_routes = {recorded_source_key(source) for record in current
+                    if record.get('actual_basis') in {'legacy_activity_verified_timer', 'legacy_activity_manual_time'}
+                    for source in record.get('sources', [])}
+    for record in current:
+        ident = str(record['id'])
+        if ident in existing:
+            continue
+        basis = record.get('actual_basis')
+        if basis in {'legacy_activity_verified_timer', 'legacy_activity_manual_time', 'extra_activity_input'}:
+            result.append({**record, 'hours_only': True} if basis == 'extra_activity_input' else record)
+        else:
+            # merge_attempts creates these identities only from the owner's
+            # saved subject attempts. Do not promote arbitrary submissions.
+            match = re.fullmatch(r'subject:(quiz:)?([1-9]\d*):([1-9]\d*)', ident)
+            if not match or record.get('completed') is not True or record.get('accepted') is not False \
+                    or record.get('actual_seconds') is not None:
+                continue
+            route = (match[2], ('quiz:' if match[1] else 'material:') + match[3])
+            if route in timed_routes or not any(
+                    source.get('source_system') == 'old_lms' and recorded_source_key(source) == route
+                    for source in record.get('sources', [])):
+                continue
+            result.append({**record, 'completion_only': True})
+        existing.add(ident)
     return result
 
 
 def allocations(entry):
-    """Use the progress row's own month and seconds; retain segments as history."""
-    return [entry]
+    """Allocate October-onward submissions by their saved completion instant.
+
+    This is a read projection: original audit timestamps, seconds, acceptance,
+    historical allocations and reporting segments are never rewritten.
+    """
+    if entry.get('completion_only'):
+        return []
+    if entry.get('retake_timing_applied'):
+        return [entry]
+    submitted = completion_reporting_instant(entry.get('submitted_at'))
+    if not submitted or submitted.strftime('%Y-%m') < '2026-10':
+        return [entry]
+    # Imported historical activity can carry a later submission/import date.
+    if entry.get('reporting_month') and entry['reporting_month'] < '2026-10':
+        return [entry]
+    completed = completion_reporting_instant(entry.get('declared_completed_at')) or submitted
+    started = completion_reporting_instant(entry.get('started_at') or entry.get('reporting_started_at'))
+    # A backdated declaration does not establish when the learner started.
+    # Show a range only when the saved start belongs to this completion day.
+    if not started or started.date() != completed.date() or started.timestamp() > completed.timestamp():
+        started = None
+    label = completed.strftime('%H:%M:%S')
+    if started and started.timestamp() < completed.timestamp():
+        label = f"{started:%H:%M:%S} - {completed:%H:%M:%S}"
+    return [{**entry, 'reporting_month': completed.strftime('%Y-%m'),
+             'reporting_started_at': started, 'reporting_ended_at': completed,
+             'reporting_timestamp_label': label,
+             'completion_reporting_date': completed.date().isoformat()}]
+
+
+def completion_reporting_instant(value):
+    """Read database instants in business time, never machine-local time."""
+    if not value:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UK)
+    return value.astimezone(UK)
 
 
 def recorded_seconds(entry):
@@ -424,7 +512,10 @@ def input_activity_date(entry):
 
 def rows_for(owner, records=None):
     result = []
-    for entry in (part for record in (records if records is not None else entries_for(owner)) for part in allocations(record)):
+    # Untimed completions belong in the activity log for review. They still
+    # contribute no allocations/hours to metrics or the monthly charts.
+    for entry in (part for record in (records if records is not None else entries_for(owner))
+                  for part in ([record] if record.get('completion_only') else allocations(record))):
         source = source_payload_metadata(entry.get('source_payload'))
         at = local_instant(entry.get('reporting_started_at') or entry.get('reporting_ended_at'))
         ref = f"canonical:{entry['id']}"
@@ -444,6 +535,8 @@ def rows_for(owner, records=None):
         declared_date = input_activity_date(entry)
         if declared_date:
             item['activity_date'] = declared_date
+        if entry.get('completion_reporting_date'):
+            item['activity_date'] = entry['completion_reporting_date']
         # Translate the historical system label for display without rewriting the ledger.
         if timestamp_label == '\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f':
             timestamp_label = 'Estimated — approval required'
@@ -772,6 +865,30 @@ def source_quiz_parts(item, owner, record):
 def content(item, owner=None, record=None):
     if owner is not None and record is None:
         record = next((r for r in entries_for(owner) if str(r['id']) == str(item.get('progress_id'))), None)
+    if record is not None and record.get('completion_only'):
+        # These owned attempt projections have no numeric progress ID. Do not
+        # send their synthetic IDs to the historical-progress SQL readers.
+        return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
+            'category': item['category'], 'url': None, 'quiz': None,
+            'html': '<p>This activity was completed without a recorded study duration. '
+                    'The duration is unavailable for review.</p>'}]}
+    if owner is not None and record is not None and record.get('actual_basis') in {'legacy_activity_verified_timer', 'legacy_activity_manual_time'}:
+        # This evidence belongs to a persisted subject attempt, not a numeric
+        # learner_progress_entries ID. Keep its preview in that owned store.
+        from .monthly_log_sources import _answers_html
+        evidence = source_payload_metadata(record.get('source_payload'))
+        attempts = query('''SELECT definition,answers FROM "Learner".subject_activity_attempts
+            WHERE id=%s AND enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL''',
+            [evidence.get('subject_attempt_id'), owner['enrolment_id'], owner.get('aptem_id')])
+        if not attempts:
+            raise ServiceError('Activity not found.', 'not_found', 404)
+        saved = attempts[0]
+        seconds = int(record.get('actual_seconds') or 0)
+        label = 'Manual study time' if record.get('actual_basis') == 'legacy_activity_manual_time' else 'Measured study time'
+        html = f'<p>{label}: {seconds // 60}m {seconds % 60}s. Activity completed.</p>'
+        html += _answers_html(decoded(saved['definition'], {}), decoded(saved['answers'], {}))
+        return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
+            'category': item['category'], 'url': None, 'quiz': None, 'html': html}]}
     parts = material_parts(item, owner, record) if owner is not None and record is not None else []
     if not parts and owner is not None and record is not None:
         parts = component_parts(item, owner, record)
@@ -796,6 +913,7 @@ def owned_source_courses(owner, *, course_ids=None, module_ids=None):
     if scoped:
         params.extend([[str(value) for value in (course_ids or [])], list(module_ids or [])])
     courses = query(f'''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
+        m.source_learner_id,m.source_payload->'legacy_course_progress' AS legacy_course_progress,
         CASE WHEN m.source_relationship='historical'
             THEN m.source_payload->'verified_catalogue_scope' END AS verified_catalogue_scope
         FROM "Learner".learner_source_course_memberships m
@@ -803,6 +921,12 @@ def owned_source_courses(owner, *, course_ids=None, module_ids=None):
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
           AND c.source_course_ref ~ '^[0-9]+$'{selection}
         ORDER BY c.source_course_title,c.id''', params)
+    from learner_api.legacy_course_progress import public_reference
+    for course in courses:
+        reference = public_reference(course.pop('legacy_course_progress', None), owner, course)
+        course.pop('source_learner_id', None)
+        if reference is not None:
+            course['legacyProgressReference'] = reference
     return courses
 
 
@@ -823,6 +947,8 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
         jsonb_build_object('quiz_id',a.source_payload->'quiz_id',
             'activity_id',a.source_payload->'activity_id','parent_activity_id',a.source_payload->'parent_activity_id',
             'section_title',a.source_payload->'section_title',
+            'section_order',coalesce(a.source_payload->'section_order',a.source_payload#>'{live_catalogue_recovery,section_order}'),
+            'component_order',coalesce(a.source_payload->'component_order',a.source_payload#>'{live_catalogue_recovery,component_order}'),
             'created_at',a.source_payload->'created_at','created_at_utc',a.source_payload->'created_at_utc') AS source_payload,
         EXISTS (SELECT 1 FROM curriculum.source_materials m
             WHERE m.material_id=a.source_material_id AND m.source_system=a.source_system
@@ -870,6 +996,12 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     else:
         monthly_targets = targets_for(owner)
         result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
+    from coach_api.migrated_otjh import planned_hours_bulk
+    review_planned = planned_hours_bulk([owner]).get(owner['enrolment_id'], 0)
+    if review_planned:
+        result['review_planned_otjh'] = review_planned
+        if result.get('audit_tp_planned') is not None:
+            result['audit_tp_planned'] += review_planned
     return result
 
 
@@ -989,7 +1121,10 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     Historical/component guesses do not substitute for learner source links.
     A quiz and material sharing a numeric ID remain distinct activities.
     """
-    catalogue = learner_course_catalogue(courses, catalogue)
+    from learner_api.course_catalogue_display import retain_learner_schedule
+    # Learner-specific fallback dates must not leak into another learner's
+    # shared/cached catalogue definitions.
+    catalogue = [dict(d) for d in learner_course_catalogue(courses, catalogue)]
     by_course = {str(c['source_course_ref']): [] for c in courses}
     definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue
                    if str(d['source_course_ref']) in by_course}
@@ -1005,7 +1140,12 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
         counted_courses = set()
         for definition in placements:
             course = str(definition['source_course_ref'])
+            if include_catalogue and not overview_only and not record.get('hours_only'):
+                retain_learner_schedule(definition, record,
+                    completed=counts_as_completed(record, include_source_evidence='completed' in record))
             if overview_only:
+                if record.get('hours_only'):
+                    continue
                 by_course[course].append({'activity_id': f"record:{course}:{record['id']}",
                     'group_id': int(course),
                     'completed': counts_as_completed(record, include_source_evidence='completed' in record)})
@@ -1061,6 +1201,8 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
         if not activity and not include_catalogue:
             continue
         subjects.append({'id': int(ref), 'name': course['source_course_title'],
+            **({'legacyProgressReference': course['legacyProgressReference']}
+               if course.get('legacyProgressReference') is not None else {}),
             'module_id': course.get('curriculum_module_ref'),
             **({} if overview_only else {
                 'catalogue_count': catalogue_counts.get(ref, 0),
@@ -1152,8 +1294,11 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     KSB points retain the shared activity/code definition; they are not a claim
     that the learner has achieved the entire programme's KSB framework.
     """
-    counted = list(records)
-    accepted = [item for item in counted if item.get('accepted') is True]
+    # A configured review allowance contributes hours, not a taught activity
+    # or a KSB achievement. Keep programme completion denominators unchanged.
+    records = list(records)
+    counted = [item for item in records if item.get('kind') != 'migrated_review' and not item.get('hours_only')]
+    accepted = [item for item in records if item.get('accepted') is True]
     completed = [item for item in counted if counts_as_completed(
         item, include_source_evidence='completed' in item)]
     ratio = point_ratio
@@ -1168,7 +1313,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     planned = round(sum(monthly_targets.values()), 4) if monthly_targets or journal_sources.enabled() else None
     result = {
         'migrated': True, 'aptem_planned_total': planned,
-        'programme': {**ratio(len(completed), len(counted)), 'historicalCompleted': len(accepted)},
+        'programme': {**ratio(len(completed), len(counted)), 'historicalCompleted': sum(item.get('accepted') is True for item in counted)},
         'otjh': {'historical': actual, 'new': 0, 'actual': actual,
                  'completed_actual': actual, 'planned': planned},
         'ksb': {**ratio(sum(v[0] for v in codes.values()), sum(v[1] for v in codes.values())),
@@ -1209,14 +1354,16 @@ def metrics(learner_id, *, owner=None):
         planned = programme_planned_hours(learner_id, owner=owner)
         result['otjh']['planned'] = planned
         result['aptem_planned_total'] = planned
-    return result
+    from coach_api.migrated_otjh import planned_hours_bulk, include_planned
+    return include_planned(result, planned_hours_bulk([owner]).get(owner['enrolment_id'], 0))
 
 
 def otjh_summary_bulk(learner_ids):
     """Profile OTJH facts in bounded reads, without content/KSB hydration.
 
     Accepted seconds belong to progress rows, not their source snapshots,
-    segments or unpersisted submissions. The plan uses the same scoped monthly
+    segments or assignment-only submissions. Standalone extra activities add
+    only their reviewed input hours. The plan uses the same scoped monthly
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """
@@ -1225,9 +1372,10 @@ def otjh_summary_bulk(learner_ids):
     if not enrolment_ids:
         return {}
     candidates = {}
-    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
+    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.programme,
         l.email,l.start_date,l.end_date,l.learner_type,
-        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
+        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
+        EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids]):
@@ -1244,6 +1392,17 @@ def otjh_summary_bulk(learner_ids):
     if not owners:
         return result
     profile_ids = [int(owner['id']) for owner in owners.values()]
+    retake_profiles = {int(item['learner_id']) for item in query('''
+        SELECT DISTINCT learner_id FROM "Learner".learner_progress_entries
+        WHERE learner_id=ANY(%s) AND deleted_at IS NULL
+          AND source_payload->>'retakeTimeChoice' IN ('keep','new','correct','add','retry')''', [profile_ids])}
+    relation = query('SELECT to_regclass(%s) AS name', ['"Learner".subject_activity_attempts'])
+    if relation and relation[0].get('name'):
+        selected_enrolments = {int(item['enrolment_id']) for item in query('''
+            SELECT DISTINCT enrolment_id FROM "Learner".subject_activity_attempts
+            WHERE enrolment_id=ANY(%s) AND submitted_at IS NOT NULL AND completed IS TRUE
+              AND definition->'studyTime'->>'retakeTimeChoice' IN ('keep','new')''', [list(owners)])}
+        retake_profiles.update(int(owner['id']) for key, owner in owners.items() if key in selected_enrolments)
     records = {profile_id: [] for profile_id in profile_ids}
     # Aggregate before transfer: full caseloads can contain many historical rows.
     # Mirror number(): ignore non-finite values and clamp negative seconds to 0.
@@ -1272,15 +1431,25 @@ def otjh_summary_bulk(learner_ids):
             targets[int(item['learner_id'])][item['report_month']] = float(item['target_hours'])
     for enrolment_id, owner in owners.items():
         profile_id = int(owner['id'])
+        if owner.get('progress_transfer_active') or profile_id in retake_profiles:
+            records[profile_id] = entries_for(owner, lineage_only=True)
         result[enrolment_id] = {
             'profile_id': profile_id,
             'start_date': owner.get('start_date'), 'end_date': owner.get('end_date'),
             **metrics_from_records(records[profile_id], targets[profile_id])['otjh'],
         }
+    from coach_api.migrated_otjh import planned_hours_bulk
+    review_hours = planned_hours_bulk(list(owners.values()))
+    for enrolment_id, hours in review_hours.items():
+        if not hours:
+            continue
+        result[enrolment_id]['review_planned'] = hours
+        if result[enrolment_id]['planned'] is not None:
+            result[enrolment_id]['planned'] += hours
     return result
 
 
-def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=False):
+def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=False, as_of=None):
     """Return canonical metrics for a caseload without per-learner queries.
 
     Keys present with ``None`` identify a canonical record that failed identity
@@ -1296,7 +1465,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
         l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
-        u."Planned_hours" AS programme_planned_hours
+        u."Planned_hours" AS programme_planned_hours,
+        EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids])
@@ -1319,13 +1489,13 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     learner_profile_ids = [int(owner['id']) for owner in valid_owners.values()]
     progress_rows = query('''SELECT p.learner_id AS owner_id,p.id,p.kind,
         p.module_title,p.component_ref,p.component_title,p.component_type,p.quiz_ref,
-        p.passed,p.feedback,p.reported_time,p.submitted_at,p.started_at,
+        p.passed,p.feedback,p.reported_time,p.submitted_at,p.declared_completed_at,p.started_at,
         p.time_tracking_source,p.claimed_seconds,p.verified_seconds,p.expected_otjh,
         p.source_system,p.component_link_source,p.actual_seconds,p.accepted,
         p.reporting_started_at,p.reporting_ended_at,p.reporting_month,
         p.achieved_score,p.total_score,p.activity_status,
-        CASE WHEN p.source_payload ? 'original_source_ref'
-             THEN jsonb_build_object('original_source_ref',p.source_payload->>'original_source_ref')
+        CASE WHEN jsonb_typeof(p.source_payload)='object'
+             THEN jsonb_build_object('retakeTimeChoice',p.source_payload->'retakeTimeChoice','original_source_ref',p.source_payload->>'original_source_ref')
              ELSE '{}'::jsonb END AS source_payload
         FROM "Learner".learner_progress_entries p
         WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
@@ -1416,6 +1586,11 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
                 record['completed'] = record.get('completed', record.get('accepted')) is True or any(
                     source.get('source_system') == 'old_lms' and source.get('completed') is True
                     for source in record.get('sources') or [])
+        if owner.get('progress_transfer_active'):
+            records = entries_for(owner, lineage_only=True)
+        if as_of is not None:
+            from .progress_cutoff import records_as_of
+            records = records_as_of(records, as_of)
         result[enrolment_id] = metrics_from_records(
             records,
             targets_by_learner.get(int(owner['id']), {}),
@@ -1427,6 +1602,9 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
             planned = programme_planned_hours(enrolment_id, owner=owner)
             result[enrolment_id]['otjh']['planned'] = planned
             result[enrolment_id]['aptem_planned_total'] = planned
+    from coach_api.migrated_otjh import planned_hours_bulk, include_planned
+    for enrolment_id, hours in planned_hours_bulk(list(valid_owners.values())).items():
+        include_planned(result[enrolment_id], hours)
     return result
 
 

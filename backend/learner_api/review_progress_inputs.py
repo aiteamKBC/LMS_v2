@@ -1,8 +1,8 @@
 """Read-only Review OTJ inputs used by frozen Progress Review snapshots.
 
 This module deliberately projects only planned Review hours and the subset due
-at the snapshot cutoff. Actual hours belong to ``LearnerProfile.completed_hours``
-and are never calculated, refreshed, or persisted here.
+at the snapshot cutoff. Actual hours come from the canonical accepted-hour
+projection and are never calculated, refreshed, or persisted here.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def review_planned_target_hours(
 ):
     """Return ``(planned, target_due)`` qualifying Review OTJ hours.
 
-    Both values reuse Curriculum's established recurrence projection. The full
+    Native uses Curriculum recurrence; Aptem uses its imported review dates. The full
     learner programme window supplies planned hours; the same window capped at
     the UK business date of ``as_of`` supplies target-due hours.
     """
@@ -50,6 +50,14 @@ def review_planned_target_hours(
     )
     if not learner_id or not start_date or not end_date:
         return 0.0, 0.0
+
+    from coach_api.review_sources import resolve_review_source
+    if resolve_review_source(profile_aptem_id=getattr(learner_profile, "aptem_id", None)).kind == "aptem":
+        from coach_api.migrated_otjh import planned_meetings
+        planned = sum(row["hours"] for row in planned_meetings(learner_profile, start_date, end_date))
+        cutoff = min(as_of_date(as_of), end_date)
+        due = sum(row["hours"] for row in planned_meetings(learner_profile, start_date, cutoff)) if cutoff >= start_date else 0
+        return planned, due
 
     from curriculum_api import review_otjh
 

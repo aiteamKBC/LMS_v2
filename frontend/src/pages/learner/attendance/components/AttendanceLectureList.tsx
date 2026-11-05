@@ -1,6 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { AttendanceLecture } from '@/api/attendanceLectures';
+import { isMadeUpLecture, isManuallyConfirmedLecture, type AttendanceLecture } from '@/api/attendanceLectures';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
@@ -13,7 +13,7 @@ import { isLectureJoinable, lectureJoinUrl, useLectureClock } from '../liveLectu
 export type AttendanceFilter = 'all' | 'attended' | 'absent' | 'covered' | 'upcoming';
 const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusTone }> = {
   completed: { label: 'Attended', tone: 'positive' }, late: { label: 'Late', tone: 'caution' },
-  absent: { label: 'Missed', tone: 'critical' }, upcoming: { label: 'Upcoming', tone: 'info' },
+  absent: { label: 'Missed', tone: 'critical' }, cancelled: { label: 'Cancelled', tone: 'neutral' }, upcoming: { label: 'Upcoming', tone: 'info' },
   unmarked: { label: 'Unmarked', tone: 'neutral' },
   awaiting_recording: { label: 'Awaiting recording', tone: 'neutral' },
   in_progress: { label: 'In progress', tone: 'info' }, pending: { label: 'Awaiting attendance', tone: 'neutral' },
@@ -28,11 +28,15 @@ function lectureOutcome(row: AttendanceLecture): {
 } {
   const method = row.recovery?.method;
   const alternative = method === 'alternative';
-  const madeUp = row.status === 'absent' && row.effectiveAttendance === 1;
+  const madeUp = isMadeUpLecture(row);
   const when = shortDate(row.recovery?.date);
   if (madeUp) {
     return { madeUp, alternative, catchupBooked: false,
       detail: { label: alternative ? 'Alternative session' : when ? `Catch-up · ${when}` : 'Catch-up', tone: 'neutral' } };
+  }
+  if (isManuallyConfirmedLecture(row)) {
+    return { madeUp: false, alternative: false, catchupBooked: false,
+      detail: { label: 'Attendance confirmed manually', tone: 'neutral' } };
   }
   // The learner's chosen make-up plan for a reported lecture that has not happened yet.
   const plan = alternative ? 'Alternative session booked'
@@ -270,10 +274,11 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
         : <span className={styles.unmapped}>{row.absenceReport && !['completed', 'late'].includes(row.status) ? 'Absence reported' : '—'}</span>}
     </div>
     <div className={styles.lectureActions}>
-      {joinable ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>
+      {row.status === 'cancelled' ? <span className={styles.unmapped}>—</span>
+        : joinable ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>
         : <button type="button" className={`primary-action ${styles.activityButton}`} disabled title="The joining link is not available yet.">Join session</button>
         : <button type="button" className={`primary-action ${styles.activityButton}`} onClick={() => onOpen(row)}>Open Activities<AppIcon className="ri-arrow-right-s-line" /></button>}
-      {joinable && !joinUrl && <span className={styles.unmapped}>Joining link not available yet</span>}
+      {row.status !== 'cancelled' && joinable && !joinUrl && <span className={styles.unmapped}>Joining link not available yet</span>}
     </div>
   </article>;
 }

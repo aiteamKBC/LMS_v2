@@ -5,6 +5,7 @@ import re
 import time
 from uuid import UUID
 
+from .response_cache import cached_learner_read
 from .journal_sources import learner_journal_view
 from django.db import DatabaseError, connections
 from django.http import JsonResponse, HttpResponseRedirect
@@ -13,7 +14,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
-from login.permissions import coach_owns_learner, learner_self_or_staff, learner_self_or_admin, staff_only
+from login.permissions import coach_owns_learner, learner_self_or_staff, learner_self_or_admin, staff_only, staff_owns_learner
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
@@ -220,6 +221,7 @@ def _activity_source_issues(enrolment_id, group_ids):
 @require_GET
 @learner_self_or_staff(kwarg="pk")
 @learner_journal_view
+@cached_learner_read('student-activity')
 def student_activity(request, kind, pk):
     """Return LMS activities for the requested learner, never for a client id.
 
@@ -265,6 +267,27 @@ def student_activity(request, kind, pk):
         except DatabaseError:
             return _error('Could not load the consolidated learning record. Please retry.', 503)
 
+    if not student_activity_available(source.aptem_id):
+        from . import canonical_learning
+        try:
+            from .progress_demo import require_activity
+            from .legacy_quiz_review import read_review
+            group_id, activity_id = int(request.GET.get('group_id', '')), int(request.GET['activity_id'])
+            catalogue_kind = request.GET.get('catalogue_kind', 'material')
+            if catalogue_kind not in ('material', 'quiz') or min(group_id, activity_id) <= 0:
+                return _error('Invalid activity reference.', 400)
+            owner = require_activity(source, group_id, activity_id, catalogue_kind)
+            if catalogue_kind == 'quiz':
+                return _private(read_review(owner, group_id, activity_id, demo_preview=True))
+            _, stored = _owned_material(kind, pk, group_id, activity_id, demo_preview=True)
+            return _material_response(request, pk, None, stored, kind=kind, group_id=group_id)
+        except (ValueError, LookupError):
+            return _error('No demonstration activity is assigned to this learner.', 404)
+        except DatabaseError:
+            return _error('Could not read the demonstration activity. Please retry.', 503)
+        except canonical_learning.ServiceError as error:
+            return _error(str(error), error.status)
+
     try:
         aptem_id = int(str(source.aptem_id or "").strip())
     except (TypeError, ValueError):
@@ -286,7 +309,15 @@ def student_activity(request, kind, pk):
             owner = canonical_learning.require_profile(pk)
             if owner['aptem_id'] != aptem_id or not _emails_match(owner['email'], source.email):
                 return _error('The consolidated learner identity needs review.', 409)
-            return _private(read_review(owner, group_id, quiz_id))
+            payload = read_review(owner, group_id, quiz_id, allow_attempts=True)
+            account = authenticate_request(request)
+            payload['can_attempt'] = bool(payload['can_attempt'] and account and (
+                account.role == 'admin'
+                or (account.role == 'learner' and int(account.subject_id) == pk)
+                or coach_owns_learner(account, pk)
+                or staff_owns_learner(account, pk)))
+            payload['csrf_token'] = get_token(request)
+            return _private(payload)
         except canonical_learning.ServiceError as error:
             return _error(str(error), error.status)
         except DatabaseError:
@@ -425,16 +456,19 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                               'passed': row.get('quiz_passed'), 'attempt_number': row.get('quiz_attempt_number'),
                               'answers': historical_answers, 'status': row.get('status')},
                'persistence_ready': saved['ready'],
-               'can_attempt': bool(account and saved['ready'] and (
+               'can_attempt': bool(aptem_id and account and saved['ready'] and (
                    account.role == 'admin'
                    or (account.role == 'learner' and int(account.subject_id) == pk)
                    or coach_owns_learner(account, pk)
+                   or staff_owns_learner(account, pk)
                )),
                'csrf_token': get_token(request)}
     return _private(payload)
 
 
-def _owned_material(kind, pk, group_id, activity_id):
+def _owned_quiz(kind, pk, group_id, quiz_id):
+    from . import canonical_learning
+    from .legacy_quiz_review import read_review
     model = SOURCE_MODELS.get(kind)
     if model is None:
         raise LookupError('Learner not found.')
@@ -444,6 +478,31 @@ def _owned_material(kind, pk, group_id, activity_id):
         raise LookupError('Learner not found.') from error
     if not student_activity_available(source.aptem_id):
         raise LookupError('No previous learning is linked to this learner.')
+    owner = canonical_learning.require_profile(pk)
+    if owner['aptem_id'] != int(str(source.aptem_id).strip()) or not _emails_match(owner['email'], source.email):
+        raise canonical_learning.ServiceError('The consolidated learner identity needs review.', 'identity_conflict', 409)
+    return owner['aptem_id'], read_review(owner, group_id, quiz_id, allow_attempts=True)
+
+
+def _owned_material(kind, pk, group_id, activity_id, *, demo_preview=False):
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        raise LookupError('Learner not found.')
+    try:
+        source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
+    except model.DoesNotExist as error:
+        raise LookupError('Learner not found.') from error
+    if not student_activity_available(source.aptem_id):
+        if not demo_preview:
+            raise LookupError('No previous learning is linked to this learner.')
+        from .progress_demo import require_activity
+        require_activity(source, group_id, activity_id)
+        with _connection().cursor() as cursor:
+            stored = read_student_material(cursor, None, group_id, activity_id,
+                include_source=True, demo_enrolment_id=pk)
+        if stored is None:
+            raise LookupError('Activity not found.')
+        return None, stored
     aptem_id = int(str(source.aptem_id).strip())
     with _connection().cursor() as cursor:
         stored = read_student_material(cursor, aptem_id, group_id, activity_id, include_source=True)
@@ -464,7 +523,7 @@ def source_material_file(request, kind, pk, group_id, activity_id):
         OFFICE_PREVIEW_SUFFIXES, curriculum_archive_url, file_response, office_preview_response,
     )
     try:
-        _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
+        _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id, demo_preview=True)
         row = stored['_source']
         if not row.get('_material_blob_ready'):
             return _error('This file has not been copied to the LMS yet.', 404)
@@ -500,7 +559,7 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
     from .subject_content import _attachment_id
     from .media_proxy import _legacy_attachment_upload_path
     try:
-        _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
+        _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id, demo_preview=True)
         # Previously issued file links keep working when the attachment has
         # been archived. Never stream missing bytes from the old LMS.
         owned = {_attachment_id(stored.get(field) or '')
@@ -520,20 +579,56 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
 @require_POST
 @learner_self_or_admin(kwarg='pk')
 def start_subject_attempt(request, kind, pk, group_id, activity_id):
+    from . import canonical_learning
     try:
-        aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
-        definition = _definition_for(stored, group_id)
+        catalogue_kind = request.GET.get('catalogue_kind', 'material')
+        if catalogue_kind == 'quiz':
+            from .subject_content import quiz_definition
+            from .subject_quiz import imported_quiz
+            aptem_id, stored = _owned_quiz(kind, pk, group_id, activity_id)
+            if stored['completed']:
+                return _error('This quiz is already complete. You can review its saved results.', 409)
+            with _connection().cursor() as cursor:
+                original = imported_quiz(cursor, group_id, activity_id)
+            if not original:
+                return _error('The original quiz is not available for grading yet.', 409)
+            definition = {'title': stored['title'], 'quiz': quiz_definition(original),
+                'catalogue_kind': 'quiz', 'has_reading': False, 'available': True, 'media': [], 'reading_html': ''}
+        elif catalogue_kind == 'material':
+            aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
+            definition = _definition_for(stored, group_id)
+        else:
+            return _error('Invalid activity kind.', 400)
         if definition.get('quiz') and not definition['quiz']['ready']:
             return _error(definition['quiz']['message'], 409)
         if not definition['available']:
             return _error('No activity content is available yet.', 409)
-        attempt_id = subject_store.start(pk, aptem_id, group_id, activity_id, definition)
+        payload = json.loads(request.body) if request.body else {}
+        if not isinstance(payload, dict):
+            return _error('Invalid attempt request.', 400)
+        from .retake_timing import choice
+        retake_choice = choice(payload.get('retakeTimeChoice'))
+        if retake_choice is not None:
+            definition['retakeTimeChoice'] = retake_choice
+        timing = None
+        if payload.get('track_time') is True:
+            from .subject_timing import create_session
+            attempt_id, timing = create_session(kind, pk, group_id, activity_id, definition)
+            subject_store.start(pk, aptem_id, group_id, activity_id, definition,
+                                attempt_id=attempt_id, timing_session=timing)
+        else:
+            attempt_id = subject_store.start(pk, aptem_id, group_id, activity_id, definition)
         public = _local_pdf_urls(definition, kind, pk, group_id, activity_id)
-        return _private({'attempt_id': attempt_id, 'definition': {**public, 'quiz': public_quiz(definition['quiz'])}}, 201)
+        return _private({'attempt_id': attempt_id, 'definition': {**public, 'quiz': public_quiz(definition['quiz'])},
+                         **({'timing': timing} if timing else {})}, 201)
+    except canonical_learning.ServiceError as error:
+        return _error(str(error), error.status)
     except LookupError as error:
         return _error(str(error), 404)
     except (ContentUnavailable, subject_store.StoreUnavailable) as error:
         return _error(str(error), 503)
+    except (ValueError, TypeError):
+        return _error('Invalid attempt request.', 400)
     except DatabaseError:
         return _error('Could not start this attempt. Please try again.', 503)
 
@@ -541,6 +636,8 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
 @require_POST
 @learner_self_or_admin(kwarg='pk')
 def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id):
+    from . import canonical_learning
+    from .working_rules import DeclaredCompletionError, validation_response_payload
     try:
         if len(request.body) > 256 * 1024:
             return _error('The submitted answers are too large.', 413)
@@ -548,14 +645,23 @@ def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id)
         if not isinstance(payload, dict):
             raise ValueError('Invalid submission.')
         UUID(str(attempt_id))
-        aptem_id, _stored = _owned_material(kind, pk, group_id, activity_id)
+        catalogue_kind = request.GET.get('catalogue_kind', 'material')
+        if catalogue_kind not in {'material', 'quiz'}:
+            return _error('Invalid activity kind.', 400)
+        reader = _owned_quiz if catalogue_kind == 'quiz' else _owned_material
+        aptem_id, _stored = reader(kind, pk, group_id, activity_id)
         result = subject_store.finish(pk, aptem_id, group_id, activity_id, str(attempt_id),
-                                      payload.get('answers', {}), payload.get('reading_confirmed') is True)
+                                      payload.get('answers', {}), payload.get('reading_confirmed') is True,
+                                      catalogue_kind=catalogue_kind, learner_kind=kind, timing_payload=payload)
         return _private(result)
+    except canonical_learning.ServiceError as error:
+        return _error(str(error), error.status)
     except LookupError as error:
         return _error(str(error), 404)
     except subject_store.StoreUnavailable as error:
         return _error(str(error), 503)
+    except DeclaredCompletionError as error:
+        return _private(validation_response_payload(error), 422)
     except (ValueError, TypeError) as error:
         return _error(str(error) if not isinstance(error, json.JSONDecodeError) else 'Invalid submission.', 400)
     except DatabaseError:
@@ -670,9 +776,13 @@ def subject_covers(request, pk):
             from .subject_origins import read_imported_courses, read_replacement_courses
             imported_courses = read_imported_courses(cur, current_subjects)
             replacement_courses = read_replacement_courses(cur, current_subjects, pk)
+        from .progress_transfer import cover_transfer_metadata
         return _private({'covers': covers, 'activity_dates': dates, 'current_subjects': current_subjects,
                          'builder_subjects': builder_subjects, 'previous_learning_groups': previous_groups,
-                         'imported_courses': imported_courses, 'replacement_courses': replacement_courses})
+                         'imported_courses': imported_courses, 'replacement_courses': replacement_courses,
+                         **cover_transfer_metadata(pk)})
+    except canonical_learning.ServiceError as error:
+        return _error(str(error), error.status)
     except DatabaseError:
         return _error('Could not load subject images.', 503)
 

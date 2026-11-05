@@ -207,14 +207,28 @@ def _record_linked_catchup(learner_id, attendance_id, event_key):
     """
     from curriculum_api.live_session_absences import recovery_status_for
     from curriculum_api.models import LiveSessionAbsence, LiveSessionLearnerAttendance
-    from .absence_reports import _kbc_attendance_report_id
+    from .absence_reports import _kbc_attendance_report_id, _native_absence_occurrence_id, _source_learner
+    from .attendance_lectures import read_native_occurrences, report_id
     database = router.db_for_write(LiveSessionAbsence) or 'default'
     absences = LiveSessionAbsence.objects.using(database)
+    rows = list(absences.filter(source_learner_id=learner_id)
+                .values('id', 'occurrence_id', 'learner_profile_id', 'source_kind'))
     matches = [
-        row for row in absences.filter(source_learner_id=learner_id)
-        .values('id', 'occurrence_id', 'learner_profile_id')
+        row for row in rows
         if _kbc_attendance_report_id(f"{learner_id}:teams:{row['occurrence_id']}") == attendance_id
     ]
+    if rows and not matches:
+        # Shared-module reports retain the display identity used by the learner
+        # and coach. Their ledger is attached to the stored source occurrence.
+        kind = rows[0].get('source_kind') or 'apprenticeship'
+        source = _source_learner(kind, learner_id)
+        scheduled = read_native_occurrences(source) if source is not None else []
+        occurrence_ids = {
+            _native_absence_occurrence_id(row) for row in scheduled
+            if report_id(row) == attendance_id
+        } - {''}
+        if len(occurrence_ids) == 1:
+            matches = [row for row in rows if row['occurrence_id'] in occurrence_ids]
     status, now = recovery_status_for('catch-up'), timezone.now()
     for row in matches:
         absences.filter(pk=row['id']).update(

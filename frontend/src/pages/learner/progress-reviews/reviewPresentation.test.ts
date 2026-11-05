@@ -3,6 +3,68 @@ import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learne
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { presentReview, reviewOverview, reviewsListHref } from './reviewPresentation';
 
+describe('APTEM next review uses lifecycle eligibility, not imported-record presence', () => {
+  const dates = ['2026-10-26', '2027-03-30', '2027-06-29', '2027-09-29'];
+  const row = (number: number, status = 'not-scheduled', overrides: Partial<LearnerCalendarEvent> = {}) => session(`aptem:${number}`, {
+    sequence: number, title: `Progress Review ${number}`, reviewSource: 'aptem', migratedForm: false,
+    status, effectiveLmsStatus: status, sourceStatus: status, targetDate: dates[number - 1], date: dates[number - 1],
+    scheduledDate: null, scheduledTime: null, meetingLink: '', importedReview: {
+      id: String(number), aptemReviewId: `A-${number}`, name: `Progress Review ${number}`, type: 'Progress Review', reviewerName: 'Synthetic Coach',
+      plannedDate: dates[number - 1], plannedTime: null, completedDate: status === 'completed' ? dates[number - 1] : null,
+      status, extractionStatus: 'complete', detailsAvailable: false, sections: [],
+    }, ...overrides,
+  });
+
+  it.each(['participant', 'employer'] as const)('selects Review 2 after completed Review 1 for %s, regardless of API order', viewer => {
+    const rows = [row(4), row(1, 'completed'), row(3), row(2)];
+    const before = structuredClone(rows);
+    const result = reviewOverview(rows, [], '2026-10-24', {}, viewer);
+    expect(result.all.map(item => item.session.sequence)).toEqual([1, 2, 3, 4]);
+    expect(result.current?.session.id).toBe('aptem:2');
+    expect(result.upcoming.map(item => item.session.sequence)).toEqual([2, 3, 4]);
+    expect(rows).toEqual(before);
+  });
+
+  it('selects Review 1 when all four are pending, without deriving completion from dates', () => {
+    expect(reviewOverview([row(4), row(2), row(1), row(3)], [], '2026-10-24', {}, 'employer').current?.session.id).toBe('aptem:1');
+  });
+
+  it.each(['completed', 'cancelled', 'unknown'])('has no next action when all imported reviews are %s', status => {
+    expect(reviewOverview([row(1, status), row(2, status)], [], '2026-10-24', {}, 'employer').current).toBeNull();
+  });
+
+  it('keeps the existing Native historical fallback and empty-state contract', () => {
+    const native = session('native-history', { status: 'completed' });
+    expect(reviewOverview([native], [], today, {}, 'employer').current?.session).toBe(native);
+    expect(reviewOverview([], [], today, {}, 'employer').current).toBeNull();
+  });
+
+  it('retains confirmed-booking priority over unbooked plans and signature reminders', () => {
+    const booked = row(3, 'scheduled', { calendarEventKey: 'booking:3', scheduledDate: dates[2], bookingStatus: 'scheduled' });
+    const sign = row(1, 'awaiting-signature', { migratedForm: true, employerSignatureRequired: true, employerSigned: false });
+    const result = reviewOverview([row(2), sign, booked, row(4)], [], '2026-10-24', {}, 'employer');
+    expect(result.current?.session).toBe(booked);
+    expect(result.attention.map(item => item.session.id)).toEqual(['aptem:1']);
+  });
+
+  it.each(['in-progress', 'awaiting-signature', 'completed', 'not-scheduled'])('preserves resolved local %s over stale scheduled booking status', status => {
+    const local = row(2, status, { migratedForm: true, sourceStatus: 'not-scheduled', bookingStatus: 'scheduled' });
+    const result = presentReview(local, undefined, today, undefined, 'employer');
+    expect(result.status).toBe(status);
+  });
+
+  it('keeps source-completed history completed despite a stale cancelled calendar copy', () => {
+    const history = row(1, 'completed', { bookingStatus: 'cancelled' });
+    expect(presentReview(history, undefined, today, undefined, 'employer')).toMatchObject({ status: 'completed', past: true, action: 'view' });
+    expect(reviewOverview([history, row(2)], [], today, {}, 'employer').current?.session.id).toBe('aptem:2');
+  });
+
+  it.each(['attended', 'missed'] as const)('does not convert %s evidence into formal Review completion', outcome => {
+    const local = row(2, 'in-progress', { migratedForm: true, calendarEventKey: 'booking:2', scheduledDate: today, bookingStatus: 'scheduled' });
+    expect(presentReview(local, attendance(local.id, { attendanceConfirmed: outcome === 'attended', missed: outcome === 'missed' }), today, undefined, 'employer').status).toBe('in-progress');
+  });
+});
+
 const today = '2026-09-14';
 const session = (id: string, overrides: Partial<LearnerCalendarEvent> = {}): LearnerCalendarEvent => ({
   id, eventKey: id, title: `Progress Review ${id}`, source: 'progress-review', type: 'review', sequence: 1,
@@ -45,8 +107,12 @@ describe('review presentation preserves review and booking rules', () => {
     const result = reviewOverview(sessions, [], today, { sign: definition() });
     expect(result.current?.session).toBe(next);
     expect(result.attention.find(item => item.session.id === 'sign')).toMatchObject({ action: 'sign', past: true });
-    expect(result.all.map(item => item.session)).toEqual(original);
-    result.all.forEach((item, index) => expect(item.session).toBe(sessions[index]));
+    // Identity, not position: the list is ordered by planned date, so each input
+    // event is located by id and must still be the very same object, never a copy.
+    expect(result.all).toHaveLength(sessions.length);
+    sessions.forEach(input => expect(result.all.find(item => item.session.id === input.id)?.session).toBe(input));
+    expect([...result.all].sort((a, b) => a.session.id.localeCompare(b.session.id)).map(item => item.session))
+      .toEqual([...original].sort((a, b) => a.id.localeCompare(b.id)));
     expect([...result.upcoming, ...result.past]).toHaveLength(sessions.length);
     expect(new Set([...result.upcoming, ...result.past].map(item => item.session.id)).size).toBe(sessions.length);
     expect(sessions).toEqual(original);
@@ -61,7 +127,7 @@ describe('review presentation preserves review and booking rules', () => {
     Object.freeze(confirmed);
     const result = reviewOverview([moved, next], [confirmed], today);
     expect(result.current?.session).toBe(next);
-    expect(result.all[0]).toMatchObject({ date: '2026-10-01', attendance: confirmed });
+    expect(result.all.find(item => item.session.id === 'moved')).toMatchObject({ date: '2026-10-01', attendance: confirmed });
     expect({ moved, confirmed }).toEqual(before);
   });
 
@@ -103,9 +169,116 @@ describe('review presentation preserves review and booking rules', () => {
     expect(result).toMatchObject({ action: 'view', past: true, needsAttention: false, canReschedule: false, joinUrl: null });
   });
 
+  it.each([
+    ['scheduled', 'Scheduled'], ['not-scheduled', 'Not scheduled'], ['planned', 'Not scheduled'], ['in-progress', 'In progress'],
+    ['awaiting-signature', 'Awaiting signatures'], ['completed', 'Completed'], ['cancelled', 'Cancelled'],
+  ])('names an imported %s review by its state, as the detail header does', (status, label) => {
+    const imported = session('imported-review:12', { status, importedReview: {
+      id: '12', aptemReviewId: '12', name: 'Imported review', type: 'Progress Review', reviewerName: 'Previous coach',
+      plannedDate: '2025-01-01', plannedTime: null, completedDate: '2025-01-01', status,
+      extractionStatus: 'complete', detailsAvailable: true, sections: [],
+    } });
+    expect(presentReview(imported, undefined, today)).toMatchObject({ label, action: 'view', past: true });
+    expect(presentReview(imported, undefined, today, undefined, 'employer')).toMatchObject({
+      label, action: 'view', past: true, needsAttention: false, booked: false, canReschedule: false, joinUrl: null,
+    });
+  });
+
+  it('falls back to a neutral record label when an imported row carries no recognised state', () => {
+    const imported = session('imported-review:13', { status: 'unknown', importedReview: {
+      id: '13', aptemReviewId: '13', name: 'Imported review', type: 'Progress Review', reviewerName: 'Previous coach',
+      plannedDate: '2025-01-01', plannedTime: null, completedDate: '2025-01-01', status: 'unknown',
+      extractionStatus: 'complete', detailsAvailable: true, sections: [],
+    } });
+    expect(presentReview(imported, undefined, today)).toMatchObject({ label: 'Review record', action: 'view' });
+    expect(presentReview(imported, undefined, today, undefined, 'employer')).toMatchObject({ label: 'Review record', action: 'view', past: true });
+  });
+
   it.each(['cancelled', 'deleted', 'superseded', 'completed'])('does not offer booking or joining when attendance status is %s', status => {
     const result = presentReview(session('closed', { learnerSigned: true }), attendance('closed', { status }), today);
     expect(result).toMatchObject({ action: 'view', booked: false, canReschedule: false, joinUrl: null, past: true });
+  });
+
+  const aptem = (overrides: Partial<LearnerCalendarEvent> = {}) => session('imported-review:11', {
+    reviewId: '11', reviewSource: 'aptem', calendarEventKey: 'booking:11', importedReview: {
+      id: '11', aptemReviewId: 'A-11', name: 'Imported review', type: 'Progress Review', reviewerName: 'Coach',
+      plannedDate: today, plannedTime: '10:00', completedDate: null, status: 'scheduled',
+      extractionStatus: 'complete', detailsAvailable: true, sections: [],
+    }, ...overrides,
+  });
+
+  it('offers rescheduling for an active Aptem booking without treating a source date as a booking', () => {
+    expect(presentReview(aptem(), undefined, today)).toMatchObject({ booked: true, past: false, canReschedule: true });
+    expect(presentReview(aptem({ calendarEventKey: undefined }), undefined, today)).toMatchObject({
+      booked: false, past: false, canReschedule: false, action: 'schedule', label: 'Not scheduled',
+    });
+  });
+
+  it.each(['scheduled', 'in-progress'])('recognises a coach-booked PSP that is %s without offering learner rescheduling', status => {
+    const row = aptem({ status, importedReview: { ...aptem().importedReview!, type: 'Personal Support Plan' } });
+    expect(presentReview(row, undefined, today)).toMatchObject({
+      booked: true, past: false, action: 'join', joinUrl: row.meetingLink, canReschedule: false,
+    });
+  });
+
+  it.each(['unbooked', 'completed', 'cancelled', 'source-completed'])('does not expose a meeting link for a %s PSP', state => {
+    const row = aptem({
+      status: ['completed', 'cancelled'].includes(state) ? state : 'scheduled',
+      calendarEventKey: state === 'unbooked' ? undefined : 'booking:11',
+      importedReview: { ...aptem().importedReview!, type: 'Personal Support Plan',
+        completedDate: state === 'source-completed' ? today : null },
+    });
+    expect(presentReview(row, undefined, today)).toMatchObject({
+      booked: false, action: 'view', joinUrl: null, canReschedule: false,
+    });
+  });
+
+  it.each(['Progress Review', 'Progress Review (+ Skills Radar)'])('keeps an unbooked Aptem %s in upcoming reviews with a booking action', type => {
+    const row = aptem({ status: 'not-scheduled', calendarEventKey: undefined, scheduledDate: null, scheduledTime: null,
+      targetDate: '2027-03-11', importedReview: { ...aptem().importedReview!, type, status: 'Not Scheduled' } });
+    const before = structuredClone(row);
+    const result = reviewOverview([row], [], today);
+    expect(result.current).toMatchObject({ session: row, action: 'schedule', label: 'Not scheduled', booked: false, canReschedule: false });
+    expect(result.upcoming).toHaveLength(1);
+    expect(result.past).toEqual([]);
+    expect(row).toEqual(before);
+    expect(presentReview(row, undefined, today, undefined, 'employer').action).toBe('view');
+  });
+
+  it.each(['completed', 'awaiting-signature', 'in-progress', 'cancelled'])('does not book an Aptem %s review despite a stale unscheduled list status', status => {
+    const row = aptem({ status: 'not-scheduled', calendarEventKey: undefined, scheduledDate: null });
+    expect(presentReview(row, undefined, today, definition(status)).action).toBe('view');
+    expect(presentReview({ ...row, importedReview: { ...row.importedReview!, status } }, undefined, today).action).toBe('view');
+    expect(presentReview({ ...row, sourceStatus: status }, undefined, today).action).toBe('view');
+  });
+
+  it('does not book completed source history, an attended occurrence, or an ordinary imported review', () => {
+    const row = aptem({ status: 'not-scheduled', calendarEventKey: undefined, scheduledDate: null });
+    expect(presentReview({ ...row, importedReview: { ...row.importedReview!, completedDate: today } }, undefined, today).action).toBe('view');
+    expect(presentReview(row, attendance(row.id, { attendanceConfirmed: true }), today).action).toBe('view');
+    expect(presentReview({ ...row, importedReview: { ...row.importedReview!, type: 'Eligibility Review & FS Discussion' } }, undefined, today).action).toBe('view');
+  });
+
+  it.each(['completed', 'awaiting-signature', 'in-progress', 'cancelled'])('keeps a linked Aptem %s review closed to rescheduling despite stale attendance', status => {
+    expect(presentReview(aptem({ status }), attendance('imported-review:11'), today).canReschedule).toBe(false);
+  });
+
+  it.each(['completed', 'awaiting-signature', 'in-progress'])('does not reschedule a linked Aptem form with %s content', status => {
+    expect(presentReview(aptem(), attendance('imported-review:11'), today, definition(status)).canReschedule).toBe(false);
+  });
+
+  it('does not reschedule an attended Aptem booking', () => {
+    expect(presentReview(aptem(), attendance('imported-review:11', { attendanceConfirmed: true }), today).canReschedule).toBe(false);
+  });
+
+  it.each(['calendar-key', 'review-id'])('matches Aptem attendance using its %s without matching another review on the same day', match => {
+    const row = aptem({ id: 'aptem-event:A-11', calendarEventKey: match === 'calendar-key' ? 'booking:11' : undefined });
+    const matched = attendance(match === 'review-id' ? 'imported-review:11' : 'local-booking:11', {
+      calendarEventKey: 'booking:11', date: '2026-10-01', attendanceConfirmed: true,
+    });
+    const unrelated = attendance('imported-review:12', { calendarEventKey: 'booking:12' });
+    const result = reviewOverview([row], [unrelated, matched], today).all[0];
+    expect(result).toMatchObject({ attendance: matched, date: '2026-10-01', canReschedule: false });
   });
 
   it('does not infer a missed meeting or attendance from a past date', () => {
@@ -140,5 +313,51 @@ describe('review presentation preserves review and booking rules', () => {
     expect(reviewsListHref(learner, new URLSearchParams('view=all&filter=unknown&page=-1'))).toBe('/learner/progress-reviews?kind=apprenticeship&learner=12&view=all');
     expect(reviewsListHref(learner, new URLSearchParams('filter=past&page=2'))).toBe('/learner/progress-reviews?kind=apprenticeship&learner=12');
     expect(reviewsListHref(learner, new URLSearchParams('view=all&filter=upcoming'), '/learner/reviews')).toBe('/learner/reviews?kind=apprenticeship&learner=12&view=all&filter=upcoming');
+  });
+});
+
+describe('programme order follows the planned date, not the date a review was completed', () => {
+  // An imported review carries its planned date in targetDate/scheduledDate and,
+  // once completed, its completed date in `date`. The reader upstream orders by
+  // `date`, so these arrive in completed order while every row displays planned
+  // dates. Each case receives them in that upstream order.
+  const imported = (id: string, planned: string, completed: string, sequence: number) =>
+    session(id, { date: completed, targetDate: planned, scheduledDate: planned, status: 'completed', sequence });
+
+  it('reorders a review completed away from its plan, and shows dates that agree with the order', () => {
+    const sessions = [imported('second', '2026-12-17', '2026-05-04', 2), imported('first', '2026-10-20', '2026-10-20', 1)];
+    sessions.forEach(Object.freeze);
+    const result = reviewOverview(Object.freeze(sessions), [], today);
+
+    expect(result.all.map(item => item.session.id)).toEqual(['first', 'second']);
+    expect(result.all.map(item => item.date)).toEqual(['2026-10-20', '2026-12-17']);
+  });
+
+  it('falls back to the occurrence, then to the order the reader gave, on a shared planned date', () => {
+    const sessions = [imported('later', '2027-06-02', '2027-06-02', 4), imported('earlier', '2027-06-02', '2027-06-02', 3)];
+    expect(reviewOverview(sessions, [], today).all.map(item => item.session.id)).toEqual(['earlier', 'later']);
+
+    const tied = [imported('b', '2027-06-02', '2027-06-02', 3), imported('a', '2027-06-02', '2027-06-02', 3)];
+    expect(reviewOverview(tied, [], today).all.map(item => item.session.id)).toEqual(['b', 'a']);
+  });
+
+  it('carries the same order into the upcoming and past filters', () => {
+    const sessions = [
+      imported('past-two', '2026-08-11', '2026-02-02', 2),
+      imported('past-one', '2026-06-09', '2026-07-07', 1),
+      session('ahead-two', { date: '2027-01-05', targetDate: '2027-01-05', scheduledDate: '2027-01-05', sequence: 4 }),
+      session('ahead-one', { date: '2026-11-03', targetDate: '2026-11-03', scheduledDate: '2026-11-03', sequence: 3 }),
+    ];
+    const result = reviewOverview(sessions, [], today);
+
+    expect(result.upcoming.map(item => item.session.id)).toEqual(['ahead-one', 'ahead-two']);
+    // Past stays most-recent-first, now measured by planned date.
+    expect(result.past.map(item => item.session.id)).toEqual(['past-two', 'past-one']);
+  });
+
+  it('leaves a review without a planned date at the end instead of dropping it', () => {
+    const undated = session('undated', { date: null, targetDate: null, scheduledDate: null, status: 'not-scheduled', sequence: 9 });
+    const planned = imported('planned', '2027-08-25', '2027-08-25', 5);
+    expect(reviewOverview([undated, planned], [], today).all.map(item => item.session.id)).toEqual(['planned', 'undated']);
   });
 });

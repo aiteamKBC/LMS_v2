@@ -7,6 +7,7 @@ import re
 
 
 
+from .point_structure import point_projection
 from .identity import learner_profile_for_source
 from .learning_plan import effective_training_plan, request_preset_cache
 from .mappers import _s, flatten_training_plan, get_training_plan
@@ -64,6 +65,10 @@ def component_content_available(c):
     if ctype == "video":
         return (_has_url(c.get("videoUrl")) or bool(c.get("recordingSeriesId")
                 and c.get("recordingSessionNumber") and c.get("recordingDate")))
+    # A session recording linked to its live session plays that session's recording.
+    if ctype == "recording_placeholder" and (c.get("recordingSeriesId")
+            and c.get("recordingSessionNumber") and c.get("recordingDate")):
+        return True
     if ctype in {"podcast", "audio"}:
         return _has_url(c.get("audioUrl")) or _has_url(c.get("resourceUrl")) or has_description
     if ctype == "reading":
@@ -97,6 +102,7 @@ def _weekly_component(c):
         "component": c.get("component"),
         "expectedOtjh": c.get("expectedOtjh"),
         "componentId": c.get("componentId"),
+        **point_projection(c),
         "moduleId": c.get("moduleId"),
         "weekId": c.get("weekId"),
         "type": c.get("type"),
@@ -121,6 +127,8 @@ def _weekly_component(c):
         # its authored activity by these dates (liveSessionRoute.ts).
         row["sessionDate"] = c.get("sessionDate")
         row["sessionDateTimeUtc"] = c.get("sessionDateTimeUtc")
+        if c.get("additionalMeeting") is True:
+            row["additionalMeeting"] = True
     # As learner-detail's compact mode: omitted means null to every consumer.
     return {key: value for key, value in row.items()
             if value is not None or key in {"module", "week", "component", "expectedOtjh"}}
@@ -158,7 +166,16 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
                                  _apply_programme_assignment_template, _resolve_from_master)
 
     assigned = effective_training_plan(source, request_preset_cache(source)) if assigned_modules is None else assigned_modules
-    modules, weeks, components = ([], [], []) if (identities_only and not preserve_legacy) or week_ids is not None else flatten_training_plan(get_training_plan(source))
+    if (identities_only and not preserve_legacy) or week_ids is not None:
+        modules, weeks, components = [], [], []
+    else:
+        plan = get_training_plan(source)
+        if identities_only and preserve_legacy and strict and resolved_metadata is not None:
+            # This strict catalogue path rebuilds every id-bearing module from
+            # master. Flatten only the id-less snapshots that survive that
+            # replacement, rather than visiting every saved native component.
+            plan = [entry for entry in plan if isinstance(entry, dict) and not entry.get('moduleId')]
+        modules, weeks, components = flatten_training_plan(plan)
     # live_session_ids=False: the Teams series ids it looks up are never sent.
     # expected_otjh=True: master rows bring their expected hours, so only the
     # rest (legacy and snapshot-only entries) need _annotate_otjh's lookups.

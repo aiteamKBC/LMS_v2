@@ -21,6 +21,21 @@ vi.mock('@/api/slideDeck', () => ({ fetchSlideDeck: (...args: unknown[]) => fetc
 
 const { SlideDeckViewer } = await import('../SlideDeckViewer');
 
+it('keeps the selected deck when an older request finishes last', async () => {
+  let finishOld!: (value: SlideDeck) => void;
+  fetchSlideDeck.mockImplementation((src: string) => src === '/old.pptx'
+    ? new Promise<SlideDeck>(resolve => { finishOld = resolve; })
+    : Promise.resolve(deck('Selected deck')));
+  const fallback = (reason: string) => <p>{reason}</p>;
+  const view = render(<SlideDeckViewer src="/old.pptx" title="Deck" fallback={fallback} />);
+  view.rerender(<SlideDeckViewer src="/new.pptx" title="Deck" fallback={fallback} />);
+  await screen.findByText('Selected deck');
+  finishOld(deck('Stale deck'));
+  await Promise.resolve();
+  expect(screen.queryByText('Stale deck')).not.toBeInTheDocument();
+  expect(screen.getByText('Selected deck')).toBeInTheDocument();
+});
+
 function textShape(text: string) {
   return {
     kind: 'text' as const,

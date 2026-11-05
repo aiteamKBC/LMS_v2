@@ -25,6 +25,7 @@ interface UseAttendanceResult {
   attendanceRate: number;
   dirty: boolean;
   pendingCount: number;
+  pendingStatuses: Record<string, AttendanceStatus>;
   save: () => void;
   undo: () => void;
   profileGetStatus: (learnerId: string, day: string) => AttendanceStatus;
@@ -154,6 +155,7 @@ export function useAttendance({ learners, date }: UseAttendanceParams): UseAtten
     attendanceRate,
     dirty: Object.keys(pending).length > 0,
     pendingCount: Object.keys(pending).length,
+    pendingStatuses: pending,
     save,
     undo,
     profileGetStatus,

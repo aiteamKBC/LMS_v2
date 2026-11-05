@@ -22,6 +22,7 @@ same-origin dev API behind the Vite proxy.
 """
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from django.db import DatabaseError
 from django.db.models import JSONField
@@ -34,6 +35,7 @@ from login.permissions import employer_or_staff
 
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
+from .employer_review_dates import imported_document_dates
 from .mappers import _s, to_employer_row
 from .models import Employer, EnrolmentReview, LearnerProfile
 from .review_form import (
@@ -45,7 +47,8 @@ from .review_form import (
 )
 from .views import _error, _parse_body
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, ImportedReviewInstance
-from coach_api.migrated_completion import signature_states
+from coach_api.migrated_completion import is_personal_support_form, signature_states
+from coach_api.review_categories import review_event_category
 from curriculum_api import review_instances
 
 logger = logging.getLogger(__name__)
@@ -251,8 +254,9 @@ def _review_signing_rows_for(learners, *, employer_only=True):
             source_review_id__isnull=False,
             status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
         )
-        if overlay.migrated_template_id and overlay.migrated_template.review_family == "PR"
+        if overlay.migrated_template_id
     ]
+    imported_dates = imported_document_dates(overlays)
     for key, ids in identity_ids.items():
         ids = {int(value) for value in ids}
         for overlay in overlays:
@@ -260,12 +264,16 @@ def _review_signing_rows_for(learners, *, employer_only=True):
                 continue
             signatures = signature_states(overlay)
             employer_state = signatures["employer"]
+            if not employer_state["required"]:
+                continue
+            family = (overlay.template_snapshot.get("templateSource") or {}).get("family") or overlay.migrated_template.review_family
             rows_by_learner[key].append({
                 "kind": "review", "eventKey": overlay.event_key,
                 "reviewInstanceId": overlay.event_key, "migratedForm": True,
-                "reviewType": "aptem_progress_review",
-                "label": overlay.template_snapshot.get("name") or "Migrated Progress Review",
-                "scheduledDate": "", "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
+                "reviewType": "aptem_psp" if family == "PSP" else "aptem_mcm" if family == "MCM" else "aptem_progress_review",
+                "label": overlay.template_snapshot.get("name") or ("Personal Support Plan" if family == "PSP" else "Monthly Coaching Meeting" if family == "MCM" else "Migrated Progress Review"),
+                "scheduledDate": imported_dates.get((overlay.learner_id, overlay.source_review_id), ""),
+                "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
                 "completed": overlay.status == ImportedReviewInstance.STATUS_COMPLETED,
                 "sectionsTotal": len(overlay.template_snapshot.get("sections") or []),
                 "employerSignatureRequired": True,
@@ -522,7 +530,71 @@ def _learner_cards(employer_id):
             "outstandingCount": len(outstanding),
             "documentsTotal": len(reviews) + len(documents),
         })
+    _attach_learner_otjh_progress(cards, [learner for _kind, _pk, learner in entries])
     return cards
+
+
+def _attach_learner_otjh_progress(cards, learners):
+    """Attach the canonical OTJ ratio from one caseload read, with plan fallback."""
+    if not learners:
+        return
+
+    from . import canonical_learning
+    from .journal_sources import learner_journal_reads
+    from .training_plan_dashboard import plan_planned_hours
+
+    learner_ids = [learner.pk for learner in learners]
+    # metrics_bulk applies the same identity checks, accepted-hours rules,
+    # enrolment plan precedence and rounding used by the Learner workspace.
+    with learner_journal_reads():
+        metrics_by_learner = canonical_learning.metrics_bulk(
+            learner_ids, learner_workspace=True,
+        )
+
+    # Resolve the profile ids in one query; plan_planned_hours needs the
+    # canonical owner id only for the Learner's inherited-course fallback.
+    profiles_by_learner = {}
+    duplicate_profiles = set()
+    profiles = LearnerProfile.objects.filter(enrolment_id__in=learner_ids).values(
+        'id', 'enrolment_id',
+    )
+    for profile in profiles:
+        enrolment_id = profile['enrolment_id']
+        if enrolment_id in profiles_by_learner:
+            duplicate_profiles.add(enrolment_id)
+        profiles_by_learner[enrolment_id] = profile
+    for enrolment_id in duplicate_profiles:
+        profiles_by_learner.pop(enrolment_id, None)
+
+    # The cache is request-local and follows the existing group-plan resolver;
+    # it never survives a request or becomes stale after an assignment changes.
+    preset_cache = {}
+    cards_by_learner = {int(card['id']): card for card in cards}
+    for learner in learners:
+        learner._plan_preset_cache = preset_cache
+        metric = metrics_by_learner.get(learner.pk)
+        otjh = (metric or {}).get('otjh')
+        progress = None
+        if otjh is not None:
+            actual = (otjh.get('completed_actual') if 'completed_actual' in otjh
+                      else otjh.get('actual'))
+            planned = otjh.get('planned')
+            if planned is None:
+                owner = profiles_by_learner.get(learner.pk)
+                if owner is not None:
+                    try:
+                        planned = plan_planned_hours(learner, owner)
+                    except Exception:
+                        # Preserve canonical actual hours; never turn a failed
+                        # inherited-plan read into zero or fail other learners.
+                        logger.exception(
+                            "employer list OTJ plan unavailable for learner %s", learner.pk,
+                        )
+            percent = round(actual / planned * 100, 2) if actual is not None and planned else None
+            progress = {'actual': actual, 'planned': planned, 'percent': percent}
+        card = cards_by_learner.get(int(learner.pk))
+        if card is not None:
+            card['otjhProgress'] = progress
 
 
 def _recording_absence_notification(report, employer_id):
@@ -584,6 +656,216 @@ def employer_portal(request, employer_id):
         "learners": cards,
         "outstandingTotal": sum(c["outstandingCount"] for c in cards),
     })
+
+
+def _dashboard_otjh_risk(value):
+    """Project the saved learner status into the employer dashboard's labels."""
+    label = ' '.join(str(value or '').casefold().replace('-', ' ').replace('_', ' ').split())
+    return {
+        'on track': 'on-track',
+        'need attention': 'need-attention',
+        'needs attention': 'need-attention',
+        'at risk': 'at-risk',
+    }.get(label, 'unavailable')
+
+
+def _read_employer_home_progress(source):
+    """Read one learner's compact Student Home projection in an isolated worker."""
+    from django.db import close_old_connections, connections
+    from .journal_sources import learner_journal_reads
+    from .overview_week import read_week
+
+    close_old_connections()
+    try:
+        with learner_journal_reads():
+            return read_week(
+                source, home_kind=source.learner_type, home_summary=True,
+            ).get('homeProgress')
+    finally:
+        # Each executor worker owns its Django connections; do not leave them
+        # attached to a thread after this bounded read finishes.
+        connections.close_all()
+
+
+def _read_employer_module_progress(source, profile):
+    """Read one learner's catalogue rollup in an isolated worker."""
+    from django.db import close_old_connections, connections
+    from .module_progress import canonical_module_progress
+
+    close_old_connections()
+    try:
+        return canonical_module_progress(source, profile)
+    finally:
+        connections.close_all()
+
+
+@employer_or_staff()
+def employer_dashboard_metrics(request, employer_id):
+    """Compact, read-only dashboard facts for this employer's own learners."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    employer, err = _employer_or_404(employer_id)
+    if err is not None:
+        return err
+    section = request.GET.get('section', 'all')
+    if section not in {'all', 'summary', 'programme', 'progress', 'status'}:
+        return _error("Unknown dashboard section.", 400)
+    from zoneinfo import ZoneInfo
+    from old_otjh.service import ServiceError
+    from . import canonical_learning
+    from .journal_sources import learner_journal_reads
+    from .overview_week import HOME_SOURCE_FIELDS
+    from .training_plan_dashboard import plan_planned_hours
+
+    try:
+        fields = ('id', 'email', 'aptem_id', 'programme', 'cohort', 'group', 'group_name',
+                  'programme_id', 'cohort_id', 'group_id', 'training_plan', 'learning_plan') if section == 'summary' else (
+            ('id', 'email', 'aptem_id') if section == 'status' else (
+            (*HOME_SOURCE_FIELDS, 'learner_type') if section == 'progress' else (
+            *HOME_SOURCE_FIELDS, 'learner_type', 'group', 'training_plan', 'learning_plan', 'modules', 'weeks', 'components')
+        ))
+        learners = list(SOURCE_MODELS["apprenticeship"].all_learners
+                        .filter(employer_id=employer.pk).only(*fields))
+        learner_ids = [learner.pk for learner in learners]
+        # Validate all learner identities with one profile read; the progress
+        # values below come from the same compact home projection as Student Home.
+        profiles = {}
+        saved = LearnerProfile.objects.filter(enrolment_id__in=learner_ids).values(
+            'id', 'enrolment_id', 'email', 'aptem_id', 'otjh_status',
+        ) if learner_ids else []
+        for profile in saved:
+            if profile['enrolment_id'] in profiles:
+                raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
+            profiles[profile['enrolment_id']] = profile
+        for learner in learners:
+            owner = profiles.get(learner.pk)
+            if owner is not None:
+                canonical_learning._validated_profile({
+                    **owner, 'account_record_id': learner.pk,
+                    'account_email': learner.email, 'account_aptem_id': learner.aptem_id,
+                })
+        progress_learners = [learner for learner in learners if learner.pk in profiles]
+        home_metrics_by_learner = {}
+        if section == 'summary' and progress_learners:
+            # The table needs only Student Home's canonical OTJ hours. Use its
+            # bulk ledger reader instead of rebuilding the full home projection
+            # (catalogue, attendance and activity calendar) once per learner.
+            with learner_journal_reads():
+                home_metrics_by_learner = canonical_learning.metrics_bulk(
+                    [learner.pk for learner in progress_learners], learner_workspace=True,
+                )
+            missing_home_metrics = [
+                learner for learner in progress_learners
+                if not (home_metrics_by_learner.get(learner.pk) or {}).get('otjh')
+            ]
+            if missing_home_metrics:
+                # Use Student Home's compact projection only for records the
+                # bulk ledger could not resolve. This keeps the normal path
+                # batched while matching the learner card when a bulk result
+                # is absent for an otherwise readable learner.
+                with ThreadPoolExecutor(max_workers=min(3, len(missing_home_metrics))) as executor:
+                    fallback_progress = executor.map(
+                        _read_employer_home_progress, missing_home_metrics,
+                    )
+                    for learner, projection in zip(missing_home_metrics, fallback_progress):
+                        home_otjh = (projection or {}).get('otjh')
+                        if home_otjh is not None:
+                            home_metrics_by_learner[learner.pk] = {'otjh': home_otjh}
+            plan_preset_cache = {}
+            for learner in progress_learners:
+                learner._plan_preset_cache = plan_preset_cache
+            for learner in progress_learners:
+                home_otjh = (home_metrics_by_learner.get(learner.pk) or {}).get('otjh') or {}
+                if home_otjh.get('planned') is None:
+                    # Match Student Home's fallback only when SSOT has no plan.
+                    # An explicit zero is authoritative and must stay zero.
+                    try:
+                        home_otjh['planned'] = plan_planned_hours(
+                            learner, profiles[learner.pk],
+                        )
+                    except Exception:
+                        # One learner's inherited-plan lookup must not discard
+                        # canonical actual hours for the rest of the employer's
+                        # caseload. Keep the plan unavailable and log the partial
+                        # read so the UI never presents the calculation as zero.
+                        logger.exception(
+                            "employer_dashboard_metrics: planned hours unavailable for learner %s",
+                            learner.pk,
+                        )
+                        home_otjh['planned'] = None
+                    actual = (home_otjh.get('completed_actual')
+                              if 'completed_actual' in home_otjh else home_otjh.get('actual'))
+                    home_otjh['percent'] = round(actual / home_otjh['planned'] * 100, 2) \
+                        if actual is not None and home_otjh['planned'] else None
+        module_progress_by_learner = {}
+        if section in {'programme', 'progress', 'all'} and progress_learners:
+            # Catalogue rollups are independent too. Bound concurrency so a
+            # larger employer caseload cannot create an unbounded DB fan-out.
+            module_inputs = [
+                (learner, LearnerProfile(id=profiles[learner.pk]['id'], enrolment_id=learner.pk))
+                for learner in progress_learners
+            ]
+            with ThreadPoolExecutor(max_workers=min(3, len(module_inputs))) as executor:
+                module_progress_by_learner = dict(zip(
+                    (learner.pk for learner in progress_learners),
+                    executor.map(lambda pair: _read_employer_module_progress(*pair), module_inputs),
+                ))
+        today = timezone.localdate(timezone=ZoneInfo("Europe/London"))
+        rows = {}
+        for learner in learners:
+            learner_id = learner.pk
+            owner = profiles.get(learner_id)
+            programme = None
+            otjh = None
+            attendance = None
+            if owner is not None:
+                # Student Home counts the assigned catalogue, including work
+                # not started yet, rather than only saved progress records.
+                profile = LearnerProfile(id=owner['id'], enrolment_id=learner_id)
+                if section == 'summary':
+                    learner_metrics = home_metrics_by_learner.get(learner_id)
+                    home_otjh = (learner_metrics or {}).get('otjh')
+                    if home_otjh is not None:
+                        actual = (home_otjh.get('completed_actual') if 'completed_actual' in home_otjh
+                                  else home_otjh.get('actual'))
+                        planned = home_otjh.get('planned')
+                        otjh = {
+                            'actual': actual,
+                            'planned': planned,
+                            'percent': round(actual / planned * 100, 2)
+                            if actual is not None and planned else None,
+                        }
+                if section in {'programme', 'progress', 'all'}:
+                    modules = module_progress_by_learner.get(learner_id)
+                    programme = canonical_learning.point_ratio(
+                        sum(module['completed'] for module in modules),
+                        sum(module['total'] for module in modules),
+                    ) if modules is not None else None
+                if section in {'summary', 'progress', 'all'}:
+                    # Student Home's My Progress card is sourced from this exact
+                    # compact home projection, not the dashboard's target-to-date
+                    # measure or the legacy LearnerProfile hour snapshot. The
+                    # learner endpoint uses the same journal-backed canonical
+                    # values. Only non-summary combined reads need the wider card.
+                    if section != 'summary':
+                        home_progress = _read_employer_home_progress(learner)
+                        home_otjh = (home_progress or {}).get('otjh')
+                        if home_otjh is not None:
+                            otjh = {key: home_otjh.get(key) for key in ('actual', 'planned', 'percent')}
+                if section == 'all':
+                    attendance = _overview_part('attendance', learner)['attendance']
+            rows[str(learner_id)] = {
+                "programme": {key: programme.get(key) for key in ("completed", "total", "percent", "status")} if programme else None,
+                "otjh": otjh,
+                "attendance": attendance,
+                "risk": _dashboard_otjh_risk(owner['otjh_status']) if owner is not None else 'unavailable',
+            }
+    except (DatabaseError, ServiceError):
+        logger.exception("employer_dashboard_metrics: metrics unavailable for employer %s", employer.pk)
+        return _error("Could not load learner progress. Please try again.", 503)
+    response = JsonResponse({"learners": rows, "asOf": today.isoformat()})
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @csrf_exempt
@@ -691,6 +973,12 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
             "onboardingStatus": _s(learner.onboarding_status),
             "startDate": _s(learner.start_date),
             "endDate": _s(learner.end_date),
+            # The two dates the learner's own dashboard header shows
+            # (dashboard_header.header_identity). "Start_date"/"End_date" above
+            # are a different pair of columns and are empty for most learners,
+            # so the header must read these rather than fall back to them.
+            "learnerStartDate": _s(learner.learner_start_date),
+            "learnerEndDate": _s(learner.learner_end_date),
             "isActive": status.lower() == ACTIVE_STATUS,
         },
         "performance": _performance(kind, learner),
@@ -704,9 +992,9 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
 
 @csrf_exempt
 @employer_or_staff()
-def employer_review_instance(request, employer_id, kind, learner_id, event_key):
+def employer_review_instance(request, employer_id, kind, learner_id, event_key, as_pdf=False):
     """Read or sign the same Curriculum Review instance used by coach/learner."""
-    if request.method not in ("GET", "POST"):
+    if request.method not in ("GET", "POST") or (as_pdf and request.method != "GET"):
         return _error("Method not allowed.", 405)
     employer, err = _employer_or_404(employer_id)
     if err:
@@ -735,7 +1023,12 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key):
     if not definition['template']['visibleTo'].get('employer', False):
         return _error("This review is not visible to the employer.", 403)
     if request.method == "GET":
-        return JsonResponse(definition)
+        if as_pdf:
+            from curriculum_api.review_pdf import learner_information, mcm_pdf_response
+            return mcm_pdf_response(definition, learner_information(learner))
+        response = JsonResponse(definition)
+        response["Cache-Control"] = "private, no-store"
+        return response
     try:
         payload = _parse_body(request)
     except (TypeError, ValueError, ValidationError):
@@ -809,10 +1102,8 @@ def employer_enrolment_review(request, employer_id, kind, learner_id, event_key)
 def employer_portal_learner_plan(request, employer_id, kind, learner_id):
     """The learner's own training plan, hours and KSBs — for their employer.
 
-    Returns exactly the payload the learner's own workspace reads, so the
-    employer sees the same weeks, components, OTJ hours and KSB mappings rather
-    than a second, divergent summary. Read-only by construction: this is a GET,
-    and the employer UI renders it without the learner's start/open actions.
+    Uses the read-only content projection, without activation, hydration,
+    identity repair or snapshot persistence on an employer GET.
 
     The employer-owns-this-learner check is the same one employer_portal_learner
     makes — the payload is richer, so the guard matters more, not less.
@@ -838,19 +1129,25 @@ def employer_portal_learner_plan(request, employer_id, kind, learner_id):
     if learner.employer_id != employer.pk:
         return _error("That learner does not belong to this employer.", 403)
 
-    from .learner_detail import build_learner_detail
+    from .employer_learning import read_plan
+    from old_otjh.service import ServiceError
 
     try:
-        return JsonResponse(build_learner_detail(learner, learner.pk))
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+        response = JsonResponse(read_plan(learner))
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
+    except DatabaseError:
+        logger.exception("employer_portal_learner_plan: projection unavailable")
+        return _error("Could not load this learner's plan. Please try again.", 503)
+    response['Cache-Control'] = 'private, no-store'
+    return response
 
 
 #: The learner-dashboard reads behind the employer's Overview tab. Each part is
 #: served by the same reader as the learner's own endpoint (overview-week,
 #: training-plan-dashboard, monthly-logs, profile-photo), so the employer sees
 #: the learner's timeline and progress rather than a second calculation of them.
-OVERVIEW_PARTS = frozenset({"week", "schedule", "contract", "hours", "photo", "attendance"})
+OVERVIEW_PARTS = frozenset({"week", "schedule", "contract", "hours", "photo", "attendance", "dashboard", "training"})
 
 #: Attendance-register totals the dashboard's Attendance figure needs. The
 #: employer gets the counts only, never the per-session register behind them.
@@ -883,11 +1180,8 @@ def _overview_part(part, learner, kind=None):
         # retaining the employer ownership gate around this endpoint.
         return read_week(learner, dashboard_kind=kind)
     if part in ("schedule", "contract"):
-        from .training_plan_dashboard import read_dashboard
-
-        if part == "contract":
-            return read_dashboard(learner, section="contract")
-        return _without_meeting_links(read_dashboard(learner, section="overview"))
+        from .employer_learning import read_schedule
+        return read_schedule(learner, 'contract' if part == 'contract' else 'overview')
     if part == "attendance":
         from .attendance import _summarize_attendance
         from .attendance_lectures import lecture_register
@@ -967,7 +1261,11 @@ def employer_portal_learner_overview(request, employer_id, kind, learner_id, par
     from old_otjh.service import ServiceError
 
     try:
-        payload = _overview_part(part, learner, kind)
+        if part in ('dashboard', 'training'):
+            from .employer_learning import read_dashboard
+            payload = read_dashboard(learner, kind, 'overview' if part == 'dashboard' else 'training', request)
+        else:
+            payload = _overview_part(part, learner, kind)
     except ServiceError as exc:
         return _error(str(exc), exc.status)
     except LookupError as exc:
@@ -998,6 +1296,59 @@ def _owned_learner(employer_id, kind, learner_id):
     if learner.employer_id != employer.pk:
         return None, _error("That learner does not belong to this employer.", 403)
     return learner, None
+
+
+@employer_or_staff()
+def employer_document_preview(request, employer_id, kind, learner_id, document_kind, document_id):
+    """Read an owned, issued document without deriving or issuing new content."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+    from .models import ApprenticeshipAgreement, TrainingPlanDocument, WrittenAgreement
+    from .apprenticeship_agreement import _agreement_json
+    from .training_plan_document import _document_json as training_plan_json
+    from .written_agreement import _document_json as written_agreement_json
+
+    snapshots = {
+        "agreement": (ApprenticeshipAgreement, _agreement_json),
+        "training-plan": (TrainingPlanDocument, training_plan_json),
+        "written-agreement": (WrittenAgreement, written_agreement_json),
+    }
+    try:
+        if document_kind in snapshots:
+            model, serialize = snapshots[document_kind]
+            document = model.objects.filter(
+                pk=document_id, learner_id=learner.pk, learner_kind=kind, status=model.STATUS_ACTIVE,
+            ).first()
+            if document is None:
+                return _error("Document not found.", 404)
+            payload = {"kind": document_kind, "document": serialize(document)}
+        elif document_kind == "document":
+            from enrolment_api.documents import SIGNING_PARTIES, _conn, azure_configured, get_download_sas
+            with _conn().cursor() as cursor:
+                cursor.execute(
+                    'select "Container", "Blob_name", "Doc_type" from enrolment."Enrolment_Documents" '
+                    'where id = %s and "Learner_kind" = %s and "Learner_id" = %s',
+                    [str(document_id), kind, learner.pk],
+                )
+                row = cursor.fetchone()
+            if not row or "employer" not in SIGNING_PARTIES.get(row[2], ("employer",)):
+                return _error("Document not found.", 404)
+            if not azure_configured():
+                return _error("Document storage is not configured.", 503)
+            payload = {"kind": "document", "url": get_download_sas(row[0], row[1])}
+        else:
+            return _error("Unknown document kind.", 404)
+    except (ValueError, ValidationError):
+        return _error("Document not found.", 404)
+    except DatabaseError:
+        logger.exception("employer_document_preview: document read unavailable")
+        return _error("Could not load the document. Please try again.", 503)
+    response = JsonResponse(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 def _employer_progress_definition(event, learner, profile, template_cache):
@@ -1033,25 +1384,44 @@ def _employer_progress_definition(event, learner, profile, template_cache):
     return definition if definition["template"]["visibleTo"].get("employer", False) else None
 
 
-@csrf_exempt
-@employer_or_staff()
-def employer_portal_progress_reviews(request, employer_id, kind, learner_id, event_key=None, as_pdf=False):
-    """Same programme review source as the learner, with employer visibility."""
-    if request.method != "GET":
-        return _error("Method not allowed.", 405)
-    learner, err = _owned_learner(employer_id, kind, learner_id)
-    if err is not None:
-        return err
+def _employer_progress_review_rows(learner, event_key=None, month=None):
+    """(rows, definitions, None) for the progress reviews this employer may read.
+
+    One visibility rule serves the review list, the review document and the
+    meeting recording: a review the employer cannot open is not one whose
+    recording they can watch either.
+    """
     from .calendar import _calendar_profile, coaching_events_for_learner
 
     try:
         profile = _calendar_profile(learner, learner.pk)
-        events = coaching_events_for_learner(learner, profile)
+        # The dashboard's monthly summary needs only this month's occurrences.
+        # Keep using the Learner calendar source, but avoid reading the learner's
+        # full review history and unrelated future/past events for that card.
+        events = coaching_events_for_learner(learner, profile, month=month) if month else coaching_events_for_learner(learner, profile)
         rows, definitions, template_cache = [], {}, {}
         for source in events:
-            code = source.get("reviewTypeCode")
-            is_progress = code == "progress_review" if code else not source.get("reviewTemplateId") and source.get("source") == "progress-review"
-            if not is_progress or (event_key is not None and event_key not in {source.get("id"), source.get("eventKey")}):
+            # Imported Gateway/support reviews also use the legacy progress-review
+            # routing source; their original review type determines this list.
+            category = review_event_category(source)
+            is_progress = category == "progress-review"
+            if source.get("reviewTemplateId") and not source.get("reviewTypeCode"):
+                is_progress = False
+            if event_key is not None and event_key not in {source.get("id"), source.get("eventKey")}:
+                continue
+            migrated_state = None
+            if source.get("migratedForm") and category in {"mcr", "progress-review", "review"}:
+                overlay = ImportedReviewInstance.objects.filter(
+                    event_key=source["eventKey"], learner_id=getattr(profile, "pk", learner.pk),
+                ).first()
+                if overlay is None:
+                    continue
+                if category == "review" and not is_personal_support_form(overlay):
+                    continue
+                migrated_state = signature_states(overlay)["employer"]
+                if category in {"mcr", "review"}:
+                    is_progress = bool(migrated_state["required"])
+            if not is_progress:
                 continue
             event = dict(source)
             definition = None
@@ -1067,21 +1437,46 @@ def employer_portal_progress_reviews(request, employer_id, kind, learner_id, eve
                     event["reviewInstanceId"] = instance["id"]
                     event["status"] = instance["status"]
                 definitions[event["eventKey"]] = definition
-            elif event.get("migratedForm"):
-                overlay = ImportedReviewInstance.objects.filter(
-                    event_key=event["eventKey"], learner_id=getattr(profile, "pk", learner.pk),
-                ).first()
-                if overlay is None:
-                    continue
-                state = signature_states(overlay)["employer"]
-                event.update({"employerSigned": bool(state["signed"]), "employerSignatureRequired": bool(state["required"])})
-            # Meeting access stays with the existing learner/coach calendar.
-            event["meetingLink"] = ""
+            elif migrated_state is not None:
+                event.update({"employerSigned": bool(migrated_state["signed"]), "employerSignatureRequired": bool(migrated_state["required"])})
+            # Only the owned, employer-visible PR appointment can be joined.
+            # Keep the calendar reader's sync verdict (and its empty link on failure).
+            booking_status = _s(source.get("bookingStatus") or source.get("status")).lower().replace("_", "-").replace(" ", "-")
+            review_status = _s(event.get("status")).lower().replace("_", "-").replace(" ", "-")
+            imported = event.get("importedReview") or {}
+            can_join = (
+                category == "progress-review" and event.get("scheduledDate")
+                and booking_status in {"scheduled", "in-progress"}
+                and review_status not in {"completed", "awaiting-signature", "cancelled", "deleted", "superseded"}
+                and (not imported or (event.get("calendarEventKey") and not imported.get("completedDate")))
+            )
+            event["meetingLink"] = (source.get("meetingLink") or "") if can_join else ""
             rows.append(event)
         rows.sort(key=lambda event: (event.get("date") or event.get("targetDate") or "", event.get("sequence") or 0, event["eventKey"]))
     except DatabaseError:
         logger.exception("employer_portal_progress_reviews: review read unavailable for %s", learner.pk)
-        return _error("Could not load progress reviews. Please try again.", 503)
+        return None, None, _error("Could not load progress reviews. Please try again.", 503)
+    return rows, definitions, None
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_progress_reviews(request, employer_id, kind, learner_id, event_key=None, as_pdf=False):
+    """Same programme review source as the learner, with employer visibility."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    summary_month = request.GET.get("summary_month")
+    if summary_month and (len(summary_month) != 7 or summary_month[4] != "-"
+                          or not summary_month[:4].isdigit() or int(summary_month[:4]) < 1
+                          or not summary_month[5:].isdigit()
+                          or not 1 <= int(summary_month[5:]) <= 12):
+        return _error("Invalid review summary month.", 400)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+    rows, definitions, err = _employer_progress_review_rows(learner, event_key, month=summary_month)
+    if err is not None:
+        return err
     if event_key is not None:
         if not rows:
             return _error("Progress review not found for this learner.", 404)
@@ -1100,10 +1495,106 @@ def employer_portal_progress_reviews(request, employer_id, kind, learner_id, eve
                 return _error("A review document is not available yet.", 409)
         else:
             response = JsonResponse({"event": rows[0], "definition": definition})
+    elif summary_month:
+        # The home card and journey markers need dates/status only. Review
+        # definitions and imported review bodies remain on the full endpoint.
+        fields = ("id", "eventKey", "title", "source", "importedReviewType", "reviewTypeCode",
+                  "sequence", "status", "bookingStatus", "date", "targetDate", "scheduledDate",
+                  "scheduledTime", "employerSigned", "employerSignatureRequired")
+        response = JsonResponse({"events": [{key: row.get(key) for key in fields} for row in rows]})
     else:
         response = JsonResponse({"events": rows, "definitions": definitions})
     response["Cache-Control"] = "private, no-store"
     return response
+
+
+def _employer_review_meeting(employer_id, kind, learner_id, event_key):
+    """(record, None) for a review meeting this employer may watch, else (None, error).
+
+    Ownership and visibility are the portal's existing rule: the learner must
+    belong to this employer, and the event must be one of the progress reviews
+    their portal already lists.
+    """
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return None, err
+    rows, _definitions, err = _employer_progress_review_rows(learner, event_key)
+    if err is not None:
+        return None, err
+    row = next((item for item in rows if event_key in {item.get("id"), item.get("eventKey")}), None)
+    if row is None:
+        return None, _error("Progress review not found for this learner.", 404)
+    from .calendar import _learner_calendar_record
+
+    record = _learner_calendar_record(kind, learner.pk, row.get("calendarEventKey") or row.get("eventKey") or event_key)
+    if record is None:
+        return None, _error("This review has no meeting of its own.", 404)
+    return record, None
+
+
+@employer_or_staff()
+def employer_portal_review_artifacts(request, employer_id, kind, learner_id, event_key):
+    """The meeting recordings for a review this employer can already open.
+
+    Employers watch the formal recording only: transcripts, attendance rows and
+    meeting summaries stay with staff. Reading this panel must not move the
+    review on or write attendance either, so the coach/learner status
+    transition is deliberately not applied -- an employer opening a page is not
+    evidence that anybody attended.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    record, err = _employer_review_meeting(employer_id, kind, learner_id, event_key)
+    if err is not None:
+        return err
+    from .imported_meeting_resources import is_imported_meeting, stored_resources
+    if is_imported_meeting(record):
+        return stored_resources(record)
+    from coach_api.views import fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots
+
+    snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+    if error_payload:
+        return JsonResponse(error_payload, status=status_code)
+    storage = persist_coach_meeting_snapshots(
+        record,
+        artifacts=snapshot["artifacts"],
+        attendance_reports=snapshot["attendanceReports"],
+        attendance_tracker=snapshot["attendanceTracker"],
+    )
+    recordings = [artifact for artifact in snapshot["artifacts"]
+                  if _s(artifact.get("artifact_type")).lower() == "recording"]
+    response = JsonResponse({
+        "artifacts": recordings,
+        # Attendance rows and AI meeting drafts never cross the employer
+        # boundary; the formal review answers are returned by the review reads.
+        "meetingSummary": None,
+        "errors": snapshot["errors"],
+        "partial": snapshot["partial"],
+        "storage": storage,
+    }, status=status_code)
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@employer_or_staff()
+def employer_portal_review_artifact_content(request, employer_id, kind, learner_id, event_key,
+                                            artifact_type, artifact_id):
+    """Play or download one recording of an employer-visible review meeting."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    if _s(artifact_type).lower() != "recording":
+        return _error("Only meeting recordings are available to employers.", 403)
+    record, err = _employer_review_meeting(employer_id, kind, learner_id, event_key)
+    if err is not None:
+        return err
+    from .imported_meeting_resources import is_imported_meeting, stored_recording
+    if is_imported_meeting(record):
+        return stored_recording(request, record, artifact_id)
+    from coach_api.views import coach_meeting_artifact_content_response
+
+    # The archived copy is keyed by the calendar event, not by the review key
+    # the employer's portal uses to address it.
+    return coach_meeting_artifact_content_response(request, record, record.event_key, artifact_type, artifact_id)
 
 
 def _monthly_log_urls(payload, employer_id, kind, learner_id):
@@ -1409,13 +1900,15 @@ def _performance(kind, learner):
 
     ksbs = profile.ksbs if isinstance(profile.ksbs, list) else []
 
+    from .canonical_hours import profile_actual_hours
+    actual_hours = profile_actual_hours(profile)
     summary.update({
         "quizzesTaken": len(quizzes),
         "quizzesPassed": passed,
         "averageScore": round(sum(scores) / len(scores), 1) if scores else None,
         "componentsCompleted": len(others),
         "ksbsEvidenced": len([k for k in ksbs if isinstance(k, dict) and k.get("evidenced")]),
-        "completedHours": _s(getattr(profile, "completed_hours", "")) or None,
+        "completedHours": str(round(actual_hours, 2)) if actual_hours is not None else None,
         "lastActivityAt": dates[-1] if dates else None,
     })
     return summary

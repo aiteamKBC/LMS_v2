@@ -1,15 +1,22 @@
 from datetime import datetime, time, timedelta
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import close_old_connections, router
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import DatabaseError, close_old_connections, router
 from django.utils import timezone
 
 from coach_api.models import CoachCalendarEvent
+from coach_api.background_meeting_sync import imported_context
+from coach_api.migrated_session_scope import (meeting_artifacts, meeting_reports,
+                                              snapshot_version, validate_attendance_response)
+from coach_api.migrated_intelligence_views import _graph_target_failure
+from coach_api.bound_actual_session import BoundSessionConflict, bound_session
 from coach_api.views import (
     apply_teams_attendance_status_transition,
     coach_meeting_snapshot_tables_ready,
     fetch_coach_meeting_graph_snapshot,
     persist_coach_meeting_snapshots,
+    stored_coach_meeting_snapshot,
 )
 
 
@@ -126,7 +133,13 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write(self.style.WARNING(f"Dry run: {len(records)} event(s) matched."))
             for record in records:
-                self.stdout.write(self._describe_record(record))
+                try:
+                    context = imported_context(record)
+                except (DatabaseError, ValueError, ObjectDoesNotExist):
+                    self.stdout.write('Skipped meeting: source association could not be verified.')
+                    continue
+                self.stdout.write(f"APTEM {context['family']}: eligible resource refresh (dry run)."
+                                  if context else self._describe_record(record))
             return
 
         stored = 0
@@ -136,8 +149,90 @@ class Command(BaseCommand):
 
         for record in records:
             close_old_connections()
-            snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+            try:
+                context = imported_context(record)
+            except (DatabaseError, ValueError, ObjectDoesNotExist):
+                skipped += 1
+                self.stdout.write(self.style.WARNING('Skipped meeting: source association could not be verified.'))
+                continue
+            if context:
+                try:
+                    from coach_api.models import ImportedReviewInstance
+                    overlay = (ImportedReviewInstance.objects.filter(pk=context['overlayId']).first()
+                               if context.get('overlayId') else None)
+                    bound = bound_session(record, overlay=overlay) if (
+                        context['family'] in {'MCM', 'PR', 'PR_SKILLS_RADAR'} and overlay) else None
+                except (BoundSessionConflict, DatabaseError):
+                    skipped += 1
+                    self.stdout.write(f"APTEM {context['family']}: claimed session changed; refresh skipped.")
+                    continue
+                previous = stored_coach_meeting_snapshot(record, database=database, safe_diagnostics=True)
+                if not (previous.get('storage') or {}).get('stored') or previous.get('partial'):
+                    failed += 1
+                    self.stdout.write(f"APTEM {context['family']}: snapshot_read_unavailable; no refresh attempted.")
+                    continue
+                expected_version = snapshot_version(previous)
+            options = {'attendance_response_validator': validate_attendance_response,
+                       'target_error_handler': _graph_target_failure, 'safe_diagnostics': True} if context else {}
+            meeting_target = {}
+            meeting_scoped = bool(context and not bound and context['family'] in {
+                'MCM', 'PR', 'PR_SKILLS_RADAR'})
+            if context and bound:
+                from coach_api.actual_session_resolution import strict_imported_meeting_target
+                from coach_api.migrated_intelligence_views import _transcript_collection
+                from coach_api.migrated_session_scope import select_artifacts
+                def owned_target(current):
+                    identity = {}
+                    base, error = strict_imported_meeting_target(current, identity_out=identity)
+                    if not error and base:
+                        try:
+                            bound_session(current, overlay=overlay, target=identity.get('target'))
+                        except BoundSessionConflict:
+                            return '', {'code': 'ACTUAL_SESSION_CLAIM_CONFLICT',
+                                        'detail': 'Claimed meeting context changed.'}
+                    return base, error
+                def selected_transcripts(current, attendance, metadata):
+                    rows, error = select_artifacts(current,
+                        {'attendanceReports': attendance, 'artifacts': metadata}, session=bound.context)
+                    return [] if error else [row['graph_artifact_id'] for row in rows
+                                             if row.get('artifact_type') == 'transcript']
+                options.update(target_resolver=owned_target,
+                    transcript_collection_fetcher=_transcript_collection,
+                    transcript_content_selector=selected_transcripts,
+                    independent_resources=True)
+            elif meeting_scoped:
+                from coach_api.actual_session_resolution import review_meeting_target
+                from coach_api.migrated_intelligence_views import _transcript_collection
+
+                def owned_target(current):
+                    return review_meeting_target(current, identity_out=meeting_target)
+
+                def selected_transcripts(current, _reports, metadata):
+                    target = meeting_target.get('target')
+                    if target is None:
+                        return []
+                    rows, _error = meeting_artifacts(current, {'artifacts': metadata},
+                        target.online_meeting_id, trusted_fetch=True)
+                    return [row['graph_artifact_id'] for row in rows
+                            if row.get('artifact_type') == 'transcript']
+
+                options.update(target_resolver=owned_target,
+                    transcript_collection_fetcher=_transcript_collection,
+                    transcript_content_selector=selected_transcripts,
+                    independent_resources=True)
+            try:
+                snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record, **options)
+            except (RuntimeError, TimeoutError, ValueError):
+                if context is None:
+                    raise
+                failed += 1
+                self.stdout.write(f"APTEM {context['family']}: refresh failed (resource fetch).")
+                continue
             if error_payload:
+                if context:
+                    failed += 1
+                    self.stdout.write(self.style.WARNING(f"APTEM {context['family']}: refresh failed (HTTP {status_code})."))
+                    continue
                 skipped += 1
                 self.stdout.write(
                     self.style.WARNING(
@@ -147,34 +242,78 @@ class Command(BaseCommand):
                 )
                 continue
 
+            meeting_id = None
+            if meeting_scoped:
+                target = meeting_target.get('target')
+                if target is None:
+                    failed += 1
+                    self.stdout.write('APTEM meeting target unavailable; refresh skipped.')
+                    continue
+                meeting_id = target.online_meeting_id
+                artifacts, media_error = meeting_artifacts(record, snapshot, meeting_id,
+                    trusted_fetch=True)
+                reports, report_error = meeting_reports(snapshot,
+                    meeting_id=meeting_id, graph_event_id=record.graph_event_id)
+                snapshot['artifacts'] = [{**row, 'metadata': {**(row.get('metadata') or {}),
+                    '_lms_graph_event_id': record.graph_event_id,
+                    '_lms_verified_online_meeting_id': meeting_id}} for row in artifacts]
+                snapshot['attendanceReports'] = [{**row, '_lms_graph_event_id': record.graph_event_id,
+                    '_lms_verified_online_meeting_id': meeting_id} for row in reports]
+                snapshot['partial'] = bool(snapshot.get('partial') or media_error or report_error)
+                if media_error or report_error:
+                    snapshot.setdefault('errors', []).append(
+                        'Some Teams evidence had conflicting identity and was skipped.')
+
             # This is the primary, cron-friendly path for the scheduled ->
             # in-progress transition: a linked MCM/Progress Review only moves
             # once this sync actually sees a real Teams join, using the
             # attendance records this command already fetched for its own
             # snapshot-persistence purposes below -- no second Graph call.
-            apply_teams_attendance_status_transition(record, (snapshot.get("attendance") or {}).get("records") or [])
+            if context is None:
+                apply_teams_attendance_status_transition(record, (snapshot.get("attendance") or {}).get("records") or [])
 
-            storage = persist_coach_meeting_snapshots(
-                record,
-                artifacts=snapshot["artifacts"],
-                attendance_reports=snapshot["attendanceReports"],
-                attendance_tracker=snapshot["attendanceTracker"],
-            )
+            try:
+                storage = persist_coach_meeting_snapshots(
+                    record,
+                    artifacts=snapshot["artifacts"],
+                    attendance_reports=snapshot["attendanceReports"],
+                    attendance_tracker=snapshot["attendanceTracker"],
+                    **({'imported_refresh': {'snapshot': snapshot, 'expected_version': expected_version,
+                        'preserve_existing': True, 'context': context,
+                        'session': bound.context if context and bound else None,
+                        'meeting_id': meeting_id,
+                        'revalidate': lambda current: imported_context(current) == context}}
+                       if context else {}),
+                )
+            except (DatabaseError, ValueError, ObjectDoesNotExist):
+                if context is None:
+                    raise
+                storage = {'stored': False, 'reason': 'snapshot_context_unavailable'}
             if not storage.get("stored"):
-                failed += 1
                 reason = storage.get("reason") or "unknown"
+                if context and reason in {'snapshot_context_changed', 'snapshot_superseded'}:
+                    skipped += 1
+                    self.stdout.write(f"APTEM {context['family']}: skipped ({reason}).")
+                    continue
+                failed += 1
                 if reason == "snapshot_tables_missing":
                     raise CommandError(
                         "Snapshot tables are missing on the active database branch. "
                         "Run backend/coach_api/sql/coach_meeting_artifacts_attendance_snapshots.sql first."
                     )
-                self.stdout.write(self.style.ERROR(f"Failed {record.event_key}: {reason}"))
+                label = f"APTEM {context['family']}" if context else record.event_key
+                self.stdout.write(self.style.ERROR(f"Failed {label}: {reason}"))
                 continue
 
             stored += 1
-            if snapshot.get("partial"):
+            if snapshot.get("partial") or storage.get('resourceRefresh') == 'partial':
                 partial += 1
             attendance = snapshot["attendance"]
+            if context:
+                outcome = {'partial': 'partial; incomplete evidence excluded', 'updated': 'updated',
+                           'pending': 'pending; previous evidence retained'}[storage['resourceRefresh']]
+                self.stdout.write(f"APTEM {context['family']}: resources stored; {outcome}.")
+                continue
             self.stdout.write(
                 self.style.SUCCESS(
                     f"Stored {record.event_key}: "

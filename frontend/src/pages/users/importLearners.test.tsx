@@ -8,7 +8,7 @@ import { importEnrolmentUsers, type LearnerImportResult } from '@/api/enrolmentU
 import type { UserListRow } from './types';
 import UsersListPage from './page';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isAdmin: true }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock('@/api/enrolmentUsers', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/enrolmentUsers')>(), fetchEnrolmentUsers: vi.fn(),
