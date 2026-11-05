@@ -1,0 +1,37 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Learner__learners {
+        bigint id PK
+    }
+    chat__conversations {
+        bigint id PK
+        integer coach_id FK
+        bigint learner_id FK
+    }
+    chat__message_deletions {
+        bigint id PK
+    }
+    chat__message_receipts {
+        bigint id PK
+        bigint message_id FK
+        integer recipient_coach_id FK
+        bigint recipient_learner_id FK
+    }
+    chat__messages {
+        bigint id PK
+        bigint conversation_id FK
+        integer sender_coach_id FK
+        bigint sender_learner_id FK
+    }
+    enrolment__Staff_users {
+        integer id PK
+    }
+    enrolment__Staff_users ||..o{ chat__conversations : "fk_chat_conversation_coach"
+    Learner__learners ||..o{ chat__conversations : "fk_chat_conversation_learner"
+    enrolment__Staff_users |o..o{ chat__message_receipts : "fk_chat_receipt_coach"
+    Learner__learners |o..o{ chat__message_receipts : "fk_chat_receipt_learner"
+    chat__messages ||..o| chat__message_receipts : "fk_chat_receipt_message"
+    chat__conversations ||..o{ chat__messages : "fk_chat_message_conversation"
+    enrolment__Staff_users |o..o{ chat__messages : "fk_chat_message_sender_coach"
+    Learner__learners |o..o{ chat__messages : "fk_chat_message_sender_learner"

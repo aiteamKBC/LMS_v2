@@ -1,0 +1,55 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    curriculum__LMS_data {
+        bigint id PK
+    }
+    curriculum__activity_annotations {
+        text component_id PK
+    }
+    curriculum__activity_events {
+        bigint id PK
+    }
+    curriculum__cache_epoch {
+        integer id PK
+    }
+    curriculum__cache_scope_epoch {
+        character_varying_255_ scope PK
+    }
+    curriculum__coaches {
+        character_varying_128_ id PK
+    }
+    curriculum__cohorts {
+        character_varying_128_ cohort_id PK
+        character_varying_255_ programme_id FK
+    }
+    curriculum__components {
+        character_varying_128_ id PK
+    }
+    curriculum__england_holiday_syncs {
+        character_varying_64_ id PK
+    }
+    curriculum__england_holidays {
+        character_varying_128_ id PK
+    }
+    curriculum__free_course_weeks {
+        character_varying_128_ id PK
+    }
+    curriculum__free_courses {
+        character_varying_128_ id PK
+    }
+    curriculum__free_programme_components {
+        character_varying_128_ id PK
+    }
+    curriculum__free_programme_modules {
+        character_varying_128_ id PK
+    }
+    curriculum__groups {
+        character_varying_128_ group_id PK
+        character_varying_255_ programme_id FK
+    }
+    curriculum__programmes {
+        character_varying_150_ programme_id PK
+    }
+    curriculum__programmes |o..o{ curriculum__cohorts : "cohorts_programme_id_fkey UNVALIDATED"
+    curriculum__programmes ||..o{ curriculum__groups : "groups_programme_id_fkey UNVALIDATED"

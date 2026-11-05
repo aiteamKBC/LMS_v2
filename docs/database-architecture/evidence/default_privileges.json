@@ -1,0 +1,4 @@
+[
+{"owner": "cloud_admin", "schema": "public", "object_type": "r", "acl": "{neon_superuser=a*r*w*d*D*x*t*m*/cloud_admin}"},
+{"owner": "cloud_admin", "schema": "public", "object_type": "S", "acl": "{neon_superuser=r*w*U*/cloud_admin}"}
+]

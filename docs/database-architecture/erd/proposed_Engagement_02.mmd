@@ -1,0 +1,80 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Engagement__events {
+        integer id PK
+    }
+    Engagement__points_grants {
+        integer id PK
+    }
+    Engagement__points_rules {
+        integer id PK
+    }
+    Engagement__recognitions {
+        integer id PK
+    }
+    Engagement__rewards {
+        integer id PK
+    }
+    Engagement__shared_reward_acceptances {
+        text session_id PK
+    }
+    Engagement__shared_reward_active_intervals {
+        text receipt_id PK
+        text session_id FK
+    }
+    Engagement__shared_reward_award_links {
+        bigint grant_id PK
+        text module_id FK
+    }
+    Engagement__shared_reward_bonus_verifications {
+        text id PK
+        text module_id FK
+        bigint grant_id FK
+    }
+    Engagement__shared_reward_config {
+        text module_id PK
+        bigint masterclass_event_id FK
+    }
+    Engagement__shared_reward_leaderboard_optins {
+        text learner_id PK
+        text module_id PK
+    }
+    Engagement__shared_reward_observations {
+        text event_id PK
+        text session_id FK
+    }
+    Engagement__shared_reward_outbox {
+        bigint progress_id PK
+        text session_id FK
+    }
+    Engagement__shared_reward_saved_progress {
+        bigint progress_id PK
+    }
+    Engagement__shared_reward_sessions {
+        text session_id PK
+        text module_id FK
+    }
+    Engagement__shared_reward_voucher_options {
+        bigint reward_id PK
+    }
+    Engagement__shared_reward_voucher_requests {
+        text request_id PK
+        bigint claim_id FK
+    }
+    Engagement__voucher_claims {
+        integer id PK
+    }
+    Engagement__shared_reward_sessions ||..o| Engagement__shared_reward_acceptances : "shared_reward_acceptances_session_id_fkey"
+    Engagement__shared_reward_acceptances ||..o{ Engagement__shared_reward_active_intervals : "shared_reward_active_intervals_session_id_fkey"
+    Engagement__points_grants ||..o| Engagement__shared_reward_award_links : "shared_reward_award_links_grant_id_fkey"
+    Engagement__shared_reward_config ||..o{ Engagement__shared_reward_award_links : "shared_reward_award_links_module_id_fkey"
+    Engagement__points_grants |o..o{ Engagement__shared_reward_bonus_verifications : "shared_reward_bonus_verifications_grant_id_fkey"
+    Engagement__shared_reward_config ||..o{ Engagement__shared_reward_bonus_verifications : "shared_reward_bonus_verifications_module_id_fkey"
+    Engagement__events |o..o{ Engagement__shared_reward_config : "shared_reward_config_masterclass_event_id_fkey"
+    Engagement__shared_reward_config ||..o{ Engagement__shared_reward_leaderboard_optins : "shared_reward_leaderboard_optins_module_id_fkey"
+    Engagement__shared_reward_sessions ||..o{ Engagement__shared_reward_observations : "shared_reward_observations_session_id_fkey"
+    Engagement__shared_reward_sessions ||..o| Engagement__shared_reward_outbox : "shared_reward_outbox_session_id_fkey"
+    Engagement__shared_reward_config ||..o{ Engagement__shared_reward_sessions : "shared_reward_sessions_module_id_fkey"
+    Engagement__rewards ||..o| Engagement__shared_reward_voucher_options : "shared_reward_voucher_options_reward_id_fkey"
+    Engagement__voucher_claims ||..o| Engagement__shared_reward_voucher_requests : "shared_reward_voucher_requests_claim_id_fkey"

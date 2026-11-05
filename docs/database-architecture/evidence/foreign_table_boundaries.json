@@ -1,0 +1,4 @@
+[
+{"schema": "kbc_sync", "table_name": "kbc_attendance", "server_name": "kbc_attendance_source", "wrapper": "postgres_fdw"},
+{"schema": "kbc_sync", "table_name": "kbc_combined_attendance_backup_20261017", "server_name": "kbc_attendance_source", "wrapper": "postgres_fdw"}
+]

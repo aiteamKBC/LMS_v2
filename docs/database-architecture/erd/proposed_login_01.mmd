@@ -1,0 +1,66 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    login__Advanced_admin_assignment_check_marks {
+        bigint id PK
+    }
+    login__Advanced_admin_assignment_uploads {
+        uuid id PK
+    }
+    login__Advanced_admin_learner_scope {
+        text aptem_id PK
+    }
+    login__Advanced_admin_legacy_marks {
+        bigint id PK
+    }
+    login__Advanced_admin_report_hours {
+        bigint evidence_id PK
+    }
+    login__Invitations {
+        bigint id PK
+        bigint Account_id FK
+    }
+    login__Login_accounts {
+        bigint id PK
+    }
+    login__Login_audit {
+        bigint id PK
+    }
+    login__Login_sessions {
+        bigint id PK
+        bigint Account_id FK
+    }
+    login__Mcp_oauth_clients {
+        bigint id PK
+    }
+    login__Mcp_oauth_codes {
+        bigint id PK
+        text Client_id FK
+        bigint Account_id FK
+    }
+    login__Mcp_oauth_tokens {
+        bigint id PK
+        text Client_id FK
+        bigint Account_id FK
+    }
+    login__Mcp_pending_changes {
+        uuid id PK
+        bigint Account_id FK
+        text Client_id FK
+    }
+    login__Password_resets {
+        bigint id PK
+        bigint Account_id FK
+    }
+    login__coach_directory {
+        bigint id PK
+    }
+    login__Login_accounts ||..o{ login__Invitations : "Invitations_Account_id_fkey"
+    login__Login_accounts ||..o{ login__Login_sessions : "Login_sessions_Account_id_fkey"
+    login__Login_accounts ||..o{ login__Mcp_oauth_codes : "Mcp_oauth_codes_Account_id_fkey"
+    login__Mcp_oauth_clients ||..o{ login__Mcp_oauth_codes : "Mcp_oauth_codes_Client_id_fkey"
+    login__Login_accounts ||..o{ login__Mcp_oauth_tokens : "Mcp_oauth_tokens_Account_id_fkey"
+    login__Mcp_oauth_clients ||..o{ login__Mcp_oauth_tokens : "Mcp_oauth_tokens_Client_id_fkey"
+    login__Login_accounts ||..o{ login__Mcp_pending_changes : "Mcp_pending_changes_Account_id_fkey"
+    login__Mcp_oauth_clients ||..o{ login__Mcp_pending_changes : "Mcp_pending_changes_Client_id_fkey"
+    login__Login_accounts ||..o{ login__Password_resets : "Password_resets_Account_id_fkey"

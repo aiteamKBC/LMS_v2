@@ -1,0 +1,99 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Learner__learner_journal_rows {
+        bigint id PK
+    }
+    Learner__learner_progress_entries {
+        bigint id PK
+    }
+    curriculum__components {
+        character_varying_128_ id PK
+    }
+    curriculum__groups {
+        character_varying_128_ group_id PK
+    }
+    curriculum__live_session_artifacts {
+        character_varying_128_ id PK
+    }
+    curriculum__live_session_occurrences {
+        character_varying_128_ id PK
+    }
+    curriculum__live_sessions {
+        character_varying_128_ id PK
+    }
+    curriculum__modules {
+        character_varying_128_ module_catalogue_id PK
+    }
+    curriculum__programmes {
+        character_varying_150_ programme_id PK
+    }
+    curriculum__review_templates {
+        character_varying_128_ id PK
+        character_varying_128_ review_type_id FK
+    }
+    curriculum__review_types {
+        character_varying_128_ id PK
+    }
+    curriculum__session_result_archive {
+        text artifact_id PK
+        text occurrence_id FK
+    }
+    curriculum__session_result_jobs {
+        text live_session_id PK
+    }
+    curriculum__source_activities {
+        bigint id PK
+        bigint source_course_id FK
+        character_varying_128_ curriculum_component_ref FK
+        bigint source_material_id FK
+    }
+    curriculum__source_activity_ksbs {
+        bigint activity_id PK
+    }
+    curriculum__source_courses {
+        bigint id PK
+        character_varying_128_ curriculum_programme_ref FK
+        character_varying_128_ curriculum_module_ref FK
+        character_varying_128_ curriculum_group_ref FK
+    }
+    curriculum__source_lms_activities {
+        bigint activity_id PK
+    }
+    curriculum__source_lms_bank_holidays {
+        date holiday_date PK
+    }
+    curriculum__source_lms_group_activities {
+        bigint group_id PK
+        bigint activity_id PK
+    }
+    curriculum__source_lms_groups {
+        bigint group_id PK
+    }
+    curriculum__source_lms_raw_pages {
+        integer page PK
+    }
+    curriculum__source_materials {
+        bigint id PK
+    }
+    curriculum__source_planned_hours_bulk_batches {
+        bigint id PK
+    }
+    curriculum__source_planned_hours_bulk_items {
+        bigint id PK
+        bigint batch_id FK
+        bigint progress_id FK
+        bigint journal_row_id FK
+    }
+    curriculum__review_types |o..o{ curriculum__review_templates : "review_templates_review_type_fk"
+    curriculum__live_session_artifacts ||..o| curriculum__session_result_archive : "session_result_archive_artifact_id_fkey"
+    curriculum__live_session_occurrences ||..o{ curriculum__session_result_archive : "session_result_archive_occurrence_id_fkey"
+    curriculum__live_sessions ||..o| curriculum__session_result_jobs : "session_result_jobs_live_session_id_fkey"
+    curriculum__components |o..o{ curriculum__source_activities : "source_activities_component_fkey"
+    curriculum__source_materials |o..o{ curriculum__source_activities : "source_activities_material_fkey UNVALIDATED"
+    curriculum__source_courses ||..o{ curriculum__source_activities : "source_activities_source_course_id_fkey"
+    curriculum__groups |o..o{ curriculum__source_courses : "source_courses_group_fkey"
+    curriculum__modules |o..o{ curriculum__source_courses : "source_courses_module_fkey"
+    curriculum__programmes |o..o{ curriculum__source_courses : "source_courses_programme_fkey"
+    Learner__learner_journal_rows |o..o{ curriculum__source_planned_hours_bulk_items : "source_planned_bulk_items_journal_row_fkey UNVALIDATED"
+    curriculum__source_planned_hours_bulk_batches ||..o{ curriculum__source_planned_hours_bulk_items : "source_planned_hours_bulk_items_batch_id_fkey"
+    Learner__learner_progress_entries |o..o{ curriculum__source_planned_hours_bulk_items : "source_planned_hours_bulk_items_progress_id_fkey"

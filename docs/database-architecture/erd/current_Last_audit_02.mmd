@@ -1,0 +1,17 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Last_audit__learner_attendance {
+        text source_key PK
+        bigint learner_id FK
+    }
+    Last_audit__learner_lms_aliases {
+        bigint aptem_id PK
+        bigint lms_learner_id PK
+    }
+    Last_audit__learners {
+        bigint record_id PK
+    }
+    Last_audit__raw_pages {
+        integer page PK
+    }
+    Last_audit__learners |o..o{ Last_audit__learner_attendance : "learner_attendance_learner_id_fkey"

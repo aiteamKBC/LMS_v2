@@ -1,0 +1,241 @@
+app,model,schema,table_name,column_name,file,line,kind,orm_nullable,database_nullable,classification,orm_type,database_type
+audit_api,MreActivity,Audit,mre,month_no,backend/audit_api/learner_log_models.py,15,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+audit_api,MreActivity,Audit,mre,month_unit,backend/audit_api/learner_log_models.py,16,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+audit_api,MreActivity,Audit,mre,unit_planned_date,backend/audit_api/learner_log_models.py,17,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+audit_api,MreActivity,Audit,mre,week_sequence,backend/audit_api/learner_log_models.py,19,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+audit_api,MreActivity,Audit,mre,activity_category,backend/audit_api/learner_log_models.py,20,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+audit_api,MreActivity,Audit,mre,activity_unit,backend/audit_api/learner_log_models.py,21,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+audit_api,MreActivity,Audit,mre,activity_description,backend/audit_api/learner_log_models.py,22,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+audit_api,MreActivity,Audit,mre,delivery_method,backend/audit_api/learner_log_models.py,23,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+chat,ChatCoach,enrolment,Staff_users,Username,backend/chat/models.py,64,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+chat,ChatCoach,enrolment,Staff_users,Email,backend/chat/models.py,65,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+chat,ChatCoach,enrolment,Staff_users,Position,backend/chat/models.py,66,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,event_key,backend/coach_api/models.py,48,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,operation_id,backend/coach_api/models.py,49,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,idempotency_key,backend/coach_api/models.py,50,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,owner_email,backend/coach_api/models.py,51,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,owner_name,backend/coach_api/models.py,52,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,learner_id,backend/coach_api/models.py,53,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,learner_name,backend/coach_api/models.py,54,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,learner_email,backend/coach_api/models.py,55,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,event_type,backend/coach_api/models.py,56,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,sequence,backend/coach_api/models.py,57,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,target_date,backend/coach_api/models.py,58,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,duration_minutes,backend/coach_api/models.py,61,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,status,backend/coach_api/models.py,62,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,meeting_provider,backend/coach_api/models.py,63,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,meeting_link,backend/coach_api/models.py,64,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,graph_event_id,backend/coach_api/models.py,65,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,graph_web_link,backend/coach_api/models.py,66,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,graph_organizer_email,backend/coach_api/models.py,70,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,notes,backend/coach_api/models.py,71,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,review_responses,backend/coach_api/models.py,72,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,review_template_id,backend/coach_api/models.py,80,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,review_instance_id,backend/coach_api/models.py,81,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,manager_signed_by,backend/coach_api/models.py,84,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,last_graph_sync_error,backend/coach_api/models.py,85,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,sync_state,backend/coach_api/models.py,86,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,sync_attempt_count,backend/coach_api/models.py,92,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,created_at,backend/coach_api/models.py,94,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,updated_at,backend/coach_api/models.py,95,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringModule,curriculum,modules,programme_id,backend/curriculum_api/models.py,6,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringModule,curriculum,modules,programme_name,backend/curriculum_api/models.py,7,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringModule,curriculum,modules,cohort_id,backend/curriculum_api/models.py,9,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringModule,curriculum,modules,cohort_name,backend/curriculum_api/models.py,10,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringModule,curriculum,modules,group_id,backend/curriculum_api/models.py,11,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringModule,curriculum,modules,group_name,backend/curriculum_api/models.py,12,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringModule,curriculum,modules,description,backend/curriculum_api/models.py,14,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringModule,curriculum,modules,created_at,backend/curriculum_api/models.py,20,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringModule,curriculum,modules,updated_at,backend/curriculum_api/models.py,21,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringWeek,curriculum,weeks,summary,backend/curriculum_api/models.py,33,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringWeek,curriculum,weeks,learning_outcomes,backend/curriculum_api/models.py,34,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringWeek,curriculum,weeks,created_at,backend/curriculum_api/models.py,55,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringWeek,curriculum,weeks,updated_at,backend/curriculum_api/models.py,56,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringComponent,curriculum,components,description,backend/curriculum_api/models.py,80,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringComponent,curriculum,components,settings_json,backend/curriculum_api/models.py,88,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringComponent,curriculum,components,live_sessions_link,backend/curriculum_api/models.py,92,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringComponent,curriculum,components,created_at,backend/curriculum_api/models.py,107,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringComponent,curriculum,components,updated_at,backend/curriculum_api/models.py,108,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringKsbMapping,curriculum,ksb_mappings,ksb_description,backend/curriculum_api/models.py,129,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringKsbMapping,curriculum,ksb_mappings,source_type,backend/curriculum_api/models.py,130,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringKsbMapping,curriculum,ksb_mappings,source_id,backend/curriculum_api/models.py,131,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringKsbMapping,curriculum,ksb_mappings,created_at,backend/curriculum_api/models.py,138,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringKsbMapping,curriculum,ksb_mappings,updated_at,backend/curriculum_api/models.py,139,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringCompletionCriteria,curriculum,module_completion_criteria,additional_notes,backend/curriculum_api/models.py,154,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,ModuleAuthoringCompletionCriteria,curriculum,module_completion_criteria,created_at,backend/curriculum_api/models.py,155,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ModuleAuthoringCompletionCriteria,curriculum,module_completion_criteria,updated_at,backend/curriculum_api/models.py,156,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,ProgrammeAuditAsset,programme_audit,assets,,backend/curriculum_api/models.py,163,table_not_in_branch,,,suspected; resolve alias/conditional Meta first,,
+curriculum_api,ModuleAuthoringAdvancedDetails,curriculum,module_authoring_advanced_details,,backend/curriculum_api/models.py,203,table_not_in_branch,,,suspected; resolve alias/conditional Meta first,,
+curriculum_api,LiveSession,curriculum,live_sessions,attendees,backend/curriculum_api/models.py,232,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,LiveSession,curriculum,live_sessions,start_datetime,backend/curriculum_api/models.py,234,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSession,curriculum,live_sessions,warnings,backend/curriculum_api/models.py,247,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,LiveSession,curriculum,live_sessions,created_at,backend/curriculum_api/models.py,248,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSession,curriculum,live_sessions,updated_at,backend/curriculum_api/models.py,249,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionOccurrence,curriculum,live_session_occurrences,scheduled_start,backend/curriculum_api/models.py,261,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionOccurrence,curriculum,live_session_occurrences,scheduled_end,backend/curriculum_api/models.py,262,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionOccurrence,curriculum,live_session_occurrences,actual_start,backend/curriculum_api/models.py,263,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionOccurrence,curriculum,live_session_occurrences,actual_end,backend/curriculum_api/models.py,264,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionOccurrence,curriculum,live_session_occurrences,artifacts_synced_at,backend/curriculum_api/models.py,270,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionOccurrence,curriculum,live_session_occurrences,created_at,backend/curriculum_api/models.py,272,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionOccurrence,curriculum,live_session_occurrences,updated_at,backend/curriculum_api/models.py,273,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionAttendance,curriculum,live_session_attendance,intervals,backend/curriculum_api/models.py,288,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,LiveSessionAttendance,curriculum,live_session_attendance,raw_data,backend/curriculum_api/models.py,289,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,LiveSessionAttendance,curriculum,live_session_attendance,created_at,backend/curriculum_api/models.py,290,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionAttendance,curriculum,live_session_attendance,updated_at,backend/curriculum_api/models.py,291,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionArtifact,curriculum,live_session_artifacts,created_datetime,backend/curriculum_api/models.py,441,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionArtifact,curriculum,live_session_artifacts,end_datetime,backend/curriculum_api/models.py,442,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionArtifact,curriculum,live_session_artifacts,metadata,backend/curriculum_api/models.py,443,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+curriculum_api,LiveSessionArtifact,curriculum,live_session_artifacts,created_at,backend/curriculum_api/models.py,444,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,LiveSessionArtifact,curriculum,live_session_artifacts,updated_at,backend/curriculum_api/models.py,445,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,WeekTemplate,curriculum,week_templates,created_at,backend/curriculum_api/models.py,479,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,WeekTemplate,curriculum,week_templates,updated_at,backend/curriculum_api/models.py,480,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,WeekTemplateComponent,curriculum,week_template_components,created_at,backend/curriculum_api/models.py,504,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+curriculum_api,WeekTemplateComponent,curriculum,week_template_components,updated_at,backend/curriculum_api/models.py,505,type_difference,,,suspected compatibility risk,DateTimeField,timestamp without time zone
+engagement_api,FeedbackExternalCampaign,Feedback,feedback_external_campaigns,,backend/engagement_api/models.py,686,table_not_in_branch,,,suspected; resolve alias/conditional Meta first,,
+engagement_api,FeedbackExternalRecipient,Feedback,feedback_external_recipients,,backend/engagement_api/models.py,711,table_not_in_branch,,,suspected; resolve alias/conditional Meta first,,
+enrolment_api,ExtendedIlr,enrolment,Extended_ILR,id,backend/enrolment_api/models.py,25,type_difference,,,suspected compatibility risk,AutoField,bigint
+enrolment_api,WizardPersonalDetails,enrolment,Wizard_Personal_Details,id,backend/enrolment_api/models.py,86,type_difference,,,suspected compatibility risk,AutoField,bigint
+enrolment_api,WizardIlrLearnerDetails,enrolment,Wizard_Ilr_Learner_Details,id,backend/enrolment_api/models.py,86,type_difference,,,suspected compatibility risk,AutoField,bigint
+enrolment_api,WizardSkillsRadar,enrolment,Wizard_Skills_Radar,id,backend/enrolment_api/models.py,86,type_difference,,,suspected compatibility risk,AutoField,bigint
+enrolment_api,WizardKsbAssessment,enrolment,Wizard_Ksb_Assessments,id,backend/enrolment_api/models.py,86,type_difference,,,suspected compatibility risk,AutoField,bigint
+enrolment_api,WizardPlr,enrolment,Wizard_Plr,id,backend/enrolment_api/models.py,86,type_difference,,,suspected compatibility risk,AutoField,bigint
+enrolment_api,WizardPlrRecord,enrolment,Wizard_Plr_Records,id,backend/enrolment_api/models.py,86,type_difference,,,suspected compatibility risk,AutoField,bigint
+enrolment_api,WizardCvJob,enrolment,Wizard_Cv_Job,id,backend/enrolment_api/models.py,86,type_difference,,,suspected compatibility risk,AutoField,bigint
+enrolment_api,WizardPolicyAck,enrolment,Wizard_Policy_Acks,id,backend/enrolment_api/models.py,86,type_difference,,,suspected compatibility risk,AutoField,bigint
+learner_api,EnrolmentUser,enrolment,Created_users,Start_date,backend/learner_api/models.py,267,type_difference,,,suspected compatibility risk,DateField,text
+learner_api,EnrolmentUser,enrolment,Created_users,End_date,backend/learner_api/models.py,268,type_difference,,,suspected compatibility risk,DateField,text
+learner_api,EnrolmentUser,enrolment,Created_users,Sub-programme,backend/learner_api/models.py,374,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Aims/Qualifications,backend/learner_api/models.py,375,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users, English_Assessments,backend/learner_api/models.py,376,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Maths_Assessments,backend/learner_api/models.py,377,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,ICT_Assessments,backend/learner_api/models.py,378,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,English_Exemption_from_Functional_Skills,backend/learner_api/models.py,379,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Maths_Exemption_from_Functional_Skills,backend/learner_api/models.py,380,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,ICT_Exemption_from_Functional_Skills,backend/learner_api/models.py,381,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Reviews,backend/learner_api/models.py,382,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Tracker,backend/learner_api/models.py,383,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Milestones,backend/learner_api/models.py,384,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Contacts,backend/learner_api/models.py,385,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Activity,backend/learner_api/models.py,386,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users, Compliance_documents,backend/learner_api/models.py,387,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users, Review_documents,backend/learner_api/models.py,388,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Documents,backend/learner_api/models.py,389,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,EnrolmentUser,enrolment,Created_users,Subscription_details,backend/learner_api/models.py,390,type_difference,,,suspected compatibility risk,JSONField,json
+learner_api,LearnerProfile,Learner,learners,email_normalized,backend/learner_api/models.py,556,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,LearnerKsb,Learner,learner_ksbs,position,backend/learner_api/models.py,895,column_not_in_branch,,,suspected; alias/conditional mapping must be confirmed,,
+learner_api,LearnerKsb,Learner,learner_ksbs,number,backend/learner_api/models.py,897,column_not_in_branch,,,suspected; alias/conditional mapping must be confirmed,,
+learner_api,LearnerKsb,Learner,learner_ksbs,ksb_type,backend/learner_api/models.py,898,column_not_in_branch,,,suspected; alias/conditional mapping must be confirmed,,
+learner_api,LearnerKsb,Learner,learner_ksbs,description,backend/learner_api/models.py,899,column_not_in_branch,,,suspected; alias/conditional mapping must be confirmed,,
+learner_api,LearnerProgressEntry,Learner,learner_progress_entries,component_link_status,backend/learner_api/models.py,1104,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,LearnerProgressEntry,Learner,learner_progress_entries,component_link_source,backend/learner_api/models.py,1106,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ActiveUser,Learner,Active_users,,backend/learner_api/models.py,1188,table_not_in_branch,,,suspected; resolve alias/conditional Meta first,,
+learner_api,UnactiveUser,Learner,Unactive_users,,backend/learner_api/models.py,1269,table_not_in_branch,,,suspected; resolve alias/conditional Meta first,,
+learner_api,LearnerAbsence,Learner,Absence,,backend/learner_api/models.py,1321,table_not_in_branch,,,suspected; resolve alias/conditional Meta first,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Review_label,backend/learner_api/models.py,1380,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Learner_name,backend/learner_api/models.py,1386,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Learner_email,backend/learner_api/models.py,1387,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Coach_name,backend/learner_api/models.py,1393,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Coach_email,backend/learner_api/models.py,1394,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Notes,backend/learner_api/models.py,1401,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Meeting_provider,backend/learner_api/models.py,1405,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Meeting_link,backend/learner_api/models.py,1406,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Graph_event_id,backend/learner_api/models.py,1407,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Sync_error,backend/learner_api/models.py,1409,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Reviewed_by,backend/learner_api/models.py,1421,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Learner_signature,backend/learner_api/models.py,1427,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Learner_signed_name,backend/learner_api/models.py,1428,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Admin_signature,backend/learner_api/models.py,1430,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Admin_signed_name,backend/learner_api/models.py,1431,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Employer_signature,backend/learner_api/models.py,1436,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EnrolmentReview,enrolment,Enrolment_Reviews,Employer_signed_name,backend/learner_api/models.py,1437,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Over_16,backend/learner_api/models.py,1496,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Within_contract_time,backend/learner_api/models.py,1497,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,PAYE_scheme,backend/learner_api/models.py,1498,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Eligible_residency,backend/learner_api/models.py,1501,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Identity_documents_seen,backend/learner_api/models.py,1502,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Eligibility_evidence,backend/learner_api/models.py,1503,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Right_to_work_England,backend/learner_api/models.py,1504,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Fifty_percent_England,backend/learner_api/models.py,1505,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Minimum_wage,backend/learner_api/models.py,1506,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Exemption_English,backend/learner_api/models.py,1512,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Exemption_Maths,backend/learner_api/models.py,1513,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Exemption_ICT,backend/learner_api/models.py,1514,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Holds_level_2,backend/learner_api/models.py,1518,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Level_matches_role,backend/learner_api/models.py,1519,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Productive_purpose,backend/learner_api/models.py,1520,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,KSB_exposure,backend/learner_api/models.py,1521,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Release_for_OTJ,backend/learner_api/models.py,1522,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Embed_OTJ,backend/learner_api/models.py,1523,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Warning_areas,backend/learner_api/models.py,1524,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Comments,backend/learner_api/models.py,1526,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Programme_status,backend/learner_api/models.py,1527,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,EligibilityReviewDetail,enrolment,Review_Eligibility,Learner_name,backend/learner_api/models.py,1483,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Apprenticeship_appropriate,backend/learner_api/models.py,1544,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Plan_aligns_standard,backend/learner_api/models.py,1545,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Prior_education,backend/learner_api/models.py,1546,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Prior_work_experience,backend/learner_api/models.py,1547,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Plan_needs_adjusting,backend/learner_api/models.py,1548,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,ULN,backend/learner_api/models.py,1551,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Reported_attainment,backend/learner_api/models.py,1552,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Attainment_English,backend/learner_api/models.py,1553,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Attainment_Maths,backend/learner_api/models.py,1554,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Attainment_ICT,backend/learner_api/models.py,1555,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Skills_radar_notes,backend/learner_api/models.py,1557,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Comments,backend/learner_api/models.py,1558,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,RplReviewDetail,enrolment,Review_RPL,Learner_name,backend/learner_api/models.py,1483,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,Basic_arrangements,backend/learner_api/models.py,1571,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,Day_one_induction,backend/learner_api/models.py,1572,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,Fire_safety,backend/learner_api/models.py,1573,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,First_aid,backend/learner_api/models.py,1574,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,Supervision,backend/learner_api/models.py,1575,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,PPE,backend/learner_api/models.py,1576,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,Accident_recording,backend/learner_api/models.py,1577,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,Inform_changes,backend/learner_api/models.py,1578,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,HS_policy,backend/learner_api/models.py,1579,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,Liability_insurance,backend/learner_api/models.py,1580,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,HealthSafetyReviewDetail,enrolment,Review_Health_Safety,Learner_name,backend/learner_api/models.py,1483,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,UlnPrivacyReviewDetail,enrolment,Review_ULN_Privacy,Privacy_notice_read,backend/learner_api/models.py,1595,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,UlnPrivacyReviewDetail,enrolment,Review_ULN_Privacy,Learner_acknowledged,backend/learner_api/models.py,1596,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,UlnPrivacyReviewDetail,enrolment,Review_ULN_Privacy,Learner_name,backend/learner_api/models.py,1483,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,Employer,enrolment,Employers,Signature,backend/learner_api/models.py,1722,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,Employer,enrolment,Employers,Signature_name,backend/learner_api/models.py,1723,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Apprentice_name,backend/learner_api/models.py,1770,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Employer_name,backend/learner_api/models.py,1771,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Employer_address,backend/learner_api/models.py,1772,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Standard,backend/learner_api/models.py,1773,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Apprentice_signature,backend/learner_api/models.py,1788,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Apprentice_signed_name,backend/learner_api/models.py,1789,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Employer_signature,backend/learner_api/models.py,1791,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Employer_signed_name,backend/learner_api/models.py,1792,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Container,backend/learner_api/models.py,1798,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Blob_name,backend/learner_api/models.py,1799,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,ApprenticeshipAgreement,enrolment,Apprenticeship_Agreements,Doc_path,backend/learner_api/models.py,1800,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,IlrDocument,enrolment,ILR_Documents,Learner_signature,backend/learner_api/models.py,1859,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,IlrDocument,enrolment,ILR_Documents,Learner_signed_name,backend/learner_api/models.py,1860,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,IlrDocument,enrolment,ILR_Documents,Provider_signature,backend/learner_api/models.py,1862,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,IlrDocument,enrolment,ILR_Documents,Provider_signed_name,backend/learner_api/models.py,1863,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Apprentice_signature,backend/learner_api/models.py,1927,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Apprentice_signed_name,backend/learner_api/models.py,1928,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Apprentice_position,backend/learner_api/models.py,1929,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Employer_signature,backend/learner_api/models.py,1931,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Employer_signed_name,backend/learner_api/models.py,1932,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Employer_position,backend/learner_api/models.py,1933,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Provider_signature,backend/learner_api/models.py,1935,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Provider_signed_name,backend/learner_api/models.py,1936,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,TrainingPlanDocument,enrolment,Training_Plan_Documents,Provider_position,backend/learner_api/models.py,1937,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Learner_signature,backend/learner_api/models.py,2007,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Learner_signed_name,backend/learner_api/models.py,2008,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Learner_position,backend/learner_api/models.py,2009,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Employer_signature,backend/learner_api/models.py,2011,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Employer_signed_name,backend/learner_api/models.py,2012,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Employer_position,backend/learner_api/models.py,2013,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Provider_signature,backend/learner_api/models.py,2015,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Provider_signed_name,backend/learner_api/models.py,2016,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+learner_api,WrittenAgreement,enrolment,Written_Agreements,Provider_position,backend/learner_api/models.py,2017,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+quiz_api,QuizPackage,curriculum,quizzes,programme_id,backend/quiz_api/models.py,5,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+quiz_api,QuizPackage,curriculum,quizzes,module,backend/quiz_api/models.py,6,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+quiz_api,QuizPackage,curriculum,quizzes,programme,backend/quiz_api/models.py,7,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+quiz_api,QuizPackage,curriculum,quizzes,file_name,backend/quiz_api/models.py,16,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+quiz_api,QuizPackage,curriculum,quizzes,validation_message,backend/quiz_api/models.py,19,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+quiz_api,QuizPackage,curriculum,quizzes,author,backend/quiz_api/models.py,21,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,
+quiz_api,QuizQuestion,curriculum,quiz_questions,explanation,backend/quiz_api/models.py,56,nullability_mismatch,False,True,confirmed declaration difference; intended semantics unconfirmed,,

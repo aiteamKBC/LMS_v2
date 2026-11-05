@@ -1,0 +1,55 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    enrolment__Apprenticeship_Agreements {
+        uuid id PK
+    }
+    enrolment__Created_users {
+        integer id PK
+    }
+    enrolment__Eligibility_Form_Layouts {
+        bigint id PK
+    }
+    enrolment__Employers {
+        integer id PK
+    }
+    enrolment__Enrolment_Documents {
+        uuid id PK
+    }
+    enrolment__Enrolment_Reviews {
+        bigint id PK
+    }
+    enrolment__Extended_ILR {
+        bigint id PK
+    }
+    enrolment__ILR_Documents {
+        uuid id PK
+    }
+    enrolment__Organisations {
+        integer id PK
+    }
+    enrolment__Review_Eligibility {
+        bigint id PK
+        bigint Review_id FK
+    }
+    enrolment__Review_Health_Safety {
+        bigint id PK
+        bigint Review_id FK
+    }
+    enrolment__Review_RPL {
+        bigint id PK
+        bigint Review_id FK
+    }
+    enrolment__Review_ULN_Privacy {
+        bigint id PK
+        bigint Review_id FK
+    }
+    enrolment__Staff_users {
+        integer id PK
+    }
+    enrolment__Training_Plan_Documents {
+        uuid id PK
+    }
+    enrolment__Enrolment_Reviews ||..o| enrolment__Review_Eligibility : "Review_Eligibility_Review_id_fkey"
+    enrolment__Enrolment_Reviews ||..o| enrolment__Review_Health_Safety : "Review_Health_Safety_Review_id_fkey"
+    enrolment__Enrolment_Reviews ||..o| enrolment__Review_RPL : "Review_RPL_Review_id_fkey"
+    enrolment__Enrolment_Reviews ||..o| enrolment__Review_ULN_Privacy : "Review_ULN_Privacy_Review_id_fkey"

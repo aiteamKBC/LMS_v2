@@ -1,0 +1,54 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Audit__Aptem_LMS_matching
+    Audit__LMS_data {
+        bigint id PK
+    }
+    Audit__activity_annotations {
+        text component_id PK
+    }
+    Audit__activity_definitions {
+        uuid activity_id PK
+    }
+    Audit__activity_offerings {
+        uuid offering_id PK
+        uuid activity_id FK
+    }
+    Audit__activity_overrides {
+        bigint aptem_id PK
+        text activity_id PK
+    }
+    Audit__activity_participations {
+        uuid offering_id PK
+        bigint learner_id PK
+    }
+    Audit__activity_source_aliases {
+        uuid activity_id PK
+        text alias_type PK
+        text alias_value PK
+    }
+    Audit__contract_document_archive {
+        bigint contract_id PK
+    }
+    Audit__contract_evidence_links {
+        bigint contract_id PK
+    }
+    Audit__contract_source_link_archive {
+        text source_link_id PK
+    }
+    Audit__ilr_learning_deliveries {
+        bigint id PK
+    }
+    Audit__learner_evidence_overrides {
+        text evidence_id PK
+    }
+    Audit__learner_justification_documents {
+        bigint id PK
+    }
+    Audit__learner_match {
+        bigint aptem_id PK
+    }
+    Audit__activity_definitions ||..o{ Audit__activity_offerings : "activity_offerings_activity_id_fkey"
+    Audit__activity_offerings ||..o{ Audit__activity_participations : "activity_participations_offering_id_fkey"
+    Audit__activity_definitions ||..o{ Audit__activity_source_aliases : "activity_source_aliases_activity_id_fkey"

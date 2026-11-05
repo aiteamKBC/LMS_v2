@@ -1,0 +1,58 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    structured_manual_activities__activity_date_generation_events {
+        bigint id PK
+        bigint row_id FK
+    }
+    structured_manual_activities__activity_ksbs {
+        bigint activity_id PK
+    }
+    structured_manual_activities__aptem_component_ksbs {
+        bigint aptem_id PK
+        bigint component_id PK
+    }
+    structured_manual_activities__evidence_content_classification {
+        bigint evidence_id PK
+    }
+    structured_manual_activities__evidence_lms_matches {
+        bigint evidence_id PK
+    }
+    structured_manual_activities__evidence_lms_merges {
+        bigint id PK
+    }
+    structured_manual_activities__evidence_overrides {
+        bigint evidence_id PK
+    }
+    structured_manual_activities__evidence_replacements {
+        bigint id PK
+    }
+    structured_manual_activities__evidence_report_ksbs {
+        bigint evidence_id PK
+    }
+    structured_manual_activities__journal_ai_audit_runs {
+        bigint id PK
+    }
+    structured_manual_activities__learner_activity_ksbs {
+        bigint aptem_id PK
+        bigint activity_id PK
+    }
+    structured_manual_activities__learner_activity_settings_history {
+        bigint id PK
+    }
+    structured_manual_activities__learner_journal_row_ksbs {
+        bigint row_id PK
+    }
+    structured_manual_activities__lms_material_snapshots {
+        bigint material_id PK
+    }
+    structured_manual_activities__manual_activity_documents {
+        bigint id PK
+        bigint manual_activity_id FK
+    }
+    structured_manual_activities__manual_learner_activities {
+        bigint id PK
+    }
+    structured_manual_activities__manual_learner_activities |o..o{ structured_manual_activities__activity_date_generation_events : "activity_date_generation_events_row_id_fkey"
+    structured_manual_activities__manual_learner_activities ||..o| structured_manual_activities__learner_journal_row_ksbs : "learner_journal_row_ksbs_row_id_fkey"
+    structured_manual_activities__manual_learner_activities ||..o{ structured_manual_activities__manual_activity_documents : "manual_activity_documents_manual_activity_id_fkey"

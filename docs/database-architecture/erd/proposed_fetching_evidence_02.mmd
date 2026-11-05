@@ -1,0 +1,56 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    fetching_evidence__assignment_classification_evaluations {
+        bigint id PK
+    }
+    fetching_evidence__assignment_classification_results {
+        bigint id PK
+        bigint run_id FK
+        bigint learner_id FK
+        bigint component_id FK
+    }
+    fetching_evidence__assignment_classification_runs {
+        bigint id PK
+    }
+    fetching_evidence__audit_signoffs
+    fetching_evidence__break_outcomes {
+        bigint tracker_id PK
+    }
+    fetching_evidence__break_periods
+    fetching_evidence__evidence_items {
+        bigint evidence_id PK
+    }
+    fetching_evidence__ksb_catalog {
+        text standard PK
+        text code PK
+    }
+    fetching_evidence__learner_end_dates {
+        bigint learner_id PK
+    }
+    fetching_evidence__learner_evidence {
+        bigint id PK
+    }
+    fetching_evidence__learner_hours_monthly {
+        bigint learner_id PK
+    }
+    fetching_evidence__learner_ksbs {
+        bigint learner_id PK
+        text category PK
+        text code PK
+    }
+    fetching_evidence__learning_plan_evidences_monthly_source {
+        bigint id PK
+    }
+    fetching_evidence__platform_performance_samples {
+        uuid id PK
+    }
+    fetching_evidence__platform_read_model_outbox {
+        uuid id PK
+    }
+    fetching_evidence__platform_read_models {
+        bigint id PK
+    }
+    fetching_evidence__assignment_classification_evaluations ||..o| fetching_evidence__assignment_classification_results : "assignment_classification_results_evaluation_fk UNVALIDATED"
+    fetching_evidence__assignment_classification_runs ||..o{ fetching_evidence__assignment_classification_results : "assignment_classification_results_run_id_fkey"
+    fetching_evidence__assignment_classification_runs ||..o{ fetching_evidence__assignment_classification_results : "assignment_classification_results_run_learner_fk UNVALIDATED"

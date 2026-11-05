@@ -1,0 +1,3 @@
+[
+{"app": "learner_api", "model": "LearnerKsb", "schema": "Learner", "table_name": "learner_ksbs", "column_name": "learner_id", "file": "backend/learner_api/models.py", "line": 894, "parent_schema": "Learner", "parent_table": "learners", "parent_columns": ["id"], "on_delete": "models.CASCADE", "classification": "ORM-declared missing FK candidate; business meaning and data require review"}
+]
