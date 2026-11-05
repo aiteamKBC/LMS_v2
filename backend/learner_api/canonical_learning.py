@@ -1367,7 +1367,7 @@ def otjh_summary_bulk(learner_ids):
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """
-    from .canonical_hours import pending_hour_records
+    from .canonical_hours import full_hour_projection_ids, pending_hour_records
     enrolment_ids = list(dict.fromkeys(int(value) for value in learner_ids if value is not None))
     if not enrolment_ids:
         return {}
@@ -1392,17 +1392,7 @@ def otjh_summary_bulk(learner_ids):
     if not owners:
         return result
     profile_ids = [int(owner['id']) for owner in owners.values()]
-    retake_profiles = {int(item['learner_id']) for item in query('''
-        SELECT DISTINCT learner_id FROM "Learner".learner_progress_entries
-        WHERE learner_id=ANY(%s) AND deleted_at IS NULL
-          AND source_payload->>'retakeTimeChoice' IN ('keep','new','correct','add','retry')''', [profile_ids])}
-    relation = query('SELECT to_regclass(%s) AS name', ['"Learner".subject_activity_attempts'])
-    if relation and relation[0].get('name'):
-        selected_enrolments = {int(item['enrolment_id']) for item in query('''
-            SELECT DISTINCT enrolment_id FROM "Learner".subject_activity_attempts
-            WHERE enrolment_id=ANY(%s) AND submitted_at IS NOT NULL AND completed IS TRUE
-              AND definition->'studyTime'->>'retakeTimeChoice' IN ('keep','new')''', [list(owners)])}
-        retake_profiles.update(int(owner['id']) for key, owner in owners.items() if key in selected_enrolments)
+    projected_profiles = full_hour_projection_ids(owners.values())
     records = {profile_id: [] for profile_id in profile_ids}
     # Aggregate before transfer: full caseloads can contain many historical rows.
     # Mirror number(): ignore non-finite values and clamp negative seconds to 0.
@@ -1431,7 +1421,7 @@ def otjh_summary_bulk(learner_ids):
             targets[int(item['learner_id'])][item['report_month']] = float(item['target_hours'])
     for enrolment_id, owner in owners.items():
         profile_id = int(owner['id'])
-        if owner.get('progress_transfer_active') or profile_id in retake_profiles:
+        if profile_id in projected_profiles:
             records[profile_id] = entries_for(owner, lineage_only=True)
         result[enrolment_id] = {
             'profile_id': profile_id,
