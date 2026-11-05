@@ -6,8 +6,8 @@ import styles from './progressTransfers.module.css';
 
 type Targets = TransferReview['modules'][number]['targets'];
 type Props = {
-  label: string; candidates: Targets; selectedId: string; suggestedId: string | null;
-  used: ReadonlySet<string>; disabled: boolean; onChange: (componentId: string) => void;
+  label: string; candidates: Targets; selectedIds: string[]; suggestedId: string | null;
+  used: ReadonlySet<string>; disabled: boolean; onChange: (componentIds: string[]) => void;
 };
 
 function menuPlacement(trigger: HTMLButtonElement) {
@@ -24,14 +24,14 @@ function menuPlacement(trigger: HTMLButtonElement) {
     left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)), width, maxHeight };
 }
 
-export function WeekComponentChoices({ label, candidates, selectedId, suggestedId, used, disabled, onChange }: Props) {
+export function WeekComponentChoices({ label, candidates, selectedIds, suggestedId, used, disabled, onChange }: Props) {
   const groupId = useId();
   const rootRef = useRef<HTMLFieldSetElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [placement, setPlacement] = useState<ReturnType<typeof menuPlacement> | null>(null);
   const open = placement !== null;
-  const selected = candidates.find(target => target.componentId === selectedId);
+  const selected = candidates.filter(target => selectedIds.includes(target.componentId));
   function toggleMenu() {
     if (open) { setPlacement(null); return; }
     const trigger = triggerRef.current;
@@ -39,7 +39,9 @@ export function WeekComponentChoices({ label, candidates, selectedId, suggestedI
     setPlacement(menuPlacement(trigger));
   }
   function choose(componentId: string) {
-    onChange(componentId);
+    onChange(selectedIds.includes(componentId) ? selectedIds.filter(id => id !== componentId) : [...selectedIds, componentId]);
+  }
+  function closeMenu() {
     setPlacement(null);
     triggerRef.current?.focus({ preventScroll: true });
   }
@@ -99,30 +101,32 @@ export function WeekComponentChoices({ label, candidates, selectedId, suggestedI
   return <fieldset ref={rootRef} className={styles.componentChoices} aria-label={label} disabled={disabled}>
     <legend>Match in new module</legend>
     <div className={styles.selectedComponent}>
-      <button ref={triggerRef} type="button" className={styles.componentTrigger} aria-label="Choose component" aria-expanded={open}
+      <button ref={triggerRef} type="button" className={styles.componentTrigger} aria-label="Choose components" aria-expanded={open}
         aria-describedby={`${groupId}-value`}
         aria-controls={open ? `${groupId}-menu` : undefined} disabled={disabled || !candidates.length} onClick={toggleMenu}
-        title={selected ? `${selected.title} — ${selected.week || 'No week specified'}` : undefined}>
-        <span id={`${groupId}-value`}>{selected ? <><strong>{selected.title}</strong>{' '}<small>{selected.week || 'No week specified'}</small></> : 'Choose a matching component'}</span>
+        title={selected.length ? selected.map(target => `${target.title} — ${target.week || 'No week specified'}`).join('\n') : undefined}>
+        <span id={`${groupId}-value`}>{selected.length > 1 ? <><strong>{selected.length} components selected</strong>{' '}<small>{selected.map(target => target.title).join(', ')}</small></>
+          : selected.length === 1 ? <><strong>{selected[0].title}</strong>{' '}<small>{selected[0].week || 'No week specified'}</small></> : 'Choose matching components'}</span>
         <ChevronDown size={16} aria-hidden="true" />
       </button>
-      <button type="button" className={styles.clearMatch} disabled={disabled || !selectedId} onClick={() => choose('')}>Clear match</button>
+      <button type="button" className={styles.clearMatch} disabled={disabled || !selectedIds.length} onClick={() => { onChange([]); closeMenu(); }}>Clear matches</button>
     </div>
     {placement && <div ref={menuRef} id={`${groupId}-menu`} className={styles.componentMenu} style={placement} role="region" aria-label="Components by week">
-      <p>Open a week to choose a component.</p>
+      <p>Choose one or more components across weeks. Uncheck a component to remove its match.</p>
       <div className={styles.componentWeeks}>
       {byWeek(candidates).map(([week, targets]) => <WeekChoices key={week} week={week} targets={targets}
-        groupId={groupId} selectedId={selectedId} suggestedId={suggestedId} used={used} disabled={disabled} onChange={choose} />)}
+        groupId={groupId} selectedIds={selectedIds} suggestedId={suggestedId} used={used} disabled={disabled} onToggle={choose} />)}
       </div>
+      <button type="button" className={styles.clearMatch} onClick={closeMenu}>Done</button>
     </div>}
   </fieldset>;
 }
 
-function WeekChoices({ week, targets, groupId, selectedId, suggestedId, used, disabled, onChange }: Omit<Props, 'label' | 'candidates'> & {
-  week: string; targets: Targets; groupId: string;
+function WeekChoices({ week, targets, groupId, selectedIds, suggestedId, used, disabled, onToggle }: Omit<Props, 'label' | 'candidates' | 'onChange'> & {
+  week: string; targets: Targets; groupId: string; onToggle: (componentId: string) => void;
 }) {
   const panelId = useId();
-  const hasSelection = targets.some(target => target.componentId === selectedId);
+  const hasSelection = targets.some(target => selectedIds.includes(target.componentId));
   const [open, setOpen] = useState(hasSelection);
   return <div className={styles.componentWeek}>
     <button type="button" id={`${panelId}-toggle`} className={styles.weekToggle} aria-expanded={open} aria-controls={panelId}
@@ -132,8 +136,8 @@ function WeekChoices({ week, targets, groupId, selectedId, suggestedId, used, di
     </button>
     <div id={panelId} role="region" aria-labelledby={`${panelId}-toggle`} hidden={!open}>
       {open && <div className={styles.weekOptions}>{targets.map(target => <label key={target.componentId} className={styles.componentOption}>
-        <input type="radio" name={groupId} value={target.componentId} checked={selectedId === target.componentId}
-          disabled={disabled || used.has(target.componentId)} onChange={() => onChange(target.componentId)} />
+        <input type="checkbox" name={groupId} value={target.componentId} checked={selectedIds.includes(target.componentId)}
+          disabled={disabled || used.has(target.componentId)} onChange={() => onToggle(target.componentId)} />
         <span><strong>{target.title}</strong>{' '}<small>{target.type} · {target.componentId}</small>
           {target.componentId === suggestedId && <>{' '}<small className={styles.recommendedMatch}>Recommended</small></>}
           {used.has(target.componentId) && <>{' '}<small>Already matched to another old component</small></>}
