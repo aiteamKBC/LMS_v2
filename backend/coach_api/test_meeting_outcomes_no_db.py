@@ -17,7 +17,8 @@ def event(key, source='mcr', status='scheduled', day='2026-09-26', start='10:00'
 class MeetingOutcomeTests(SimpleTestCase):
     def annotate(self, events, attended=()):
         with patch('coach_api.meeting_outcomes.learner_attended_event_keys',
-                   return_value=set(attended)) as lookup:
+                   return_value=set(attended)) as lookup, patch(
+                       'coach_api.review_attendance_display.read_evidence', return_value=({}, {}, {})):
             annotate_meeting_outcomes(events, now=NOW)
         return lookup
 

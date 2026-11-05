@@ -14,6 +14,11 @@ import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedRe
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 const coachMode = vi.hoisted(() => ({ email: 'coach@example.invalid', isInitialized: true, isViewingAsCoach: false }));
+const nativeArtifacts = vi.hoisted(() => vi.fn());
+vi.mock('./calendarEvents', async importOriginal => ({
+  ...await importOriginal<typeof import('./calendarEvents')>(),
+  fetchCoachMeetingArtifacts: nativeArtifacts,
+}));
 vi.mock('@/features/monthly-logs/page', () => ({ LearnerLogs: () => null }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => coachMode }));
@@ -106,6 +111,7 @@ function mount(instanceId = 'instance-1') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  nativeArtifacts.mockResolvedValue({ artifacts: [], attendance: null, meetingSummary: null });
   vi.mocked(fetchCoachReviewSlots).mockResolvedValue(['09:00', '10:00', '10:30', '11:00', '12:00', '14:30', '15:00']);
   account.name = 'Sam Coach';
   coachMode.email = 'coach@example.invalid';
@@ -124,6 +130,44 @@ beforeEach(() => {
     transcriptText: '',
     transcriptAvailable: false,
     transcriptTruncated: false,
+  });
+});
+
+describe('Native Review Teams resources', () => {
+  it.each(['mcr', 'progress-review', 'review'])('checks the linked %s meeting without losing unsaved answers', async source => {
+    const data = definition('scheduled');
+    data.calendarMeeting = { eventKey: 'native:exact-meeting', source, status: 'scheduled',
+      meetingLink: 'https://example.invalid/teams', graphWebLink: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    nativeArtifacts.mockResolvedValue({ artifacts: [], attendance: null, meetingSummary: null,
+      event: { eventKey: 'native:exact-meeting', status: 'in-progress' } });
+    mount();
+    const answer = await screen.findByDisplayValue('Review the next module');
+    fireEvent.change(answer, { target: { value: 'Unsaved answer' } });
+    const check = await screen.findByRole('button', { name: 'Check Teams' });
+    await waitFor(() => expect(check).toBeEnabled());
+    fireEvent.click(check);
+    await waitFor(() => expect(nativeArtifacts).toHaveBeenCalledWith('native:exact-meeting', undefined, { refresh: true }));
+    expect(answer).toHaveValue('Unsaved answer');
+  });
+
+  it('does not expose a check without a linked meeting', async () => {
+    mount();
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+    expect(nativeArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('disables checking in coach view-as mode', async () => {
+    coachMode.isViewingAsCoach = true;
+    const data = definition('scheduled');
+    data.calendarMeeting = { eventKey: 'native:exact-meeting', source: 'mcr', status: 'scheduled',
+      meetingLink: 'https://example.invalid/teams', graphWebLink: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    mount();
+    const check = await screen.findByRole('button', { name: 'Check Teams' });
+    await waitFor(() => expect(check).toBeDisabled());
+    expect(nativeArtifacts.mock.calls.every(call => call[2]?.refresh === false)).toBe(true);
   });
 });
 

@@ -50,7 +50,10 @@ def _prepare_cookies(directory):
             if not source.is_absolute():
                 raise VideoImportError('YOUTUBE_COOKIES_FILE must be an absolute path outside the application folder.')
             source = source.resolve(strict=True)
-            if source.is_relative_to(Path(__file__).resolve().parents[2]):
+            # The backend folder (curriculum_api/..). parents[2] was the repo root
+            # on the VPS but "/" in the container (/app/curriculum_api), which
+            # rejected every path there.
+            if source.is_relative_to(Path(__file__).resolve().parents[1]):
                 raise VideoImportError('Keep the YouTube session file outside the application folder.')
             if not source.is_file():
                 raise VideoImportError(invalid)

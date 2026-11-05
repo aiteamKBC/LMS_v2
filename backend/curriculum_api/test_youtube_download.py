@@ -258,6 +258,18 @@ class YouTubeDownloadTests(unittest.TestCase):
                     youtube._prepare_cookies(Path(temporary))
                 self.assertNotIn(path, str(raised.exception))
 
+    def test_cookie_file_outside_container_application_is_allowed(self):
+        source = self.make_cookies()
+        original = source.read_bytes()
+        # Model /app/curriculum_api alongside a private cookie file outside /app.
+        module_file = source.parent / 'app' / 'curriculum_api' / 'youtube_download.py'
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(youtube, '__file__', str(module_file)):
+            copied = youtube._prepare_cookies(Path(temporary))
+            self.assertEqual(copied.parent, Path(temporary))
+            self.assertIn(COOKIE_VALUE, copied.read_text())
+            self.assertEqual(source.read_bytes(), original)
+
     def test_posix_cookie_file_permissions_are_enforced(self):
         self.make_cookies()
         for mode in (0o644, 0o640, 0o606, 0o600):

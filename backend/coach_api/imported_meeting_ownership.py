@@ -124,12 +124,16 @@ def _verify_source_and_overlay(record, event, profile, source):
     if len(overlays) > 1:
         raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT')
     overlay = overlays[0] if overlays else None
+    allowed_statuses = {ImportedReviewInstance.STATUS_NOT_SCHEDULED, ImportedReviewInstance.STATUS_SCHEDULED}
+    if overlay and overlay.status == 'in-progress' and record.status == 'in-progress':
+        from .review_rescheduling import previous_bookings
+        if previous_bookings(record):
+            allowed_statuses.add('in-progress')
     if overlay and (overlay.learner_id != record.learner_id
                     or overlay.event_key != record.event_key
                     or overlay.owner_email.casefold() != record.owner_email.casefold()
                     or overlay.completed_at
-                    or overlay.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED,
-                                              ImportedReviewInstance.STATUS_SCHEDULED}):
+                    or overlay.status not in allowed_statuses):
         raise MeetingOwnershipError('MEETING_OWNERSHIP_SOURCE_CONFLICT')
     try:
         linked = booking_for_imported_review(profile, {

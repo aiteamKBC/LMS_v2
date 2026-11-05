@@ -184,9 +184,12 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
         codes.append('SUMMARY_SESSION_MISMATCH')
     if latest_status == "failed":
         codes.append("AI_SUMMARY_FAILED")
+    from .review_rescheduling import historical_artifacts
     artifacts = []
-    for item in snapshot['artifacts']:
+    for item in [*snapshot['artifacts'], *historical_artifacts(record, saved)]:
         artifact = public_coach_meeting_artifact(item)
+        if item.get('previous_session'):
+            artifact['previous_session'] = True
         if isinstance(artifact.get('metadata'), dict):
             artifact['metadata'].pop('_lms_booking_fingerprint', None)
         if item.get('artifact_type') == 'recording':
@@ -194,7 +197,8 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
             # is not a playable archive. The local signed URL never enters JSON.
             artifact['content_available'] = bool(archived_recording_url(
                 record.event_key, item.get('graph_artifact_id') or item.get('id')))
-            if not artifact['content_available'] and graph_playback_candidate(record, snapshot, item):
+            playback_snapshot = {**saved, 'selectionError': None} if item.get('previous_session') else snapshot
+            if not artifact['content_available'] and graph_playback_candidate(record, playback_snapshot, item):
                 artifact['graph_playback_candidate'] = True
         artifacts.append(artifact)
     return JsonResponse({
@@ -459,7 +463,14 @@ def migrated_review_check_session(request, review_id):
         return JsonResponse({'detail': 'generateSummary must be a boolean.'}, status=400)
     generate_summary = options.get('generateSummary', False)
     if (overlay.meeting_intelligence or {}).get('actualSession'):
-        return JsonResponse({'detail': 'This historical Review has an immutable Actual Session claim. '
+        from .review_rescheduling import archived_claim
+        try:
+            archived = (bound_session(record, overlay=overlay) is None
+                        and archived_claim(record, overlay.meeting_intelligence['actualSession']))
+        except BoundSessionConflict:
+            archived = None
+        if not archived:
+            return JsonResponse({'detail': 'This historical Review has an immutable Actual Session claim. '
                              'Its schema and evidence need a controlled retirement before a meeting-wide refresh.',
                              'code': 'LEGACY_SESSION_CLAIM_REQUIRES_REVIEW'}, status=409)
     basis = _check_basis(overlay, record)

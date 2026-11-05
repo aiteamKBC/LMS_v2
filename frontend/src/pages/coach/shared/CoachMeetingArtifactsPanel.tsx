@@ -761,7 +761,8 @@ export function CoachMeetingArtifactsPanel({
     );
     const combinedTranscript = combinedTranscriptArtifact(transcriptSegments);
     return {
-      transcripts: combinedTranscript ? [combinedTranscript] : [],
+      transcripts: state.artifacts.some(artifact => artifact.previous_session)
+        ? transcriptSegments : combinedTranscript ? [combinedTranscript] : [],
       recordings: state.artifacts.filter(artifact => artifact.artifact_type === 'recording' && visibleArtifactTypes.includes('recording')),
     };
   }, [state, visibleArtifactTypes]);
@@ -865,7 +866,7 @@ export function CoachMeetingArtifactsPanel({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[12px] font-bold text-foreground-900">{artifactLabel(type)}</p>
                     <p className="mt-0.5 truncate text-[12px] text-foreground-500">
-                      {artifactDate(artifact.end_datetime || artifact.created_datetime)}
+                      {artifact.previous_session ? 'Previous meeting · ' : ''}{artifactDate(artifact.end_datetime || artifact.created_datetime)}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {contentAvailable ? <button

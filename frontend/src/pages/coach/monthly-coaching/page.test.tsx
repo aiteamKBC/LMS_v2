@@ -65,6 +65,20 @@ const meetings = [
   meeting(8, { learner: 'Live Session Learner', source: 'live-session' }),
 ];
 
+it.each(['curriculum', 'aptem'])('shows %s missed attendance separately from In Progress in the table', async reviewSource => {
+  fetchEvents.mockResolvedValue({ events: [meeting(40, { learner: 'Absent learner', reviewSource,
+    status: 'in-progress', reviewAttendance: 'missed', scheduledDate: '2026-09-13', scheduledTime: '10:00',
+    ...(reviewSource === 'aptem' ? { importedReviewType: 'Monthly Coaching Meeting', aptemReviewId: '40', calendarEventKey: 'mcr:40' } : {}),
+  })] });
+  mount();
+  const badge = await screen.findByText('Learner missed');
+  const row = within(badge.closest('tr')!);
+  expect(row.getByText('In Progress')).toBeInTheDocument();
+  expect(badge).toHaveClass('text-red-700');
+  fireEvent.click(row.getByRole('button', { name: /More actions/ }));
+  expect(screen.getByRole('menuitem', { name: 'View details' })).toBeInTheDocument();
+});
+
 function RouteState() {
   const location = useLocation();
   return <output data-testid="route">{location.pathname}{location.search}</output>;

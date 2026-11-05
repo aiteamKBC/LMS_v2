@@ -58,4 +58,6 @@ EXPOSE 8000-8009
 #   --lifespan off: the Channels router has no lifespan handler
 #   /health/ is answered in config/health.py for the load balancer.
 # `exec` makes Uvicorn PID 1, so it receives ECS's stop signal and shuts down cleanly.
+# docker-entrypoint.sh writes secret files (e.g. the YouTube cookies) first
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["sh", "-c", "exec uvicorn config.asgi:application --host 0.0.0.0 --port \"$PORT\" --workers \"$WEB_CONCURRENCY\" --proxy-headers --forwarded-allow-ips '*' --lifespan off"]

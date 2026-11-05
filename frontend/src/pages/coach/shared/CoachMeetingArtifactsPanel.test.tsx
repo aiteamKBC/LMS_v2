@@ -239,6 +239,19 @@ describe('MeetingSummaryCard status handling', () => {
 });
 
 describe('Meeting artifact display', () => {
+  it('keeps transcripts from the previous and replacement meetings separate', async () => {
+    renderArtifacts([
+      { id: 'old', artifact_type: 'transcript', graph_artifact_id: 'old', previous_session: true,
+        created_datetime: '2026-10-27T10:00:00Z' },
+      { id: 'new', artifact_type: 'transcript', graph_artifact_id: 'new',
+        created_datetime: '2026-11-03T10:00:00Z' },
+    ]);
+    expect(await screen.findAllByText('Transcript')).toHaveLength(2);
+    expect(screen.getByText(/Previous meeting/)).toBeInTheDocument();
+    const links = screen.getAllByRole('link', { name: 'Download' });
+    expect(links[0]).toHaveAttribute('href', expect.stringContaining('/transcript/old/content'));
+    expect(links[1]).toHaveAttribute('href', expect.stringContaining('/transcript/new/content'));
+  });
   it('combines transcript segments into one downloadable card while keeping recordings separate', async () => {
     renderArtifacts([
       {

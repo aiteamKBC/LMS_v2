@@ -83,13 +83,24 @@ def populate_answer(overlay, state, summary_text):
 def record_answer_edit(overlay, answers, *, actor, edited_fields=(), role="advisor", account_id=None):
     if not isinstance(answers, dict):
         raise ValueError("answers must be an object keyed by field id.")
+    from .migrated_skills_radar import check_role_edits
+    from .migrated_reviews import all_fields
+    check_role_edits(overlay.template_snapshot, overlay.answers or {}, answers, role)
+    radar_keys = {field['key'] for field in all_fields(overlay.template_snapshot) if field.get('skillsRadar')}
     state = deepcopy(overlay.meeting_intelligence or {})
     audit = state.setdefault("answerEdits", {})
     previous = overlay.answers or {}
-    for key, value in answers.items():
+    changed_answers = {**{key: None for key in radar_keys if key in previous and key not in answers}, **answers}
+    for key, value in changed_answers.items():
+        if key in radar_keys and (previous.get(key) or None) == (value or None):
+            continue
         if key not in previous or previous[key] != value:
+            history = list((audit.get(key) or {}).get('history') or []) if key in radar_keys else None
             audit[key] = {"actor": actor, "role": role, "accountId": account_id,
                           "at": timezone.now().isoformat()}
+            if history is not None:
+                history.append({'value': value, 'role': role, 'at': audit[key]['at']})
+                audit[key]['history'] = history
     overlay.meeting_intelligence = state
     field = meeting_summary_field(overlay.template_snapshot)
     if not field:

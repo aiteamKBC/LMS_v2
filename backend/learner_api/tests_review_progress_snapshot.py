@@ -12,7 +12,7 @@ start date in the first place, and curriculum_api/tests_review_progress_snapshot
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
@@ -21,7 +21,9 @@ from .review_progress_snapshot import (
     CALCULATION_METHOD_PLANNED_HOURS,
     build_progress_snapshot,
 )
-from .training_plan_targets import WeekScheduleResolution
+from .training_plan_targets import WeekScheduleResolution, resolve_training_plan_week_starts as real_week_resolver
+from .module_progress import _module_progress_facts
+from .progress_cutoff import records_as_of
 
 #: The learner's own programme start date.
 LEARNER_START = date(2024, 10, 18)
@@ -57,8 +59,23 @@ def plan_detail():
 class ProgressSnapshotCalculationTests(SimpleTestCase):
     def setUp(self):
         self.detail = plan_detail()
-        patcher = patch.object(review_progress_snapshot, 'build_otjh_detail', return_value=self.detail)
-        self.build_detail = patcher.start()
+        self.live_otjh = {'actual': 250.5, 'planned': 40}
+        self.live_ksb = {'status': 'ready', 'completed': 159, 'total': 166}
+        self.historical = None
+        def live_inputs(source, profile, *, as_of):
+            progress = [{**row, 'component_ref': row.get('componentId'), 'passed': row.get('passed')}
+                        for row in records_as_of(profile.training_plan_progress, as_of)]
+            facts = _module_progress_facts(self.historical, {**self.detail, 'quizAttempts': []}, [], progress)
+            return {'owner': {'id': 101, 'enrolment_id': 201}, 'otjh': dict(self.live_otjh),
+                    'ksb': dict(self.live_ksb), **facts}
+        patcher = patch.object(review_progress_snapshot, 'read_live_inputs', side_effect=live_inputs)
+        self.live_read = patcher.start()
+        self.addCleanup(patcher.stop)
+        # Schedule-specific assertions below stay independent of hour pacing.
+        # The real Dashboard hour target is separately exercised below.
+        patcher = patch.object(review_progress_snapshot, 'coach_otjh_target_to_date',
+                               side_effect=lambda *args, as_of, **kw: 30 if as_of < date(2024, 11, 8) else 40)
+        self.hour_target = patcher.start()
         self.addCleanup(patcher.stop)
         schedule_patcher = patch(
             'learner_api.training_plan_targets.resolve_training_plan_week_starts',
@@ -71,14 +88,9 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         )
         schedule_patcher.start()
         self.addCleanup(schedule_patcher.stop)
-        # The legacy cache and current accepted ledger intentionally disagree.
-        self.actual_hours = 250.5
-        self.hours_reader = self.enterContext(patch(
-            'learner_api.canonical_learning.otjh_summary_bulk',
-            side_effect=lambda ids: {201: {'profile_id': 101, 'actual': self.actual_hours}},
-        ))
+        # Deliberately stale columns must not supply new Review metrics.
         self.profile = SimpleNamespace(
-            id=101, enrolment_id=201, completed_hours=Decimal('12.70'),
+            completed_hours=Decimal('21.90'),
             training_plan_progress=[
                 {'componentId': 'cW1', 'kind': 'component', 'verifiedSeconds': 5 * 3600},
             ],
@@ -116,17 +128,14 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         self.assertEqual(snapshot['programmeProgress']['expected'], 3)
         self.assertEqual(snapshot['weeksElapsed'], 2)
 
-    def test_qualifying_review_hours_share_the_planned_and_target_denominator(self):
-        with patch.object(
-            review_progress_snapshot, 'review_planned_target_hours', return_value=(12.0, 3.0),
-        ):
-            snapshot = self.snapshot()
+    def test_review_hours_already_in_dashboard_totals_are_not_added_twice(self):
+        self.live_otjh['planned'] = 52
+        self.hour_target.side_effect = None
+        self.hour_target.return_value = 33
+        snapshot = self.snapshot()
         self.assertEqual(snapshot['offTheJobHours']['planned'], 52.0)
         self.assertEqual(snapshot['offTheJobHours']['expected'], 33.0)
-        self.assertEqual(snapshot['targetCalculation']['reviewPlannedOtjHours'], 12.0)
-        self.assertEqual(snapshot['targetCalculation']['reviewTargetOtjHours'], 3.0)
-        # Review actuals are deliberately not projected here: the owning OTJ
-        # system has already folded accepted entries into the canonical total.
+        # Canonical totals own Review allowances; this consumer adds none.
         self.assertEqual(snapshot['offTheJobHours']['actual'], 250.5)
 
     def test_learner_metadata_start_does_not_replace_plan_week_dates(self):
@@ -165,32 +174,31 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
 
     # ----------------------------------------------------- actual figures
 
-    def test_actual_hours_come_from_accepted_ledger_not_the_stale_profile_cache(self):
+    def test_actual_hours_come_from_the_live_dashboard_not_stale_columns(self):
         snapshot = self.snapshot()
         self.assertEqual(snapshot['offTheJobHours']['actual'], 250.5)
         self.assertEqual(snapshot['offTheJobHours']['actualPercent'], 626.25)
-        self.assertEqual(snapshot['actualHoursSource'], 'canonical.accepted_hours')
-        self.hours_reader.assert_called_once_with([201])
+        self.assertEqual(snapshot['actualHoursSource'], 'canonical_learning.dashboard')
         self.assertEqual(snapshot['programmeProgress']['actual'], 1)
         self.assertEqual(snapshot['programmeProgress']['planned'], 4)
         self.assertEqual(snapshot['programmeProgress']['actualPercent'], 25.0)
 
-    def test_zero_accepted_completed_hours_is_valid(self):
-        self.actual_hours = 0
+    def test_zero_live_completed_hours_is_valid(self):
+        self.live_otjh['actual'] = 0
         snapshot = self.snapshot()
         self.assertEqual(snapshot['offTheJobHours']['actual'], 0.0)
         self.assertEqual(snapshot['offTheJobHours']['actualPercent'], 0.0)
 
-    def test_missing_or_invalid_current_hours_is_unavailable_not_stale_or_zero(self):
+    def test_missing_or_invalid_live_completed_hours_is_unavailable_not_zero(self):
         for value in (None, '', 'not-a-number', 'NaN', Decimal('-1')):
             with self.subTest(value=value):
-                self.actual_hours = value
+                self.live_otjh['actual'] = value
                 with self.assertRaises(review_progress_snapshot.UnavailableCompletedHours):
                     self.snapshot()
 
-    def test_another_profiles_hours_are_never_used(self):
-        self.profile.id = 102
-        with self.assertRaises(review_progress_snapshot.UnavailableCompletedHours):
+    def test_unavailable_live_source_does_not_fall_back_to_stale_learner_totals(self):
+        self.live_read.side_effect = review_progress_snapshot.UnavailableCompletedHours('Live source unavailable')
+        with self.assertRaisesMessage(ValueError, 'Live source unavailable'):
             self.snapshot()
 
     def test_calculation_does_not_mutate_stored_completed_hours(self):
@@ -198,9 +206,9 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         self.snapshot()
         self.assertEqual(self.profile.completed_hours, original)
 
-    def test_each_editable_recalculation_reads_current_hours_without_changing_earlier_snapshot(self):
+    def test_each_editable_recalculation_reads_live_values_without_changing_previous_snapshot(self):
         first = self.snapshot()
-        self.actual_hours = 300.25
+        self.live_otjh['actual'] = 300.25
         second = self.snapshot()
         self.assertEqual(first['offTheJobHours']['actual'], 250.5)
         self.assertEqual(second['offTheJobHours']['actual'], 300.25)
@@ -222,26 +230,15 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         ]
         self.assertEqual(self.snapshot()['programmeProgress']['actual'], 0)
 
-    def test_real_assigned_ksb_progress_is_frozen_in_the_snapshot(self):
-        version = SimpleNamespace(
-            source_profile_id='standard:st0845-v1-0', programme='Programme',
-        )
-        self.profile.ksb_assignment = SimpleNamespace(profile_version=version)
-        self.profile.ksbs = [{'code': 'K1'}, {'code': 'S2'}]
-        self.profile.training_plan_progress = [{'componentId': 'cW1', 'kind': 'component'}]
-        self.detail['components'][0]['ksbMappings'] = [{'code': 'K1'}, {'code': 'OUTSIDE'}]
-        standard = {
-            'name': 'Project controls professional', 'version': '1.0', 'level': 'Level 6',
-        }
-        with patch('curriculum_api.views.find_skills_england_standard', return_value=standard):
-            snapshot = self.snapshot()
-        self.assertEqual(snapshot['ksbProgress']['actual'], 1)
-        self.assertEqual(snapshot['ksbProgress']['planned'], 2)
-        self.assertEqual(snapshot['ksbProgress']['actualPercent'], 50)
+    def test_live_ksb_evidence_points_are_frozen_without_claiming_unique_standard_achievement(self):
+        snapshot = self.snapshot()
+        self.assertEqual(snapshot['ksbProgress']['actual'], 159)
+        self.assertEqual(snapshot['ksbProgress']['planned'], 166)
+        self.assertEqual(snapshot['ksbProgress']['actualPercent'], 95.78)
         self.assertEqual(snapshot['ksbProgress']['expectedPercent'], 100)
         self.assertEqual(
             snapshot['ksbProgress']['title'],
-            'Project controls professional Apprenticeship Standard (v1.0) (Level 6)',
+            'KSB evidence points',
         )
 
     def test_future_progress_is_not_included_before_the_snapshot_timestamp(self):
@@ -253,7 +250,8 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         self.assertEqual(snapshot['programmeProgress']['actual'], 0)
 
     def test_an_empty_plan_reports_nothing_rather_than_zero_percent_on_track(self):
-        self.build_detail.return_value = {'week': [], 'components': [], 'totalExpectedOtjh': 0.0}
+        self.detail = {'week': [], 'components': [], 'totalExpectedOtjh': 0.0}
+        self.live_otjh['planned'] = 0
         snapshot = self.snapshot()
         self.assertIsNone(snapshot['offTheJobHours']['actualPercent'])
         self.assertIsNone(snapshot['offTheJobHours']['variancePercent'])
@@ -266,8 +264,94 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         self.assertEqual(self.snapshot()['schemaVersion'], 5)
         self.assertEqual(
             self.snapshot()['formulaVersion'],
-            'canonical_accepted_hours_and_component_ksb_v5',
+            'canonical_dashboard_metrics_and_scheduled_catalogue_v6',
         )
+
+    def test_finished_previous_learning_is_due_but_does_not_automatically_award_completion(self):
+        self.historical = {'subjects': [{'id': 50, 'name': 'Previous learning'}], 'activities': [
+            {'group_id': 50, 'activity_id': 1, 'completed': True},
+            {'group_id': 50, 'activity_id': 2, 'completed': False}]}
+        metric = self.snapshot()['programmeProgress']
+        self.assertEqual((metric['actual'], metric['expected'], metric['planned']), (2, 5, 6))
+        self.assertEqual((metric['actualPercent'], metric['expectedPercent']), (33.33, 83.33))
+
+    def test_live_dashboard_hour_target_reuses_same_programme_window(self):
+        from .dashboard_metrics import coach_otjh_target_to_date
+        self.source.start_date = date(2024, 10, 18)
+        self.source.end_date = date(2025, 1, 26)  # 100-day window.
+        self.live_otjh = {'actual': 21.9, 'planned': 100}
+        with patch.object(review_progress_snapshot, 'coach_otjh_target_to_date', coach_otjh_target_to_date):
+            metric = self.snapshot()['offTheJobHours']
+        self.assertEqual(metric['expected'], 15)
+        self.assertEqual(metric['actualPercent'], 21.9)
+        self.assertEqual(metric['expectedPercent'], 15)
+        self.assertEqual(metric['variancePercent'], 6.9)
+
+    def test_stale_missing_column_no_longer_blocks_verified_live_totals(self):
+        self.profile.completed_hours = None
+        self.assertEqual(self.snapshot()['offTheJobHours']['actual'], 250.5)
+
+    def test_empty_or_unavailable_ksb_is_not_reported_as_zero_achievement(self):
+        for ksb in ({'status': 'unavailable'}, {'status': 'empty', 'completed': 0, 'total': 0}):
+            self.live_ksb = ksb
+            result = self.snapshot()['ksbProgress']
+            self.assertFalse(result['available'])
+            self.assertIsNone(result['actualPercent'])
+
+    def test_invalid_current_schedule_still_refuses_partial_success(self):
+        with patch('learner_api.training_plan_targets.resolve_training_plan_week_starts',
+                   return_value=WeekScheduleResolution({}, [])):
+            with self.assertRaises(review_progress_snapshot.UnresolvedTrainingPlanTarget):
+                self.snapshot()
+
+    def test_separate_quiz_cards_sharing_a_quiz_keep_the_dashboard_population(self):
+        for row in self.detail['components'][:2]:
+            row.update(isQuiz=True, quizMeta={'quizId': 12})
+        result = self.snapshot()['programmeProgress']
+        self.assertEqual(result['planned'], 4)
+        self.assertEqual(result['expected'], 3)
+        self.assertEqual(result['actual'], 0)  # No passed quiz attempt.
+
+    def test_retained_quiz_record_is_due_without_automatic_achievement(self):
+        self.detail['retiredQuizComponents'] = [{'componentId': 'REMOVED', 'moduleId': 'm1',
+            'module': 'M1', 'isQuiz': True, 'quizMeta': {'quizId': 12}}]
+        result = self.snapshot()
+        self.assertEqual(result['programmeProgress']['planned'], 5)
+        self.assertEqual(result['programmeProgress']['actual'], 1)
+        self.assertEqual(result['programmeProgress']['expected'], 4)
+        self.assertEqual(result['targetCalculation']['retainedComponents'], 1)
+
+    def test_mismatched_catalogue_and_target_population_fails_visibly(self):
+        live = self.live_read.side_effect(self.source, self.profile, as_of=CALCULATED_AT)
+        live['modules'][0]['total'] += 1
+        self.live_read.side_effect = None
+        self.live_read.return_value = live
+        with self.assertRaisesMessage(ValueError, 'activity population needs review'):
+            self.snapshot()
+
+    def test_missing_programme_window_keeps_hour_target_unavailable(self):
+        from .dashboard_metrics import coach_otjh_target_to_date
+        self.source.start_date = LEARNER_START
+        self.source.end_date = None
+        with patch.object(review_progress_snapshot, 'coach_otjh_target_to_date', coach_otjh_target_to_date):
+            result = self.snapshot()['offTheJobHours']
+        self.assertIsNone(result['expected'])
+        self.assertIsNone(result['variancePercent'])
+
+    def test_live_catalogue_keeps_module_and_week_identity_through_real_schedule_resolution(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.side_effect = [
+            [('m1', LEARNER_START, 'native')],
+            [(f'w{i}', 'm1') for i in range(1, 5)],
+        ]
+        with patch('learner_api.training_plan_targets.connections', {'default': connection}), \
+             patch('learner_api.training_plan_targets.resolve_training_plan_week_starts', real_week_resolver):
+            result = self.snapshot()
+        self.assertEqual(result['programmeProgress']['expected'], 3)
+        self.assertEqual(result['targetCalculation']['status'], 'resolved')
+        self.assertEqual(cursor.execute.call_args_list[0].args[1], ['m1'])
+        self.assertEqual(result['targetCalculation']['currentWeek']['moduleId'], 'm1')
 
     def test_an_unknown_method_is_refused_rather_than_silently_defaulted(self):
         with self.assertRaises(ValueError):

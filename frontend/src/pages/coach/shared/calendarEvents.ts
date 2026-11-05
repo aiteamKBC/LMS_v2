@@ -2,6 +2,7 @@ import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { coachFetch } from '@/lib/coachFetch';
 import { reviewCategory } from '@/lib/reviewCategory';
 import { withCoachViewAs } from '@/lib/coachViewAs';
+import type { ReviewAttendance } from '@/lib/reviewAttendance';
 
 interface CoachCalendarFetchOptions {
   start?: string;
@@ -34,6 +35,7 @@ export type CoachCalendarStatus =
   | 'not-scheduled';
 
 export interface CoachCalendarEvent {
+  reviewAttendance?: ReviewAttendance;
   id: string;
   bookingOnly?: boolean;
   eventKey?: string;
@@ -166,6 +168,7 @@ export interface CoachMeetingArtifact {
   content_available?: boolean;
   /** Saved, verified APTEM metadata permits an on-demand Teams playback attempt. */
   graph_playback_candidate?: boolean;
+  previous_session?: boolean;
 }
 
 export interface CoachMeetingAttendanceRecord {
@@ -491,6 +494,11 @@ export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form
       scheduledDate: form.date,
       scheduledTime: form.time,
       durationMinutes: form.durationMinutes,
+      ...(event.status === 'in-progress' ? { expectedBooking: {
+        scheduledDate: event.scheduledDate,
+        scheduledTime: event.scheduledTime,
+        durationMinutes: event.durationMinutes,
+      } } : {}),
     }),
   });
   const data = await readJsonResponse<{ event: CoachCalendarEvent; warning?: string }>(response);
