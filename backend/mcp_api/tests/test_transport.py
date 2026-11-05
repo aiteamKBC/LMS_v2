@@ -88,13 +88,15 @@ class ProtocolTests(TransportTestCase):
     def test_ping_and_tools_list(self):
         self.assertEqual(self.post(rpc("ping")).json()["result"], {})
         tools = self.post(rpc("tools/list")).json()["result"]["tools"]
-        self.assertEqual([t["name"] for t in tools], ["test_whoami"])
-        self.assertEqual(tools[0]["annotations"],
+        self.assertEqual([t["name"] for t in tools], ["apply_change", "cancel_change", "list_my_pending_changes", "test_whoami"])
+        whoami = next(t for t in tools if t["name"] == "test_whoami")
+        self.assertEqual(whoami["annotations"],
                          {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True})
-        self.assertIn("inputSchema", tools[0])
+        self.assertIn("inputSchema", whoami)
 
     def test_no_tools_registered_outside_tests(self):
-        self.assertEqual(set(REGISTRY), {"test_whoami"})
+        # Step 5 adds the three change-management tools; no business tools until Step 6.
+        self.assertEqual(set(REGISTRY), {"apply_change", "cancel_change", "list_my_pending_changes", "test_whoami"})
 
     def test_invalid_json_unknown_method_and_batch(self):
         bad = self.post("{not json")

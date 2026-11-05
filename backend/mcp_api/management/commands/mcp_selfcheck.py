@@ -12,12 +12,26 @@ leaves nothing behind even when a check fails half-way.
 - ``--mode transport`` (Step 4): a real token through ``/mcp/`` with Django's test
   client -- initialize, tools/list, and a test-only tool that confirms the actor is
   the token's account with source ``mcp:*`` during the call and cleared after.
+- ``--mode changes`` (Step 5): a real token through ``/mcp/`` with a test-only write
+  tool that writes nothing outside ``Mcp_pending_changes`` -- preview (nothing
+  written) -> apply -> second apply returns the stored result without writing ->
+  another account gets "not found" -> expired refused -> cancel then apply refused.
 - ``--mode delete-clients --client-name NAME [--confirm]``: delete named test
   clients and their codes, tokens and pending changes. The only mode that commits;
   without ``--confirm`` it only lists what it would delete.
 
-Branch-only guard
------------------
+Where it may run
+----------------
+The Neon test branch ``security_test`` expired (2026-10-27) and, by the owner's
+decision of 2026-11-05, is not recreated: MCP is now checked against production.
+Production needs ``--allow-production`` AND the connected Neon branch id typed back
+(``--confirm-branch ID`` or at the prompt). On production every mode touches only
+the four ``login."Mcp_*"`` tables (it reads ``Login_accounts``), and every mode
+except ``delete-clients`` is rolled back. The branch guard below still applies when
+``USE_SECURITY_TEST_BRANCH=1`` is set.
+
+Branch guard (when a test branch is used)
+-----------------------------------------
 ``settings.USE_SECURITY_TEST_BRANCH`` is only ever true under ``manage.py test``;
 for any other command the branch databases are built by
 ``settings.RUN_APP_ON_TEST_BRANCH`` (the ``runserver_test_branch.sh`` environment).
@@ -98,6 +112,31 @@ def assert_test_branch(environ=None, branch_id_of=connected_branch_id):
             f"Refusing: connected to Neon branch {actual_id!r}, expected {expected_id!r}."
         )
     return actual_id
+
+
+def assert_safe_target(options, environ=None, branch_id_of=connected_branch_id, ask=input):
+    """Return ``(branch_id, is_production_opt_in)`` or raise CommandError.
+
+    A test branch (``USE_SECURITY_TEST_BRANCH=1``) goes through ``assert_test_branch``.
+    Anything else is treated as production and needs ``--allow-production`` plus the
+    connected branch id typed back, so nobody runs this against production by accident.
+    """
+    environ = os.environ if environ is None else environ
+    if environ.get("USE_SECURITY_TEST_BRANCH", "").strip().lower() in _TRUE_VALUES:
+        return assert_test_branch(environ, branch_id_of), False
+    if not options.get("allow_production"):
+        raise CommandError(
+            "Refusing: this is not the test branch. To run against production add "
+            "--allow-production (only the four Mcp_* tables are touched; every mode except "
+            "delete-clients is rolled back)."
+        )
+    actual_id = branch_id_of(ENROLMENT_DB) or ""
+    typed = options.get("confirm_branch")
+    if typed is None:
+        typed = ask(f"Connected to Neon branch {actual_id!r}. Type that branch id to continue: ")
+    if not actual_id or (typed or "").strip() != actual_id:
+        raise CommandError("Refusing: the typed branch id did not match the connected branch.")
+    return actual_id, True
 
 
 def _expect(condition, message):
@@ -390,28 +429,123 @@ TRANSPORT_STEPS = (
 )
 
 
+# --- changes mode: preview -> apply through /mcp/ with a test-only write tool -------------
+#
+# The write tool exists only while this command runs. Its ``apply`` appends to an
+# in-memory list -- it never touches LMS data -- so the only rows written are in
+# Mcp_pending_changes (and the token tables), all rolled back with the run.
+
+SELFCHECK_WRITE_TOOL = "selfcheck_note"
+
+
+def _tool_call(state, name, arguments, id_=10):
+    response = _mcp_post(state, {"jsonrpc": "2.0", "id": id_, "method": "tools/call",
+                                 "params": {"name": name, "arguments": arguments}})
+    _expect(response.status_code == 200, f"{name} returned HTTP {response.status_code}")
+    return response.json()["result"]
+
+
+def _text(result):
+    return result["content"][0]["text"]
+
+
+def _propose(state, note):
+    result = _tool_call(state, SELFCHECK_WRITE_TOOL, {"note": note})
+    _expect(not result.get("isError"), f"preview failed: {_text(result)}")
+    return result["structuredContent"]["preview_id"]
+
+
+def changes_preview_writes_nothing(state):
+    preview_id = _propose(state, "first")
+    state["preview_id"] = preview_id
+    _expect(state["applied"] == [], "the write tool wrote during the preview")
+    row = McpPendingChange.objects.get(pk=preview_id)
+    _expect(row.account_id == state["account"].pk, "preview stored for the wrong account")
+    _expect(row.applied_at is None and row.cancelled_at is None, "preview is not open")
+
+
+def changes_apply_then_replay(state):
+    first = _tool_call(state, "apply_change", {"preview_id": state["preview_id"]})
+    _expect(not first.get("isError"), f"apply failed: {_text(first)}")
+    _expect(state["applied"] == ["first"], f"apply wrote {state['applied']!r}")
+    second = _tool_call(state, "apply_change", {"preview_id": state["preview_id"]}, id_=11)
+    _expect(second["structuredContent"].get("already_applied"), "second apply was not a replay")
+    _expect(state["applied"] == ["first"], "second apply wrote again")
+    _expect(McpPendingChange.objects.get(pk=state["preview_id"]).applied_at is not None, "applied_at not stored")
+
+
+def changes_other_account_not_found(state):
+    from mcp_api import changes
+    from mcp_api.tools import ToolError
+
+    preview_id = _propose(state, "other")
+    stranger = SimpleNamespace(login_account=SimpleNamespace(pk=-1), mcp_client=state["client"])
+    try:
+        changes.apply_change(stranger, {"preview_id": preview_id})
+    except ToolError as exc:
+        _expect("couldn't find" in str(exc), f"unexpected refusal: {exc}")
+    else:
+        raise AssertionError("another account could apply this preview")
+    _expect(state["applied"] == ["first"], "another account's apply wrote")
+
+
+def changes_expired_refused(state):
+    preview_id = _propose(state, "expired")
+    McpPendingChange.objects.filter(pk=preview_id).update(expires_at=timezone.now() - timedelta(seconds=1))
+    result = _tool_call(state, "apply_change", {"preview_id": preview_id})
+    _expect(result.get("isError") and "expired" in _text(result), f"expired preview: {_text(result)}")
+    _expect(state["applied"] == ["first"], "an expired preview was applied")
+
+
+def changes_cancel_then_apply_refused(state):
+    preview_id = _propose(state, "cancelled")
+    cancelled = _tool_call(state, "cancel_change", {"preview_id": preview_id})
+    _expect(not cancelled.get("isError"), f"cancel failed: {_text(cancelled)}")
+    result = _tool_call(state, "apply_change", {"preview_id": preview_id})
+    _expect(result.get("isError") and "cancelled" in _text(result), f"cancelled preview: {_text(result)}")
+    _expect(state["applied"] == ["first"], "a cancelled preview was applied")
+
+
+CHANGES_STEPS = (
+    ("mint a real token (register, consent, exchange)", transport_mint_token),
+    ("preview stores a pending change and writes nothing", changes_preview_writes_nothing),
+    ("apply writes once; second apply replays the stored result", changes_apply_then_replay),
+    ("another account gets 'not found'", changes_other_account_not_found),
+    ("expired preview refused", changes_expired_refused),
+    ("cancel then apply refused", changes_cancel_then_apply_refused),
+)
+
+
 class Command(BaseCommand):
     help = (
-        "On the Neon test branch only: round-trip each MCP table (--mode tables), run the "
-        "OAuth flow (--mode oauth) or a real token through /mcp/ (--mode transport), then "
-        "roll everything back. --mode delete-clients removes named test clients (committed)."
+        "Round-trip each MCP table (--mode tables), run the OAuth flow (--mode oauth), a real "
+        "token through /mcp/ (--mode transport) or preview -> apply (--mode changes), then roll "
+        "everything back. --mode delete-clients removes named test clients (committed). "
+        "Production needs --allow-production and the branch id typed back."
     )
 
     def add_arguments(self, parser):
-        parser.add_argument("--mode", choices=("tables", "oauth", "transport", "delete-clients"), default="tables")
+        parser.add_argument("--mode", choices=("tables", "oauth", "transport", "changes", "delete-clients"),
+                            default="tables")
+        parser.add_argument("--allow-production", action="store_true",
+                            help="Run against production (needs the branch id typed back).")
+        parser.add_argument("--confirm-branch", default=None,
+                            help="The connected Neon branch id, to skip the interactive prompt.")
         parser.add_argument("--client-name", action="append", default=[],
                             help="delete-clients: exact client_name to remove (repeatable).")
         parser.add_argument("--confirm", action="store_true", help="delete-clients: actually delete.")
 
     def handle(self, *args, **options):
-        branch_id = assert_test_branch()
+        branch_id, production = assert_safe_target(options)
         mode = options["mode"]
-        self.stdout.write(f"mcp_selfcheck --mode {mode} on Neon branch {branch_id}")
+        where = "PRODUCTION (Mcp_* tables only)" if production else "test branch"
+        self.stdout.write(f"mcp_selfcheck --mode {mode} on Neon branch {branch_id} [{where}]")
         if mode == "delete-clients":
             self._delete_clients(options["client_name"], options["confirm"])
             return
 
-        run = {"tables": self._tables, "oauth": self._oauth, "transport": self._transport}[mode]
+        run = {"tables": self._tables, "oauth": self._oauth, "transport": self._transport,
+               "changes": self._changes}[mode]
         with transaction.atomic(using=ENROLMENT_DB):
             failures = run()
             # Nothing this run wrote survives it, whatever happened above.
@@ -492,6 +626,40 @@ class Command(BaseCommand):
                 return self._steps(TRANSPORT_STEPS, state)
         finally:
             unregister(SELFCHECK_TOOL)
+
+    def _changes(self):
+        from unittest import mock
+
+        from django.test import Client
+
+        from mcp_api.changes import Validation, WriteTool, register_write_tool, unregister_write_tool
+
+        state = {"account": self._account(), "http": Client(HTTP_HOST="localhost"), "applied": []}
+
+        class NoteTool(WriteTool):
+            name = SELFCHECK_WRITE_TOOL
+            description = "Self-check only: records a note in memory. Touches no LMS data."
+            input_schema = {"type": "object", "properties": {"note": {"type": "string", "maxLength": 40}},
+                            "required": ["note"], "additionalProperties": False}
+
+            def validate(self, request, arguments):
+                return Validation({"note": arguments["note"]})
+
+            def preview(self, request, payload):
+                return {"summary": f"Record the note '{payload['note']}' (self-check).", "details": payload}
+
+            def apply(self, request, payload, progress):
+                state["applied"].append(payload["note"])
+                progress.done("Recorded the note in memory")
+                return {"summary": "Note recorded (self-check, in memory only).", "result": payload}
+
+        register_write_tool(NoteTool())
+        env = {"MCP_ENABLED": "1", "MCP_PUBLIC_BASE_URL": os.environ.get("MCP_PUBLIC_BASE_URL") or "http://localhost"}
+        try:
+            with mock.patch.dict(os.environ, env), mock.patch("login.middleware.close_old_connections"):
+                return self._steps(CHANGES_STEPS, state)
+        finally:
+            unregister_write_tool(SELFCHECK_WRITE_TOOL)
 
     def _delete_clients(self, names, confirm):
         """Remove named test clients and everything that references them. Committed."""

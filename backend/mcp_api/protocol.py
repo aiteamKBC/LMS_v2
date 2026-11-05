@@ -6,6 +6,7 @@ authentication, the per-call context and logging.
 """
 import logging
 
+from . import changes  # noqa: F401 - registers apply_change, cancel_change, list_my_pending_changes
 from . import pii, ratelimit
 from . import schema as json_schema
 from .dispatch import DispatchError

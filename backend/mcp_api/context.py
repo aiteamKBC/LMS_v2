@@ -29,6 +29,7 @@ def source_label(client_name):
 def mcp_call(request, account, client):
     previous_source = versioning.current_source()
     request.login_account = account
+    request.mcp_client = client
     versioning.set_actor(account)
     versioning.set_source(source_label(client.client_name))
     try:
@@ -37,3 +38,4 @@ def mcp_call(request, account, client):
         versioning.set_actor(None)
         versioning.set_source(previous_source)
         request.login_account = None
+        request.mcp_client = None
