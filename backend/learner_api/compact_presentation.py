@@ -139,7 +139,7 @@ def build_compact_deck(slides, reference=None, design=None):
     return stream.getvalue()
 
 
-def _from_template(slides, content, design):
+def _from_template(slides, content, design, *, paginate=False):
     """Preserve an explicitly selected reference, including its slide dimensions."""
     from pptx import Presentation
     from pptx.util import Inches
@@ -154,7 +154,8 @@ def _from_template(slides, content, design):
     except (ValueError, TypeError):
         raise ValueError('Choose valid cover and content slide numbers for your reference.') from None
     width, height = deck.slide_width, deck.slide_height
-    for index, section in enumerate(slides):
+    sections = list(slides)
+    for index, section in enumerate(sections):
         slide = _clone_slide(deck, originals[cover if index == 0 else body])
         shapes = [s for s in _all_shapes(slide.shapes) if s.has_text_frame and (s.text.strip() or s.is_placeholder)]
         title = slide.shapes.title
@@ -173,6 +174,18 @@ def _from_template(slides, content, design):
             from pptx.dml.color import RGBColor
             body_shape.fill.fore_color.rgb = RGBColor.from_string('FFFFFF')
         font = str(design.get('font') or FONT)[:80]
+        if paginate:
+            # Standard MCM exports may contain full edited accounts. Match the
+            # conservative geometry used by _write, adding pages with the same
+            # reference artwork. Compact v1 callers keep their original contract.
+            columns = max(1, int((body_shape.width / 12700 - 6) / (20 * .60)))
+            rows = max(1, int((body_shape.height / 12700 - 6) / (20 * 1.16)))
+            lines = textwrap.wrap(section['body'], columns, break_long_words=True, break_on_hyphens=False) or ['']
+            if len(lines) > rows:
+                if len(sections) >= 200:
+                    raise ValueError('The full content needs more than 200 slides. Split it into separate presentations.')
+                sections.insert(index + 1, {**section, 'body': ' '.join(lines[rows:]), 'notes': ''})
+            section = {**section, 'body': ' '.join(lines[:rows]), 'notes': section.get('notes') or section['body']}
         _write(title.text_frame, section['title'], 32, title.width, title.height, index + 1, bold=True, font=font, preserve_style=True)
         _write(body_shape.text_frame, section['body'], 20, body_shape.width, body_shape.height, index + 1, font=font, preserve_style=True)
         _logo(slide, (width - Inches(.95)) / 914400, (height - Inches(.7)) / 914400, .55)

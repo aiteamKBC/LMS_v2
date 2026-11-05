@@ -326,7 +326,7 @@ def refusal_for(path, account, *, django_user_is_authenticated=False, method='GE
             '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
             '/login_api/forgot-password/', '/login_api/reset/',
             '/login_api/reset-password/', '/login_api/login/',
-            '/login_api/health/',
+            '/login_api/health/', '/login_api/announcements/',
         }
         if not path.startswith('/login_api/advanced-admin/') and path not in account_paths:
             return _forbidden(['advanced-admin'])
@@ -340,6 +340,7 @@ def refusal_for(path, account, *, django_user_is_authenticated=False, method='GE
         if not is_transition_path(path) and path not in {
             '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
             '/login_api/login/', '/login_api/health/',
+            '/login_api/announcements/',
         }:
             return _forbidden(['previous_records.view'])
 

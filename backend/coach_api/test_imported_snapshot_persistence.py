@@ -22,6 +22,7 @@ from . import test_aptem_attendance_stabilization as fixtures
 
 class ImportedSnapshotPersistenceTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch('coach_api.review_rescheduling.previous_bookings', return_value=[]))
         self.fixture = fixtures.AptemAttendanceRefreshTests()
         self.fixture.setUp()
         self.fixture.prepare('MCM')

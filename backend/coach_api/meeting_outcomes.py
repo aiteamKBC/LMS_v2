@@ -66,6 +66,8 @@ def learner_attended_event_keys(event_keys):
 def annotate_meeting_outcomes(events, *, now=None):
     """Add ``meetingOutcome`` ('ended' | 'completed' | None) to serialized calendar events."""
     now_local = timezone.localtime(now).replace(tzinfo=None)
+    from .review_attendance_display import annotate_review_attendance
+    annotate_review_attendance(events, now_local=now_local)
     elapsed = []
     for event in events:
         if not isinstance(event, dict):

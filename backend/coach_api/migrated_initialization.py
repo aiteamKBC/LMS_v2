@@ -74,7 +74,7 @@ def initialize_imported_review(owner_email, definition):
             owner_email=owner_email, event_key=definition["instance"]["id"],
             defaults={
                 "learner_id": definition["instance"]["learnerId"], "source_review_id": source_id,
-                "migrated_template": template, "template_snapshot": snapshot_for(template),
+                "migrated_template": template, "template_snapshot": _review_snapshot(template, learner_id),
                 "signature_requirements": requirements_for_definition(template.definition_json, family), "answers": answers,
                 "status": status,
             },
@@ -82,4 +82,12 @@ def initialize_imported_review(owner_email, definition):
         if (overlay.learner_id != definition["instance"]["learnerId"]
                 or overlay.source_review_id != source_id or not overlay.template_snapshot):
             raise ValueError("An existing overlay has a different source association.")
+        if created and family == 'PR_SKILLS_RADAR':
+            from .migrated_radar_carry_forward import carry_forward_locked
+            carry_forward_locked(overlay, definition)
         return overlay, created
+
+
+def _review_snapshot(template, learner_id):
+    from .migrated_skills_radar import expand_snapshot
+    return expand_snapshot(snapshot_for(template), learner_id)

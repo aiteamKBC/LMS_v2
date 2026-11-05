@@ -27,6 +27,7 @@ from login.permissions import require_role
 from .bunny_stream import BunnyStream, VideoImportError, is_bunny_url, playback_url
 from .models import CurriculumVideoImport
 from .video_sources import download_url, download_video, source_url, validate_video
+from .video_uploads import save_mp4, stored_video, stored_video_path
 
 logger = logging.getLogger(__name__)
 _worker_lock = threading.Lock()
@@ -113,6 +114,18 @@ def enqueue(kind, target_id, component, scope, *, file_hash='', title=''):
     return asset
 
 
+def enqueue_saved_video(kind, target_id, component, scope):
+    """Save and manual import use the same idempotent request/retry action."""
+    asset = enqueue(kind, target_id, component, scope)
+    if asset and asset.status == 'failed':
+        # A simultaneous worker may already have claimed this import. Do not
+        # reset its state or lease from a stale instance read by the save request.
+        CurriculumVideoImport.objects.filter(pk=asset.pk, status='failed').update(
+            status='queued', error='', updated_at=timezone.now())
+        asset.refresh_from_db()
+    return asset
+
+
 def _matches_current_source(asset):
     """Label the stored copy without writing component settings or playback URLs."""
     try:
@@ -145,7 +158,8 @@ def process(import_id, file_obj=None):
         asset.status, asset.error = 'uploading', ''
         asset.save(update_fields=['lease_until', 'status', 'error', 'updated_at'])
     try:
-        if asset.source_url:
+        local_source = stored_video_path(asset.source_url)
+        if asset.source_url and not local_source:
             download_url(asset.source_url)
         client = BunnyStream(asset.library_id)
         if not asset.collection_id:
@@ -161,7 +175,9 @@ def process(import_id, file_obj=None):
         if video is None or video.get('status') in (0, 6):
             if file_obj is None and not asset.source_url:
                 raise VideoImportError('Choose the MP4 again to retry this upload.')
-            with (nullcontext(file_obj) if file_obj is not None else download_video(asset.source_url)) as stream:
+            source_stream = (nullcontext(file_obj) if file_obj is not None else
+                             stored_video(asset.source_url) if local_source else download_video(asset.source_url))
+            with source_stream as stream:
                 validate_video(stream)
                 if not asset.video_id:
                     # Verify/download the source before creating a remote object.
@@ -234,6 +250,12 @@ def tracked_save(view, kind):
             return _unauthenticated(request)
         if account.role not in ('admin', 'staff'):
             return _forbidden(('admin', 'staff'))
+        try:
+            payload = json.loads(request.body)
+        except (ValueError, AttributeError):
+            payload = {}
+        requested_ids = payload.get('importVideoComponentIds', []) if isinstance(payload, dict) else []
+        requested_ids = {value for value in requested_ids if isinstance(value, str)} if isinstance(requested_ids, list) else set()
         target_id = kwargs.get('module_catalogue_id') or kwargs.get('identifier') or ''
         changed_component_id = kwargs.get('component_id', '')
         actual_kind = kind
@@ -282,8 +304,12 @@ def tracked_save(view, kind):
                     rows = [r for r in rows if r['id'] == changed_component_id]
                 changed_scope = any(scope.get(k) != old_scope.get(k) for k in ('programme_id', 'cohort_id', 'group_id'))
                 for row in rows:
-                    if changed_scope or source_url(_settings(row)) != before.get(row['id'], ''):
-                        enqueue(actual_kind, target_id, row, scope)
+                    # Explicit Save also requests the open video even when its
+                    # link is unchanged. Only saved rows in this scope qualify;
+                    # never import sibling historical videos merely on page load.
+                    if (changed_scope or kind == 'component' or row['id'] in requested_ids
+                            or source_url(_settings(row)) != before.get(row['id'], '')):
+                        enqueue_saved_video(actual_kind, target_id, row, scope)
                 transaction.on_commit(wake_worker)
         return response
     return wrapped
@@ -309,33 +335,35 @@ def component_video(request, kind, target_id, component_id):
         _, rows, scope = target(kind, target_id)
         component = next((r for r in rows if r['id'] == component_id), None)
         if component is None:
+            if request.method == 'GET':
+                return JsonResponse({'enabled': True, 'saved': False, 'import': None, 'scope': scope})
             raise VideoImportError('Save this video component before importing its source.')
         if request.method == 'GET':
             assets = CurriculumVideoImport.objects.filter(target_kind=kind, target_id=target_id, component_id=component_id).order_by('-requested_at')
             asset = assets.first()
             if asset and asset.status in ('queued', 'uploading', 'processing'):
                 transaction.on_commit(wake_worker)
-            return JsonResponse({'enabled': True, 'import': public_asset(asset) if asset else None, 'scope': scope})
+            return JsonResponse({'enabled': True, 'saved': True, 'import': public_asset(asset) if asset else None, 'scope': scope})
         for key in ('programme_id', 'cohort_id', 'group_id'):
             if key in request.POST and request.POST[key] != scope.get(key, ''):
                 raise VideoImportError('The programme, cohort or group no longer matches this module. Refresh before retrying.')
         uploaded = request.FILES.get('file')
+        saved_settings = None
         if uploaded:
             if not str(uploaded.name).lower().endswith('.mp4'):
                 raise VideoImportError('Choose an MP4 video file.')
             validate_video(uploaded)
-            digest = hashlib.sha256()
-            for chunk in uploaded.chunks():
-                digest.update(chunk)
-            uploaded.seek(0)
-            asset = enqueue(kind, target_id, component, scope, file_hash=digest.hexdigest(), title=request.POST.get('title', '')[:500])
-            asset = process(asset.id, uploaded)
-        else:
-            asset = enqueue(kind, target_id, component, scope)
-            if asset and asset.status == 'failed':
-                asset.status, asset.error = 'queued', ''
-                asset.save(update_fields=['status', 'error', 'updated_at'])
+            asset, saved_settings = save_mp4(kind, target_id, component, scope, uploaded,
+                                             title=request.POST.get('title', '')[:500])
+            # The durable LMS file lets the supervised worker retry after a web
+            # timeout or restart. Do not hold the upload request for Bunny IO.
             transaction.on_commit(wake_worker)
-        return JsonResponse({'enabled': True, 'import': public_asset(asset) if asset else None}, status=202)
+        else:
+            asset = enqueue_saved_video(kind, target_id, component, scope)
+            transaction.on_commit(wake_worker)
+        result = {'enabled': True, 'import': public_asset(asset) if asset else None}
+        if saved_settings is not None:
+            result['savedSettings'] = saved_settings
+        return JsonResponse(result, status=202)
     except VideoImportError as exc:
         return JsonResponse({'error': str(exc)}, status=400)

@@ -31,6 +31,7 @@ const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notificati
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
+const AdminAnnouncementsPage = lazyRoute(() => import("../pages/admin/announcements/page"));
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
@@ -1102,6 +1103,10 @@ const routes: RouteObject[] = [
   {
     path: "/admin/system",
     element: <AdminSystemSettingsPage />,
+  },
+  {
+    path: "/admin/announcements",
+    element: <AdminAnnouncementsPage />,
   },
   {
     path: "/admin/platform-report",

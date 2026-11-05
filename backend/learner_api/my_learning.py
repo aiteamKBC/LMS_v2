@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
+from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
@@ -510,6 +511,9 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
         # Reuse native completion before selecting deadlines, just as the
         # initial catalogue does. No cover or programme metric reads on expansion.
         return dict(upcoming=upcoming_links(source,kind,ids,native,metadata,{c['id'] for c in cards}))
+    from .my_learning_activity import card_teaching_activity
+    with projection_stage('teaching_activity'):
+        module_activity = card_teaching_activity(cards)
     from .student_activity import _cover_url
     with projection_stage('covers'):
         covers = {**metadata['covers'], **{ref:_cover_url(path) for ref,path in covers_for([c['id'] for c in cards if c['source']=='legacy']).items()}}
@@ -528,7 +532,7 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     with projection_stage('upcoming'):
         upcoming = upcoming_links(source, kind, ids, native, metadata, {c['id'] for c in cards}, limit=4)
     return dict(learner=dict(id=str(source.pk),kind=kind,name=owner['name'],programme=owner.get('programme') or '',cohort=str(source.cohort or ''),group=str(source.group or '')),
-        summary=summary, modules=cards, otjh=dict(actual=actual,planned=planned),
+        summary=summary, modules=cards, moduleActivity=module_activity, otjh=dict(actual=actual,planned=planned),
         upcoming=upcoming[:3], hasMoreUpcoming=len(upcoming)>3)
 
 
@@ -781,6 +785,7 @@ def read_module(source, kind, owner, subject_id):
 @local_catalogue_trace
 @learner_self_or_staff(kwarg='pk')
 @learner_journal_view
+@cached_learner_read('my-learning')
 def my_learning(request,kind,pk,subject_id=None,resource=None):
     model=SOURCE_MODELS.get(kind)
     if model is None:

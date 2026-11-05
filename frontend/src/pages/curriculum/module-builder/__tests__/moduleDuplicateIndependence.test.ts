@@ -198,6 +198,39 @@ describe('a duplicated module is its own module', () => {
     expect(result.report.unmatched[0]).toMatchObject({ code: 'B9', location: 'component' });
   });
 
+  it('starts a standalone copy with no learners or meeting participants while retaining its materials', async () => {
+    const source = bookedModule();
+    source.assignedLearnerCount = 42;
+    const participants = { teamsAttendees: ['old-learner@example.invalid'], teamsPresenters: ['old-presenter@example.invalid'], teamsCoOrganizers: ['old-coorganizer@example.invalid'] };
+    source.deliveryMetadata = { ...source.deliveryMetadata, ...participants };
+    source.weekStructure[0].components[0].settings = { ...source.weekStructure[0].components[0].settings, ...participants };
+    const reading = createEmptyComponent(source.weekStructure[0].id, 'reading', 2);
+    reading.title = 'Reusable reading';
+    reading.settings = { ...reading.settings, readingContent: '<p>Retained learning material</p>' };
+    const quiz = createEmptyComponent(source.weekStructure[0].id, 'quiz', 3);
+    quiz.title = 'Reusable quiz';
+    quiz.settings = { ...quiz.settings, linkedQuizId: 'QUIZ-CONTENT' };
+    source.weekStructure[0].components.push(reading, quiz);
+    const original = structuredClone(source);
+    await duplicateModuleStructure(source, { learnerRosterMode: 'manual', teamsCopyMode: 'independent', startDate: '2026-11-20' });
+    expect(savedStructure.assignedLearnerCount).toBe(0);
+    expect(savedStructure.learnerRosterMode).toBe('manual');
+    expect(savedStructure.teamsSharedSourceModuleId).toBe('');
+    expect(savedStructure.startDate).toBe('2026-11-20');
+    expect(savedStructure.weekStructure[0].components.find(item => item.title === 'Reusable reading')?.settings.readingContent).toBe('<p>Retained learning material</p>');
+    expect(savedStructure.weekStructure[0].components.find(item => item.title === 'Reusable quiz')?.settings.linkedQuizId).toBe('QUIZ-CONTENT');
+    const posted = vi.mocked(fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body || '{}')));
+    for (const payload of posted) {
+      expect(payload.learnerRosterMode).toBe('manual');
+      expect(payload.teamsSharedSourceModuleId).toBe('');
+      expect(JSON.stringify(payload)).not.toContain('old-learner@example.invalid');
+      expect(JSON.stringify(payload)).not.toContain('old-presenter@example.invalid');
+      expect(JSON.stringify(payload)).not.toContain('old-coorganizer@example.invalid');
+      expect(JSON.stringify(payload)).not.toContain('https://teams.microsoft.com/source');
+    }
+    expect(source).toEqual(original);
+  });
+
   it('copies no date and no Teams meeting from the module it was duplicated from', async () => {
     const source = bookedModule();
     await duplicateModuleStructure(source);
@@ -373,8 +406,10 @@ describe('a duplicated module is its own module', () => {
 
   it('keeps inherited roster mode for the group/cohort clone path', async () => {
     const source = bookedModule();
+    source.weekStructure[0].components[0].settings.teamsAttendees = ['group-learner@example.invalid'];
     await duplicateModuleStructure(source, { keepDates: true, renameCopy: false, learnerRosterMode: 'inherited' });
 
     expect(savedStructure.learnerRosterMode).toBe('inherited');
+    expect(savedStructure.weekStructure[0].components[0].settings.teamsAttendees).toEqual(['group-learner@example.invalid']);
   });
 });

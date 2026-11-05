@@ -209,12 +209,9 @@ def clean_answers(value, status, definition):
         if not isinstance(row,dict) or set(row)-set(keys):
             raise InvalidReview('An action row is invalid.')
         action={key:_text(row.get(key,''),3000 if key in ('action','outcome') else 300) for key in keys}
-        if action['dueDate']:
-            try: date.fromisoformat(action['dueDate'])
-            except ValueError: raise InvalidReview('Enter a valid action deadline.')
         if any(action.values()):
-            if status=='completed' and not all(action.values()):
-                raise InvalidReview('Complete all four fields in each SMART action.')
+            if status=='completed' and not all(action[key] for key in ('action','outcome','supportedBy')):
+                raise InvalidReview('Complete the target, planned outcome and supported by fields for each SMART action.')
             plan.append(action)
     sources=value.get('sources',[])
     if not isinstance(sources,list) or any(key not in ('recording','transcript','ai','portfolio','other') for key in sources):

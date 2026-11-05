@@ -282,13 +282,17 @@ export default function CoachMarkingReviewPage() {
         ...(promptEdited ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.trim() }) } : {}),
       });
       const text = await response.text();
-      let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string; promptSource?: string } } = {};
+      let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string; promptSource?: string; evidenceFiles?: { filename: string; readable: boolean }[] } } = {};
       try { data = text ? JSON.parse(text) : {}; } catch { throw new Error(`The draft could not be generated (server error ${response.status}).`); }
       if (!response.ok) throw new Error(data.error || data.detail || 'The draft could not be generated.');
       setFeedback(data.feedback || '');
       const ksbCount = data.meta?.ksbCount ?? 0;
       const promptNote = data.meta?.promptSource === 'custom' ? ' from your edited prompt' : '';
-      setAiNotice(`AI-assisted draft generated${promptNote}${ksbCount ? ` against ${ksbCount} assigned KSB${ksbCount === 1 ? '' : 's'}` : ''}. Review and edit it before deciding.`);
+      const files = data.meta?.evidenceFiles ?? [];
+      const unreadable = files.filter(file => !file.readable);
+      const fileNote = files.length ? ` Readable text extracted from ${files.length - unreadable.length} of ${files.length} uploaded files.` : '';
+      const unreadableNote = unreadable.length ? ` Could not read: ${unreadable.map(file => file.filename || 'Unnamed file').join(', ')}. Review these files separately.` : '';
+      setAiNotice(`AI-assisted draft generated${promptNote}${ksbCount ? ` against ${ksbCount} assigned KSB${ksbCount === 1 ? '' : 's'}` : ''}.${fileNote}${unreadableNote} Review and edit it before deciding.`);
     } catch (aiError) {
       setError(aiError instanceof Error ? aiError.message : 'The draft could not be generated.');
     } finally {

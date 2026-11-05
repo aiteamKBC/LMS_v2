@@ -65,10 +65,13 @@ export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatri
   const imported = Boolean(event.reviewSource === 'aptem' || event.aptemReviewId);
   const importedSchedulable = imported && (['progress-review', 'mcr'].includes(reviewCategory(event)) || isImportedPersonalSupportPlan(event))
     && (status === 'not-scheduled' || status === 'scheduled');
+  // The server rechecks attendance and ownership before changing any booking.
+  const startedBooking = status === 'in-progress' && ['mcr', 'progress-review'].includes(reviewCategory(event))
+    && Boolean(event.scheduledDate && event.scheduledTime && (event.meetingLink || event.graphWebLink));
   return {
     // Aptem source dates alone do not identify a local booking to reschedule.
     // The dialog loads the authoritative booking permissions before saving.
-    schedule: imported ? importedSchedulable ? status === 'scheduled' && event.calendarEventKey ? 'Reschedule' : 'Schedule' : null
+    schedule: startedBooking ? 'Reschedule' : imported ? importedSchedulable ? status === 'scheduled' && event.calendarEventKey ? 'Reschedule' : 'Schedule' : null
       : status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
     view: true,
     // Imported reviews remain reachable through local progress and signature

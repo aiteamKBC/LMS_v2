@@ -14,6 +14,9 @@ from . import views
 
 class ImportedStartTests(SimpleTestCase):
     def setUp(self):
+        # This lifecycle fixture has neither reschedules nor manual identity links.
+        self.enterContext(patch('coach_api.review_rescheduling.previous_bookings', return_value=[]))
+        self.enterContext(patch('coach_api.review_attendance_links.saved_links', return_value=[]))
         self.overlay = SimpleNamespace(pk=3, event_key='imported-review:source-7',
             owner_email='coach@example.invalid', learner_id=41, source_review_id=7,
             status='scheduled', completed_at=None, template_snapshot={'sections': [{'id': 'section', 'fields': []}]},

@@ -325,7 +325,7 @@ def persist_imported_snapshot(record, snapshot, *, expected_version, revalidate=
                           and (not row.get('transcript_text') or not row.get('transcript_vtt')))])
         result = persist_coach_meeting_snapshots(current, artifacts=snapshot['artifacts'],
             attendance_reports=snapshot['attendanceReports'], attendance_tracker=snapshot['attendanceTracker'],
-            safe_diagnostics=True)
+            safe_diagnostics=True, calendar_locked=True)
         # Manual Check Session can defer Start until it evaluates the original,
         # unfiltered collection under its already-held parent/overlay locks.
         if result.get('stored') and start_evidence and start_review is not False:
@@ -433,8 +433,12 @@ def select_artifacts(record, snapshot, *, session=None):
     return selected, 'TRANSCRIPT_SESSION_AMBIGUOUS' if ambiguous else None
 
 
-def scope_snapshot(record, snapshot, *, session=None, meeting_scoped=False, meeting_id=None):
+def scope_snapshot(record, snapshot, *, session=None, meeting_scoped=False, meeting_id=None, historical=False):
     from .views import build_coach_meeting_attendance_tracker
+
+    if not historical:
+        from .review_rescheduling import current_evidence
+        snapshot = current_evidence(record, snapshot)
 
     if meeting_scoped:
         if meeting_id is None:
@@ -471,7 +475,8 @@ def scope_snapshot(record, snapshot, *, session=None, meeting_scoped=False, meet
         'absentCount': sum(report.get('absentCount', 0) for report in reports), **tracker,
     }
     return {**snapshot, 'artifacts': artifacts, 'attendanceReports': reports,
-            'attendance': attendance, 'attendanceTracker': tracker, 'selectionError': selection_error}
+            'attendance': attendance, 'attendanceTracker': tracker,
+            'selectionError': selection_error or snapshot.get('rescheduleSelectionError')}
 
 
 def stored_transcript_selection(record, snapshot, *, session=None, meeting_scoped=False, meeting_id=None):
@@ -480,6 +485,11 @@ def stored_transcript_selection(record, snapshot, *, session=None, meeting_scope
     Metadata without a proven Graph event is not evidence for the current link.
     Keep rejected historical rows intact, but never read their content here.
     """
+    from .review_rescheduling import current_evidence
+    snapshot = current_evidence(record, snapshot)
+    if snapshot.get('rescheduleSelectionError'):
+        return {'artifactIds': [], 'callId': None, 'provenance': session_provenance(record),
+                'status': 'ambiguous', 'code': snapshot['rescheduleSelectionError']}
     graph_id = record.graph_event_id
     artifacts = [row for row in snapshot.get('artifacts', []) if graph_id and
                  (row.get('metadata') or {}).get('_lms_graph_event_id') == graph_id]
