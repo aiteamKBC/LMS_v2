@@ -104,8 +104,8 @@ describe('post-lecture feedback delivery scope', () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FormBuilder /></MemoryRouter>);
 
-    expect(screen.getByText('Reusable Live Sessions Feedback QR')).toBeVisible();
-    expect(screen.getByText(`${window.location.origin}/login?lectureFeedback=1`)).toBeVisible();
+    expect(screen.getByText('One Live Sessions Feedback QR')).toBeVisible();
+    expect(screen.getByText(`${window.location.origin}/lecture-feedback`)).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Question bank' })).toBeVisible();
     expect(screen.getAllByRole('radio', { name: /star/ })).toHaveLength(5);
     expect(screen.getByRole('combobox', { name: 'Rating style' })).toHaveValue('stars');
