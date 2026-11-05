@@ -1217,6 +1217,26 @@ class EndpointTests(unittest.TestCase):
         storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240,
             content_type='video/mp4', content_disposition='attachment; filename="Module-session-1-2026-09-07.mp4"')
 
+    def test_bunny_recording_resolves_authorized_iframe_without_azure_signing(self):
+        bunny = types.ModuleType('curriculum_api.session_bunny')
+        bunny.recording_player = Mock(return_value='https://player.mediadelivery.net/embed/798153/synthetic')
+        self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording',
+            'metadata': {'lmsBunnyRecording': {'state': 'ready', 'libraryId': '798153', 'videoId': 'synthetic'}}}]
+        req = self.req(); req.GET = {'format': 'player'}
+        with patch.dict(sys.modules, {'curriculum_api.session_bunny': bunny}):
+            response = self.ns['stored_content'](req, 'S', 'A')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['provider'], 'bunny')
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.assertEqual(self.ns['read'].call_args.args[1], ['A', 'S'])
+        bunny.recording_player.assert_called_once()
+
+    def test_bunny_pending_never_falls_back_to_retained_azure_video(self):
+        self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording',
+            'container': 'session-recordings', 'blob_name': 'old.mp4',
+            'metadata': {'lmsBunnyRecording': {'state': 'pending'}}}]
+        self.assertEqual(self.ns['stored_content'](self.req(), 'S', 'A').status_code, 409)
+
     def test_staff_resolves_inline_and_download_urls_without_exposing_unauthenticated_file(self):
         storage = types.ModuleType('learner_api.evidence_storage')
         storage.get_read_sas = Mock(return_value='https://storage.invalid/private/read')

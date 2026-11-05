@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { loadRecordingWatch, loadTranscriptCues, recordRecordingWatch, sessionFileUrl, type SessionFile, type SessionLearner, type TranscriptCue, type TranscriptLink } from '@/api/sessionResults';
+import { BunnyRecordingVideo } from './BunnyRecordingVideo';
+import { isBunnyEmbed, type RecordingMedia } from './bunnyRecordingProtocol';
 
 function cueTime(seconds: number) {
   const value = Math.max(0, Math.floor(seconds));
@@ -19,7 +21,7 @@ function watchedText({ watchedSeconds, durationSeconds }: { watchedSeconds: numb
 const MAX_PLAYED_STEP_SECONDS = 2;
 
 /** Adds up the seconds the learner actually plays and reports them about every 30 seconds. */
-function useWatchTracking(video: RefObject<HTMLVideoElement | null>, seriesId: string, file: SessionFile,
+function useWatchTracking(video: RefObject<RecordingMedia | null>, seriesId: string, file: SessionFile,
   learner: SessionLearner | undefined, enabled: boolean) {
   const pending = useRef(0);
   const lastPosition = useRef<number | null>(null);
@@ -90,7 +92,7 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
   onWatchTimeChange?: (seconds: number) => void;
   onPlayingChange?: (playing: boolean) => void;
 }) {
-  const video = useRef<HTMLVideoElement>(null);
+  const video = useRef<RecordingMedia | null>(null);
   const watch = useWatchTracking(video, seriesId, file, learner, trackWatch);
   useEffect(() => {
     if (trackWatch) onWatchTimeChange?.(Math.floor(watch.elapsedSeconds));
@@ -149,14 +151,18 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
     setTime(video.current.currentTime);
   };
   return <div className="space-y-3">
-    <video ref={video} controls playsInline preload="none" className="aspect-video w-full rounded-xl bg-black"
+    {file.playbackProvider === 'bunny' || isBunnyEmbed(sourceUrl)
+      ? <BunnyRecordingVideo seriesId={seriesId} file={file} learner={learner} label={label} sourceUrl={sourceUrl} mediaRef={video}
+        onTimeUpdate={() => { readTime(); watch.onPlayedTime(); }} onSeeked={() => { readTime(); watch.onSeeked(); }}
+        onPause={() => { readTime(); watch.onStop(); }} onEnded={watch.onStop} onPlayingChange={onPlayingChange} />
+      : <video ref={element => { video.current = element; }} controls playsInline preload="none" className="aspect-video w-full rounded-xl bg-black"
       src={sourceUrl || sessionFileUrl(seriesId, file, learner)} aria-label={label}
       onPlaying={() => onPlayingChange?.(true)}
       onWaiting={() => onPlayingChange?.(false)}
       onSeeking={() => onPlayingChange?.(false)}
       onTimeUpdate={() => { readTime(); watch.onPlayedTime(); }} onSeeked={() => { readTime(); watch.onSeeked(); }}
       onLoadedMetadata={readTime} onPause={() => { readTime(); watch.onStop(); onPlayingChange?.(false); }}
-      onEnded={() => { watch.onStop(); onPlayingChange?.(false); }} />
+      onEnded={() => { watch.onStop(); onPlayingChange?.(false); }} />}
     {trackWatch && (watch.saveError
       ? <p role="status" className="text-xs text-amber-800">{watch.saveError}</p>
       : watch.saved && <p role="status" className="text-xs font-semibold text-primary-700">{watchedText(watch.saved)}</p>)}

@@ -1,9 +1,10 @@
-"""Durable curriculum video imports, separate from Teams recordings.
+"""Durable curriculum video imports, including scoped live-session recordings.
 
 New/changed video sources are queued by authoring saves and the database event
 worker, including external SQL writers. Existing content is imported only by
 an explicit staff request or scoped command. The
-original source remains unchanged after Bunny finishes encoding. Workers never
+original authored source remains unchanged after Bunny finishes encoding.
+Live-session jobs use the dedicated Microsoft-only transfer handler. Workers never
 hold a database transaction while downloading/uploading a video.
 """
 from __future__ import annotations
@@ -143,10 +144,13 @@ def _matches_current_source(asset):
     return source_url(_settings(row)) == asset.source_at_start
 
 
-def process(import_id, file_obj=None):
+def process(import_id, file_obj=None, *, session_lease_id=None):
     with transaction.atomic():
         asset = CurriculumVideoImport.objects.select_for_update().get(pk=import_id)
         if asset.status in ('ready', 'superseded'):
+            if asset.target_kind == 'live_session' and asset.status == 'ready':
+                from .session_bunny import publish_outcome
+                publish_outcome(asset)
             return asset
         if asset.lease_until and asset.lease_until > timezone.now():
             return asset
@@ -158,6 +162,10 @@ def process(import_id, file_obj=None):
         asset.status, asset.error = 'uploading', ''
         asset.save(update_fields=['lease_until', 'status', 'error', 'updated_at'])
     try:
+        if asset.target_kind == 'live_session':
+            from .session_bunny import transfer_recording
+            transfer_recording(asset, lease_id=session_lease_id)
+            return asset
         local_source = stored_video_path(asset.source_url)
         if asset.source_url and not local_source:
             download_url(asset.source_url)
@@ -205,6 +213,9 @@ def process(import_id, file_obj=None):
     finally:
         asset.lease_until = None
         asset.save(update_fields=['status', 'error', 'lease_until', 'updated_at'])
+        if asset.target_kind == 'live_session':
+            from .session_bunny import publish_outcome
+            publish_outcome(asset)
     return asset
 
 

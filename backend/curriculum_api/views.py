@@ -4862,6 +4862,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         metadata = dict(artifact)
         metadata.pop('lmsHiddenFromLearners', None)
         metadata.pop('lmsTranscriptTimeline', None)
+        metadata.pop('lmsBunnyRecording', None)
         same_recording = None if existing else _same_artifact_under_new_graph_id(cursor, lock, payload)
         if same_recording:
             # Teams re-issued the id of an artifact already saved (same call and
@@ -4872,6 +4873,8 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
                 metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            if 'lmsBunnyRecording' in saved_metadata:
+                metadata['lmsBunnyRecording'] = saved_metadata['lmsBunnyRecording']
             cursor.execute(
                 f'UPDATE {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} SET graph_artifact_id=%s, content_url=%s, '
                 'content_correlation_id=%s, metadata=%s, updated_at=%s WHERE id=%s',
@@ -4884,6 +4887,8 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
                 metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            if 'lmsBunnyRecording' in saved_metadata:
+                metadata['lmsBunnyRecording'] = saved_metadata['lmsBunnyRecording']
         payload['metadata'] = json_db_value(metadata)
         authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], payload)
     return True

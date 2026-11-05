@@ -22,7 +22,7 @@ export default function RecordingItem({
   const meta = STATUS_META[recording.status];
   const isReady = recording.status === "ready";
   const file: SessionFile = { id: recording.source.id, type: 'recording', state: recording.source.state,
-    createdAt: recording.source.recordedAt ?? undefined };
+    createdAt: recording.source.recordedAt ?? undefined, playbackProvider: recording.source.playbackProvider };
   const [playbackUrl, setPlaybackUrl] = useState('');
   const [playError, setPlayError] = useState('');
   useEffect(() => {

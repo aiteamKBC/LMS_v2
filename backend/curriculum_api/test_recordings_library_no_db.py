@@ -140,6 +140,27 @@ class RecordingsLibraryTests(unittest.TestCase):
         self.assertTrue(item['hiddenFromLearners'])
         self.assertEqual(item['startsAt'], '2026-09-07T09:00:00Z')
 
+    def test_duplicate_azure_alias_cannot_bypass_pending_bunny_provider(self):
+        old = recording(artifact_id='OLD', content_correlation_id='CONTENT', call_id='CALL')
+        new = recording(artifact_id='BUNNY', content_correlation_id='CONTENT', call_id='CALL',
+                        metadata={'lmsBunnyRecording': {'state': 'pending'}})
+        for rows in ([old, new], [new, old]):
+            payload = self.ns['build_library'](rows, WEEKS, [])
+            item = self.weeks_of(payload)[0]['recordings'][0]
+            self.assertEqual(item['id'], 'BUNNY')
+            self.assertEqual(item['state'], 'pending')
+            self.assertEqual(item['playbackProvider'], 'bunny')
+            self.assertEqual(item['duplicateCount'], 1)
+
+    def test_ready_bunny_alias_carries_its_provider_when_selected(self):
+        rows = [recording(artifact_id='WAIT', content_correlation_id='CONTENT', call_id='CALL',
+                          archive_status='pending', metadata={'lmsBunnyRecording': {'state': 'pending'}}),
+                recording(artifact_id='READY', content_correlation_id='CONTENT', call_id='CALL',
+                          archive_status='pending', metadata={'lmsBunnyRecording': {'state': 'ready'}})]
+        item = self.weeks_of(self.ns['build_library'](rows, WEEKS, []))[0]['recordings'][0]
+        self.assertEqual((item['id'], item['status'], item['state'], item['playbackProvider']),
+                         ('READY', 'available', 'ready', 'bunny'))
+
     def test_recording_from_another_day_is_kept_but_requires_placement_review(self):
         scheduled = datetime(2026, 10, 14, 8, tzinfo=timezone.utc)
         rows = [recording(artifact_id='EARLY', scheduled_start=scheduled,
