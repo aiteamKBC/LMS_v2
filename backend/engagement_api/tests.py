@@ -346,6 +346,22 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(json.loads(response.content)['csrfToken'])
 
+    def test_forms_summary_counts_completed_responses_across_historical_versions(self):
+        current_form = SimpleNamespace(status='published')
+        completed_responses = mock.MagicMock()
+        completed_responses.count.return_value = 11
+        with (
+            mock.patch.object(feedback, 'sync_module_feedback'),
+            mock.patch.object(feedback, '_forms_queryset', return_value=[current_form]),
+            mock.patch.object(feedback, 'form_dict', return_value={'id': 20}),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=completed_responses) as response_filter,
+        ):
+            response = feedback.forms_collection.__wrapped__(RequestFactory().get('/'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['summary']['totalResponses'], 11)
+        response_filter.assert_called_once_with(status='completed')
+
     def test_recipient_rows_show_attendance_learner_lecture_and_response(self):
         form = SimpleNamespace(id=19, form_type='post_lecture', template_key='template-1')
         delivery_form = SimpleNamespace(version=1, form_type='post_lecture')

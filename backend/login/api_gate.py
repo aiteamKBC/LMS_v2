@@ -221,6 +221,10 @@ def rule_for(path):
     # other Engagement endpoint.
     if path.startswith('/engagement_api/feedback/public-event/'):
         return None
+    # The shared lecture QR still validates a secret per lecture and checks
+    # the supplied email against that lecture's assigned module on every call.
+    if path.startswith('/engagement_api/feedback/public-lecture/'):
+        return None
     if path.startswith('/engagement_api/feedback/public-rsvp/'):
         return None
     if path.startswith('/engagement_api/event-check-in/'):

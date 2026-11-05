@@ -30,7 +30,7 @@ from learner_api import evidence_storage
 from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
-from .feedback_delivery import ensure_delivery_questions, lecture_after_form_creation
+from .feedback_delivery import QR_SCHEDULE_SOURCE, ensure_delivery_questions, lecture_after_form_creation
 from .feedback_analytics import lecture_analytics_options, question_analytics
 from .feedback_scoring import validate_analytics_settings
 from .feedback_question_overrides import effective_question_ids
@@ -528,7 +528,7 @@ def forms_collection(request):
                 'totalForms': len(forms),
                 'publishedForms': sum(f.status == 'published' for f in forms),
                 'draftForms': sum(f.status == 'draft' for f in forms),
-                'totalResponses': sum(sum(r.status == 'completed' for r in f.responses.all()) for f in forms),
+                'totalResponses': FeedbackResponse.objects.filter(status='completed').count(),
             },
         })
     if request.method != 'POST':
@@ -809,6 +809,7 @@ def _response_dict(response, *, include_answers=False):
     anonymous_name = 'Anonymous employer' if response.form.form_type == EMPLOYER_REVIEW_FORM_TYPE else 'Anonymous learner'
     data = {
         'id': response.id, 'formId': response.form_id, 'formTitle': response.form.title,
+        'templateKey': str(response.form.template_key),
         'formType': response.form.form_type,
         'learnerId': None if anonymous else response.learner_id,
         'learnerName': anonymous_name if anonymous else response.learner_name,
@@ -1057,8 +1058,15 @@ def learner_forms(request):
     accessible_modules = None
     for recipient in recipients:
         delivery, form = recipient.delivery, recipient.delivery.form
+        if form.form_type == 'post_lecture' and getattr(delivery, 'attendance_source', '') == QR_SCHEDULE_SOURCE:
+            continue
         if form.form_type == 'post_lecture' and not lecture_after_form_creation(form, delivery.starts_at):
             continue
+        if form.form_type == 'post_lecture' and getattr(recipient, 'public_claimed_at', None) is not None:
+            if accessible_modules is None:
+                accessible_modules = assigned_active_module_ids(learner_id)
+            if delivery.module_catalogue_id not in accessible_modules:
+                continue
         if form.form_type in MODULE_FORM_TYPES:
             if accessible_modules is None:
                 accessible_modules = assigned_active_module_ids(learner_id)
@@ -1467,6 +1475,8 @@ def _learner_feedback_context(
         except FeedbackDeliveryRecipient.DoesNotExist:
             return None, None, None
         form, delivery = recipient.delivery.form, recipient.delivery
+        if form.form_type == 'post_lecture' and getattr(delivery, 'attendance_source', '') == QR_SCHEDULE_SOURCE:
+            return None, None, None
         if lecture_only and form.form_type != 'post_lecture':
             return None, None, None
         if form.form_type in MODULE_FORM_TYPES and not module_delivery_accessible(delivery, learner_id):
@@ -1482,6 +1492,8 @@ def _learner_feedback_context(
             return None, None, None
         if form.form_type == 'post_lecture':
             if not lecture_after_form_creation(form, delivery.starts_at):
+                return None, None, None
+            if getattr(recipient, 'public_claimed_at', None) is not None and delivery.module_catalogue_id not in assigned_active_module_ids(learner_id):
                 return None, None, None
             ensure_delivery_questions(delivery)
         return form, delivery, recipient
