@@ -4,6 +4,7 @@
 # with several worker processes.
 # Settings are NOT baked in: ECS injects them from AWS Secrets Manager.
 # ------------------------------------------------------------
+FROM node:22.23.4-bookworm-slim AS youtube-node
 FROM python:3.12-slim
 
 # PIP_DEFAULT_TIMEOUT / PIP_RETRIES: tolerate slow or flaky connections to PyPI
@@ -14,6 +15,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_RETRIES=10
 
 WORKDIR /app
+
+# YouTube's EJS challenge solver needs Node >=22 in the backend container.
+# Copy only the runtime, not npm or another application's configuration.
+COPY --from=youtube-node /usr/local/bin/node /usr/local/bin/node
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libstdc++6 libatomic1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && node -e "if (Number(process.versions.node.split('.')[0]) < 22) process.exit(1)"
 
 # Dependencies first so this layer is cached when only code changes.
 # The cache mount keeps pip's downloads on the build machine between builds

@@ -76,7 +76,8 @@ jobs:
           docker run --rm --entrypoint python lms-backend:ci -m unittest -v \
             config.test_health_no_db \
             config.test_load_metric_no_db \
-            learner_api.test_response_cache_no_db
+            learner_api.test_response_cache_no_db \
+            curriculum_api.test_youtube_download
 
       - name: Container answers /health/
         run: |

@@ -32,28 +32,38 @@ def _prepare_cookies(directory):
     or pass browser sessions from other sites to the downloader.
     """
     configured = os.environ.get('YOUTUBE_COOKIES_FILE', '').strip()
-    if not configured:
+    secret_text = os.environ.get('YOUTUBE_COOKIES_TEXT', '')
+    if configured and secret_text:
+        raise VideoImportError('Configure only one YouTube session source: YOUTUBE_COOKIES_FILE or YOUTUBE_COOKIES_TEXT.')
+    if not configured and not secret_text:
         return None
     invalid = 'The YouTube session file is invalid. Ask an administrator to supply a YouTube-only Netscape cookies file.'
     try:
-        source = Path(configured)
-        if not source.is_absolute():
-            raise VideoImportError('YOUTUBE_COOKIES_FILE must be an absolute path outside the application folder.')
-        source = source.resolve(strict=True)
-        # The backend folder (curriculum_api/..). parents[2] was the repo root
-        # on the VPS but "/" in the container (/app/curriculum_api), which
-        # rejected every path there.
-        if source.is_relative_to(Path(__file__).resolve().parents[1]):
-            raise VideoImportError('Keep the YouTube session file outside the application folder.')
-        if not source.is_file():
-            raise VideoImportError(invalid)
-        with source.open('rb') as stream:
-            info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode):
+        if secret_text:
+            # ECS can inject a Secrets Manager plaintext export. Never forward
+            # this environment variable to the child or bake it into the image.
+            if len(secret_text) > MAX_COOKIE_BYTES:
                 raise VideoImportError(invalid)
-            if sys.platform != 'win32' and info.st_mode & 0o077:
-                raise VideoImportError('The YouTube session file must be private to the worker account (chmod 600).')
-            raw = stream.read(MAX_COOKIE_BYTES + 1)
+            raw = secret_text.encode('utf-8')
+        else:
+            source = Path(configured)
+            if not source.is_absolute():
+                raise VideoImportError('YOUTUBE_COOKIES_FILE must be an absolute path outside the application folder.')
+            source = source.resolve(strict=True)
+            # The backend folder (curriculum_api/..). parents[2] was the repo root
+            # on the VPS but "/" in the container (/app/curriculum_api), which
+            # rejected every path there.
+            if source.is_relative_to(Path(__file__).resolve().parents[1]):
+                raise VideoImportError('Keep the YouTube session file outside the application folder.')
+            if not source.is_file():
+                raise VideoImportError(invalid)
+            with source.open('rb') as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise VideoImportError(invalid)
+                if sys.platform != 'win32' and info.st_mode & 0o077:
+                    raise VideoImportError('The YouTube session file must be private to the worker account (chmod 600).')
+                raw = stream.read(MAX_COOKIE_BYTES + 1)
         if len(raw) > MAX_COOKIE_BYTES:
             raise VideoImportError(invalid)
         lines = raw.decode('utf-8-sig').splitlines()
@@ -248,7 +258,7 @@ def main(args=None):
     args = sys.argv[1:] if args is None else args
     if len(args) == 2 and args[0] == '--check':
         # Standalone: never load Django/.env, connect to a database or wake a
-        # worker. Pass YOUTUBE_COOKIES_FILE explicitly in the shell environment.
+        # worker. Use the session already injected into this process environment.
         from .video_sources import MAX_VIDEO_BYTES, youtube_url
         try:
             canonical = youtube_url(args[1])

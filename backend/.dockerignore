@@ -5,6 +5,7 @@
 .env.*
 *.pem
 *.key
+**/*cookies*.txt
 
 # Generated data-fix / audit reports (may contain learner data)
 reports/
