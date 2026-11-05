@@ -218,11 +218,18 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             'completed': (course, ref) in done, 'started': (course, ref) in started,
             '_course_ref': course, 'title': d['source_activity_title'], 'section_title': d.get('source_section_title'),
             'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0})
+    native_component_count = len(native.get('components', []))
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
-    from .replacement_learning import project_approved_learning
+    from .replacement_learning import project_approved_learning, approved_retained_components
     components = project_approved_learning(components, metadata['replacement_settings'], metadata.get('progress_transfers', []))
-    native['components'] = components[:len(native.get('components', []))]
-    native['retiredQuizComponents'] = components[len(native['components']):]
+    native['components'] = components[:native_component_count]
+    current_module_ids = {c.get('moduleId') for c in native['components'] if c.get('moduleId')}
+    # Explicitly retained (unmatched) old components have no destination here;
+    # they bypass project_approved_learning, which only revalidates matches
+    # against real target components, and would otherwise strip them.
+    retained_transfer = approved_retained_components(metadata.get('progress_transfers', []), current_module_ids)
+    native['retiredQuizComponents'] = [*components[native_component_count:], *retained_transfer]
+    components = [*components, *retained_transfer]
     by_id = {}
     for course in courses:
         ref = str(course['source_course_ref'])
@@ -704,8 +711,11 @@ def read_module(source, kind, owner, subject_id):
                             **{k:global_by_id.get(c.get('componentId'),{}).get(k) for k in ('attendanceCompleted',) if k in global_by_id.get(c.get('componentId'),{})}}
                             for c in detail['components'] if (c.get('moduleId') in native_scope_ids if mid else c.get('module')==subject_id[9:])]
     detail['retiredQuizComponents'] = [{k:v for k,v in c.items() if k != 'previousLearning'} for c in native.get('retiredQuizComponents',[]) if c.get('moduleId') in native_scope_ids]
-    from .replacement_learning import project_approved_learning
+    from .replacement_learning import project_approved_learning, approved_retained_components
     detail['components'] = project_approved_learning(detail['components'], metadata['replacement_settings'], transfers)
+    # Explicitly retained (unmatched) old components have no destination
+    # component to attach to; add them the same way assemble_cards does.
+    detail['retiredQuizComponents'] = [*detail['retiredQuizComponents'], *approved_retained_components(transfers, native_scope_ids)]
     component_set = {c.get('componentId') for c in [*detail['components'],*detail['retiredQuizComponents']]}
     quiz_ids = {str((c.get('quizMeta') or {}).get('quizId')) for c in detail['components'] if c.get('isQuiz')}
     detail['quizAttempts'] = [a for a in native['quizAttempts'] if a.get('componentId') in component_set if a.get('componentId')] + [a for a in native['quizAttempts'] if not a.get('componentId') and str(a.get('quizId')) in quiz_ids]
