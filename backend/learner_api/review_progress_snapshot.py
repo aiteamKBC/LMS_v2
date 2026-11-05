@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone as datetime_timezone
 
 from .dashboard_metrics import coach_otjh_target_to_date
+from .aptem_schedule import parse_aptem_date
 from .review_live_inputs import read_live_inputs, nonnegative_number, UnavailableReviewProgress
 from .training_plan_targets import (
     TARGET_STATUS_RESOLVED,
@@ -32,7 +33,7 @@ from .training_plan_targets import (
 #: evolution is recorded independently in ``formulaVersion``.
 CALCULATION_METHOD_PLANNED_HOURS = 'planned_hours'
 SNAPSHOT_SCHEMA_VERSION = 5
-TARGET_FORMULA_VERSION = 'canonical_dashboard_metrics_and_scheduled_catalogue_v6'
+TARGET_FORMULA_VERSION = 'canonical_dashboard_overview_activities_v7'
 ACTUAL_HOURS_SOURCE = 'canonical_learning.dashboard'
 
 DIRECTION_ABOVE = 'above'
@@ -158,7 +159,7 @@ def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calc
                'historicalComponents': historical, 'retainedComponents': retained,
                'totalPlannedOtjHours': planned_hours, 'targetOtjHours': expected_hours,
                'hoursTargetSource': 'ssot:programme-plan-window',
-               'activityPopulation': 'dashboard_assigned_catalogue'}
+               'activityPopulation': 'dashboard_overview_activities'}
     # These older fields described authored component/review hour sums. The
     # whole-programme Dashboard plan now owns hours, so do not persist a
     # misleading zero Review allowance or a partial sum beside its total.
@@ -221,6 +222,15 @@ def build_progress_snapshot(
     )
     targets = metrics.pop('targetCalculation')
     as_of_date = date.fromisoformat(targets['asOfDate'])
+    is_commercial = str(getattr(source, 'learner_type', '') or '').strip().casefold() == 'commercial'
+    practical_end = None if is_commercial else (
+        parse_aptem_date(getattr(source, 'practical_period_end_date', None))
+        or parse_aptem_date(getattr(source, 'end_date', None))
+    )
+    apprenticeship_end = parse_aptem_date(getattr(source, 'apprenticeship_end_date', None))
+    programme_end = (apprenticeship_end
+                     or parse_aptem_date(getattr(source, 'learner_end_date', None))
+                     or parse_aptem_date(getattr(source, 'end_date', None)))
     return {
         'calculationMethod': method,
         'schemaVersion': SNAPSHOT_SCHEMA_VERSION,
@@ -228,6 +238,12 @@ def build_progress_snapshot(
         'calculatedFrom': start_date.isoformat(),
         'calculatedAt': calculated_at_utc.isoformat().replace('+00:00', 'Z'),
         'calculatedBy': calculated_by or '',
+        'programmeTimeline': {
+            'startDate': start_date.isoformat(),
+            'asOfDate': as_of_date.isoformat(),
+            'gatewayDate': practical_end.isoformat() if practical_end else None,
+            'endDate': programme_end.isoformat() if programme_end else None,
+        },
         # Legacy explanatory field retained for old readers.  It no longer
         # drives either target; targetCalculation.qualifyingWeeks states the
         # authoritative schedule-based count.

@@ -2348,7 +2348,7 @@ describe('Progress Review learning progress snapshot', () => {
     expect(screen.getByText('64%')).toBeVisible();
     expect(screen.getByText('12% Above')).toBeVisible();
     expect(screen.getByText('2% Below')).toBeVisible();
-    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%' })).toBeVisible();
+    expect(screen.getByRole('img', { name: /Learning Plan Progress: 28%; target/ })).toBeVisible();
     expect(screen.getByText('27% Below')).toBeVisible();
   });
 
@@ -2390,7 +2390,7 @@ describe('Progress Review learning progress snapshot', () => {
     mount();
     expect(await screen.findByText('Review completed')).toBeVisible();
     expect(screen.getByText('64%')).toBeVisible();
-    expect(screen.getAllByText('28%')).toHaveLength(2);
+    expect(screen.getByText('28%')).toBeVisible();
     expect(screen.getByText('Green')).toBeVisible();
     // A past review that captured no RAG still appears, as "None".
     expect(screen.getByText('None')).toBeVisible();

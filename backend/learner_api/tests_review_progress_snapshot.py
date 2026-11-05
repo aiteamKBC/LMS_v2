@@ -22,7 +22,7 @@ from .review_progress_snapshot import (
     build_progress_snapshot,
 )
 from .training_plan_targets import WeekScheduleResolution, resolve_training_plan_week_starts as real_week_resolver
-from .module_progress import _module_progress_facts
+from .review_activity_facts import overview_activity_facts
 from .progress_cutoff import records_as_of
 
 #: The learner's own programme start date.
@@ -65,7 +65,12 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         def live_inputs(source, profile, *, as_of):
             progress = [{**row, 'component_ref': row.get('componentId'), 'passed': row.get('passed')}
                         for row in records_as_of(profile.training_plan_progress, as_of)]
-            facts = _module_progress_facts(self.historical, {**self.detail, 'quizAttempts': []}, [], progress)
+            facts = overview_activity_facts({
+                'activity': self.historical,
+                'detail': {**self.detail, 'quizAttempts': [], 'componentProgress': [
+                    {**row, 'componentId': row['component_ref']} for row in progress]},
+                'metadata': {'builder_subjects': {}},
+            })
             return {'owner': {'id': 101, 'enrolment_id': 201}, 'otjh': dict(self.live_otjh),
                     'ksb': dict(self.live_ksb), **facts}
         patcher = patch.object(review_progress_snapshot, 'read_live_inputs', side_effect=live_inputs)
@@ -119,6 +124,23 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         for shared in (COHORT_START, GROUP_START, PROGRAMME_TEMPLATE_START,
                        MODULE_START, PREVIOUS_REVIEW_DATE):
             self.assertNotEqual(snapshot['calculatedFrom'], shared.isoformat())
+
+    def test_timeline_freezes_learner_dates_at_calculation(self):
+        self.source.practical_period_end_date = '2026-07-01'
+        self.source.apprenticeship_end_date = '2027-01-01'
+        result = self.snapshot()
+        self.assertEqual(result['programmeTimeline'], {
+            'startDate': '2024-10-18', 'asOfDate': '2024-11-02',
+            'gatewayDate': '2026-07-01', 'endDate': '2027-01-01',
+        })
+        self.source.apprenticeship_end_date = '2028-01-01'
+        self.assertEqual(result['programmeTimeline']['endDate'], '2027-01-01')
+
+    def test_commercial_timeline_does_not_invent_gateway(self):
+        self.source.learner_type = 'commercial'
+        timeline = self.snapshot()['programmeTimeline']
+        self.assertIsNone(timeline['gatewayDate'])
+        self.assertEqual(timeline['endDate'], '2027-10-17')
 
     def test_expected_progress_uses_the_resolved_plan_week_dates(self):
         snapshot = self.snapshot()
@@ -264,7 +286,7 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         self.assertEqual(self.snapshot()['schemaVersion'], 5)
         self.assertEqual(
             self.snapshot()['formulaVersion'],
-            'canonical_dashboard_metrics_and_scheduled_catalogue_v6',
+            'canonical_dashboard_overview_activities_v7',
         )
 
     def test_finished_previous_learning_is_due_but_does_not_automatically_award_completion(self):

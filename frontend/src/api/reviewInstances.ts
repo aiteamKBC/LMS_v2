@@ -109,6 +109,7 @@ export interface ReviewProgressSnapshot {
   calculatedAt: string;
   calculatedBy: string;
   weeksElapsed: number | null;
+  programmeTimeline?: { startDate: string; asOfDate: string; gatewayDate: string | null; endDate: string | null } | null;
   programmeProgress: ReviewProgressMetric;
   offTheJobHours: ReviewProgressMetric;
   /** Additive and optional so signed snapshots from before this contract keep
