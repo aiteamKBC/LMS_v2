@@ -186,9 +186,24 @@ describe('compact My Learning route', () => {
       ? reply({ template: null, csrfToken: '' }) : String(input).includes('/modules/')
         ? reply(contractFixture.module) : reply(contractFixture.catalogue));
     route();
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Teaching status' }), { target: { value: 'all' } });
     fireEvent.click(await screen.findByRole('button', { name: /New LMS.*Example module.*Open subject/ }));
     await waitFor(() => expect(urls().filter(url => url.includes('/modules/'))).toHaveLength(1));
     expect(urls().find(url => url.includes('/modules/'))).toContain('current%3AM1');
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('defaults to active cards and opens an older subject through All (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.moduleActivity = { 'current:M1': { startDate: '2000-01-01', lastLiveDate: '2099-12-31' } };
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : String(input).includes('/modules/') ? makeModule('legacy:50') : catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    const card = (await screen.findByRole('heading', { name: 'One' })).closest('article')!;
+    expect(within(card).getByText('Active')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Old' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Teaching status' }), { target: { value: 'all' } });
+    fireEvent.click(screen.getByRole('button', { name: /Old LMS.*Old.*Open subject/ }));
+    await waitFor(() => expect(urls().some(url => url.includes('/modules/legacy%3A50/'))).toBe(true));
   });
 
   it('loads only the opened module and reuses its cache on revisits', async () => {
