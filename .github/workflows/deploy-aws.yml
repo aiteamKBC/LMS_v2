@@ -1,9 +1,9 @@
 # ------------------------------------------------------------
 # CI/CD for https://lms.kentbusinesscollege.org (AWS London)
 #
-# Pull requests into main: every check below runs; nothing is deployed.
-# Push to main (a merged PR): the same checks, then - after approval in the
-# "aws-staging" environment - the deploy.
+# Runs only when main is updated (a merged PR) or by hand (Run workflow):
+# every check below, then - after approval in the "aws-staging" environment -
+# the deploy. Pull requests do not run it.
 #
 #   backend        Docker image, Django checks, no-database tests (each
 #                  module in its own process: they stub parts of Django),
@@ -35,8 +35,6 @@
 name: CI/CD
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -46,10 +44,10 @@ on:
         required: false
         default: ""
 
-# A newer push to the same PR cancels its older checks
+# Runs queue one after another; a newer push never cancels a deploy
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -127,11 +125,9 @@ jobs:
           { echo '### Python dependency audit'; echo '```'; cat pip-audit.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save image for the deploy job
-        if: github.event_name != 'pull_request'
         run: docker save lms-backend:ci | gzip > image.tar.gz
 
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request'
         with:
           name: backend-image
           path: image.tar.gz
@@ -228,7 +224,6 @@ jobs:
         run: npm run build
 
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request'
         with:
           name: frontend-out
           path: frontend/out
@@ -246,10 +241,10 @@ jobs:
 
       - name: Leaked-secret scan of the new commits (gitleaks)
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE: ${{ github.event.before }}
+          HEAD: ${{ github.sha }}
         run: |
-          # Only the commits this PR/push adds; history is not rescanned
+          # Only the commits this push adds; history is not rescanned
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
              || ! git cat-file -e "$BASE" 2>/dev/null; then
             RANGE="$HEAD~1..$HEAD"
@@ -275,7 +270,7 @@ jobs:
   deploy:
     name: Deploy to AWS
     needs: [backend, frontend, security]
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # Required reviewers on this environment = the approval gate
     environment:
