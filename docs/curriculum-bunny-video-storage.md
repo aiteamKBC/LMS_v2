@@ -84,8 +84,9 @@ and [SKIP LOCKED for concurrent queue consumers](https://www.postgresql.org/docs
   rate-limit and extraction failures remain visible; they never create an empty
   Bunny video or claim success. Downloads are anonymous by default. An
   administrator can opt in to a YouTube-only session export through
-  `YOUTUBE_COOKIES_FILE`; see the VPS session setup below. Browser profiles and
-  account passwords are never read by the application.
+  `YOUTUBE_COOKIES_FILE` on a server, or `YOUTUBE_COOKIES_TEXT` injected from an
+  ECS secret; see the session setup sections below. Browser profiles and account
+  passwords are never read by the application.
 - YouTube temporary media are removed after upload, including when downloading
   or uploading fails. The downloader has a 20-minute timeout, the same 300 MB
   limit, bounded retries and no database/Bunny/Microsoft credentials in its
@@ -223,6 +224,73 @@ the next attempt reads the replacement. To return to anonymous downloading,
 remove `YOUTUBE_COOKIES_FILE` and restart the affected services. This adds no
 migration, dependency, PO-token service or proxy. Existing failed imports are not
 automatically replayed by the configuration change.
+
+## Optional YouTube session on AWS ECS
+
+This path requires the reviewed backend image containing `YOUTUBE_COOKIES_TEXT`
+support. The local implementation alone does not enable it in running tasks.
+The backend image includes Node 22.23.4 for the existing yt-dlp EJS solver;
+Python requirements and the application's non-root user remain unchanged.
+
+Use the YouTube-only Netscape export described above. ECS does not create a file
+merely because `YOUTUBE_COOKIES_FILE` names a path. Instead, the downloader accepts
+the export as an injected secret and creates its existing private per-attempt
+file automatically. Configure **one** session input: keep `YOUTUBE_COOKIES_FILE`
+unset when using `YOUTUBE_COOKIES_TEXT`. Supplying both reports a configuration
+error rather than selecting one silently.
+
+1. In AWS Secrets Manager, in the ECS service's region, choose **Store a new
+   secret**, **Other type of secret**, then **Plaintext**. Paste the complete
+   contents of the exported `.txt` file, including its Netscape header and real
+   tabs/newlines. Do not wrap it in JSON or paste a local file path. Use a separate
+   secret, for example `lms/youtube-cookies`; this example name has not been
+   created by the agent. Secrets Manager accepts at most 65,536 bytes per secret.
+   Keep the value out of Git, chat, logs and ordinary task environment fields.
+   See [creating an AWS secret](https://docs.aws.amazon.com/secretsmanager/latest/userguide/create_secret.html).
+2. Through the existing `LMS_infrastructure` task-definition configuration, add
+   this entry to the curriculum container's existing `secrets` list. Add it to
+   the actual video-worker container too if that worker is separately deployed.
+   Preserve the other entries; use the full ARN returned for the plaintext
+   secret, without a JSON-key suffix:
+
+   ```json
+   {
+     "name": "YOUTUBE_COOKIES_TEXT",
+     "valueFrom": "<full ARN of the plaintext Secrets Manager secret>"
+   }
+   ```
+
+   The [task execution role](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html)
+   needs `secretsmanager:GetSecretValue` for this secret,
+   plus `kms:Decrypt` when a customer-managed encryption key is used. Persist the
+   mapping in the infrastructure configuration so later deployments retain it.
+   This repository does not contain those task definitions. See
+   [ECS secret injection](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-secrets-manager.html).
+3. After review, merge, image validation and an explicitly requested deployment,
+   run the affected services on the new image and task-definition revision.
+   Renewing the secret later also requires fresh tasks: an existing task retains
+   its old environment value. No `/root` or `/run/secrets` file mount is needed
+   for this method. The Bunny enabled flag, library ID and API-key secret remain
+   separate requirements; YouTube cookies do not enable Bunny imports.
+4. For a metadata-only production check after deployment, an explicitly requested
+   one-off ECS task can use the same image and secret mapping with this container
+   command override:
+
+   ```text
+   python -m curriculum_api.youtube_download --check "https://www.youtube.com/watch?v=Ey2FlBW7uKI"
+   ```
+
+   It exits with a safe diagnostic, without Django startup, database access,
+   media download or Bunny calls. Success establishes metadata access only.
+   Saving a failed video again initiates the real download and Bunny copy and is
+   a separate live action. YouTube can still reject a valid session.
+
+The application validates the same bounded YouTube-only export for both inputs.
+It strips browser-export comments and gives each downloader a private temporary
+copy. The raw secret is excluded from subprocess arguments/environment and public
+errors. A job cannot update another job's copy. Temporary files are removed after
+success or failure, including a subprocess startup failure. Without either input,
+the existing anonymous download behavior is preserved.
 
 ## Scoped existing-module import
 
@@ -642,3 +710,45 @@ Final verification from `backend`:
 Only the downloader, its regression tests and this document changed in this
 follow-up. No environment files, credentials, dependencies, databases or services
 were changed. No commit, push, PR update, deployment or live upload was performed.
+
+## ECS YouTube session follow-up on 2026-11-05
+
+After the user exported a YouTube-only session, the AWS preparation added an
+optional `YOUTUBE_COOKIES_TEXT` input for Secrets Manager injection. It uses the
+existing validated per-attempt file and subprocess isolation; the VPS file input
+continues to work. The backend Dockerfile now supplies the Node runtime required
+by the existing downloader, and `.dockerignore` excludes cookie-text exports.
+The existing image-test workflow includes the downloader unit suite. No workflow
+was triggered and no infrastructure task definition was changed.
+
+Verification from `backend` on the final implementation:
+
+- `.\.venv\Scripts\python.exe -m unittest config.test_health_no_db config.test_load_metric_no_db learner_api.test_response_cache_no_db curriculum_api.test_youtube_download`:
+  PASS, 38 tests, including 25 downloader cases. New cases cover plaintext
+  BOM/CRLF exports, independent private copies, competing session inputs, invalid
+  or expired exports, size limits, safe errors, child-environment isolation and
+  cleanup after a subprocess startup failure. External downloader calls are
+  mocked and the downloader suite blocks socket connections. An initial size
+  test hit Windows' environment-variable length limit before entering the
+  application; its environment is now a test dictionary, retaining both the
+  character and UTF-8 byte-limit assertions.
+- `.\.venv\Scripts\python.exe -m curriculum_api.run_video_import_tests`:
+  PASS, 128 tests on fresh in-memory SQLite, with external network blocked. This
+  includes the same 25 downloader tests; the two counts are not disjoint.
+- `git diff --check`: PASS.
+- Docker image build and in-container checks: BLOCKED / NOT RUN locally because
+  Docker CLI is unavailable. Docker Hub's tag API confirmed
+  `node:22.23.4-bookworm-slim` exists with an amd64 image, but that does not verify
+  the combined image. The changed workflow must build it and run its existing
+  health checks before deployment.
+- Frontend, PostgreSQL and Teams checks: NOT REQUIRED for this follow-up. No
+  frontend, database behavior, listed Teams file or consumed API contract changed.
+- Live YouTube/Bunny/Teams, AWS configuration and production UI: NOT RUN. The
+  actual exported session was not read or tested; YouTube acceptance remains
+  unverified.
+
+All six changed files remain local on the existing branch. No commit, push, PR
+update, merge, secret creation, task restart, deployment or media upload was
+performed. The user's restriction on publishing without an explicit request
+remains in force. Review, a successful image build, infrastructure secret mapping
+and any subsequently authorized production validation remain outstanding.

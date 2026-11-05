@@ -152,9 +152,10 @@ def build_review(request_id, items, context):
 
 
 def validate_decisions(review, decisions):
-    """Require explicit unique choices; type exceptions are request-local pairs."""
-    needed = {(module['moduleId'], source['sourceActivityRef']): (module, source)
-              for module in review['modules'] for source in module['sources'] if not source['automaticTargetId']}
+    """Allow multiple destinations per source, reserving each destination once."""
+    sources = {(module['moduleId'], source['sourceActivityRef']): (module, source)
+               for module in review['modules'] for source in module['sources']}
+    needed = {key for key, (_, source) in sources.items() if not source['automaticTargetId']}
     if decisions is None and not needed:
         return {}
     if not isinstance(decisions, dict) or decisions.get('reviewToken') != review['reviewToken']:
@@ -171,17 +172,17 @@ def validate_decisions(review, decisions):
                 or any(not isinstance(value, str) or not value for value in row.values())):
             raise ServiceError('Choose a destination for every unmatched component.', 'invalid_transfer_match', 400)
         key = (row['moduleId'], row['sourceActivityRef'])
-        if key not in needed or key in result:
-            raise ServiceError('A source component is invalid or selected more than once.', 'invalid_transfer_match', 400)
-        module, source = needed[key]
+        if key not in sources:
+            raise ServiceError('A source component is invalid.', 'invalid_transfer_match', 400)
+        module, source = sources[key]
         target = next((target for target in module['targets'] if target['componentId'] == row['targetComponentId']), None)
         if (target is None or source['type'] == 'unknown'
                 or (source['type'] != target['type'] and source.get('recommendedTargetId') != row['targetComponentId'])
                 or (row['moduleId'], row['targetComponentId']) in used):
             raise ServiceError('Choose a unique component of the same type in the destination module.', 'invalid_transfer_match', 400)
         used.add((row['moduleId'], row['targetComponentId']))
-        result[key] = target
-    if result.keys() != needed.keys():
+        result.setdefault(key, []).append(target)
+    if not needed.issubset(result):
         raise ServiceError('Every completed old component must have a match before approval.', 'transfer_matches_required', 409)
     return result
 
