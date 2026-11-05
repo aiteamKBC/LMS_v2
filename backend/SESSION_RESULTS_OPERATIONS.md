@@ -261,10 +261,13 @@ were blocked. The runner dropped its test database and the temporary server was
 stopped afterwards. No production database writes, live meetings or invitations
 were used for these checks. Browser-based learner playback remains unverified.
 
-**Owner hold:** keep the change on the existing branch and the PR in draft. Do
-not merge or deploy until the owner confirms the required AWS environment
-settings have been configured. Review and the normal merged-main release checks
-still apply.
+**Release authorization, 5 November:** the owner reports uploading the combined
+dotenv containing the Microsoft Graph and Bunny settings and requests merging
+the current branch followed by CI/CD. The earlier draft hold is superseded.
+Review, final-state checks and the existing merged-main deployment/rollback
+gates still apply. The local session has not independently inspected ECS secret
+mappings or running-container values; post-deployment recording checks remain
+necessary.
 
 The authorized four-recording live cutover batch has completed: all four Bunny
 videos are fully encoded, have verified collection/component/week metadata,
