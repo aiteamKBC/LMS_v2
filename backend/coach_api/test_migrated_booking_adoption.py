@@ -190,6 +190,42 @@ class MigratedBookingAdoptionTests(SimpleTestCase):
         self.assertEqual(self.overlay.status, "in-progress")
         self.overlay.save.assert_not_called()
 
+    def test_adopts_verified_booking_when_source_started_after_form_initialization(self):
+        self.definition["sourceStatus"] = "In Progress"
+        before = deepcopy({k: v for k, v in vars(self.overlay).items() if k not in {"status", "save"}})
+        response = self.call()
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(json.loads(response.content)["localStatus"], "scheduled")
+        self.assertEqual(self.call().status_code, 200)
+        self.overlay.save.assert_called_once_with(update_fields=["status", "updated_at"])
+        self.assertEqual(before, {k: v for k, v in vars(self.overlay).items() if k not in {"status", "save"}})
+        self.assertEqual(self.definition["sourceStatus"], "In Progress")
+        self.calendar.save.assert_not_called()
+
+    def test_in_progress_source_exception_is_limited_to_mcm(self):
+        self.definition["sourceStatus"] = "In Progress"
+        for family, title in (("PR", "Progress Review"),
+                              ("PR_SKILLS_RADAR", "Progress Review (+ Skills Radar)")):
+            with self.subTest(family=family):
+                self.definition["historicalReview"]["type"] = title
+                self.overlay.template_snapshot["templateSource"]["family"] = family
+                self.assertEqual(self.call().status_code, 409)
+        self.overlay.save.assert_not_called()
+
+    def test_source_completion_during_mcm_adoption_is_rechecked_under_lock(self):
+        self.definition["sourceStatus"] = "In Progress"
+        self.reader.side_effect = [deepcopy(self.definition), {**self.definition, "sourceStatus": "Completed"}]
+        self.assertEqual(self.call().status_code, 409)
+        self.overlay.save.assert_not_called()
+
+    def test_in_progress_source_does_not_allow_creating_another_meeting(self):
+        self.definition["sourceStatus"] = "In Progress"
+        request = self.factory.post("/", {}, content_type="application/json")
+        request.coach_email = OWNER
+        response = unwrap(views.coach_review_instance_book)(request, KEY)
+        self.assertEqual(response.status_code, 409)
+        self.overlay.save.assert_not_called()
+
     def test_legacy_commercial_and_apprenticeship_bookings_use_exact_learner_and_review_identity(self):
         self.calendar.review_instance_id = self.calendar.review_template_id = ""
         self.calendar.learner_id = 121  # Older learner bookings stored the enrolment ID.
@@ -226,7 +262,8 @@ class MigratedBookingAdoptionTests(SimpleTestCase):
 
     def test_conflicting_source_or_template_and_historical_reviews_are_preserved(self):
         for update in ({"booking": {"conflict": True}}, {"templateSync": {"status": "conflict"}},
-                       {"sourceStatus": "Completed"}, {"readOnly": True}, {"previewOnly": True},
+                       {"sourceStatus": "Completed"}, {"sourceStatus": "Cancelled"}, {"sourceStatus": "Unknown"},
+                       {"readOnly": True}, {"previewOnly": True},
                        {"migratedForm": False}, {"historicalReview": {"type": "Personal Support Plan"}}):
             with self.subTest(update=update):
                 before = deepcopy(self.definition)
