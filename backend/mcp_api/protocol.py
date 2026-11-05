@@ -7,6 +7,7 @@ authentication, the per-call context and logging.
 import logging
 
 from . import changes  # noqa: F401 - registers apply_change, cancel_change, list_my_pending_changes
+from .tools import read  # noqa: F401 - registers the Step 6 read tools
 from . import pii, ratelimit
 from . import schema as json_schema
 from .dispatch import DispatchError

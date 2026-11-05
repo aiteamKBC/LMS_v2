@@ -88,15 +88,22 @@ class ProtocolTests(TransportTestCase):
     def test_ping_and_tools_list(self):
         self.assertEqual(self.post(rpc("ping")).json()["result"], {})
         tools = self.post(rpc("tools/list")).json()["result"]["tools"]
-        self.assertEqual([t["name"] for t in tools], ["apply_change", "cancel_change", "list_my_pending_changes", "test_whoami"])
+        names = [t["name"] for t in tools]
+        self.assertEqual(names, sorted(names))
+        self.assertIn("test_whoami", names)
         whoami = next(t for t in tools if t["name"] == "test_whoami")
         self.assertEqual(whoami["annotations"],
                          {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True})
         self.assertIn("inputSchema", whoami)
 
     def test_no_tools_registered_outside_tests(self):
-        # Step 5 adds the three change-management tools; no business tools until Step 6.
-        self.assertEqual(set(REGISTRY), {"apply_change", "cancel_change", "list_my_pending_changes", "test_whoami"})
+        # Step 5: change management. Step 6: read-only tools. No write tools until Step 7.
+        self.assertEqual(set(REGISTRY), {
+            "apply_change", "cancel_change", "list_my_pending_changes", "test_whoami",
+            "find_programmes", "find_cohorts_groups", "find_modules", "get_module_structure",
+            "list_standard_ksbs", "ksb_coverage", "get_quiz", "list_books", "search_books",
+        })
+        self.assertEqual([name for name, t in REGISTRY.items() if t.writes], ["apply_change"])
 
     def test_invalid_json_unknown_method_and_batch(self):
         bad = self.post("{not json")
@@ -285,8 +292,16 @@ class DispatchTests(SimpleTestCase):
         self.request = SimpleNamespace(login_account=SimpleNamespace(pk=5, role="staff"))
 
     def test_not_allowlisted_is_refused(self):
-        with self.assertRaisesRegex(dispatch.DispatchError, "not available"):
-            dispatch.call_api(self.request, "GET", "/curriculum_api/curriculum/programmes/")
+        # Step 6 allows GET on the programme list -- never a write, never anything else.
+        for method, path in (
+            ("POST", "/curriculum_api/curriculum/programmes/"),
+            ("GET", "/curriculum_api/curriculum/programmes/tree/"),
+            ("GET", "/learner_api/enrolment-users/"),
+            ("PUT", "/curriculum_api/curriculum/modules/M1/structure/"),
+        ):
+            with self.subTest(method=method, path=path), \
+                    self.assertRaisesRegex(dispatch.DispatchError, "not available"):
+                dispatch.call_api(self.request, method, path, json_body={} if method != "GET" else None)
 
     def test_forbidden_keys_are_rejected_not_stripped(self):
         for payload in (

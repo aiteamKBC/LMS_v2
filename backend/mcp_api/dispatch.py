@@ -28,9 +28,19 @@ logger = logging.getLogger("mcp_api")
 
 METHODS = frozenset({"GET", "POST", "PUT", "PATCH"})
 
-#: (method, full-match regex on the path). Empty until tools need endpoints
-#: (Step 6 adds read-only ones). Anything not listed is refused.
-ALLOWED_CALLS = ()
+#: (method, full-match regex on the path). Anything not listed is refused.
+#: Step 6: read-only GETs for the read tools (``tools/read.py``).
+_SEG = r"[^/?#]+"
+ALLOWED_CALLS = (
+    ("GET", r"/curriculum_api/curriculum/programmes/"),
+    ("GET", rf"/curriculum_api/curriculum/programmes/{_SEG}/cohorts/"),
+    ("GET", rf"/curriculum_api/curriculum/cohorts/{_SEG}/groups/"),
+    ("GET", r"/curriculum_api/curriculum/modules/"),
+    ("GET", rf"/curriculum_api/curriculum/modules/{_SEG}/structure/"),
+    ("GET", rf"/curriculum_api/curriculum/(programmes|modules)/{_SEG}/ksb-coverage/"),
+    ("GET", r"/quiz_api/quizzes/\d+/preview/"),
+    ("GET", r"/curriculum_api/knowledge-base/books/"),
+)
 
 FORBIDDEN_KEYS = frozenset({"removemissing", "hydrationcomplete", "permanent"})
 FORBIDDEN_KEY_PREFIXES = ("remove", "deleted")
