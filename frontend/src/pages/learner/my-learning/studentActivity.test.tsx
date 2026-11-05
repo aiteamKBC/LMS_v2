@@ -402,7 +402,13 @@ describe('subjects shared with Module Builder', () => {
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByRole('group', { name: 'Welcome activity' })).toBeVisible();
     expect(screen.getByRole('group', { name: 'First lecture activity', hidden: true })).not.toBeVisible();
-    expect(within(screen.getByRole('complementary', { name: 'Module activities' })).getByText('First lecture')).toBeVisible();
+    const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
+    const lectureWeek = sidebar.getByRole('button', { name: /Week 1.*First lecture, 1 components/ });
+    expect(lectureWeek).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(lectureWeek);
+    expect(lectureWeek).toHaveAttribute('aria-expanded', 'true');
+    expect(sidebar.getByText('First lecture')).toBeVisible();
+    expect(screen.getByRole('group', { name: 'Welcome activity' })).toBeVisible();
   });
 
   it('shows native components in every future month with their completion totals', async () => {
