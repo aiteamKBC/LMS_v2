@@ -29,7 +29,7 @@ from .feedback import (
     upload_owned_photo,
 )
 from .feedback_delivery import (
-    QR_SCHEDULE_SOURCE, _form_for_occurrence, _pin_delivery_questions,
+    QR_SCHEDULE_SOURCE, _aware_utc, _form_for_occurrence, _pin_delivery_questions,
     ensure_delivery_questions, lecture_after_form_creation,
 )
 from .feedback_delivery_guard import tag_transaction
@@ -60,7 +60,7 @@ def _eligible_modules(learner):
 
 def _window_open(occurrence, now):
     """Never open before the scheduled start, even for a short lecture."""
-    start, end = occurrence.scheduled_start, occurrence.scheduled_end
+    start, end = _aware_utc(occurrence.scheduled_start), _aware_utc(occurrence.scheduled_end)
     return (start < end and max(start, end - EARLY_WINDOW) <= now < end
             and occurrence.actual_end is None
             and str(occurrence.status or '').casefold() not in INACTIVE_SESSION_STATES)
@@ -99,10 +99,10 @@ def _provisional_delivery_open(delivery, now):
             or str(occurrence.status or '').casefold() in INACTIVE_SESSION_STATES):
         return False
     if occurrence.actual_end is not None:
-        return now >= occurrence.actual_end
+        return now >= _aware_utc(occurrence.actual_end)
     if str(occurrence.status or '').casefold() in {'completed', 'ended'}:
         return False
-    return now >= occurrence.scheduled_end or _window_open(occurrence, now)
+    return now >= _aware_utc(occurrence.scheduled_end) or _window_open(occurrence, now)
 
 
 def _qr_delivery_open(delivery, now):
@@ -116,16 +116,18 @@ def _qr_delivery_open(delivery, now):
 
 def _ensure_current_delivery(occurrence, module, now):
     """Pin one form version and one random question set per occurrence."""
+    starts_at = _aware_utc(occurrence.scheduled_start)
+    ends_at = _aware_utc(occurrence.scheduled_end)
     with transaction.atomic():
         existing = FeedbackDelivery.objects.select_for_update().select_related('form').filter(
             occurrence_key=occurrence.pk,
         ).first()
         form = existing.form if existing else _form_for_occurrence(
-            occurrence.pk, module.module_catalogue_id, occurrence.scheduled_start,
+            occurrence.pk, module.module_catalogue_id, starts_at,
         )
         if (form is None or form.form_type != 'post_lecture' or form.status != 'published'
                 or (form.start_date and form.start_date > now)
-                or not lecture_after_form_creation(form, occurrence.scheduled_start)):
+                or not lecture_after_form_creation(form, starts_at)):
             return None
         if existing:
             if (existing.status != 'open' or existing.module_catalogue_id != module.module_catalogue_id
@@ -145,8 +147,8 @@ def _ensure_current_delivery(occurrence, module, now):
                 'module_name': module.title,
                 'session_title': f'{module.title} - Session {occurrence.session_number}',
                 'tutor_name': module.tutor_name or '',
-                'starts_at': occurrence.scheduled_start, 'ends_at': occurrence.scheduled_end,
-                'available_at': occurrence.scheduled_end, 'status': 'open',
+                'starts_at': starts_at, 'ends_at': ends_at,
+                'available_at': ends_at, 'status': 'open',
             },
         )
         if created:
@@ -158,7 +160,7 @@ def _ensure_current_delivery(occurrence, module, now):
             pinned_form = delivery.form
             if (pinned_form.form_type != 'post_lecture' or pinned_form.status != 'published'
                     or (pinned_form.start_date and pinned_form.start_date > now)
-                    or not lecture_after_form_creation(pinned_form, occurrence.scheduled_start)):
+                    or not lecture_after_form_creation(pinned_form, starts_at)):
                 return None
             ensure_delivery_questions(delivery)
         return delivery

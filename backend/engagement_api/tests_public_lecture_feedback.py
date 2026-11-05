@@ -181,10 +181,20 @@ class PublicLectureFeedbackTests(SimpleTestCase):
         occurrence.actual_end = start + timedelta(minutes=5)
         self.assertFalse(public._window_open(occurrence, start + timedelta(minutes=6)))
 
+    def test_final_hour_accepts_curriculum_naive_utc_timestamps(self):
+        now = datetime(2026, 11, 5, 11, 30, tzinfo=timezone.utc)
+        occurrence = SimpleNamespace(
+            scheduled_start=datetime(2026, 11, 5, 10, 0),
+            scheduled_end=datetime(2026, 11, 5, 12, 0),
+            actual_end=None, status='scheduled',
+        )
+        self.assertTrue(public._window_open(occurrence, now))
+        self.assertFalse(public._window_open(occurrence, now - timedelta(hours=1)))
+
     def test_public_token_rechecks_live_schedule_and_cancellation(self):
         start = datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc)
-        occurrence = SimpleNamespace(live_session_id='LIVE-1', scheduled_start=start,
-                                     scheduled_end=start + timedelta(hours=2), actual_end=None,
+        occurrence = SimpleNamespace(live_session_id='LIVE-1', scheduled_start=start.replace(tzinfo=None),
+                                     scheduled_end=(start + timedelta(hours=2)).replace(tzinfo=None), actual_end=None,
                                      status='scheduled')
         parent = SimpleNamespace(module_catalogue_id='MOD-1', status='active')
         delivery = SimpleNamespace(occurrence_key='OCC-1', module_catalogue_id='MOD-1')
@@ -199,8 +209,10 @@ class PublicLectureFeedbackTests(SimpleTestCase):
             occurrence.status = 'cancelled'
             self.assertFalse(public._provisional_delivery_open(delivery, start + timedelta(minutes=61)))
             occurrence.status = 'scheduled'
-            occurrence.scheduled_end = start + timedelta(hours=3)
+            occurrence.scheduled_end = (start + timedelta(hours=3)).replace(tzinfo=None)
             self.assertFalse(public._provisional_delivery_open(delivery, start + timedelta(minutes=61)))
+            occurrence.actual_end = (start + timedelta(minutes=62)).replace(tzinfo=None)
+            self.assertTrue(public._provisional_delivery_open(delivery, start + timedelta(minutes=63)))
 
     def test_group_mismatch_denies_lecture_even_when_module_id_matches(self):
         target = lecture()
@@ -307,8 +319,8 @@ class PublicLectureFeedbackTests(SimpleTestCase):
 
     def test_ongoing_lecture_final_hour_selects_current_pinned_delivery(self):
         now = datetime(2026, 11, 4, 11, 0, tzinfo=timezone.utc)
-        occurrence = SimpleNamespace(scheduled_start=now - timedelta(hours=1),
-                                     scheduled_end=now + timedelta(hours=1), actual_end=None,
+        occurrence = SimpleNamespace(scheduled_start=(now - timedelta(hours=1)).replace(tzinfo=None),
+                                     scheduled_end=(now + timedelta(hours=1)).replace(tzinfo=None), actual_end=None,
                                      status='scheduled')
         module = SimpleNamespace(module_catalogue_id='MOD-1', group_id='GROUP-1')
         target = lecture()
@@ -330,8 +342,8 @@ class PublicLectureFeedbackTests(SimpleTestCase):
 
     def test_early_delivery_is_created_once_with_group_snapshot_and_pinned_questions(self):
         now = datetime(2026, 11, 4, 11, 0, tzinfo=timezone.utc)
-        occurrence = SimpleNamespace(pk='OCC-1', scheduled_start=now - timedelta(hours=1),
-                                     scheduled_end=now + timedelta(hours=1), session_number=4)
+        occurrence = SimpleNamespace(pk='OCC-1', scheduled_start=(now - timedelta(hours=1)).replace(tzinfo=None),
+                                     scheduled_end=(now + timedelta(hours=1)).replace(tzinfo=None), session_number=4)
         module = SimpleNamespace(module_catalogue_id='MOD-1', programme_id='P', programme_name='Programme',
                                  cohort_id='C', cohort_name='Cohort', group_id='GROUP-1', group_name='Group',
                                  title='Module', tutor_name='Tutor')
@@ -352,7 +364,8 @@ class PublicLectureFeedbackTests(SimpleTestCase):
         defaults = create.call_args.kwargs['defaults']
         self.assertEqual(defaults['attendance_source'], public.QR_SCHEDULE_SOURCE)
         self.assertEqual(defaults['group_id'], 'GROUP-1')
-        self.assertEqual(defaults['available_at'], occurrence.scheduled_end)
+        self.assertEqual(defaults['available_at'], now + timedelta(hours=1))
+        self.assertEqual(defaults['starts_at'], now - timedelta(hours=1))
         pin.assert_called_once_with(delivery, form)
         ensure.assert_called_once_with(delivery)
 

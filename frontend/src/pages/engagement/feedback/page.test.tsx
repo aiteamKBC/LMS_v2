@@ -94,16 +94,24 @@ describe('feedback form version history', () => {
 
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: 'Responses' }));
-    await user.selectOptions(screen.getAllByRole('combobox')[0], '20');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by form' }), '20');
     expect(screen.getByText('Marketing - Session 1')).toBeVisible();
     expect(screen.getByText('Marketing - Session 2')).toBeVisible();
     expect(screen.queryByText('Other - Session 1')).not.toBeInTheDocument();
+    const tutorFilter = screen.getByRole('combobox', { name: 'Filter by tutor' });
+    expect(within(tutorFilter).getByRole('option', { name: 'Original Tutor' })).toBeInTheDocument();
+    expect(within(tutorFilter).queryByRole('option', { name: 'Not recorded' })).not.toBeInTheDocument();
+    await user.selectOptions(tutorFilter, 'Original Tutor');
+    expect(screen.getByText('Marketing - Session 1')).toBeVisible();
+    expect(screen.queryByText('Marketing - Session 2')).not.toBeInTheDocument();
+    await user.selectOptions(tutorFilter, 'all');
     expect(screen.getByRole('columnheader', { name: 'Lecture' })).toBeVisible();
     expect(screen.getByRole('columnheader', { name: 'Lecture date' })).toBeVisible();
     expect(screen.getByRole('columnheader', { name: 'Tutor' })).toBeVisible();
     expect(screen.getAllByText('19 Oct 2026')).toHaveLength(2);
-    expect(screen.getByText('Original Tutor')).toBeVisible();
-    expect(screen.getByText('Not recorded')).toBeVisible();
+    const responsesTable = screen.getByRole('table');
+    expect(within(responsesTable).getByText('Original Tutor')).toBeVisible();
+    expect(within(responsesTable).getByText('Not recorded')).toBeVisible();
     await user.click(screen.getByText('Marketing - Session 1'));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Original Tutor')).toBeVisible();
