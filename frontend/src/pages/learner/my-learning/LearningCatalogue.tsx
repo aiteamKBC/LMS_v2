@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, ClipboardList, Clock3, Headphones, LayoutGrid, List, Map, Search, Trophy } from 'lucide-react';
 import type { Subject, UnifiedLearningSummary } from './SubjectWorkspace';
@@ -9,6 +9,7 @@ import { sessionDay } from '@/pages/learner/training-plan-timeline/model';
 import { learningDate, learningHref, learningToday, subjectPercent } from './subjectLearning';
 import { DEFAULT_MODULE_COVER } from './moduleCover';
 import styles from './SubjectWorkspace.module.css';
+import { moduleTeachingActive, type TeachingActivities } from './teachingActivity';
 
 export type UpcomingLearningLink = { id: string; title: string; type: string; date: string; href: string; online: boolean };
 
@@ -60,7 +61,7 @@ export function LearningHero({ map = false }: { map?: boolean }) {
   </header>;
 }
 
-export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming, transferAction }: {
+export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming, transferAction, moduleActivity }: {
   summary: UnifiedLearningSummary; search: string; onSearch: (value: string) => void; current?: Subject;
   renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void;
   moduleStartDate: (subject: Subject) => string | null | undefined; kind?: string; learnerId?: string;
@@ -68,8 +69,15 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   deadlines?: OverviewWeek['deadlines']; covers?: Record<string, string>; upcomingSessions?: PlanSession[]; reviewMode?: boolean;
   activityMatches?: string[]; upcomingLinks?: UpcomingLearningLink[]; hasMoreUpcoming?: boolean; onLoadUpcoming?: () => void;
   transferAction?: ReactNode;
+  moduleActivity?: TeachingActivities;
 }) {
   const [filter, setFilter] = useState('all');
+  const [teaching, setTeaching] = useState<'active' | 'all'>('active');
+  const [today, setToday] = useState(learningToday);
+  useEffect(() => {
+    const timer = window.setInterval(() => setToday(learningToday()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [sourceFilter, setSourceFilter] = useState<'all' | Subject['source']>('all');
   const [sort, setSort] = useState('start');
   const [layout, setLayout] = useState('list');
@@ -78,6 +86,8 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   const visible = summary.subjects.filter(subject => {
     const progress = subjectPercent(subject);
     return (!term || subject.title.toLocaleLowerCase().includes(term) || activityMatches.includes(subject.id) || subject.activities.some(a => a.title.toLocaleLowerCase().includes(term)))
+      && (!moduleActivity || teaching === 'all' || moduleTeachingActive(moduleActivity[
+        sourceFilter === 'all' && subject.previousLearningFor ? subject.previousLearningFor : subject.id], today))
       && (sourceFilter === 'all' || (subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source) === sourceFilter)
       && (filter === 'all' || (filter === 'complete' ? progress === 100 : filter === 'new' ? progress === 0 : progress > 0 && progress < 100));
   }).sort((a, b) => {
@@ -96,7 +106,6 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     const target = group && summary.subjects.find(item => item.id === group);
     return target ? [target.id, target] as const : [subject.id, subject] as const;
   })).values()];
-  const today = learningToday();
   const upcoming = upcomingLinks?.map(item => ({ ...item, detail: item.type === 'session' ? 'Live session' : item.type === 'assignment' ? 'Assignment due' : 'Checkpoint' })) ?? [
     ...deadlines.filter(item => item.date >= today).map(item => ({
       id: `deadline:${item.id}`, title: item.title, detail: item.type === 'assignment' ? 'Assignment due' : 'Checkpoint',
@@ -112,7 +121,9 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   const currentSubjects = summary.subjects.filter(subject => subject.source === 'current');
   const previous = summary.previousLearning;
   const listedTotal = summary.subjects.reduce((sum, subject) => sum + (subject.card?.activityCount ?? subject.activities.length), 0);
-  const learningSubjects = currentSubjects.length ? currentSubjects : summary.subjects;
+  const activeSubjects = moduleActivity ? summary.subjects.filter(subject => moduleTeachingActive(moduleActivity[subject.id], today)) : summary.subjects;
+  const activeCurrent = activeSubjects.filter(subject => subject.source === 'current');
+  const learningSubjects = activeCurrent.length ? activeCurrent : activeSubjects;
   const hasRemainingActivity = (subject: Subject) => subject.card ? subject.card.completedActivityCount < subject.card.activityCount : subject.activities.some(activity => !activity.completed);
   const continueSubject = current && learningSubjects.includes(current) && hasRemainingActivity(current)
     ? current
@@ -138,6 +149,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
           <button type="button" role="tab" aria-selected={sourceFilter === 'legacy'} onClick={() => setSourceFilter('legacy')}>Old LMS</button>
         </div>
         {transferAction}
+        {moduleActivity && <label className={styles.selectLabel}>Teaching<select aria-label="Teaching status" value={teaching} onChange={event => setTeaching(event.target.value as 'active' | 'all')}><option value="active">Active modules</option><option value="all">All modules</option></select></label>}
         <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" placeholder="Search subjects or activities…" value={search} onChange={e => onSearch(e.target.value)} /></label>
         <label className={styles.selectLabel}>Status<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All modules</option><option value="started">In progress</option><option value="new">Not started</option><option value="complete">Completed</option></select></label>
         <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="start">Module start date</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
@@ -153,7 +165,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
           {previous.map(renderCard)}
         </section> : renderCard(subject);
       })}</div>
-        : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setSourceFilter('all'); setFilter('all'); }}>Clear filters</button>}</div>}
+        : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? moduleActivity && teaching === 'active' ? 'No active modules match your filters.' : 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{moduleActivity && teaching === 'active' && summary.subjectCount > 0 && <button type="button" onClick={() => setTeaching('all')}>View all modules</button>}{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setSourceFilter('all'); setFilter('all'); setTeaching('all'); }}>Clear filters</button>}</div>}
     </div>
     <aside className={styles.catalogueAside} aria-label="Learning shortcuts">
       {continueSubject && <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><BookOpen size={19} />Continue learning</h2><button type="button" className={styles.asideTextButton} onClick={() => onContinue(continueSubject)}>Open<ArrowRight size={14} /></button></div><div className={styles.continueSubject}><img src={covers[continueSubject.id] || DEFAULT_MODULE_COVER} alt="" loading="lazy" className={covers[continueSubject.id] ? undefined : styles.defaultCoverImage} /><div><strong>{continueSubject.title}</strong><p>{continueSubject.card?.completedActivityCount ?? continueSubject.activities.filter(item => item.completed).length} of {continueSubject.card?.activityCount ?? continueSubject.activities.length} activities</p><div className={styles.miniTrack}><span style={{ width: `${subjectPercent(continueSubject)}%` }} /></div></div><b>{subjectPercent(continueSubject)}%</b></div><button type="button" className={styles.primaryButton} onClick={() => onContinue(continueSubject)}>Continue learning<ArrowRight size={17} /></button></section>}
