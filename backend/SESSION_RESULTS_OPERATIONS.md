@@ -237,7 +237,9 @@ suites pass 113 tests. Type checking, lint and the production frontend build
 pass. Focused Bunny transport, live-session and historical Azure-selection
 tests pass 47 cases in isolated SQLite with outbound sockets blocked. The
 session-results, recordings-library and ready-review runners pass 148, 35 and
-9 cases respectively; the expanded safe Teams backend subset passes 61.
+9 cases respectively; 11 media-policy cases cover preserving the server-owned
+Bunny reference during Graph refresh and re-issued recording IDs. The expanded
+safe Teams backend subset passes 61.
 
 The full video runner executes 155 tests with one intermittent existing file
 ordering failure: two immediate requests receive the same Windows timestamp.

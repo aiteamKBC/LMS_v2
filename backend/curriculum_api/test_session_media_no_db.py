@@ -69,26 +69,31 @@ class MediaPolicyTests(unittest.TestCase):
     def test_graph_refresh_preserves_staff_visibility_under_row_lock(self):
         cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
         timeline = {'version': 1, 'cues': [{'start': 1, 'end': 2, 'text': 'Saved'}]}
-        cursor.fetchone.return_value = ({'lmsHiddenFromLearners': True, 'lmsTranscriptTimeline': timeline},)
+        bunny = {'state': 'ready', 'libraryId': '798153', 'videoId': 'synthetic'}
+        cursor.fetchone.return_value = ({'lmsHiddenFromLearners': True, 'lmsTranscriptTimeline': timeline, 'lmsBunnyRecording': bunny},)
         ns = {'hashlib': hashlib, 'clean_str': lambda value: str(value or ''), 'parse_graph_datetime': instant,
               'json_db_value': lambda value: value, 'parse_json_value': lambda value, default: value or default,
               'LIVE_SESSION_ARTIFACTS_TABLE': 'live_session_artifacts', 'authoring_table_name': lambda name: name,
               'authoring_upsert': Mock(), 'transaction': types.SimpleNamespace(atomic=nullcontext),
               'connection': types.SimpleNamespace(vendor='postgresql', cursor=lambda: cursor)}
         functions(ROOT / 'views.py', {'upsert_live_session_artifact'}, ns)
-        self.assertTrue(ns['upsert_live_session_artifact']({'id': 'O'}, 'recording', {'id': 'G', 'lmsHiddenFromLearners': False}))
+        self.assertTrue(ns['upsert_live_session_artifact']({'id': 'O'}, 'recording', {'id': 'G',
+            'lmsHiddenFromLearners': False, 'lmsBunnyRecording': {'state': 'failed'}}))
         self.assertIn('FOR UPDATE', cursor.execute.call_args.args[0])
         saved = ns['authoring_upsert'].call_args.args[2]
         self.assertTrue(saved['metadata']['lmsHiddenFromLearners'])
         self.assertEqual(saved['metadata']['lmsTranscriptTimeline'], timeline)
+        self.assertEqual(saved['metadata']['lmsBunnyRecording'], bunny)
         self.assertEqual(saved['occurrence_id'], 'O')
         self.assertEqual(saved['graph_artifact_id'], 'G')
 
     def test_a_recording_reissued_under_a_new_graph_id_updates_the_saved_row(self):
         cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
         timeline = {'version': 1, 'cues': [{'start': 1, 'end': 2, 'text': 'Saved'}]}
+        bunny = {'state': 'ready', 'libraryId': '798153', 'videoId': 'synthetic'}
         # No row under the new id; the same call and window is saved as ART-OLD.
-        cursor.fetchone.side_effect = [None, ('ART-OLD', {'lmsHiddenFromLearners': True, 'lmsTranscriptTimeline': timeline})]
+        cursor.fetchone.side_effect = [None, ('ART-OLD', {'lmsHiddenFromLearners': True, 'lmsTranscriptTimeline': timeline,
+                                                      'lmsBunnyRecording': bunny})]
         ns = {'hashlib': hashlib, 'clean_str': lambda value: str(value or ''), 'parse_graph_datetime': instant,
               'json_db_value': lambda value: value, 'parse_json_value': lambda value, default: value or default,
               'LIVE_SESSION_ARTIFACTS_TABLE': 'live_session_artifacts', 'authoring_table_name': lambda name: name,
@@ -109,6 +114,21 @@ class MediaPolicyTests(unittest.TestCase):
         self.assertEqual((update_params[0], update_params[1], update_params[-1]), ('G-NEW', 'https://graph.example/new', 'ART-OLD'))
         self.assertTrue(update_params[3]['lmsHiddenFromLearners'])
         self.assertEqual(update_params[3]['lmsTranscriptTimeline'], timeline)
+        self.assertEqual(update_params[3]['lmsBunnyRecording'], bunny)
+
+    def test_graph_payload_cannot_introduce_a_server_owned_bunny_reference(self):
+        cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
+        cursor.fetchone.return_value = None
+        ns = {'hashlib': hashlib, 'clean_str': lambda value: str(value or ''), 'parse_graph_datetime': instant,
+              'json_db_value': lambda value: value, 'parse_json_value': lambda value, default: value or default,
+              'LIVE_SESSION_ARTIFACTS_TABLE': 'live_session_artifacts', 'authoring_table_name': lambda name: name,
+              'authoring_upsert': Mock(), '_same_artifact_under_new_graph_id': Mock(return_value=None),
+              'transaction': types.SimpleNamespace(atomic=nullcontext),
+              'connection': types.SimpleNamespace(vendor='postgresql', cursor=lambda: cursor)}
+        functions(ROOT / 'views.py', {'upsert_live_session_artifact'}, ns)
+        ns['upsert_live_session_artifact']({'id': 'O'}, 'recording', {'id': 'G',
+            'lmsBunnyRecording': {'state': 'ready', 'videoId': 'untrusted'}})
+        self.assertNotIn('lmsBunnyRecording', ns['authoring_upsert'].call_args.args[2]['metadata'])
 
 
 if __name__ == '__main__':
