@@ -5,6 +5,12 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
+class ActivityTimeConflict(ValueError):
+    def __init__(self, previous_seconds):
+        super().__init__('The saved activity time changed. Reload the activity and choose again. Your answers are kept.')
+        self.previous_seconds = previous_seconds
+
+
 def choice(value, *, activity=False):
     allowed = ('keep', 'new', 'correct', 'add', 'retry') if activity else ('keep', 'new')
     if value is not None and value not in allowed:
@@ -71,8 +77,9 @@ def validate_activity_time(record, history, *, seconds_for, monthly_assignment=F
         raise ValueError('Explain the time correction using 3 to 500 characters.')
     quiz = record.get('quizId')
     component = record.get('componentId')
+    # AI reading shares quizId but has its own separately counted duration.
     previous = [row for row in history if row.get('passed') is not False and (
-        str(row.get('quizId')) == str(quiz) if quiz else
+        row.get('kind', 'quiz') == 'quiz' and str(row.get('quizId')) == str(quiz) if quiz else
         row.get('componentId') == component and row.get('kind') in ('component', 'video'))]
     ordered = sorted(enumerate(previous), key=lambda item: attempt_order(item[1].get('submittedAt'), item[0]))
     _, before = selected_attempt([{'seconds': seconds_for(row), 'mode': row.get('retakeTimeChoice')}
@@ -80,7 +87,7 @@ def validate_activity_time(record, history, *, seconds_for, monthly_assignment=F
     # The prior value is a concurrency guard, never a trusted source of hours.
     expected = record.get('retakePreviousSeconds')
     if expected is not None and (type(expected) not in (int, float) or not isfinite(expected) or abs(expected - before) > 1):
-        raise ValueError('The saved activity time changed. Reload the activity and choose again. Your answers are kept.')
+        raise ActivityTimeConflict(before)
     total = combine_seconds(before, seconds, mode)
     if total > 8 * 3600:
         raise ValueError(f'Adding this time would make the activity total {total / 3600:g} hours, above the 8-hour limit. Enter a smaller additional time and try again. Your answers are kept.')

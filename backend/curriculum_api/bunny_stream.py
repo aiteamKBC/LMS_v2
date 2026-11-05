@@ -111,10 +111,10 @@ class BunnyStream:
             raise VideoImportError('The programme must match exactly one collection in the Curriculum library.')
         return matches[0]['guid']
 
-    def find_import(self, import_id):
+    def find_import(self, import_id, *, exclude_video_ids=()):
         marker = f'[LMS:{import_id}]'
         result = self.request('GET', '/videos', params={'search': marker, 'itemsPerPage': 100})
-        matches = [v for v in result.get('items', []) if (
+        matches = [v for v in result.get('items', []) if v.get('guid') not in exclude_video_ids and (
             v.get('title', '').startswith(marker + ' ') or v.get('title', '').endswith(' ' + marker))]
         if len(matches) > 1:
             raise VideoImportError('More than one Bunny video matches this import. Administrator review is needed.')

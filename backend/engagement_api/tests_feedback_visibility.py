@@ -54,9 +54,12 @@ class FeedbackVisibilityTests(SimpleTestCase):
         moment = datetime(2026, 10, 27, tzinfo=timezone.utc)
         delivery = SimpleNamespace(id=21, form=form, module_name='Synthetic module', session_title='Session 1', starts_at=moment)
         recipient = SimpleNamespace(delivery=delivery, delivery_id=21, assigned_at=moment, due_date=None)
+        provisional = SimpleNamespace(id=22, form=form, attendance_source='qr_schedule',
+                                      module_name='Synthetic module', session_title='Session 2', starts_at=moment)
+        early_recipient = SimpleNamespace(delivery=provisional, delivery_id=22, assigned_at=moment, due_date=None)
         recipients = mock.MagicMock()
         recipients.filter.return_value = recipients
-        recipients.order_by.return_value = [recipient]
+        recipients.order_by.return_value = [recipient, early_recipient]
         forms = mock.MagicMock()
         forms.filter.return_value = forms
         forms.distinct.return_value = forms
@@ -80,6 +83,8 @@ class FeedbackVisibilityTests(SimpleTestCase):
             response = feedback.learner_forms(RequestFactory().get('/?learnerId=999'))
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Assigned feedback', response.content)
+        self.assertIn(b'Session 1', response.content)
+        self.assertNotIn(b'Session 2', response.content)
         self.assertEqual(recipients.filter.call_args_list[0].kwargs['learner_id'], '61')
         self.assertEqual(recipients.filter.call_args_list[0].kwargs['delivery__form__form_type__in'], ['post_lecture'])
         assignment.assert_not_called()
@@ -144,6 +149,8 @@ class FeedbackVisibilityTests(SimpleTestCase):
             query.get.return_value = recipient
             self.assertEqual(feedback._learner_feedback_context('61', delivery_id=21, lecture_only=True), (form, delivery, recipient))
             pin.assert_called_once_with(delivery)
+            delivery.attendance_source = 'qr_schedule'
+            self.assertEqual(feedback._learner_feedback_context('61', delivery_id=21, lecture_only=True), (None, None, None))
             self.assertEqual(query.get.call_args.kwargs, {
                 'delivery_id': 21, 'learner_id': '61', 'revoked_at__isnull': True,
                 'delivery__status': 'open', 'delivery__form__status': 'published',

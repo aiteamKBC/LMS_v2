@@ -167,7 +167,7 @@ function SubjectCertificateAction({
   </div>;
 }
 
-export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress }: {
+export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress, teachingActive = false }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
@@ -178,6 +178,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   learnerId?: string;
   planModule?: Omit<PlanModule, 'description' | 'coach_name'> & Partial<Pick<PlanModule, 'description' | 'coach_name'>>;
   moduleProgress?: Pick<PlanModuleProgress, 'hours'> & Partial<Omit<PlanModuleProgress, 'hours'>>;
+  teachingActive?: boolean;
 }) {
   const total = subject.card?.activityCount ?? subject.activities.length;
   const completed = subject.card?.completedActivityCount ?? subject.activities.filter((activity) => activity.completed).length;
@@ -209,6 +210,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           {subject.source === 'legacy' && <span className={styles.learningModeBadge} data-source="legacy">Review only</span>}
           {subject.transferPending && <span className={styles.learningModeBadge}>Transfer pending</span>}
           {subject.demoProgress && <span className={styles.learningModeBadge}>Demo progress</span>}
+          {teachingActive && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800">Active</span>}
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>

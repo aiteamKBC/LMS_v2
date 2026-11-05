@@ -56,6 +56,7 @@ class ModuleAuthoringModule(models.Model):
     cohort_name = models.CharField(max_length=255, blank=True, default='')
     group_id = models.CharField(max_length=255, blank=True, default='')
     group_name = models.CharField(max_length=255, blank=True, default='')
+    tutor_name = models.CharField(max_length=255, blank=True, default='')
     title = models.TextField()
     description = models.TextField(blank=True, default='')
     total_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)

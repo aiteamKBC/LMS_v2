@@ -77,10 +77,10 @@ class MyLearningCatalogueTests(unittest.TestCase):
             'SELECT subject_ref,storage_path FROM covers WHERE subject_ref=ANY(%s)', [['legacy:5']])
 
     def test_optional_ledger_is_not_calculated_and_reuses_verified_owner(self):
-        from backend.learner_api.test_canonical_learning_no_db import adapter
+        from learner_api.test_canonical_learning_no_db import adapter
         query = Mock(return_value=[])
         scope = adapter(query)
-        owner = {'id': 2, 'name': 'Synthetic learner', 'aptem_id': 3,
+        owner = {'id': 2, 'enrolment_id': 1, 'name': 'Synthetic learner', 'aptem_id': 3,
                  'programme_planned_hours': 12}
         scope['profile'] = Mock(side_effect=AssertionError('Owner resolved twice'))
         scope['otjh_activities'] = Mock(return_value=[{'id': 'record:1'}])

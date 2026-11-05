@@ -58,6 +58,7 @@ export interface AttendanceCandidate {
 }
 export interface SessionFile {
   id: string; type: 'recording' | 'transcript'; state: 'pending' | 'ready' | 'failed';
+  playbackProvider?: 'bunny';
   createdAt?: string; text?: string | null;
   hiddenFromLearners?: boolean;
   endsAt?: string | null; timingReady?: boolean;
@@ -156,6 +157,8 @@ export const loadSessionResult = (seriesId: string, number: number, learner?: Se
 };
 export const sessionFileUrl = (seriesId: string, file: SessionFile, learner?: SessionLearner, text = false) =>
   personalLearningUrl(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`);
+export const loadRecordingPlayer = (seriesId: string, file: SessionFile, learner?: SessionLearner, signal?: AbortSignal) =>
+  read<{ url: string; provider: 'bunny' }>(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/?format=player`, signal);
 export interface RecordingWatchState { watchedSeconds: number; durationSeconds: number; csrfToken?: string }
 const watchUrl = (seriesId: string, file: SessionFile, learner: SessionLearner) =>
   `${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/watch/`;
@@ -224,6 +227,7 @@ export type LibraryRecordingStatus = 'available' | 'missingAzureFile' | 'verific
 /** One saved recording on the Recordings page. `state` is the saved playback copy, not Teams. */
 export interface LibraryRecording {
   id: string; seriesId: string; occurrenceId?: string | null; sessionNumber: number | null;
+  playbackProvider?: 'bunny';
   startsAt: string | null; recordedAt: string | null; endsAt: string | null;
   state: 'pending' | 'ready' | 'failed'; status: LibraryRecordingStatus;
   /** More stored copies of this same Teams recording (Graph listed it under another id). */

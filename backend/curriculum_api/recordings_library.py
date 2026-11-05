@@ -488,13 +488,23 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
     week_order = {row['id']: index for index, row in enumerate(weeks)}
     deliveries, kept = {}, {}
     for row in recordings:
+        bunny_value = artifact_metadata(row).get('lmsBunnyRecording')
+        bunny = bunny_value if isinstance(bunny_value, dict) else {}
+        state = bunny.get('state') or _text(row.get('archive_status')) or 'pending'
         key = same_recording_key(row)
         if key in kept:
             first = kept[key]
             first['duplicateCount'] += 1
-            # Show the copy that can be played when only one of them can.
-            if first['status'] != 'available' and recording_status(row.get('archive_status')) == 'available':
-                first.update(id=row['artifact_id'], seriesId=row['series_id'], status='available', state='ready')
+            # Prefer the selected Bunny provider across aliases; a historical
+            # Azure copy must not make an unfinished Bunny import look playable.
+            first_bunny = first.get('playbackProvider') == 'bunny'
+            if ((bunny and not first_bunny) or
+                    (bool(bunny) == first_bunny and first['status'] != 'available'
+                     and recording_status(state) == 'available')):
+                first.update(id=row['artifact_id'], seriesId=row['series_id'],
+                             status=recording_status(state), state=state)
+                if bunny:
+                    first['playbackProvider'] = 'bunny'
             continue
         delivery = deliveries.setdefault(row['module_catalogue_id'], _delivery(row, bool(row.get('module_archived'))))
         week_id = recording_week(row, owners)
@@ -506,7 +516,6 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
             'title': _text(week.get('title')) if week else '',
             'order': week_order.get(week_key, len(week_order)),
             'recordings': []})
-        state = _text(row.get('archive_status')) or 'pending'
         recorded = instant(row.get('created_datetime')) if row.get('created_datetime') else None
         recorded_day = recorded.astimezone(ZoneInfo('Europe/London')).date().isoformat() if recorded else ''
         explicitly_placed = bool(owners[3].get((_text(row.get('series_id')), recorded_day)))
@@ -516,7 +525,8 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
             'startsAt': _iso(row.get('scheduled_start')), 'recordedAt': _iso(row.get('created_datetime')),
             'endsAt': _iso(row.get('end_datetime')),
             'state': state if state in ('pending', 'ready', 'failed') else 'pending',
-            'status': recording_status(row.get('archive_status')), 'duplicateCount': 0,
+            'status': recording_status(state), 'duplicateCount': 0,
+            **({'playbackProvider': 'bunny'} if bunny else {}),
             'placementReview': row['artifact_id'] in placement_reviews and not explicitly_placed,
             'hiddenFromLearners': artifact_metadata(row).get('lmsHiddenFromLearners') is True}
         kept[key] = item

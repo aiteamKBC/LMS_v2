@@ -45,6 +45,8 @@ The product is built around a simple principle: every workspace should show the
 right person the right information without breaking learner ownership, programme
 context, or the historical audit trail.
 
+The sections below describe the platform's capabilities, architecture, and setup.
+
 | | |
 | --- | --- |
 | **Organisation** | Kent Business College |

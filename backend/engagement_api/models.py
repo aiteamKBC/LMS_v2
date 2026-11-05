@@ -658,6 +658,9 @@ class FeedbackDeliveryRecipient(models.Model):
     available_at = models.DateTimeField(null=True, blank=True)
     due_date = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    # A module member may claim this lecture through its shared public QR even
+    # without an attendance row. Attendance reconciliation must retain that claim.
+    public_claimed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False
