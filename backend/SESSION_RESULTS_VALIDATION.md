@@ -61,7 +61,7 @@ Final local checks (backend module commands run from `backend/`):
 
 | Check | Result |
 | --- | --- |
-| `npm --prefix frontend run test:teams` | PASS — 147 tests, 9 files. Required because shared recording APIs/player are consumed by Teams screens. |
+| `npm --prefix frontend run test:teams` | PASS — 149 tests, 9 files. Required because shared recording APIs/player are consumed by Teams screens. |
 | Frontend feature command below | PASS — 113 tests, 5 files. |
 | `npm --prefix frontend run type-check` | PASS. |
 | `npm --prefix frontend run lint` | PASS. |
@@ -71,7 +71,7 @@ Final local checks (backend module commands run from `backend/`):
 | `python -B -m curriculum_api.test_session_recording_review_no_db` | PASS — 9 tests. |
 | `python -B curriculum_api/test_session_media_no_db.py` with backend and curriculum_api on PYTHONPATH | PASS — 11 tests, including preserving trusted Bunny metadata across Graph refresh/re-issued IDs and rejecting an injected reference. |
 | Existing in-memory video runner restricted to `curriculum_api.test_session_bunny` | PASS — 21 tests; journal migrations applied only to new SQLite `:memory:`, external sockets blocked. |
-| `python -B -m curriculum_api.run_video_import_tests` | 155 run: 154 passed, 1 intermittent existing failure in `test_newer_file_choice_does_not_report_previous_copy_as_current`. Two rapid requests can receive equal timestamps on Windows. Its test file and the `_matches_current_source` function are unchanged from HEAD. Earlier full runs passed 148 before the final recording/fetch tests were added. No assertion was removed, skipped or weakened. |
+| `python -B -m curriculum_api.run_video_import_tests` | 157 run: 156 passed, 1 intermittent existing failure in `test_newer_file_choice_does_not_report_previous_copy_as_current`. Two rapid requests can receive equal timestamps on Windows. Its test file and the `_matches_current_source` function are unchanged from HEAD. Earlier full runs passed 148 before the final recording/fetch tests were added. No assertion was removed, skipped or weakened. |
 | Expanded safe backend subset below | PASS — 61 tests, SQLite aliases verified as `:memory:` before Django setup; external sockets blocked after setup. |
 | `git diff --check` | PASS, with Git's LF/CRLF normalization notices. |
 

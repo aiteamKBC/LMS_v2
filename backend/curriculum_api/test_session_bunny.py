@@ -236,6 +236,25 @@ class SessionBunnyTests(TestCase):
         self.assertEqual(client.return_value.request.call_args.kwargs['headers'],
                          {'Referer': 'https://lms.example.invalid/'})
 
+    def test_staff_download_expands_bunny_mp4_prefix_and_preserves_signed_query(self):
+        row = {'metadata': {'lmsBunnyRecording': {'state': 'ready', 'libraryId': '798153', 'videoId': VIDEO}}}
+        with patch.dict(os.environ, BUNNY_STREAM_TOKEN_KEY='synthetic-playback-key'), \
+             patch.object(session_bunny, 'BunnyStream') as client:
+            client.return_value.request.return_value = {
+                'fallbackUrl': 'https://example.b-cdn.net/video/play_?token=synthetic&expires=99999',
+                'video': {'hasMP4Fallback': True, 'availableResolutions': '480p,720p,1080p,2160p'}}
+            result = session_bunny.recording_player(row, download=True)
+        self.assertEqual(result, 'https://example.b-cdn.net/video/play_1080p.mp4?token=synthetic&expires=99999')
+
+    def test_unavailable_mp4_prefix_is_not_returned_as_a_broken_download(self):
+        row = {'metadata': {'lmsBunnyRecording': {'state': 'ready', 'libraryId': '798153', 'videoId': VIDEO}}}
+        with patch.dict(os.environ, BUNNY_STREAM_TOKEN_KEY='synthetic-playback-key'), \
+             patch.object(session_bunny, 'BunnyStream') as client:
+            client.return_value.request.return_value = {'fallbackUrl': 'https://example.b-cdn.net/video/play_',
+                'video': {'hasMP4Fallback': False, 'availableResolutions': '1080p'}}
+            with self.assertRaisesRegex(VideoImportError, 'not available'):
+                session_bunny.recording_player(row, download=True)
+
     def test_projection_refuses_an_import_whose_original_artifact_no_longer_matches(self):
         asset = self.asset()
         cursor = Mock()

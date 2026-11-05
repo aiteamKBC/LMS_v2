@@ -232,16 +232,16 @@ on Azure; this change does not authorize deleting those stores.
 
 ### Cutover validation, 5 November 2026
 
-The frontend Teams baseline passes 147 tests; recording/player/shared-consumer
+The frontend Teams baseline passes 149 tests; recording/player/shared-consumer
 suites pass 113 tests. Type checking, lint and the production frontend build
 pass. Focused Bunny transport, live-session and historical Azure-selection
-tests pass 47 cases in isolated SQLite with outbound sockets blocked. The
+tests pass 49 cases in isolated SQLite with outbound sockets blocked. The
 session-results, recordings-library and ready-review runners pass 148, 35 and
 9 cases respectively; 11 media-policy cases cover preserving the server-owned
 Bunny reference during Graph refresh and re-issued recording IDs. The expanded
 safe Teams backend subset passes 61.
 
-The full video runner executes 155 tests with one intermittent existing file
+The full video runner executes 157 tests with one intermittent existing file
 ordering failure: two immediate requests receive the same Windows timestamp.
 Both that test file and `_matches_current_source` are unchanged from HEAD;
 an instrumented repeat confirmed identical timestamps. No assertions or test

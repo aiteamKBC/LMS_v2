@@ -8,6 +8,7 @@ import json
 import os
 import uuid
 import logging
+import re
 from time import sleep, time
 from urllib.parse import quote, parse_qs, urlsplit
 from zoneinfo import ZoneInfo
@@ -277,6 +278,15 @@ def recording_player(row, *, download=False, referrer=''):
         params={'token': query['token'][0], 'expires': query['expires'][0]})
     source = data.get('originalUrl') or data.get('fallbackUrl') or ''
     parsed = urlsplit(source)
+    if not data.get('originalUrl') and parsed.path.endswith('/play_'):
+        # Play-data returns an MP4 prefix, not a complete downloadable URL.
+        video = data.get('video') or {}
+        heights = [int(value) for value in re.findall(r'(\d+)p', str(video.get('availableResolutions') or ''))
+                   if 0 < int(value) <= 1080]
+        if not video.get('hasMP4Fallback') or not heights:
+            raise VideoImportError('A downloadable Bunny file is not available for this recording.')
+        parsed = parsed._replace(path=parsed.path + str(max(heights)) + 'p.mp4')
+        source = parsed.geturl()
     if (parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.b-cdn.net')
             or parsed.username or parsed.password):
         raise VideoImportError('A downloadable Bunny file is not available for this recording.')
