@@ -3,6 +3,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuizTakePage from './page';
 import { CompletionValidationError } from '@/lib/completionValidation';
+import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
+import { useState } from 'react';
 
 const mocks = vi.hoisted(() => ({
   detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(), checkpoint: vi.fn(),
@@ -21,7 +23,10 @@ vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess:
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/components/feature/ReflectionWindow', () => ({
-  ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number }) => void; onClose?: () => void }) => <div>My Learning Evidence and Reflection<button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback: 'Reflection', reportedTime: '1', ...(mocks.reflectionTimeSeconds == null ? {} : { timeTakenSeconds: mocks.reflectionTimeSeconds }) })}>Submit reflection</button></div>,
+  ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number }) => void; onClose?: () => void }) => {
+    const [feedback, setFeedback] = useState('Reflection');
+    return <div>My Learning Evidence and Reflection<textarea aria-label="Reflection draft" value={feedback} onChange={event => setFeedback(event.target.value)} /><button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback, reportedTime: '1', ...(mocks.reflectionTimeSeconds == null ? {} : { timeTakenSeconds: mocks.reflectionTimeSeconds }) })}>Submit reflection</button></div>;
+  },
 }));
 vi.mock('@/components/feature/ReflectionWindow.helpers', () => ({
   formatClock: (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
@@ -287,6 +292,80 @@ describe('quiz requirements loading', () => {
     expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ timeTakenSeconds: 120 }));
   });
 
+  it.each(['correct', 'add', 'retry'] as const)('reconfirms %s with server time and preserves the answers, reflection and session', async mode => {
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.reflectionTimeSeconds = 120;
+    mocks.submit.mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time. Your answers and reflection are kept.', 600))
+      .mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, grade: 1, earned: 1, possible: 1,
+        breakdown: [], attempt: { attempt: 2, passed: true, grade: 1, timeTaken: '02:00' } });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.change(screen.getByLabelText('Reflection draft'), { target: { value: 'My saved reflection draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    const dialog = await screen.findByRole('dialog', { name: 'How should this time count?' });
+    expect(dialog).toHaveTextContent('10:00');
+    expect(within(dialog).getByRole('button', { name: 'Confirm and submit' })).toBeDisabled();
+    expect(screen.getByLabelText('Reflection draft')).toHaveValue('My saved reflection draft');
+    expect(mocks.submit).toHaveBeenCalledOnce();
+    const original = mocks.submit.mock.calls[0][3];
+    fireEvent.click(within(dialog).getByRole('radio', { name: mode === 'correct' ? /^Correct recorded time/ : mode === 'add' ? /^Add more learning time/ : /^Record another attempt/ }));
+    if (mode === 'correct') fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Correcting the previous duration.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and submit' }));
+    await screen.findByText(/Quiz Passed/);
+    expect(mocks.submit).toHaveBeenCalledTimes(2);
+    expect(mocks.submit.mock.calls[1][3]).toEqual({ ...original, retakeTimeChoice: mode,
+      retakePreviousSeconds: 600, retakeTimeReason: mode === 'correct' ? 'Correcting the previous duration.' : '' });
+    expect(mocks.start).toHaveBeenCalledOnce();
+    expect(mocks.detail).toHaveBeenCalledOnce();
+  });
+
+  it('can cancel a time conflict and keep editing the same reflection', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.submit.mockRejectedValue(new ActivityTimeConflictError('Review the updated time.', 600));
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.change(screen.getByLabelText('Reflection draft'), { target: { value: 'Keep my draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    const dialog = await screen.findByRole('dialog', { name: 'How should this time count?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByLabelText('Reflection draft')).toHaveValue('Keep my draft');
+    expect(mocks.submit).toHaveBeenCalledOnce();
+    expect(mocks.start).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog', { name: 'How should this time count?' })).not.toBeInTheDocument();
+  });
+
+  it('requires another confirmation if time changes again and preserves the no-reflection choice', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.submit.mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time.', 600))
+      .mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time.', 900))
+      .mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, grade: 1, earned: 1, possible: 1,
+        breakdown: [], attempt: { attempt: 2, passed: true, grade: 1, timeTaken: '02:00' } });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+    for (const [index, clock] of ['10:00', '15:00'].entries()) {
+      const dialog = await screen.findByRole('dialog', { name: 'How should this time count?' });
+      expect(dialog).toHaveTextContent(clock);
+      expect(mocks.submit).toHaveBeenCalledTimes(index + 1);
+      expect(within(dialog).getByRole('button', { name: 'Confirm and submit' })).toBeDisabled();
+      fireEvent.click(within(dialog).getByRole('radio', { name: /^Record another attempt/ }));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and submit' }));
+    }
+    await screen.findByText(/Quiz Passed/);
+    expect(mocks.submit.mock.calls[2][3]).toEqual({ ...mocks.submit.mock.calls[0][3],
+      retakeTimeChoice: 'retry', retakePreviousSeconds: 900, retakeTimeReason: '' });
+    expect(mocks.submit.mock.calls[2][3].skipReflection).toBe(true);
+    expect(mocks.start).toHaveBeenCalledOnce();
+  });
+
   it('keeps quiz answers and reflection while reducing an addition from nine hours to eight', async () => {
     mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }],
       quizAttempts: [{ kind: 'quiz', quizId: 1, passed: true, grade: 1, questions: [], attempt: 1,
@@ -311,6 +390,31 @@ describe('quiz requirements loading', () => {
       retakeTimeChoice: 'add', retakePreviousSeconds: 21600, timeTakenSeconds: 7200, timeEntrySource: 'input', feedback: 'Reflection',
       answers: { '1': 1 },
     })));
+  });
+
+  it('rechecks the eight-hour limit against refreshed time without losing the reflection', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.reflectionTimeSeconds = 10800;
+    mocks.submit.mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time.', 21600));
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.change(screen.getByLabelText('Reflection draft'), { target: { value: 'Retain this evidence' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    const dialog = await screen.findByRole('dialog', { name: 'How should this time count?' });
+    fireEvent.click(within(dialog).getByRole('radio', { name: /^Add more learning time/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and submit' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('make 9 hours');
+    expect(mocks.submit).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit time and try again' }));
+    expect(screen.getByLabelText('Reflection draft')).toHaveValue('Retain this evidence');
+    mocks.reflectionTimeSeconds = 7200;
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(2));
+    expect(mocks.submit.mock.calls[1][3]).toEqual(expect.objectContaining({ retakeTimeChoice: 'add',
+      retakePreviousSeconds: 21600, timeTakenSeconds: 7200, feedback: 'Retain this evidence', answers: { '1': 1 } }));
   });
 
   it('keeps reflection optional for tutor-validated quizzes', async () => {
@@ -487,6 +591,27 @@ describe('quiz submit working rules', () => {
 
     expect(screen.queryByText('Please review your completion date and time')).not.toBeInTheDocument();
     expect(mocks.submit.mock.calls[0][3].declaredCompletedAt).toBeUndefined();
+  });
+
+  it('preserves the declared completion date when reconfirming a time conflict', async () => {
+    mocks.submit.mockRejectedValueOnce(new CompletionValidationError('Sunday is not a working day.', 'weekend'))
+      .mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time.', 600))
+      .mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, breakdown: [], attempt: { attempt: 1, passed: true } });
+    await answerAndFinish();
+    fireEvent.change(await screen.findByLabelText('Completion date'), { target: { value: '2026-01-15' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14' } });
+    fireEvent.change(screen.getByLabelText('Completion minutes'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'How should this time count?' });
+    expect(screen.getByLabelText('Completion date')).toHaveValue('2026-01-15');
+    expect(mocks.submit).toHaveBeenCalledTimes(2);
+    fireEvent.click(within(dialog).getByRole('radio', { name: /^Record another attempt/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and submit' }));
+    await screen.findByText(/Quiz Passed/);
+    expect(mocks.submit.mock.calls[2][3]).toEqual({ ...mocks.submit.mock.calls[1][3],
+      retakeTimeChoice: 'retry', retakePreviousSeconds: 600, retakeTimeReason: '' });
+    expect(mocks.submit.mock.calls[2][3].declaredCompletedAt).toBe('2026-01-15T14:30:00');
+    expect(mocks.start).toHaveBeenCalledOnce();
   });
 
   it('keeps a non-calendar save failure visible inside the completion dialog', async () => {
