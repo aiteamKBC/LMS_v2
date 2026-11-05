@@ -91,6 +91,12 @@ jobs:
           docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
             -v "$PWD/.github/ci:/ci:ro" --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
 
+      - name: Other fast tests (not named *_no_db)
+        run: |
+          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
+            --entrypoint python lms-backend:ci manage.py test --noinput \
+            curriculum_api.test_youtube_download
+
       - name: Container answers /health/
         run: |
           docker run -d --name smoke -e PORT=8000 -e WEB_CONCURRENCY=1 \
@@ -103,7 +109,7 @@ jobs:
           exit 1
 
       - name: Image vulnerability scan (fixable CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: lms-backend:ci
           scanners: vuln
