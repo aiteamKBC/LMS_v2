@@ -30,7 +30,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
 
-from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
+from .active_users import fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
@@ -1151,22 +1151,16 @@ def _review_otjh_hours(learner_profile):
 
 
 def _live_otjh_snapshot(detail, learner_profile=None):
-    # Reviews are off-the-job training in their own right when Curriculum says
-    # so, so they land in the same two totals as curriculum components rather
-    # than a figure of their own: planned grows when a review is scheduled,
-    # completed when it is signed off.
-    review_planned, review_completed = _review_otjh_hours(learner_profile)
+    from .canonical_hours import profile_actual_hours
+    # Keep the established plan projection; actuals use the same accepted
+    # ledger as the dashboard, including retained history and current saves.
+    review_planned, _ = _review_otjh_hours(learner_profile)
     planned = fmt_hours(float(detail.get("totalExpectedOtjh") or 0) + review_planned)
-    completed = (
-        completed_hours_from_progress(
-            learner_profile.training_plan_progress,
-            detail.get("components"),
-        )
-        if learner_profile
-        else "0"
-    )
-    if review_completed:
-        completed = fmt_hours(float(completed or 0) + review_completed)
+    completed_num = profile_actual_hours(learner_profile) if learner_profile else 0
+    if completed_num is None:
+        from old_otjh.service import ServiceError
+        raise ServiceError('Current accepted OTJ hours are unavailable.', 'hours_unavailable', 503)
+    completed = fmt_hours(completed_num)
 
     learner_start_date = getattr(learner_profile, "start_date", None)
     target_num = _cumulative_week_target(detail, learner_start_date=learner_start_date)

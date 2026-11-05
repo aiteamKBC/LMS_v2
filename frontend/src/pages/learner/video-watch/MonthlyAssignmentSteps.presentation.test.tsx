@@ -3,10 +3,12 @@ import { useState, type ComponentProps } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { emptyMonthlyAssignment, type MonthlyAssignment } from '@/api/monthlyAssignment';
 import { fetchLearnerDetail } from '@/api/learnerDetail';
+import type { LearnerDetail } from '@/api/learnerDetail';
+import { fetchExtraActivities } from '@/api/extraActivities';
 import { MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ activityFeed: [] }) }));
-vi.mock('@/api/extraActivities', () => ({ useExtraActivities: () => ({ activities: [], loading: false, error: '' }) }));
+vi.mock('@/api/extraActivities', () => ({ fetchExtraActivities: vi.fn().mockResolvedValue([]), useExtraActivities: () => ({ activities: [], loading: false, error: '' }) }));
 vi.mock('./AssignmentCoachingBooking', () => ({ AssignmentCoachingBooking: () => <div>Booking preserved</div> }));
 vi.mock('@/hooks/useAssignedKsbExplanations', () => ({ useAssignedKsbExplanations: () => '' }));
 vi.mock('@/hooks/useMonthlyReflections', () => ({ useMonthlyReflections: () => '' }));
@@ -22,10 +24,10 @@ const submission = {
   applicationType: '', applicationText: '', evidenceFiles: [], evidenceConsentConfirmed: false, selectedBenefits: [], benefitExplanation: '',
   actualTimeHours: '2', completedDuringPaidHours: 'yes', dateCompleted: '2026-10-12', otjhConfirmed: false, signedDeclaration: false, qualityScore: 0,
 };
-function Harness({ initial = source, step = 6, historical = false, disabled = false }: { initial?: MonthlyAssignment; step?: number; historical?: boolean; disabled?: boolean }) {
+function Harness({ initial = source, step = 6, historical = false, disabled = false, learnerId = '1' }: { initial?: MonthlyAssignment; step?: number; historical?: boolean; disabled?: boolean; learnerId?: string }) {
   const [data, onChange] = useState(initial);
   const props: ComponentProps<typeof MonthlyAssignmentSteps> = {
-    step, data, onChange, historical, disabled, kind: 'commercial', learnerId: '1', activityId: 'C1', title: 'Monthly assignment',
+    step, data, onChange, historical, disabled, kind: 'commercial', learnerId, activityId: 'C1', title: 'Monthly assignment',
     question: '<p>Original question</p>', answers: { assignmentAnswer: 'My own answer', whatYouLearned: 'My original learning', businessImpact: 'My original impact' },
     onAnswer: vi.fn(), plannedOtjh: null, mappings: [], evidenceFiles: [], evidenceUploader: null, timeControl: null,
     payload: () => ({ ...submission, monthlyAssignment: data }), checks: [], checking: false, onCheck: vi.fn(), onSave: vi.fn(),
@@ -77,4 +79,49 @@ it('repairs a legacy empty generated section on presentation step 6 without repl
   await waitFor(() => expect(saved().slides[0].body).toContain('Original reflection'));
   expect(saved().slides[1].body).toBe('Keep my content');
   expect(saved().presentationFormat).toBeUndefined();
+});
+
+it('uses the completed records shown in Full-month reflection when generating the presentation', async () => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValueOnce({ activityFeed: [], componentProgress: [{
+    componentId: 'reading', componentTitle: 'Completed monthly reading', submittedAt: '2026-10-12T10:00:00Z',
+    feedback: 'Full completed reading reflection.', ksbs: ['K1'], reportedTime: '20 minutes',
+  }] } as unknown as LearnerDetail);
+  const view = render(<Harness step={3} />);
+  expect(await screen.findByText('Completed monthly reading')).toBeVisible();
+  expect(screen.getByText('K1')).toBeVisible();
+  expect(screen.getByText('20 minutes')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Read more about Completed monthly reading' }));
+  expect(screen.getAllByText('Full completed reading reflection.').length).toBeGreaterThan(0);
+  view.unmount();
+  vi.mocked(fetchLearnerDetail).mockResolvedValueOnce({ activityFeed: [], componentProgress: [{
+    componentId: 'reading', componentTitle: 'Completed monthly reading', submittedAt: '2026-10-12T10:00:00Z',
+    feedback: 'Full completed reading reflection.', ksbs: ['K1'], reportedTime: '20 minutes',
+  }] } as unknown as LearnerDetail);
+  render(<Harness />);
+  fireEvent.click(screen.getByRole('button', { name: 'Generate full-month presentation' }));
+  await waitFor(() => expect(saved().slides.length).toBeGreaterThan(0));
+  expect(saved().slides.map(s => s.body).join(' ').replace(/\s+/g, ' ')).toContain('Full completed reading reflection.');
+  expect(fetchExtraActivities).toHaveBeenCalledWith('commercial', '1', '2026-10');
+});
+
+it('preserves the existing deck if the current month extra activities cannot be loaded', async () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  vi.mocked(fetchExtraActivities).mockRejectedValueOnce(new Error('Monthly activities unavailable'));
+  const initial: MonthlyAssignment = { ...source, presentationFormat: 'kbc-mcm-v2', slides: [{ title: 'Saved', body: 'Keep my content' }], presentationReviewed: true, presentationToken: 'saved' };
+  render(<Harness initial={initial} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Generate full-month presentation' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Monthly activities unavailable');
+  expect(saved()).toEqual(initial);
+});
+
+it('does not show the previous learner activities while another learner is loading', async () => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValueOnce({ activityFeed: [], componentProgress: [{
+    componentId: 'reading', componentTitle: 'First learner reading', submittedAt: '2026-10-12T10:00:00Z',
+  }] } as unknown as LearnerDetail);
+  const view = render(<Harness step={3} />);
+  expect(await screen.findByText('First learner reading')).toBeVisible();
+  vi.mocked(fetchLearnerDetail).mockImplementationOnce(() => new Promise(() => {}));
+  view.rerender(<Harness step={3} learnerId="2" />);
+  expect(screen.queryByText('First learner reading')).not.toBeInTheDocument();
+  expect(fetchLearnerDetail).toHaveBeenLastCalledWith('commercial', '2', { revalidate: true });
 });

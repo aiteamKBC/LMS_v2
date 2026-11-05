@@ -6,7 +6,7 @@ import re
 from django.utils import timezone
 
 from .migrated_summary_binding import binding_state, populate_answer, preserve_original
-from .migrated_reviews import TEXT_ANSWER_LIMIT
+from .migrated_reviews import meeting_summary_field, text_answer_limit
 
 
 TIMING = re.compile(r"(?P<start>(?:\d{2,}:)?\d{2}:\d{2}\.\d{3})[ \t]+-->[ \t]+(?P<end>(?:\d{2,}:)?\d{2}:\d{2}\.\d{3})(?:[ \t]+[^\n]*)?")
@@ -99,9 +99,10 @@ def summary_binding_response(overlay):
     provenance = latest.get("provenance") or {}
     if isinstance(latest.get("summary"), dict):
         text = meeting_summary_plain_text(latest["summary"])
+        limit = text_answer_limit(overlay.template_snapshot, meeting_summary_field(overlay.template_snapshot))
         result.update(suggestionText=text, suggestionSource=provenance.get("source"),
                       provisional=bool(provenance.get('source') == 'teams' and provenance.get('provisional')),
-                      summaryTooLong=len(text) > TEXT_ANSWER_LIMIT,
+                      summaryTooLong=limit is not None and len(text) > limit,
                       generatedAt=provenance.get("generatedAt"), transcriptTruncated=bool(provenance.get("transcriptTruncated")),
                       replacementAvailable=bool(text and text != result.get("answer") and result["state"] != "NEVER_POPULATED"))
     elif result.get("status") == "summary-too-long":

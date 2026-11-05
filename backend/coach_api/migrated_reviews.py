@@ -26,6 +26,15 @@ FIELD_TYPES = {
 TEXT_ANSWER_LIMIT = 4000
 
 
+def text_answer_limit(definition, field):
+    """MCM's mapped Meeting Summary is unrestricted; other fields keep their limit."""
+    if ((definition.get('templateSource') or {}).get('family') == 'MCM'
+            and field.get('semanticKey') == 'meeting_summary'
+            and field.get('aptemType') in (1, 13)):
+        return None
+    return TEXT_ANSWER_LIMIT
+
+
 def meeting_summary_field(definition):
     """Resolve explicit metadata from a frozen migrated definition, never labels."""
     matches = []
@@ -304,8 +313,11 @@ def validate_answers(definition, answers, *, completing=False):
                 date.fromisoformat(value)
             except (TypeError, ValueError):
                 raise ValueError(f"{key} must be an ISO date.") from None
-        if kind in ("text", "text_multiline") and (not isinstance(value, str) or len(value) > TEXT_ANSWER_LIMIT):
-            raise ValueError(f"{key} must be text of at most {TEXT_ANSWER_LIMIT} characters.")
+        if kind in ("text", "text_multiline"):
+            limit = text_answer_limit(definition, field)
+            if not isinstance(value, str) or (limit is not None and len(value) > limit):
+                requirement = 'text' if limit is None else f'text of at most {limit} characters'
+                raise ValueError(f"{key} must be {requirement}.")
     if completing:
         missing = [key for key, field in visible.items()
                    if field.get("mandatory") and FIELD_TYPES.get(field["aptemType"]) != "title_description"

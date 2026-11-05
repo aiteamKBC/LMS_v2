@@ -38,6 +38,7 @@ class CurriculumApiConfig(AppConfig):
             'import_global_migrated_review_template',
             'enable_personal_support_form',
             'bootstrap_module_hours_manager',
+            'process_curriculum_videos', 'import_curriculum_videos',
         }:
             return
         # runserver spawns a reloader child that does the actual serving; the

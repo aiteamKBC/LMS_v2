@@ -1,6 +1,8 @@
 """Exercise compact coach reads against an isolated in-memory ledger."""
 import json
 import sqlite3
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -19,6 +21,9 @@ class CanonicalHoursTests(SimpleTestCase):
         self.db.row_factory = sqlite3.Row
         self.db.execute("ATTACH DATABASE ':memory:' AS Learner")
         self.db.create_function('GREATEST', 2, max)
+        self.db.create_function('uk_month', 1, lambda value:
+            datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(ZoneInfo('Europe/London')).strftime('%Y-%m')
+            if value else None)
         self.db.execute('''CREATE TABLE Learner.learner_progress_entries(
             id,learner_id,kind,component_ref,component_type,quiz_ref,passed,reported_time,
             submitted_at,declared_completed_at,started_at,time_tracking_source,claimed_seconds,verified_seconds,
@@ -36,6 +41,9 @@ class CanonicalHoursTests(SimpleTestCase):
         sql = sql.replace('actual_seconds::text', 'CAST(actual_seconds AS TEXT)')
         sql = sql.replace('s.id::text', 'CAST(s.id AS TEXT)')
         sql = sql.replace('jsonb_build_object', 'json_object')
+        sql = sql.replace("to_char(submitted_at AT TIME ZONE 'Europe/London','YYYY-MM')", 'uk_month(submitted_at)')
+        sql = sql.replace("to_char(coalesce(declared_completed_at,submitted_at)\n                 AT TIME ZONE 'Europe/London','YYYY-MM')",
+                          'uk_month(coalesce(declared_completed_at,submitted_at))')
         if '=ANY(%s)' in sql:
             sql = sql.replace('=ANY(%s)', ' IN (' + ','.join('?' for _ in params[0]) + ')')
             params = params[0]
@@ -75,6 +83,34 @@ class CanonicalHoursTests(SimpleTestCase):
         self.assertEqual(months[0]['submitted'], 0)
         self.assertEqual(self.db.total_changes, before)
         self.assertIsNone(self.db.execute('SELECT actual_seconds FROM Learner.learner_progress_entries WHERE id=2').fetchone()[0])
+
+    def test_stored_quiz_with_no_month_matches_learner_allocation_without_changing_history(self):
+        records = [
+            self.entry(1, actual_seconds=1800, component_type='quiz', reporting_month=''),
+            self.entry(2, actual_seconds=3600, reporting_month='2026-08', source_system='old_lms'),
+            self.entry(3, actual_seconds=900, reporting_month=None,
+                       submitted_at='2026-09-30T23:30:00Z'),
+            self.entry(4, actual_seconds=600, declared_completed_at='2026-09-30T22:30:00Z'),
+            self.entry(5, actual_seconds=7200, accepted=False),
+            self.entry(6, actual_seconds=9999, learner_id=102),
+        ]
+        before = self.db.total_changes
+        with patch.object(canonical, 'query', side_effect=self.read):
+            totals = read_hour_totals(self.owner)
+        months = {row['month']: row for row in totals}
+        self.assertAlmostEqual(months['2026-10']['completed'], 0.75)
+        self.assertAlmostEqual(months['2026-09']['completed'], 1 / 6)
+        self.assertEqual(months['2026-08']['completed'], 1)
+        self.assertEqual(months['2026-10']['submitted'], 2)
+        expected = {}
+        for record in records[:-1]:
+            for allocation in canonical.allocations(record):
+                if allocation['accepted']:
+                    month = allocation['reporting_month']
+                    expected[month] = expected.get(month, 0) + allocation['actual_seconds'] / 3600
+        self.assertEqual({month: row['completed'] for month, row in months.items()}, expected)
+        self.assertEqual(self.db.total_changes, before)
+        self.assertEqual(self.db.execute('SELECT reporting_month FROM Learner.learner_progress_entries WHERE id=1').fetchone()[0], '')
 
     def test_saved_activity_decisions_match_learner_and_coach_totals_after_reopening(self):
         for mode, expected in (('correct', 1200), ('add', 4800), ('retry', 3600)):

@@ -312,7 +312,7 @@ function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onC
       <div><span className="text-foreground-400">Tutor</span><p className="font-semibold">{response.tutorName || 'Not recorded'}</p></div>
     </div>}
     <FormRenderer sections={response.sections || []} answers={Object.fromEntries((response.sections || []).flatMap(s => s.questions.map(q => [String(q.id), q.answer ?? null])))} readOnly />
-    <div className="sticky bottom-0 mt-5 flex justify-end gap-3 border-t border-foreground-100 bg-white pt-4">
+    <div className="sticky bottom-4 z-10 ml-auto mt-5 flex w-fit justify-end gap-3">
       <button type="button" disabled={downloading} onClick={() => void download()} className={`${button} inline-flex items-center gap-1.5 bg-primary-600 text-white shadow-sm hover:bg-primary-700 disabled:opacity-50`}><i className="ri-download-2-line" aria-hidden="true" />{downloading ? 'Preparing PDF...' : 'Export PDF'}</button>
       <button type="button" onClick={onClose} className={`${button} border border-foreground-200 bg-white text-foreground-700 hover:bg-background-100`}>Back</button>
     </div>

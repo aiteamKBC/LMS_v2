@@ -40,6 +40,15 @@ class DefinitionMergeTests(SimpleTestCase):
     def template(self, definition, family="MCM"):
         return SimpleNamespace(pk=1, scope="GLOBAL", programme_key="", name="Synthetic form", review_family=family, definition_json=definition)
 
+    def test_template_sync_keeps_a_long_mcm_summary(self):
+        definition = form(field('recap', 13, semanticKey='meeting_summary'), field('other'))
+        previous = snapshot_for(self.template(definition))
+        answers = {'recap': 'Saved summary.\n' * 1000, 'other': 'Keep this answer'}
+        definition['sections'][0]['fields'][0]['title'] = 'Updated summary label'
+        result = merge_snapshot(previous, answers, self.template(definition), 'MCM')
+        self.assertEqual(active_answers(result, answers), answers)
+        self.assertEqual(validate_answers(result, answers, completing=True), answers)
+
     def test_reordered_and_moved_fields_keep_typed_answers_and_latest_metadata(self):
         old = form(field("text"), field("long", 13), field("boolean", 2), field("date", 4), field("choice", 5, options=["A", "B"]))
         answers = {"text": "Saved words", "long": "Saved paragraph", "boolean": "yes", "date": "2026-10-04", "choice": "B"}
