@@ -1,4 +1,5 @@
 import { ukOffsetForDate } from '@/lib/timeZones';
+import type { ReviewAttendance } from '@/lib/reviewAttendance';
 ﻿import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation, withCallerSignal } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -18,6 +19,7 @@ export interface LearnerCalendarEvent {
   bookingOnly?: boolean;
   /** Server-derived once the booked time has passed: learner attended (completed) or not (ended). */
   meetingOutcome?: 'ended' | 'completed' | null;
+  reviewAttendance?: ReviewAttendance;
   /** Live session the learner missed but then watched in full as a recording. */
   watchedRecording?: boolean;
   /** Catch-up only: the absence report it already makes up, if any. */

@@ -1449,7 +1449,7 @@ def otjh_summary_bulk(learner_ids):
     return result
 
 
-def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=False):
+def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=False, as_of=None):
     """Return canonical metrics for a caseload without per-learner queries.
 
     Keys present with ``None`` identify a canonical record that failed identity
@@ -1588,6 +1588,9 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
                     for source in record.get('sources') or [])
         if owner.get('progress_transfer_active'):
             records = entries_for(owner, lineage_only=True)
+        if as_of is not None:
+            from .progress_cutoff import records_as_of
+            records = records_as_of(records, as_of)
         result[enrolment_id] = metrics_from_records(
             records,
             targets_by_learner.get(int(owner['id']), {}),

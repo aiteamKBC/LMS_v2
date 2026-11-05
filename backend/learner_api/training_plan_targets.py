@@ -8,7 +8,8 @@ authoritative ``as_of`` cutoff.
 Authored weeks follow Curriculum's existing Monday-to-Sunday model.  The first
 week starts on the module's own start date (so a mid-week module has a partial
 first week); later weeks start on the corresponding Monday.  Missing schedule
-metadata is an unresolved calculation, never a partial or zero target.
+metadata is an unresolved calculation, never a partial or zero target. Explicitly
+approved, finished legacy deliveries can be wholly due without fabricated dates.
 """
 from __future__ import annotations
 
@@ -19,6 +20,11 @@ from zoneinfo import ZoneInfo
 from django.db import DatabaseError, connections
 
 from .progress_rules import progress_record_counts_as_achieved
+from .legacy_completed_delivery import (
+    POLICY_EFFECTIVE_FROM,
+    POLICY_VERSION,
+    approved_completed_delivery,
+)
 from curriculum_api.week_visibility import visible_week_sql
 
 
@@ -31,6 +37,7 @@ TARGET_STATUS_UNRESOLVED = "unresolved"
 class WeekScheduleResolution:
     starts: dict[str, date]
     reasons: list[dict]
+    completed_weeks: frozenset[tuple[str, str]] = frozenset()
 
 
 def _text(value):
@@ -86,13 +93,15 @@ def derive_week_starts(module_starts, ordered_week_ids_by_module):
     return WeekScheduleResolution(starts, reasons)
 
 
-def resolve_training_plan_week_starts(detail):
+def resolve_training_plan_week_starts(detail, *, as_of=None):
     """Resolve every id-bearing plan week through Curriculum's canonical order.
 
     ``curriculum.modules.start_date`` is group-delivery-specific because each
     assigned module row belongs to one group.  ``curriculum.weeks`` supplies the
     ordered authored weeks.  We enumerate that order instead of treating the
     stored zero-based ``display_order`` as a one-based week number.
+    Approved finished legacy deliveries supply verified due week identities,
+    not made-up dates; existing module dates always keep their priority.
     """
     plan_weeks = [row for row in (detail.get("week") or []) if isinstance(row, dict)]
     module_ids = list(dict.fromkeys(
@@ -113,11 +122,12 @@ def resolve_training_plan_week_starts(detail):
     try:
         with connections["default"].cursor() as cursor:
             cursor.execute(
-                "SELECT module_catalogue_id, start_date FROM curriculum.modules "
+                "SELECT module_catalogue_id, start_date, source_type FROM curriculum.modules "
                 f"WHERE module_catalogue_id IN ({placeholders})",
                 module_ids,
             )
-            module_starts = {str(module_id): start for module_id, start in cursor.fetchall()}
+            module_rows = cursor.fetchall()
+            module_starts = {str(module_id): start for module_id, start, _source in module_rows}
             cursor.execute(
                 "SELECT id, module_catalogue_id FROM curriculum.weeks "
                 f"WHERE module_catalogue_id IN ({placeholders}) "
@@ -136,9 +146,24 @@ def resolve_training_plan_week_starts(detail):
     for week_id, module_id in ordered_weeks:
         week_ids_by_module.setdefault(str(module_id), []).append(str(week_id))
 
+    cutoff = as_of_date(as_of) if as_of is not None else None
+    completed_modules = {
+        str(module_id) for module_id, start, source_type in module_rows
+        if approved_completed_delivery(
+            str(module_id), source_type=source_type, module_start=start, as_of=cutoff,
+        )
+    }
+    # A policy can only cover weeks verified under that module in Curriculum.
+    # Unknown/stale week ids from a plan still produce an unresolved reason.
+    completed_weeks = frozenset(
+        (module_id, week_id)
+        for module_id in completed_modules
+        for week_id in week_ids_by_module.get(module_id, [])
+    )
     derived = derive_week_starts(
         module_starts,
-        {module_id: week_ids_by_module.get(module_id, []) for module_id in module_ids},
+        {module_id: week_ids_by_module.get(module_id, []) for module_id in module_ids
+         if module_id not in completed_modules},
     )
     starts.update(derived.starts)
     reasons.extend(derived.reasons)
@@ -147,9 +172,10 @@ def resolve_training_plan_week_starts(detail):
     reason_week_ids = {item.get("weekId") for item in reasons}
     for row in plan_weeks:
         module_id, week_id = _text(row.get("moduleId")), _text(row.get("weekId"))
-        if module_id and week_id and week_id not in known_week_ids and week_id not in reason_week_ids:
+        if (module_id and week_id and week_id not in known_week_ids
+                and (module_id, week_id) not in completed_weeks and week_id not in reason_week_ids):
             reasons.append(_reason("week_not_found_in_authoritative_module_schedule", module_id=module_id, week_id=week_id))
-    return WeekScheduleResolution(starts, reasons)
+    return WeekScheduleResolution(starts, reasons, completed_weeks)
 
 
 def component_identity(component):
@@ -181,6 +207,7 @@ def achieved_component_identities(progress):
 def calculate_training_plan_targets(
     detail, *, progress, as_of, week_schedule=None,
     planned_review_otj_hours=0, target_review_otj_hours=0,
+    identity_resolver=None,
 ):
     """Calculate component and OTJ targets from one resolved plan and cutoff.
 
@@ -190,7 +217,7 @@ def calculate_training_plan_targets(
     cutoff_date = as_of_date(as_of)
     components = [row for row in (detail.get("components") or []) if isinstance(row, dict)]
     resolution = week_schedule or (
-        resolve_training_plan_week_starts(detail) if components else WeekScheduleResolution({}, [])
+        resolve_training_plan_week_starts(detail, as_of=as_of) if components else WeekScheduleResolution({}, [])
     )
     week_starts = dict(resolution.starts)
     relevant_week_ids = {_text(row.get("weekId")) for row in components if _text(row.get("weekId"))}
@@ -201,7 +228,7 @@ def calculate_training_plan_targets(
 
     units = {}
     for component in components:
-        identity = component_identity(component)
+        identity = (identity_resolver or component_identity)(component)
         module_id = _text(component.get("moduleId"))
         week_id = _text(component.get("weekId"))
         if not identity:
@@ -210,12 +237,16 @@ def calculate_training_plan_targets(
         if not week_id:
             reasons.append(_reason("planned_component_has_no_authoritative_week", module_id=module_id, identity=identity))
             continue
-        is_quiz = identity.startswith("quiz:")
+        is_quiz = component_identity(component).startswith("quiz:")
         candidate = {
             "identity": identity,
             "moduleId": module_id,
             "weekId": week_id,
             "weekStart": week_starts.get(week_id),
+            "completedDelivery": (
+                (module_id, week_id) in resolution.completed_weeks
+                and week_starts.get(week_id) is None
+            ),
             "isQuiz": is_quiz,
             # Quiz duration/expected fields remain excluded from OTJ exactly as
             # before; this phase changes component identity, not OTJ eligibility.
@@ -232,7 +263,7 @@ def calculate_training_plan_targets(
         units[identity] = candidate
 
     for unit in units.values():
-        if unit["weekStart"] is None:
+        if unit["weekStart"] is None and not unit["completedDelivery"]:
             reasons.append(_reason(
                 "planned_component_week_date_unresolved",
                 module_id=unit["moduleId"], week_id=unit["weekId"], identity=unit["identity"],
@@ -248,9 +279,11 @@ def calculate_training_plan_targets(
     review_target_otj = round(max(_number(target_review_otj_hours), 0), 2)
     total_planned_otj = round(component_planned_otj + review_planned_otj, 2)
     resolved = not unique_reasons
-    eligible = [unit for unit in units.values() if unit["weekStart"] and unit["weekStart"] <= cutoff_date]
+    eligible = [unit for unit in units.values()
+                if unit["completedDelivery"] or (unit["weekStart"] and unit["weekStart"] <= cutoff_date)]
     current_week = max(
-        (unit for unit in eligible), key=lambda unit: (unit["weekStart"], unit["weekId"]), default=None,
+        (unit for unit in eligible if unit["weekStart"]),
+        key=lambda unit: (unit["weekStart"], unit["weekId"]), default=None,
     ) if resolved else None
     if current_week:
         current_week = {
@@ -259,6 +292,7 @@ def calculate_training_plan_targets(
             "weekStart": current_week["weekStart"].isoformat(),
         }
 
+    legacy_units = [unit for unit in units.values() if unit["completedDelivery"]]
     return {
         "status": TARGET_STATUS_RESOLVED if resolved else TARGET_STATUS_UNRESOLVED,
         "asOf": _utc_iso(as_of),
@@ -279,4 +313,10 @@ def calculate_training_plan_targets(
         "totalWeeks": len({_text(row.get("weekId")) for row in detail.get("week") or [] if _text(row.get("weekId"))}),
         "unresolvedReasons": unique_reasons,
         "currentWeek": current_week,
+        **({"legacyCompletedDelivery": {
+            "policyVersion": POLICY_VERSION,
+            "effectiveFrom": POLICY_EFFECTIVE_FROM.isoformat(),
+            "moduleIds": sorted({unit["moduleId"] for unit in legacy_units}),
+            "weekCount": len({(unit["moduleId"], unit["weekId"]) for unit in legacy_units}),
+        }} if legacy_units else {}),
     }

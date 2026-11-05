@@ -10,6 +10,7 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ReviewAttendanceBadge } from '../shared/ReviewAttendanceBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { cn } from '@/lib/cn';
@@ -606,6 +607,7 @@ export default function CoachMonthlyCoaching() {
                       <td><ReviewCompletedDate event={event} /></td>
                       <td>
                         <span className={styles.status} data-status={event.status}><AppIcon className={statusIcon} />{statusLabel(event.status)}</span>
+                        <ReviewAttendanceBadge event={event} />
                         {isAtRiskEvent(event) || isDueSoonEvent(event) ? <div className={styles.alerts}>{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}
                       </td>
                       <td onClick={(clickEvent) => clickEvent.stopPropagation()}>

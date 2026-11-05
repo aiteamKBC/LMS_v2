@@ -1,17 +1,18 @@
 """Build the progress snapshot frozen when a coach presses Calculate.
 
-Target Components and Target OTJ Hours come from one target calculator. It
-resolves the learner's effective training plan and includes a component/hour
-when its authoritative curriculum week has started.
-Qualifying Review hours use the existing recurrence projection's targetDate;
-the one server timestamp supplied by the Calculate endpoint is the cutoff for
-both activity types. The current Review's own instance/booking date is never a
-second input and its hours are not separately added.
+Actual hours, whole-programme planned hours, the assigned activity catalogue
+and KSB evidence points use the live Dashboard readers. No learner totals are
+repaired or persisted here. Review allowances are already included by those
+readers and must not be added a second time.
+
+Current activity targets retain authoritative week scheduling and approved
+completed-delivery rules. Previous-learning catalogue activities and retained
+quiz records are wholly due, without awarding completion or inventing dates.
+The hour target reuses the Dashboard's programme-window calculation. All
+percentage and variance arithmetic remains unchanged.
 
 ``calculatedFrom`` and legacy ``weeksElapsed`` remain as explanatory metadata
 for compatible readers, but they do not drive the versioned target formula.
-Actual OTJ uses the same accepted-hour projection as the current learner and
-coach screens. Calculation never writes back to the learner's historical cache.
 Snapshots are persisted by ``curriculum_api.review_instances`` and are never
 recalculated on read, completion, or PDF rendering.
 """
@@ -19,22 +20,20 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone as datetime_timezone
 
-from .canonical_hours import profile_actual_hours
-
-from .ksb_progress import calculate_ksb_progress
-from .learner_detail import build_otjh_detail
-from .review_progress_inputs import review_planned_target_hours
+from .dashboard_metrics import coach_otjh_target_to_date
+from .review_live_inputs import read_live_inputs, nonnegative_number, UnavailableReviewProgress
 from .training_plan_targets import (
     TARGET_STATUS_RESOLVED,
     calculate_training_plan_targets,
+    as_of_date,
 )
 
 #: Existing strategy selector retained for backward compatibility. Formula
 #: evolution is recorded independently in ``formulaVersion``.
 CALCULATION_METHOD_PLANNED_HOURS = 'planned_hours'
 SNAPSHOT_SCHEMA_VERSION = 5
-TARGET_FORMULA_VERSION = 'canonical_accepted_hours_and_component_ksb_v5'
-ACTUAL_HOURS_SOURCE = 'canonical.accepted_hours'
+TARGET_FORMULA_VERSION = 'canonical_dashboard_metrics_and_scheduled_catalogue_v6'
+ACTUAL_HOURS_SOURCE = 'canonical_learning.dashboard'
 
 DIRECTION_ABOVE = 'above'
 DIRECTION_BELOW = 'below'
@@ -79,75 +78,92 @@ def _metric(*, actual, expected, planned, actual_percent, expected_percent):
     }
 
 
-def _progress_as_of(progress, calculated_at):
-    """Rows visible at the captured instant; undated legacy rows stay visible."""
-    visible = []
-    for record in progress if isinstance(progress, list) else []:
-        if not isinstance(record, dict):
-            continue
-        submitted = record.get('submittedAt') or record.get('submitted_at')
-        if submitted:
-            try:
-                submitted_at = datetime.fromisoformat(str(submitted).replace('Z', '+00:00'))
-                if submitted_at.tzinfo is None:
-                    submitted_at = submitted_at.replace(tzinfo=datetime_timezone.utc)
-                if submitted_at.astimezone(datetime_timezone.utc) > calculated_at:
-                    continue
-            except (TypeError, ValueError):
-                # Malformed legacy timestamps were historically included. Keep
-                # that behavior instead of silently removing earned progress.
-                pass
-        visible.append(record)
-    return visible
-
-
 class UnresolvedTrainingPlanTarget(ValueError):
     def __init__(self, calculation):
         self.calculation = calculation
         super().__init__('The learner training plan has no complete authoritative week schedule.')
 
 
-class UnavailableCompletedHours(ValueError):
-    """The resolved learner has no usable current accepted-hours projection."""
+# Compatibility for callers that previously distinguished missing actual hours.
+UnavailableCompletedHours = UnavailableReviewProgress
 
 
-def _current_completed_hours(learner_profile):
-    value = profile_actual_hours(learner_profile)
-    if value is None:
-        raise UnavailableCompletedHours(
-            'Verified completed OTJ hours are unavailable for this learner, so progress cannot be calculated.'
-        )
-    return round(value, 2)
+def _catalogue_identity(component):
+    """Match Dashboard cards: a verified component first, otherwise a quiz ID."""
+    if component.get('componentId'):
+        return f"component:{component['componentId']}"
+    quiz_id = (component.get('quizMeta') or {}).get('quizId')
+    return f'quiz:{quiz_id}' if quiz_id not in (None, '') else ''
+
+
+def _count(value, label):
+    number = nonnegative_number(value, label)
+    if not number.is_integer():
+        raise UnavailableReviewProgress(f'The learner\'s live {label} must be whole counts.')
+    return int(number)
+
+
+def _ksb_points(ksb):
+    if ksb.get('status') not in {'ready', 'empty'}:
+        return {'available': False, 'title': 'KSB evidence points',
+                'reason': 'KSB evidence points were unavailable at calculation time.',
+                'actualPercent': None, 'expectedPercent': None}
+    actual = _count(ksb.get('completed'), 'completed KSB points')
+    total = _count(ksb.get('total'), 'total KSB points')
+    if actual > total:
+        raise UnavailableReviewProgress('The learner\'s live KSB point counts are inconsistent.')
+    return {'available': total > 0, 'title': 'KSB evidence points',
+            'reason': None if total else 'No KSB evidence points are mapped.',
+            'source': 'canonical_learning.dashboard', 'unit': 'activity_ksb_points',
+            **_metric(actual=actual, expected=total, planned=total,
+                      actual_percent=_percent(actual, total),
+                      expected_percent=100 if total else None)}
 
 
 def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calculated_at):
-    detail = build_otjh_detail(source, learner_profile)
-    progress = _progress_as_of(
-        getattr(learner_profile, 'training_plan_progress', None), calculated_at,
-    )
-    review_planned, review_target = review_planned_target_hours(
-        learner_profile,
-        as_of=calculated_at,
-        learner_start_date=learner_start_date,
-        learner_end_date=getattr(source, 'learner_end_date', None),
-    )
+    live = read_live_inputs(source, learner_profile, as_of=calculated_at)
+    components = live['nativeComponents']
+    week_pairs = sorted({
+        (str(row.get('moduleId') or ''), str(row['weekId']))
+        for row in components if row.get('weekId')
+    })
+    detail = {'components': components, 'week': [
+        {'moduleId': module_id, 'weekId': week_id} for module_id, week_id in week_pairs
+    ]}
     targets = calculate_training_plan_targets(
         detail,
-        progress=progress,
+        progress=[],
         as_of=calculated_at,
-        planned_review_otj_hours=review_planned,
-        target_review_otj_hours=review_target,
+        identity_resolver=_catalogue_identity,
     )
     if targets['status'] != TARGET_STATUS_RESOLVED:
         raise UnresolvedTrainingPlanTarget(targets)
 
-    planned_hours = targets['totalPlannedOtjHours']
-    expected_hours = targets['targetOtjHours']
-    actual_hours = _current_completed_hours(learner_profile)
-
-    planned_components = targets['totalComponents']
-    completed_components = targets['completedComponents']
-    expected_components = targets['targetComponents']
+    planned_hours = nonnegative_number(live['otjh'].get('planned'), 'planned OTJ hours')
+    actual_hours = nonnegative_number(live['otjh'].get('actual'), 'actual OTJ hours')
+    expected_hours = coach_otjh_target_to_date(
+        source, {'planned': planned_hours, 'actual': actual_hours},
+        owner=live['owner'], as_of=as_of_date(calculated_at),
+    )
+    planned_components = sum(_count(row['total'], 'total activities') for row in live['modules'])
+    completed_components = sum(_count(row['completed'], 'completed activities') for row in live['modules'])
+    historical = _count(live['historicalComponents'], 'previous learning activities')
+    retained = _count(live['retainedComponents'], 'retained quiz activities')
+    if planned_components != targets['totalComponents'] + historical + retained or completed_components > planned_components:
+        raise UnavailableReviewProgress('The learner\'s live activity population needs review.')
+    expected_components = targets['targetComponents'] + historical + retained
+    targets = {**targets, 'targetComponents': expected_components,
+               'totalComponents': planned_components, 'completedComponents': completed_components,
+               'currentPlanComponents': targets['totalComponents'],
+               'historicalComponents': historical, 'retainedComponents': retained,
+               'totalPlannedOtjHours': planned_hours, 'targetOtjHours': expected_hours,
+               'hoursTargetSource': 'ssot:programme-plan-window',
+               'activityPopulation': 'dashboard_assigned_catalogue'}
+    # These older fields described authored component/review hour sums. The
+    # whole-programme Dashboard plan now owns hours, so do not persist a
+    # misleading zero Review allowance or a partial sum beside its total.
+    for key in ('componentPlannedOtjHours', 'reviewPlannedOtjHours', 'reviewTargetOtjHours'):
+        targets.pop(key, None)
 
     return {
         'offTheJobHours': _metric(
@@ -166,7 +182,7 @@ def _planned_hours_strategy(source, learner_profile, *, learner_start_date, calc
                 _percent(expected_components, planned_components) if expected_components is not None else None
             ),
         ),
-        'ksbProgress': calculate_ksb_progress(learner_profile, detail, progress),
+        'ksbProgress': _ksb_points(live['ksb']),
         'actualHoursSource': ACTUAL_HOURS_SOURCE,
         'targetCalculation': targets,
     }
