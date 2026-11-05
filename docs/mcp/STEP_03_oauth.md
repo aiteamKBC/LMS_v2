@@ -68,9 +68,10 @@ Run MCP Inspector (`npx @modelcontextprotocol/inspector`) against the branch ser
 complete the OAuth flow.
 
 ## Acceptance checklist
-- [ ] All tests green; `login` suite unchanged and green.
-- [ ] No edits in `login/` except none (or justified read-only helper import).
-- [ ] Inspector completes OAuth on branch.
+- [x] All tests green; `login` suite unchanged and green. (mcp_api green; `login.tests_api_gate` 34/34.)
+- [x] No edits in `login/` except none (or justified read-only helper import).
+- [x] Inspector completes OAuth on branch. (2026-10-18, after fix 7ce331c4: Referrer-Policy `no-referrer` made
+      Chrome send `Origin: null` on the consent POST, so CSRF refused it — now `same-origin` in header and meta.)
 
 ## Do not
 - Accept bearer tokens anywhere outside `/mcp/`. Issue tokens without PKCE. Use client secrets in v1.

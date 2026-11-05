@@ -29,4 +29,6 @@ Other account → not found; expired; double apply returns same result with one 
 re-validation failure; partial failure reporting; cancel then apply refused.
 
 ## Acceptance checklist
-- [ ] A dummy test write tool goes preview → apply → appears in curriculum revisions with actor + `mcp:` source.
+- [x] A test-only write tool goes preview → apply (DB-free tests + `mcp_selfcheck --mode changes`).
+      Owner decision 2026-11-05: Step 5 makes NO curriculum write, so the curriculum-revision check (actor +
+      `mcp:` source on a real revision) moves to Step 7, the first real curriculum write.

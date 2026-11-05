@@ -1,6 +1,9 @@
 # Step 12 — Pilot and production rollout (mostly human-run; Claude Code prepares)
 
 ## 12.1 Environment for pilot (CRITICAL)
+> **Decision 2026-11-05:** the test branch expired and is not recreated, so option (b) applies: pilot on
+> production behind the flag, with only the pilot accounts allowed (12.3).
+
 - The `security_test` branch is a production clone with REAL learner PII and blob refs to real Azure evidence
   (A21). Do NOT expose it to the internet or to Claude/ChatGPT as-is.
 - Options (owner decides): (a) create a fresh Neon branch and run `scripts/sanitise_test_branch.sql` +

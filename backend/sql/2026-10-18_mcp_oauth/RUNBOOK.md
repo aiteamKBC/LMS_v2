@@ -1,5 +1,11 @@
 # MCP OAuth tables: runbook
 
+> **2026-11-05:** the `security_test` branch (br-mute-voice-aboca1lt) expired on 2026-10-27 and is not
+> recreated. Branch-only steps below are historical. `mcp_selfcheck` now runs against production with
+> `--allow-production` + the branch id typed back, touches only the `Mcp_*` tables, and rolls back every mode
+> except `delete-clients`. See `docs/mcp/README.md`.
+
+
 **Read this first:** run **only** the steps below, **in this order**, one at a time, in the **Neon SQL editor**. Nobody runs `migrate` or scripts this DDL.
 
 | File | When |

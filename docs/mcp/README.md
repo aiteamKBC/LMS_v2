@@ -27,18 +27,44 @@ Single developer: work through the steps in order. (`TEAM_SEQUENCE.md` is a park
 4. Anything deferred, assumptions made, open questions.
 
 ## Testing reminder
-- Working branch: `MCP-Server` (local). `STEP_00_test_blockers.md` was SKIPPED — DB-backed suites cannot start.
+- Working branch: `MCP-Server` (local). `STEP_00_test_blockers.md` was SKIPPED.
 
-## Testing without DB suites (applies to Steps 2–11)
-- Automated tests must be DB-free: `SimpleTestCase` + `unittest.mock` (mock model managers / dispatcher responses).
-  Run with `bash scripts/test_on_branch.sh mcp_api` (SECURITY_TEST_BRANCH_ID set).
-- Real-database checks use a management command `mcp_selfcheck` (built in Step 2, extended each step) that:
-  - REFUSES to run unless `USE_SECURITY_TEST_BRANCH=1` and the resolved DB host is the test branch host (not prod);
-  - performs the step's round-trip on the branch and cleans up its own rows;
-  - is run with the same env as `scripts/test_on_branch.sh` (never plain `manage.py`).
-- Manual end-to-end via `scripts/runserver_test_branch.sh` + MCP Inspector from Step 3 on.
-- Every report must state which checks were automated, which were selfcheck, which were manual.
-- Test commands need `SECURITY_TEST_BRANCH_ID=br-mute-voice-aboca1lt` set (put it in the local, gitignored wrapper).
-- Tests: `cd backend && bash scripts/test_on_branch.sh <app>` — app-by-app, never plain `manage.py test`.
-- Manual server: `scripts/runserver_test_branch.sh` only. Plain `runserver` = PRODUCTION (A20).
-- The branch is a production clone with real PII unless sanitised — never expose it publicly (see Step 12).
+## How MCP is tested (from 2026-11-05: NO test branch — production with guardrails)
+The Neon test branch `security_test` (br-mute-voice-aboca1lt) expired on 2026-10-27. By owner decision it is
+NOT recreated: MCP is checked against production (`br-holy-band-abhispwg`). `scripts/test_on_branch.sh`,
+`.env.branch` and `SECURITY_TEST_BRANCH_ID` are retired for MCP work (left on disk, not used).
+
+Guardrails:
+- **Production server keeps `MCP_ENABLED` off.** Only a developer's LOCAL server runs with `MCP_ENABLED=1`, so
+  staff never see MCP until go-live (Step 12).
+- **Automated tests never touch a real database.** Run them with the SQLite-only settings, which refuse to start
+  if any PostgreSQL connection is configured:
+
+      cd backend
+      python manage.py test mcp_api --settings=config.settings_sqlite_test --noinput
+
+  Tests are `SimpleTestCase` + in-memory fakes of the MCP managers.
+- **Real-database checks** use `mcp_selfcheck` (built in Step 2, extended each step). Against production it needs
+  `--allow-production` AND the connected Neon branch id typed back (prompt, or `--confirm-branch ID`). On
+  production it only touches the four `login."Mcp_*"` tables (it reads `Login_accounts`), and every mode except
+  `delete-clients` is rolled back:
+
+      cd backend
+      python manage.py mcp_selfcheck --mode changes --allow-production
+      # modes: tables | oauth | transport | changes | delete-clients
+
+- **Real curriculum writes** (Step 7 onward) go only into a clearly labelled test module agreed with the owner,
+  and are removed by a person in the LMS afterwards. Never into a live module.
+- Every report states which checks were automated, which were selfcheck, which were manual.
+
+## Local server for MCP Inspector runs (against production, MCP on locally only)
+Git Bash, from `backend/` (a plain local server IS production data — A20 — so act as you would in the live LMS):
+
+    MCP_ENABLED=1 MCP_PUBLIC_BASE_URL=http://localhost:8000 \
+    MCP_ALLOWED_REDIRECT_HOSTS=localhost,127.0.0.1 \
+    MCP_ALLOWED_ORIGINS=http://localhost:6274,http://127.0.0.1:6274 \
+    FRONTEND_URL=http://localhost:3000 \
+    python manage.py runserver 8000
+
+Frontend: `cd frontend && npm run dev` (port 3000). Inspector: `npx @modelcontextprotocol/inspector`, open it on
+`localhost` (not 127.0.0.1), add server `http://localhost:8000/mcp/`, sign in with your normal LMS account.

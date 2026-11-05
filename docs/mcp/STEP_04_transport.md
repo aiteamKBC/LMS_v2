@@ -55,5 +55,7 @@ A working MCP server (no business tools yet) that authenticates, attributes and 
 - PII guard catches a nested email key.
 
 ## Acceptance checklist
-- [ ] Inspector connects via OAuth and lists 0 tools (or test tools only in DEBUG).
-- [ ] All new + baseline suites green.
+- [x] Inspector connects via OAuth and lists 0 tools (or test tools only in DEBUG). (2026-10-18: kbc-lms 1.0.0,
+      protocol 2025-11-25, Tools (0). Fix 7ce331c4: per-path resource metadata so `/mcp` and `/mcp/` each match.
+      No `Mcp-Session-Id` is ever sent; the Inspector's "Session-based" label is its own connection state.)
+- [x] All new + baseline suites green.
