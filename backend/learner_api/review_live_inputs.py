@@ -9,7 +9,7 @@ from math import isfinite
 from old_otjh.service import ServiceError
 
 from . import canonical_learning, journal_sources
-from .module_progress import canonical_module_facts
+from .review_activity_facts import dashboard_activity_facts
 from .training_plan_dashboard import plan_planned_hours
 
 
@@ -58,7 +58,7 @@ def read_live_inputs(source, learner_profile, *, as_of):
             if otjh.get('planned') is None:
                 # Same explicit no-plan fallback used by Dashboard Overview.
                 otjh['planned'] = plan_planned_hours(source, owner)
-            facts = canonical_module_facts(source, learner_profile, as_of=as_of)
+            facts = dashboard_activity_facts(source, learner_profile, as_of=as_of)
     except ServiceError as error:
         # Both Native and Imported Calculate already return ValueError as a
         # visible conflict without replacing the previously frozen snapshot.

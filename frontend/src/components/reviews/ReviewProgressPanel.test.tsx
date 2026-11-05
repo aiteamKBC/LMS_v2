@@ -22,6 +22,7 @@ function snapshot(overrides: Partial<ReviewProgressSnapshot> = {}): ReviewProgre
     calculatedAt: '2026-09-19T10:00:00Z',
     calculatedBy: 'coach@example.test',
     weeksElapsed: 88,
+    programmeTimeline: { startDate: '2025-01-01', asOfDate: '2026-09-19', gatewayDate: '2027-01-01', endDate: '2027-06-01' },
     programmeProgress: metric(28, 0),
     offTheJobHours: metric(64, 41),
     ksbProgress: {
@@ -63,13 +64,18 @@ describe('ReviewProgressPanel reference visual contract', () => {
 
   it('uses the programme actual for the donut and keeps fill and target labels independent', () => {
     render(<ReviewProgressPanel snapshot={snapshot()} canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
-    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%' })).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%; target 0%' })).toBeVisible();
     expect(screen.getByText('Project controls professional Apprenticeship Standard (v1.0) (Level 6)')).toBeVisible();
     expect(screen.getByText('23% Above')).toBeVisible();
     expect(screen.getByText('28% Above')).toBeVisible();
     const markers = screen.getAllByTestId('target-marker');
     expect(markers[0]).toHaveStyle({ right: '0px' });
-    expect(markers[2]).toHaveStyle({ left: '0px' });
+    expect(markers).toHaveLength(2);
+    expect(screen.getByTestId('donut-target-marker')).toHaveAttribute('transform', 'rotate(0 88 88)');
+    expect(screen.getByText('Programme timeline')).toBeVisible();
+    expect(screen.queryByText('Programme progress')).not.toBeInTheDocument();
+    expect(screen.getByText('At calculation: 19 Sept 2026')).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Programme timeline at calculation: 19 Sept 2026' }).firstElementChild).toHaveStyle({ width: '71.05561861521%' });
   });
 
   it('shows the real over-100 value while capping only its visual fill', () => {
@@ -96,7 +102,13 @@ describe('ReviewProgressPanel reference visual contract', () => {
     expect(screen.getByText('96%')).toBeVisible();
     expect(screen.getByText('4% Below')).toBeVisible();
     expect(screen.getByText('50% Below')).toBeVisible();
-    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 33%' })).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 33%; target 83%' })).toBeVisible();
+  });
+
+  it('does not invent dates for an older snapshot or a missing target', () => {
+    render(<ReviewProgressPanel snapshot={snapshot({ programmeTimeline: undefined, programmeProgress: metric(28, null) })} canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByText('Programme timeline dates were not recorded in this snapshot.')).toBeVisible();
+    expect(screen.queryByTestId('donut-target-marker')).not.toBeInTheDocument();
   });
 });
 
