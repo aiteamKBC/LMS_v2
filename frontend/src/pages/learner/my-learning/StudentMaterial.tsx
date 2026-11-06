@@ -334,7 +334,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
         <button type="button" disabled={actionsDisabled} className="rounded-lg border border-primary-300 px-3 py-1 font-semibold" onClick={() => study.setPaused(!study.paused)}>{study.paused ? 'Resume timer' : 'Pause timer'}</button>
         <span>{videoActivity && (untrackedVideo || data.media.some(item => isVideoMaterial(item) && item.can_embed === false))
           ? 'This video cannot report playback time. Enter your study time manually.'
-          : study.paused ? 'Timer paused.' : videoActivity || study.draft?.timing.countingMode === 'active_playback' ? 'Time counts during audible playback while this page is visible.' : 'Time counts while this page is visible.'}</span>
+          : study.paused ? 'Timer paused.' : !videoActivity && study.draft?.timing.countingMode === 'active_playback' ? 'Time counts during audible playback, including in another tab.' : videoActivity ? 'Time counts during audible playback while this page is visible.' : 'Time counts while this page is visible.'}</span>
         <span>{manualSeconds == null ? 'Only enter a time if you need to correct it.' : 'Your manual time will be saved. Clear both fields to use the timer.'}</span>
       </div>}
       {study.storageError && <p role="alert" className="text-sm text-amber-800">{study.storageError}</p>}
