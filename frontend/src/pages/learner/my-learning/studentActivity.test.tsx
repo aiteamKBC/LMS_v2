@@ -216,6 +216,19 @@ describe('learner subject cards', () => {
     expect(screen.getByText(/OTJH: Unavailable/)).toBeInTheDocument();
   });
 
+  it('shows mapped planned time in the imported activity heading without confusing it with recorded hours', () => {
+    const allocated = { ...data, activities: data.activities.map(entry => ({ ...entry,
+      planned: entry.activity === 'Reflection' ? 0.5 : 0, planned_hours_mapped: true })) };
+    render(<StudentActivityPanel data={allocated} loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    selectMonthWeek('Undated activities');
+    const activity = screen.getByRole('group', { name: 'Reflection activity' });
+    expect(activity).toHaveTextContent('Required');
+    expect(activity).toHaveTextContent('Planned time: 30m');
+    expect(within(activity).getAllByText(/Planned time/)).toHaveLength(1);
+    expect(activity).toHaveTextContent('OTJH: Unavailable');
+  });
+
   it('filters activities without changing the full module completion or hours summary', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Reflection' } });

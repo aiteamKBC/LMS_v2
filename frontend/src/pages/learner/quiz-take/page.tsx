@@ -25,6 +25,7 @@ import { completedComponentIds } from '@/utils/learnerJourney';
 import { PreviousLearningNotice } from '@/pages/learner/my-learning/PreviousLearningNotice';
 import { placeActivity } from '@/pages/learner/video-watch/weekPreview';
 import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
+import { ActivityPlanDetails } from '@/pages/learner/video-watch/ActivityPlanDetails';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
 import { formatClock } from "@/components/feature/ReflectionWindow.helpers";
@@ -524,6 +525,7 @@ export default function QuizTakePage() {
           <PreviousLearningNotice learning={placement?.weekComponents.find(component => String(component.quizMeta?.quizId) === String(quizId))?.previousLearning} kind={kind} learnerId={id} />
           <IntroScreen
             quiz={quiz}
+            allocatedHours={placement?.weekComponents.find(component => String(component.quizMeta?.quizId) === String(quizId))?.expectedOtjh}
             totalPoints={totalPoints}
             latestAttempt={latestAttempt}
             onStart={startQuiz}
@@ -648,8 +650,9 @@ export default function QuizTakePage() {
 /* ═══════════════════════════════════════════════════════
    INTRO
    ═══════════════════════════════════════════════════════ */
-function IntroScreen({ quiz, totalPoints, latestAttempt, onStart, onViewResult, onBack }: {
+function IntroScreen({ quiz, allocatedHours, totalPoints, latestAttempt, onStart, onViewResult, onBack }: {
   quiz: Quiz;
+  allocatedHours?: number | null;
   totalPoints: number;
   latestAttempt: LearnerQuizAttempt | null;
   onStart: () => void;
@@ -662,9 +665,10 @@ function IntroScreen({ quiz, totalPoints, latestAttempt, onStart, onViewResult, 
         <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
           <AppIcon className="ri-questionnaire-line text-amber-600 text-xl" />
         </div>
-        <div>
+        <div className="min-w-0">
           <h1 className="text-lg font-heading font-bold text-foreground-900">{quiz.title}</h1>
           <p className="text-sm text-foreground-400">{quiz.questions.length} questions · {totalPoints} points</p>
+          <ActivityPlanDetails hours={allocatedHours} />
         </div>
       </div>
 

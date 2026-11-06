@@ -26,7 +26,7 @@ describe('point sidebar', () => {
     const point = screen.getByRole('list', { name: 'Point 1 activities' });
     expect(point.closest('details')).toHaveAttribute('open');
     expect(within(point).getAllByRole('button').map(button => button.textContent))
-      .toEqual(['ReadingRead the case', 'PodcastListen to the case', 'QuizCheck understanding']);
+      .toEqual(['ReadingRead the caseRequiredPlanned time: 1h', 'PodcastListen to the case', 'QuizCheck understanding']);
     expect(screen.getByText('Point 2').closest('details')).not.toHaveAttribute('open');
     expect(screen.getByRole('button', { name: /Welcome/ })).toBeVisible();
     fireEvent.click(within(point).getByRole('button', { name: /Read the case/ }));

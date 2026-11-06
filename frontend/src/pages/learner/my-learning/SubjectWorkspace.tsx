@@ -21,6 +21,8 @@ import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type Cove
 import { PreviousLearningNotice } from './PreviousLearningNotice';
 import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
 import { resolveSubjectWeek } from './subjectLearning';
+import { subjectActivityHours } from '@/utils/activityPlan';
+import { ActivityPlanDetails } from '../video-watch/ActivityPlanDetails';
 export type { SubjectEntry, Subject, CoverMetadata, UnifiedLearningSummary } from './learningSummary';
 
 
@@ -273,6 +275,7 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, 
       {legacy && canOpen && kind && learnerId && !direct ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
         : href ? <Link to={href} className="text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</Link> : entry.title}
     </h5><p className="mt-1 text-xs text-foreground-500">{[entry.category, entry.schedule.date, score != null ? `Best score ${Math.round(score)}%` : ''].filter(Boolean).join(' · ')}</p>
+      <ActivityPlanDetails hours={subjectActivityHours(entry)} />
       {legacy?.section_title && <p className="mt-1 text-xs text-foreground-500">Lecture: {legacy.section_title}</p>}
     </div>
     <div className="col-start-2 flex flex-wrap items-center gap-2 sm:ml-auto"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.completed ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{entry.completed ? 'Complete' : 'Not complete'}</span>
@@ -282,7 +285,7 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, 
     {((legacy && !canOpen && !sourceHref) || (!legacy && !href)) && <span className="text-xs text-foreground-500">{entry.native?.retired ? 'No longer in this module' : 'Content not available yet'}</span>}</div>
   </div>
     <PreviousLearningNotice learning={entry.native?.previousLearning} kind={kind} learnerId={learnerId} />
-    {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'} · Planned: {legacy.planned_hours_mapped ? formatHoursMinutes(legacy.planned) : 'Unavailable'}</p>}
+    {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'}</p>}
     <div id={contentId}>{(direct || open) && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly} reviewQuiz={canReviewQuiz} catalogueQuiz={legacy.catalogue_kind === 'quiz'} onProgress={readOnly ? undefined : onProgress} /></div>}</div>
   </div>;
 }
