@@ -83,6 +83,27 @@ describe('recording watch tracking', () => {
 });
 
 describe('recording transcript', () => {
+  it.each([undefined, { kind: 'commercial' as const, id: '7' }, { kind: 'apprenticeship' as const, id: '8' }])('downloads the saved linked text through the current viewer endpoint (%j)', async learner => {
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" />);
+    const download = screen.getByRole('link', { name: 'Download transcript' });
+    const path = learner ? `/learner_api/session-results/${learner.kind}/${learner.id}/S` : '/curriculum_api/curriculum/session-results/S';
+    expect(download).toHaveAttribute('href', `${path}/artifacts/T/?format=txt`);
+    expect(download).toHaveAttribute('download');
+    await screen.findByRole('button', { name: /First phrase/ });
+  });
+
+  it('offers each ready linked part without exposing unrelated or pending transcripts', () => {
+    render(<SessionRecordingPlayer seriesId="S" file={{ ...recording, transcriptLinks: [
+      { id: 'T', timingReady: false, offsetSeconds: null }, { id: 'T2', timingReady: false, offsetSeconds: null },
+      { id: 'pending', timingReady: false, offsetSeconds: null },
+    ] }} transcripts={[{ ...transcript, timingReady: false, text: 'Saved text' }, { ...transcript, id: 'T2' },
+      { ...transcript, id: 'pending', state: 'pending' }, { ...transcript, id: 'unrelated' }]} label="Recording" />);
+    expect(screen.getByRole('link', { name: 'Download transcript 1' })).toHaveAttribute('href', expect.stringContaining('/artifacts/T/?format=txt'));
+    expect(screen.getByRole('link', { name: 'Download transcript 2' })).toHaveAttribute('href', expect.stringContaining('/artifacts/T2/?format=txt'));
+    expect(screen.getAllByRole('link')).toHaveLength(2);
+    expect(loadTranscriptCues).not.toHaveBeenCalled();
+  });
+
   it('highlights and seeks using media time plus the stored offset, preserving pause', async () => {
     render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} label="Recording" />);
     const first = await screen.findByRole('button', { name: /First phrase/ });
@@ -136,6 +157,7 @@ describe('recording transcript', () => {
   it('never guesses a transcript when no association or timing exists', async () => {
     const page = render(<SessionRecordingPlayer seriesId="S" file={{ ...recording, transcriptLinks: [] }} transcripts={[transcript]} label="Recording" />);
     expect(screen.getByText(/No matching transcript/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Download transcript/ })).not.toBeInTheDocument();
     expect(loadTranscriptCues).not.toHaveBeenCalled();
     page.rerender(<SessionRecordingPlayer seriesId="S" file={{ ...recording, transcriptLinks: [{ id: 'T', timingReady: false, offsetSeconds: 0 }] }}
       transcripts={[{ ...transcript, timingReady: false, text: 'Saved plain text' }]} label="Recording" />);
@@ -150,6 +172,7 @@ describe('recording transcript', () => {
     render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} label="Recording" />);
     const video = screen.getByLabelText('Recording');
     await screen.findByText('Saved transcript unavailable');
+    expect(screen.getByRole('link', { name: 'Download transcript' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry transcript' }));
     await screen.findByRole('button', { name: /First phrase/ });
     expect(screen.getByLabelText('Recording')).toBe(video);
