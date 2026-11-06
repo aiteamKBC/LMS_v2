@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { loadRecordingsLibrary, resolveRecordingUrl, type RecordingsLibrary } from '@/api/sessionResults';
+import { loadRecordingsLibrary, loadSessionResult, resolveRecordingUrl, type RecordingsLibrary } from '@/api/sessionResults';
 import { addDays, todayIso } from '../utils';
 import { buildCalendarLectures } from '../model';
 import CurriculumRecordingsPage from '../page';
@@ -29,7 +29,7 @@ vi.mock('@/components/feature/SessionRecordingPlayer', () => ({
 }));
 vi.mock('@/api/sessionResults', async () => {
   const actual = await vi.importActual<typeof import('@/api/sessionResults')>('@/api/sessionResults');
-  return { ...actual, loadRecordingsLibrary: vi.fn(), resolveRecordingUrl: vi.fn() };
+  return { ...actual, loadRecordingsLibrary: vi.fn(), loadSessionResult: vi.fn(), resolveRecordingUrl: vi.fn() };
 });
 
 const date = todayIso();
@@ -77,6 +77,7 @@ describe('Session recordings calendar', () => {
     window.localStorage.removeItem('lms-recordings-calendar-zone');
     vi.mocked(loadRecordingsLibrary).mockReset().mockResolvedValue(library);
     vi.mocked(resolveRecordingUrl).mockReset().mockResolvedValue('https://storage.invalid/inline-video');
+    vi.mocked(loadSessionResult).mockReset().mockResolvedValue({ sessions: [] });
   });
 
   it('converts the same UTC lecture across Cairo and London including the date boundary and daylight saving', () => {
