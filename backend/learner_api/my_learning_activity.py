@@ -11,15 +11,18 @@ def card_teaching_activity(cards):
         return {}
     modules = []
     # Follow only the owned cards' explicitly shared delivery sources. The path
-    # prevents cycles; no global catalogue or per-card structure reads.
+    # prevents cycles; no global catalogue or per-card structure reads. Optional
+    # authoring flags may be absent, as in Curriculum's schema-aware reader.
     for offset in range(0, len(wanted), 400):
         modules.extend(canonical.query('''WITH RECURSIVE delivery AS (
             SELECT m.module_catalogue_id,m.start_date,m.source_type,m.teams_shared_source_module_id,
-                m.deleted_at,m.is_programme_deleted,m.status,m.library_state,ARRAY[m.module_catalogue_id] AS path
+                m.deleted_at,m.is_programme_deleted,to_jsonb(m)->>'status' AS status,
+                to_jsonb(m)->>'library_state' AS library_state,ARRAY[m.module_catalogue_id]::text[] AS path
             FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
             UNION ALL
             SELECT m.module_catalogue_id,m.start_date,m.source_type,m.teams_shared_source_module_id,
-                m.deleted_at,m.is_programme_deleted,m.status,m.library_state,delivery.path || m.module_catalogue_id
+                m.deleted_at,m.is_programme_deleted,to_jsonb(m)->>'status' AS status,
+                to_jsonb(m)->>'library_state' AS library_state,delivery.path || m.module_catalogue_id
             FROM delivery JOIN curriculum.modules m
               ON m.module_catalogue_id=delivery.teams_shared_source_module_id
             WHERE NOT m.module_catalogue_id=ANY(delivery.path) AND cardinality(delivery.path)<8
