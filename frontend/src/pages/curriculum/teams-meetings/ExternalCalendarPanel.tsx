@@ -6,6 +6,7 @@ import type { MeetingRow } from './useTeamsMeetingsWorkspace';
 import { ImportedParticipantsPanel } from './ImportedParticipantsPanel';
 import { ImportedMeetingEditor, type ImportedMeetingEditorActions } from './ImportedMeetingEditor';
 import { ImportedCalendarUpdatePanel } from './ImportedCalendarUpdatePanel';
+import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
 
 export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, onEditingChange, busy, disabled, editorUpdateRef, hideEditorEntry = false }: {
   calendar: ExternalCalendar;
@@ -110,7 +111,7 @@ export function ExternalCalendarPanel({ calendar, row, onReattach, onUpdated, on
             return (
               <li key={session.componentId || `${session.id}:${index}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-[12px]">
                 <div>
-                  <p className="font-semibold text-foreground-800">{session.componentTitle || session.title || `Session ${index + 1}`}</p>
+                  <p className="font-semibold text-foreground-800">{sessionDisplayTitle(session.componentTitle || session.title || `Session ${index + 1}`, session.weekTitle, 'Live Teams Session')}</p>
                   <p className="text-foreground-500">{formatDateLabel(session.date)}{session.startTime ? ` · ${session.startTime}` : ''}</p>
                 </div>
                 <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${confirmed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900'}`}>

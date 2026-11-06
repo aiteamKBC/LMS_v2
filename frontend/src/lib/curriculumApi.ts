@@ -1575,6 +1575,8 @@ export interface CurriculumSession {
   componentId?: string;
   /** The live-session component's own title, when the caller matched one. Display only. */
   componentTitle?: string;
+  /** Owning authored week; display metadata, never a Teams meeting subject. */
+  weekTitle?: string;
   title: string;
   type: string;
   date: string;

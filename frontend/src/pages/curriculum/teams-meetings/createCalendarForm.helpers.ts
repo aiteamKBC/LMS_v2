@@ -58,6 +58,7 @@ export interface TeamsPlannedSession {
   componentId?: string;
   /** Display-only title from the matched live-session component. */
   componentTitle?: string;
+  weekTitle?: string;
 }
 
 
