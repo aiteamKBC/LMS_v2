@@ -86,6 +86,15 @@ class ModuleScopedSessionTests(unittest.TestCase):
         expected = [session for session in everything if session['moduleCatalogueId'] == 'MOD-1']
         self.assertEqual(self.get(module_catalogue_id='MOD-1')['results'], expected)
 
+    def test_week_title_is_display_metadata_without_rewriting_the_component_or_session(self):
+        self.links['MOD-1'][0]['title'] = 'Live Teams Session 1'
+        before = self.get(module_catalogue_id='MOD-1')['results'][0]
+        self.links['MOD-1'][0]['weekTitle'] = 'Pricing'
+        after = self.get(module_catalogue_id='MOD-1')['results'][0]
+        self.assertEqual(after['weekTitle'], 'Pricing')
+        self.assertEqual(after['title'], 'Live Teams Session 1')
+        self.assertEqual({**after, 'weekTitle': before['weekTitle']}, before)
+
     def test_dates_clock_and_holidays_come_from_the_modules_own_rows(self):
         sessions = self.get(module_catalogue_id='MOD-1')['results']
         # The undated component is a gap, never a date of our choosing.

@@ -11074,6 +11074,8 @@ def authoring_session_links_by_catalogue(
                     'weekId': week_id,
                     'componentId': clean_str(component.get('id')),
                     'title': component.get('title') or week_row.get('title') or '',
+                    'weekTitle': (clean_str(week_row.get('title'))
+                                  if clean_str(component.get('module_catalogue_id')) == catalogue_id else ''),
                     # Delivered by its own additional meeting rather than by the
                     # module's calendar. Flagged, never dropped: the week still runs
                     # a live session and every screen that lists sessions must still
@@ -11662,6 +11664,7 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 # the row the author is looking at.
                 'weekId': clean_str(link.get('weekId')),
                 'componentId': clean_str(link.get('componentId')),
+                'weekTitle': clean_str(link.get('weekTitle')),
                 # The live session's own name, as its author typed it on the
                 # component. The module's name and a number are what is left
                 # when a component carries no title of its own.

@@ -78,7 +78,7 @@ WEEKS_SQL = '''SELECT x.id, x.module_catalogue_id, x.week_number, x.title, x.dis
 # Only transfer settings consumed by this read-only library. Full component settings
 # contain meeting payloads that are large and never used here. Keep non-object
 # legacy JSON unchanged so _settings retains its existing decoding semantics.
-LIVE_COMPONENTS_SQL = '''SELECT x.week_id, x.module_catalogue_id, CASE WHEN jsonb_typeof(x.settings_json)='object' THEN jsonb_build_object(
+LIVE_COMPONENTS_SQL = '''SELECT x.id AS component_id, x.week_id, x.module_catalogue_id, CASE WHEN jsonb_typeof(x.settings_json)='object' THEN jsonb_build_object(
             'teamsOccurrenceId', x.settings_json -> 'teamsOccurrenceId',
             'teamsLiveSessionId', x.settings_json -> 'teamsLiveSessionId',
             'teamsSessionNumber', x.settings_json -> 'teamsSessionNumber',
@@ -100,7 +100,7 @@ ATTENTION_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_
             'teamsSessionNumber', c.settings_json -> 'teamsSessionNumber',
             'extraTeamsLiveSessionId', c.settings_json -> 'extraTeamsLiveSessionId'
         ) ELSE c.settings_json END AS settings_json,
-        w.week_number, w.title AS week_title, w.display_order,
+        w.week_number, w.title AS week_title, w.module_catalogue_id AS week_module_catalogue_id, w.display_order,
         m.title AS module_title, m.programme_name, m.cohort_name, m.group_name, p.status AS programme_status
     FROM curriculum.components c
     JOIN curriculum.weeks w ON w.id=c.week_id
@@ -350,8 +350,42 @@ def session_attention(occurrence, now):
     return 'notRecorded', 'A complete synchronization after this session found no recording in Teams.'
 
 
+def occurrence_week_links(components, occurrences):
+    """Read-only labels from explicit, unique module/component/occurrence links."""
+    links = {}
+    for component in components:
+        settings = _settings(component.get('settings_json'))
+        module = _text(component.get('module_catalogue_id'))
+        if 'week_module_catalogue_id' in component and _text(component['week_module_catalogue_id']) != module:
+            continue
+        occurrence = _text(settings.get('teamsOccurrenceId'))
+        series = _text(settings.get('teamsLiveSessionId'))
+        number = _text(settings.get('teamsSessionNumber'))
+        key = (('occurrence', module, occurrence) if occurrence else
+               ('session', module, series, number) if series and number else None)
+        if module and key:
+            links.setdefault(key, set()).add((
+                _text(component.get('component_id') or component.get('id')),
+                _text(component.get('week_id')), _text(component.get('week_title'))))
+    titles = {}
+    for occurrence in occurrences:
+        module = _text(occurrence.get('module_catalogue_id'))
+        identity = (module, _text(occurrence.get('id')))
+        names = links.get(('occurrence', *identity), set()) | links.get(
+            ('session', module, _text(occurrence.get('live_session_id')),
+             _text(occurrence.get('session_number'))), set())
+        week = next(iter(names)) if len(names) == 1 else None
+        titles[identity] = (week[1], week[2]) if week and week[0] and week[1] else None
+    return titles
+
+
+def occurrence_week_titles(components, occurrences):
+    return {key: value[1] if value else '' for key, value in occurrence_week_links(components, occurrences).items()}
+
+
 def attention_by_module(components, occurrences, now):
     """Sessions that need checking, per running module, from persisted sync results only."""
+    display_titles = occurrence_week_titles(components, occurrences)
     by_id = {row['id']: row for row in occurrences}
     by_session = {(_text(row.get('live_session_id')), _text(row.get('session_number'))): row for row in occurrences}
     recorded_series = {_text(row.get('live_session_id')) for row in occurrences if row.get('has_recording')}
@@ -371,6 +405,7 @@ def attention_by_module(components, occurrences, now):
         module['seen'].add(occurrence['id'])
         module['sessions'].append({
             'occurrenceId': occurrence['id'], 'weekId': row.get('week_id'), 'weekNumber': row.get('week_number'),
+            'displayWeekTitle': display_titles.get((row['module_catalogue_id'], _text(occurrence['id'])), ''),
             'weekTitle': _text(row.get('week_title')), 'sessionNumber': occurrence.get('session_number'),
             'startsAt': _iso(occurrence.get('scheduled_start')), 'status': verdict[0], 'reason': verdict[1]})
     return modules
@@ -383,6 +418,7 @@ def calendar_sessions(components, occurrences, now=None):
     never hide the meeting or turn its week number into a lecture title.
     """
     by_occurrence, by_session, by_extra_series, by_start = {}, {}, {}, {}
+    display_titles = occurrence_week_titles(components, occurrences)
     for component in components:
         settings = _settings(component.get('settings_json'))
         module_id = _text(component.get('module_catalogue_id'))
@@ -421,6 +457,7 @@ def calendar_sessions(components, occurrences, now=None):
                         or _text(component.get('module_title')) or 'Untitled module')
         sessions.append({
             'source': 'occurrence',
+            'displayWeekTitle': display_titles.get((module_id, _text(occurrence.get('id'))), ''),
             'occurrenceId': occurrence['id'], 'seriesId': series_id,
             'moduleId': module_id or f'live-session:{series_id}',
             'title': _text(component.get('component_title')) or _text(occurrence.get('series_module_title'))
@@ -456,6 +493,11 @@ def calendar_sessions(components, occurrences, now=None):
         module_title = _text(component.get('module_title')) or 'Untitled module'
         sessions.append({
             'source': 'authored',
+            'displayWeekTitle': (_text(component.get('week_title'))
+                                 if component.get('component_id') and component.get('week_id')
+                                 and component.get('module_catalogue_id')
+                                 and _text(component.get('week_module_catalogue_id', component['module_catalogue_id']))
+                                 == _text(component['module_catalogue_id']) else ''),
             'occurrenceId': f"authored:{component['component_id']}", 'seriesId': '',
             'moduleId': component['module_catalogue_id'],
             'title': _text(component.get('component_title')) or module_title,
@@ -485,6 +527,15 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
     owners = week_owners(components)
     placement_reviews = placement_reviews or set()
     week_rows = {row['id']: row for row in weeks}
+    title_components = []
+    for component in components:
+        week = week_rows.get(component.get('week_id')) or {}
+        if _text(week.get('module_catalogue_id')) == _text(component.get('module_catalogue_id')):
+            title_components.append({**component, 'week_title': _text(week.get('title'))})
+    display_links = occurrence_week_links(title_components, [
+        {'id': row['occurrence_id'], 'module_catalogue_id': row['module_catalogue_id'],
+         'live_session_id': row.get('series_id'), 'session_number': row.get('session_number')}
+        for row in recordings if row.get('occurrence_id')])
     week_order = {row['id']: index for index, row in enumerate(weeks)}
     deliveries, kept = {}, {}
     for row in recordings:
@@ -510,6 +561,7 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
         week_id = recording_week(row, owners)
         week = week_rows.get(week_id) if week_id else None
         week_key = week['id'] if week else ''
+        display_link = display_links.get((_text(row['module_catalogue_id']), _text(row.get('occurrence_id'))))
         bucket = delivery['weeks'].setdefault(week_key, {
             'weekId': week_key or None,
             'weekNumber': week.get('week_number') if week else None,
@@ -521,6 +573,7 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
         explicitly_placed = bool(owners[3].get((_text(row.get('series_id')), recorded_day)))
         item = {
             'id': row['artifact_id'], 'seriesId': row['series_id'], 'occurrenceId': row.get('occurrence_id'),
+            'displayWeekTitle': display_link[1] if display_link and display_link[0] == week_key else '',
             'sessionNumber': row.get('session_number'),
             'startsAt': _iso(row.get('scheduled_start')), 'recordedAt': _iso(row.get('created_datetime')),
             'endsAt': _iso(row.get('end_datetime')),

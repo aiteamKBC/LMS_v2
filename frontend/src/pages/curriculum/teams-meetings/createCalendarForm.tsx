@@ -1,5 +1,6 @@
 import { DEFAULT_START_TIME, DEFAULT_DURATION_MINUTES, minuteKey, sessionNaiveLocal, minutesBetween, naiveLocalFromUtc, calendarLabel, teamsGapNote, overrideDurationMinutes, emptyTeamsCalendarForm, buildTeamsCalendarInput, teamsUpdateChanges, TEAMS_LOBBY_OPTIONS, TEAMS_RECORDING_OPTIONS, TEAMS_LANGUAGE_OPTIONS, type TeamsPlannedSession, type TeamsSchedulePreviewRow, type GroupDeliveryPattern, type TeamsCalendarForm, type TeamsCalendarTarget, type TeamsUpdateFields } from './createCalendarForm.helpers';
 export type { TeamsPlannedSession, TeamsSchedulePreviewRow, GroupDeliveryPattern, TeamsCalendarForm, TeamsCalendarTarget } from './createCalendarForm.helpers';
+import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
 import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
@@ -194,7 +195,7 @@ export function ModuleSessionSchedulePreview({
     const driftedCountryPair = rowCountryPair && rowCountryPair !== usualCountryPair ? rowCountryPair : '';
     return {
       session,
-      name: session?.componentTitle,
+      name: sessionDisplayTitle(session?.componentTitle || '', session?.weekTitle, 'Live Teams Session'),
       plannedUtc: plannedUtc || teamsUtc,
       teamsUtc,
       durationMinutes,

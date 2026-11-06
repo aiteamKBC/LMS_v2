@@ -769,15 +769,18 @@ def linked_session_items(series_ids):
           AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
           AND coalesce(w.library_state,'')<>'library'
         WHERE o.live_session_id=ANY(%s)''', [sorted(set(series_ids))])
-    titles, weeks = defaultdict(set), defaultdict(dict)
+    titles, weeks, components = defaultdict(set), defaultdict(dict), defaultdict(set)
     for row in rows:
         key = (row['live_session_id'], row['session_number'])
+        components[key].add(row.get('component_id'))
         titles[key].add(str(row.get('title') or '').strip())
         weeks[key][row['week_id']] = {'number': row['week_number'], 'title': row['week_title'] or ''}
     items = {}
     for key in set(titles) | set(weeks):
         named = titles[key] - {''}
+        week_title = str(next(iter(weeks[key].values()))['title']).strip() if len(weeks[key]) == 1 else ''
         items[key] = {'title': next(iter(named)) if len(titles[key]) == 1 and named else None,
+                      'weekTitle': week_title if len(components[key]) == 1 and next(iter(components[key])) else '',
                       'week': next(iter(weeks[key].values())) if len(weeks[key]) == 1 else None}
     return items
 
@@ -831,6 +834,7 @@ def module_results(request, module_id):
         for item in occurrences:
             # The Course structure item's own name; the list falls back to "Session N".
             item['itemTitle'] = (items.get((item['seriesId'], item['sessionNumber'])) or {}).get('title')
+            item['itemWeekTitle'] = (items.get((item['seriesId'], item['sessionNumber'])) or {}).get('weekTitle')
         results = [{'id': row['id'], 'title': row['module_title'],
                     'sessions': [item for item in occurrences if item['seriesId'] == row['id']]} for row in series]
         payload = {'series': results, 'jobs': [], 'presenceThresholdSeconds': 180, 'syncAvailable': True}
