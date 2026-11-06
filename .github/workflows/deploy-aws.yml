@@ -44,9 +44,10 @@ on:
         required: false
         default: ""
 
-# Runs queue one after another; a newer push never cancels a deploy
+# Keep up to 100 waiting runs in FIFO order; newer pushes do not replace them.
 concurrency:
   group: ci-${{ github.ref }}
+  queue: max
   cancel-in-progress: false
 
 permissions:
@@ -278,6 +279,7 @@ jobs:
       url: ${{ vars.SITE_URL }}
     concurrency:
       group: deploy-aws
+      queue: max
       cancel-in-progress: false
     permissions:
       contents: read
