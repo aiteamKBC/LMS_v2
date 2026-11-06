@@ -646,7 +646,7 @@ describe('subject months, weeks and completion', () => {
     expect(reads).toHaveLength(1);
     expect(reads[0][0]).toContain('group_id=1&activity_id=11');
     expect(reads[0][0]).not.toContain('catalogue_kind=quiz');
-    expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/') && options?.method === 'POST')).toHaveLength(1);
+    await waitFor(() => expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/') && options?.method === 'POST')).toHaveLength(1));
     expect(requests.mock.calls.some(([url]) => url.endsWith('/attempt-1/'))).toBe(false);
   });
 
