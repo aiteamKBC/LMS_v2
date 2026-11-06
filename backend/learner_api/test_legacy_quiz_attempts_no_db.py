@@ -150,6 +150,20 @@ class LegacyAttemptEndpointTests(unittest.TestCase):
         self.assertEqual(self.request('start_subject_attempt').status_code, 409)
         self.store.start.assert_not_called()
 
+    def test_granted_completed_quiz_starts_a_separate_server_authorized_attempt(self):
+        self.owned.return_value[1].update(completed=True, can_retake=True)
+        original = {'quiz_id': 60, 'maximum_score': 100, 'passing_score': 80,
+            'questions': [{'question_id': 1, 'question_body': 'Example?', 'options': [
+                {'option_order': 1, 'option_text': 'Yes'}, {'option_order': 2, 'option_text': 'No'}]}],
+            'solutions': [{'question_id': 1, 'correct_answer': ['Yes']}]}
+        self.scope['_connection'] = lambda: SimpleNamespace(cursor=lambda: nullcontext(Mock()))
+        with patch('learner_api.subject_quiz.imported_quiz', return_value=original):
+            response = self.request('start_subject_attempt')
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(self.store.start.call_args.args[-1]['retakeRequired'])
+        self.assertNotIn('retakeRequired', response.content.decode())
+        self.assertNotIn('solution_ids', response.content.decode())
+
     def test_start_keeps_grading_keys_in_server_snapshot_only(self):
         original = {'quiz_id': 60, 'maximum_score': 100, 'passing_score': 80,
             'questions': [{'question_id': 1, 'question_body': 'Example?', 'options': [

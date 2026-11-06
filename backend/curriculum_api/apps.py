@@ -40,6 +40,7 @@ class CurriculumApiConfig(AppConfig):
             'bootstrap_module_hours_manager',
             'process_curriculum_videos', 'import_curriculum_videos',
             'import_live_session_recordings',
+            'grant_legacy_quiz_retake',
         }:
             return
         # runserver spawns a reloader child that does the actual serving; the

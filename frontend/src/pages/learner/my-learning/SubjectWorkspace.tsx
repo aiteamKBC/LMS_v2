@@ -283,7 +283,7 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, 
   </div>
     <PreviousLearningNotice learning={entry.native?.previousLearning} kind={kind} learnerId={learnerId} />
     {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'} · Planned: {legacy.planned_hours_mapped ? formatHoursMinutes(legacy.planned) : 'Unavailable'}</p>}
-    <div id={contentId}>{(direct || open) && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly || canReviewQuiz} reviewQuiz={canReviewQuiz} catalogueQuiz={legacy.catalogue_kind === 'quiz'} onProgress={readOnly || canReviewQuiz ? undefined : onProgress} /></div>}</div>
+    <div id={contentId}>{(direct || open) && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly} reviewQuiz={canReviewQuiz} catalogueQuiz={legacy.catalogue_kind === 'quiz'} onProgress={readOnly ? undefined : onProgress} /></div>}</div>
   </div>;
 }
 
