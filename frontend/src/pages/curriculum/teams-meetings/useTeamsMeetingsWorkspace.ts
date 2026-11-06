@@ -1,3 +1,4 @@
+import { seriesSessionWeekTitle } from '../shared/sessionDisplayTitle';
 import {
   useCallback,
   useEffect,
@@ -266,6 +267,9 @@ function sessionRowsFromPlan(row: MeetingRow, plan: ModuleWeekSessionPlan, modul
       moduleCatalogueId: row.catalogueId,
       moduleId: row.catalogueId,
       title: previous?.title || row.name,
+      // Do not inherit a previous row's display week by position.
+      weekTitle: seriesSessionWeekTitle(module?.weekStructure || [], row.catalogueId,
+        row.summary?.liveSessionId, planned.sessionNumber),
       type: previous?.type || 'live-session',
       date: planned.date,
       day: planned.day || previous?.day || '',

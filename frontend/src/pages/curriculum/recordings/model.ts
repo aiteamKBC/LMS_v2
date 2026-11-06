@@ -1,6 +1,7 @@
 import type { LibraryRecording, RecordingsAttention, RecordingsDelivery, RecordingsLibrary } from '@/api/sessionResults';
 import type { Lecture, Recording, RecordingStatus } from './types';
 import { TIME_ZONE_LABEL } from './utils';
+import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
 
 const localParts = new Map<string, Intl.DateTimeFormat>();
 
@@ -84,7 +85,7 @@ export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIM
               : session.attentionStatus === 'verificationRequired' ? 'pending' : 'unavailable';
     lectures.set(`${session.moduleId}:${session.occurrenceId}`, {
       id: `${session.moduleId}:${session.occurrenceId}`, moduleId: session.moduleId,
-      title: session.title || session.moduleTitle,
+      title: sessionDisplayTitle(session.title || session.moduleTitle, session.displayWeekTitle, 'Live Teams Session'),
       seriesId: session.seriesId, occurrenceId: session.occurrenceId, sessionNumber: session.sessionNumber,
       startsAt: session.startsAt, endsAt: session.endsAt, cancelled: session.status === 'cancelled',
       date: start.date, startTime: start.time, endTime: end?.time ?? start.time,
@@ -132,7 +133,7 @@ export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIM
         if (!lecture) {
           lecture = {
             id: key, moduleId: delivery.moduleId,
-            title: fallbackTitle(delivery),
+            title: sessionDisplayTitle(fallbackTitle(delivery), recording.displayWeekTitle, 'Recording Session'),
             seriesId: recording.seriesId, occurrenceId: recording.occurrenceId || undefined, sessionNumber: recording.sessionNumber,
             startsAt: recording.startsAt, endsAt: recording.endsAt,
             date: start.date, startTime: start.time,
@@ -160,7 +161,7 @@ export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIM
       if (!lecture) {
         lecture = {
           id: key, moduleId: delivery.moduleId,
-          title: fallbackTitle(delivery),
+          title: sessionDisplayTitle(fallbackTitle(delivery), attention.displayWeekTitle ?? '', 'Live Teams Session'),
           date: start.date, startTime: start.time, endTime: start.time,
           programme: delivery.programme, cohort: delivery.cohort, group: delivery.group,
           module: delivery.title, week: attention.weekNumber, weekTitle: attention.weekTitle,

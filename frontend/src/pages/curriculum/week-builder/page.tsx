@@ -1,4 +1,5 @@
 import { CollaborativeField } from '../module-builder/CollaborativeField';
+import { componentSessionTitle, type SessionTitleWeek } from '../shared/sessionDisplayTitle';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -888,7 +889,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
                 <SaveStatus dirty={dirty} saving={saving} isNew={!persistedId} />
               </div>
               <input value={template.title} onChange={e => update(prev => ({ ...prev, title: e.target.value }))} placeholder="Untitled week" className="mt-1 w-full max-w-[600px] bg-transparent font-heading text-[24px] font-black text-foreground-950 outline-none placeholder:text-foreground-300 border-b-2 border-transparent focus:border-primary-300 transition-colors" />
-              <FlowStrip components={template.components} selectedId={selectedId} onJump={jumpTo} />
+              <FlowStrip components={template.components} selectedId={selectedId} onJump={jumpTo} displayWeek={template} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <input
@@ -929,6 +930,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         <div className="space-y-4">
           <WeekComponentRail
             weekId={template.id}
+            displayWeek={template}
             components={template.components}
             selectedId={selectedId}
             onSelectId={setSelectedId}
@@ -946,7 +948,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         {/* Inspector — the wide working canvas */}
         <div>
           {selected ? (
-            <ComponentEditor key={selected.id} component={selected} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} videoTemplateId={template.id} />
+            <ComponentEditor key={selected.id} component={selected} displayWeek={template} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} videoTemplateId={template.id} />
           ) : (
             <WeekOverviewPanel
               components={template.components}
@@ -1003,7 +1005,7 @@ function Meter({ icon, value, label }: { icon: string; value: string; label: str
 }
 
 // At-a-glance sequence — click a dot to jump to that part.
-function FlowStrip({ components, selectedId, onJump }: { components: ModuleComponent[]; selectedId: string | null; onJump: (id: string) => void }) {
+function FlowStrip({ components, selectedId, onJump, displayWeek }: { components: ModuleComponent[]; selectedId: string | null; onJump: (id: string) => void; displayWeek?: SessionTitleWeek }) {
   if (components.length === 0) return null;
   return (
     <div className="mt-3 flex items-center gap-1 flex-wrap">
@@ -1014,7 +1016,7 @@ function FlowStrip({ components, selectedId, onJump }: { components: ModuleCompo
           <button
             key={component.id}
             onClick={() => onJump(component.id)}
-            title={`${index + 1}. ${component.title || weekTypeLabel(component.type)}`}
+            title={`${index + 1}. ${componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type))}`}
             className={`h-2 rounded-full transition-all ${tone.marker} ${active ? 'w-7 ring-2 ring-offset-1 ring-foreground-300' : 'w-4 opacity-70 hover:opacity-100 hover:w-6'}`}
           />
         );
@@ -1055,6 +1057,7 @@ function SpineGutter({ connectTop = true, connectBottom = true, children }: { co
 
 interface RailNodeProps {
   component: ModuleComponent;
+  displayWeek?: SessionTitleWeek;
   index: number;
   selected: boolean;
   focused?: boolean;
@@ -1111,7 +1114,8 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, displayWeek, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+  const displayTitle = componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type));
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
@@ -1167,7 +1171,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, nes
           <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
           <span className="flex-1 min-w-0">
           <span className={`flex min-w-0 gap-2 ${nested ? 'items-start' : 'items-center'}`}>
-            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold ${nested ? 'break-words [overflow-wrap:anywhere]' : 'truncate'} ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
+            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold ${nested ? 'break-words [overflow-wrap:anywhere]' : 'truncate'} ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{displayTitle}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
           {nested && scheduledDate && (
@@ -1536,6 +1540,7 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
 // on top of it), via a single `onChange(nextComponents)` callback.
 export interface WeekComponentRailProps {
   weekId: string;
+  displayWeek?: SessionTitleWeek;
   components: ModuleComponent[];
   selectedId: string | null;
   focusedId?: string;
@@ -1581,7 +1586,7 @@ export interface WeekComponentRailProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1674,7 +1679,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
   const activeComponent = components.find(c => c.id === activeDragId) || null;
   const searchTerm = componentSearch.trim().toLocaleLowerCase();
   const visibleComponents = searchTerm
-    ? components.filter(component => [component.title, component.description, component.type, weekTypeLabel(component.type)]
+    ? components.filter(component => [componentSessionTitle(component, displayWeek), component.title, component.description, component.type, weekTypeLabel(component.type)]
       .some(value => value.toLocaleLowerCase().includes(searchTerm)))
     : components;
 
@@ -1740,6 +1745,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                 <Fragment key={component.id}>
                   <SortableRailNode
                     component={component}
+                    displayWeek={displayWeek}
                     nested={nested}
                     index={index}
                     selected={component.id === selectedId}
@@ -1764,7 +1770,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} nested={nested} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} displayWeek={displayWeek} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} nested={nested} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
           </DragOverlay>
         </DndContext>
       )}
@@ -2022,7 +2028,7 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string }) {
+export function ComponentEditor({ component, displayWeek, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2047,7 +2053,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
         <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><AppIcon className={`${definition.icon} text-xl`}></AppIcon></span>
         <div className="flex-1 min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${tone.text}`}>{definition.group}</p>
-          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{component.title || weekTypeLabel(component.type)}</p>
+          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type))}</p>
         </div>
         <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${issues.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
           <AppIcon className={issues.length ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'}></AppIcon>{issues.length ? `${issues.length} to fix` : 'Valid'}

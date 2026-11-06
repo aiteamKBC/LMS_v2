@@ -73,6 +73,8 @@ export interface SessionResult {
   title?: string; actualStartsAt?: string | null; actualEndsAt?: string | null;
   /** Title of the Course structure item linked to this session; null when none or ambiguous. */
   itemTitle?: string | null;
+  /** Owning week title only when the occurrence has one linked component and week. Display only. */
+  itemWeekTitle?: string | null;
   runs?: { startsAt: string; endsAt: string }[];
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
   attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
@@ -226,6 +228,8 @@ export async function setRecordingVisibility(seriesId: string, artifactId: strin
 export type LibraryRecordingStatus = 'available' | 'missingAzureFile' | 'verificationRequired';
 /** One saved recording on the Recordings page. `state` is the saved playback copy, not Teams. */
 export interface LibraryRecording {
+  /** A uniquely linked owning week, verified independently of legacy file placement. */
+  displayWeekTitle?: string;
   id: string; seriesId: string; occurrenceId?: string | null; sessionNumber: number | null;
   playbackProvider?: 'bunny';
   startsAt: string | null; recordedAt: string | null; endsAt: string | null;
@@ -237,6 +241,7 @@ export interface LibraryRecording {
 }
 /** A past session with no recording, judged only from persisted sync results. */
 export interface RecordingsAttention {
+  displayWeekTitle?: string;
   occurrenceId: string; weekId: string | null; weekNumber: number | null; weekTitle: string;
   sessionNumber: number | null; startsAt: string | null;
   status: 'missingSync' | 'notRecorded' | 'verificationRequired'; reason: string;
@@ -253,6 +258,8 @@ export interface RecordingsDelivery {
 }
 /** A persisted LMS Teams occurrence, whether or not a week component is linked. */
 export interface RecordingsSession {
+  /** Empty when no unique occurrence/component/week link can be proved. */
+  displayWeekTitle?: string;
   occurrenceId: string; moduleId: string; title: string; weekId: string | null;
   moduleTitle: string; programme: string; programmeActive: boolean; cohort: string; group: string;
   weekNumber: number | null; weekTitle: string; sessionNumber: number | null;

@@ -1141,10 +1141,13 @@ class EndpointTests(unittest.TestCase):
         self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
             [{'id': 'O1', 'seriesId': 'S', 'sessionNumber': 1, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': True, 'fileCount': 2},
              {'id': 'O2', 'seriesId': 'S', 'sessionNumber': 2, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': False, 'fileCount': 0}], []]
-        self.ns['linked_session_items'].return_value = {('S', 1): {'title': 'Week 01 | Join the LIVE session', 'week': None}}
+        self.ns['linked_session_items'].return_value = {('S', 1): {'title': 'Week 01 | Join the LIVE session', 'week': None, 'weekTitle': 'Pricing'}}
         response = self.ns['module_results'](self.req(), module_id='M')
         sessions = response['series'][0]['sessions']
         self.assertEqual([item['itemTitle'] for item in sessions], ['Week 01 | Join the LIVE session', None])
+        self.assertEqual([item['itemWeekTitle'] for item in sessions], ['Pricing', None])
+        self.assertEqual([(item['id'], item['seriesId'], item['sessionNumber']) for item in sessions],
+                         [('O1', 'S', 1), ('O2', 'S', 2)])
         self.ns['linked_session_items'].assert_called_once_with(['S'])
         # A failed name lookup never hides the sessions.
         self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
