@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Lecture, Recording } from "@/pages/curriculum/recordings/types";
 import { STATUS_META } from "@/pages/curriculum/recordings/utils";
 import StatusBadge from "@/pages/curriculum/recordings/components/StatusBadge";
-import { resolveRecordingUrl, type SessionFile } from '@/api/sessionResults';
+import { loadSessionResult, resolveRecordingUrl, type SessionFile } from '@/api/sessionResults';
 import { SessionRecordingPlayer } from '@/components/feature/SessionRecordingPlayer';
 import RecordingDownloadButton from './RecordingDownloadButton';
 
@@ -25,6 +25,12 @@ export default function RecordingItem({
     createdAt: recording.source.recordedAt ?? undefined, playbackProvider: recording.source.playbackProvider };
   const [playbackUrl, setPlaybackUrl] = useState('');
   const [playError, setPlayError] = useState('');
+  const [savedMedia, setSavedMedia] = useState<{ file: SessionFile; transcripts: SessionFile[] } | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState('');
+  const [transcriptRetry, setTranscriptRetry] = useState(0);
+  const { moduleId } = lecture;
+  const { seriesId, id: artifactId, occurrenceId, sessionNumber } = recording.source;
   useEffect(() => {
     if (!isPlaying || !isReady) return;
     const controller = new AbortController();
@@ -35,6 +41,24 @@ export default function RecordingItem({
       .catch(reason => { if (!controller.signal.aborted) setPlayError(reason instanceof Error ? reason.message : 'The recording could not be played.'); });
     return () => controller.abort();
   }, [isPlaying, isReady, recording.source.seriesId, recording.source.id]);
+  useEffect(() => {
+    setSavedMedia(null); setTranscriptError(''); setTranscriptLoading(false);
+    if (!isPlaying || !isReady || !sessionNumber) return;
+    const controller = new AbortController();
+    setTranscriptLoading(true);
+    void loadSessionResult(seriesId, sessionNumber, undefined, controller.signal, moduleId)
+      .then(result => {
+        if (controller.signal.aborted) return;
+        const session = result.sessions.find(item => (!occurrenceId || item.id === occurrenceId)
+          && item.artifacts?.some(artifact => artifact.id === artifactId && artifact.type === 'recording'));
+        const savedFile = session?.artifacts?.find(item => item.id === artifactId && item.type === 'recording');
+        if (!session?.artifacts || !savedFile) throw new Error('Saved transcript details could not be linked to this recording.');
+        setSavedMedia({ file: savedFile, transcripts: session.artifacts.filter(item => item.type === 'transcript') });
+      }).catch(reason => {
+        if (!controller.signal.aborted) setTranscriptError(reason instanceof Error ? reason.message : 'Saved transcript details could not be loaded.');
+      }).finally(() => { if (!controller.signal.aborted) setTranscriptLoading(false); });
+    return () => controller.abort();
+  }, [isPlaying, isReady, seriesId, artifactId, occurrenceId, sessionNumber, moduleId, transcriptRetry]);
 
   return (
     <div className="rounded-lg border border-background-200 bg-background-50 p-3.5">
@@ -82,7 +106,9 @@ export default function RecordingItem({
         <div className="mt-3 overflow-hidden rounded-md">
           {playError && <p role="alert" className="rounded-md bg-rose-50 p-3 text-sm text-rose-800">{playError}</p>}
           {!playError && !playbackUrl && <p role="status" className="p-3 text-sm">Preparing video preview…</p>}
-          {playbackUrl && <SessionRecordingPlayer seriesId={recording.source.seriesId} file={file} transcripts={[]} label={lecture.title} sourceUrl={playbackUrl} />}
+          {playbackUrl && <SessionRecordingPlayer seriesId={seriesId} file={savedMedia?.file || file} transcripts={savedMedia?.transcripts || []}
+            label={lecture.title} sourceUrl={playbackUrl} transcriptLoading={transcriptLoading} transcriptLoadError={transcriptError}
+            onTranscriptRetry={() => setTranscriptRetry(value => value + 1)} />}
         </div>
       ) : null}
     </div>
