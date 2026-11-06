@@ -1,4 +1,5 @@
 import { requestSessionSync } from '@/api/sessionResults';
+import { coachFetch } from '@/lib/coachFetch';
 import { localClockToUtcIso, zoneOffsetMs } from '@/lib/timeZones';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
@@ -887,14 +888,14 @@ export interface ExistingTeamsSeriesReview {
 export async function previewExistingTeamsSeries(moduleId: string, input: { link: string; weekIds: string[]; calendarMailbox: string }) {
   return apiJson<ExistingTeamsSeriesReview>(`/curriculum/modules/${encodeURIComponent(moduleId)}/teams-existing-series/`, {
     method: 'POST', body: JSON.stringify({ action: 'preview', ...input }), timeoutMs: 120000,
-  });
+  }, coachFetch);
 }
 
 export async function linkExistingTeamsSeries(moduleId: string, previewToken: string) {
   const result = await apiJson<{ module: ModuleCatalogueItem; matched: number; unmatched: number; alreadyLinked: boolean }>(
     `/curriculum/modules/${encodeURIComponent(moduleId)}/teams-existing-series/`, {
       method: 'POST', body: JSON.stringify({ action: 'apply', previewToken }), timeoutMs: 120000,
-    },
+    }, coachFetch,
   );
   invalidateCurriculumCacheByEntity('module');
   return { ...result, module: recalculateModule(result.module) };
@@ -4182,13 +4183,13 @@ export class ApiError extends Error {
   }
 }
 
-async function apiJson<T>(path: string, init?: { method?: string; body?: string; headers?: Record<string, string>; timeoutMs?: number }): Promise<T> {
+async function apiJson<T>(path: string, init?: { method?: string; body?: string; headers?: Record<string, string>; timeoutMs?: number }, request: typeof fetch = fetch): Promise<T> {
   const controller = init?.timeoutMs ? new AbortController() : undefined;
   const timeout = controller && init?.timeoutMs
     ? window.setTimeout(() => controller.abort(), init.timeoutMs)
     : undefined;
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await request(`${API_BASE_URL}${path}`, {
       ...init,
       signal: controller?.signal,
       headers: {
