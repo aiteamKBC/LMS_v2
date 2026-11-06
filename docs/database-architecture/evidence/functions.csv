@@ -1,0 +1,2644 @@
+schema,name,arguments,result,kind,language,volatility,security_definer,strict,owner,acl,definition,definition_sha256
+Coach,refresh_learner_absence_counts,"affected_learner_id integer, affected_learner_email text",void,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Coach"".refresh_learner_absence_counts(affected_learner_id integer, affected_learner_email text)
+ RETURNS void
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    present_count integer := 0;
+    absent_count integer := 0;
+    normalized_email text := lower(trim(coalesce(affected_learner_email, '<literal redacted>')));
+BEGIN
+    IF affected_learner_id IS NULL AND normalized_email = '<literal redacted>' THEN
+        RETURN;
+    END IF;
+
+    SELECT
+        count(*) FILTER (
+            WHERE lower(trim(attendance_status::text)) IN
+                ('<literal redacted>', '<literal redacted>', '<literal redacted>', '<literal redacted>', '<literal redacted>', '<literal redacted>', '<literal redacted>')
+        ),
+        count(*) FILTER (
+            WHERE lower(trim(attendance_status::text)) IN
+                ('<literal redacted>', '<literal redacted>', '<literal redacted>', '<literal redacted>', '<literal redacted>', '<literal redacted>',
+                 '<literal redacted>', '<literal redacted>')
+        )
+    INTO present_count, absent_count
+    FROM ""Learner"".learner_attendance_details
+    WHERE (
+        affected_learner_id IS NOT NULL
+        AND learner_id = affected_learner_id
+    )
+    OR (
+        affected_learner_id IS NULL
+        AND normalized_email <> '<literal redacted>'
+        AND lower(trim(learner_email::text)) = normalized_email
+    );
+
+    UPDATE ""Learner"".""Absence""
+    SET present = coalesce(present_count, 0),
+        absent = coalesce(absent_count, 0),
+        updated_at = now()
+    WHERE (
+        affected_learner_id IS NOT NULL
+        AND learner_id = affected_learner_id
+    )
+    OR (
+        affected_learner_id IS NULL
+        AND normalized_email <> '<literal redacted>'
+        AND lower(trim(learner_email::text)) = normalized_email
+    );
+END;
+$function$
+",b2ec0ee33f2cb44c0b860f576adfbcfc531fde2d8adb8c2d2090435c357d6770
+Coach,sync_learner_absence_counts_from_details,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Coach"".sync_learner_absence_counts_from_details()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+            BEGIN
+                IF TG_OP IN ('<literal redacted>', '<literal redacted>') THEN
+                    PERFORM ""Coach"".refresh_learner_absence_counts(OLD.learner_id, OLD.learner_email);
+                END IF;
+
+                IF TG_OP IN ('<literal redacted>', '<literal redacted>') THEN
+                    PERFORM ""Coach"".refresh_learner_absence_counts(NEW.learner_id, NEW.learner_email);
+                    RETURN NEW;
+                END IF;
+
+                RETURN OLD;
+            END;
+            $function$
+",fb7987c608445c89b8df878977d5591288e89c8652203f64059e31eb449c966d
+Engagement,shared_reward_immutable,,trigger,f,plpgsql,v,False,False,neondb_owner,{neondb_owner=X/neondb_owner},"CREATE OR REPLACE FUNCTION ""Engagement"".shared_reward_immutable()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN RAISE EXCEPTION '<literal redacted>' USING ERRCODE='<literal redacted>'; END $function$
+",4cc1bfca558e3911ba8c3d5e934036fd04f5f1f6ee4dedcfe318fabb4ba8a78b
+Engagement,shared_reward_queue_progress,,trigger,f,plpgsql,v,False,False,neondb_owner,{neondb_owner=X/neondb_owner},"CREATE OR REPLACE FUNCTION ""Engagement"".shared_reward_queue_progress()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+ INSERT INTO ""Engagement"".shared_reward_outbox(progress_id,session_id)
+ SELECT NEW.id,s.session_id FROM ""Engagement"".shared_reward_sessions s
+ JOIN ""Engagement"".shared_reward_config c ON c.module_id=s.module_id
+ JOIN ""Learner"".learners l ON l.id=NEW.learner_id
+ WHERE s.session_id=NEW.time_tracking_session_ref AND s.profile_id=NEW.learner_id
+   AND s.learner_id=l.enrolment_id::text AND c.enabled
+   AND NEW.submitted_at>=c.starts_at AND s.started_at>=c.starts_at
+ ON CONFLICT DO NOTHING;
+ IF NOT EXISTS (SELECT 1 FROM ""Engagement"".shared_reward_outbox WHERE progress_id=NEW.id)
+    AND NEW.kind IN ('<literal redacted>','<literal redacted>','<literal redacted>')
+    AND (EXISTS (SELECT 1 FROM ""Engagement"".shared_reward_config
+                 WHERE module_id='<literal redacted>' AND enabled AND NEW.submitted_at>=starts_at)
+         OR EXISTS (SELECT 1 FROM ""Engagement"".learning_reward_policies WHERE effective_at<=NEW.submitted_at))
+ THEN
+   INSERT INTO ""Engagement"".shared_reward_saved_progress(progress_id) VALUES(NEW.id) ON CONFLICT DO NOTHING;
+ END IF;
+ RETURN NEW;
+END $function$
+",5143a5477e40deebfa09f7684ee7144425d3ddd267457b3a5ca853e9d8c3f8e0
+Learner,guard_finalized_journal_month,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".guard_finalized_journal_month()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+        DECLARE
+            old_aptem_id bigint;
+            old_month text;
+            new_aptem_id bigint;
+            new_month text;
+            scope record;
+            latest_event text;
+        BEGIN
+            IF TG_TABLE_NAME = '<literal redacted>' THEN
+                IF TG_OP <> '<literal redacted>' THEN
+                    SELECT aptem_id, month INTO old_aptem_id, old_month
+                    FROM ""Learner"".""learner_journal_rows""
+                    WHERE id = OLD.manual_activity_id;
+                    old_aptem_id := COALESCE(old_aptem_id, OLD.aptem_id);
+                    old_month := COALESCE(old_month, OLD.month);
+                END IF;
+                IF TG_OP <> '<literal redacted>' THEN
+                    SELECT aptem_id, month INTO new_aptem_id, new_month
+                    FROM ""Learner"".""learner_journal_rows""
+                    WHERE id = NEW.manual_activity_id;
+                    new_aptem_id := COALESCE(new_aptem_id, NEW.aptem_id);
+                    new_month := COALESCE(new_month, NEW.month);
+                END IF;
+            ELSE
+                IF TG_OP <> '<literal redacted>' THEN
+                    old_aptem_id := OLD.aptem_id;
+                    old_month := OLD.month;
+                END IF;
+                IF TG_OP <> '<literal redacted>' THEN
+                    new_aptem_id := NEW.aptem_id;
+                    new_month := NEW.month;
+                END IF;
+            END IF;
+
+            FOR scope IN
+                SELECT DISTINCT aptem_id, report_month
+                FROM (
+                    VALUES (old_aptem_id, old_month), (new_aptem_id, new_month)
+                ) AS scopes(aptem_id, report_month)
+                WHERE aptem_id IS NOT NULL AND report_month IS NOT NULL
+                ORDER BY aptem_id, report_month
+            LOOP
+                PERFORM pg_advisory_xact_lock(hashtext(
+                    '<literal redacted>' || scope.aptem_id::text
+                    || '<literal redacted>' || scope.report_month
+                ));
+                SELECT event_type INTO latest_event
+                FROM ""Learner"".""manual_month_finalization_events""
+                WHERE aptem_id = scope.aptem_id
+                  AND report_month = scope.report_month
+                ORDER BY id DESC
+                LIMIT 1;
+                IF latest_event = '<literal redacted>' THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '<literal redacted>',
+                        MESSAGE = '<literal redacted>'
+                            || scope.aptem_id::text || '<literal redacted>' || scope.report_month;
+                END IF;
+                latest_event := NULL;
+            END LOOP;
+            IF TG_OP = '<literal redacted>' THEN
+                RETURN OLD;
+            END IF;
+            RETURN NEW;
+        END
+        $function$
+",88b7ff6868a081eac7b9cfcc64bb0e39ca0901b20b9cc18ed887d44ec8097abb
+Learner,guard_unique_learner_lms_activity,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".guard_unique_learner_lms_activity()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+        DECLARE
+            new_material_ids bigint[];
+        BEGIN
+            IF NEW.deleted_at IS NOT NULL
+               OR NEW.activity_id IS NULL
+               OR NEW.category NOT IN ('<literal redacted>', '<literal redacted>', '<literal redacted>') THEN
+                RETURN NEW;
+            END IF;
+            IF TG_OP = '<literal redacted>'
+               AND OLD.aptem_id IS NOT DISTINCT FROM NEW.aptem_id
+               AND OLD.activity_id IS NOT DISTINCT FROM NEW.activity_id
+               AND OLD.source_ref IS NOT DISTINCT FROM NEW.source_ref
+               AND OLD.category IS NOT DISTINCT FROM NEW.category
+               AND OLD.deleted_at IS NULL THEN
+                RETURN NEW;
+            END IF;
+
+            new_material_ids :=
+                ""Learner"".""lms_material_activity_ids""(
+                    NEW.source_ref, NEW.activity_id
+                );
+            -- Lock each material separately and in stable order. A bundle
+            -- (55,56) and a standalone row (56) must serialize on the same
+            -- key even though their complete material arrays differ.
+            PERFORM pg_advisory_xact_lock(
+                hashtext('<literal redacted>'),
+                hashtext(NEW.aptem_id::text || '<literal redacted>' || material_id::text)
+            )
+            FROM unnest(new_material_ids) AS material_id
+            ORDER BY material_id;
+            IF EXISTS (
+                SELECT 1
+                FROM ""Learner"".""learner_journal_rows"" existing
+                WHERE existing.aptem_id = NEW.aptem_id
+                  AND existing.deleted_at IS NULL
+                  AND existing.activity_id IS NOT NULL
+                  AND existing.category IN ('<literal redacted>', '<literal redacted>', '<literal redacted>')
+                  AND existing.id IS DISTINCT FROM NEW.id
+                  AND ""Learner"".""lms_material_activity_ids""(
+                        existing.source_ref, existing.activity_id
+                      ) && new_material_ids
+            ) THEN
+                RAISE unique_violation
+                    USING CONSTRAINT = '<literal redacted>',
+                          MESSAGE = '<literal redacted>';
+            END IF;
+            RETURN NEW;
+        END
+        $function$
+",c951cdab776c5582b2db6724d2bdd4ddde705004c6bb6d300c0bece550f0b097
+Learner,jsonb_array_or_empty,value jsonb,jsonb,f,sql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".jsonb_array_or_empty(value jsonb)
+ RETURNS jsonb
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+    SELECT CASE WHEN jsonb_typeof(value) = '<literal redacted>' THEN value ELSE '<literal redacted>'::jsonb END;
+$function$
+",7a1d10cb23d2dd5eb23062ef05a6d6d5b0bac885b7baa5349673433178e5582a
+Learner,link_journal_kbc_progress,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".link_journal_kbc_progress()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    owner_id bigint;
+    existing_deleted_at timestamptz;
+BEGIN
+    IF NEW.progress_id IS NOT NULL OR coalesce(NEW.source_ref, '<literal redacted>') NOT LIKE '<literal redacted>' THEN
+        RETURN NEW;
+    END IF;
+    SELECT id INTO owner_id FROM ""Learner"".learners WHERE aptem_id=NEW.aptem_id;
+    IF owner_id IS NULL THEN RETURN NEW; END IF;
+    PERFORM pg_advisory_xact_lock(hashtext('<literal redacted>'), owner_id::integer);
+    SELECT p.id, p.deleted_at INTO NEW.progress_id, existing_deleted_at
+    FROM ""Learner"".learner_progress_entries p
+    WHERE p.learner_id=owner_id AND (
+        p.kbc_attendance_key=substring(NEW.source_ref FROM 5) OR
+        p.source_payload->>'<literal redacted>'=NEW.source_ref)
+    ORDER BY (p.deleted_at IS NULL) DESC, p.id LIMIT 1;
+    IF NEW.progress_id IS NOT NULL THEN
+        NEW.canonical_learner_id := owner_id;
+        NEW.deleted_at := existing_deleted_at;
+    END IF;
+    RETURN NEW;
+END
+$function$
+",b9a0d316cef01194230d4a4cfb038b25d9be90f118f92384471f8e22b5f852c7
+Learner,link_progress_kbc_attendance,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".link_progress_kbc_attendance()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    owner_aptem_id bigint;
+    candidate_key text;
+BEGIN
+    IF NEW.kbc_attendance_key IS NULL AND
+       coalesce(NEW.source_payload->>'<literal redacted>', '<literal redacted>') NOT LIKE '<literal redacted>'
+    THEN
+        RETURN NEW;
+    END IF;
+    SELECT aptem_id INTO owner_aptem_id FROM ""Learner"".learners
+    WHERE id = NEW.learner_id;
+    IF NEW.kbc_attendance_key IS NOT NULL THEN
+        IF NOT EXISTS (SELECT 1 FROM ""Learner"".source_lms_attendance
+            WHERE source_key = NEW.kbc_attendance_key AND aptem_id = owner_aptem_id)
+        THEN
+            RAISE EXCEPTION '<literal redacted>'
+                USING ERRCODE = '<literal redacted>';
+        END IF;
+    ELSIF NEW.source_payload->>'<literal redacted>' LIKE '<literal redacted>' THEN
+        candidate_key := substring(NEW.source_payload->>'<literal redacted>' FROM 5);
+        SELECT source_key INTO NEW.kbc_attendance_key
+        FROM ""Learner"".source_lms_attendance
+        WHERE source_key = candidate_key AND aptem_id = owner_aptem_id;
+    END IF;
+    RETURN NEW;
+END
+$function$
+",9a9f5694eb27ecd43e3d4c3e6774f8af608c69b5375915ef6a9cfa64a9ec1005
+Learner,lms_material_activity_ids,"source_ref text, activity_id bigint",bigint[],f,sql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".lms_material_activity_ids(source_ref text, activity_id bigint)
+ RETURNS bigint[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+AS $function$
+            SELECT CASE
+                WHEN source_ref ~ '<literal redacted>'
+                THEN string_to_array(
+                    regexp_replace(source_ref, '<literal redacted>', '<literal redacted>'), '<literal redacted>'
+                )::bigint[]
+                WHEN activity_id IS NOT NULL THEN ARRAY[activity_id]
+                ELSE ARRAY[]::bigint[]
+            END
+        $function$
+",d3a4899a51a835b495e68e95fdad615b09b95d043ebc125ce2dd93848d472ba8
+Learner,safe_date,value text,date,f,plpgsql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".safe_date(value text)
+ RETURNS date
+ LANGUAGE plpgsql
+ IMMUTABLE
+AS $function$
+BEGIN
+    RETURN nullif(trim(value), '<literal redacted>')::date;
+EXCEPTION
+    WHEN invalid_datetime_format OR datetime_field_overflow THEN
+        RETURN NULL;
+END;
+$function$
+",621c19ad9491a5c8049295f726bad8933c27e2679fcbefeea4397a8f386e5b4f
+Learner,safe_numeric,value text,numeric,f,plpgsql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".safe_numeric(value text)
+ RETURNS numeric
+ LANGUAGE plpgsql
+ IMMUTABLE
+AS $function$
+BEGIN
+    RETURN nullif(trim(value), '<literal redacted>')::numeric;
+EXCEPTION
+    WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+        RETURN NULL;
+END;
+$function$
+",98a8337bb404b8ea00c82016a6e6087215bb4310d9c0033a2bd2d0514cda6b15
+Learner,safe_timestamptz,value text,timestamp with time zone,f,plpgsql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".safe_timestamptz(value text)
+ RETURNS timestamp with time zone
+ LANGUAGE plpgsql
+ IMMUTABLE
+AS $function$
+BEGIN
+    RETURN nullif(trim(value), '<literal redacted>')::timestamptz;
+EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN
+    RETURN NULL;
+END;
+$function$
+",ed8b58591ca4afc37348ba8fc8e7e43b94f32d1d1b41c95deab553bf294f7389
+Learner,set_epa_milestone_dates,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".set_epa_milestone_dates()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+                DECLARE
+                    parsed_end_date date;
+                BEGIN
+                    BEGIN
+                        parsed_end_date := NULLIF(btrim(NEW.""End_date""), '<literal redacted>')::date;
+                    EXCEPTION
+                        WHEN invalid_text_representation OR datetime_field_overflow THEN
+                            parsed_end_date := NULL;
+                    END;
+
+                    IF parsed_end_date IS NULL THEN
+                        NEW.""Alert_notify_for_EPA"" := NULL;
+                        NEW.""Enter_EPA"" := NULL;
+                        NEW.""Gateway_review_date"" := NULL;
+                    ELSE
+                        NEW.""Alert_notify_for_EPA"" := (parsed_end_date - INTERVAL '<literal redacted>')::date;
+                        NEW.""Enter_EPA"" := parsed_end_date + 7;
+                        NEW.""Gateway_review_date"" := parsed_end_date + 14;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $function$
+",0dd885c47c02070933f4bb09ef1c387fbc7f3c3586e4f0443562135a98c51d25
+Learner,set_learners_updated_at,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".set_learners_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$function$
+",cc9fd6eedec3a7076dbb2921a5ebffcca337189dff1b1ff2d20cf4dfd97de30b
+Learner,sync_journal_document_to_activity_ssot,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".sync_journal_document_to_activity_ssot()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    linked_learner_id bigint;
+    linked_progress_id bigint;
+BEGIN
+    SELECT journal.canonical_learner_id, journal.progress_id
+    INTO linked_learner_id, linked_progress_id
+    FROM ""Learner"".learner_journal_rows journal
+    WHERE journal.id = NEW.manual_activity_id;
+    IF linked_learner_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    INSERT INTO ""Learner"".learner_activity_documents (
+        learner_id, progress_id, source_system, source_document_id,
+        container, blob_name, display_name, content_type, size_bytes,
+        uploaded_by, uploaded_at, deleted_at, created_at, updated_at
+    ) VALUES (
+        linked_learner_id, linked_progress_id, '<literal redacted>',
+        '<literal redacted>' || NEW.id::text,
+        NEW.container, NEW.blob_name, NEW.display_name,
+        coalesce(NEW.content_type, '<literal redacted>'), NEW.size_bytes,
+        coalesce(NEW.uploaded_by, '<literal redacted>'), NEW.uploaded_at, NEW.deleted_at,
+        coalesce(NEW.uploaded_at, now()), now()
+    )
+    ON CONFLICT (source_system, source_document_id) DO UPDATE SET
+        learner_id = excluded.learner_id,
+        progress_id = excluded.progress_id,
+        container = excluded.container,
+        blob_name = excluded.blob_name,
+        display_name = excluded.display_name,
+        content_type = excluded.content_type,
+        size_bytes = excluded.size_bytes,
+        uploaded_by = excluded.uploaded_by,
+        uploaded_at = excluded.uploaded_at,
+        deleted_at = excluded.deleted_at,
+        updated_at = now();
+    RETURN NEW;
+END
+$function$
+",3006dea5a5b441577544b99eb8d3e930b4e527153a563a95dc0385e51fc86e19
+Learner,sync_journal_row_to_activity_ssot,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".sync_journal_row_to_activity_ssot()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    linked_learner_id bigint;
+    linked_source_id bigint;
+    linked_progress_id bigint;
+    next_entry_order integer;
+    catalog_activity_id bigint;
+    catalog_component_ref text;
+    catalogue_course_ref text;
+    catalogue_module_ref text;
+    catalogue_module_title text;
+    journal_kind text;
+    journal_seconds bigint;
+    journal_status text;
+    journal_completed boolean;
+    created_progress boolean := false;
+    actual_changed boolean := true;
+BEGIN
+    linked_learner_id := NEW.canonical_learner_id;
+    IF linked_learner_id IS NULL THEN
+        SELECT learner.id INTO linked_learner_id
+        FROM ""Learner"".learners learner
+        WHERE learner.aptem_id = NEW.aptem_id
+        LIMIT 1;
+        NEW.canonical_learner_id := linked_learner_id;
+    END IF;
+    IF linked_learner_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    -- A migration insert already carries the canonical links and must not
+    -- rewrite AI-generated timestamps or second-level duration evidence.
+    IF TG_OP = '<literal redacted>' AND NEW.progress_id IS NOT NULL
+       AND NEW.source_id IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP = '<literal redacted>' THEN
+        actual_changed := OLD.actual_hours IS DISTINCT FROM NEW.actual_hours;
+    END IF;
+
+    journal_kind := CASE WHEN NEW.category = '<literal redacted>'
+                         THEN '<literal redacted>'
+                         ELSE NEW.category END;
+    journal_seconds := round(NEW.actual_hours * 3600)::bigint;
+    journal_status := coalesce(nullif(NEW.completion_note, '<literal redacted>'),
+                               CASE WHEN NEW.accepted
+                                    THEN '<literal redacted>' ELSE '<literal redacted>' END);
+    journal_completed := lower(journal_status) NOT IN (
+        '<literal redacted>', '<literal redacted>', '<literal redacted>', '<literal redacted>'
+    );
+
+    SELECT activity.id, activity.curriculum_component_ref,
+           course.source_course_ref, course.curriculum_module_ref,
+           module.title
+    INTO catalog_activity_id, catalog_component_ref,
+         catalogue_course_ref, catalogue_module_ref,
+         catalogue_module_title
+    FROM curriculum.source_courses course
+    JOIN curriculum.source_activities activity
+      ON activity.source_course_id = course.id
+     AND activity.source_activity_id = NEW.activity_id::text
+     AND activity.deleted_at IS NULL
+    LEFT JOIN curriculum.modules module
+      ON module.module_catalogue_id = course.curriculum_module_ref
+    WHERE course.source_system = '<literal redacted>'
+      AND course.source_course_ref = NEW.group_id::text
+      AND course.deleted_at IS NULL
+    ORDER BY activity.id
+    LIMIT 1;
+
+    linked_progress_id := NEW.progress_id;
+    IF linked_progress_id IS NULL THEN
+        SELECT source.canonical_progress_id, source.id
+        INTO linked_progress_id, linked_source_id
+        FROM ""Learner"".learner_activity_sources source
+        WHERE source.learner_id = linked_learner_id
+          AND source.source_system = '<literal redacted>'
+          AND source.source_activity_id = '<literal redacted>' || NEW.id::text
+        ORDER BY (source.deleted_at IS NULL) DESC, source.id
+        LIMIT 1;
+        NEW.source_id := coalesce(NEW.source_id, linked_source_id);
+    END IF;
+    IF linked_progress_id IS NULL THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtext('<literal redacted>'), linked_learner_id::integer
+        );
+        SELECT coalesce(max(entry_order), 0) + 1
+        INTO next_entry_order
+        FROM ""Learner"".learner_progress_entries
+        WHERE learner_id = linked_learner_id;
+        INSERT INTO ""Learner"".learner_progress_entries (
+            learner_id, entry_order, kind,
+            module_ref, module_title,
+            component_ref, component_title, component_type,
+            feed_kind, feed_action, feed_title, feed_detail,
+            feed_occurred_at, enrolment_id, programme_id, aptem_id,
+            curriculum_component_ref, source_system,
+            source_activity_id, canonical_activity_key,
+            activity_status, accepted, actual_seconds, actual_basis,
+            reporting_month, reporting_timestamp_label,
+            source_payload, deleted_at
+        )
+        SELECT linked_learner_id, next_entry_order, journal_kind,
+               catalogue_module_ref, coalesce(catalogue_module_title, '<literal redacted>'),
+               coalesce(catalog_component_ref, '<literal redacted>' || NEW.id::text),
+               NEW.title, journal_kind,
+               journal_kind, '<literal redacted>', NEW.title,
+               coalesce(NEW.completion_note, '<literal redacted>'), NEW.updated_at,
+               learner.enrolment_id,
+               coalesce(nullif(NEW.programme_profile_id, '<literal redacted>'),
+                        learner.programme_id),
+               NEW.aptem_id, catalog_component_ref,
+               '<literal redacted>', '<literal redacted>' || NEW.id::text,
+               '<literal redacted>' || NEW.id::text,
+               journal_status, NEW.accepted, journal_seconds,
+               CASE WHEN NEW.accepted
+                    THEN '<literal redacted>'
+                    ELSE '<literal redacted>' END,
+               NEW.month, NEW.timestamp_label,
+               jsonb_build_object(
+                   '<literal redacted>', NEW.id,
+                   '<literal redacted>', NEW.source_ref,
+                   '<literal redacted>', NEW.planned_hours::text
+               ), NEW.deleted_at
+        FROM ""Learner"".learners learner
+        WHERE learner.id = linked_learner_id
+        RETURNING id INTO linked_progress_id;
+        NEW.progress_id := linked_progress_id;
+        created_progress := true;
+    ELSE
+        NEW.progress_id := linked_progress_id;
+    END IF;
+
+    linked_source_id := NEW.source_id;
+    IF linked_source_id IS NULL THEN
+        INSERT INTO ""Learner"".learner_activity_sources (
+            learner_id, enrolment_id, programme_id, aptem_id,
+            source_system, source_activity_id, canonical_activity_key,
+            activity_type, title, activity_status, completed, accepted,
+            actual_seconds, actual_basis, reporting_month,
+            source_payload, source_updated_at, canonical_progress_id,
+            source_course_ref, source_catalog_activity_id, deleted_at
+        )
+        SELECT linked_learner_id, learner.enrolment_id,
+               coalesce(nullif(NEW.programme_profile_id, '<literal redacted>'),
+                        learner.programme_id),
+               NEW.aptem_id, '<literal redacted>', '<literal redacted>' || NEW.id::text,
+               '<literal redacted>' || NEW.id::text,
+               NEW.category, NEW.title, journal_status,
+               journal_completed, NEW.accepted, journal_seconds,
+               CASE WHEN NEW.accepted
+                    THEN '<literal redacted>'
+                    ELSE '<literal redacted>' END,
+               NEW.month,
+               jsonb_build_object(
+                   '<literal redacted>', NEW.id,
+                   '<literal redacted>', NEW.source_ref,
+                   '<literal redacted>', NEW.planned_hours::text
+               ), NEW.updated_at, linked_progress_id,
+               coalesce(catalogue_course_ref, NEW.group_id::text, '<literal redacted>'),
+               catalog_activity_id, NEW.deleted_at
+        FROM ""Learner"".learners learner
+        WHERE learner.id = linked_learner_id
+        RETURNING id INTO linked_source_id;
+        NEW.source_id := linked_source_id;
+    END IF;
+
+    IF NOT created_progress THEN
+        UPDATE ""Learner"".learner_progress_entries progress
+        SET component_title = NEW.title,
+            feed_title = NEW.title,
+            feed_detail = coalesce(NEW.completion_note, '<literal redacted>'),
+            activity_status = journal_status,
+            accepted = NEW.accepted,
+            actual_seconds = CASE WHEN actual_changed
+                THEN journal_seconds ELSE progress.actual_seconds END,
+            actual_basis = CASE
+                WHEN actual_changed
+                THEN CASE WHEN NEW.accepted
+                          THEN '<literal redacted>'
+                          ELSE '<literal redacted>' END
+                ELSE progress.actual_basis END,
+            reporting_month = NEW.month,
+            reporting_timestamp_label = NEW.timestamp_label,
+            source_payload = progress.source_payload || jsonb_build_object(
+                '<literal redacted>', NEW.id,
+                '<literal redacted>', NEW.source_ref,
+                '<literal redacted>', NEW.planned_hours::text
+            ),
+            deleted_at = NEW.deleted_at,
+            ssot_updated_at = now()
+        WHERE progress.id = linked_progress_id;
+    END IF;
+
+    UPDATE ""Learner"".learner_activity_sources source
+    SET title = NEW.title,
+        activity_status = journal_status,
+        completed = journal_completed,
+        accepted = NEW.accepted,
+        actual_seconds = CASE WHEN actual_changed
+            THEN journal_seconds ELSE source.actual_seconds END,
+        actual_basis = CASE
+            WHEN actual_changed
+            THEN CASE WHEN NEW.accepted
+                      THEN '<literal redacted>'
+                      ELSE '<literal redacted>' END
+            ELSE source.actual_basis END,
+        reporting_month = NEW.month,
+        source_payload = source.source_payload || jsonb_build_object(
+            '<literal redacted>', NEW.id,
+            '<literal redacted>', NEW.source_ref,
+            '<literal redacted>', NEW.planned_hours::text
+        ),
+        source_updated_at = NEW.updated_at,
+        canonical_progress_id = linked_progress_id,
+        source_course_ref = coalesce(
+            nullif(catalogue_course_ref, '<literal redacted>'), NEW.group_id::text,
+            source.source_course_ref
+        ),
+        source_catalog_activity_id = coalesce(
+            catalog_activity_id, source.source_catalog_activity_id
+        ),
+        curriculum_component_ref = coalesce(
+            catalog_component_ref, source.curriculum_component_ref
+        ),
+        deleted_at = NEW.deleted_at,
+        last_seen_at = now()
+    WHERE source.id = linked_source_id;
+
+    RETURN NEW;
+END
+$function$
+",585f4c851201f08c8a93a4e303aff1fd2680ce3416b13a2fac738705813883ab
+Learner,sync_master_learner,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".sync_master_learner()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    row_data jsonb := to_jsonb(NEW);
+    resolved_name text;
+    resolved_email text;
+    resolved_phone text;
+    resolved_status text;
+BEGIN
+    resolved_email := trim(coalesce(row_data ->> '<literal redacted>', '<literal redacted>'));
+    IF resolved_email = '<literal redacted>' THEN
+        RETURN NEW;
+    END IF;
+
+    resolved_name := coalesce(
+        nullif(trim(row_data ->> '<literal redacted>'), '<literal redacted>'),
+        nullif(trim(row_data ->> '<literal redacted>'), '<literal redacted>'),
+        resolved_email
+    );
+    resolved_phone := coalesce(row_data ->> '<literal redacted>', '<literal redacted>');
+    resolved_status := CASE
+        WHEN TG_TABLE_NAME = '<literal redacted>' THEN '<literal redacted>'
+        ELSE lower(trim(coalesce(
+            nullif(row_data ->> '<literal redacted>', '<literal redacted>'),
+            nullif(row_data ->> '<literal redacted>', '<literal redacted>'),
+            '<literal redacted>'
+        )))
+    END;
+
+    INSERT INTO ""Learner"".learners (
+        id, full_name, email, phone_number, lifecycle_status,
+        programme, programme_status, cohort, group_name,
+        completed_hours, target_hours, minimum_hours, maximum_hours,
+        planned_hours, progress_hours, progress_variance, otjh_status,
+        coach_name, coach_email, coach_rag,
+        start_date, end_date, gateway_review_date,
+        alert_notify_for_epa, enter_epa,
+        created_at, updated_at
+    )
+    VALUES (
+        NEW.id::bigint,
+        resolved_name,
+        resolved_email,
+        resolved_phone,
+        resolved_status,
+        coalesce(row_data ->> '<literal redacted>', '<literal redacted>'),
+        coalesce(row_data ->> '<literal redacted>', '<literal redacted>'),
+        coalesce(row_data ->> '<literal redacted>', '<literal redacted>'),
+        coalesce(row_data ->> '<literal redacted>', '<literal redacted>'),
+        ""Learner"".safe_numeric(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_numeric(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_numeric(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_numeric(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_numeric(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_numeric(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_numeric(row_data ->> '<literal redacted>'),
+        coalesce(row_data ->> '<literal redacted>', '<literal redacted>'),
+        coalesce(row_data ->> '<literal redacted>', '<literal redacted>'),
+        coalesce(row_data ->> '<literal redacted>', '<literal redacted>'),
+        coalesce(row_data ->> '<literal redacted>', '<literal redacted>'),
+        ""Learner"".safe_date(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_date(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_date(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_date(row_data ->> '<literal redacted>'),
+        ""Learner"".safe_date(row_data ->> '<literal redacted>'),
+        now(),
+        now()
+    )
+    ON CONFLICT (id) DO UPDATE
+    SET full_name = EXCLUDED.full_name,
+        email = EXCLUDED.email,
+        phone_number = EXCLUDED.phone_number,
+        lifecycle_status = EXCLUDED.lifecycle_status,
+        programme = EXCLUDED.programme,
+        programme_status = EXCLUDED.programme_status,
+        cohort = EXCLUDED.cohort,
+        group_name = EXCLUDED.group_name,
+        completed_hours = EXCLUDED.completed_hours,
+        target_hours = EXCLUDED.target_hours,
+        minimum_hours = EXCLUDED.minimum_hours,
+        maximum_hours = EXCLUDED.maximum_hours,
+        planned_hours = EXCLUDED.planned_hours,
+        progress_hours = EXCLUDED.progress_hours,
+        progress_variance = EXCLUDED.progress_variance,
+        otjh_status = EXCLUDED.otjh_status,
+        coach_name = EXCLUDED.coach_name,
+        coach_email = EXCLUDED.coach_email,
+        coach_rag = EXCLUDED.coach_rag,
+        start_date = EXCLUDED.start_date,
+        end_date = EXCLUDED.end_date,
+        gateway_review_date = EXCLUDED.gateway_review_date,
+        alert_notify_for_epa = EXCLUDED.alert_notify_for_epa,
+        enter_epa = EXCLUDED.enter_epa,
+        updated_at = now();
+
+    RETURN NEW;
+END;
+$function$
+",f321effa29ca33fa2ebb8db5baa841b73a3d373c87c548d17687328e108f5468
+Learner,sync_normalized_learner_json,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".sync_normalized_learner_json()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    row_data jsonb := to_jsonb(NEW);
+    learner_key bigint := NEW.id::bigint;
+    item jsonb;
+    nested_item jsonb;
+    answer_item jsonb;
+    module_row record;
+    week_row record;
+    component_row record;
+    progress_row record;
+    ksb_row record;
+    question_row record;
+    correct_row record;
+    activity_row record;
+    plan_module_key bigint;
+    plan_week_key bigint;
+    progress_key bigint;
+    quiz_answer_key bigint;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM ""Learner"".learners WHERE id = learner_key) THEN
+        RETURN NEW;
+    END IF;
+
+    DELETE FROM ""Learner"".learner_ksbs WHERE learner_id = learner_key;
+    DELETE FROM ""Learner"".learner_training_plan_modules WHERE learner_id = learner_key;
+    DELETE FROM ""Learner"".learner_progress_entries WHERE learner_id = learner_key;
+    DELETE FROM ""Learner"".learner_activity_events WHERE learner_id = learner_key;
+
+    FOR ksb_row IN
+        SELECT value, ordinality
+        FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(row_data -> '<literal redacted>'))
+             WITH ORDINALITY AS entries(value, ordinality)
+    LOOP
+        item := ksb_row.value;
+        INSERT INTO ""Learner"".learner_ksbs
+            (learner_id, position, code, number, ksb_type, description)
+        VALUES
+            (learner_key, ksb_row.ordinality::integer,
+             coalesce(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'),
+             coalesce(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'));
+    END LOOP;
+
+    FOR module_row IN
+        SELECT value, ordinality
+        FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(row_data -> '<literal redacted>'))
+             WITH ORDINALITY AS entries(value, ordinality)
+    LOOP
+        item := module_row.value;
+        INSERT INTO ""Learner"".learner_training_plan_modules
+            (learner_id, position, module_ref, module_title)
+        VALUES
+            (learner_key, module_row.ordinality::integer,
+             nullif(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'))
+        RETURNING id INTO plan_module_key;
+
+        FOR week_row IN
+            SELECT value, ordinality
+            FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(item -> '<literal redacted>'))
+                 WITH ORDINALITY AS entries(value, ordinality)
+        LOOP
+            nested_item := week_row.value;
+            INSERT INTO ""Learner"".learner_training_plan_weeks
+                (plan_module_id, position, week_ref, week_title)
+            VALUES
+                (plan_module_key, week_row.ordinality::integer,
+                 nullif(nested_item ->> '<literal redacted>', '<literal redacted>'), coalesce(nested_item ->> '<literal redacted>', '<literal redacted>'))
+            RETURNING id INTO plan_week_key;
+
+            FOR component_row IN
+                SELECT value, ordinality
+                FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(nested_item -> '<literal redacted>'))
+                     WITH ORDINALITY AS entries(value, ordinality)
+            LOOP
+                INSERT INTO ""Learner"".learner_training_plan_components
+                    (plan_week_id, position, component_ref, component_title)
+                VALUES
+                    (plan_week_key, component_row.ordinality::integer,
+                     nullif(component_row.value ->> '<literal redacted>', '<literal redacted>'),
+                     coalesce(component_row.value ->> '<literal redacted>', '<literal redacted>'));
+            END LOOP;
+        END LOOP;
+    END LOOP;
+
+    FOR progress_row IN
+        SELECT value, ordinality
+        FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(row_data -> '<literal redacted>'))
+             WITH ORDINALITY AS entries(value, ordinality)
+    LOOP
+        item := progress_row.value;
+        INSERT INTO ""Learner"".learner_progress_entries (
+            learner_id, entry_order, kind,
+            module_ref, module_title, week_ref, week_title,
+            component_ref, component_title, component_type, quiz_ref,
+            attempt, grade, achieved_score, total_score, passed,
+            feedback, reported_time, started_at, submitted_at, time_taken
+        ) VALUES (
+            learner_key, progress_row.ordinality::integer,
+            coalesce(nullif(item ->> '<literal redacted>', '<literal redacted>'), '<literal redacted>'),
+            nullif(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', item ->> '<literal redacted>', '<literal redacted>'),
+            nullif(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', item ->> '<literal redacted>', '<literal redacted>'),
+            nullif(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'),
+            coalesce(item ->> '<literal redacted>', '<literal redacted>'), nullif(item ->> '<literal redacted>', '<literal redacted>'),
+            ""Learner"".safe_numeric(item ->> '<literal redacted>')::integer,
+            ""Learner"".safe_numeric(coalesce(item ->> '<literal redacted>', item ->> '<literal redacted>')),
+            ""Learner"".safe_numeric(item ->> '<literal redacted>'),
+            ""Learner"".safe_numeric(item ->> '<literal redacted>'),
+            CASE WHEN item ? '<literal redacted>' AND jsonb_typeof(item -> '<literal redacted>') = '<literal redacted>'
+                 THEN (item ->> '<literal redacted>')::boolean END,
+            coalesce(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'),
+            ""Learner"".safe_timestamptz(item ->> '<literal redacted>'),
+            ""Learner"".safe_timestamptz(item ->> '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>')
+        ) RETURNING id INTO progress_key;
+
+        FOR ksb_row IN
+            SELECT value, ordinality
+            FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(item -> '<literal redacted>'))
+                 WITH ORDINALITY AS entries(value, ordinality)
+        LOOP
+            INSERT INTO ""Learner"".learner_progress_ksbs (progress_id, position, ksb_code)
+            VALUES (progress_key, ksb_row.ordinality::integer,
+                    trim(both '<literal redacted>' from ksb_row.value::text));
+        END LOOP;
+
+        FOR question_row IN
+            SELECT value, ordinality
+            FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(item -> '<literal redacted>'))
+                 WITH ORDINALITY AS entries(value, ordinality)
+        LOOP
+            answer_item := question_row.value;
+            INSERT INTO ""Learner"".learner_quiz_answers
+                (progress_id, position, question_ref, chosen_answer_ref, is_correct, earned)
+            VALUES
+                (progress_key, question_row.ordinality::integer,
+                 (answer_item ->> '<literal redacted>')::bigint,
+                 nullif(answer_item ->> '<literal redacted>', '<literal redacted>')::bigint,
+                 CASE WHEN answer_item ? '<literal redacted>' AND jsonb_typeof(answer_item -> '<literal redacted>') = '<literal redacted>'
+                      THEN (answer_item ->> '<literal redacted>')::boolean END,
+                 ""Learner"".safe_numeric(answer_item ->> '<literal redacted>'))
+            RETURNING id INTO quiz_answer_key;
+
+            FOR correct_row IN
+                SELECT value, ordinality
+                FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(answer_item -> '<literal redacted>'))
+                     WITH ORDINALITY AS entries(value, ordinality)
+            LOOP
+                INSERT INTO ""Learner"".learner_quiz_correct_answers
+                    (quiz_answer_id, position, answer_ref)
+                VALUES
+                    (quiz_answer_key, correct_row.ordinality::integer,
+                     (correct_row.value #>> '<literal redacted>')::bigint);
+            END LOOP;
+        END LOOP;
+    END LOOP;
+
+    FOR activity_row IN
+        SELECT value, ordinality
+        FROM jsonb_array_elements(""Learner"".jsonb_array_or_empty(row_data -> '<literal redacted>'))
+             WITH ORDINALITY AS entries(value, ordinality)
+    LOOP
+        item := activity_row.value;
+        INSERT INTO ""Learner"".learner_activity_events (
+            learner_id, event_order, kind, action, title, detail,
+            component_ref, component_type, quiz_ref,
+            module_title, week_title, passed, occurred_at
+        ) VALUES (
+            learner_key, activity_row.ordinality::integer,
+            coalesce(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'),
+            coalesce(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'),
+            nullif(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'),
+            nullif(item ->> '<literal redacted>', '<literal redacted>'), coalesce(item ->> '<literal redacted>', '<literal redacted>'),
+            coalesce(item ->> '<literal redacted>', '<literal redacted>'),
+            CASE WHEN item ? '<literal redacted>' AND jsonb_typeof(item -> '<literal redacted>') = '<literal redacted>'
+                 THEN (item ->> '<literal redacted>')::boolean END,
+            ""Learner"".safe_timestamptz(item ->> '<literal redacted>')
+        );
+    END LOOP;
+
+    RETURN NEW;
+END;
+$function$
+",5d8adfa1a19d5ee5017de6799596fd3ad9087327f6ef3b6d3c350b70d9541294
+Learner,target_hours_as_of,"p_planned_hours numeric, p_start_date date, p_planned_end_date date, p_as_of_date date",numeric,f,sql,s,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".target_hours_as_of(p_planned_hours numeric, p_start_date date, p_planned_end_date date, p_as_of_date date DEFAULT CURRENT_DATE)
+ RETURNS numeric
+ LANGUAGE sql
+ STABLE
+AS $function$
+    SELECT CASE
+        WHEN p_planned_hours IS NULL OR p_planned_hours <= 0
+          OR p_start_date IS NULL OR p_planned_end_date IS NULL
+          OR p_planned_end_date <= p_start_date
+            THEN NULL::numeric
+        WHEN p_as_of_date < p_start_date
+            THEN 0.00::numeric
+        WHEN p_as_of_date >= p_planned_end_date
+            THEN round(p_planned_hours, 2)
+        ELSE round(
+            least(
+                p_planned_hours,
+                greatest(
+                    0.00::numeric,
+                    (p_planned_hours * (p_as_of_date - p_start_date)::numeric)
+                    / (p_planned_end_date - p_start_date)::numeric
+                )
+            ),
+            2
+        )
+    END
+$function$
+",cdeb7d8b439e2b9338dc85d80f61fb0229b90b9a60c512843e3051e6a3142af6
+Learner,target_hours_safe_date,value text,date,f,sql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".target_hours_safe_date(value text)
+ RETURNS date
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+    SELECT CASE
+        WHEN NULLIF(btrim(value), '<literal redacted>') IS NULL THEN NULL::date
+        WHEN btrim(value) ~ '<literal redacted>'
+            THEN substring(btrim(value), 1, 10)::date
+        WHEN btrim(value) ~ '<literal redacted>'
+            THEN to_date(btrim(value), '<literal redacted>')
+        WHEN btrim(value) ~ '<literal redacted>'
+            THEN to_date(btrim(value), '<literal redacted>')
+        ELSE NULL::date
+    END
+$function$
+",d0f4d09849b4d6d10925fdea16a2a6420fc69842ff5b8c075cc12a98cea665f3
+Learner,target_hours_safe_numeric,value text,numeric,f,sql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""Learner"".target_hours_safe_numeric(value text)
+ RETURNS numeric
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+    SELECT CASE
+        WHEN NULLIF(btrim(value), '<literal redacted>') IS NULL THEN NULL::numeric
+        WHEN btrim(value) ~ '<literal redacted>'
+            THEN btrim(value)::numeric
+        ELSE NULL::numeric
+    END
+$function$
+",7ac49e28c7a4fe1f9e3aac43692c959fe3182d503970389d47ff08cd8ab19d73
+MBA,make_migration_id,"p_prefix text, p_source_key text",text,f,sql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION ""MBA"".make_migration_id(p_prefix text, p_source_key text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+    SELECT
+        p_prefix
+        || '<literal redacted>'
+        || UPPER(
+            SUBSTRING(
+                MD5(
+                    '<literal redacted>'
+                    || p_prefix
+                    || '<literal redacted>'
+                    || p_source_key
+                ),
+                1,
+                12
+            )
+        );
+$function$
+",4a4aa1907bc6f97827d288787ca85521bacbe94ed2eecec14ee55a3d03ee5a5b
+auth,init,,void,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION auth.init()
+ RETURNS void
+ LANGUAGE c
+ STRICT
+AS '<literal redacted>', $function$init_wrapper$function$
+",100bea09d46f1bbbacd9aa791624ca8e6f3efe8a99ecfccd1f01774caa4ef0ef
+auth,jwt,,jsonb,f,c,s,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION auth.jwt()
+ RETURNS jsonb
+ LANGUAGE c
+ STABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$jwt_wrapper$function$
+",7d64067a5cf874dcc77719e8d30a68607560614321ef40292914f1c280336c1b
+auth,jwt_session_init,jwt text,void,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION auth.jwt_session_init(jwt text)
+ RETURNS void
+ LANGUAGE c
+ STRICT
+AS '<literal redacted>', $function$jwt_session_init_wrapper$function$
+",fcd4cd11c464b2de38a5a3f65e48a56b84c704218fdd1080227bd727c40694bf
+auth,organization,,jsonb,f,c,s,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION auth.organization()
+ RETURNS jsonb
+ LANGUAGE c
+ STABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$organization_wrapper$function$
+",bf5de0402ccbeb1735d14d9e5862a0ce4ccbc944db6b561edcc324cb3626faba
+auth,organization_id,,uuid,f,c,s,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION auth.organization_id()
+ RETURNS uuid
+ LANGUAGE c
+ STABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$organization_id_wrapper$function$
+",8bc14408fc68ae40269a7986ba80b0d6ec71a2ab545d0e7e437dce9590dba70a
+auth,session,,jsonb,f,c,s,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION auth.session()
+ RETURNS jsonb
+ LANGUAGE c
+ STABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$session_wrapper$function$
+",9c48c476a26a934ed411372b43d0850e8d1a9694c2566fffc6675d355a453dad
+auth,uid,,uuid,f,c,s,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION auth.uid()
+ RETURNS uuid
+ LANGUAGE c
+ STABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$uid_wrapper$function$
+",e89d0a13f51de842ea2cdc7bd33c3eacbe25649b9719f1ff23e6bc1259440115
+auth,user_id,,text,f,c,s,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION auth.user_id()
+ RETURNS text
+ LANGUAGE c
+ STABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$user_id_wrapper$function$
+",34dd543a1c9bd7da915d4e91a2ffee509d4e8b2560a2a7ad17e0cd7ab560c59d
+fetching_evidence,canonical_cv_funding,requested_learner_id text,jsonb,f,sql,s,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION fetching_evidence.canonical_cv_funding(requested_learner_id text)
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE
+AS $function$
+      SELECT r.funding
+      FROM ""fetching_evidence"".""aptem_cv_certifications"" r
+      WHERE r.learner_id::text = requested_learner_id
+        AND r.funding IS NOT NULL
+      ORDER BY
+        (r.row_kind = '<literal redacted>') DESC,
+        r.funding_updated_at DESC NULLS LAST,
+        r.id DESC
+      LIMIT 1
+    $function$
+",0a8d7efea1c99dfa95aee09e631a80687c47e5931ed592b4c1c6e9ddecc0cc9b
+fetching_evidence,push_cv_funding_to_rpl,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION fetching_evidence.push_cv_funding_to_rpl()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+    DECLARE
+      target_learner_id text;
+    BEGIN
+      IF TG_OP = '<literal redacted>' THEN
+        target_learner_id := OLD.learner_id::text;
+      ELSE
+        target_learner_id := NEW.learner_id::text;
+      END IF;
+
+      UPDATE ""fetching_evidence"".""rpl_analysis_results"" rpl
+      SET funding = ""fetching_evidence"".""canonical_cv_funding""(target_learner_id)
+      WHERE rpl.learner_id = target_learner_id
+        AND rpl.funding IS DISTINCT FROM ""fetching_evidence"".""canonical_cv_funding""(target_learner_id);
+
+      IF TG_OP = '<literal redacted>' AND OLD.learner_id IS DISTINCT FROM NEW.learner_id THEN
+        UPDATE ""fetching_evidence"".""rpl_analysis_results"" rpl
+        SET funding = ""fetching_evidence"".""canonical_cv_funding""(OLD.learner_id::text)
+        WHERE rpl.learner_id = OLD.learner_id::text
+          AND rpl.funding IS DISTINCT FROM ""fetching_evidence"".""canonical_cv_funding""(OLD.learner_id::text);
+      END IF;
+
+      IF TG_OP = '<literal redacted>' THEN
+        RETURN OLD;
+      END IF;
+      RETURN NEW;
+    END
+    $function$
+",ec31953e761d33aa4c38ae9113b6813581a32089f98138d9361b53569b671116
+public,armor,"bytea, text[], text[]",text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.armor(bytea, text[], text[])
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_armor$function$
+",18da0ca7fd017b69933b0e4dffca2b153949d5d6c9096230ee4b805da0cc63b8
+public,armor,bytea,text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.armor(bytea)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_armor$function$
+",86373a38c4afaaf569873c166b396c96552e2f0b4fc2871b7f7bec09c69e2e9e
+public,array_to_halfvec,"numeric[], integer, boolean",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_halfvec(numeric[], integer, boolean)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_halfvec$function$
+",785ee6836cc450730d6aec9dbf3266e74201fd23094156aedb8c51ac52112823
+public,array_to_halfvec,"integer[], integer, boolean",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_halfvec(integer[], integer, boolean)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_halfvec$function$
+",25511b1db4fe39110bda31a60bab61e245116fff470a15a620ae70a9fd53a17b
+public,array_to_halfvec,"real[], integer, boolean",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_halfvec(real[], integer, boolean)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_halfvec$function$
+",5f61a5a0a3a175923449ded56741532ff721429347919097a0da5c4b62221c9a
+public,array_to_halfvec,"double precision[], integer, boolean",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_halfvec(double precision[], integer, boolean)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_halfvec$function$
+",849c18b7dee9cd803ea8e154367596194252aab6235da8609cbda9d617ac8da1
+public,array_to_sparsevec,"numeric[], integer, boolean",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_sparsevec(numeric[], integer, boolean)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_sparsevec$function$
+",2e7f0052ef457fdc97bb3a4856ea31c80a736576a0ad47836ad630208395762a
+public,array_to_sparsevec,"double precision[], integer, boolean",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_sparsevec(double precision[], integer, boolean)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_sparsevec$function$
+",2fc65f0210fad2746daa303b1c5a68b25dc8db6094080c6ccc70bf85d0dc4153
+public,array_to_sparsevec,"integer[], integer, boolean",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_sparsevec(integer[], integer, boolean)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_sparsevec$function$
+",2d8a18dd5e6d0b4e0188cacc9582deead01296f86a06ca36f452caf2502c4a86
+public,array_to_sparsevec,"real[], integer, boolean",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_sparsevec(real[], integer, boolean)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_sparsevec$function$
+",873cf27caf215598bd585f50c62548e11e06216a9c6722af7fa2eafbde91b304
+public,array_to_vector,"numeric[], integer, boolean",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_vector(numeric[], integer, boolean)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_vector$function$
+",8079bca8cb19ac243acb43333afa449ee6e487932e383e9f71724cb03c9ee09e
+public,array_to_vector,"real[], integer, boolean",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_vector(real[], integer, boolean)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_vector$function$
+",cdb75d6b0426b8314fa9f9c5fb395d7904219ccd67fcda6b65f81a71dc063d6f
+public,array_to_vector,"double precision[], integer, boolean",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_vector(double precision[], integer, boolean)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_vector$function$
+",f289898cbae8723d3a39168bc6decc83b9886a6b414667a8d642957347381081
+public,array_to_vector,"integer[], integer, boolean",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.array_to_vector(integer[], integer, boolean)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$array_to_vector$function$
+",b15c45d81d3cfc90301999140d67c2a3f8c5282fdfde082084f53ea0d1cf4a3a
+public,avg,halfvec,halfvec,a,internal,i,False,False,cloud_admin,,,
+public,avg,vector,vector,a,internal,i,False,False,cloud_admin,,,
+public,binary_quantize,halfvec,bit,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.binary_quantize(halfvec)
+ RETURNS bit
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_binary_quantize$function$
+",8ecb781b1811e5f95fe4f91173df6d3770f6462b6ebadf575550af474f6997e5
+public,binary_quantize,vector,bit,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.binary_quantize(vector)
+ RETURNS bit
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$binary_quantize$function$
+",53fa06aea1ccd88aa5d6af60eea75382ff013331dcc082edc79fa0eafa5bb474
+public,citext,character,citext,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext(character)
+ RETURNS citext
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$rtrim1$function$
+",89b78deccd3553b4aa36fa5e8c4fc7348d3f34414bf5a89f685b903ebb55a885
+public,citext,boolean,citext,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext(boolean)
+ RETURNS citext
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$booltext$function$
+",346a3d2a1022021b44518ef634a776e2c02c9d37027a6859d0a81ebb8bb0716a
+public,citext,inet,citext,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext(inet)
+ RETURNS citext
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$network_show$function$
+",f9bdd81f899575a87d8c77887c434332bd46de0d1052c151b67d524d1e222da7
+public,citext_cmp,"citext, citext",integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_cmp(citext, citext)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_cmp$function$
+",9fb3f16a1fb290d5de90b362f2ead7513b52166aae352d6a88e3b2b806f11bff
+public,citext_eq,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_eq(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_eq$function$
+",8f1a23acc8881d58fcdbfc9b2c6fb33ae60d7e9c293a93fc494f0847db06f123
+public,citext_ge,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_ge(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_ge$function$
+",503ba51d460c304e4e7aa42fcd7f8c2880e66810a2617865ed68cc377c472dec
+public,citext_gt,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_gt(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_gt$function$
+",e04f0adb2ee93ce5f2e11a592392629f4de7a684bf201c84e4ee0e90b48af790
+public,citext_hash,citext,integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_hash(citext)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_hash$function$
+",d930a5afe3cbd794dfe2b37a35226978acbd205ebd66476fd00a0d9d7a6b1ed6
+public,citext_hash_extended,"citext, bigint",bigint,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_hash_extended(citext, bigint)
+ RETURNS bigint
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_hash_extended$function$
+",f8bb8ef586dd7a4af6626219d36e78f62b34ac74b0d7d0341547e93ca6498009
+public,citext_larger,"citext, citext",citext,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_larger(citext, citext)
+ RETURNS citext
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_larger$function$
+",5e22fd5d7ba5e90468751cf61964887117a888ab6ffc55a1d98648db483227fb
+public,citext_le,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_le(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_le$function$
+",2d9eb62c1d8a92c4e232451190dacd186e85f8bdaf4dba8456570d4e942d5c39
+public,citext_lt,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_lt(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_lt$function$
+",bae9ec5bd5530214ef326e248b9d951dd817c75d03738a8d83c59571efd23e1b
+public,citext_ne,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_ne(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_ne$function$
+",d73e2f663cb615286e828520d633142088cc288823acf81ac7ae4bb36f3b315d
+public,citext_pattern_cmp,"citext, citext",integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_pattern_cmp(citext, citext)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_pattern_cmp$function$
+",4abac7b7bd7230aeb4edf5f73e298d3937ba6f259ccf3cfb01b08d88e8950e32
+public,citext_pattern_ge,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_pattern_ge(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_pattern_ge$function$
+",985a11cc99ff8bf0b17e877c52cefc432901b123de6f5b20832d1eaed1d246c9
+public,citext_pattern_gt,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_pattern_gt(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_pattern_gt$function$
+",a8d5e1d2a6f832eaa013f699d293b3d871b68bbf5ee6e36042fb6bb1e9ca0154
+public,citext_pattern_le,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_pattern_le(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_pattern_le$function$
+",4dd6ebe19f06be0e07bab1f3f48227d49f1f335a26301c81b5ebb31b088aea71
+public,citext_pattern_lt,"citext, citext",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_pattern_lt(citext, citext)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_pattern_lt$function$
+",7796f9d36d7976efb4d5ef4090382afabb95e0962ad5de3d49d992eb3d94662e
+public,citext_smaller,"citext, citext",citext,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citext_smaller(citext, citext)
+ RETURNS citext
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$citext_smaller$function$
+",4a1b70b591917318763b604812fdec312632e09bd7a6011391f2afd44e8ea509
+public,citextin,cstring,citext,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citextin(cstring)
+ RETURNS citext
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$textin$function$
+",eb12bc416da349cdc540df597db7332affbe9350591de21779aacf54f8edbf92
+public,citextout,citext,cstring,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citextout(citext)
+ RETURNS cstring
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$textout$function$
+",0ebfc6090e7dd7cdaf128cbaee68cdfdb8680e7ae8e95a9ef6e59380b262f3d4
+public,citextrecv,internal,citext,f,internal,s,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citextrecv(internal)
+ RETURNS citext
+ LANGUAGE internal
+ STABLE PARALLEL SAFE STRICT
+AS $function$textrecv$function$
+",292e7aaf31c0c30882c6540dc4cd91a936d90366dc9e67118756a9168a48e546
+public,citextsend,citext,bytea,f,internal,s,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.citextsend(citext)
+ RETURNS bytea
+ LANGUAGE internal
+ STABLE PARALLEL SAFE STRICT
+AS $function$textsend$function$
+",2a8a5e011f3aa6bb079a3d1f5392133707d6bc32745bfbd08db2e215af31398b
+public,cosine_distance,"sparsevec, sparsevec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.cosine_distance(sparsevec, sparsevec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_cosine_distance$function$
+",c1c48277c49e9b5c2d8544663834dda10a98a757478a32846ab1f2ba76d5a603
+public,cosine_distance,"halfvec, halfvec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.cosine_distance(halfvec, halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_cosine_distance$function$
+",0ab9ae14739c59262eca45591009f14a141078483fb5d0cdd42e0bf35fe5a162
+public,cosine_distance,"vector, vector",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.cosine_distance(vector, vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$cosine_distance$function$
+",3f01b76a16a7691cf216a8c019bf93994ad277e76f5e3a422e7e16f4f5ac45f3
+public,crypt,"text, text",text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.crypt(text, text)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_crypt$function$
+",2610b16a4ed5b56e95b873f4923be155dbf20ec9198fc978a49d06758cf0968f
+public,dearmor,text,bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.dearmor(text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_dearmor$function$
+",9656518ecc9dd0eb2acf2791abf0395951e011b654fc75cb6b95a5f71b356940
+public,decrypt,"bytea, bytea, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.decrypt(bytea, bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_decrypt$function$
+",c3822821916c676d4d4d5b0d3c377caa69087f987af713e98008c0b7d491074f
+public,decrypt_iv,"bytea, bytea, bytea, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.decrypt_iv(bytea, bytea, bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_decrypt_iv$function$
+",83dbc7d6cdd70f984e1a99641f1a03af4c726150ec054d14bcffd2b29b216479
+public,digest,"text, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.digest(text, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_digest$function$
+",c0837f7b035f0a146cb002a027a144839f242ad6950e2faf5bb64c2175b09f98
+public,digest,"bytea, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.digest(bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_digest$function$
+",9b340b4cfdf8aa6cf46da4b6f62b4405a0d521ec8675738d82698e8daadd223b
+public,encrypt,"bytea, bytea, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.encrypt(bytea, bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_encrypt$function$
+",6d8c4e341c3a83a9429c8f8b6aeefa2bf8ddcfaa22b7f5bc5bb11f5868f07d55
+public,encrypt_iv,"bytea, bytea, bytea, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.encrypt_iv(bytea, bytea, bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_encrypt_iv$function$
+",1df1038219f64655205bb00bace6ed1a6ecfbaac6669457a28b968ffe1ad1d44
+public,fips_mode,,boolean,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.fips_mode()
+ RETURNS boolean
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_check_fipsmode$function$
+",64da007c61b929c63026d4f5d2956a396815a3bb0d439fceb728cd4ee21f27c1
+public,gen_random_bytes,integer,bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.gen_random_bytes(integer)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_random_bytes$function$
+",4008cbe198b87c6ddf6e60a47358e23067deff0a5d5ae8313eaa761563c439e2
+public,gen_random_uuid,,uuid,f,c,v,False,False,cloud_admin,,"CREATE OR REPLACE FUNCTION public.gen_random_uuid()
+ RETURNS uuid
+ LANGUAGE c
+ PARALLEL SAFE
+AS '<literal redacted>', $function$pg_random_uuid$function$
+",3271fab0dab40dac42bfa8c36893357ed479c125b6d7e07c28f54073bede7703
+public,gen_salt,"text, integer",text,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.gen_salt(text, integer)
+ RETURNS text
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_gen_salt_rounds$function$
+",07c39a78e967d4557b80a5082d20ea543a28f71ca486fee46006ad9edf140ccb
+public,gen_salt,text,text,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.gen_salt(text)
+ RETURNS text
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_gen_salt$function$
+",13e313ead52a619133fbbbf047b3eb47d0980254f79aac4104d31d0d6a4392e0
+public,halfvec,"halfvec, integer, boolean",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec(halfvec, integer, boolean)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec$function$
+",9dc8f557951ed599be9270e5c8583cb561d0652b61c4f3760a14481c3ae9a71f
+public,halfvec_accum,"double precision[], halfvec",double precision[],f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_accum(double precision[], halfvec)
+ RETURNS double precision[]
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_accum$function$
+",c73cbe8af58efb2c80992feca654b21f20b1526af1459bca9127513a26aa72c7
+public,halfvec_add,"halfvec, halfvec",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_add(halfvec, halfvec)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_add$function$
+",4848be1f18142104da474744e073932986dec0ab265d4154ed7b258b92c776cb
+public,halfvec_avg,double precision[],halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_avg(double precision[])
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_avg$function$
+",2b262aaebcc63e18207eaa4ce3bbe9c251530b2a68e241346955827726e88b80
+public,halfvec_cmp,"halfvec, halfvec",integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_cmp(halfvec, halfvec)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_cmp$function$
+",e0a455017834b4e9107ce9cdc5f7f7c8add3169ad3a4dd930e1ee5d83a30e9ae
+public,halfvec_combine,"double precision[], double precision[]",double precision[],f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_combine(double precision[], double precision[])
+ RETURNS double precision[]
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_combine$function$
+",3a93a167118f8560df3a99e8d80c455acc8f867d0e1e178c1aea431fb70b50e9
+public,halfvec_concat,"halfvec, halfvec",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_concat(halfvec, halfvec)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_concat$function$
+",fde13b6ff8a0e2231374a3ad6aaa67acb1641c548e88d957911e460f680a3ef4
+public,halfvec_eq,"halfvec, halfvec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_eq(halfvec, halfvec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_eq$function$
+",02dc92954026d781daaee0d919c76adfdf6020560546743154085301e81a534f
+public,halfvec_ge,"halfvec, halfvec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_ge(halfvec, halfvec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_ge$function$
+",13905f1200e312f90702786ee9a9b310dee4101d167f12a1f6b79b4750188f60
+public,halfvec_gt,"halfvec, halfvec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_gt(halfvec, halfvec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_gt$function$
+",3c37cee5015c568b63de751001036c39ac8268cbf94876e781af7c7ba1b570da
+public,halfvec_in,"cstring, oid, integer",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_in(cstring, oid, integer)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_in$function$
+",a06bdd88d901d55dd3dd24a5ecb7bcb6a54d2f4151d640b90ccf8b29484b6b57
+public,halfvec_l2_squared_distance,"halfvec, halfvec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_l2_squared_distance(halfvec, halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_l2_squared_distance$function$
+",5a9e14da7a842def8063df19765fae5eb02894a5d1fb16c6cf5253c4ece181c3
+public,halfvec_le,"halfvec, halfvec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_le(halfvec, halfvec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_le$function$
+",30fdda99124f64984ca70c648202982ee85352ab846d57c8720324d3da4a0192
+public,halfvec_lt,"halfvec, halfvec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_lt(halfvec, halfvec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_lt$function$
+",119bc9a3e8ed3f537f3447a93c11d0baaefa0dda56892487721787c7141f77ff
+public,halfvec_mul,"halfvec, halfvec",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_mul(halfvec, halfvec)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_mul$function$
+",15aa204e57632e16df7c3c26066b86129f695c4e72fe6198f5044efa754ab8c4
+public,halfvec_ne,"halfvec, halfvec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_ne(halfvec, halfvec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_ne$function$
+",305f11ce98daee108bb73ad3f41ec9a4529e31793be291d982832110916392a1
+public,halfvec_negative_inner_product,"halfvec, halfvec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_negative_inner_product(halfvec, halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_negative_inner_product$function$
+",8eaf27603c88bebd0a5b3e1e2e097a2443a337b2b258f4b4f8a6a5990d247911
+public,halfvec_out,halfvec,cstring,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_out(halfvec)
+ RETURNS cstring
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_out$function$
+",bd8eec91d95a2bb0545598bf8ef6549763c8dab2fd0e132e172c58f8b377e07f
+public,halfvec_recv,"internal, oid, integer",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_recv(internal, oid, integer)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_recv$function$
+",d409ae49c28a0a9660ed7171ae16ef52483205055f783c816574d8b7822af795
+public,halfvec_send,halfvec,bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_send(halfvec)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_send$function$
+",06e5bfca491d669f221360c3d6b354cc4fc766effd1e6eaaa56a0dbef02e0dca
+public,halfvec_spherical_distance,"halfvec, halfvec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_spherical_distance(halfvec, halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_spherical_distance$function$
+",a2deb697413c3cea1f7d75cee616ee2fa185b5410e70cd46c8f6711159160648
+public,halfvec_sub,"halfvec, halfvec",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_sub(halfvec, halfvec)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_sub$function$
+",b7929ecb6a60fb9dbc7da6d8a7c205f7cf6479e2b2e738d4b176e2ab277bd83a
+public,halfvec_to_float4,"halfvec, integer, boolean",real[],f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_to_float4(halfvec, integer, boolean)
+ RETURNS real[]
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_to_float4$function$
+",c3d6b11ab522cfa03e89ddb5eacf72fd1961fd2aa062f4c69da2f49463e27b3c
+public,halfvec_to_sparsevec,"halfvec, integer, boolean",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_to_sparsevec(halfvec, integer, boolean)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_to_sparsevec$function$
+",32b4f72775683db70109f67ece516cef292db7333f98995138a75d1070fc7080
+public,halfvec_to_vector,"halfvec, integer, boolean",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_to_vector(halfvec, integer, boolean)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_to_vector$function$
+",c4e4fbbf0c75fb47feb2d25ccf786a98e24c69e35a0147ba7b14f3a9d42de4be
+public,halfvec_typmod_in,cstring[],integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.halfvec_typmod_in(cstring[])
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_typmod_in$function$
+",3ea6f16f538b7b0072ce2321ef9b16f530f2a0e8f3d0a87c4dc17c719b41f8d4
+public,hamming_distance,"bit, bit",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.hamming_distance(bit, bit)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$hamming_distance$function$
+",583370b01220ba14f0dfcb319f201151437e27970ff918f78d3040ed268576da
+public,hmac,"text, text, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.hmac(text, text, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_hmac$function$
+",d42bd8eaabc58bee966bd3fe71189bd0ea46818cb1661e392d7de80b4290f34b
+public,hmac,"bytea, bytea, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.hmac(bytea, bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_hmac$function$
+",40df18174784b0e2216d5c039777da2b11bc91a8a445e22210e0a2fa040b9a9e
+public,hnsw_bit_support,internal,internal,f,c,v,False,False,cloud_admin,,"CREATE OR REPLACE FUNCTION public.hnsw_bit_support(internal)
+ RETURNS internal
+ LANGUAGE c
+AS '<literal redacted>', $function$hnsw_bit_support$function$
+",11f6bffdb4d3483eb553b27a6f60e757347e10ab6ed6c4d682e3b492ee44517a
+public,hnsw_halfvec_support,internal,internal,f,c,v,False,False,cloud_admin,,"CREATE OR REPLACE FUNCTION public.hnsw_halfvec_support(internal)
+ RETURNS internal
+ LANGUAGE c
+AS '<literal redacted>', $function$hnsw_halfvec_support$function$
+",70663b6ad96d41445faad19e67974bc451d93a41ba2c10934225d914a68b1611
+public,hnsw_sparsevec_support,internal,internal,f,c,v,False,False,cloud_admin,,"CREATE OR REPLACE FUNCTION public.hnsw_sparsevec_support(internal)
+ RETURNS internal
+ LANGUAGE c
+AS '<literal redacted>', $function$hnsw_sparsevec_support$function$
+",124c578805557a438af932ebde2d70f1719f5a1c0dec4fb3b2b277fc9179965f
+public,hnswhandler,internal,index_am_handler,f,c,v,False,False,cloud_admin,,"CREATE OR REPLACE FUNCTION public.hnswhandler(internal)
+ RETURNS index_am_handler
+ LANGUAGE c
+AS '<literal redacted>', $function$hnswhandler$function$
+",70ae1a98cf660bec069c061b31f135facb2ec5c8d1e17493064b4e378d955f41
+public,inner_product,"vector, vector",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.inner_product(vector, vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$inner_product$function$
+",63fd67c7e7ce50f04e90d53a799a570bdb2631767783b446ccb05f50a4b05e22
+public,inner_product,"sparsevec, sparsevec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.inner_product(sparsevec, sparsevec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_inner_product$function$
+",17449cf0e6c03952495f51384786514ea5a1e2cf1a11d37d23339fa66a10198c
+public,inner_product,"halfvec, halfvec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.inner_product(halfvec, halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_inner_product$function$
+",a5cb53012815aa61ff0330fc79358685a80460544fb55fdc059a54900356b993
+public,ivfflat_bit_support,internal,internal,f,c,v,False,False,cloud_admin,,"CREATE OR REPLACE FUNCTION public.ivfflat_bit_support(internal)
+ RETURNS internal
+ LANGUAGE c
+AS '<literal redacted>', $function$ivfflat_bit_support$function$
+",3836b53554858db51c453125ca67a4aa3e5e0dc4cafe5c2183d580c5584f7de5
+public,ivfflat_halfvec_support,internal,internal,f,c,v,False,False,cloud_admin,,"CREATE OR REPLACE FUNCTION public.ivfflat_halfvec_support(internal)
+ RETURNS internal
+ LANGUAGE c
+AS '<literal redacted>', $function$ivfflat_halfvec_support$function$
+",0a031b8382f8a492edd41509edb74dad5728ef45954d8df3a52d0fd53d86b961
+public,ivfflathandler,internal,index_am_handler,f,c,v,False,False,cloud_admin,,"CREATE OR REPLACE FUNCTION public.ivfflathandler(internal)
+ RETURNS index_am_handler
+ LANGUAGE c
+AS '<literal redacted>', $function$ivfflathandler$function$
+",608aa057313110b3d114fda374d279bbc4cc14594508a12328d94defa97059dd
+public,jaccard_distance,"bit, bit",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.jaccard_distance(bit, bit)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$jaccard_distance$function$
+",3730204dbd0c41c5a53d4412738be95ecb98cd5eed83920cff9d73274e1bb400
+public,l1_distance,"halfvec, halfvec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l1_distance(halfvec, halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_l1_distance$function$
+",b42142d2a5ecc7d535728bc69e7f7fadadcc1febb6c542bca5408189c623bfca
+public,l1_distance,"sparsevec, sparsevec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l1_distance(sparsevec, sparsevec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_l1_distance$function$
+",217c33b427fdad56c4e02031db04919c2ca73fe24feda8332af3e846fb1d8339
+public,l1_distance,"vector, vector",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l1_distance(vector, vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$l1_distance$function$
+",47c0136d3073589e014aa525919f9feffea812131e30cfe151c8cea7500d8679
+public,l2_distance,"vector, vector",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l2_distance(vector, vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$l2_distance$function$
+",f72fdcc8604675623e9dafb953c820c0537c4944e654fc99ca1ec5d69a90706d
+public,l2_distance,"halfvec, halfvec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l2_distance(halfvec, halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_l2_distance$function$
+",94c8d71cf9ed30a57d9813e471bdc98e0a479a41df31a3ce4bf52bb909cb5347
+public,l2_distance,"sparsevec, sparsevec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l2_distance(sparsevec, sparsevec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_l2_distance$function$
+",6e6d5feac3eb4644dab7945f928bb57908877810024c8e6f361597102d1dc676
+public,l2_norm,sparsevec,double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l2_norm(sparsevec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_l2_norm$function$
+",28411503a6654294bf473c1feb5d1d680d66e74e2b3aefc856af57d9115d64ce
+public,l2_norm,halfvec,double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l2_norm(halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_l2_norm$function$
+",d9cbea9adbe38dfd5878ce5a7d084488c42a5aa9a58bebdc5c5ad103f33ecbc6
+public,l2_normalize,halfvec,halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l2_normalize(halfvec)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_l2_normalize$function$
+",304915c6bd1a11846410cc2e749277292b8c0ebdf6e18608a38756af39f37321
+public,l2_normalize,sparsevec,sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l2_normalize(sparsevec)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_l2_normalize$function$
+",5ff2985c1ef7dc0bd70dc1d8ce156b67a550c6c8267002c933ffb699a49a843d
+public,l2_normalize,vector,vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.l2_normalize(vector)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$l2_normalize$function$
+",cf87786014961e2cc3c59fdae16cf07fada7c951896a24e0ec1e876c4483beb2
+public,max,citext,citext,a,internal,i,False,False,cloud_admin,,,
+public,min,citext,citext,a,internal,i,False,False,cloud_admin,,,
+public,pg_stat_statements,"showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT shared_blk_read_time double precision, OUT shared_blk_write_time double precision, OUT local_blk_read_time double precision, OUT local_blk_write_time double precision, OUT temp_blk_read_time double precision, OUT temp_blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric, OUT wal_buffers_full bigint, OUT jit_functions bigint, OUT jit_generation_time double precision, OUT jit_inlining_count bigint, OUT jit_inlining_time double precision, OUT jit_optimization_count bigint, OUT jit_optimization_time double precision, OUT jit_emission_count bigint, OUT jit_emission_time double precision, OUT jit_deform_count bigint, OUT jit_deform_time double precision, OUT parallel_workers_to_launch bigint, OUT parallel_workers_launched bigint, OUT stats_since timestamp with time zone, OUT minmax_stats_since timestamp with time zone",SETOF record,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT shared_blk_read_time double precision, OUT shared_blk_write_time double precision, OUT local_blk_read_time double precision, OUT local_blk_write_time double precision, OUT temp_blk_read_time double precision, OUT temp_blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric, OUT wal_buffers_full bigint, OUT jit_functions bigint, OUT jit_generation_time double precision, OUT jit_inlining_count bigint, OUT jit_inlining_time double precision, OUT jit_optimization_count bigint, OUT jit_optimization_time double precision, OUT jit_emission_count bigint, OUT jit_emission_time double precision, OUT jit_deform_count bigint, OUT jit_deform_time double precision, OUT parallel_workers_to_launch bigint, OUT parallel_workers_launched bigint, OUT stats_since timestamp with time zone, OUT minmax_stats_since timestamp with time zone)
+ RETURNS SETOF record
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_stat_statements_1_12$function$
+",10255d1e5f619e9a7c0293a7f620546e48a896fd4f33d4bdfb6c654ced5a2047
+public,pg_stat_statements_info,"OUT dealloc bigint, OUT stats_reset timestamp with time zone",record,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone)
+ RETURNS record
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_stat_statements_info$function$
+",4986c83bf898b397b20bf2fce209183549d593eb061d0c6f9f6e228597ee43d7
+public,pg_stat_statements_reset,"userid oid, dbid oid, queryid bigint, minmax_only boolean",timestamp with time zone,f,c,v,False,True,cloud_admin,"{cloud_admin=X/cloud_admin,neon_superuser=X/cloud_admin}","CREATE OR REPLACE FUNCTION public.pg_stat_statements_reset(userid oid DEFAULT 0, dbid oid DEFAULT 0, queryid bigint DEFAULT 0, minmax_only boolean DEFAULT false)
+ RETURNS timestamp with time zone
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pg_stat_statements_reset_1_11$function$
+",bcd8932856e53452621a941f7a8800a4651ff6db453e4322e95f5fcb8c979652
+public,pgp_armor_headers,"text, OUT key text, OUT value text",SETOF record,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_armor_headers(text, OUT key text, OUT value text)
+ RETURNS SETOF record
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_armor_headers$function$
+",a6e60e824774ea4696a8739db642f2959ec91d28b26b863d2b870f95073e1cae
+public,pgp_key_id,bytea,text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_key_id(bytea)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_key_id_w$function$
+",663d6110328ff2f02fe1b7821a19a506cf82ed8f489a6661ac9c04efc2d2cafb
+public,pgp_pub_decrypt,"bytea, bytea, text, text",text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_decrypt(bytea, bytea, text, text)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_decrypt_text$function$
+",ada35c32d35308cec9dd1067be760f5cade08610ed880719e8570edf07499cfa
+public,pgp_pub_decrypt,"bytea, bytea",text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_decrypt(bytea, bytea)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_decrypt_text$function$
+",c723a7960435364b2a2611f08f7eba1dde70f5094f5c581554fefd35ead484eb
+public,pgp_pub_decrypt,"bytea, bytea, text",text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_decrypt(bytea, bytea, text)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_decrypt_text$function$
+",9f68d4f595992b5f2677c2228e949bdd5833784e0d90202490f0fa89c5f579ed
+public,pgp_pub_decrypt_bytea,"bytea, bytea, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_decrypt_bytea(bytea, bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_decrypt_bytea$function$
+",370ee2b064b78fb111f8c3872953eae876c54b80ebcd6eba2c6fa132b0001f47
+public,pgp_pub_decrypt_bytea,"bytea, bytea",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_decrypt_bytea(bytea, bytea)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_decrypt_bytea$function$
+",13d6bad6a30ad1e3390519157b91d94f607d841ebfc3dae9282f0fc117d92f15
+public,pgp_pub_decrypt_bytea,"bytea, bytea, text, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_decrypt_bytea(bytea, bytea, text, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_decrypt_bytea$function$
+",72751f8e42ec572b7bc1bd37fba8c66d2d7860c0ea51b0725f3ec6cc5af192b0
+public,pgp_pub_encrypt,"text, bytea, text",bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_encrypt(text, bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_encrypt_text$function$
+",b65b8f77e4e27c19a3bfda8fa9b4a38944959d36e721b36fa6b8d31ffa5e586d
+public,pgp_pub_encrypt,"text, bytea",bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_encrypt(text, bytea)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_encrypt_text$function$
+",41c7b83950635f751295839b008803dd13ea8572e2e08f83049f2612bf966795
+public,pgp_pub_encrypt_bytea,"bytea, bytea, text",bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_encrypt_bytea(bytea, bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_encrypt_bytea$function$
+",250c01f59da2ce0143d52d30278a0ddd2700596d02a0b13fbe98233d0876844a
+public,pgp_pub_encrypt_bytea,"bytea, bytea",bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_pub_encrypt_bytea(bytea, bytea)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_pub_encrypt_bytea$function$
+",0e735a16c45bd4151b68281bca7d1b4e50671f0461fc02b23a774357fe4ec940
+public,pgp_sym_decrypt,"bytea, text, text",text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_sym_decrypt(bytea, text, text)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_sym_decrypt_text$function$
+",d72203bf965cc9674bbf8ba2716cfdba15e8eca52835b73eecd0c3d963488de1
+public,pgp_sym_decrypt,"bytea, text",text,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_sym_decrypt(bytea, text)
+ RETURNS text
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_sym_decrypt_text$function$
+",1fce70ffadaee63609b00208840e8f59fb4f58d5093d2e232deb36565615aa8d
+public,pgp_sym_decrypt_bytea,"bytea, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_sym_decrypt_bytea(bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_sym_decrypt_bytea$function$
+",6abfb054659c31c5974e5214ad6aec55985e99124da73c2567efa8658cccf91a
+public,pgp_sym_decrypt_bytea,"bytea, text, text",bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_sym_decrypt_bytea(bytea, text, text)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_sym_decrypt_bytea$function$
+",307e47a8cf72a89aa81eaaa3f2665daa7d878b83359e7e4f5fb4dc232385b23f
+public,pgp_sym_encrypt,"text, text, text",bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_sym_encrypt(text, text, text)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_sym_encrypt_text$function$
+",36c7f4150b1836ca0eb5c299bb926d0aadc8ee3dbc3fba122a72f3d113a0ef86
+public,pgp_sym_encrypt,"text, text",bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_sym_encrypt(text, text)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_sym_encrypt_text$function$
+",03e61456d2936c998d5f6d723f397993495355f5f588e3af6e6999044239f99f
+public,pgp_sym_encrypt_bytea,"bytea, text, text",bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_sym_encrypt_bytea(bytea, text, text)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_sym_encrypt_bytea$function$
+",519118771a5a0493d938ff5131717cdddbf004e3dbb67501f736e02a2c151d22
+public,pgp_sym_encrypt_bytea,"bytea, text",bytea,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.pgp_sym_encrypt_bytea(bytea, text)
+ RETURNS bytea
+ LANGUAGE c
+ PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$pgp_sym_encrypt_bytea$function$
+",f2b8881e00268e2558932d122d384efccf66cc40da910d1cd282aa6d9c7ae477
+public,postgres_fdw_disconnect,text,boolean,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.postgres_fdw_disconnect(text)
+ RETURNS boolean
+ LANGUAGE c
+ PARALLEL RESTRICTED STRICT
+AS '<literal redacted>', $function$postgres_fdw_disconnect$function$
+",af62296548af1f99d52f51e7b8192756187d1c087c8ab234a1ad6d198f9e595e
+public,postgres_fdw_disconnect_all,,boolean,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.postgres_fdw_disconnect_all()
+ RETURNS boolean
+ LANGUAGE c
+ PARALLEL RESTRICTED STRICT
+AS '<literal redacted>', $function$postgres_fdw_disconnect_all$function$
+",52793551a212e8347f9ac22059cd4474c613439b0ecd34660999322efab099c1
+public,postgres_fdw_get_connections,"check_conn boolean, OUT server_name text, OUT user_name text, OUT valid boolean, OUT used_in_xact boolean, OUT closed boolean, OUT remote_backend_pid integer",SETOF record,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.postgres_fdw_get_connections(check_conn boolean DEFAULT false, OUT server_name text, OUT user_name text, OUT valid boolean, OUT used_in_xact boolean, OUT closed boolean, OUT remote_backend_pid integer)
+ RETURNS SETOF record
+ LANGUAGE c
+ PARALLEL RESTRICTED STRICT
+AS '<literal redacted>', $function$postgres_fdw_get_connections_1_2$function$
+",d6624518a68690eeccf67cde7a6292d83729cb0fb3bcb665fd591e9416b4b9a1
+public,postgres_fdw_handler,,fdw_handler,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.postgres_fdw_handler()
+ RETURNS fdw_handler
+ LANGUAGE c
+ STRICT
+AS '<literal redacted>', $function$postgres_fdw_handler$function$
+",132c6bc190c12b441c01fe64e9d61f31787c811ce388243f36ae7a41782582f3
+public,postgres_fdw_validator,"text[], oid",void,f,c,v,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.postgres_fdw_validator(text[], oid)
+ RETURNS void
+ LANGUAGE c
+ STRICT
+AS '<literal redacted>', $function$postgres_fdw_validator$function$
+",ca91c95ec0ebc58da0c5117a1bc4701483c27262e33edec5c41ce9ba57ba4b92
+public,refresh_kbc_combined_attendance,,jsonb,f,plpgsql,v,True,False,neondb_owner,{neondb_owner=X/neondb_owner},"CREATE OR REPLACE FUNCTION public.refresh_kbc_combined_attendance()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO '<literal redacted>', '<literal redacted>'
+AS $function$
+DECLARE
+  v_stale integer := 0;
+  v_changed integer := 0;
+  v_source integer := 0;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('<literal redacted>'));
+
+  CREATE TEMP TABLE pg_temp.kbc_combined_snapshot ON COMMIT DROP AS
+    SELECT * FROM kbc_sync.combined_attendance_source;
+  CREATE UNIQUE INDEX ON pg_temp.kbc_combined_snapshot (learner_email, session_date, module_key);
+
+  SELECT count(*) INTO v_source FROM pg_temp.kbc_combined_snapshot;
+
+  UPDATE public.kbc_combined_attendance c
+     SET is_current = false, updated_at = clock_timestamp()
+   WHERE c.is_current
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_temp.kbc_combined_snapshot s
+       WHERE s.learner_email = c.learner_email
+         AND s.session_date = c.session_date
+         AND s.module_key = c.module_key
+     );
+  GET DIAGNOSTICS v_stale = ROW_COUNT;
+
+  INSERT INTO public.kbc_combined_attendance AS c
+    (learner_email, session_date, module_key, module_name, learner_name,
+     legacy_records, lms_records, aptem_ids, lms_profile_ids, lms_occurrence_ids,
+     learner_emails, legacy_record_count, lms_record_count,
+     attendance_result, identity_conflict, is_current)
+  SELECT learner_email, session_date, module_key, module_name, learner_name,
+         legacy_records, lms_records, aptem_ids, lms_profile_ids, lms_occurrence_ids,
+         learner_emails, legacy_record_count, lms_record_count,
+         attendance_result, identity_conflict, true
+    FROM pg_temp.kbc_combined_snapshot
+  ON CONFLICT (learner_email, session_date, module_key)
+  DO UPDATE SET
+    module_name = EXCLUDED.module_name,
+    learner_name = EXCLUDED.learner_name,
+    legacy_records = EXCLUDED.legacy_records,
+    lms_records = EXCLUDED.lms_records,
+    aptem_ids = EXCLUDED.aptem_ids,
+    lms_profile_ids = EXCLUDED.lms_profile_ids,
+    lms_occurrence_ids = EXCLUDED.lms_occurrence_ids,
+    learner_emails = EXCLUDED.learner_emails,
+    legacy_record_count = EXCLUDED.legacy_record_count,
+    lms_record_count = EXCLUDED.lms_record_count,
+    attendance_result = EXCLUDED.attendance_result,
+    identity_conflict = EXCLUDED.identity_conflict,
+    is_current = true,
+    updated_at = clock_timestamp()
+  WHERE NOT c.is_current
+     OR (c.module_name, c.learner_name, c.legacy_records, c.lms_records,
+         c.aptem_ids, c.lms_profile_ids, c.lms_occurrence_ids, c.learner_emails,
+         c.legacy_record_count, c.lms_record_count, c.attendance_result, c.identity_conflict)
+        IS DISTINCT FROM
+        (EXCLUDED.module_name, EXCLUDED.learner_name, EXCLUDED.legacy_records, EXCLUDED.lms_records,
+         EXCLUDED.aptem_ids, EXCLUDED.lms_profile_ids, EXCLUDED.lms_occurrence_ids, EXCLUDED.learner_emails,
+         EXCLUDED.legacy_record_count, EXCLUDED.lms_record_count, EXCLUDED.attendance_result, EXCLUDED.identity_conflict);
+  GET DIAGNOSTICS v_changed = ROW_COUNT;
+
+  RETURN jsonb_build_object('<literal redacted>', v_source, '<literal redacted>', v_changed,
+                            '<literal redacted>', v_stale, '<literal redacted>', clock_timestamp());
+END
+$function$
+",dd6c527ec55313e978bfd0295a76b2f30b80cbba00a6dd1c2ba72156565da756
+public,regexp_match,"string citext, pattern citext, flags text",text[],f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_match(string citext, pattern citext, flags text)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_match((string)::text, (pattern)::text, CASE WHEN (strpos(flags, '<literal redacted>'::text) = 0) THEN (flags || '<literal redacted>'::text) ELSE flags END)
+",5652e4040783b3293c6993b6704b6ab595f655774f75305ff30ccc8ea524f1bf
+public,regexp_match,"string citext, pattern citext",text[],f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_match(string citext, pattern citext)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_match((string)::text, (pattern)::text, '<literal redacted>'::text)
+",2561a003954ad3727820ca46152098aeaf7e8451813a8e381e56bdade9e5f6b1
+public,regexp_matches,"string citext, pattern citext, flags text",SETOF text[],f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_matches(string citext, pattern citext, flags text)
+ RETURNS SETOF text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT ROWS 10
+RETURN regexp_matches((string)::text, (pattern)::text, CASE WHEN (strpos(flags, '<literal redacted>'::text) = 0) THEN (flags || '<literal redacted>'::text) ELSE flags END)
+",1f20ffaf95a379f6fe4e0362ff1c92df78f2aee1813be77492d8caa31eaebb76
+public,regexp_matches,"string citext, pattern citext",SETOF text[],f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_matches(string citext, pattern citext)
+ RETURNS SETOF text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT ROWS 1
+RETURN regexp_matches((string)::text, (pattern)::text, '<literal redacted>'::text)
+",23c55815cf6b62475796e432335cf2c79e84209897247640f717086771c98e8d
+public,regexp_replace,"string citext, pattern citext, replacement text, flags text",text,f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_replace(string citext, pattern citext, replacement text, flags text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_replace((string)::text, (pattern)::text, replacement, CASE WHEN (strpos(flags, '<literal redacted>'::text) = 0) THEN (flags || '<literal redacted>'::text) ELSE flags END)
+",19dfe3c589704f46ee9fffa2f74e02848d6c48810101980b466b14ad22070180
+public,regexp_replace,"string citext, pattern citext, replacement text",text,f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_replace(string citext, pattern citext, replacement text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_replace((string)::text, (pattern)::text, replacement, '<literal redacted>'::text)
+",c140b94e30119b161c053aa24cd9164be632749894721449b3b95a3ffa7745fe
+public,regexp_split_to_array,"string citext, pattern citext, flags text",text[],f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_split_to_array(string citext, pattern citext, flags text)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_split_to_array((string)::text, (pattern)::text, CASE WHEN (strpos(flags, '<literal redacted>'::text) = 0) THEN (flags || '<literal redacted>'::text) ELSE flags END)
+",59c880d822fe23b143ef297f842c6594b1208f14a36828d76583da2962180289
+public,regexp_split_to_array,"string citext, pattern citext",text[],f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_split_to_array(string citext, pattern citext)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_split_to_array((string)::text, (pattern)::text, '<literal redacted>'::text)
+",85250e7a47a8d80f7a8f3ea32223b66b4a0b16a661d9ead180857fe285b8efa8
+public,regexp_split_to_table,"string citext, pattern citext",SETOF text,f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_split_to_table(string citext, pattern citext)
+ RETURNS SETOF text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_split_to_table((string)::text, (pattern)::text, '<literal redacted>'::text)
+",49da2e750e9b27bd6315a47fbd7486c3399a861dcca31d62e81b34acf9888633
+public,regexp_split_to_table,"string citext, pattern citext, flags text",SETOF text,f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.regexp_split_to_table(string citext, pattern citext, flags text)
+ RETURNS SETOF text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_split_to_table((string)::text, (pattern)::text, CASE WHEN (strpos(flags, '<literal redacted>'::text) = 0) THEN (flags || '<literal redacted>'::text) ELSE flags END)
+",41983089caed9e23ec3c6932fdef4c9388d19b0b389381167cbe65c89cc43a41
+public,replace,"citext, citext, citext",text,f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.replace(citext, citext, citext)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN regexp_replace(($1)::text, regexp_replace(($2)::text, '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text), ($3)::text, '<literal redacted>'::text)
+",56f1e441ea5fb63be861485dd5627f659db7f8f27ef109157ef7973cd9fb88db
+public,show_db_tree,,TABLE(tree_structure text),f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION public.show_db_tree()
+ RETURNS TABLE(tree_structure text)
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+    -- First show all databases
+    RETURN QUERY
+    SELECT '<literal redacted>' || datname || '<literal redacted>'
+    FROM pg_database
+    WHERE datistemplate = false;
+
+    -- Then show current database structure
+    RETURN QUERY
+    WITH RECURSIVE
+    -- Get schemas
+    schemas AS (
+        SELECT
+            n.nspname AS object_name,
+            1 AS level,
+            n.nspname AS path,
+            '<literal redacted>' AS object_type
+        FROM pg_namespace n
+        WHERE n.nspname NOT LIKE '<literal redacted>'
+        AND n.nspname != '<literal redacted>'
+    ),
+
+    -- Get all objects (tables, views, functions, etc.)
+    objects AS (
+        SELECT
+            c.relname AS object_name,
+            2 AS level,
+            s.path || '<literal redacted>' || c.relname AS path,
+            CASE c.relkind
+                WHEN '<literal redacted>' THEN '<literal redacted>'
+                WHEN '<literal redacted>' THEN '<literal redacted>'
+                WHEN '<literal redacted>' THEN '<literal redacted>'
+                WHEN '<literal redacted>' THEN '<literal redacted>'
+                WHEN '<literal redacted>' THEN '<literal redacted>'
+                WHEN '<literal redacted>' THEN '<literal redacted>'
+            END AS object_type
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN schemas s ON n.nspname = s.object_name
+        WHERE c.relkind IN ('<literal redacted>','<literal redacted>','<literal redacted>','<literal redacted>','<literal redacted>','<literal redacted>')
+
+        UNION ALL
+
+        SELECT
+            p.proname AS object_name,
+            2 AS level,
+            s.path || '<literal redacted>' || p.proname AS path,
+            '<literal redacted>' AS object_type
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN schemas s ON n.nspname = s.object_name
+    ),
+
+    -- Combine schemas and objects
+    combined AS (
+        SELECT * FROM schemas
+        UNION ALL
+        SELECT * FROM objects
+    )
+
+    -- Final output with tree-like formatting
+    SELECT
+        REPEAT('<literal redacted>', level) ||
+        CASE
+            WHEN level = 1 THEN '<literal redacted>'
+            ELSE '<literal redacted>' ||
+                CASE object_type
+                    WHEN '<literal redacted>' THEN '<literal redacted>'
+                    WHEN '<literal redacted>' THEN '<literal redacted>'
+                    WHEN '<literal redacted>' THEN '<literal redacted>'
+                    WHEN '<literal redacted>' THEN '<literal redacted>'
+                    WHEN '<literal redacted>' THEN '<literal redacted>'
+                    WHEN '<literal redacted>' THEN '<literal redacted>'
+                    WHEN '<literal redacted>' THEN '<literal redacted>'
+                    ELSE '<literal redacted>'
+                END
+        END || object_name || '<literal redacted>' || object_type || '<literal redacted>'
+    FROM combined
+    ORDER BY path;
+END;
+$function$
+",c6ba7c138ba46cf5431984fc47e2939bd5c4c89a01bc326cfba7c1786d53500b
+public,sparsevec,"sparsevec, integer, boolean",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec(sparsevec, integer, boolean)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec$function$
+",d7d00463cb6c7fe3e526d7ff4ace5113182cf0388e66b13a160522c8e49f9c28
+public,sparsevec_cmp,"sparsevec, sparsevec",integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_cmp(sparsevec, sparsevec)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_cmp$function$
+",7669daf13c8b6fa37cc2a92617ac9b1a534fb6def586976e5be9d5ed97559bb6
+public,sparsevec_eq,"sparsevec, sparsevec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_eq(sparsevec, sparsevec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_eq$function$
+",0da714fbb91360c5c633f92f6523dec2e4b76350a3794858ae8d2b58968909d7
+public,sparsevec_ge,"sparsevec, sparsevec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_ge(sparsevec, sparsevec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_ge$function$
+",9d7f0da7cf0160de316d3c3bca0600f50a4af1f42bd1129e83de40933715c1cf
+public,sparsevec_gt,"sparsevec, sparsevec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_gt(sparsevec, sparsevec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_gt$function$
+",e7379f90f67786e7687c7a25c0843a71f8afdac94e3bb095e5419c2964b316be
+public,sparsevec_in,"cstring, oid, integer",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_in(cstring, oid, integer)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_in$function$
+",6bd113f79f9f0da1298a43f9ab1ca5252bada341a4aade7319bb04420d7bc859
+public,sparsevec_l2_squared_distance,"sparsevec, sparsevec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_l2_squared_distance(sparsevec, sparsevec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_l2_squared_distance$function$
+",90439627fc8dfad0be176e4b72d03d314fa2dc12463a7c1250e8bc11c0e2ec45
+public,sparsevec_le,"sparsevec, sparsevec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_le(sparsevec, sparsevec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_le$function$
+",d33b642b832fbc22342dfcc66f91d4076db1923bcf5227fba87168c77e7c472f
+public,sparsevec_lt,"sparsevec, sparsevec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_lt(sparsevec, sparsevec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_lt$function$
+",1f153b84fb05ce7d4a52d35c384ece2396ff082a0eec34d22e31b01eb170b45e
+public,sparsevec_ne,"sparsevec, sparsevec",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_ne(sparsevec, sparsevec)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_ne$function$
+",2422fb79a465262bbe1b0c86feccc0816ab8e2f4f240415e4285dfd4c5117ffb
+public,sparsevec_negative_inner_product,"sparsevec, sparsevec",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_negative_inner_product(sparsevec, sparsevec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_negative_inner_product$function$
+",f6ad268f4c06aa6d6f8c4d57702bb964d01b72e53a838c738b4ee3c276e38960
+public,sparsevec_out,sparsevec,cstring,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_out(sparsevec)
+ RETURNS cstring
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_out$function$
+",f5d111ab5bdf34e04e2ff2504711cde9a1bee34aaef699356a5b8a598f753687
+public,sparsevec_recv,"internal, oid, integer",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_recv(internal, oid, integer)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_recv$function$
+",b88835b477978b1095c1565cfa0983c2282fe2c9c49b8cad50c271e7ec42857c
+public,sparsevec_send,sparsevec,bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_send(sparsevec)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_send$function$
+",8bea5124d27e46070940100cba5aba186b70d6aa6ca984911616de0808ed1416
+public,sparsevec_to_halfvec,"sparsevec, integer, boolean",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_to_halfvec(sparsevec, integer, boolean)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_to_halfvec$function$
+",4461011499e29718a02cccbd6b955da2c09dfd0956ef1272f2592b3252ece307
+public,sparsevec_to_vector,"sparsevec, integer, boolean",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_to_vector(sparsevec, integer, boolean)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_to_vector$function$
+",321858f27732d8acd26be3ee56d698dc9ff664a5de3deedf7b0f005ce9fd16e3
+public,sparsevec_typmod_in,cstring[],integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.sparsevec_typmod_in(cstring[])
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$sparsevec_typmod_in$function$
+",16b0cb6059bb05f5a320c2e979a6e1ca233811d9188afc8f52c2ed446b9029a0
+public,split_part,"citext, citext, integer",text,f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.split_part(citext, citext, integer)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN (regexp_split_to_array(($1)::text, regexp_replace(($2)::text, '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text), '<literal redacted>'::text))[$3]
+",b758f54fdb2addaf5142f0fba837d3b429537159d166279d4d306f645de40d05
+public,strpos,"citext, citext",integer,f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.strpos(citext, citext)
+ RETURNS integer
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN strpos(lower(($1)::text), lower(($2)::text))
+",d0a0f38dc2b3dbab99e20805715ed02881f9ee268a2c37331145cb37c4e73c53
+public,subvector,"halfvec, integer, integer",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.subvector(halfvec, integer, integer)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_subvector$function$
+",2c440642fee1435be0dd86f5cc58597e77c6e34d8df466da6f2c84d5e27f68a8
+public,subvector,"vector, integer, integer",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.subvector(vector, integer, integer)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$subvector$function$
+",2e2a93444caf6ba05ac6453a03e5ed1905ff6bff8976bf4570895c8a63beb52f
+public,sum,halfvec,halfvec,a,internal,i,False,False,cloud_admin,,,
+public,sum,vector,vector,a,internal,i,False,False,cloud_admin,,,
+public,texticlike,"citext, text",boolean,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.texticlike(citext, text)
+ RETURNS boolean
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$texticlike$function$
+",3dd2134edd0d786da93bc122fee1eafe2dc5afd729b5d4b56fb9a563d005ad70
+public,texticlike,"citext, citext",boolean,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.texticlike(citext, citext)
+ RETURNS boolean
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$texticlike$function$
+",f810615f90bd55b453b3f52a8ca36ce2937d57ad27f12478cdddfd97264c8249
+public,texticnlike,"citext, text",boolean,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.texticnlike(citext, text)
+ RETURNS boolean
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$texticnlike$function$
+",6def882c74ee2616b00b728dede2de86bbd2751b9b389d22a90098ade3c3fc7b
+public,texticnlike,"citext, citext",boolean,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.texticnlike(citext, citext)
+ RETURNS boolean
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$texticnlike$function$
+",f171d61fdd383c1e0e8779e0b393de5934e4fefa100051745943f7921371fd1b
+public,texticregexeq,"citext, citext",boolean,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.texticregexeq(citext, citext)
+ RETURNS boolean
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$texticregexeq$function$
+",6174a63786178b0f564c345a347422905ed8e857b4effba51525428744955eca
+public,texticregexeq,"citext, text",boolean,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.texticregexeq(citext, text)
+ RETURNS boolean
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$texticregexeq$function$
+",e0f4b723afc7411eefe0e9d1aca8361b0eeedbb84955904fd5eeaa098f731475
+public,texticregexne,"citext, citext",boolean,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.texticregexne(citext, citext)
+ RETURNS boolean
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$texticregexne$function$
+",4920bd5a4b996d79e65d39133d68757cf24bf17151f535a9c73c6a5dd01f8207
+public,texticregexne,"citext, text",boolean,f,internal,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.texticregexne(citext, text)
+ RETURNS boolean
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$texticregexne$function$
+",8dd61484fbf92178c24bbc9a64fc90088c7b2beeb8451c83d3166e2bc4b746a2
+public,translate,"citext, citext, text",text,f,sql,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.translate(citext, citext, text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+RETURN translate(translate(($1)::text, lower(($2)::text), $3), upper(($2)::text), $3)
+",a443af0ba73ccc7bf3b641f75549434e7c354517c68b684c0c54203295f35324
+public,vector,"vector, integer, boolean",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector(vector, integer, boolean)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector$function$
+",1646bc84a25109d9cafa7309291e18918466f512a04278718b8b2056166c42dc
+public,vector_accum,"double precision[], vector",double precision[],f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_accum(double precision[], vector)
+ RETURNS double precision[]
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_accum$function$
+",2f08a46b0eb61cc68617d6d7525772a1a2cbefb9716161826dc9cba3b9401b00
+public,vector_add,"vector, vector",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_add(vector, vector)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_add$function$
+",e3c6317ed067373842bc3cdb5b4506fe3b65fc7333e62ddafe57951eb324f76e
+public,vector_avg,double precision[],vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_avg(double precision[])
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_avg$function$
+",41f0e03b20b6287e0acd9ff0ce004556f98327ee82c6b1d2656254f982352329
+public,vector_cmp,"vector, vector",integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_cmp(vector, vector)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_cmp$function$
+",b09669ea1ca6508cd89063e9c4561582e8e390f11c0521d05b80e86aebc086aa
+public,vector_combine,"double precision[], double precision[]",double precision[],f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_combine(double precision[], double precision[])
+ RETURNS double precision[]
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_combine$function$
+",c7a864c96509a166d6043eaa48bddbe625fc6a413977e0a0cd3fba0e330e82a4
+public,vector_concat,"vector, vector",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_concat(vector, vector)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_concat$function$
+",dcabd847d9fac81db443122400bd6d87cecf64b50adb8efab181bb73dc19c1d7
+public,vector_dims,vector,integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_dims(vector)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_dims$function$
+",c010bb75dc9123d1ad2f9d30b86e7f59035ef9fe6833e38bc4e2b12c3707a716
+public,vector_dims,halfvec,integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_dims(halfvec)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$halfvec_vector_dims$function$
+",4e673f49c41a70952ac18e9cc0d9cadbe6ad5066dd2e734abd72d182db280aad
+public,vector_eq,"vector, vector",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_eq(vector, vector)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_eq$function$
+",bb6de98dfa2a7923ab8942274ffefb24d78fc8afcb59856883eda346148a05ee
+public,vector_ge,"vector, vector",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_ge(vector, vector)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_ge$function$
+",f3e19d4234ed74a0a2518a78adec87e7ff2fb775c0165482caf6b3750ee82f35
+public,vector_gt,"vector, vector",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_gt(vector, vector)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_gt$function$
+",bebed11b7b264ce9dbc312badd55e53a492149ddb063ac3e518e8af5a3e8140d
+public,vector_in,"cstring, oid, integer",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_in(cstring, oid, integer)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_in$function$
+",f736ae7600303d4ab1fa88059815ad324bb5fa153a76e63ef4c7bb4b01b7e46b
+public,vector_l2_squared_distance,"vector, vector",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_l2_squared_distance(vector, vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_l2_squared_distance$function$
+",f460c1317da92110be35030ad0e523fac683834dff8b47bb072b6da631260c82
+public,vector_le,"vector, vector",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_le(vector, vector)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_le$function$
+",5b68a3889e16576e65d5f0c874edd6491113cdafae1624bfa9972ecd2791083b
+public,vector_lt,"vector, vector",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_lt(vector, vector)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_lt$function$
+",aef7b13a5f9d7b7881656c3e4c8928816dafe72a4778398cf4538ad73bf67186
+public,vector_mul,"vector, vector",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_mul(vector, vector)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_mul$function$
+",f4f76b40a3870b90f1ae6d36a0e8bbfcdbf1e712b239ecd572ee14dd95da94cf
+public,vector_ne,"vector, vector",boolean,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_ne(vector, vector)
+ RETURNS boolean
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_ne$function$
+",63ecda47618b05bae6ea725da4dd221370c5fa7a82bee621227ff1e6781902d5
+public,vector_negative_inner_product,"vector, vector",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_negative_inner_product(vector, vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_negative_inner_product$function$
+",d2dae2501cf837b1e81f038e7ca0e23fb8c27e5251304ba6d034a5267e9f8720
+public,vector_norm,vector,double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_norm(vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_norm$function$
+",0985fae205ac902b9ddb6536364b0676a8504267927017b5a37f20db83b052ae
+public,vector_out,vector,cstring,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_out(vector)
+ RETURNS cstring
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_out$function$
+",78d0c337e37d34dc31820fa27687232ba01719db129f6e1af6188f845d6e3858
+public,vector_recv,"internal, oid, integer",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_recv(internal, oid, integer)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_recv$function$
+",46944c9739eddc1a5d0984cce59c48f1e6f8929d9771653dd1d3b8c859379812
+public,vector_send,vector,bytea,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_send(vector)
+ RETURNS bytea
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_send$function$
+",43d5ab85dfdc42c3b7603ae4edd80fb9ba91433449b6bebccd5626429dd2a21d
+public,vector_spherical_distance,"vector, vector",double precision,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_spherical_distance(vector, vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_spherical_distance$function$
+",fccea3f534a2bb9b17ccd8310b7a241e31109f6e5e8cc4f16f1f0ceb3f784b88
+public,vector_sub,"vector, vector",vector,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_sub(vector, vector)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_sub$function$
+",f15eb15741a45b87e8add7b6f6b22067eb12714995b7d243748e8e6ffcb3a1bb
+public,vector_to_float4,"vector, integer, boolean",real[],f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_to_float4(vector, integer, boolean)
+ RETURNS real[]
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_to_float4$function$
+",1488837a78b6b13dd928f6cb7abce34701aca98b3d9108d99d36cae555c82fa6
+public,vector_to_halfvec,"vector, integer, boolean",halfvec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_to_halfvec(vector, integer, boolean)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_to_halfvec$function$
+",7f46e1ad5540f0398edcf42870bb3259583d3254e7e27628978b762a1de0d246
+public,vector_to_sparsevec,"vector, integer, boolean",sparsevec,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_to_sparsevec(vector, integer, boolean)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_to_sparsevec$function$
+",bb1fc2aeb19a3543b32a0c38ef91148febc6aef4a3ad3614dbd915c0458eac8c
+public,vector_typmod_in,cstring[],integer,f,c,i,False,True,cloud_admin,,"CREATE OR REPLACE FUNCTION public.vector_typmod_in(cstring[])
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '<literal redacted>', $function$vector_typmod_in$function$
+",d05580508d000c1edcecb8bdf8953c6e9c0580bc83982a82a67aca2a5933ce34
+structured_manual_activities,guard_finalized_journal_month,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION structured_manual_activities.guard_finalized_journal_month()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+        DECLARE
+            old_aptem_id bigint;
+            old_month text;
+            new_aptem_id bigint;
+            new_month text;
+            scope record;
+            latest_event text;
+        BEGIN
+            IF TG_TABLE_NAME = '<literal redacted>' THEN
+                IF TG_OP <> '<literal redacted>' THEN
+                    SELECT aptem_id, month INTO old_aptem_id, old_month
+                    FROM ""structured_manual_activities"".""manual_learner_activities""
+                    WHERE id = OLD.manual_activity_id;
+                    old_aptem_id := COALESCE(old_aptem_id, OLD.aptem_id);
+                    old_month := COALESCE(old_month, OLD.month);
+                END IF;
+                IF TG_OP <> '<literal redacted>' THEN
+                    SELECT aptem_id, month INTO new_aptem_id, new_month
+                    FROM ""structured_manual_activities"".""manual_learner_activities""
+                    WHERE id = NEW.manual_activity_id;
+                    new_aptem_id := COALESCE(new_aptem_id, NEW.aptem_id);
+                    new_month := COALESCE(new_month, NEW.month);
+                END IF;
+            ELSE
+                IF TG_OP <> '<literal redacted>' THEN
+                    old_aptem_id := OLD.aptem_id;
+                    old_month := OLD.month;
+                END IF;
+                IF TG_OP <> '<literal redacted>' THEN
+                    new_aptem_id := NEW.aptem_id;
+                    new_month := NEW.month;
+                END IF;
+            END IF;
+
+            FOR scope IN
+                SELECT DISTINCT aptem_id, report_month
+                FROM (
+                    VALUES (old_aptem_id, old_month), (new_aptem_id, new_month)
+                ) AS scopes(aptem_id, report_month)
+                WHERE aptem_id IS NOT NULL AND report_month IS NOT NULL
+                ORDER BY aptem_id, report_month
+            LOOP
+                PERFORM pg_advisory_xact_lock(hashtext(
+                    '<literal redacted>' || scope.aptem_id::text
+                    || '<literal redacted>' || scope.report_month
+                ));
+                SELECT event_type INTO latest_event
+                FROM ""structured_manual_activities"".""manual_month_finalization_events""
+                WHERE aptem_id = scope.aptem_id
+                  AND report_month = scope.report_month
+                ORDER BY id DESC
+                LIMIT 1;
+                IF latest_event = '<literal redacted>' THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '<literal redacted>',
+                        MESSAGE = '<literal redacted>'
+                            || scope.aptem_id::text || '<literal redacted>' || scope.report_month;
+                END IF;
+                latest_event := NULL;
+            END LOOP;
+            IF TG_OP = '<literal redacted>' THEN
+                RETURN OLD;
+            END IF;
+            RETURN NEW;
+        END
+        $function$
+",2bce5ed334dd8b7dbaf972e2777811ce55d5934188fe3b7782690c3595888b5a
+structured_manual_activities,guard_unique_learner_lms_activity,,trigger,f,plpgsql,v,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION structured_manual_activities.guard_unique_learner_lms_activity()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+        DECLARE
+            new_material_ids bigint[];
+        BEGIN
+            IF NEW.deleted_at IS NOT NULL
+               OR NEW.activity_id IS NULL
+               OR NEW.category NOT IN ('<literal redacted>', '<literal redacted>', '<literal redacted>') THEN
+                RETURN NEW;
+            END IF;
+            IF TG_OP = '<literal redacted>'
+               AND OLD.aptem_id IS NOT DISTINCT FROM NEW.aptem_id
+               AND OLD.activity_id IS NOT DISTINCT FROM NEW.activity_id
+               AND OLD.source_ref IS NOT DISTINCT FROM NEW.source_ref
+               AND OLD.category IS NOT DISTINCT FROM NEW.category
+               AND OLD.deleted_at IS NULL THEN
+                RETURN NEW;
+            END IF;
+
+            new_material_ids :=
+                ""structured_manual_activities"".""lms_material_activity_ids""(
+                    NEW.source_ref, NEW.activity_id
+                );
+            -- Lock each material separately and in stable order. A bundle
+            -- (55,56) and a standalone row (56) must serialize on the same
+            -- key even though their complete material arrays differ.
+            PERFORM pg_advisory_xact_lock(
+                hashtext('<literal redacted>'),
+                hashtext(NEW.aptem_id::text || '<literal redacted>' || material_id::text)
+            )
+            FROM unnest(new_material_ids) AS material_id
+            ORDER BY material_id;
+            IF EXISTS (
+                SELECT 1
+                FROM ""structured_manual_activities"".""manual_learner_activities"" existing
+                WHERE existing.aptem_id = NEW.aptem_id
+                  AND existing.deleted_at IS NULL
+                  AND existing.activity_id IS NOT NULL
+                  AND existing.category IN ('<literal redacted>', '<literal redacted>', '<literal redacted>')
+                  AND existing.id IS DISTINCT FROM NEW.id
+                  AND ""structured_manual_activities"".""lms_material_activity_ids""(
+                        existing.source_ref, existing.activity_id
+                      ) && new_material_ids
+            ) THEN
+                RAISE unique_violation
+                    USING CONSTRAINT = '<literal redacted>',
+                          MESSAGE = '<literal redacted>';
+            END IF;
+            RETURN NEW;
+        END
+        $function$
+",e394d05c8af646a9fd7c88740f8f7f39f561ea782ef4a8d711dd3dba0c89f9d6
+structured_manual_activities,lms_material_activity_ids,"source_ref text, activity_id bigint",bigint[],f,sql,i,False,False,neondb_owner,,"CREATE OR REPLACE FUNCTION structured_manual_activities.lms_material_activity_ids(source_ref text, activity_id bigint)
+ RETURNS bigint[]
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+AS $function$
+            SELECT CASE
+                WHEN source_ref ~ '<literal redacted>'
+                THEN string_to_array(
+                    regexp_replace(source_ref, '<literal redacted>', '<literal redacted>'), '<literal redacted>'
+                )::bigint[]
+                WHEN activity_id IS NOT NULL THEN ARRAY[activity_id]
+                ELSE ARRAY[]::bigint[]
+            END
+        $function$
+",d886bab00590046313daaf43b78497303b5e8ba14ddbbe24b3663ff0b478467f

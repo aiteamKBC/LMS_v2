@@ -1,0 +1,42 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    neon_auth__account {
+        uuid id PK
+        uuid userId FK
+    }
+    neon_auth__invitation {
+        uuid id PK
+        uuid organizationId FK
+        uuid inviterId FK
+    }
+    neon_auth__jwks {
+        uuid id PK
+    }
+    neon_auth__member {
+        uuid id PK
+        uuid organizationId FK
+        uuid userId FK
+    }
+    neon_auth__organization {
+        uuid id PK
+    }
+    neon_auth__project_config {
+        uuid id PK
+    }
+    neon_auth__session {
+        uuid id PK
+        uuid userId FK
+    }
+    neon_auth__user {
+        uuid id PK
+    }
+    neon_auth__verification {
+        uuid id PK
+    }
+    neon_auth__user ||..o{ neon_auth__account : "account_userId_fkey"
+    neon_auth__user ||..o{ neon_auth__invitation : "invitation_inviterId_fkey"
+    neon_auth__organization ||..o{ neon_auth__invitation : "invitation_organizationId_fkey"
+    neon_auth__organization ||..o{ neon_auth__member : "member_organizationId_fkey"
+    neon_auth__user ||..o{ neon_auth__member : "member_userId_fkey"
+    neon_auth__user ||..o{ neon_auth__session : "session_userId_fkey"

@@ -1,0 +1,30 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Learner__source_lms_group_learners {
+        bigint group_id PK
+        bigint learner_id PK
+    }
+    Learner__source_lms_learner_aliases {
+        bigint aptem_id PK
+        bigint lms_learner_id PK
+    }
+    Learner__source_lms_learners {
+        bigint record_id PK
+    }
+    Learner__source_lms_planned_hours {
+        bigint learner_id PK
+        text kind PK
+        text ref PK
+    }
+    Learner__subject_activity_attempts {
+        uuid id PK
+        integer enrolment_id FK
+    }
+    Learner__subject_covers {
+        text subject_ref PK
+    }
+    enrolment__Created_users {
+        integer id PK
+    }
+    enrolment__Created_users ||..o{ Learner__subject_activity_attempts : "subject_activity_attempts_enrolment_id_fkey"

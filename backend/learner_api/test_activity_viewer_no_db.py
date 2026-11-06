@@ -63,6 +63,7 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             attendance = mock('learner_api.teams_attendance.annotate_attendance_completion',
                               side_effect=lambda rows, profile: [{**row, 'attendanceCompleted': True} for row in rows])
             mock('learner_api.replacement_learning.annotate_replacement_learning', side_effect=lambda rows, pk: rows)
+            mock('learner_api.progress_transfer_store.read_state', return_value={'items': []})
             credits = mock('learner_api.live_session_progress.read_live_credits', return_value=[])
             mock('learner_api.live_session_progress.supplement_component_progress', side_effect=lambda rows, credits: rows)
             result = reader.build_learner_detail(source, 7, compact=True, read_only=True,

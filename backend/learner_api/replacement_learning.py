@@ -60,6 +60,17 @@ def project_replacement_learning(components, settings_by_id, courses, activities
     return result
 
 
+def approved_retained_components(transfers, current_module_ids):
+    """Virtual entries for old components an admin explicitly kept without a
+    destination match (see progress_transfer_matching.retained_component).
+
+    Counted toward completion like a retired quiz slot; never implies or
+    creates a destination catalogue component, and never awards hours."""
+    return [component for item in transfers if item.get('status') == 'approved'
+            and item.get('moduleId') in current_module_ids
+            for component in item.get('retainedTransferComponents') or [] if component.get('componentId')]
+
+
 def annotate_replacement_learning(components, enrolment_id):
     """Expose only the server-owned, approved and frozen component matches."""
     from django.db import connections

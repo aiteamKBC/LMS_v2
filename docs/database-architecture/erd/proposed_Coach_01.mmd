@@ -1,0 +1,70 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Coach__catchup_reminder {
+        bigint id PK
+    }
+    Coach__coach_absence_report {
+        bigint id PK
+    }
+    Coach__coach_attendance_adjustment {
+        bigint id PK
+    }
+    Coach__coach_calendar_color_preference {
+        bigint id PK
+    }
+    Coach__coach_calendar_sequence {
+        bigint id PK
+    }
+    Coach__coach_dashboard_snapshot {
+        bigint id PK
+    }
+    Coach__coach_imported_review_instance {
+        bigint id PK
+        bigint source_review_id FK
+        bigint migrated_template_id FK
+    }
+    Coach__coach_manual_attendance {
+        bigint id PK
+    }
+    Coach__coach_meeting_artifacts {
+        bigint id PK
+        bigint calendar_event_id FK
+    }
+    Coach__coach_meeting_attendance {
+        bigint id PK
+        bigint calendar_event_id FK
+    }
+    Coach__coach_meeting_attendance_reports {
+        bigint id PK
+        bigint calendar_event_id FK
+    }
+    Coach__coach_meeting_summaries {
+        bigint id PK
+        bigint calendar_event_id FK
+    }
+    Coach__coach_migrated_review_document {
+        bigint id PK
+        bigint overlay_id FK
+    }
+    Coach__coach_migrated_review_signature {
+        bigint id PK
+        bigint overlay_id FK
+    }
+    Coach__coach_migrated_review_template {
+        bigint id PK
+    }
+    Learner__coach_calendar_event {
+        bigint id PK
+    }
+    Learner__reviews {
+        bigint id PK
+    }
+    Coach__coach_migrated_review_template |o..o{ Coach__coach_imported_review_instance : "coach_imported_revie_migrated_template_id_94f3657b_fk_coach_mig"
+    Learner__reviews |o..o{ Coach__coach_imported_review_instance : "coach_imported_review_source_fk UNVALIDATED"
+    Learner__coach_calendar_event |o..o{ Coach__coach_meeting_artifacts : "coach_meeting_artifacts_calendar_event_id_fkey"
+    Learner__coach_calendar_event |o..o{ Coach__coach_meeting_attendance : "coach_meeting_attendance_calendar_event_id_fkey"
+    Learner__coach_calendar_event |o..o{ Coach__coach_meeting_attendance_reports : "coach_meeting_attendance_reports_calendar_event_id_fkey"
+    Learner__coach_calendar_event |o..o{ Coach__coach_meeting_summaries : "coach_meeting_summaries_calendar_event_id_fkey"
+    Coach__coach_imported_review_instance ||..o| Coach__coach_migrated_review_document : "coach_migrated_revie_overlay_id_43fd4938_fk_coach_imp"
+    Coach__coach_imported_review_instance ||..o{ Coach__coach_migrated_review_signature : "coach_migrated_revie_overlay_id_81a8452b_fk_coach_imp"

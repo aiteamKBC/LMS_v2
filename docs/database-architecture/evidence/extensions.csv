@@ -1,0 +1,8 @@
+extname,extversion,schema
+citext,1.8,public
+pg_session_jwt,0.5.0,public
+pg_stat_statements,1.12,public
+pgcrypto,1.4,public
+plpgsql,1.0,pg_catalog
+postgres_fdw,1.2,public
+vector,0.8.6,public

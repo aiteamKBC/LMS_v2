@@ -1,0 +1,65 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    curriculum__live_sessions {
+        character_varying_128_ id PK
+    }
+    curriculum__programmes {
+        character_varying_150_ programme_id PK
+    }
+    curriculum__source_planned_hours_bulk_batches {
+        bigint id PK
+    }
+    curriculum__source_planned_hours_default_revisions {
+        bigint id PK
+        bigint default_id FK
+        bigint bulk_batch_id FK
+    }
+    curriculum__source_planned_hours_defaults {
+        bigint id PK
+    }
+    curriculum__source_reading_quiz_pairs {
+        bigint id PK
+    }
+    curriculum__standard_ksbs {
+        bigint id PK
+    }
+    curriculum__teams_calendar_create_claims {
+        character_varying_300_ module_key PK
+    }
+    curriculum__teams_calendar_create_drafts {
+        character_varying_300_ module_key PK
+    }
+    curriculum__teams_calendar_integrity_events {
+        character_varying_64_ id PK
+    }
+    curriculum__teams_calendar_sync_state {
+        character_varying_128_ live_session_id PK
+    }
+    curriculum__teams_graph_failures {
+        bigint id PK
+    }
+    curriculum__teams_schedule_emails {
+        character_varying_128_ live_session_id PK
+        text recipient PK
+    }
+    curriculum__tutor_module_notifications {
+        character_varying_160_ id PK
+    }
+    curriculum__tutors {
+        character_varying_128_ id PK
+    }
+    curriculum__week_template_components {
+        character_varying_128_ id PK
+    }
+    curriculum__week_templates {
+        character_varying_128_ id PK
+        character_varying_255_ programme_id FK
+    }
+    curriculum__weeks {
+        character_varying_128_ id PK
+    }
+    curriculum__source_planned_hours_bulk_batches |o..o{ curriculum__source_planned_hours_default_revisions : "source_planned_hours_default_revisions_bulk_batch_id_fkey"
+    curriculum__source_planned_hours_defaults ||..o{ curriculum__source_planned_hours_default_revisions : "source_planned_hours_default_revisions_default_id_fkey"
+    curriculum__live_sessions ||..o| curriculum__teams_calendar_sync_state : "teams_calendar_sync_state_live_session_id_fkey"
+    curriculum__programmes |o..o{ curriculum__week_templates : "week_templates_programme_id_fkey UNVALIDATED"

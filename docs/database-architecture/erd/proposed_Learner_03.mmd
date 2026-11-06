@@ -1,0 +1,79 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Learner__activity_sync_runs {
+        bigint id PK
+    }
+    Learner__evidence_files {
+        uuid id PK
+    }
+    Learner__evidence_items {
+        bigint evidence_id PK
+    }
+    Learner__evidence_lms_matches {
+        bigint evidence_id PK
+    }
+    Learner__evidence_lms_merges {
+        bigint id PK
+    }
+    Learner__evidence_overrides {
+        bigint evidence_id PK
+    }
+    Learner__evidence_replacements {
+        bigint id PK
+    }
+    Learner__evidence_report_ksbs {
+        bigint evidence_id PK
+    }
+    Learner__extra_activities {
+        uuid id PK
+        bigint learner_id FK
+        bigint progress_entry_id FK
+    }
+    Learner__ilr_learning_deliveries {
+        bigint id PK
+    }
+    Learner__journal_ai_audit_runs {
+        bigint id PK
+    }
+    Learner__learner_activity_documents {
+        bigint id PK
+        bigint learner_id FK
+        bigint progress_id FK
+    }
+    Learner__learner_activity_ksbs {
+        bigint aptem_id PK
+        bigint activity_id PK
+    }
+    Learner__learner_activity_reporting_segments {
+        bigint id PK
+        bigint progress_id FK
+        bigint learner_id FK
+        bigint sync_run_id FK
+    }
+    Learner__learner_activity_revisions {
+        bigint id PK
+        bigint learner_id FK
+        bigint progress_id FK
+    }
+    Learner__learner_activity_settings_history {
+        bigint id PK
+    }
+    Learner__learner_progress_entries {
+        bigint id PK
+    }
+    Learner__learners {
+        bigint id PK
+    }
+    enrolment__Created_users {
+        integer id PK
+    }
+    enrolment__Created_users ||..o{ Learner__extra_activities : "extra_activities_learner_id_fkey"
+    Learner__learner_progress_entries |o..o| Learner__extra_activities : "extra_activities_progress_entry_id_fkey"
+    Learner__learners ||..o{ Learner__learner_activity_documents : "learner_activity_documents_learner_id_fkey"
+    Learner__learner_progress_entries |o..o{ Learner__learner_activity_documents : "learner_activity_documents_progress_id_fkey"
+    Learner__learners ||..o{ Learner__learner_activity_reporting_segments : "learner_activity_reporting_segments_learner_id_fkey"
+    Learner__learner_progress_entries ||..o{ Learner__learner_activity_reporting_segments : "learner_activity_reporting_segments_progress_id_fkey"
+    Learner__activity_sync_runs |o..o{ Learner__learner_activity_reporting_segments : "learner_activity_reporting_segments_sync_run_id_fkey"
+    Learner__learners ||..o{ Learner__learner_activity_revisions : "learner_activity_revisions_learner_id_fkey"
+    Learner__learner_progress_entries |o..o{ Learner__learner_activity_revisions : "learner_activity_revisions_progress_id_fkey"

@@ -1,0 +1,11 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Engagement__rewards {
+        integer id PK
+    }
+    Engagement__voucher_claims {
+        integer id PK
+        integer reward_id FK
+    }
+    Engagement__rewards ||..o{ Engagement__voucher_claims : "voucher_claims_reward_id_fkey"
