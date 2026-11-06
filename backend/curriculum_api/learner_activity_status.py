@@ -8,12 +8,12 @@ import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from math import isfinite
-from zoneinfo import ZoneInfo
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import DatabaseError, connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
+from config.working_hours import UK, WORKING_DAY_START, WORKING_DAY_END, WORKING_WEEKDAYS, WORKING_HOURS_LABEL
 
 from login.permissions import require_access, _accesses_of
 from old_otjh.service import ServiceError
@@ -23,7 +23,6 @@ from . import schema_gate
 from . import learner_activity_attendance as attendance
 from .module_progress_metrics import completion_records, apply_ksb_metrics
 
-UK = ZoneInfo('Europe/London')
 TABLES = ('learner_activity_display_overrides', 'learner_activity_display_audit')
 
 
@@ -351,8 +350,10 @@ def interval(payload, owner):
         raise ServiceError('A valid start date and time with timezone is required.')
     end = start + timedelta(seconds=seconds)
     local, finish = start.astimezone(UK), end.astimezone(UK)
-    if local.date() != finish.date() or local.weekday() > 4 or local.hour < 9 or finish.time().replace(tzinfo=None) > datetime.strptime('17:00', '%H:%M').time():
-        raise ServiceError('Enter a weekday interval within 09:00–17:00 UK time.')
+    if (local.date() != finish.date() or local.weekday() not in WORKING_WEEKDAYS
+            or not (WORKING_DAY_START <= local.time() < WORKING_DAY_END)
+            or finish.time() > WORKING_DAY_END):
+        raise ServiceError(f'Enter a weekday interval within {WORKING_HOURS_LABEL}.')
     validate_date(local.date(), owner)
     if end > datetime.now(timezone.utc):
         raise ServiceError('Completed activity time cannot be in the future.')
@@ -360,7 +361,7 @@ def interval(payload, owner):
 
 
 def validate_date(activity_date, owner):
-    if activity_date.weekday() > 4:
+    if activity_date.weekday() not in WORKING_WEEKDAYS:
         raise ServiceError('Enter a weekday activity date.')
     for field, too_early in (('start_date', True), ('end_date', False)):
         if owner.get(field):
