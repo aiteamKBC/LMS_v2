@@ -64,6 +64,22 @@ describe('quiz requirements loading', () => {
       },
     });
   });
+  it.each([0.75, null])('keeps allocated quiz hours (%s) separate from its time limit', async hours => {
+    mocks.detail.mockResolvedValue({ ...detail, modules: ['Project controls'],
+      week: [{ module: 'Project controls', moduleId: 'M1', week: 'Week 1', weekId: 'W1' }], components: [{
+      module: 'Project controls', moduleId: 'M1', week: 'Week 1', weekId: 'W1', componentId: 'Q1',
+      component: 'Campaign quiz', type: 'quiz', isQuiz: true, expectedOtjh: hours,
+      quizMeta: { quizId: 1, questions: 1, duration: 20, timeUnit: 'minutes' },
+    }] });
+    mocks.quiz.mockResolvedValue({ ...(await mocks.quiz()), duration: 20, timeUnit: 'minutes' });
+    renderPage();
+    const heading = await screen.findByRole('heading', { name: 'Campaign quiz' });
+    if (hours == null) expect(heading.parentElement).not.toHaveTextContent(/Required|Planned time/);
+    else expect(heading.parentElement).toHaveTextContent('RequiredPlanned time: 45m');
+    expect(screen.getByText('Time limit').parentElement).toHaveTextContent('20 minutes');
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
   it('waits for the authored reflection requirement before allowing a quick quiz attempt', async () => {
     let resolve!: (value: unknown) => void;
     mocks.detail.mockReturnValue(new Promise(done => { resolve = done; }));
