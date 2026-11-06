@@ -33,10 +33,10 @@ export function seriesSessionWeekTitle(
 ): string {
   if (!seriesId || !sessionNumber) return '';
   const matches = weeks.flatMap(week => week.components.filter(component =>
-    component.type === 'live-session' && component.weekId === week.id
+    component.type === 'live-session' && !!week.id && component.weekId === week.id
     && (!week.moduleId || week.moduleId === moduleId)
     && (!component.moduleId || component.moduleId === moduleId)
-    && component.settings.teamsLiveSessionId === seriesId
-    && String(component.settings.teamsSessionNumber) === String(sessionNumber)).map(() => week.title.trim()));
+    && component.settings?.teamsLiveSessionId === seriesId
+    && String(component.settings?.teamsSessionNumber) === String(sessionNumber)).map(() => week.title?.trim() || ''));
   return matches.length === 1 ? matches[0] : '';
 }

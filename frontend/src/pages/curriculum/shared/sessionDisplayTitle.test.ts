@@ -38,4 +38,24 @@ describe('curriculum session display titles', () => {
     expect(seriesSessionWeekTitle(weeks, 'M1', 'S2', 7)).toBe('');
     expect(seriesSessionWeekTitle([{ ...week, components: [linked, { ...linked, id: 'DUP' }] }], 'M1', 'S1', 7)).toBe('');
   });
+
+  it('keeps the current title when a partial module response omits the week identity or settings', () => {
+    type Weeks = Parameters<typeof seriesSessionWeekTitle>[0];
+    const partialModule = [{ weekNumber: 1, components: [{ type: 'live-session', title: 'Live Teams Session 1' }] }] as unknown as Weeks;
+    expect(seriesSessionWeekTitle(partialModule, 'M1', 'S1', 7)).toBe('');
+    const missingSettings = [{ ...week, components: [{ ...component, settings: undefined }] }] as unknown as Weeks;
+    expect(seriesSessionWeekTitle(missingSettings, 'M1', 'S1', 7)).toBe('');
+  });
+
+  it('requires an actual owning week ID even when the series identity matches', () => {
+    const linked = { ...component, weekId: '', settings: { teamsLiveSessionId: 'S1', teamsSessionNumber: '7' } };
+    expect(seriesSessionWeekTitle([{ ...week, id: '', components: [linked] }], 'M1', 'S1', 7)).toBe('');
+  });
+
+  it('keeps the current title when the matched week has no title', () => {
+    type Weeks = Parameters<typeof seriesSessionWeekTitle>[0];
+    const linked = { ...component, settings: { teamsLiveSessionId: 'S1', teamsSessionNumber: '7' } };
+    const weeks = [{ ...week, title: undefined, components: [linked] }] as unknown as Weeks;
+    expect(seriesSessionWeekTitle(weeks, 'M1', 'S1', 7)).toBe('');
+  });
 });
