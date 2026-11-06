@@ -225,6 +225,50 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(winter[1].astimezone(timezone.utc).hour, 9)
         with self.assertRaises(ServiceError): status.interval({'durationSeconds': 1800, 'startedAt': '2025-12-31T10:00:00Z'}, self.owner)
 
+    def test_early_activity_keeps_the_uk_clock_for_bst_gmt_and_overseas_offsets(self):
+        for start, utc_hour in (
+            ('2026-01-02T08:00:00+00:00', 8),
+            ('2026-07-01T08:00:00+01:00', 7),
+            ('2026-01-02T10:00:00+02:00', 8),
+            ('2026-07-01T10:00:00+03:00', 7),
+        ):
+            with self.subTest(start=start):
+                seconds, begin, end, month = status.interval({'durationSeconds': 1800, 'startedAt': start}, self.owner)
+                self.assertEqual(seconds, 1800)
+                self.assertEqual(begin.astimezone(status.UK).hour, 8)
+                self.assertEqual(begin.astimezone(timezone.utc).hour, utc_hour)
+                self.assertEqual((end - begin).total_seconds(), 1800)
+                self.assertEqual(month, start[:7])
+
+    def test_early_time_edit_keeps_raw_evidence_and_the_original_audit_snapshot(self):
+        self.save(self.payload())
+        self.db.execute('UPDATE learner_progress_entries SET source_payload=?,submitted_at=?,feedback=?',
+                        [json.dumps({'evidence_id': 'e1'}), '2026-10-01T09:04:13Z', 'Existing feedback'])
+        self.db.commit()
+        before = self.query('SELECT * FROM learner_progress_entries')[0]
+        self.save({**self.payload(), 'durationSeconds': 1800, 'startedAt': '2026-10-01T08:15:00+01:00'})
+        after = self.query('SELECT * FROM learner_progress_entries')[0]
+        self.assertEqual(after['id'], before['id'])
+        self.assertEqual(after['actual_seconds'], 1800)
+        self.assertEqual(datetime.fromisoformat(after['reporting_started_at']).astimezone(status.UK).strftime('%H:%M'), '08:15')
+        self.assertEqual(after['submitted_at'], before['submitted_at'])
+        self.assertEqual(after['feedback'], before['feedback'])
+        self.assertEqual(json.loads(after['source_payload'])['evidence_id'], 'e1')
+        snapshot = json.loads(self.query('SELECT before_snapshot FROM learner_activity_display_audit WHERE revision=2')[0]['before_snapshot'])
+        self.assertEqual(snapshot['progress'][0]['reporting_started_at'], before['reporting_started_at'])
+
+    def test_manual_activity_rejects_before_opening_and_after_closing_in_uk_time(self):
+        for start, seconds in (
+            ('2026-01-02T07:59:59+00:00', 1800),
+            ('2026-07-01T06:59:59+00:00', 1800),
+            ('2026-01-02T17:00:00+00:00', 1),
+            ('2026-07-01T16:59:00+01:00', 120),
+        ):
+            with self.subTest(start=start), self.assertRaises(ServiceError):
+                status.interval({'durationSeconds': seconds, 'startedAt': start}, self.owner)
+        result = status.interval({'durationSeconds': 60, 'startedAt': '2026-01-02T16:59:00+00:00'}, self.owner)
+        self.assertEqual(result[2].astimezone(status.UK).strftime('%H:%M:%S'), '17:00:00')
+
     def test_manual_allocation_suppresses_only_its_native_retry_hours(self):
         at = datetime(2026, 1, 2, 10, tzinfo=timezone.utc)
         native = {'id': 1, 'learner_id': 1, 'component_ref': 'c1', 'component_link_source': 'direct', 'kind': 'component', 'submitted_at': at, 'time_taken':'10:00', 'accepted':True}

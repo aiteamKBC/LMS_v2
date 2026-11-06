@@ -30,6 +30,8 @@ import {
   dateRestriction,
   monthBounds,
   WORK_DAY_START,
+  WORK_DAY_END,
+  WORK_DAY_LABEL,
   workingTimeRange,
 } from "@/features/audit/learner-log-pro-copy/lib/ukCalendar";
 
@@ -285,7 +287,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
   const needsSelection = manualEntry ? false : category !== "assignment" && !sourceRef;
 
   // Live validation: the date must sit inside the report month, on a UK
-  // working day; a generated timestamp must fit inside 09:00–17:00.
+  // working day; a generated timestamp must fit inside 08:00–17:00 UK time.
   const dateIssue = needsSelection
     ? null
     : !draft.activity_date
@@ -497,7 +499,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
                 <>
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     Start
-                    <input type="time" min="09:00:00" max="17:00:00" step="1" value={startTime} disabled={needsSelection} onChange={(event) => setStartTime(event.target.value || WORK_DAY_START)} className="h-9 rounded-md border border-border bg-card px-2 font-mono text-sm disabled:opacity-60" aria-label="Start time including seconds" />
+                    <input type="time" min={WORK_DAY_START} max={WORK_DAY_END} step="1" value={startTime} disabled={needsSelection} onChange={(event) => setStartTime(event.target.value || WORK_DAY_START)} className="h-9 rounded-md border border-border bg-card px-2 font-mono text-sm disabled:opacity-60" aria-label="Start time including seconds" title="UK time (GMT/BST)" />
                   </label>
                   {generatedTime && "label" in generatedTime ? (
                     <span className="rounded-md bg-[#f6f8fb] px-2.5 py-1.5 font-mono text-xs text-[#182d48]">{generatedTime.label}</span>
@@ -509,7 +511,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
               <span className="mt-1 block text-[11px] text-destructive">{timeIssue}</span>
             ) : (
               <span className="mt-1 block text-[11px] text-muted-foreground">
-                {tsMode === "time" ? "Generated from the claimed hours, inside legal job hours (09:00–17:00)." : "Saved as “input”."}
+                {tsMode === "time" ? `Generated from the claimed hours, inside working hours (${WORK_DAY_LABEL}).` : "Saved as “input”."}
               </span>
             )}
           </div>
