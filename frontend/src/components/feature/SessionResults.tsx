@@ -224,7 +224,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
         </div>}
       {learner && !preview && !recordingsOnly && (!recordedSessionsLearner || liveAttendanceSatisfied) && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
         <strong>Your original attendance: {ownRawStatus ? rawLabels[ownRawStatus] : upcoming ? 'Not available yet' : session.reportReady ? 'Identity needs review' : 'Awaiting report'}</strong>
-        {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams. Presence requires more than 3 minutes.</p>}
+        {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams.</p>}
         {recordedSessionsLearner && liveAttendanceSatisfied && <p className="mt-1 font-semibold text-primary-700">Your live attendance counts for this session. Watching the recording is optional.</p>}
         {ownFinalOutcome && ownRawStatus && ownFinalOutcome !== ownRawStatus && <p className="mt-1 font-semibold text-primary-700">Effective outcome: {outcomeLabels[ownFinalOutcome]}</p>}
         {own?.attendance === 0 && !own.catchupCompleted && <Link className="mt-2 inline-block font-semibold text-primary-700 underline" to="/learner/attendance">{own.absenceReported ? 'View recovery plan' : 'Open attendance and report absence'}</Link>}
