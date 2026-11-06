@@ -24,7 +24,7 @@ class RewardTrackingCapabilityTests(SimpleTestCase):
             self.assertFalse(reward_tracking.capability(SimpleNamespace(), 'video', 'synthetic-video'))
         connections.__getitem__.assert_called_once_with('default')
 
-    def checkpoint(self, *, learner_kind='apprenticeship', subject_id=12, enabled=False, error=None):
+    def checkpoint(self, *, learner_kind='apprenticeship', subject_id=12, enabled=False, error=None, capability_error=None):
         request = RequestFactory().post(
             f'/?kind={learner_kind}&learnerId=12',
             json.dumps({'trackingToken': 'same-signed-token', 'activityKind': 'video',
@@ -37,7 +37,7 @@ class RewardTrackingCapabilityTests(SimpleTestCase):
         with patch('login.permissions._auth_gate_enabled', return_value=True), \
              patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner', subject_id=subject_id)), \
              patch('learner_api.timing_drafts.checkpoint', return_value=dict(saved), side_effect=error) as store, \
-             patch.object(reward_tracking, 'capability', return_value=enabled) as capability:
+             patch.object(reward_tracking, 'capability', return_value=enabled, side_effect=capability_error) as capability:
             response = time_tracking.checkpoint_time_tracking(request)
         return response, store, capability, saved
 
@@ -68,6 +68,13 @@ class RewardTrackingCapabilityTests(SimpleTestCase):
         self.assertEqual(json.loads(response.content)['error'], 'Invalid signed time.')
         store.assert_called_once()
         capability.assert_not_called()
+
+    def test_access_refusal_cannot_be_converted_into_rewards_disabled(self):
+        response, _, capability, _ = self.checkpoint(capability_error=reward_tracking.mobile.MobileError(
+            'Learning access is not open.', 403, 'learning_access_blocked'))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(json.loads(response.content)['code'], 'learning_access_blocked')
+        capability.assert_called_once()
 
     @override_settings(KBC_SHARED_REWARDS_READY=False)
     def test_disabled_global_flag_never_queries_reward_tables(self):

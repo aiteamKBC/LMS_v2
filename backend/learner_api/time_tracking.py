@@ -267,8 +267,12 @@ def checkpoint_time_tracking(request):
         return _error('Invalid timing request.', 400)
     # A saved browser draft may predate a reward-policy or deployment change.
     # Keep its signed time while refreshing optional observation availability.
-    result['rewardTracking'] = _reward_tracking_capability(
-        request, payload.get('activityKind'), payload.get('activityId'))
+    from .reward_tracking import capability
+    from .mobile import MobileError
+    try:
+        result['rewardTracking'] = capability(request, payload.get('activityKind'), payload.get('activityId'))
+    except MobileError as exc:
+        return JsonResponse({'error': exc.message, 'code': exc.code}, status=exc.status)
     response = JsonResponse(result)
     response['Cache-Control'] = 'private, no-store'
     return response
