@@ -457,6 +457,32 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByText('Scheduled Learner').closest('tr')).toHaveTextContent('10:30 - 11:30');
   });
 
+  it('opens a scheduled MCM form by event key when the calendar row omits form metadata', async () => {
+    fetchEvents.mockResolvedValue({ events: [meeting(33, {
+      learner: 'Meeting learner', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:30',
+      reviewTemplateId: null, reviewInstanceId: null, hasReviewForm: false,
+    })] });
+    openReview.mockResolvedValue({ instanceId: 'REVI-33' });
+    mount();
+    const row = within((await screen.findByText('Meeting learner')).closest('tr')!);
+    fireEvent.click(row.getByRole('button', { name: 'View form' }));
+    await waitFor(() => expect(openReview).toHaveBeenCalledWith('mcr:33'));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/REVI-33');
+  });
+
+  it('explains a failed MCM form lookup instead of opening unrelated meeting details', async () => {
+    fetchEvents.mockResolvedValue({ events: [meeting(34, {
+      learner: 'Meeting learner', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:30',
+      reviewTemplateId: null, reviewInstanceId: null, hasReviewForm: false,
+    })] });
+    openReview.mockRejectedValueOnce(new Error('Review is unavailable.'));
+    mount();
+    fireEvent.click(within((await screen.findByText('Meeting learner')).closest('tr')!)
+      .getByRole('button', { name: 'View form' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Review is unavailable.');
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
+  });
+
   it('opens the learner-owned MCM slides read-only from the meeting row', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
