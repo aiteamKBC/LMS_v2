@@ -957,6 +957,28 @@ it('keeps a review-required timing error visible without offering a misleading r
   expect(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')).not.toBeNull();
 });
 
+it.each(['commercial', 'apprenticeship'])('finishes a %s video using its saved token after rewards are disabled', async kind => {
+  session.outsideWorkingHours = false;
+  const original = { sessionId: 'STALE-REWARD', trackingToken: 'original-signed-token',
+    startedAt: new Date().toISOString(), countingMode: 'active_playback' as const, rewardTracking: true };
+  vi.mocked(startTimeTracking).mockResolvedValue(original);
+  vi.mocked(checkpointTimeTracking).mockResolvedValue({ ...original, persistent: true,
+    savedSeconds: 0, rewardTracking: false });
+  vi.mocked(submitVideoProgress).mockResolvedValue({ record: { timeTaken: '00:00' } } as VideoProgressResponse);
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'video', videoUrl: 'https://example.test/synthetic.mp4', reflectionRequired: true },
+  ] } as unknown as LearnerDetail);
+  const transport = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected observation request'));
+  mount('C1', kind);
+  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  await waitFor(() => expect(submitVideoProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    trackingToken: original.trackingToken, timeEntrySource: 'timer', skipReflection: true,
+  })));
+  expect(checkpointTimeTracking).toHaveBeenCalledWith(original, 'video', 'C1', kind, '1', 0);
+  expect(transport.mock.calls.some(([url]) => String(url).includes('/time-tracking/observations/'))).toBe(false);
+});
+
 it('retries a persistent reading checkpoint on reconnect without erasing the draft', async () => {
   const persistent = { sessionId: 'PERIODIC', trackingToken: 'signed', startedAt: new Date().toISOString(),
     countingMode: 'visible_page' as const, persistent: true };

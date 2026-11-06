@@ -60,10 +60,14 @@ export async function checkpointTimeTracking(session: TimeTrackingSession, activ
     if (data.sessionId !== session.sessionId || data.trackingToken !== session.trackingToken
         || data.startedAt !== session.startedAt || data.countingMode !== session.countingMode
         || !Number.isSafeInteger(data.savedSeconds) || data.savedSeconds < 0
-        || !Number.isSafeInteger(data.elapsedMilliseconds) || data.elapsedMilliseconds < 0 || data.persistent !== true) {
+        || !Number.isSafeInteger(data.elapsedMilliseconds) || data.elapsedMilliseconds < 0 || data.persistent !== true
+        || (data.rewardTracking !== undefined && typeof data.rewardTracking !== 'boolean')) {
       throw new Error('The LMS did not confirm your saved time. Your draft is kept.');
     }
-    const restored = { ...session, persistent: true, savedSeconds: data.savedSeconds };
+    // An explicit server disable supersedes a stale draft. Do not opt old
+    // untracked work into rewards or fabricate observations for its past time.
+    const restored = { ...session, persistent: true, savedSeconds: data.savedSeconds,
+      rewardTracking: session.rewardTracking === true && data.rewardTracking !== false };
     if (restored.rewardTracking) synchronizeTrackingClock(restored, data.elapsedMilliseconds);
     return restored;
   })();

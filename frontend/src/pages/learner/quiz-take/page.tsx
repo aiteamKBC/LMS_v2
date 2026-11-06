@@ -429,7 +429,7 @@ export default function QuizTakePage() {
     try {
       let tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Quiz timing did not start. Reopen the quiz and try again.');
-      if (tracking.persistent) {
+      if (tracking.persistent || tracking.rewardTracking) {
         tracking = await checkpointTimeTracking(tracking, 'quiz', String(quiz.id), kind, id, elapsedSeconds)
           .catch(error => { setExpiredTiming(true); throw error; });
         trackingSessionRef.current = tracking;

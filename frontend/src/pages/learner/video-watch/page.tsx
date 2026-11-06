@@ -677,7 +677,7 @@ export default function ComponentViewPage() {
       if (finalTimeSource === 'input') confirmedManualTime.current = finalTimeSeconds;
       let tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
-      if (tracking.persistent || !canResumeActivityTimer({ session: tracking, elapsedSeconds: elapsedRef.current }, tracking.countingMode)) {
+      if (tracking.persistent || tracking.rewardTracking || !canResumeActivityTimer({ session: tracking, elapsedSeconds: elapsedRef.current }, tracking.countingMode)) {
         tracking = await checkpointTimeTracking(tracking, isVideo ? 'video' : 'component', componentId, kind, id, elapsedRef.current)
           .catch(error => { setExpiredTiming(true); throw error; });
         trackingSessionRef.current = tracking;

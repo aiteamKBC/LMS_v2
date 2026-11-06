@@ -446,6 +446,22 @@ describe('quiz requirements loading', () => {
     expect(screen.queryByText('Reflection form')).not.toBeInTheDocument();
   });
 
+  it('submits the same quiz answers and token after a checkpoint disables stale rewards', async () => {
+    mocks.detail.mockResolvedValue(detail);
+    const original = { sessionId: 'STALE-QUIZ-REWARD', trackingToken: 'same-quiz-token',
+      startedAt: new Date().toISOString(), countingMode: 'active_quiz', rewardTracking: true };
+    mocks.start.mockResolvedValue(original);
+    mocks.checkpoint.mockResolvedValue({ ...original, persistent: true, rewardTracking: false, savedSeconds: 0 });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({
+      answers: { '1': 1 }, trackingToken: original.trackingToken, skipReflection: false,
+    })));
+    expect(mocks.checkpoint).toHaveBeenCalledWith(original, 'quiz', '1', 'commercial', '501', expect.any(Number));
+  });
+
   it('restores the latest saved result and keeps a separate retake action after refresh', async () => {
     mocks.detail.mockResolvedValue({
       ...detail,

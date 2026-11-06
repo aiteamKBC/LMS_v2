@@ -204,6 +204,15 @@ def verify_tracking_session(token, *, activity_kind, activity_id, learner_kind, 
     }
 
 
+def _reward_tracking_capability(request, activity_kind, activity_id):
+    from .reward_tracking import capability
+    from .mobile import MobileError
+    try:
+        return capability(request, activity_kind, activity_id)
+    except MobileError:
+        return False
+
+
 @csrf_exempt
 @learner_self_or_admin(query_param="learnerId")
 def start_time_tracking(request):
@@ -230,14 +239,8 @@ def start_time_tracking(request):
         )
     except TrackingSessionError as exc:
         return _error(str(exc), 400)
-    from django.conf import settings
-    if getattr(settings, 'KBC_SHARED_REWARDS_READY', False) is True:
-        from .reward_tracking import capability
-        from .mobile import MobileError
-        try:
-            session['rewardTracking'] = capability(request, str(payload.get('activityKind') or ''), str(payload.get('activityId') or ''))
-        except MobileError:
-            session['rewardTracking'] = False
+    session['rewardTracking'] = _reward_tracking_capability(
+        request, str(payload.get('activityKind') or ''), str(payload.get('activityId') or ''))
     return JsonResponse(session)
 
 
@@ -262,6 +265,10 @@ def checkpoint_time_tracking(request):
         return JsonResponse({'error': str(exc), 'code': exc.code}, status=409 if exc.code == 'tracking_session_used' else 400)
     except (ValueError, UnicodeDecodeError):
         return _error('Invalid timing request.', 400)
+    # A saved browser draft may predate a reward-policy or deployment change.
+    # Keep its signed time while refreshing optional observation availability.
+    result['rewardTracking'] = _reward_tracking_capability(
+        request, payload.get('activityKind'), payload.get('activityId'))
     response = JsonResponse(result)
     response['Cache-Control'] = 'private, no-store'
     return response

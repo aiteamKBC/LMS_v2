@@ -72,3 +72,23 @@ it('does not accept a replacement identity or a failed checkpoint as successful 
   await expect(checkpointTimeTracking(session, 'component', 'reading', 'commercial', '7', 300)).rejects.toThrow('offline');
   await expect(checkpointTimeTracking(session, 'component', 'reading', 'commercial', '7', 300)).rejects.toThrow('did not confirm');
 });
+
+it.each(['video', 'component', 'quiz'] as const)('refreshes disabled rewards for a saved %s timer without changing its time or identity', async activityKind => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...session,
+    rewardTracking: false, persistent: true, savedSeconds: 600, elapsedMilliseconds: 600000 }) }));
+  const restored = await checkpointTimeTracking(session, activityKind, 'activity', 'apprenticeship', '7', 600);
+  expect(restored).toEqual({ ...session, rewardTracking: false, persistent: true, savedSeconds: 600 });
+});
+
+it('does not enroll a previously untracked session into rewards when policy becomes available', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...session,
+    rewardTracking: true, persistent: true, savedSeconds: 600, elapsedMilliseconds: 600000 }) }));
+  const restored = await checkpointTimeTracking({ ...session, rewardTracking: false }, 'video', 'activity', 'commercial', '7', 600);
+  expect(restored.rewardTracking).toBe(false);
+});
+
+it('rejects a malformed availability flag instead of treating it as a successful timing refresh', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...session,
+    rewardTracking: 'false', persistent: true, savedSeconds: 600, elapsedMilliseconds: 600000 }) }));
+  await expect(checkpointTimeTracking(session, 'video', 'activity', 'commercial', '7', 600)).rejects.toThrow('did not confirm');
+});
