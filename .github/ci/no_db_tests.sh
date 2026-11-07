@@ -20,6 +20,12 @@ else
 fi
 known=$(( $(wc -l < "$OUT/all") - $(wc -l < "$OUT/run") ))
 
+# SHARD/SHARDS (e.g. 2 of 4): this machine runs every SHARDS-th module
+if [ -n "${SHARDS:-}" ] && [ "${SHARDS}" -gt 1 ]; then
+  awk -v n="$SHARDS" -v k="$SHARD" 'NR % n == k % n' "$OUT/run" > "$OUT/part" && mv "$OUT/part" "$OUT/run"
+  echo "part $SHARD of $SHARDS: $(wc -l < "$OUT/run") modules"
+fi
+
 # One process per module, JOBS at a time; each writes <module>.ok or .fail
 export OUT
 xargs -P "$JOBS" -I{} sh -c '

@@ -58,9 +58,52 @@ env:
   GATE: ${{ vars.SECURITY_GATE || 'warn' }}
 
 jobs:
+  # ------------------------------------------------------- what changed
+  # Compared with the commit of the last fully successful run on main (what
+  # is live), not just the previous push: if a deploy was skipped or failed,
+  # its changes are still included next time. CI changes (.github/), manual
+  # runs and an unknown base deploy everything.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      backend: ${{ steps.diff.outputs.backend }}
+      frontend: ${{ steps.diff.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          all() { echo "backend=true" >> "$GITHUB_OUTPUT"; echo "frontend=true" >> "$GITHUB_OUTPUT"; echo "Deploying everything: $1"; exit 0; }
+          [ "$EVENT" = "workflow_dispatch" ] && all "manual run"
+          BASE=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/deploy-aws.yml/runs?branch=main&status=success&per_page=1" \
+            | python3 -c 'import json,sys;r=json.load(sys.stdin)["workflow_runs"];print(r[0]["head_sha"] if r else "")') || BASE=""
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then all "no earlier successful deploy found"; fi
+          FILES=$(git diff --name-only "$BASE" "$CHECKOUT_REF")
+          echo "Changed since $BASE (last successful deploy):"; echo "$FILES" | sed 's/^/  /' | head -50
+          echo "$FILES" | grep -q '^\.github/' && all "CI files changed"
+          b=false; f=false
+          echo "$FILES" | grep -q '^backend/' && b=true
+          echo "$FILES" | grep -q '^frontend/' && f=true
+          echo "backend=$b" >> "$GITHUB_OUTPUT"; echo "frontend=$f" >> "$GITHUB_OUTPUT"
+          echo "backend=$b frontend=$f"
+
   # ---------------------------------------------------------------- backend
   backend:
-    name: Backend - image, tests, scan
+    name: Backend - image, checks, scan
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,11 +127,6 @@ jobs:
         run: |
           docker run --rm -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
             --entrypoint python lms-backend:ci manage.py check
-
-      - name: No-database tests (one process per module)
-        run: |
-          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
-            -v "$PWD/.github/ci:/ci:ro" --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
 
       - name: Other fast tests (not named *_no_db)
         run: |
@@ -134,9 +172,45 @@ jobs:
           path: image.tar.gz
           retention-days: 1
 
+  # No-database tests split over 4 machines at once; each machine rebuilds
+  # the image from the shared build cache (fast) and runs every 4th module
+  backend-tests:
+    name: Backend - tests ${{ matrix.shard }}/4
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (from cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          tags: lms-backend:ci
+          cache-from: type=gha
+
+      - name: No-database tests, part ${{ matrix.shard }} of 4
+        run: |
+          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
+            -e SHARD=${{ matrix.shard }} -e SHARDS=4 \
+            -v "$PWD/.github/ci:/ci:ro" --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
+
   # ------------------------------------------- backend tests with a database
   backend-db:
     name: Backend - database tests (Neon schema branch)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     # Report-only until the suite passes; then remove continue-on-error and
     # add this job to deploy.needs
@@ -189,7 +263,9 @@ jobs:
 
   # --------------------------------------------------------------- frontend
   frontend:
-    name: Frontend - lint, types, tests, build
+    name: Frontend - lint, types, build
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -224,6 +300,8 @@ jobs:
   # the deploy instead of delaying it (~10 minutes)
   frontend-tests:
     name: Frontend - unit tests (report)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     defaults:
@@ -290,8 +368,15 @@ jobs:
   # ------------------------------------------------------------------ deploy
   deploy:
     name: Deploy to AWS
-    needs: [backend, frontend, security]
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    needs: [changes, backend, backend-tests, frontend, security]
+    # Runs when the changed parts passed; parts that didn't change are skipped
+    if: >-
+      !cancelled()
+      && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      && needs.changes.result == 'success'
+      && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
+      && !contains(needs.*.result, 'failure')
+      && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     # Required reviewers on this environment = the approval gate
     environment:
@@ -316,6 +401,8 @@ jobs:
       SITE_URL: ${{ vars.SITE_URL }}
       ALB_METRIC_ID: ${{ vars.ALB_METRIC_ID }}
       COMMIT: ${{ inputs.ref || github.sha }}
+      BACKEND: ${{ needs.changes.outputs.backend }}
+      FRONTEND: ${{ needs.changes.outputs.frontend }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -327,41 +414,53 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # ---- backend (only when backend/ changed) ----
       - id: ecr
+        if: env.BACKEND == 'true'
         uses: aws-actions/amazon-ecr-login@v2
 
       - uses: actions/download-artifact@v4
+        if: env.BACKEND == 'true'
         with:
           name: backend-image
 
       - name: Push image and remember the exact last-good one
+        if: env.BACKEND == 'true'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: bash .github/ci/deploy.sh push
 
       - name: Roll the API services onto the new image
+        if: env.BACKEND == 'true'
         run: bash .github/ci/deploy.sh roll
 
       - name: Wait until every service is healthy
+        if: env.BACKEND == 'true'
         id: wait
         run: bash .github/ci/deploy.sh wait
 
+      # ---- frontend (only when frontend/ changed) ----
       - uses: actions/download-artifact@v4
+        if: env.FRONTEND == 'true'
         with:
           name: frontend-out
           path: out
 
       - name: Upload the frontend (previous page kept for rollback)
+        if: env.FRONTEND == 'true'
         id: frontend
         run: bash .github/ci/deploy.sh frontend
 
       - name: Smoke test the live site
         run: bash .github/ci/deploy.sh smoke
 
+      # Watches the API servers, so only after a backend rollout
       - name: Watch errors and response time for 5 minutes
+        if: env.BACKEND == 'true'
         run: bash .github/ci/deploy.sh watch
 
       - name: Mark this image as last-good
+        if: env.BACKEND == 'true'
         run: bash .github/ci/deploy.sh mark-good
 
       # Runs on any failure; it only undoes what was already changed
