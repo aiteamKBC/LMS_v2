@@ -86,6 +86,17 @@ class FullyWatchedTests(SimpleTestCase):
         watched = [{'artifact_id': 'R2', 'watched_seconds': 7470, 'duration_seconds': 7470}]
         self.assertEqual(self.check(artifacts, watched), {'OCC-1'})
 
+    def test_ready_bunny_recording_keeps_credit_when_the_retained_azure_archive_is_failed(self):
+        artifacts = [self.recording('R1', archive_status='failed',
+                     metadata={'lmsBunnyRecording': {'state': 'ready'}})]
+        watched = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), {'OCC-1'})
+
+    def test_pending_bunny_copy_cannot_use_azure_readiness_for_viewing_credit(self):
+        artifacts = [self.recording('R1', metadata={'lmsBunnyRecording': {'state': 'pending'}})]
+        watched = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), set())
+
     def test_hidden_or_unarchived_recordings_are_not_required_and_nothing_to_watch_is_not_complete(self):
         artifacts = [self.recording('R1'), self.recording('R2', hidden=True), self.recording('R3', archive_status='pending')]
         watched = [{'artifact_id': 'R1', 'watched_seconds': 7200, 'duration_seconds': 7200}]

@@ -120,6 +120,7 @@ class RecoveryQueueTests(unittest.TestCase):
         error = self.cursor.execute.call_args_list[2].args[1][0]
         self.assertIn('Bunny recording reference', error)
         self.assertNotIn('Azure', error)
+        self.assertNotIn("status='failed'", self.cursor.execute.call_args_list[2].args[0])
 
     def test_changed_or_locked_archive_is_not_overwritten(self):
         for row in (None, ('failed', 'private', 'saved.mp4', 'complete'),

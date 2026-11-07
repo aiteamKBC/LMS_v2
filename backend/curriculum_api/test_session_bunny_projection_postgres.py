@@ -77,6 +77,17 @@ class SessionBunnyProjectionTests(TestCase):
                          ('session-recordings', 'original/module/session/recording.mp4', 'ready'))
         self.assertEqual(metadata['lmsBunnyRecording']['state'], 'ready')
 
+    def test_metadata_only_repair_preserves_archive_readiness_and_the_original_path(self):
+        from .session_recording_review import queue_missing_recording
+        path = 'original/module/session/recording.mp4'
+        self.archive(path)
+        self.assertTrue(queue_missing_recording('BUNNY-A', 'BUNNY-S', 'session-recordings', path, provider='bunny'))
+        self.assertEqual(self.saved()[1:], ('session-recordings', path, 'ready'))
+        publish_outcome(self.asset)
+        metadata, container, name, status = self.saved()
+        self.assertEqual((container, name, status), ('session-recordings', path, 'ready'))
+        self.assertEqual(metadata['lmsBunnyRecording']['state'], 'ready')
+
     def test_other_delivery_cannot_publish_or_repair_the_reference(self):
         self.archive(self.asset.library_id + '/' + self.asset.video_id)
         before = self.saved()

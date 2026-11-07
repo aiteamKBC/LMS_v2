@@ -184,6 +184,11 @@ repairs an Azure container label only when its path is the exact saved Bunny
 library/video identity, retaining genuine historical Azure paths for rollback.
 The archive occurrence must match the recording before content is served.
 New transfers still require the Bunny configuration below on the actual worker.
+Legacy Teams artifact URLs follow the same provider rule and redirect native
+video clients to Bunny's protected MP4 rendition. A pending reference or Bunny
+error is visible; neither switches to Azure or Microsoft. Metadata-only repairs
+retain archive readiness, and viewing credit follows the selected Bunny state
+instead of the availability of a retained Azure rollback copy.
 
 ### Configuration
 

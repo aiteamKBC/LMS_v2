@@ -140,6 +140,7 @@ FULL_WATCH_SLACK_RATIO = 0.02
 
 def fully_watched_occurrences(kind, learner_id, occurrence_ids):
     """Occurrences whose every recording the learner can play was watched to the end."""
+    from .session_bunny_policy import bunny_recording
     ids = sorted({str(value) for value in occurrence_ids if value})
     if not ids:
         return set()
@@ -167,7 +168,9 @@ def fully_watched_occurrences(kind, learner_id, occurrence_ids):
         # Only recordings the learner can actually play (archived and not hidden) are required.
         copies = {}
         for row in rows:
-            if row['artifact_type'] == 'recording' and row.get('archive_status') == 'ready' and row['id'] not in hidden:
+            bunny = bunny_recording(row.get('metadata'))
+            state = bunny.get('state') if bunny else row.get('archive_status')
+            if row['artifact_type'] == 'recording' and state == 'ready' and row['id'] not in hidden:
                 copies.setdefault(_recording_identity(row), []).append(row['id'])
         # Teams can return one recording twice under different ids: watching either copy counts.
         if copies and all(any(watched_to_end(artifact_id) for artifact_id in ids) for ids in copies.values()):

@@ -35,8 +35,11 @@ def queue_missing_recording(artifact_id, series_id, container, blob_name, *, pro
         if (not row or row[0] != 'ready' or row[1] != container
                 or row[2] != blob_name or row[3] == 'running'):
             return False
-        cursor.execute('''UPDATE curriculum.session_result_archive
-            SET status='failed',last_error=%s,updated_at=now()
+        # A lost provider pointer does not invalidate an existing archive or
+        # previously earned viewing credit. Only a missing Azure file is failed.
+        archive_update = "" if provider == 'bunny' else "status='failed',"
+        cursor.execute(f'''UPDATE curriculum.session_result_archive
+            SET {archive_update}last_error=%s,updated_at=now()
             WHERE artifact_id=%s''', [
                 'Saved Bunny recording reference is missing; repair queued.' if provider == 'bunny'
                 else 'Saved recording is missing or empty in Azure; retry queued.', artifact_id])
