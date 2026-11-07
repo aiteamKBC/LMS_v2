@@ -97,6 +97,24 @@ describe('learner feedback categories', () => {
     expect(feedbackApi.myForms).toHaveBeenCalledWith(undefined);
   });
 
+  it.each(['commercial', 'apprenticeship'])('opens EPA for the signed-in %s learner through its owned review delivery', async kind => {
+    Object.assign(state.account, { learnerType: kind });
+    Object.assign(state.resolved, { kind });
+    vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [{
+      ...lecture, id: 83, deliveryId: null, reviewDeliveryId: 73, formType: 'post_epa_review',
+      title: 'Gateway experience', sessionTitle: 'Gateway Review',
+    }] });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/learner/feedback']}><LearnerFeedbackPage /><Location /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: /All feedback types/ }));
+    await user.click(screen.getByRole('option', { name: 'EPA Feedback' }));
+    const requests = screen.getByRole('region', { name: 'All feedback requests' });
+    expect(within(requests).getByText('EPA Feedback', { selector: 'p' })).toBeVisible();
+    await user.click(within(requests).getByRole('button', { name: /Start Gateway Review/ }));
+    expect(screen.getByText('/learner/feedback/review/73?category=epa')).toBeVisible();
+    expect(feedbackApi.myForms).toHaveBeenCalledWith(undefined);
+  });
+
   it('shows a unified request list with type, search, status filters and summary', async () => {
     vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [
       lecture,

@@ -1,5 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review' | 'post_progress_review_employer' | 'mid_module' | 'end_module';
+export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review' | 'post_progress_review_employer' | 'post_epa_review' | 'mid_module' | 'end_module';
 export type FeedbackDeliveryScope = 'manual' | 'all_modules' | 'module';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
