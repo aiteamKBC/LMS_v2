@@ -100,15 +100,15 @@ class AzureStorage:
     """Private blobs; references, not expiring SAS URLs, are persisted."""
 
     def __init__(self, container=None):
-        from azure.storage.blob import BlobServiceClient
+        from config.blob_storage import BlobServiceClient, storage_configured
 
         self.container = container or getattr(settings, "KNOWLEDGE_BASE_AZURE_CONTAINER", None) or os.environ.get("KNOWLEDGE_BASE_AZURE_CONTAINER", "")
         if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])", self.container) or "--" in self.container:
             raise StorageError("Set KNOWLEDGE_BASE_AZURE_CONTAINER to a dedicated private container.")
         account = getattr(settings, "AZURE_STORAGE_ACCOUNT", "")
         key = getattr(settings, "AZURE_STORAGE_KEY", "")
-        if not account or not key:
-            raise StorageError("Azure storage account and key are required.")
+        if not storage_configured(account, key):
+            raise StorageError("Azure storage account and key (or the S3 bucket) are required.")
         # Bounded blocks avoid a single large PDF request timing out on slower uplinks.
         self.client = BlobServiceClient(
             account_url=f"https://{account}.blob.core.windows.net", credential=key,

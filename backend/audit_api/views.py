@@ -10,6 +10,7 @@ from collections import defaultdict
 from html import escape
 from urllib.parse import quote, unquote, urlsplit
 
+from django.conf import settings
 from django.db import DatabaseError, connections
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils.http import content_disposition_header
@@ -19,6 +20,8 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
 from .db_source import resolve
+
+from config import blob_storage
 
 try:
     from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_blob_sas
@@ -2317,6 +2320,12 @@ def learner_audit_list(request):
 
 
 def _azure_service_client():
+    if blob_storage.s3_enabled():
+        # S3 keys are namespaced by the Azure account the stored paths name.
+        account = _azure_connection_parts().get("AccountName") or getattr(settings, "AZURE_STORAGE_ACCOUNT", "")
+        if not account or not blob_storage.s3_bucket():
+            raise RuntimeError("S3 storage is not configured (AWS_S3_STORAGE_BUCKET / AZURE_STORAGE_ACCOUNT).")
+        return blob_storage.S3BlobServiceClient(account)
     if BlobServiceClient is None:
         raise RuntimeError("The azure-storage-blob package is not installed.")
     connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip()
@@ -2350,6 +2359,10 @@ def _blob_client_with_fallback(service, container, blob_name):
 
 
 def _signed_blob_url(client):
+    if blob_storage.s3_enabled():
+        return blob_storage.presigned_read_url(
+            client.account_name, client.container_name, client.blob_name, ttl_minutes=30,
+        )
     parts = _azure_connection_parts()
     connection_sas = (parts.get("SharedAccessSignature") or "").lstrip("?")
     if connection_sas:
