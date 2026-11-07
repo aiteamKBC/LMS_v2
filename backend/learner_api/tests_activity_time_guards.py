@@ -16,10 +16,11 @@ class ActivityTimeWriteGuardsTests(SimpleTestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket', side_effect=AssertionError('Network forbidden')))
 
-    def save(self, *, previous=3600, expected=3600, current=1200, frozen=False, historical=False, mode='add'):
+    def save(self, *, previous=3600, expected=3600, current=1200, frozen=False, historical=False, mode='add', attendance=None):
         old = {'kind': 'component', 'componentId': 'C1', 'claimedSeconds': previous,
                'timeTrackingSource': 'signed:input', 'submittedAt': '2026-10-01T10:00:00Z'}
-        history = [old]
+        history = [old] if attendance is None else []
+        original_history = deepcopy(history)
         learner = SimpleNamespace(pk=7, enrolment_id=19, aptem_id=42, username='Synthetic learner',
                                   training_plan_progress=history, save=Mock())
         record = {'kind': 'component', 'componentType': 'reading', 'componentId': 'C1',
@@ -32,7 +33,10 @@ class ActivityTimeWriteGuardsTests(SimpleTestCase):
         connection = MagicMock(vendor='sqlite'); connection.cursor.return_value.__enter__.return_value = cursor
         with ExitStack() as stack:
             stack.enter_context(patch.object(active_users, 'component_reference_state', return_value=('active', None)))
-            stack.enter_context(patch.object(active_users, '_component_learning_context', return_value={'componentType': 'reading'}))
+            stack.enter_context(patch.object(active_users, '_component_learning_context', return_value={
+                'componentType': 'reading' if attendance is None else 'live_session'}))
+            if attendance is not None:
+                stack.enter_context(patch('learner_api.activity_time_history.attendance_baseline', return_value=attendance))
             stack.enter_context(patch.object(active_users.transaction, 'atomic', side_effect=lambda **kwargs: nullcontext()))
             stack.enter_context(patch.object(active_users.transaction, 'on_commit'))
             stack.enter_context(patch.object(active_users, 'connections', {'enrolment': connection}))
@@ -52,7 +56,7 @@ class ActivityTimeWriteGuardsTests(SimpleTestCase):
                 return saved, learner, record, create, cursor, check
             except ValueError:
                 self.assertFalse(create.called, 'A rejected time decision must not insert an attempt')
-                self.assertEqual(history, [old])
+                self.assertEqual(history, original_history)
                 raise
 
     def test_rechecks_current_time_after_the_learner_lock(self):
@@ -90,8 +94,22 @@ class ActivityTimeWriteGuardsTests(SimpleTestCase):
         calls = cursor.execute.call_args_list
         self.assertIn('Created_users', calls[0].args[0])
         metadata = next(call for call in calls if 'source_payload=' in call.args[0])
-        self.assertEqual(json.loads(metadata.args[1][0]), {'retakeTimeChoice': 'add'})
+        self.assertEqual(json.loads(metadata.args[1][0]), {'retakeTimeChoice': 'add', 'retakePreviousSeconds': 3600})
         self.assertEqual(metadata.args[1][1:], [11, 7])
+
+    def test_first_reflection_adds_to_attendance_and_persists_the_authoritative_baseline(self):
+        _, learner, record, create, cursor, _ = self.save(attendance=7200, expected=7200, current=1800)
+        self.assertEqual(record['countedSeconds'], 9000)
+        self.assertEqual(record['claimedSeconds'], 1800)
+        self.assertEqual(record['verifiedSeconds'], 12)
+        self.assertEqual(learner.completed_hours, 2.5)
+        create.assert_called_once()
+        metadata = next(call for call in cursor.execute.call_args_list if 'source_payload=' in call.args[0])
+        self.assertEqual(json.loads(metadata.args[1][0]), {'retakeTimeChoice': 'add', 'retakePreviousSeconds': 7200})
+
+    def test_changed_attendance_baseline_under_the_lock_rejects_without_inserting(self):
+        with self.assertRaisesRegex(ValueError, 'saved activity time changed'):
+            self.save(attendance=9000, expected=7200, current=1800)
 
 
 class ActivityTimeMetadataReadTests(SimpleTestCase):
@@ -99,7 +117,7 @@ class ActivityTimeMetadataReadTests(SimpleTestCase):
         db = sqlite3.connect(':memory:'); self.addCleanup(db.close)
         db.executescript('''ATTACH DATABASE ':memory:' AS Learner;
             CREATE TABLE Learner.learner_progress_entries(id,learner_id,source_payload);
-            INSERT INTO Learner.learner_progress_entries VALUES(11,7,'{"retakeTimeChoice":"add","evidence":"private synthetic evidence"}');''')
+            INSERT INTO Learner.learner_progress_entries VALUES(11,7,'{"retakeTimeChoice":"add","retakePreviousSeconds":7200,"evidence":"private synthetic evidence"}');''')
         profile = LearnerProfile(id=7)
         entry = LearnerProgressEntry(id=11, learner=profile, kind='component', component_ref='C1', claimed_seconds=1200)
         entry._state.adding = False; entry._state.db = 'enrolment'
@@ -117,6 +135,7 @@ class ActivityTimeMetadataReadTests(SimpleTestCase):
         with patch('learner_api.models.connections', {'enrolment': connection}):
             records = profile.training_plan_progress
         self.assertEqual(records[0]['retakeTimeChoice'], 'add')
+        self.assertEqual(records[0]['retakePreviousSeconds'], 7200)
         self.assertEqual(records[0]['claimedSeconds'], 1200)
         self.assertNotIn('source_payload', records[0]); self.assertNotIn('evidence', records[0])
         self.assertEqual(len(statements), 1)
