@@ -175,6 +175,21 @@ origin. Viewing-time reporting and transcript seeking remain in the LMS;
 video bytes are served by Bunny. An unavailable Bunny player does not silently
 switch to Azure. Normal transcript and attendance storage are unchanged.
 
+The cutover also applies when a recording loses its saved Bunny metadata:
+session results and the recordings library report it as pending, and the content
+route refuses Azure playback. The reviewer queues the existing session worker
+to restore the reference. An already completed journal entry can be re-published
+with new transfers disabled; this performs no media transfer. The projection
+repairs an Azure container label only when its path is the exact saved Bunny
+library/video identity, retaining genuine historical Azure paths for rollback.
+The archive occurrence must match the recording before content is served.
+New transfers still require the Bunny configuration below on the actual worker.
+Legacy Teams artifact URLs follow the same provider rule and redirect native
+video clients to Bunny's protected MP4 rendition. A pending reference or Bunny
+error is visible; neither switches to Azure or Microsoft. Metadata-only repairs
+retain archive readiness, and viewing credit follows the selected Bunny state
+instead of the availability of a retained Azure rollback copy.
+
 ### Configuration
 
 Use the backend and worker environments, including the AWS runtime secrets:
@@ -224,6 +239,14 @@ so scoped uploads do not break old deployed readers before the new player is
 released. Deploy reviewed backend and frontend together from merged main under
 AGENTS.md, with the same environment values in the relevant AWS containers.
 Local `.env` edits do not update AWS automatically.
+
+After the backend rollout, CI reports read-only summaries for the running
+`session-worker` and `curriculum-api` tasks: whether their image digest matches
+the release, required setting names are mapped, the Bunny flag is enabled, and
+the scheduled worker command is present. Secret values and command text are
+never printed. Secret-backed flag values remain unverified. These diagnostics
+warn without rolling back a healthy release; they do not prove worker execution
+or authorized playback. A missing AWS read permission is reported explicitly.
 
 Retained Azure references protect those existing recordings during rollback.
 Recordings created only in Bunny require a Bunny-capable backend and player;

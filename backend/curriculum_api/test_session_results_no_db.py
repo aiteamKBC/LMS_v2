@@ -1184,6 +1184,18 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(self.ns['read'].call_args.args[1], [['O']])
         self.cursor.execute.assert_not_called()
 
+    def test_cutover_file_list_does_not_advertise_a_ready_azure_archive_as_playable(self):
+        self.ns['apply_recovery'] = Mock()
+        self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 7, 'status': 'completed',
+            'scheduled_start': '2026-11-06T09:00Z', 'scheduled_end': '2026-11-06T11:00Z'}],
+            [], [], [], [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': 'recording',
+                         'created_datetime': None, 'archive_status': 'ready', 'transcript_text': None,
+                         'metadata': {}}]]
+        rows = self.ns['result_rows']({'id': 'S', 'attendees': []}, session_number=7)
+        artifact = rows[0]['artifacts'][0]
+        self.assertEqual((artifact['state'], artifact['playbackProvider']), ('pending', 'bunny'))
+        self.cursor.execute.assert_not_called()
+
     def test_missing_archive_queue_never_claims_success(self):
         self.ns['read'].return_value = [{'id': 'S'}]
         self.cursor.execute.side_effect = self.missing_archive()
@@ -1240,6 +1252,18 @@ class EndpointTests(unittest.TestCase):
             'container': 'session-recordings', 'blob_name': 'old.mp4',
             'metadata': {'lmsBunnyRecording': {'state': 'pending'}}}]
         self.assertEqual(self.ns['stored_content'](self.req(), 'S', 'A').status_code, 409)
+
+    def test_cutover_recording_without_bunny_pointer_cannot_sign_an_azure_video(self):
+        storage = types.ModuleType('learner_api.evidence_storage')
+        storage.get_read_sas = Mock(side_effect=AssertionError('Azure playback forbidden after cutover'))
+        for day in ('2026-11-05T00:00:00Z', '2026-11-06T09:00:00Z'):
+            with self.subTest(day=day), patch.dict(sys.modules, {'learner_api.evidence_storage': storage}):
+                self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording',
+                    'scheduled_start': day, 'metadata': {}, 'container': 'session-recordings',
+                    'blob_name': '798153/saved-bunny-video'}]
+                response = self.ns['stored_content'](self.req(), 'S', 'A')
+            self.assertEqual(response.status_code, 409)
+        storage.get_read_sas.assert_not_called()
 
     def personal_session_reader(self):
         namespace = {'__package__': 'learner_api', 'copy': copy, 're': re}

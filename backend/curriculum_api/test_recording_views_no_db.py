@@ -86,6 +86,41 @@ class FullyWatchedTests(SimpleTestCase):
         watched = [{'artifact_id': 'R2', 'watched_seconds': 7470, 'duration_seconds': 7470}]
         self.assertEqual(self.check(artifacts, watched), {'OCC-1'})
 
+    def test_ready_bunny_recording_keeps_credit_when_the_retained_azure_archive_is_failed(self):
+        artifacts = [self.recording('R1', archive_status='failed',
+                     metadata={'lmsBunnyRecording': {'state': 'ready'}})]
+        watched = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), {'OCC-1'})
+
+    def test_pending_bunny_copy_cannot_use_azure_readiness_for_viewing_credit(self):
+        artifacts = [self.recording('R1', metadata={'lmsBunnyRecording': {'state': 'pending'}})]
+        watched = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), set())
+
+    def test_pending_bunny_alias_blocks_credit_from_a_ready_azure_duplicate(self):
+        identity = {'callId': 'C1', 'createdDateTime': '2026-11-06T09:00:00Z',
+                    'endDateTime': '2026-11-06T10:00:00Z'}
+        artifacts = [self.recording('R1', metadata={**identity, 'lmsBunnyRecording': {'state': 'pending'}}),
+                     self.recording('R2', metadata=identity)]
+        watched = [{'artifact_id': 'R2', 'watched_seconds': 600, 'duration_seconds': 600}]
+        for aliases in (artifacts, list(reversed(artifacts))):
+            with self.subTest(order=[row['id'] for row in aliases]):
+                self.assertEqual(self.check(aliases, watched), set())
+
+    def test_post_cutover_recording_without_bunny_metadata_cannot_borrow_azure_credit(self):
+        artifacts = [self.recording('R1', scheduled_start='2026-11-06T09:00:00Z')]
+        watched = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), set())
+
+    def test_ready_bunny_alias_preserves_watch_evidence_on_the_same_recordings_other_id(self):
+        identity = {'callId': 'C1', 'createdDateTime': '2026-11-06T09:00:00Z',
+                    'endDateTime': '2026-11-06T10:00:00Z'}
+        artifacts = [self.recording('R1', archive_status='failed',
+                                   metadata={**identity, 'lmsBunnyRecording': {'state': 'ready'}}),
+                     self.recording('R2', archive_status='failed', metadata=identity)]
+        watched = [{'artifact_id': 'R2', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), {'OCC-1'})
+
     def test_hidden_or_unarchived_recordings_are_not_required_and_nothing_to_watch_is_not_complete(self):
         artifacts = [self.recording('R1'), self.recording('R2', hidden=True), self.recording('R3', archive_status='pending')]
         watched = [{'artifact_id': 'R1', 'watched_seconds': 7200, 'duration_seconds': 7200}]
