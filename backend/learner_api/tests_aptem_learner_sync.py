@@ -1,6 +1,7 @@
 """Aptem detail refreshes preserve plans, account security and identity scope."""
 
 import json
+from datetime import date
 from contextlib import nullcontext
 from io import StringIO
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ def enrolment(**values):
     return SimpleNamespace(**{
         "pk": 71, "aptem_id": "10001", "username": "Example Learner",
         "programme_status": "Active", "learning_plan": {"preserve": True},
+        "start_date": None, "end_date": None,
         **values,
     })
 
@@ -46,6 +48,84 @@ def source(**values):
 
 
 class AptemDetailPlanTests(SimpleTestCase):
+    def test_programme_dates_sync_for_every_state_including_active_and_unknown(self):
+        for status in ("Active", "Withdrawn", "OnBreak", "Completed", "EnteredEpa",
+                       "Onboarding", "ReadyToEnrol", "Future state", None):
+            with self.subTest(status=status):
+                plan = plan_update(source(programme_status=status, start_date=date(2025, 1, 2),
+                                          end_date=date(2027, 8, 30)), enrolment(), profile())
+                self.assertEqual(plan["enrolment"]["start_date"], "2025-01-02")
+                self.assertEqual(plan["enrolment"]["end_date"], "2027-08-30")
+                self.assertEqual(plan["profile"]["start_date"], date(2025, 1, 2))
+                self.assertEqual(plan["profile"]["end_date"], date(2027, 8, 30))
+
+    def test_missing_imported_end_never_clears_the_existing_end(self):
+        plan = plan_update(source(programme_status="Withdrawn", start_date=date(2025, 1, 2), end_date=None),
+                           enrolment(end_date="2027-08-30"), profile(end_date=date(2027, 8, 30)))
+        self.assertEqual(plan["enrolment"]["start_date"], "2025-01-02")
+        self.assertNotIn("end_date", plan["enrolment"])
+        self.assertNotIn("end_date", plan["profile"])
+        self.assertIn("missing_end_date", plan["preserved"])
+
+    def test_omitted_dates_are_independent_of_status_and_name_updates(self):
+        plan = plan_update(source(full_name="Updated Example"), enrolment(), profile())
+        self.assertNotIn("start_date", plan["enrolment"])
+        self.assertNotIn("end_date", plan["profile"])
+        self.assertEqual(plan["preserved"], [])
+
+    def test_invalid_date_cannot_write_half_of_an_untrusted_window(self):
+        for invalid in ("bad", "2025-02-30", "2025-01-02junk", 0):
+            with self.subTest(invalid=invalid):
+                plan = plan_update(source(start_date=invalid, end_date=date(2027, 8, 30),
+                                          full_name="Updated Example"), enrolment(), profile())
+                self.assertEqual(plan["enrolment"], {"username": "Updated Example"})
+                self.assertEqual(plan["profile"], {"full_name": "Updated Example"})
+                self.assertIn("invalid_start_date", plan["review"])
+
+    def test_reversed_or_zero_length_window_does_not_write_dates(self):
+        for end in (date(2025, 1, 1), date(2025, 1, 2)):
+            with self.subTest(end=end):
+                plan = plan_update(source(start_date=date(2025, 1, 2), end_date=end), enrolment(), profile())
+                self.assertEqual(plan["enrolment"], {})
+                self.assertEqual(plan["profile"], {})
+                self.assertIn("invalid_date_range", plan["review"])
+
+    def test_partial_source_must_also_fit_the_preserved_existing_dates(self):
+        plan = plan_update(source(start_date=date(2026, 1, 2), end_date=None),
+                           enrolment(end_date="2025-12-31"), profile())
+        self.assertEqual(plan["enrolment"], {})
+        self.assertEqual(plan["profile"], {})
+        self.assertIn("invalid_date_range", plan["review"])
+
+    def test_unparseable_preserved_counterpart_is_reported(self):
+        plan = plan_update(source(start_date=date(2025, 1, 2), end_date=None),
+                           enrolment(end_date="unknown"), profile())
+        self.assertEqual(plan["enrolment"], {})
+        self.assertIn("unverifiable_existing_date_range", plan["review"])
+
+    def test_equivalent_dates_are_not_rewritten_for_formatting(self):
+        plan = plan_update(source(start_date=date(2025, 1, 2), end_date=date(2027, 8, 30)),
+                           enrolment(start_date="02/01/2025", end_date="30 August 2027"),
+                           profile(start_date=date(2025, 1, 2), end_date=date(2027, 8, 30)))
+        self.assertEqual(plan["enrolment"], {})
+        self.assertEqual(plan["profile"], {})
+
+    def test_date_import_is_idempotent_and_leaves_review_anchors_and_progress_untouched(self):
+        e = enrolment(learner_start_date="2024-01-02", learner_end_date="2028-03-04")
+        p = profile(learner_start_date="2024-01-02", learner_end_date="2028-03-04")
+        progress = p.training_plan_progress
+        imported = source(start_date=date(2025, 1, 2), end_date=date(2027, 8, 30))
+        first = plan_update(imported, e, p)
+        for target, row in (("enrolment", e), ("profile", p)):
+            for field, value in first[target].items():
+                setattr(row, field, value)
+        second = plan_update(imported, e, p)
+        self.assertEqual(second["enrolment"], {})
+        self.assertEqual(second["profile"], {})
+        self.assertEqual(e.learner_start_date, "2024-01-02")
+        self.assertEqual(p.learner_end_date, "2028-03-04")
+        self.assertIs(p.training_plan_progress, progress)
+
     def test_explicit_withdrawal_reaches_both_local_statuses(self):
         plan = plan_update(source(programme_status="Withdrawn"), enrolment(), profile())
         self.assertEqual(plan["enrolment"], {"programme_status": "Withdrawn"})
@@ -120,6 +200,20 @@ class AptemDetailPlanTests(SimpleTestCase):
                            enrolment(), profile(), account())
         self.assertEqual(plan["review"], ["identity_mismatch"])
         self.assertFalse(any(plan[target] for target in ("enrolment", "profile", "account")))
+
+    def test_existing_profile_id_can_anchor_a_missing_enrolment_id_without_backfilling_it(self):
+        learner = enrolment(aptem_id=None)
+        plan = plan_update(source(start_date=date(2025, 1, 2), end_date=date(2027, 8, 30)),
+                           learner, profile())
+        self.assertEqual(plan["enrolment"]["start_date"], "2025-01-02")
+        self.assertNotIn("aptem_id", plan["enrolment"])
+        self.assertIsNone(learner.aptem_id)
+        self.assertEqual(plan["review"], [])
+
+    def test_invalid_supplied_enrolment_id_is_not_hidden_by_the_profile_fallback(self):
+        plan = plan_update(source(start_date=date(2025, 1, 2)), enrolment(aptem_id="invalid"), profile())
+        self.assertEqual(plan["review"], ["identity_mismatch"])
+        self.assertEqual(plan["enrolment"], {})
 
     def test_disagreeing_profile_identity_prevents_all_writes(self):
         for values in ({"aptem_id": 10002}, {"enrolment_id": 999}):
@@ -220,12 +314,14 @@ class AptemDetailCommandTests(SimpleTestCase):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         cursor.fetchall.side_effect = [
-            [("10001", "Example Active", "Active")],
-            [("10002", "Example Withdrawn", "Withdrawn")],
+            [("10001", "Example Active", "Active", date(2025, 1, 2), date(2027, 8, 30))],
+            [("10002", "Example Withdrawn", "Withdrawn", date(2025, 1, 2), None)],
         ]
         with patch("learner_api.management.commands.sync_aptem_learner_details.connections", {"enrolment": connection}):
             rows = Command()._sources({"10001", "10002"}, lock=True)
         self.assertEqual([row["programme_status"] for row in rows], ["Active", "Withdrawn"])
+        self.assertEqual(rows[0]["start_date"], date(2025, 1, 2))
+        self.assertIsNone(rows[1]["end_date"])
         statements = [call.args[0] for call in cursor.execute.call_args_list]
         self.assertIn('"LMS"."Aptem_users"', statements[0])
         self.assertIn('"LMS"."non_active_users"', statements[1])
@@ -287,6 +383,20 @@ class AptemDetailCommandTests(SimpleTestCase):
             self.run_command(apply=True, aptem_ids=["10001"],
                              records=[enrolment(), enrolment(pk=72, aptem_id="0010001")])
         self.write.assert_not_called()
+
+    def test_profile_fallback_and_enrolment_id_cannot_claim_the_same_source(self):
+        report = self.run_command(
+            records=[enrolment(), enrolment(pk=72, aptem_id=None)],
+            profiles=[profile(), profile(pk=83, enrolment_id=72, aptem_id=10001)],
+        )
+        self.assertEqual(report["review"], {"ambiguous_aptem_id": 2})
+        self.write.assert_not_called()
+
+    def test_scoped_profile_fallback_reaches_an_existing_active_learner(self):
+        report = self.run_command(apply=True, aptem_ids=["10001"],
+                                  records=[enrolment(aptem_id=None)], profiles=[profile()])
+        self.assertEqual(report["counts"]["examined"], 1)
+        self.assertEqual(self.write.call_count, 1)
 
     def test_duplicate_imported_aptem_id_is_rejected(self):
         report = self.run_command(sources=[source(), source(programme_status="Withdrawn")])

@@ -1,7 +1,7 @@
 # Aptem learner details reconciliation
 
-This change reconciles existing LMS learners with the imported Aptem identity
-and programme state. It never creates learners, login accounts, invitations,
+This change reconciles existing LMS learners with the imported Aptem identity,
+programme state and programme dates. It never creates learners, login accounts, invitations,
 activities, training plans or meetings.
 
 ## Confirmed source contract
@@ -36,11 +36,29 @@ delivery records or the enrolment/account names.
 - `Learner.learners.full_name`, `programme_status`, `lifecycle_status`;
 - an existing learner login's `Display_name`.
 
+The requested date extension also reconciles `Created_users.Start_date` /
+`End_date` and `Learner.learners.start_date` / `end_date` with imported
+`Start-Date` / `End-Date`. This applies to every matched local learner regardless
+of programme status, including Active and Withdrawn. Date reconciliation is
+independent of name/status availability.
+
+Missing or omitted imported dates never clear existing dates. Invalid dates,
+reversed/zero-length windows, or a partial source window that conflicts with a
+preserved local date produce review counts instead of a guessed write.
+Equivalent calendar dates are compared as dates, without converting through the
+workstation time zone or rewriting a correct textual date just for formatting.
+The distinct `Learner_start_date` / `Learner_end_date` header overrides are not
+changed: they anchor reviews and have a separate established business contract.
+
 The command updates timestamps only on records which actually change. Its ORM
 writes use the existing audit registration. Matching uses a strict positive
 bigint Aptem ID, then the exact `enrolment_id` and learner account subject link.
-It does not fall back to names or shared email addresses. Conflicting profile
-IDs, duplicate import/enrolment/profile/account links and missing source records
+When the enrolment Aptem ID is absent, a single existing profile's Aptem ID can
+supply the bridge only through its exact `enrolment_id`. An invalid supplied
+enrolment ID is never hidden by that fallback. Neither identity field is
+backfilled or rewritten. Matching does not fall back to names or shared email
+addresses. Conflicting profile IDs, duplicate import/enrolment/profile/account
+links (including direct-versus-profile ID claims) and missing source records
 are reported without guessing a match.
 
 Explicit withdrawal maps to `Withdrawn`, break aliases to `On break`, completion
@@ -66,6 +84,12 @@ existing Coach Dashboard outbox boundary when that feature is enabled. Dashboard
 cache invalidation is registered after commit. Existing caseload response TTLs
 and the legacy dashboard snapshot refresh still apply; this is not a promise
 that every already-open browser updates immediately.
+
+Multi-learner writes group identical field sets into batches of at most 200
+rows, retaining each row's own values in parameterized CASE expressions. The
+existing audited queryset `update` path records before/after values. A row with
+no imported end date cannot accidentally acquire another row's end date or have
+its existing value cleared.
 
 ## Running and scheduling
 
@@ -163,7 +187,7 @@ and one name. The subsequent all-local-learners comparison applied changes to
 stale delivery-profile fields and eight existing account display names. Overall,
 50 learners received a correction in this session.
 
-The final full comparison counted 699 local records: 616 have an Aptem ID,
+At that stage, the full comparison counted 699 local records: 616 have an enrolment Aptem ID,
 614 were found in the two source tables and need no further supported updates,
 two linked records are missing from the imported sources, and 83 have no Aptem
 ID. Forty-two local lifecycle states were intentionally preserved under the
@@ -182,7 +206,72 @@ rendering were therefore not confirmed. Existing caseload cache expiry (up to
 five minutes for a paginated response) and dashboard refresh behavior still
 apply.
 
-Source/runtime schedule verification, PR review, merged-main deployment and
-activation of the polling worker remain release work. The two missing imported
-records remain visible as review counts; the 83 unlinked local learners are
-reported without being matched by name or imported automatically.
+## Date extension: applied checks and outcome
+
+The date follow-up covered the same existing local learner population and added
+no learners, profiles or accounts. The first application corrected programme
+dates for 610 learners with direct enrolment Aptem IDs. A subsequent comparison
+found 13 additional existing profile-ID bridges: six have imported source rows
+and seven do not. Five of those six needed date corrections; one was already
+aligned. This is an existing identity link, not a match inferred from email.
+
+In total, programme dates were corrected for **615 existing learners** across
+all statuses: 613 enrolment start dates, 448 enrolment end dates, 575 profile
+start dates and 444 profile end dates. The profile-linked batch also corrected
+one existing learner's name and account display name under the original name
+sync policy. Eighty-seven missing imported end dates left existing local ends
+unchanged.
+
+The final command comparison counted 699 local records, 629 with a trusted
+direct/profile Aptem identity and 620 matched to the imports. All 620 matched
+records were unchanged on repeat. Nine linked records are absent from both
+imports, and 70 local learners have no trusted Aptem identity. The separate
+`without_aptem_id` count remains 83 because 13 use the existing profile bridge
+without backfilling the enrolment ID. Forty-two deliberate local lifecycle
+differences remain preserved. These counts describe the checked snapshot.
+
+An independent read-only SQL comparison against the verified LMS branch found
+zero remaining supplied-date differences in all four date fields across the
+620 matched records. Before/after fingerprints verified unrelated enrolment /
+profile fields (including activation states, learner-specific review anchors,
+plans and hours), account identity/security, historical progress, unaffected
+records, missing-source end dates, row counts and imported source data. The
+direct-ID batch preserved all names and whole login records; the profile-ID
+batch permitted only its one planned name/display-name correction alongside
+dates. Both applications used repeatable-read transactions. No production
+schema, Aptem identity fields or environment files changed.
+
+Date follow-up validation:
+
+- SQLite feature/consumer regression selection: **84 passed**, using the isolated
+  settings, local cache and external-network guard. The selection adds
+  `learner_api.tests_aptem_schedule` and `learner_api.tests_learner_date_sync`
+  to the relevant identity/status feature labels. The exact invocation from
+  `backend` was
+  `.\.venv\Scripts\python.exe ..\.qa-tmp\ticket4-maher-20261107\run-date-feature-sqlite.py`.
+- Verified local PostgreSQL feature selection: **88 passed** using
+  `.\.venv\Scripts\python.exe ..\.qa-tmp\ticket4-maher-20261107\run-date-feature-postgres.py`
+  from `backend`. This contains the same 84 cases plus four real database tests
+  of active/inactive date synchronization, partial-date preservation, existing
+  profile identity fallback and rollback after grouped writes. Fixtures verify
+  the actual local database, cluster directory and network boundary before
+  writing synthetic records. The test database was destroyed after success.
+- The existing `test_activation_copies_header_dates_into_new_profile` initially
+  failed independently with the new reconciliation modules absent from the
+  process: its mock setup did not isolate `replace_free_courses`. A focused mock
+  and a matching call assertion were added; all existing date/identity assertions
+  remain. Production activation logic was not changed.
+- Teams baseline / expanded Teams checks for this follow-up: **NOT REQUIRED**.
+  The extension changes only this updater, its feature tests and documentation;
+  no listed Teams file or function/type/API imported by one is changed. The
+  earlier 147/170 Teams results above belong to the original startup-safety
+  change and were not rerun for this data/date extension.
+- Live Teams and live browser verification remain **NOT RUN**. The periodic
+  worker still requires normal review, merge and deployment before activation.
+
+Source/runtime schedule verification, [PR review](https://github.com/aiteamKBC/LMS_v2/pull/608),
+merged-main deployment and activation of the polling worker remain release
+work. The nine missing imported records remain visible as review counts; the
+70 learners without a trusted identity are reported without being matched by
+name/email or imported automatically. Neither the worker nor the upstream
+schedule's successful live execution has been verified.

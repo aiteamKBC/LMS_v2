@@ -7,11 +7,12 @@ from contextlib import nullcontext
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError, connections, transaction
+from django.db.models import Case, F, Value, When
 from django.utils import timezone
 
 from coach_api.read_model import enqueue_coach_dashboard_refresh
 from curriculum_api.versioning import audit_context
-from learner_api.aptem_learner_sync import aptem_id, plan_update
+from learner_api.aptem_learner_sync import aptem_id, linked_aptem_id, plan_update
 from learner_api.models import EnrolmentUser, LearnerProfile
 from login.models import LoginAccount
 
@@ -21,7 +22,7 @@ ALIAS = "enrolment"
 
 class Command(BaseCommand):
     help = (
-        "Dry-run or sync Aptem names and explicit withdrawal/break/completion/EPA states into "
+        "Dry-run or sync Aptem names, programme dates and explicit withdrawal/break/completion/EPA states into "
         "existing learner records. Never imports activities or activates accounts."
     )
 
@@ -40,7 +41,7 @@ class Command(BaseCommand):
         rows = []
         with connections[ALIAS].cursor() as cursor:
             for table in ('"LMS"."Aptem_users"', '"LMS"."non_active_users"'):
-                sql = f'SELECT "ID"::text, "FullName", "Program-Status" FROM {table}'
+                sql = f'SELECT "ID"::text, "FullName", "Program-Status", "Start-Date", "End-Date" FROM {table}'
                 params = []
                 if scoped_ids:
                     sql += ' WHERE "ID" = ANY(%s)'
@@ -49,7 +50,7 @@ class Command(BaseCommand):
                 if lock:
                     sql += " FOR SHARE"
                 cursor.execute(sql, params)
-                rows.extend(dict(zip(("aptem_id", "full_name", "programme_status"), row))
+                rows.extend(dict(zip(("aptem_id", "full_name", "programme_status", "start_date", "end_date"), row))
                             for row in cursor.fetchall())
         return rows
 
@@ -64,7 +65,7 @@ class Command(BaseCommand):
         # Read all linked enrolments before scoping so differently formatted
         # duplicate Aptem ids cannot be hidden by a textual ORM filter.
         query = EnrolmentUser.all_learners.using(ALIAS).only(
-            "id", "aptem_id", "username", "programme_status",
+            "id", "aptem_id", "username", "programme_status", "start_date", "end_date",
         )
         if lock:
             query = query.select_for_update()
@@ -74,7 +75,7 @@ class Command(BaseCommand):
         ids = [row.pk for row in records]
         profiles = LearnerProfile.objects.using(ALIAS).filter(enrolment_id__in=ids).only(
             "id", "enrolment_id", "aptem_id", "full_name", "programme_status",
-            "lifecycle_status", "coach_email",
+            "lifecycle_status", "coach_email", "start_date", "end_date",
         )
         accounts = LoginAccount.objects.using(ALIAS).filter(
             subject_type="learner", subject_id__in=ids,
@@ -98,28 +99,76 @@ class Command(BaseCommand):
                 **plan["account"], updated_at=now,
             )
 
+    def _write_many(self, pending):
+        if len(pending) == 1:
+            self._write(*pending[0])
+            return
+        # Group identical field sets and keep every row's own values in CASE
+        # expressions. A date-only row cannot clear a missing end date, and a
+        # full import does not need one remote round trip per learner/field.
+        now = timezone.now()
+        for index, (target, manager) in enumerate((
+            ("enrolment", EnrolmentUser.all_learners),
+            ("profile", LearnerProfile.objects),
+            ("account", LoginAccount.objects),
+        )):
+            groups = defaultdict(list)
+            for *records, plan in pending:
+                fields = plan[target]
+                if fields:
+                    groups[tuple(sorted(fields))].append((records[index].pk, fields))
+            for fields, rows in groups.items():
+                for offset in range(0, len(rows), 200):
+                    batch = rows[offset:offset + 200]
+                    values = {}
+                    for field in fields:
+                        output_field = manager.model._meta.get_field(field)
+                        values[field] = Case(
+                            *(When(pk=pk, then=Value(changes[field], output_field=output_field))
+                              for pk, changes in batch),
+                            default=F(field), output_field=output_field,
+                        )
+                    if target != "enrolment":
+                        values["updated_at"] = now
+                    manager.using(ALIAS).filter(pk__in=[pk for pk, _ in batch]).update(**values)
+
     def _reconcile(self, scoped_ids, apply):
         stats = Counter()
         review = Counter()
         owners = set()
+        pending = []
         records = self._records(lock=apply)
         stats["local_records"] = len(records)
-        if not scoped_ids:
-            stats["without_aptem_id"] = sum(not str(row.aptem_id or "").strip() for row in records)
-        records = [row for row in records if str(row.aptem_id or "").strip()]
-        by_id = self._group(records, lambda row: aptem_id(row.aptem_id))
-        records = [row for row in records if not scoped_ids or aptem_id(row.aptem_id) in scoped_ids]
-        sources = self._group(self._sources(scoped_ids, lock=apply), lambda row: aptem_id(row["aptem_id"]))
-        if not sources:
-            raise CommandError("No scoped Aptem source rows are available; no learner was changed.")
         profiles, accounts = self._related(records, lock=apply)
         by_enrolment = self._group(profiles, lambda row: row.enrolment_id)
         by_subject = self._group(accounts, lambda row: row.subject_id)
+        effective_ids = {}
+        for row in records:
+            matches = by_enrolment.get(row.pk, [])
+            effective_ids[row.pk] = linked_aptem_id(row, matches[0] if len(matches) == 1 else None)
+        if not scoped_ids:
+            stats["without_aptem_id"] = sum(not str(row.aptem_id or "").strip() for row in records)
+            stats["without_trusted_aptem_id"] = sum(effective_ids[row.pk] is None for row in records)
+            stats["profile_aptem_id_fallback"] = sum(
+                not str(row.aptem_id or "").strip() and effective_ids[row.pk] is not None for row in records
+            )
+        records = [row for row in records if str(row.aptem_id or "").strip()
+                   or any(profile.aptem_id is not None for profile in by_enrolment.get(row.pk, []))]
+        by_id = self._group(records, lambda row: effective_ids[row.pk])
+        records = [row for row in records if not scoped_ids or effective_ids[row.pk] in scoped_ids]
+        sources = self._group(self._sources(scoped_ids, lock=apply), lambda row: aptem_id(row["aptem_id"]))
+        if not sources:
+            raise CommandError("No scoped Aptem source rows are available; no learner was changed.")
         for ident in scoped_ids - set(by_id):
             review["unmatched_requested_id"] += 1
         for enrolment in records:
             stats["examined"] += 1
-            ident = aptem_id(enrolment.aptem_id)
+            matches = by_enrolment.get(enrolment.pk, [])
+            logins = by_subject.get(enrolment.pk, [])
+            if len(matches) > 1 or len(logins) > 1:
+                review["ambiguous_local_identity"] += 1
+                continue
+            ident = effective_ids[enrolment.pk]
             if ident is None:
                 review["invalid_aptem_id"] += 1
                 continue
@@ -128,11 +177,6 @@ class Command(BaseCommand):
                 continue
             if not sources.get(ident):
                 review["missing_source"] += 1
-                continue
-            matches = by_enrolment.get(enrolment.pk, [])
-            logins = by_subject.get(enrolment.pk, [])
-            if len(matches) > 1 or len(logins) > 1:
-                review["ambiguous_local_identity"] += 1
                 continue
             profile = matches[0] if matches else None
             account = logins[0] if logins else None
@@ -148,9 +192,11 @@ class Command(BaseCommand):
                 for field in plan[target]:
                     stats[f"{target}.{field}"] += 1
             if apply:
-                self._write(enrolment, profile, account, plan)
+                pending.append((enrolment, profile, account, plan))
                 if profile is not None and profile.coach_email:
                     owners.add(profile.coach_email)
+        if apply:
+            self._write_many(pending)
         if apply and owners:
             from coach_api.dashboard_cache import invalidate_coach_dashboard_cache
             for owner in owners:
