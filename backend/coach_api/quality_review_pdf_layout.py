@@ -1,17 +1,18 @@
-"""Branded PDF presentation for reviews created with layout version 2.
+"""Versioned branded PDF presentations for saved quality reviews.
 
 Only saved answers and supplied evidence are rendered. The original renderer
 remains in quality_review_pdf for reviews that predate this layout.
 """
 from collections import Counter
 from datetime import date, datetime, timezone
+from functools import partial
 from io import BytesIO
 from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.platypus import Image, KeepTogether, PageBreak, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from .quality_form_definition import clean_answers, definition_for
 from .quality_review_types import saved_type
@@ -44,9 +45,9 @@ def label(value):
     return result
 
 
-def heading(value, number=None):
+def heading(value, number=None, *, compact=False):
     if number is None:
-        result = paragraph(value, size=14, bold=True, color=PURPLE, space=12)
+        result = paragraph(value, size=14, bold=True, color=PURPLE, space=10 if compact else 12)
     else:
         result = Table([[paragraph(f'{number:02d}', size=12, bold=True, color=WHITE, space=0),
                          paragraph(value, size=12, bold=True, color=PURPLE, space=0)]],
@@ -55,9 +56,12 @@ def heading(value, number=None):
             ('BACKGROUND', (0, 0), (0, 0), PURPLE), ('BACKGROUND', (1, 0), (1, 0), SOFT),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-            ('TOPPADDING', (0, 0), (-1, -1), 10), ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 8 if compact else 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8 if compact else 10),
         ]))
-        result.spaceAfter = 13
+        result.spaceAfter = 10 if compact else 13
+    if compact:
+        result.review_heading = value
     result.keepWithNext = True
     return result
 
@@ -70,7 +74,7 @@ def instant(value):
     return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc).strftime('%d %b %Y, %H:%M UTC')
 
 
-def details_grid(pairs):
+def details_grid(pairs, *, compact=False):
     cells = [[label(title), paragraph(value, size=9, space=0)] for title, value in pairs]
     rows = [cells[index:index + 2] for index in range(0, len(cells), 2)]
     if len(rows[-1]) == 1:
@@ -80,10 +84,34 @@ def details_grid(pairs):
         ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8F9FC')),
         ('LINEBELOW', (0, 0), (-1, -1), .5, LINE),
         ('LEFTPADDING', (0, 0), (-1, -1), 12), ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-        ('TOPPADDING', (0, 0), (-1, -1), 10), ('BOTTOMPADDING', (0, 0), (-1, -1), 11),
+        ('TOPPADDING', (0, 0), (-1, -1), 8 if compact else 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 9 if compact else 11),
     ]))
-    table.spaceAfter = 15
+    table.spaceAfter = 12 if compact else 15
     return table
+
+
+class ReviewDocTemplate(SimpleDocTemplate):
+    """Add continuation context once the first visible item on a page is known."""
+
+    def beforePage(self):
+        self._seen_page_content = False
+
+    def afterFlowable(self, flowable):
+        if not isinstance(flowable, (Paragraph, Table, Image)):
+            return
+        title = getattr(flowable, 'review_heading', None)
+        if title:
+            self._review_heading = title
+        if not self._seen_page_content:
+            self._seen_page_content = True
+            previous = getattr(self, '_review_heading', None)
+            if self.page > 1 and not title and previous:
+                continued = paragraph(previous + ' (continued)', size=8.5, bold=True, color=PURPLE, space=0)
+                _, height = continued.wrap(self.width, 15 * mm)
+                self.canv.saveState()
+                continued.drawOn(self.canv, self.leftMargin, A4[1] - 17 * mm - height)
+                self.canv.restoreState()
 
 
 def picture(content):
@@ -97,13 +125,18 @@ def picture(content):
 
 def render(review, images, attachments=()):
     _fonts()
+    refined = review.get('pdfLayoutVersion') == 3
+    section_heading = partial(heading, compact=refined)
+    detail_grid = partial(details_grid, compact=refined)
     definition = definition_for(review)
     data = clean_answers(review['form'], 'completed', definition)
     output = BytesIO()
-    doc = SimpleDocTemplate(output, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
-        topMargin=23 * mm, bottomMargin=20 * mm, title=definition['title'], author='Kent Business College')
+    document_type = ReviewDocTemplate if refined else SimpleDocTemplate
+    doc = document_type(output, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=(25 if refined else 23) * mm, bottomMargin=20 * mm,
+        title=definition['title'], author='Kent Business College')
     logo = Path(__file__).resolve().parents[1] / 'curriculum_api' / 'templates' / 'kbc-logo.png'
-    brand = Table([[Image(str(logo), width=42 * mm, height=21 * mm, kind='proportional'),
+    brand = Table([[Image(str(logo), width=42 * mm, height=(29 if refined else 21) * mm, kind='proportional'),
         [paragraph('QUALITY ASSURANCE', size=9, bold=True, color=PURPLE, space=4),
          paragraph('Observation & feedback', size=8, color=MUTED, space=0)]]],
         colWidths=[WIDTH * .62, WIDTH * .38])
@@ -120,7 +153,7 @@ def render(review, images, attachments=()):
         story.append(paragraph('Quality review type: ' + (saved_type(review) or 'Not classified'),
                                size=8, color=MUTED, space=10))
     header = data['header']
-    story.append(details_grid([
+    story.append(detail_grid([
         ('Coach / tutor observed', review['coach']['name']), ('Observer', review['reviewer']['name']),
         ('Learner / cohort', review['learner']['name']), ('Employer', header['employer']),
         ('Programme / standard', header['programme']), ('Activity date', formatted_date(header['activityDate'])),
@@ -130,7 +163,7 @@ def render(review, images, attachments=()):
         paragraph(f'{instant(review["meeting"]["startsAt"])}  to  {instant(review["meeting"]["endsAt"])}',
                   size=8, color=MUTED, space=14)])
     counts = Counter(answer['rating'] for answer in data['criteria'].values())
-    story.append(heading('Review at a glance'))
+    story.append(section_heading('Review at a glance'))
     if data['criteria']:
         tiles = Table([[[paragraph(str(counts[key]), size=18, bold=True, color=colors.HexColor(tone), space=3),
                         paragraph(name, size=8, bold=True, color=colors.HexColor(tone), space=0)]
@@ -143,8 +176,9 @@ def render(review, images, attachments=()):
         story.extend([tiles, Spacer(1, 10)])
     else:
         story.append(paragraph('This form contains no rated criteria.', size=8, color=MUTED))
+    action_label = 'action' if refined and len(data['actions']) == 1 else 'actions'
     story.extend([
-        paragraph(f'{len(data["criteria"])} rated criteria   /   {len(data["actions"])} follow-up actions', size=8, bold=True),
+        paragraph(f'{len(data["criteria"])} rated criteria   /   {len(data["actions"])} follow-up {action_label}', size=8, bold=True),
         label('Evidence relied on (declared by reviewer)'),
         paragraph(', '.join(SOURCES[key] for key in data['sources']) or 'Not recorded', size=8),
         paragraph('Judgements and evidence are recorded by the reviewer for this observation. '
@@ -179,7 +213,7 @@ def render(review, images, attachments=()):
 
     for section_number, section in enumerate(definition['sections'], 1):
         section_start = len(story)
-        story.append(heading(section['title'], section_number))
+        story.append(section_heading(section['title'], section_number))
         for index, item in enumerate(section['criteria'], 1):
             entry_start = section_start if index == 1 else len(story)
             kind = item['type']
@@ -198,13 +232,13 @@ def render(review, images, attachments=()):
                     ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
                 ]))
                 title.keepWithNext = True
-                title.spaceAfter = 7
+                title.spaceAfter = 5 if refined else 7
                 story.extend([title, label('Evidence observed and impact on the learner'),
-                    paragraph(answer['evidence'] or 'Not applicable - no additional evidence recorded.', space=9)])
+                    paragraph(answer['evidence'] or 'Not applicable - no additional evidence recorded.', space=6 if refined else 9)])
                 description = (item.get('descriptors') or {}).get(answer['rating'])
                 if description:
                     story.extend([label('Selected rating - reference criteria'),
-                        paragraph(description, size=8, color=MUTED, space=9)])
+                        paragraph(description, size=8, color=MUTED, space=6 if refined else 9)])
             else:
                 story.append(question)
                 if kind == 'image':
@@ -220,20 +254,20 @@ def render(review, images, attachments=()):
                     text = ('Yes' if answer is True else 'No' if answer is False else ', '.join(answer)
                             if isinstance(answer, list) else str(answer) if answer not in (None, '') else 'Not answered')
                     story.append(paragraph(text))
-            story.append(Spacer(1, 10))
+            story.append(Spacer(1, 6 if refined else 10))
             # Keep ordinary observations together; unusually long evidence may
             # still split naturally across pages without dropping any content.
             keep_block(entry_start)
         pictures(section['id'])
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 4 if refined else 8))
 
     if any(file['section'] == 'evidence' for file in attachments):
-        story.extend([heading('Evidence attachments'),
+        story.extend([section_heading('Evidence attachments'),
             paragraph('Original files remain available in the saved meeting review. Image previews are included below; '
                       'other files are listed in their original format.', size=8, color=MUTED)])
         evidence_files('evidence')
     actions_start = len(story)
-    story.append(heading(definition['actionsTitle']))
+    story.append(section_heading(definition['actionsTitle']))
     if not data['actions']:
         story.append(paragraph('No follow-up actions were recorded by the reviewer.', color=MUTED))
     for index, action in enumerate(data['actions'], 1):
@@ -241,17 +275,17 @@ def render(review, images, attachments=()):
         title = paragraph(f'Action {index:02d}', size=11, bold=True, color=PURPLE, space=9)
         title.keepWithNext = True
         story.append(title)
-        metadata = details_grid([('Supported by', action['supportedBy']), ('By when', action['dueDate'])])
+        metadata = detail_grid([('Supported by', action['supportedBy']), ('By when', action['dueDate'])])
         metadata.keepWithNext = True
         story.append(metadata)
         for key, title in [('action', 'Target / action (SMART)'), ('outcome', 'Planned outcome and learner impact')]:
             story.extend([label(title), paragraph(action[key])])
-        story.append(Spacer(1, 13))
+        story.append(Spacer(1, 8 if refined else 13))
         keep_block(entry_start)
     reference_start = len(story)
-    story.extend([Spacer(1, 12), heading('Rating reference guide'),
+    story.extend([Spacer(1, 8 if refined else 12), section_heading('Rating reference guide'),
         paragraph('Use these descriptors to interpret the selected judgements. Where a criterion has its own reference '
-                  'description, the selected description appears alongside the observation.', size=8, color=MUTED, space=10)])
+                  'description, the selected description appears alongside the observation.', size=8, color=MUTED, space=8 if refined else 10)])
     for key, (name, tint, tone) in RATINGS.items():
         row = Table([[paragraph(name, size=8.5, bold=True, color=colors.HexColor(tone), space=0),
                       paragraph(definition['ratings'][key], size=8, space=0)]],
@@ -260,7 +294,8 @@ def render(review, images, attachments=()):
             ('BACKGROUND', (0, 0), (0, 0), colors.HexColor(tint)), ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LINEBELOW', (0, 0), (-1, -1), .5, LINE),
             ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-            ('TOPPADDING', (0, 0), (-1, -1), 10), ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 7 if refined else 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 7 if refined else 10),
         ]))
         story.append(row)
     keep_block(reference_start)

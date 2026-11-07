@@ -629,3 +629,39 @@ optional read-only check of configured form definitions could not connect
 (OperationalError). No shared database changes were attempted. Teams baseline
 and expanded checks are NOT REQUIRED: no trigger file or Teams dependency
 contract changed. Live Teams operations were NOT RUN.
+
+
+### PDF refinements after visual review - 7 November 2026
+
+Newly created checks now receive `pdfLayoutVersion: 3`. Version 2 remains
+supported with its original page content, including first-time exports and later
+saves. Legacy reviews with no layout marker keep the original renderer. Stored
+PDF bytes remain immutable for every layout version. No schema change or data
+backfill is needed.
+
+Version 3 enlarges the cover logo, reduces spacing without reducing the existing
+body font sizes, and fixes the singular follow-up-action label. The document
+adds the active section name with `(continued)` when a page starts partway
+through that section. A new section at the top of a page replaces the previous
+context. The same behavior supports long evidence and action plans.
+
+The representative portfolio preview is now 5 pages instead of 6; the action
+plan and complete rating guide share the last page. Monthly coaching remains
+4 pages, and the long-text/image example is 8 pages instead of 9. The input
+answers and all descriptors are retained.
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_quality_reviews coach_api.test_quality_form_builder coach_api.test_quality_review_types coach_api.test_quality_feedback_library coach_api.test_quality_pdf_layout --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 87 tests, including all fifteen forms under layouts 2 and 3.
+git diff --check
+# PASS for the scoped changes.
+```
+
+Validation used the existing verified SQLite settings and mocked/blocked
+external services. Before/after hashes of PDF page-content streams matched for
+all 15 version-2 forms. The 48 pages generated from all fifteen version-3 forms
+had no overlapping text boxes or text outside the checked margins. Portfolio,
+monthly-coaching and long-text/image samples were rendered and visually checked.
+Frontend checks and Teams baseline/expanded checks are NOT REQUIRED for these
+backend PDF changes; no Teams trigger or imported Teams contract changed. Live
+Teams and shared-database writes were NOT RUN.

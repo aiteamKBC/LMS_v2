@@ -32,7 +32,7 @@ def _utc(value):
 
 
 def _render(review, images, attachments=()):
-    if review.get('pdfLayoutVersion', 1) == 2:
+    if review.get('pdfLayoutVersion', 1) in (2, 3):
         from .quality_review_pdf_layout import render
         return render(review, images, attachments)
     _fonts()
