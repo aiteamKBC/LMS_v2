@@ -439,6 +439,10 @@ jobs:
         id: wait
         run: bash .github/ci/deploy.sh wait
 
+      - name: Inspect recording worker image and configuration names
+        if: env.BACKEND == 'true'
+        run: python3 .github/ci/recording-runtime.py
+
       # ---- frontend (only when frontend/ changed) ----
       - uses: actions/download-artifact@v4
         if: env.FRONTEND == 'true'

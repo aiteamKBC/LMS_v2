@@ -240,6 +240,14 @@ released. Deploy reviewed backend and frontend together from merged main under
 AGENTS.md, with the same environment values in the relevant AWS containers.
 Local `.env` edits do not update AWS automatically.
 
+After the backend rollout, CI reports read-only summaries for the running
+`session-worker` and `curriculum-api` tasks: whether their image digest matches
+the release, required setting names are mapped, the Bunny flag is enabled, and
+the scheduled worker command is present. Secret values and command text are
+never printed. Secret-backed flag values remain unverified. These diagnostics
+warn without rolling back a healthy release; they do not prove worker execution
+or authorized playback. A missing AWS read permission is reported explicitly.
+
 Retained Azure references protect those existing recordings during rollback.
 Recordings created only in Bunny require a Bunny-capable backend and player;
 an older Azure-only release cannot play them. Keep the backend/frontend release
