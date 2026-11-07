@@ -140,13 +140,19 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
     return () => controller.abort();
   }, [seriesId, file.id, linksKey, kind, learnerId, retry]);
   const visibleCues = useMemo(() => cues.filter(cue => cue.start < duration), [cues, duration]);
-  const activeIndex = visibleCues.findIndex(cue => cue.start <= time && time < cue.end);
+  // Follow the latest phrase reached by the playhead. Overlapping speech must
+  // not pin scrolling to an earlier, longer cue; silence keeps the preceding phrase.
+  const followIndex = useMemo(() => {
+    if (!visibleCues.length) return -1;
+    const next = visibleCues.findIndex(cue => cue.start > time);
+    return next < 0 ? visibleCues.length - 1 : Math.max(0, next - 1);
+  }, [visibleCues, time]);
   useEffect(() => {
-    if (!follow || activeIndex < 0) return;
+    if (!follow || followIndex < 0) return;
     const container = panel.current;
-    const active = container?.querySelector<HTMLElement>('[aria-current="true"]');
+    const active = container?.querySelector<HTMLElement>(`[data-cue-index="${followIndex}"]`);
     if (container && active) container.scrollTo?.({ top: Math.max(0, active.offsetTop - container.clientHeight / 2), behavior: 'smooth' });
-  }, [activeIndex, follow]);
+  }, [followIndex, follow]);
   const readTime = () => {
     if (!video.current) return;
     setTime(video.current.currentTime);
@@ -181,14 +187,17 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
           className="rounded-lg border bg-white px-3 py-1 text-xs font-semibold text-primary-700">
           Download transcript{downloadable.length > 1 ? ` ${index + 1}` : ''}
         </a>)}
-        {visibleCues.length > 0 && <button type="button" aria-pressed={follow} onClick={() => setFollow(value => !value)} className="rounded-lg border bg-white px-3 py-1 text-xs font-semibold">Follow video</button>}
+        {visibleCues.length > 0 && <button type="button" aria-label="Follow video" aria-pressed={follow} onClick={() => setFollow(value => !value)}
+          className={`rounded-lg border px-3 py-1 text-xs font-semibold ${follow ? 'border-primary-400 bg-primary-50 text-primary-800' : 'bg-white'}`}>
+          {follow ? 'Following video' : 'Follow video'}
+        </button>}
         </div>
       </header>
       {pendingTranscript && <p role="status" className="p-3 text-sm">Loading saved transcript…</p>}
       {transcriptError && <div role="alert" className="p-3 text-sm text-red-800">{transcriptError} <button type="button" onClick={() => transcriptLoadError ? onTranscriptRetry?.() : setRetry(value => value + 1)} className="underline">Retry transcript</button></div>}
       {!pendingTranscript && !transcriptError && visibleCues.length > 0 && <div ref={panel} className="relative max-h-72 overflow-y-auto p-2">
         <ol className="space-y-1">{visibleCues.map((cue, index) => <li key={`${cue.start}-${index}`}>
-          <button type="button" aria-current={cue.start <= time && time < cue.end ? 'true' : undefined}
+          <button type="button" data-cue-index={index} aria-current={cue.start <= time && time < cue.end ? 'true' : undefined}
             onClick={() => seek(cue.start)} className={`flex w-full gap-3 rounded-lg p-3 text-left text-sm ${cue.start <= time && time < cue.end ? 'bg-primary-100 text-primary-900 ring-1 ring-primary-300' : 'hover:bg-background-100'}`}>
             <span className="shrink-0 font-mono text-xs tabular-nums">{cueTime(cue.start)}</span>
             <span dir="auto">{cue.speaker && <strong className="mr-1">{cue.speaker}:</strong>}{cue.text}</span>
