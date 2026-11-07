@@ -15,6 +15,7 @@ export default function QualityQuestions({ template, sectionId, form, onChange, 
   const setAnswer = (key: string, value: QualityAnswer) => onChange({ ...form, answers: { ...form.answers, [key]: value } });
   const images = (key: string, label: string) => renderImages ? renderImages(key, label) : <div className="rounded-xl border border-dashed border-primary-200 bg-primary-50 p-4 text-sm text-primary-800">{label} · Image upload appears when completing a saved review.</div>;
   return <section aria-label={section.title} className="space-y-4">
+    {sectionId === template.sections[0]?.id && template.purpose && <p className="rounded-xl bg-primary-50 p-4 text-sm leading-6 text-foreground-700">{template.purpose}</p>}
     <h3 className="text-lg font-bold">{section.title}</h3>
     {section.criteria.map((item, index) => {
       const kind = item.type || 'rating', value = form.answers?.[item.id];
