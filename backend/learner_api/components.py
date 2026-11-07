@@ -420,11 +420,13 @@ def submit_component_progress(request, component_id):
     }
 
     from .retake_timing import validate_activity_time
+    from .activity_time_history import attendance_baseline
     from .active_users import _progress_record_minutes
     if not monthly_submission:
         try:
             validated = {**record, 'componentType': live_type or record['componentType']}
-            validate_activity_time(validated, history, seconds_for=lambda row: _progress_record_minutes(row) * 60)
+            validate_activity_time(validated, history, seconds_for=lambda row: _progress_record_minutes(row) * 60,
+                                   initial_seconds=attendance_baseline(validated, history, source=source))
             if 'countedSeconds' in validated:
                 record['countedSeconds'] = validated['countedSeconds']
         except ValueError as exc:
