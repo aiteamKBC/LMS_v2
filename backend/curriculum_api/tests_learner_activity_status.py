@@ -225,6 +225,50 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(winter[1].astimezone(timezone.utc).hour, 9)
         with self.assertRaises(ServiceError): status.interval({'durationSeconds': 1800, 'startedAt': '2025-12-31T10:00:00Z'}, self.owner)
 
+    def test_early_activity_keeps_the_uk_clock_for_bst_gmt_and_overseas_offsets(self):
+        for start, utc_hour in (
+            ('2026-01-02T08:00:00+00:00', 8),
+            ('2026-07-01T08:00:00+01:00', 7),
+            ('2026-01-02T10:00:00+02:00', 8),
+            ('2026-07-01T10:00:00+03:00', 7),
+        ):
+            with self.subTest(start=start):
+                seconds, begin, end, month = status.interval({'durationSeconds': 1800, 'startedAt': start}, self.owner)
+                self.assertEqual(seconds, 1800)
+                self.assertEqual(begin.astimezone(status.UK).hour, 8)
+                self.assertEqual(begin.astimezone(timezone.utc).hour, utc_hour)
+                self.assertEqual((end - begin).total_seconds(), 1800)
+                self.assertEqual(month, start[:7])
+
+    def test_early_time_edit_keeps_raw_evidence_and_the_original_audit_snapshot(self):
+        self.save(self.payload())
+        self.db.execute('UPDATE learner_progress_entries SET source_payload=?,submitted_at=?,feedback=?',
+                        [json.dumps({'evidence_id': 'e1'}), '2026-10-01T09:04:13Z', 'Existing feedback'])
+        self.db.commit()
+        before = self.query('SELECT * FROM learner_progress_entries')[0]
+        self.save({**self.payload(), 'durationSeconds': 1800, 'startedAt': '2026-10-01T08:15:00+01:00'})
+        after = self.query('SELECT * FROM learner_progress_entries')[0]
+        self.assertEqual(after['id'], before['id'])
+        self.assertEqual(after['actual_seconds'], 1800)
+        self.assertEqual(datetime.fromisoformat(after['reporting_started_at']).astimezone(status.UK).strftime('%H:%M'), '08:15')
+        self.assertEqual(after['submitted_at'], before['submitted_at'])
+        self.assertEqual(after['feedback'], before['feedback'])
+        self.assertEqual(json.loads(after['source_payload'])['evidence_id'], 'e1')
+        snapshot = json.loads(self.query('SELECT before_snapshot FROM learner_activity_display_audit WHERE revision=2')[0]['before_snapshot'])
+        self.assertEqual(snapshot['progress'][0]['reporting_started_at'], before['reporting_started_at'])
+
+    def test_manual_activity_rejects_before_opening_and_after_closing_in_uk_time(self):
+        for start, seconds in (
+            ('2026-01-02T07:59:59+00:00', 1800),
+            ('2026-07-01T06:59:59+00:00', 1800),
+            ('2026-01-02T17:00:00+00:00', 1),
+            ('2026-07-01T16:59:00+01:00', 120),
+        ):
+            with self.subTest(start=start), self.assertRaises(ServiceError):
+                status.interval({'durationSeconds': seconds, 'startedAt': start}, self.owner)
+        result = status.interval({'durationSeconds': 60, 'startedAt': '2026-01-02T16:59:00+00:00'}, self.owner)
+        self.assertEqual(result[2].astimezone(status.UK).strftime('%H:%M:%S'), '17:00:00')
+
     def test_manual_allocation_suppresses_only_its_native_retry_hours(self):
         at = datetime(2026, 1, 2, 10, tzinfo=timezone.utc)
         native = {'id': 1, 'learner_id': 1, 'component_ref': 'c1', 'component_link_source': 'direct', 'kind': 'component', 'submitted_at': at, 'time_taken':'10:00', 'accepted':True}
@@ -322,8 +366,10 @@ class ActivityStatusTests(SimpleTestCase):
             'learnerActivityPlan': [{'learnerId': learner, 'componentId': 'c1', 'componentType': 'reading'} for learner in (1, 2)]}
         with patch.object(status, 'load_records', return_value=rows), patch.object(status, 'query', return_value=[]):
             status.enrich(payload, None)
-        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0.75)
-        self.assertEqual([row['achievedOtjh'] for row in payload['activityLogOtjh']['learners']], [0.25, 0.5])
+        # Current-only percentages, with retained hours reported separately.
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0.5)
+        self.assertEqual(payload['activityLogOtjh']['historicalTotal'], 0.25)
+        self.assertEqual([row['achievedOtjh'] for row in payload['activityLogOtjh']['learners']], [0, 0.5])
         self.assertEqual(payload['activityLogOtjh']['unallocatedAcceptedRecords'], 0)
         self.assertEqual(payload['activityLogProgress']['learners'][0]['earlierOtjh'], 0.25)
 
@@ -351,10 +397,12 @@ class ActivityStatusTests(SimpleTestCase):
         with patch.object(status, 'query', side_effect=scoped_read):
             status.enrich(payload, None)
         summary = payload['activityLogOtjh']
-        self.assertEqual(summary['achievedTotal'], 3.5)
-        self.assertEqual(summary['unallocatedAcceptedRecords'], 2)
+        self.assertEqual(summary['achievedTotal'], 3)
+        self.assertEqual(summary['historicalTotal'], 0.5)
+        self.assertEqual(summary['historicalUnallocatedRecords'], 1)
+        self.assertEqual(summary['unallocatedAcceptedRecords'], 1)
         self.assertEqual([(row['achievedOtjh'], row['unallocatedAcceptedRecords'])
-                          for row in summary['learners']], [(1.5, 2), (2, 0)])
+                          for row in summary['learners']], [(1, 1), (2, 0)])
         self.assertEqual(len(self.query('SELECT * FROM learner_progress_entries')), 9)
 
     def test_enrichment_queries_are_bounded_and_unstarted_rows_and_log_totals_remain_consistent(self):
@@ -374,6 +422,53 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(payload['learnerActivityPlan'][0]['displayStatus'],'not_started')
         self.assertEqual(payload['learnerActivityPlan'][1]['calculatedStatus'],'not_started')
         self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1)
+
+    def test_enrichment_uses_completed_ledger_record_instead_of_stale_unstarted_trace(self):
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [{'learnerId': 1, 'plannedOtjh': 1}]},
+                   'learnerActivityPlan': [{'learnerId': 1, 'componentId': 'c1', 'componentType': 'reading',
+                                            'calculatedStatus': 'not_started'}]}
+        rows = [{'id': 1, 'learner_id': 1, 'component_ref': 'old-c1', 'curriculum_component_ref': 'c1',
+                 'actual_seconds': 1800, 'accepted': True}]
+        with patch.object(status, 'load_records', return_value=rows), patch.object(status, 'query', return_value=[]):
+            status.enrich(payload, None)
+        self.assertEqual(payload['learnerActivityPlan'][0]['calculatedStatus'], 'completed')
+        self.assertEqual(payload['activityLogProgress']['completedActivities'], 1)
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0.5)
+
+    def test_enrichment_does_not_keep_stale_completed_trace_when_ledger_has_no_completion(self):
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [{'learnerId': 1, 'plannedOtjh': 1}]},
+                   'learnerActivityPlan': [{'learnerId': 1, 'componentId': 'c1', 'componentType': 'reading',
+                                            'calculatedStatus': 'completed'}]}
+        with patch.object(status, 'load_records', return_value=[]), patch.object(status, 'query', return_value=[]):
+            status.enrich(payload, None)
+        self.assertEqual(payload['learnerActivityPlan'][0]['displayStatus'], 'not_started')
+        self.assertEqual(payload['activityLogProgress']['completedActivities'], 0)
+
+    def test_module_read_ignores_deleted_and_feed_rows_and_resolves_blank_corrected_reference(self):
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,component_ref,curriculum_component_ref,kind,accepted,actual_seconds)
+            VALUES (1,'c1','','component',true,1800)''')
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,component_ref,kind,accepted,actual_seconds,deleted_at)
+            VALUES (1,'c1','component',true,3600,'2026-10-01')''')
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,component_ref,kind,accepted,actual_seconds)
+            VALUES (1,'c1','activity_event',true,7200)''')
+        rows = status.load_records([1], ['c1'])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(status.component_reference(rows[0]), 'c1')
+        self.assertEqual(status.facts(rows)['acceptedOtjh'], 0.5)
+
+    def test_staff_edit_with_blank_corrected_reference_updates_the_scoped_existing_record(self):
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,enrolment_id,component_ref,curriculum_component_ref,kind,accepted,actual_seconds,feedback)
+            VALUES (1,91,' c1 ','','component',true,1800,'Original feedback')''')
+        self.save(self.payload())
+        rows = self.query('SELECT * FROM learner_progress_entries')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['actual_seconds'], 3617)
+        self.assertEqual(rows[0]['feedback'], 'Original feedback')
+        self.assertEqual(rows[0]['component_ref'], ' c1 ')
 
     def test_enrichment_counts_module_ref_rows_once_and_reports_completion(self):
         payload = {'identifier':'MOD-1', 'otjhAchievement':{'learners':[{'learnerId':1,'plannedOtjh':10}]},
@@ -397,7 +492,8 @@ class ActivityStatusTests(SimpleTestCase):
         progress = payload['activityLogProgress']['learners'][0]
         self.assertEqual((progress['completedActivities'], progress['totalActivities']), (1, 2))
         self.assertEqual((progress['earlierRecords'], progress['earlierOtjh']), (1, 0.5))
-        self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1.5)
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1)
+        self.assertEqual(payload['activityLogOtjh']['historicalTotal'],0.5)
 
     def test_endpoint_denies_unauthenticated_and_unauthorized_roles_and_preserves_csrf(self):
         factory = RequestFactory()

@@ -4,6 +4,7 @@ import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_E
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
+import { LearnerFeedbackFormRoute } from "./LearnerFeedbackFormRoute";
 import { studentWorkspaceRoutes } from "./studentWorkspaceRoutes";
 
 // Route components are code-split: each page becomes its own chunk, fetched on
@@ -30,6 +31,7 @@ const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notificati
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
+const AdminAnnouncementsPage = lazyRoute(() => import("../pages/admin/announcements/page"));
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
@@ -46,8 +48,10 @@ const AuditSelectPage = lazyRoute(() => import("../pages/workspace/audit-select/
 const BadgeDetailPage = lazyRoute(() => import("../pages/learner/rewards/badge-detail/page"));
 const BoardPage = lazyRoute(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPortalPage"));
+const EmployerFeedbackPage = lazyRoute(() => import("../pages/employer/EmployerFeedbackPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
+const PublicLectureFeedbackPage = lazyRoute(() => import("../pages/lecture-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
@@ -335,6 +339,10 @@ const routes: RouteObject[] = [
     element: <EventFeedbackPage />,
   },
   {
+    path: "/lecture-feedback",
+    element: <PublicLectureFeedbackPage />,
+  },
+  {
     path: "/event-rsvp",
     element: <EventRsvpPage />,
   },
@@ -538,6 +546,14 @@ const routes: RouteObject[] = [
     element: <EmployerPortalPage />,
   },
   {
+    path: "/employers/:employerId/feedback",
+    element: <EmployerFeedbackPage />,
+  },
+  {
+    path: "/employers/:employerId/feedback/:deliveryId",
+    element: <EmployerFeedbackPage />,
+  },
+  {
     // Every document across the employer's learners.
     path: "/employers/:employerId/documents",
     element: <EmployerDocumentsPage />,
@@ -658,11 +674,11 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/feedback/review/:reviewDeliveryId",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+    element: <LearnerFeedbackFormRoute><LearnerFeedbackFormPage /></LearnerFeedbackFormRoute>,
   },
   {
     path: "/learner/feedback/:formId",
-    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+    element: <LearnerFeedbackFormRoute><LearnerFeedbackFormPage /></LearnerFeedbackFormRoute>,
   },
   {
     path: "/learner/feedback/delivery/:deliveryId",
@@ -1082,6 +1098,10 @@ const routes: RouteObject[] = [
   {
     path: "/admin/system",
     element: <AdminSystemSettingsPage />,
+  },
+  {
+    path: "/admin/announcements",
+    element: <AdminAnnouncementsPage />,
   },
   {
     path: "/admin/platform-report",
@@ -1879,6 +1899,7 @@ const PUBLIC_PATHS = new Set([
   "/",
   "/login",
   "/event-feedback",
+  "/lecture-feedback",
   "/event-rsvp",
   "/event-check-in",
   "/access-required",

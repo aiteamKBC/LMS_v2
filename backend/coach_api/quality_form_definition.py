@@ -37,7 +37,7 @@ def _identifier(value):
 
 
 def clean_definition(value):
-    if not isinstance(value, dict) or set(value)-{'id','version','title','sections','ratings','actionsTitle','reviewType'}:
+    if not isinstance(value, dict) or set(value)-{'id','version','title','sections','ratings','actionsTitle','reviewType','purpose'}:
         raise InvalidReview('The quality form definition is invalid.')
     review_kind = review_type(value.get('reviewType', ''))
     title = _text(value.get('title', ''), 160)
@@ -81,6 +81,8 @@ def clean_definition(value):
                 raise InvalidReview('Only choice questions can have options.')
             extra = {}
             if 'allowNa' in item:
+                # Retain legacy metadata without rewriting saved form versions.
+                # All rating questions now accept N/A, regardless of this flag.
                 if type(item['allowNa']) is not bool:
                     raise InvalidReview('Choose whether N/A is allowed for this criterion.')
                 extra['allowNa'] = item['allowNa']
@@ -97,7 +99,8 @@ def clean_definition(value):
         result.append({'id':key,'title':heading,'screenshots':bool(section.get('screenshots',False)), 'criteria':fields})
     return {'id':('feedback-' + review_kind.lower()) if review_kind.startswith('FORM_') else template()['id'] + (f'-{review_kind.lower()}' if review_kind else ''),'version':1,'title':title,'ratings':ratings,'sections':result,
             'actionsTitle':_text(value.get('actionsTitle','SMART action plan'),160) or 'SMART action plan',
-            **({'reviewType':review_kind} if review_kind else {})}
+            **({'reviewType':review_kind} if review_kind else {}),
+            **({'purpose':_text(value['purpose'],1000)} if 'purpose' in value else {})}
 
 
 def definition_for(review):
@@ -165,8 +168,6 @@ def clean_answers(value, status, definition):
             if not isinstance(answer,dict) or set(answer)-{'rating','evidence'} or answer.get('rating','') not in ('',*RATINGS):
                 raise InvalidReview('Choose a valid quality rating.')
             rating=answer.get('rating',''); evidence=_text(answer.get('evidence',''),6000)
-            if rating=='na' and item.get('allowNa') is False:
-                raise InvalidReview('N/A is not allowed for this criterion.')
             if required and not rating or status=='completed' and rating not in ('','na') and not evidence:
                 raise InvalidReview('Complete each required rating and explain its evidence.')
             cleaned_ratings[key]={'rating':rating,'evidence':evidence}
@@ -209,12 +210,9 @@ def clean_answers(value, status, definition):
         if not isinstance(row,dict) or set(row)-set(keys):
             raise InvalidReview('An action row is invalid.')
         action={key:_text(row.get(key,''),3000 if key in ('action','outcome') else 300) for key in keys}
-        if action['dueDate']:
-            try: date.fromisoformat(action['dueDate'])
-            except ValueError: raise InvalidReview('Enter a valid action deadline.')
         if any(action.values()):
-            if status=='completed' and not all(action.values()):
-                raise InvalidReview('Complete all four fields in each SMART action.')
+            if status=='completed' and not all(action[key] for key in ('action','outcome','supportedBy')):
+                raise InvalidReview('Complete the target, planned outcome and supported by fields for each SMART action.')
             plan.append(action)
     sources=value.get('sources',[])
     if not isinstance(sources,list) or any(key not in ('recording','transcript','ai','portfolio','other') for key in sources):

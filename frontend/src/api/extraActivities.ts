@@ -6,6 +6,12 @@ export interface ExtraActivity {
   coachFeedback: string | null; reviewedBy: string | null; reviewedAt: string | null;
   addedBy?: string | null;
 }
+export async function fetchExtraActivities(kind: string, learnerId: string, month?: string, signal?: AbortSignal): Promise<ExtraActivity[]> {
+  const query = new URLSearchParams({ learnerKind: kind, learnerId, ...(month ? { month } : {}) });
+  const data = await readLearnerJson<{ activities: ExtraActivity[] }>(`/learner_api/reflection/extra-activities/?${query}`, { signal, revalidate: true });
+  if (!Array.isArray(data.activities)) throw new Error('Invalid activities response');
+  return data.activities;
+}
 export function useExtraActivities(kind: string | undefined, learnerId: string | undefined, month?: string, enabled = true) {
   const [activities, setActivities] = useState<ExtraActivity[]>([]);
   const [loading, setLoading] = useState(false);
@@ -17,9 +23,8 @@ export function useExtraActivities(kind: string | undefined, learnerId: string |
     if (!enabled || !kind || !learnerId) return;
     const controller = new AbortController();
     setActivities([]); setLoading(true); setError('');
-    const query = new URLSearchParams({ learnerKind: kind, learnerId, ...(month ? { month } : {}) });
-    void readLearnerJson<{ activities: ExtraActivity[] }>(`/learner_api/reflection/extra-activities/?${query}`, { signal: controller.signal, revalidate: true })
-      .then(data => { if (!Array.isArray(data.activities)) throw new Error('Invalid activities response'); if (!controller.signal.aborted) setActivities(data.activities); })
+    void fetchExtraActivities(kind, learnerId, month, controller.signal)
+      .then(data => { if (!controller.signal.aborted) setActivities(data); })
       .catch(() => { if (!controller.signal.aborted) setError('Could not load extra activities. Please retry.'); })
       .finally(() => { if (!controller.signal.aborted) { setLoadedFor(identity); setLoading(false); } });
     return () => controller.abort();

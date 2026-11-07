@@ -30,7 +30,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
 
-from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
+from .active_users import fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
@@ -1151,22 +1151,16 @@ def _review_otjh_hours(learner_profile):
 
 
 def _live_otjh_snapshot(detail, learner_profile=None):
-    # Reviews are off-the-job training in their own right when Curriculum says
-    # so, so they land in the same two totals as curriculum components rather
-    # than a figure of their own: planned grows when a review is scheduled,
-    # completed when it is signed off.
-    review_planned, review_completed = _review_otjh_hours(learner_profile)
+    from .canonical_hours import profile_actual_hours
+    # Keep the established plan projection; actuals use the same accepted
+    # ledger as the dashboard, including retained history and current saves.
+    review_planned, _ = _review_otjh_hours(learner_profile)
     planned = fmt_hours(float(detail.get("totalExpectedOtjh") or 0) + review_planned)
-    completed = (
-        completed_hours_from_progress(
-            learner_profile.training_plan_progress,
-            detail.get("components"),
-        )
-        if learner_profile
-        else "0"
-    )
-    if review_completed:
-        completed = fmt_hours(float(completed or 0) + review_completed)
+    completed_num = profile_actual_hours(learner_profile) if learner_profile else 0
+    if completed_num is None:
+        from old_otjh.service import ServiceError
+        raise ServiceError('Current accepted OTJ hours are unavailable.', 'hours_unavailable', 503)
+    completed = fmt_hours(completed_num)
 
     learner_start_date = getattr(learner_profile, "start_date", None)
     target_num = _cumulative_week_target(detail, learner_start_date=learner_start_date)
@@ -1853,7 +1847,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
                                                'teamsLiveSessionId': (_s(settings.get('extraTeamsLiveSessionId'))
                                                    if _s(settings.get('extraTeamsMeetingUrl')) else '')
-                                                   or _s(settings.get('teamsLiveSessionId')) or None} if catalogue_facts else {})})
+                                                   or _s(settings.get('teamsLiveSessionId')) or None,
+                                               **({'additionalMeeting': True} if _s(ctype).strip().lower().replace('-', '_') == 'live_session'
+                                                  and _s(settings.get('extraTeamsMeetingUrl')) else {})} if catalogue_facts else {})})
                 titles = list(dict.fromkeys(_s(value) for value in master_module_title.values()))
                 if catalogue_facts:
                     # Preserve the same id-less rows as the full reader in a
@@ -1960,16 +1956,18 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         live_session_url = (
             _s(delivery.get('liveSessionUrl')) if delivery else _s(stored_live_link)
         ) or (
-            _s(settings.get("liveSessionUrl"))
+            _s(settings.get("liveSessionLinkOverride"))
+            or _s(settings.get("liveSessionUrl"))
             or _s(settings.get("teamsMeetingUrl"))
             or None
         )
         normalised_type = _s(ctype).strip().lower().replace("-", "_")
+        unconfirmed_calendar = not delivery and settings.get('teamsCalendarBinding') in {'unverified', 'missing', 'ambiguous'}
         fallback = (
             live_session_fallbacks.get((_s(_mid), _s(settings.get("sessionDate"))[:10]))
-            if normalised_type == "live_session" else None
+            if normalised_type == "live_session" and not unconfirmed_calendar else None
         )
-        stored_series_id = _s(settings.get("teamsLiveSessionId"))
+        stored_series_id = '' if unconfirmed_calendar else _s(settings.get("teamsLiveSessionId"))
         extra_series_id = (
             _s(settings.get("extraTeamsLiveSessionId"))
             if normalised_type == "live_session" and _s(settings.get("extraTeamsMeetingUrl")) else ""
@@ -1984,7 +1982,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             teams_session_number = settings.get("teamsSessionNumber") or fallback["teamsSessionNumber"]
         else:
             teams_live_session_id = stored_series_id or None
-            teams_session_number = settings.get("teamsSessionNumber") or None
+            teams_session_number = None if unconfirmed_calendar else settings.get("teamsSessionNumber") or None
         # Use the shared resolver, not a bare settings["videoUrl"] read: a video
         # can be authored as an embed snippet instead of a plain URL, and the
         # removal check below must not treat that as "video removed".
@@ -2116,6 +2114,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "resourceUrl": resource_url,
             "liveSessionUrl": live_session_url,
             "teamsLiveSessionId": teams_live_session_id,
+            "additionalMeeting": normalised_type == "live_session" and bool(_s(settings.get("extraTeamsMeetingUrl"))),
             "teamsSessionNumber": teams_session_number,
             "recordingSeriesId": recording_series_id or None,
             "recordingSessionNumber": recording_session_number if has_recording_source else None,
@@ -2207,6 +2206,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "resourceUrl": comp["resourceUrl"],
                     "liveSessionUrl": comp["liveSessionUrl"],
                     "teamsLiveSessionId": comp["teamsLiveSessionId"],
+                    **({"additionalMeeting": True} if comp.get("additionalMeeting") else {}),
                     "teamsSessionNumber": comp["teamsSessionNumber"],
                     "recordingSeriesId": comp["recordingSeriesId"],
                     "recordingSessionNumber": comp["recordingSessionNumber"],
@@ -2364,8 +2364,14 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
 
     # Carry earned completion into an explicitly verified replacement without
     # manufacturing attempts or changing the persisted hours/attendance above.
-    from .replacement_learning import annotate_replacement_learning
+    from .replacement_learning import annotate_replacement_learning, approved_retained_components
     detail['components'] = annotate_replacement_learning(detail['components'], pk)
+    # Explicitly retained (unmatched) old components have no destination
+    # component to attach to; add them the same way My Learning does.
+    from . import progress_transfer_store
+    current_module_ids = {c.get('moduleId') for c in detail['components'] if c.get('moduleId')}
+    detail['retiredQuizComponents'] = [*detail.get('retiredQuizComponents', []),
+        *approved_retained_components(progress_transfer_store.read_state(pk)['items'], current_module_ids)]
 
     from .live_session_progress import read_live_credits, supplement_component_progress
     detail['componentProgress'] = supplement_component_progress(

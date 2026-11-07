@@ -15,7 +15,7 @@ from learner_api.models import EnrolmentUser
 
 from .models import FeedbackDelivery, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
 
-MODULE_FORM_TYPES = {'mid_module': 'Mid-module Feedback', 'end_module': 'End-module Feedback'}
+MODULE_FORM_TYPES = {'mid_module': 'Wellbeing', 'end_module': 'End-module Feedback'}
 BUSINESS_TZ = ZoneInfo('Europe/London')
 
 
@@ -37,7 +37,11 @@ def module_feedback_date(start, end, form_type):
 
 
 def active_modules():
-    """Only live published delivery modules, retaining their exact placement."""
+    """Dated modules in active delivery scopes, retaining their exact placement.
+
+    Module publication is not stored on curriculum.modules. The published
+    feedback template is selected separately by sync_module_feedback.
+    """
     with connection.cursor() as cursor:
         cursor.execute('''SELECT m.module_catalogue_id, m.title, m.start_date, m.end_date,
                                 p.programme_id, p.name AS programme_name,
@@ -51,7 +55,8 @@ def active_modules():
                             AND COALESCE(m.is_programme_deleted, false) = false
                             AND COALESCE(g.is_programme_deleted, false) = false
                             AND COALESCE(p.is_archived, false) = false
-                            AND lower(COALESCE(m.status, 'draft')) = 'published'
+                            AND m.start_date IS NOT NULL AND m.end_date IS NOT NULL
+                            AND m.end_date >= m.start_date
                             AND lower(COALESCE(c.status, 'active')) <> 'archived'
                             AND lower(COALESCE(p.status, 'active')) <> 'archived'
                           ORDER BY m.module_catalogue_id''')

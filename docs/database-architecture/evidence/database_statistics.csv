@@ -1,0 +1,2 @@
+datname,numbackends,xact_commit,xact_rollback,blks_read,blks_hit,tup_returned,tup_fetched,temp_files,temp_bytes,deadlocks,stats_reset
+neondb,1,143,1,3791,323495,773429,424086,0,0,0,

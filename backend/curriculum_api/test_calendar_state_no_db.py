@@ -21,6 +21,8 @@ from curriculum_api.teams_cancellation_checks import CalendarStateError, cancell
 
 
 def functions(path, names, namespace):
+    namespace.setdefault('__package__', 'curriculum_api')
+    namespace.setdefault('__name__', 'curriculum_api.isolated_tests')
     tree = ast.parse(path.read_text(encoding='utf-8-sig'))
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(nodes) == len(names)
@@ -36,8 +38,22 @@ class Response(dict):
         return dict(self)
 
 
+def native_calendar_context(test):
+    # Native transport stays isolated here; the owner transport is exercised
+    # with real Django in test_teams_original_calendar.
+    original = types.ModuleType('curriculum_api.teams_original_calendar')
+    original.current_calendar = lambda: None
+    original.calendar_authorized = lambda _id: False
+    original.OriginalCalendarRequired = type('OriginalCalendarRequired', (CalendarStateError,), {})
+    original.original_calendar_request = lambda view, **_kwargs: view
+    transport = patch.dict(sys.modules, {'curriculum_api.teams_original_calendar': original})
+    transport.start()
+    test.addCleanup(transport.stop)
+
+
 class CalendarFixture(unittest.TestCase):
     def setUp(self):
+        native_calendar_context(self)
         network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
         network.start()
         self.addCleanup(network.stop)
@@ -317,6 +333,7 @@ class ServiceTests(CalendarFixture):
 
 class BoundaryTests(unittest.TestCase):
     def setUp(self):
+        native_calendar_context(self)
         network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
         network.start()
         self.addCleanup(network.stop)

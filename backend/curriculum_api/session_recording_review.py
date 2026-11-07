@@ -1,4 +1,4 @@
-"""Lightweight Azure check for recordings already marked ready.
+"""Lightweight provider check for recordings already marked ready.
 
 The normal Teams sync discovers new media. This reviewer only finds saved
 recordings whose private copy disappeared and puts their series back in the
@@ -45,14 +45,14 @@ def queue_missing_recording(artifact_id, series_id, container, blob_name):
 
 
 def review_ready_recordings(*, now=None, full=False):
-    """HEAD a bounded time slice; transient Azure errors leave ready rows intact."""
+    """Check a bounded slice; transient provider errors leave ready rows intact."""
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         raise ValueError('Review time must include a timezone.')
     now = now.astimezone(timezone.utc)
     bucket = int(now.timestamp() // REVIEW_SECONDS) % REVIEW_BUCKETS
     with connections['default'].cursor() as cursor:
-        cursor.execute('''SELECT a.id,o.live_session_id,r.container,r.blob_name
+        cursor.execute('''SELECT a.id,o.live_session_id,r.container,r.blob_name,a.metadata
             FROM curriculum.session_result_archive r
             JOIN curriculum.live_session_artifacts a ON a.id=r.artifact_id
             JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
@@ -62,13 +62,26 @@ def review_ready_recordings(*, now=None, full=False):
             ORDER BY a.id''', [full, now - timedelta(hours=6), REVIEW_BUCKETS, bucket])
         rows = cursor.fetchall()
     checked = repaired = errors = 0
-    client = storage_client() if rows else None
-    for artifact_id, series_id, container, blob_name in rows:
+    client = None
+    for artifact_id, series_id, container, blob_name, *extra in rows:
         checked += 1
         try:
+            saved = extra[0] if extra else None
+            if saved:
+                from .session_bunny_policy import bunny_recording
+                saved = bunny_recording(saved)
+            if saved:
+                if saved.get('state') != 'ready':
+                    continue  # pending/failed imports already retain their retry state
+                from .session_bunny import check_saved_recording
+                missing = not check_saved_recording(artifact_id, saved)
+                if missing:
+                    repaired += 1
+                continue
             if not container or not blob_name:
                 missing = True
             else:
+                client = client or storage_client()
                 blob = client.get_blob_client(container, blob_name)
                 try:
                     properties = blob.get_blob_properties(logging_enable=False)

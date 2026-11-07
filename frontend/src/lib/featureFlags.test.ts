@@ -6,10 +6,10 @@ afterEach(() => {
 });
 
 describe('learner feedback feature flag', () => {
-  it('releases only Live Sessions Feedback in production builds', async () => {
+  it('releases all assigned feedback types in production builds', async () => {
     vi.stubEnv('DEV', false);
     const { LEARNER_FEEDBACK_ENABLED, LEARNER_POST_LECTURE_FEEDBACK_ENABLED } = await import('./featureFlags');
-    expect(LEARNER_FEEDBACK_ENABLED).toBe(false);
+    expect(LEARNER_FEEDBACK_ENABLED).toBe(true);
     expect(LEARNER_POST_LECTURE_FEEDBACK_ENABLED).toBe(true);
   });
 

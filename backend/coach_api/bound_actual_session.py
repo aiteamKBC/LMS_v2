@@ -65,6 +65,16 @@ def bound_session(record, *, overlay=None, target=None, lock=False):
     if claim is None:
         return None
     session = session_context_from_claim(record, claim)
+    # An explicitly archived call remains reserved by its immutable claim.
+    # It must not become the selected call for the replacement appointment.
+    historical = None
+    if session is None:
+        from .review_rescheduling import archived_claim, historical_record, booking_fingerprint
+        historical = archived_claim(record, claim)
+        if historical:
+            session = session_context_from_claim(historical_record(record, historical), claim)
+            if owner.booking_fingerprint not in {claim.get('bookingFingerprint'), booking_fingerprint(record)}:
+                raise BoundSessionConflict('The rescheduled meeting association changed.')
     if (session is None
             or not getattr(settings, 'APTEM_ACTUAL_SESSION_ASSOCIATION_POLICY_APPROVED', False)
             or owner.state != ImportedMeetingOwnership.STATE_ACTIVE
@@ -77,7 +87,7 @@ def bound_session(record, *, overlay=None, target=None, lock=False):
             or owner.owner_email.casefold() != record.owner_email.casefold()
             or owner.owner_email.casefold() != overlay.owner_email.casefold()
             or owner.graph_event_id != record.graph_event_id
-            or owner.booking_fingerprint != claim.get('bookingFingerprint')
+            or (not historical and owner.booking_fingerprint != claim.get('bookingFingerprint'))
             or claim.get('sourceReviewId') != owner.source_review_id
             or claim.get('overlayEventKey') != overlay.event_key
             or claim.get('tenantId') != str(owner.tenant_id)
@@ -93,4 +103,4 @@ def bound_session(record, *, overlay=None, target=None, lock=False):
             or target.organizer_id != str(owner.organizer_id)
             or target.online_meeting_id != owner.online_meeting_id):
         raise BoundSessionConflict('The provider meeting identity changed.')
-    return BoundSession(session, claim)
+    return None if historical else BoundSession(session, claim)

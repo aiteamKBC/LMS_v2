@@ -24,10 +24,11 @@ const QUESTION_TYPES: { value: FeedbackQuestionType; label: string }[] = [
 const CHOICE_TYPES = new Set<FeedbackQuestionType>(['single_choice', 'multiple_choice', 'dropdown', 'likert']);
 const FORM_TYPE_OPTIONS: BuilderSelectOption[] = [
   { value: 'post_lecture', label: 'Live Sessions Feedback', description: 'Sent automatically after finalized attendance', icon: 'ri-graduation-cap-line' },
-  { value: 'mid_module', label: 'Mid-module Feedback', description: 'Opens halfway between the module start and end dates', icon: 'ri-calendar-check-line' },
+  { value: 'mid_module', label: 'Wellbeing', description: 'Opens halfway between the module start and end dates', icon: 'ri-calendar-check-line' },
   { value: 'end_module', label: 'End-module Feedback', description: 'Opens on the module end date', icon: 'ri-flag-line' },
   { value: 'post_mcm_review', label: 'MCM Feedback', description: 'Used after completed monthly coaching meetings', icon: 'ri-team-line' },
   { value: 'post_progress_review', label: 'Progress Review Feedback', description: 'Used after completed progress reviews', icon: 'ri-line-chart-line' },
+  { value: 'post_progress_review_employer', label: 'Progress Review – Employer Feedback', description: 'Sent to the employer after a completed progress review', icon: 'ri-building-line' },
   { value: 'post_event', label: 'Post-event feedback', description: 'Collect feedback after an event', icon: 'ri-calendar-check-line' },
   { value: 'event_rsvp', label: 'Event RSVP', description: 'Collect attendance choices and extra responses', icon: 'ri-mail-send-line' },
   { value: 'general', label: 'General feedback', description: 'A flexible form for manual feedback collection', icon: 'ri-chat-poll-line' },
@@ -64,7 +65,7 @@ export function FormBuilder() {
   const [saving, setSaving] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const questionSettingsRef = useRef<HTMLElement>(null);
-  const lectureFeedbackUrl = `${window.location.origin}/login?lectureFeedback=1`;
+  const lectureFeedbackUrl = `${window.location.origin}/lecture-feedback`;
   const presentationSections = useMemo(() => lecturePresentationSections(model.formType, model.sections), [model.formType, model.sections]);
   const presentationStep = Math.min(previewStep, Math.max(presentationSections.length - 1, 0));
 
@@ -230,6 +231,7 @@ export function FormBuilder() {
         <div className="grid gap-5 p-5 md:grid-cols-2">
         <div className="max-w-2xl"><BuilderSelect label="Form Type" value={model.formType} options={FORM_TYPE_OPTIONS} disabled={locked} onValueChange={value => { const formType = value as FeedbackFormInput['formType']; setModel(current => ({ ...current, formType, deliveryScope: ['post_lecture', 'mid_module', 'end_module'].includes(formType) ? 'all_modules' : 'manual', startDate: ['mid_module', 'end_module'].includes(formType) ? null : current.startDate, dueDate: ['mid_module', 'end_module'].includes(formType) ? null : current.dueDate, programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '', sections: formType === 'post_lecture' ? current.sections : current.sections.map(section => ({ ...section, questionsPerDelivery: null })) })); }} /></div>
         {(model.formType === 'post_mcm_review' || model.formType === 'post_progress_review') && <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 text-xs text-violet-800 md:col-span-2">Learners receive this form automatically only for matching reviews completed after this template is first published. Historical completed reviews are not backfilled.</div>}
+        {model.formType === 'post_progress_review_employer' && <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 text-xs text-violet-800 md:col-span-2">Employers receive this form after progress reviews completed after this template is first published. Each response is separate from the learner’s feedback. Assignments without a linked employer account remain pending until the link is resolved. Historical completed reviews are not backfilled.</div>}
         {model.formType === 'event_rsvp' && <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 text-xs text-emerald-800 md:col-span-2">This form is attached to an event invitation. Yes / No / Maybe is collected by the RSVP page; add any extra questions attendees should answer.</div>}
         {['post_lecture', 'mid_module', 'end_module'].includes(model.formType) && <div className="rounded-xl border border-primary-100 bg-primary-50/40 p-4 md:col-span-2">
           <div className="mb-4 flex items-start gap-3"><span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-primary-600 shadow-sm"><i className="ri-graduation-cap-line" aria-hidden="true" /></span><div><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold text-foreground-900">{model.formType === 'post_lecture' ? 'Live Sessions Feedback delivery' : 'Module delivery'}</h3><span className="rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-primary-700">Automatic</span></div><p className="mt-1 text-xs leading-5 text-foreground-500">{model.formType === 'post_lecture' ? 'Present learners receive this form automatically after finalized attendance.' : model.formType === 'mid_module' ? 'All assigned learners receive this form halfway between the module start and end dates.' : 'All assigned learners receive this form on the module end date.'} A module-specific form overrides the all-modules form.</p></div></div>
@@ -249,8 +251,9 @@ export function FormBuilder() {
           </>}
         </div>}
         {model.formType === 'post_lecture' && <div className="rounded-xl border border-primary-100 bg-white p-4 md:col-span-2">
-          <h3 className="text-sm font-semibold text-foreground-900">Reusable Live Sessions Feedback QR</h3>
-          <p className="mt-1 text-xs text-foreground-500">Share this same QR every week. After sign-in, each learner sees only Live Sessions Feedback unlocked by their finalized attendance.</p>
+          <h3 className="text-sm font-semibold text-foreground-900">One Live Sessions Feedback QR</h3>
+          <p className="mt-1 text-xs text-foreground-500">Use this same QR for every Live Sessions form. The learner enters their Aptem or LMS email, then sees their latest available lecture and module without signing in.</p>
+          <p className="mt-1 text-xs text-amber-700">Email is not verified. Anyone who knows a learner's email could respond as them.</p>
           <div className="mt-3 flex flex-wrap items-center gap-4"><div className="rounded-lg border border-foreground-200 bg-white p-2"><QRCodeSVG value={lectureFeedbackUrl} size={150} level="M" marginSize={1} title="Live Sessions Feedback QR" /></div><div className="min-w-0 flex-1"><p className="break-all text-xs text-foreground-600">{lectureFeedbackUrl}</p><button type="button" className="mt-3 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700" onClick={() => void navigator.clipboard.writeText(lectureFeedbackUrl).then(() => { setLinkCopied(true); window.setTimeout(() => setLinkCopied(false), 1600); }).catch(() => void Swal.fire({ icon: 'error', title: 'Could not copy link' }))}>{linkCopied ? 'Copied' : 'Copy link'}</button></div></div>
         </div>}
         </div>

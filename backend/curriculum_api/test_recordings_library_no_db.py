@@ -48,7 +48,7 @@ def component(week_id, **settings):
     return {'week_id': week_id, 'module_catalogue_id': 'M-A', 'settings_json': json.dumps(settings)}
 
 
-LIBRARY_FUNCTIONS = {'_settings', '_text', '_iso', 'week_owners', 'recording_week', 'programme_active',
+LIBRARY_FUNCTIONS = {'_settings', '_text', '_iso', 'week_owners', 'recording_week', 'programme_active', 'occurrence_week_titles', 'occurrence_week_links',
                      'recording_status', 'same_recording_key', 'session_attention', 'attention_by_module',
                      '_component_start', 'module_index', 'calendar_sessions', 'placement_review_ids',
                      '_delivery', 'build_library',
@@ -69,6 +69,60 @@ def library_namespace():
 class RecordingsLibraryTests(unittest.TestCase):
     def setUp(self):
         self.ns = library_namespace()
+
+    def test_display_week_titles_require_one_explicit_link_in_the_same_module(self):
+        from copy import deepcopy
+        row = {'id': 'O7', 'live_session_id': 'S1', 'session_number': 7, 'module_catalogue_id': 'M-A'}
+        owner = {**component('W2', teamsOccurrenceId='O7'), 'component_id': 'C2', 'week_title': 'Pricing'}
+        other = {**owner, 'component_id': 'OTHER', 'module_catalogue_id': 'M-B', 'week_title': 'Other module'}
+        before = deepcopy([owner, row])
+        resolve = self.ns['occurrence_week_titles']
+        self.assertEqual(resolve([other, owner], [row]), {('M-A', 'O7'): 'Pricing'})
+        self.assertEqual([owner, row], before)
+        for candidates in ([], [other], [{**owner, 'week_title': '  '}],
+                           [{**owner, 'week_module_catalogue_id': 'M-B'}],
+                           [owner, {**owner, 'component_id': 'DUP', 'week_id': 'W3', 'week_title': 'Another week'}]):
+            self.assertEqual(resolve(candidates, [row]), {('M-A', 'O7'): ''})
+        paired = {**owner, 'settings_json': {'teamsLiveSessionId': 'S1', 'teamsSessionNumber': 7}}
+        self.assertEqual(resolve([paired], [row]), {('M-A', 'O7'): 'Pricing'})
+        # A different occurrence cannot borrow the week by row order or date.
+        self.assertEqual(resolve([owner], [{**row, 'id': 'O8', 'session_number': 8}]), {('M-A', 'O8'): ''})
+
+    def test_direct_and_series_links_to_different_components_are_ambiguous(self):
+        row = occurrence(id='O7', session_number=7)
+        direct = {**component('W2', teamsOccurrenceId='O7'), 'component_id': 'C2', 'week_title': 'Pricing'}
+        paired = {**component('W3', teamsLiveSessionId='S1', teamsSessionNumber=7),
+                  'component_id': 'C3', 'week_title': 'Another week'}
+        self.assertEqual(self.ns['occurrence_week_titles']([direct, paired], [row]), {('M-A', 'O7'): ''})
+
+    def test_calendar_display_metadata_does_not_change_saved_identity_or_titles(self):
+        owner = {**component('W2', teamsOccurrenceId='O7'), 'component_id': 'C2',
+                 'component_title': 'Live Teams Session 1', 'week_title': 'Pricing', 'week_number': 2}
+        row = occurrence(id='O7', session_number=7)
+        session = self.ns['calendar_sessions']([owner], [row])[0]
+        self.assertEqual(session['displayWeekTitle'], 'Pricing')
+        self.assertEqual(session['title'], 'Live Teams Session 1')
+        self.assertEqual((session['occurrenceId'], session['seriesId'], session['moduleId'], session['sessionNumber']),
+                         ('O7', 'S1', 'M-A', 7))
+
+    def test_recording_only_titles_do_not_trust_the_first_ambiguous_week_owner(self):
+        owner = {**component('W2', teamsOccurrenceId='O7'), 'component_id': 'C2'}
+        row = recording(occurrence_id='O7', session_number=7)
+        payload = self.ns['build_library']([row], WEEKS, [owner])
+        self.assertEqual(self.weeks_of(payload)[0]['recordings'][0]['displayWeekTitle'], 'Cleaning')
+        ambiguous = self.ns['build_library']([row], WEEKS,
+            [owner, {**owner, 'component_id': 'C3', 'week_id': 'W3'}])
+        item = self.weeks_of(ambiguous)[0]['recordings'][0]
+        self.assertEqual(item['displayWeekTitle'], '')
+        self.assertEqual((item['id'], item['occurrenceId'], item['seriesId']), ('A1', 'O7', 'S1'))
+
+    def test_an_authored_session_cannot_borrow_another_modules_week_title(self):
+        owner = {**component('W2', sessionDate='2026-11-06', sessionTime='09:00'),
+                 'component_id': 'C2', 'component_title': 'Live Teams Session 1', 'week_title': 'Pricing'}
+        self.assertEqual(self.ns['calendar_sessions']([owner], [])[0]['displayWeekTitle'], 'Pricing')
+        invalid = self.ns['calendar_sessions']([{**owner, 'week_module_catalogue_id': 'M-B'}], [])[0]
+        self.assertEqual(invalid['displayWeekTitle'], '')
+        self.assertEqual(invalid['title'], 'Live Teams Session 1')
 
     def weeks_of(self, payload, delivery=0):
         return payload['deliveries'][delivery]['weeks']
@@ -139,6 +193,27 @@ class RecordingsLibraryTests(unittest.TestCase):
         self.assertEqual(item['state'], 'pending')
         self.assertTrue(item['hiddenFromLearners'])
         self.assertEqual(item['startsAt'], '2026-09-07T09:00:00Z')
+
+    def test_duplicate_azure_alias_cannot_bypass_pending_bunny_provider(self):
+        old = recording(artifact_id='OLD', content_correlation_id='CONTENT', call_id='CALL')
+        new = recording(artifact_id='BUNNY', content_correlation_id='CONTENT', call_id='CALL',
+                        metadata={'lmsBunnyRecording': {'state': 'pending'}})
+        for rows in ([old, new], [new, old]):
+            payload = self.ns['build_library'](rows, WEEKS, [])
+            item = self.weeks_of(payload)[0]['recordings'][0]
+            self.assertEqual(item['id'], 'BUNNY')
+            self.assertEqual(item['state'], 'pending')
+            self.assertEqual(item['playbackProvider'], 'bunny')
+            self.assertEqual(item['duplicateCount'], 1)
+
+    def test_ready_bunny_alias_carries_its_provider_when_selected(self):
+        rows = [recording(artifact_id='WAIT', content_correlation_id='CONTENT', call_id='CALL',
+                          archive_status='pending', metadata={'lmsBunnyRecording': {'state': 'pending'}}),
+                recording(artifact_id='READY', content_correlation_id='CONTENT', call_id='CALL',
+                          archive_status='pending', metadata={'lmsBunnyRecording': {'state': 'ready'}})]
+        item = self.weeks_of(self.ns['build_library'](rows, WEEKS, []))[0]['recordings'][0]
+        self.assertEqual((item['id'], item['status'], item['state'], item['playbackProvider']),
+                         ('READY', 'available', 'ready', 'bunny'))
 
     def test_recording_from_another_day_is_kept_but_requires_placement_review(self):
         scheduled = datetime(2026, 10, 14, 8, tzinfo=timezone.utc)

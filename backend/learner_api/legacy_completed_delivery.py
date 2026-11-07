@@ -1,0 +1,92 @@
+"""Explicit approval for finished deliveries imported from the previous LMS.
+
+The owner confirmed these 62 audited deliveries had finished teaching before
+the move. This is a target policy, not evidence of learner completion. Do not
+extend it to other imported modules merely because they share a source label.
+
+The effective date records this policy's approval, not an invented delivery or
+week date. Calculations before approval keep the previous schedule rules.
+Keeping the approval in source control needs no runtime database/schema write.
+"""
+from datetime import date
+
+
+POLICY_VERSION = "approved_legacy_delivery_completed_v1"
+POLICY_EFFECTIVE_FROM = date(2026, 11, 4)
+APPROVED_SOURCE_TYPE = "mba-legacy"
+
+# Stable Curriculum module identities from the 62-delivery read-only audit.
+APPROVED_MODULE_IDS = frozenset({
+    "MOD-20260822007072C8A616",
+    "MOD-2026082201FB8A2E96D3",
+    "MOD-2026082202DCF4E837EF",
+    "MOD-202608220A19E33C5552",
+    "MOD-202608220A1D2C26A3E5",
+    "MOD-202608220C12A5ED2D52",
+    "MOD-2026082227C99014990B",
+    "MOD-2026082229B41B80266C",
+    "MOD-20260822325BB9E81B24",
+    "MOD-202608223894BBCBCF5F",
+    "MOD-202608223BE5D3D3C97F",
+    "MOD-202608223E23693425BC",
+    "MOD-20260822403EEDFCFC64",
+    "MOD-2026082245779A87FE0C",
+    "MOD-202608225269AA65FE11",
+    "MOD-202608225900AF6B327D",
+    "MOD-2026082268FEECD7E308",
+    "MOD-202608226D4446F9FA83",
+    "MOD-202608226D7F30544E6E",
+    "MOD-202608226D94D7082B8E",
+    "MOD-202608226F0A69EDAD30",
+    "MOD-20260822740CED24E769",
+    "MOD-202608227739EC14E0CC",
+    "MOD-2026082278ADA58C5302",
+    "MOD-202608227D42D5E9AF38",
+    "MOD-202608227DB732D5883F",
+    "MOD-2026082281333774FD28",
+    "MOD-2026082283A21E14285E",
+    "MOD-20260822845BE588961A",
+    "MOD-20260822899D822C193B",
+    "MOD-20260822A3B3BA81D79E",
+    "MOD-20260822AB3BC5BCE80A",
+    "MOD-20260822B1535EF26DB6",
+    "MOD-20260822B2177D2C4599",
+    "MOD-20260822B5DA7DFE95C6",
+    "MOD-20260822B6B98858C0BE",
+    "MOD-20260822B8A89D2AFD1D",
+    "MOD-20260822B9BBBA2C4E66",
+    "MOD-20260822BEAC7D9F6ED6",
+    "MOD-20260822C09579BBCC65",
+    "MOD-20260822C2ABEFEF6847",
+    "MOD-20260822C66FB1FC7EFC",
+    "MOD-20260822C8C4CF8F9D6F",
+    "MOD-20260822CE256A6742F2",
+    "MOD-20260822CF33C7A02E36",
+    "MOD-20260822D074A494D159",
+    "MOD-20260822D3CD7C674898",
+    "MOD-20260822D51FBB217BE9",
+    "MOD-20260822D91346A200C4",
+    "MOD-20260822DDAA061F0BB8",
+    "MOD-20260822DE3E29E1444E",
+    "MOD-20260822DF2D42A50658",
+    "MOD-20260822DFE12176DB82",
+    "MOD-20260822E35A9F7DFC21",
+    "MOD-20260822E551CE7C7FCE",
+    "MOD-20260822EB1B07CE2B42",
+    "MOD-20260822EB63B90A0058",
+    "MOD-20260822F1ACC63210A8",
+    "MOD-20260822F447F8C1470F",
+    "MOD-20260822F5205A5A253A",
+    "MOD-20260822F5EBF587E6A3",
+    "MOD-20260822F78020497691",
+})
+
+
+def approved_completed_delivery(module_id, *, source_type, module_start, as_of):
+    return bool(
+        as_of is not None
+        and as_of >= POLICY_EFFECTIVE_FROM
+        and module_start is None
+        and source_type == APPROVED_SOURCE_TYPE
+        and module_id in APPROVED_MODULE_IDS
+    )

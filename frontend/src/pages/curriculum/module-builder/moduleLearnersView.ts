@@ -69,13 +69,16 @@ export function learnerProgressSummary(
   const completed = rows.filter(row => row.status === 'completed').length;
   const otjh = key == null ? undefined : impact?.otjhAchievement?.learners?.find(row => learnerKey(row.learnerId) === key);
   const log = key == null ? undefined : impact?.activityLogOtjh?.learners.find(row => learnerKey(row.learnerId) === key);
-  const hoursAchieved = log ? log.achievedOtjh : otjh ? otjh.achievedOtjh ?? 0 : impact ? 0 : null;
+  const hoursAchieved = log ? log.achievedOtjh : otjh ? otjh.achievedOtjh ?? null : impact && !impact.moduleProgressBasis ? 0 : null;
   const hoursPlanned = log?.plannedOtjh ?? otjh?.plannedOtjh ?? 0;
   const consumption = key == null ? undefined : impact?.learnerKsbConsumption?.find(row => learnerKey(row.learnerId) === key);
   const ksbs = consumption?.ksbs || [];
-  const ksbPercent = consumption ? percentOf(consumption.cappedConsumedWeightTotal, consumption.expectedWeightTotal) : null;
-  const activityPercent = percentOf(completed, rows.length);
-  const hoursPercent = hoursAchieved == null ? null : percentOf(hoursAchieved, hoursPlanned);
+  const ksbPercent = consumption ? percentOf(consumption.cappedConsumedWeightTotal ?? consumption.consumedWeightTotal, consumption.expectedWeightTotal) : null;
+  const activity = key == null ? undefined : impact?.activityLogProgress?.learners.find(row => learnerKey(row.learnerId) === key);
+  const activityPercent = impact?.activityLogProgress
+    ? activity ? percentOf(activity.completedActivities, activity.totalActivities) : null
+    : percentOf(completed, rows.length);
+  const hoursPercent = hoursAchieved == null || log?.unallocatedAcceptedRecords ? null : percentOf(hoursAchieved, hoursPlanned);
   return {
     key,
     rows,

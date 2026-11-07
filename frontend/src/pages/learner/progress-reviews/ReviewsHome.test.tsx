@@ -49,6 +49,17 @@ function mount(overrides: Partial<ReviewsHomeProps> = {}, search = '?kind=appren
 
 afterEach(cleanup);
 
+it.each(['curriculum', 'aptem'] as const)('shows a missed %s review in the timeline without changing its form status', reviewSource => {
+  const row = session('missed', { status: 'in-progress', reviewSource, scheduledDate: '2026-09-13', reviewAttendance: 'missed' });
+  mount({ sessions: [row], attendance: [attendance(row.id, { date: '2026-09-13', missed: true })] });
+  const timeline = within(screen.getByRole('region', { name: /programme timeline/ }));
+  const marker = timeline.getByRole('button', { name: /Missed/ });
+  expect(marker.closest('[data-status]')).toHaveAttribute('data-status', 'missed');
+  fireEvent.click(marker);
+  expect(screen.getAllByText('Meeting missed').length).toBeGreaterThan(0);
+  expect(row.status).toBe('in-progress');
+});
+
 it.each(['participant', 'employer'] as const)('keeps completed APTEM records selectable without a fabricated next action for %s', viewerRole => {
   mount({ viewerRole, sessions: [session('history', { reviewSource: 'aptem', status: 'completed', effectiveLmsStatus: 'completed', learnerSigned: true })] });
   expect(screen.getByRole('heading', { name: 'No current review' })).toBeVisible();

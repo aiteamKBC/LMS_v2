@@ -243,6 +243,56 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  it('prepares a planned Aptem MCM for the owning learner', async () => {
+    const key = 'imported-review:synthetic-mcm';
+    events = [event({ id: key, eventKey: key, source: 'mcr', reviewSource: 'aptem',
+      importedReviewType: 'Monthly Coaching Meeting', reviewTemplateId: null, reviewInstanceId: null,
+      migratedForm: false, status: 'not-scheduled', sourceStatus: 'Not Scheduled' })];
+    reviewDefinition = { ...reviewDefinition, source: 'aptem', migratedForm: true, readOnly: false,
+      answerVersion: 'synthetic-v1', instance: { ...reviewDefinition.instance!, id: key, status: 'not-scheduled' },
+      sections: [{ id: 'section', title: 'Questions', enabled: true, displayOrder: 0, estimatedMinutes: 0,
+        fields: [{ id: 'learner-question', title: 'Learner question', fieldType: 'text', required: false,
+          displayOrder: 0, configuration: { respondentRoles: ['participant'] }, answer: '' }] }] };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/csrf')) return new Response(JSON.stringify({ csrfToken: 'synthetic' }));
+      if (String(input).endsWith('/prepare-review')) return new Response(JSON.stringify(reviewDefinition));
+      if (String(input).endsWith('/party-answers')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ answers: { 'learner-question': 'My answer' } });
+        return new Response(JSON.stringify(reviewDefinition));
+      }
+      return originalFetch(input, init);
+    });
+    mountMcm(key);
+    await screen.findByTestId('learner-review-instance-form');
+    expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url).endsWith('/prepare-review') && init?.method === 'POST')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Open my questions' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My answer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url).endsWith('/party-answers') && init?.method === 'POST')).toBe(true));
+  });
+
+  it('shows a planned Aptem MCM to an admin without preparation or answer controls', async () => {
+    const key = 'imported-review:synthetic-mcm';
+    viewer.role = 'admin';
+    access.canProgress = true;
+    events = [event({ id: key, eventKey: key, source: 'mcr', reviewSource: 'aptem',
+      importedReviewType: 'Monthly Coaching Meeting', reviewTemplateId: null, reviewInstanceId: null,
+      migratedForm: false, status: 'not-scheduled', sourceStatus: 'Not Scheduled' })];
+    reviewDefinition = { ...reviewDefinition, source: 'aptem', migratedForm: false, readOnly: true,
+      instance: { ...reviewDefinition.instance!, id: key, status: 'not-scheduled' } };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/preview-review/')) return new Response(JSON.stringify(reviewDefinition));
+      return originalFetch(input, init);
+    });
+    mountMcm(key);
+    await screen.findByTestId('learner-review-instance-form');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/preview-review/'))).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/prepare-review'))).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Save my answers' })).not.toBeInTheDocument();
+  });
+
   function unpreparedPsp(status = 'not-scheduled') {
     const key = 'imported-review:unprepared-psp';
     events = [event({ id: key, source: 'progress-review', title: 'Personal Support Plan',

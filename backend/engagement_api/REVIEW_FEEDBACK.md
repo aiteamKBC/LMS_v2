@@ -1,5 +1,9 @@
 # Imported Review feedback
 
+Employer Progress Review feedback is documented in
+[EMPLOYER_REVIEW_FEEDBACK.md](EMPLOYER_REVIEW_FEEDBACK.md). It adds migration
+`0010_employer_review_feedback`; the learner-only schema notes below predate it.
+
 `feedback._sync_review_feedback_deliveries` delegates to `review_feedback`.
 The previous implementation read only `"Learner".reviews`, required exact
 `Completed` status and matched only two exact type labels.
@@ -65,7 +69,7 @@ For an import pipeline or recovery run, after verifying the target environment:
 The command prints counts only (`created`, `existing`, `incomplete`,
 `historical`, `undated`, `future`, `unlinked`, `identityConflicts`). It requires
 explicit learner IDs and never sends notifications, invitations or mail.
-No new SQL migration is required; the existing reviewed Feedback Review schema
+For learner-only review feedback no new SQL migration is required; the existing reviewed Feedback Review schema
 and its unique source_review_id constraint must already be installed. Do not
 rerun older form-type constraint migrations over newer schema releases.
 
@@ -78,6 +82,62 @@ mocked. ORM race checks create only a temporary local SQLite database, guarded
 to refuse any non-SQLite test configuration. No live database or external
 service is used. SQLite proves these ORM/constraint cases, not live PostgreSQL
 availability or the external Aptem import schedule.
+
+## Production learner release — 2026-11-02
+
+All assigned feedback types are now released for signed-in learners in both
+production and development. Previously the frontend used `import.meta.env.DEV`
+for the full workspace, while the backend disabled non-lecture feedback when
+DEBUG was false. Staff preview bypassed those learner release restrictions,
+which explained why a published MCM assignment appeared for Admin and locally
+but not for the same learner on the production site.
+
+`frontend/src/lib/featureFlags.ts` now enables the full workspace, and
+`backend/config/settings.py` enables non-lecture feedback. Queue categories,
+deep links, response saving/submission and the committed Review-completion hook
+therefore use the existing full-feedback workflows in production. Publication,
+assignment ownership, learner identity, availability dates, immutable previous
+responses, no-backfill boundaries and read-only staff preview are unchanged.
+The explicit disabled-release tests remain and still check the limited mode.
+
+Final checks:
+
+- Backend feature checks: **PASS, 210 tests**, using isolated SQLite settings
+  and mocked source/external services. From `backend`:
+
+  ```powershell
+  .\.venv\Scripts\python.exe manage.py test engagement_api.tests_feedback_visibility engagement_api.tests_review_feedback engagement_api.tests.FeedbackValidationTests engagement_api.tests_module_feedback engagement_api.tests_event_feedback engagement_api.tests_post_lecture_bank engagement_api.tests_feedback_question_scoring engagement_api.tests_feedback_analytics --settings=config.settings_sqlite_test --noinput
+  ```
+
+- Frontend feature/shared authorization checks: **PASS, 120 tests**. From root:
+
+  ```powershell
+  npm.cmd --prefix frontend test -- --run --maxWorkers=1 src/lib/featureFlags.test.ts src/router/__tests__/learnerFeedbackFlag.test.tsx src/pages/learner/feedback/page.test.tsx src/pages/learner/feedback/form/page.test.tsx src/pages/learner/home/page.test.tsx src/api/feedback.test.ts src/components/feature/__tests__/RequireAuth.test.tsx src/lib/__tests__/routeAccess.test.ts
+  ```
+
+- `npm.cmd --prefix frontend run type-check`: **PASS**.
+- `npm.cmd --prefix frontend run lint`: **PASS**.
+- `npm.cmd --prefix frontend run build`: **PASS**, with dependency/chunk-size warnings.
+- `git diff --check`: **PASS**.
+- Additional RSVP/creation-guard checks: **21 pass, 1 error** across 22 tests:
+
+  ```powershell
+  .\.venv\Scripts\python.exe manage.py test engagement_api.tests_event_rsvp engagement_api.tests_feedback_delivery_guard --settings=config.settings_sqlite_test --noinput
+  ```
+
+  `test_pending_only_batch_leaves_failed_recipients_for_explicit_retry` expects
+  the mock keyword `invite_status`, while the existing endpoint filters with
+  `invite_status__in`. The same test was independently rerun with the former
+  `LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False` setting and failed identically;
+  the RSVP endpoint and its test were not edited for this release. This is an
+  outstanding existing test failure, not a fully green broader regression run.
+
+No SQL/schema or learner-data changes are required or were performed. Teams
+baseline/expanded checks are **NOT REQUIRED**: no Teams file, imported Teams
+function or response was changed. Live browser, Teams and Aptem checks were
+**NOT RUN**. Deployment is still pending review/merge; release both the frontend
+production build and restarted backend together. Publishing a form or rebuilding
+only the frontend does not update the backend's release setting.
 
 ## Verification record — 2026-10-29
 

@@ -1,6 +1,8 @@
 import { fileProbe } from './page.helpers';
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
+import { ActivityRetakeTimeDialog, ActivityTimeLimitNotice } from '@/components/feature/ActivityRetakeTimeDialog';
+import { activityTimeSeconds, applyActivityTime, countedActivityTime, activityTimeIssue, type ActivityTimeChoice } from '@/lib/activityTimeDecision';
 import { ManualTimeSummary } from '@/components/feature/ManualTimeConfirmation';
 import { startActivityClock } from '@/lib/activityClock';
 import { fetchAttachmentResource, fetchPdfResource } from '@/api/pdfResource';
@@ -53,11 +55,12 @@ import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog'
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
+import { ActivityPlanDetails } from './ActivityPlanDetails';
 import { AudioYouTubeAlternative } from './AudioYouTubeAlternative';
 import { isNavigableComponent, placeActivity, weekDisplayLabel, type ActivityPlacement } from './weekPreview';
 import { componentRoute } from './componentRoute';
 import { ActivityElapsedTimer } from './ActivityElapsedTimer';
-import manualTimeStyles from './ActivityManualTimeInput.module.css';
+import { ActivityTimeSpentInput } from './ActivityTimeSpentInput';
 import layoutStyles from './ComponentActivityLayout.module.css';
 import { AssignmentSubmissionWizard, type AssignmentCompletion } from './AssignmentSubmissionWizard';
 import { AssignmentBriefPanel } from './AssignmentBriefSections';
@@ -92,9 +95,10 @@ interface TimedCompletion {
   submittedAt?: string | null;
   timeTaken?: string | null;
   passed?: boolean | null;
+  retakeTimeChoice?: ActivityTimeChoice | 'keep' | 'new';
 }
 
-/** The latest successful completion time for one sidebar activity. */
+/** The counted successful time for one sidebar activity. */
 function completionTimeFor(component: JourneyComponent, detail: LearnerDetail | null): string | null {
   let records: TimedCompletion[] = [];
   if (component.isQuiz) {
@@ -109,103 +113,7 @@ function completionTimeFor(component: JourneyComponent, detail: LearnerDetail | 
     );
   }
 
-  const latest = records.reduce<TimedCompletion | null>((current, record) => {
-    if (!current) return record;
-    return String(record.submittedAt || '') >= String(current.submittedAt || '') ? record : current;
-  }, null);
-  return formatRecordedClock(latest?.timeTaken);
-}
-
-function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange: (seconds: number | null) => void; initialSeconds?: number | null }) {
-  const partsFromSeconds = (seconds: number | null) => {
-    if (seconds == null || seconds <= 0) return { hours: '', minutes: '' };
-    const [hours, minutes] = formatClock(seconds).split(':');
-    return { hours, minutes };
-  };
-  const [parts, setParts] = useState(() => partsFromSeconds(initialSeconds));
-
-  useEffect(() => {
-    setParts(current => {
-      const currentSeconds = current.hours || current.minutes
-        ? (Number(current.hours) || 0) * 3600 + (Number(current.minutes) || 0) * 60
-        : null;
-      // Keep in-progress typing, but reflect time edited in the other control.
-      return currentSeconds === initialSeconds ? current : partsFromSeconds(initialSeconds);
-    });
-  }, [initialSeconds]);
-
-  const totalSeconds = (next: typeof parts): number | null => {
-    if (!next.hours && !next.minutes) return null;
-    return (Number(next.hours) || 0) * 3600 + (Number(next.minutes) || 0) * 60;
-  };
-
-  const updatePart = (part: keyof typeof parts, rawValue: string) => {
-    const value = rawValue.replace(/\D/g, '').slice(0, part === 'hours' ? 3 : 2);
-    const next = { ...parts, [part]: value };
-    setParts(next);
-    onChange(totalSeconds(next));
-  };
-
-  const normalise = () => {
-    const total = totalSeconds(parts);
-    if (total == null) return;
-    const [hours, minutes] = formatClock(total).split(':');
-    setParts({ hours, minutes });
-    onChange(total);
-  };
-
-  const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
-    { key: 'hours', label: 'Hours', ariaLabel: 'Hours spent' },
-    { key: 'minutes', label: 'Minutes', ariaLabel: 'Minutes spent' },
-  ];
-  const helpId = useId();
-  const [selectedHours, selectedMinutes, selectedRemainder] = formatClock(initialSeconds ?? 0).split(':').map(Number);
-
-  return (
-    <div
-      className={manualTimeStyles.card}
-      title="Enter time spent in hours and minutes"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) normalise();
-      }}
-    >
-      <div className={manualTimeStyles.heading}>
-        <span className={manualTimeStyles.icon}><AppIcon className="ri-edit-2-line" /></span>
-        <span>Manual time entry</span>
-        <span className={manualTimeStyles.badge}>Editable</span>
-      </div>
-      <div className={manualTimeStyles.fields}>
-        {fields.map((field) => (
-          <label key={field.key} className={manualTimeStyles.field}>
-            <span className={manualTimeStyles.label}>{field.label}</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={parts[field.key]}
-              onChange={(event) => updatePart(field.key, event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-                if (event.key === 'Escape') {
-                  event.preventDefault();
-                  const empty = { hours: '', minutes: '' };
-                  setParts(empty);
-                  onChange(null);
-                }
-              }}
-              placeholder={field.key === 'hours' ? '0' : '30'}
-              aria-label={field.ariaLabel}
-              aria-describedby={helpId}
-              className={manualTimeStyles.input}
-            />
-          </label>
-        ))}
-      </div>
-      <p id={helpId} className={manualTimeStyles.hint}>For 30 minutes: enter 0 in Hours and 30 in Minutes.</p>
-      <p className={manualTimeStyles.summary} aria-live="polite" aria-atomic="true">
-        {initialSeconds !== null && `Selected time: ${selectedHours} ${selectedHours === 1 ? 'hour' : 'hours'} and ${selectedMinutes} ${selectedMinutes === 1 ? 'minute' : 'minutes'}${selectedRemainder > 0 ? ` and ${selectedRemainder} ${selectedRemainder === 1 ? 'second' : 'seconds'}` : ''}.`}
-      </p>
-    </div>
-  );
+  return records.length ? formatClock(countedActivityTime(records)) : null;
 }
 
 /** Find the target component + its week/module context inside the built journey. */
@@ -280,6 +188,7 @@ export default function ComponentViewPage() {
   const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'timer' | 'input' }>({
     ksbs: [], feedback: '', reportedTime: '',
   });
+  const lastReflectionSkippedRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [expiredTiming, setExpiredTiming] = useState(false);
   const [recoveringTiming, setRecoveringTiming] = useState(false);
@@ -289,7 +198,9 @@ export default function ComponentViewPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
   const [repeating, setRepeating] = useState(false);
-  const [keepPreviousTime, setKeepPreviousTime] = useState(false);
+  const [retakeOpen, setRetakeOpen] = useState(false);
+  const [timeDecision, setTimeDecision] = useState<{ choice: ActivityTimeChoice; reason: string; previousSeconds: number } | null>(null);
+  const [timeLimitIssue, setTimeLimitIssue] = useState('');
   const [refreshError, setRefreshError] = useState<string | null>(null);
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
@@ -315,6 +226,7 @@ export default function ComponentViewPage() {
     setPhase('consume');
     setRecord(null);
     setRepeating(false);
+    setRetakeOpen(false); setTimeDecision(null); setTimeLimitIssue('');
     setRefreshError(null);
     setSubmitError(null);
     setPlayerPlaying(false);
@@ -395,8 +307,8 @@ export default function ComponentViewPage() {
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
   const hasActivityPanel = isVideo || isLiveSession;
-  // The monthly assignment uses the eight-step submission. Once an author flags
-  // one, the plan's other assignments are completed like any other activity.
+  // Every assignment uses the eight-step monthly submission, regardless of
+  // legacy author flags elsewhere in the learner's plan.
   const isAssignment = isMonthlyAssignment(component, detail?.components);
   const isPlainAssignment = !isAssignment && componentRequiresEvidence(component?.type);
   const completed = !!component && isComponentComplete(component, completedIds);
@@ -682,7 +594,7 @@ export default function ComponentViewPage() {
   // wall-clock deltas rather than assuming each callback is exactly one second.
   useEffect(() => {
     const activeMedia = isVideo || isAudio;
-    if (phase !== 'consume' || !recordingAttempt || !canUseComponent || expiredTiming) return;
+    if (phase !== 'consume' || retakeOpen || !recordingAttempt || !canUseComponent || expiredTiming) return;
     // Downloading/parsing a document is not study time; wait for its first page.
     if (waitsForPreview && (loading || loadError || !openable || readyContent !== previewInstance)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
@@ -704,12 +616,11 @@ export default function ComponentViewPage() {
     });
     timerRef.current = clock;
     return () => clock.stop();
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, previewInstance, expiredTiming]);
+  }, [phase, retakeOpen, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, waitsForPreview, readyContent, previewInstance, expiredTiming]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
     timerRef.current?.stop();
-    setKeepPreviousTime(false);
     if (isLiveSession && manualTimeMissing) {
       setPhase('time-entry');
       return;
@@ -723,16 +634,6 @@ export default function ComponentViewPage() {
 
   const confirmCompletion = () => {
     if (!component) return;
-    if (keepPreviousTime && completedTime) {
-      clearActivityTimer(timerStorageKey);
-      setWallElapsed(0);
-      timerRemainder.current.milliseconds = 0;
-      setManualTimeSeconds(null);
-      setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
-      setRepeating(false);
-      setPhase('consume');
-      return;
-    }
     if (manualTimeMissing) return;
     if (timeSource === 'input') confirmedManualTime.current = submittedTimeSeconds;
     if (phase === 'time-entry' && component.reflectionRequired !== false) {
@@ -757,10 +658,14 @@ export default function ComponentViewPage() {
     const declared = options.declaredCompletedAt ?? null;
     const finalTimeSeconds = reflection.timeTakenSeconds ?? submittedTimeSeconds;
     const finalTimeSource = reflection.timeEntrySource ?? timeSource;
+    const limitIssue = !isAssignment ? activityTimeIssue(timeDecision?.previousSeconds ?? 0, finalTimeSeconds, timeDecision?.choice) : '';
+    if (limitIssue) { setTimeLimitIssue(limitIssue); return; }
     lastReflectionRef.current = reflection;
+    lastReflectionSkippedRef.current = options.skipReflection === true;
     completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
+    if (declared) setCorrectionError('');
     setRefreshError(null);
     try {
       if (finalTimeSource === 'input' && !options.manualTimeConfirmed && confirmedManualTime.current !== finalTimeSeconds
@@ -784,17 +689,19 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: finalTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: finalTimeSource,
+          ...(timeDecision ? { retakeTimeChoice: timeDecision.choice, retakeTimeReason: timeDecision.reason, retakePreviousSeconds: timeDecision.previousSeconds } : {}),
           declaredCompletedAt: declared,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
           skipReflection: options.skipReflection === true,
         });
-        setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
+        setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.countedSeconds != null ? formatClock(res.record.countedSeconds) : res.record.timeTaken });
       } else {
         const res = await submitComponentProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: finalTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: finalTimeSource,
+          ...(timeDecision && !isAssignment ? { retakeTimeChoice: timeDecision.choice, retakeTimeReason: timeDecision.reason, retakePreviousSeconds: timeDecision.previousSeconds } : {}),
           declaredCompletedAt: declared,
           componentTitle: pageTitle, componentType: component.type || undefined,
           plannedOtjh: plannedTimeLabel,
@@ -802,7 +709,7 @@ export default function ComponentViewPage() {
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
           skipReflection: options.skipReflection === true,
         });
-        setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
+        setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.countedSeconds != null ? formatClock(res.record.countedSeconds) : res.record.timeTaken });
       }
       clearRewardObservations(tracking);
       clearActivityTimer(timerStorageKey);
@@ -812,6 +719,7 @@ export default function ComponentViewPage() {
       if (reflection.assignmentTopicId) setTrackingGeneration(value => value + 1);
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
       setRepeating(false);
+      setTimeDecision(null);
       // A refresh failure after a committed completion must not invite the
       // learner to submit the same timing session again.
       const refreshed = await fetchLearnerDetail(kind as LearnerKind, id, { componentId }).catch(() => {
@@ -842,7 +750,9 @@ export default function ComponentViewPage() {
         if (options.rethrow) throw e;
         return;
       }
-      setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
+      const message = e instanceof Error ? e.message : 'Could not save progress';
+      if (declared) setCorrectionError(message);
+      else setSubmitError(message);
       if (options.rethrow) throw e;
     } finally {
       completionInFlightRef.current = false;
@@ -851,7 +761,11 @@ export default function ComponentViewPage() {
   };
 
   const submitDeclared = (declaredAt: string) => {
-    void finalizeSubmit(lastReflectionRef.current, { declaredCompletedAt: declaredAt, manualTimeConfirmed: true });
+    void finalizeSubmit(lastReflectionRef.current, {
+      declaredCompletedAt: declaredAt,
+      manualTimeConfirmed: true,
+      skipReflection: lastReflectionSkippedRef.current,
+    });
   };
 
   const activityHeading = component && (
@@ -868,9 +782,7 @@ export default function ComponentViewPage() {
         ) : component.durationMinutes != null && (
           <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
         )}
-        {component.expectedOtjh != null && component.expectedOtjh > 0 && (
-          <span className="inline-flex items-center gap-1"><AppIcon className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
-        )}
+        <ActivityPlanDetails hours={component.expectedOtjh} />
         {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
       </div>
     </div>
@@ -960,6 +872,10 @@ export default function ComponentViewPage() {
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
               <PreviousLearningNotice learning={component.previousLearning} kind={kind} learnerId={id} />
+              {timeDecision && <div className="mb-3 rounded-xl border border-primary-200 bg-primary-50 p-3 text-sm">
+                <p>{timeDecision.choice === 'correct' ? 'Correcting the recorded duration.' : timeDecision.choice === 'add' ? 'Adding time to the recorded duration.' : 'Recording another attempt; the larger duration will count.'} Maximum activity total: 8 hours.</p>
+                <button type="button" className="mt-2 font-semibold underline" onClick={() => setRetakeOpen(true)}>Change time option</button>
+              </div>}
               {isVideo && activityHeading}
               {!isAssignment && !recordedEvent && (
                 <ComponentContent key={timerStorageKey} component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
@@ -1016,7 +932,7 @@ export default function ComponentViewPage() {
                   <div className={hasActivityPanel ? layoutStyles.videoTools : 'contents'}>
                   <ActivityTimeSpentInput
                     key={timerStorageKey}
-                    initialSeconds={isLiveSession ? manualTimeSeconds : undefined}
+                    initialSeconds={manualTimeSeconds}
                     onChange={(seconds) => {
                       setManualTimeSeconds(seconds);
                       setTimeSource(seconds == null && !usesManualTimeOnly ? 'timer' : 'input');
@@ -1142,7 +1058,7 @@ export default function ComponentViewPage() {
                     {nextActivity && <button type="button" onClick={() => navigate(nextActivity.href)} className="rounded-lg bg-emerald-700 px-3 py-2 text-left text-xs font-semibold text-white hover:bg-emerald-800">
                       Next activity: {nextActivity.label}
                     </button>}
-                    {!repeating && <button type="button" onClick={() => setRepeating(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
+                    {!repeating && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
                   </div>
                 </div>
               )}
@@ -1289,13 +1205,24 @@ export default function ComponentViewPage() {
           </div>
         )}
         {timeConfirmation}
+        {retakeOpen && <ActivityRetakeTimeDialog previousSeconds={activityTimeSeconds({ timeTaken: completedTime })} onClose={() => setRetakeOpen(false)} onChoose={(choice, reason) => {
+          const previousSeconds = activityTimeSeconds({ timeTaken: completedTime });
+          setTimeDecision({ choice, reason, previousSeconds }); setRetakeOpen(false); setRepeating(true);
+          setManualTimeSeconds(current => current ?? (choice === 'correct' ? previousSeconds : null));
+          setTimeSource(choice === 'correct' || usesManualTimeOnly ? 'input' : 'timer');
+        }} />}
+        {timeLimitIssue && <ActivityTimeLimitNotice message={timeLimitIssue} onEdit={() => {
+          setTimeLimitIssue(''); if (phase === 'reflection-choice') setPhase('consume');
+          requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Hours spent"]')?.focus());
+        }} />}
         {(phase === 'confirm' || phase === 'time-entry') && (
           <CompletionConfirmPopup
             title={pageTitle}
             noun={noun}
             previousTimeLabel={completed ? completedTime : null}
-            keepPreviousTime={keepPreviousTime}
-            onKeepPreviousTimeChange={setKeepPreviousTime}
+            decision={timeDecision?.choice}
+            countedTimeLabel={timeDecision ? formatClock(applyActivityTime(timeDecision.previousSeconds, submittedTimeSeconds, timeDecision.choice)) : undefined}
+            timeIssue={activityTimeIssue(timeDecision?.previousSeconds ?? 0, submittedTimeSeconds, timeDecision?.choice)}
             timerLabel={formatClock(elapsedSeconds)}
             inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
             inputSeconds={manualTimeSeconds}
@@ -1305,7 +1232,7 @@ export default function ComponentViewPage() {
             }}
             selectedSource={timeSource}
             manualTimeOnly={usesManualTimeOnly}
-            continueToReflection={phase === 'time-entry' && component?.reflectionRequired !== false && !keepPreviousTime}
+            continueToReflection={phase === 'time-entry' && component?.reflectionRequired !== false}
             timeEntryHint={isLiveSession ? 'Enter the time you spent on this session to continue.' : undefined}
             evidenceFileName={evidenceFileLabel}
             submitting={submitting}
@@ -1357,8 +1284,7 @@ function CompletionConfirmPopup({
   noun,
   timerLabel,
   previousTimeLabel,
-  keepPreviousTime,
-  onKeepPreviousTimeChange,
+  decision, countedTimeLabel, timeIssue,
   inputLabel,
   inputSeconds,
   onInputChange,
@@ -1376,7 +1302,7 @@ function CompletionConfirmPopup({
   recoveringTiming = false,
 }: {
   title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
-  previousTimeLabel?: string | null; keepPreviousTime: boolean; onKeepPreviousTimeChange: (keep: boolean) => void;
+  previousTimeLabel?: string | null; decision?: ActivityTimeChoice; countedTimeLabel?: string; timeIssue?: string;
   submitting: boolean; error: string | null;
   inputSeconds: number | null; onInputChange: (seconds: number | null) => void;
   continueToReflection?: boolean; timeEntryHint?: string;
@@ -1395,11 +1321,13 @@ function CompletionConfirmPopup({
     const panel = panelRef.current;
     (panel?.querySelector<HTMLInputElement>('input') || panel?.querySelector<HTMLButtonElement>('button'))?.focus();
   }, [reviewingManualTime]);
-  const selectedTimeLabel = keepPreviousTime && previousTimeLabel ? previousTimeLabel : selectedSource === 'input'
+  const selectedTimeLabel = countedTimeLabel || (selectedSource === 'input'
     ? inputLabel || '--:--:--'
-    : timerLabel;
+    : timerLabel);
+  const editLimit = () => { setReviewingManualTime(false); onSelectSource('input'); requestAnimationFrame(() => panelRef.current?.querySelector<HTMLInputElement>('[aria-label="Hours spent"]')?.focus()); };
   const confirmSelectedTime = () => {
-    if (!reviewingManualTime && !keepPreviousTime && selectedSource === 'input' && inputSeconds != null && inputSeconds > 0) {
+    if (timeIssue) { editLimit(); return; }
+    if (!reviewingManualTime && selectedSource === 'input' && inputSeconds != null && inputSeconds > 0) {
       setReviewingManualTime(true);
       return;
     }
@@ -1452,32 +1380,8 @@ function CompletionConfirmPopup({
               </span>
             </div>
           )}
-          {previousTimeLabel && (
-            <>
-              <p className="text-xs text-foreground-500">Choose which attempt time to keep. Times will not be added together.</p>
-              <button
-                type="button"
-                aria-pressed={keepPreviousTime}
-                onClick={() => onKeepPreviousTimeChange(true)}
-                disabled={submitting}
-                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${keepPreviousTime ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-300 bg-white text-foreground-700'}`}
-              >
-                <span className="text-sm font-semibold">Previous attempt</span>
-                <span className="font-mono text-sm font-bold tabular-nums">{previousTimeLabel}</span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={!keepPreviousTime}
-                onClick={() => onKeepPreviousTimeChange(false)}
-                disabled={submitting}
-                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${!keepPreviousTime ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-300 bg-white text-foreground-700'}`}
-              >
-                <span className="text-sm font-semibold">Current attempt</span>
-                <span className="font-mono text-sm font-bold tabular-nums">{selectedSource === 'input' ? inputLabel || '--:--:--' : timerLabel}</span>
-              </button>
-            </>
-          )}
-          <fieldset disabled={submitting || keepPreviousTime} className="space-y-3 disabled:opacity-50">
+          {previousTimeLabel && <p className="text-xs text-foreground-600">Previously recorded: {previousTimeLabel}. {decision === 'add' ? 'Add this time to the previous total.' : decision === 'correct' ? 'Replace the incorrect duration with this time.' : 'Count the larger of the previous and new attempt.'}</p>}
+          <fieldset disabled={submitting} className="space-y-3 disabled:opacity-50">
           {!manualTimeOnly && (
             <button
               type="button"
@@ -1520,6 +1424,7 @@ function CompletionConfirmPopup({
           </fieldset>
         </div>}
 
+        {timeIssue && <div role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-left text-sm"><p>{timeIssue}</p><button type="button" className="mt-2 font-semibold underline" onClick={editLimit}>Edit entered time</button></div>}
         {error && (
           <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-left text-xs font-semibold text-red-700">
             {error}
@@ -1542,7 +1447,7 @@ function CompletionConfirmPopup({
           <button
             type="button"
             onClick={confirmSelectedTime}
-            disabled={submitting || (!keepPreviousTime && (manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
+            disabled={submitting || ((manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />

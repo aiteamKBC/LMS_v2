@@ -324,9 +324,12 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     for artifact in artifacts:
         if email is not None and artifact['id'] in hidden:
             continue
+        bunny_value = artifact_metadata(artifact).get('lmsBunnyRecording')
+        bunny = bunny_value if isinstance(bunny_value, dict) else {}
         artifacts_by_id[artifact['occurrence_id']].append({
             'id': artifact['id'], 'type': artifact['artifact_type'], 'createdAt': artifact['created_datetime'],
-            'state': artifact['archive_status'] or 'pending', 'text': artifact['transcript_text'],
+            'state': bunny.get('state') or artifact['archive_status'] or 'pending', 'text': artifact['transcript_text'],
+            **({'playbackProvider': 'bunny'} if bunny else {}),
             'hiddenFromLearners': artifact['id'] in hidden,
             'endsAt': instant(artifact.get('end_datetime')),
             'timingReady': transcript_timing_ready(artifact) if artifact['artifact_type'] == 'transcript' else False,
@@ -717,7 +720,8 @@ def link_attendance_alias(request, series_id, session_number):
 def add_sync_progress(jobs):
     if not jobs:
         return
-    rows = read('''SELECT o.live_session_id,o.session_number,a.id,a.artifact_type,r.status,
+    rows = read('''SELECT o.live_session_id,o.session_number,a.id,a.artifact_type,
+        coalesce(nullif(a.metadata::jsonb->'lmsBunnyRecording'->>'state',''),r.status) AS status,
         r.last_error,r.updated_at,
         CASE WHEN a.metadata::jsonb->'lmsArchiveProgress'->>'leaseId'=j.lease_id
             THEN (a.metadata::jsonb->'lmsArchiveProgress')-'leaseId' ELSE NULL END AS transfer
@@ -765,15 +769,18 @@ def linked_session_items(series_ids):
           AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
           AND coalesce(w.library_state,'')<>'library'
         WHERE o.live_session_id=ANY(%s)''', [sorted(set(series_ids))])
-    titles, weeks = defaultdict(set), defaultdict(dict)
+    titles, weeks, components = defaultdict(set), defaultdict(dict), defaultdict(set)
     for row in rows:
         key = (row['live_session_id'], row['session_number'])
+        components[key].add(row.get('component_id'))
         titles[key].add(str(row.get('title') or '').strip())
         weeks[key][row['week_id']] = {'number': row['week_number'], 'title': row['week_title'] or ''}
     items = {}
     for key in set(titles) | set(weeks):
         named = titles[key] - {''}
+        week_title = str(next(iter(weeks[key].values()))['title']).strip() if len(weeks[key]) == 1 else ''
         items[key] = {'title': next(iter(named)) if len(titles[key]) == 1 and named else None,
+                      'weekTitle': week_title if len(components[key]) == 1 and next(iter(components[key])) else '',
                       'week': next(iter(weeks[key].values())) if len(weeks[key]) == 1 else None}
     return items
 
@@ -827,6 +834,7 @@ def module_results(request, module_id):
         for item in occurrences:
             # The Course structure item's own name; the list falls back to "Session N".
             item['itemTitle'] = (items.get((item['seriesId'], item['sessionNumber'])) or {}).get('title')
+            item['itemWeekTitle'] = (items.get((item['seriesId'], item['sessionNumber'])) or {}).get('weekTitle')
         results = [{'id': row['id'], 'title': row['module_title'],
                     'sessions': [item for item in occurrences if item['seriesId'] == row['id']]} for row in series]
         payload = {'series': results, 'jobs': [], 'presenceThresholdSeconds': 180, 'syncAvailable': True}
@@ -1115,10 +1123,25 @@ def stored_content(request, series_id, artifact_id, *, learner_view=False):
         JOIN curriculum.live_session_artifacts a ON a.id=r.artifact_id
         JOIN curriculum.live_session_occurrences o ON o.id=r.occurrence_id
         WHERE r.artifact_id=%s AND o.live_session_id=%s''', [artifact_id, series_id])
-    if not rows or rows[0]['status'] != 'ready':
+    bunny_value = artifact_metadata(rows[0]).get('lmsBunnyRecording') if rows else None
+    bunny = bunny_value if isinstance(bunny_value, dict) else {}
+    if not rows or (bunny.get('state') or rows[0]['status']) != 'ready':
         return JsonResponse({'error': 'This file is still being saved. Please try again later.'}, status=409)
     row = rows[0]
-    if row['artifact_type'] == 'transcript' and request.GET.get('format') == 'cues':
+    if row['artifact_type'] == 'recording' and bunny:
+        from .session_bunny import recording_player
+        from .bunny_stream import VideoImportError
+        try:
+            download = not learner_view and request.GET.get('download') == '1'
+            url = recording_player(row, download=download,
+                                   referrer=request.build_absolute_uri('/') if download else '')
+            if request.GET.get('format') == 'player' or (not learner_view and request.GET.get('resolve') == '1'):
+                response = JsonResponse({'url': url, 'provider': 'bunny'})
+            else:
+                response = HttpResponseRedirect(url)
+        except VideoImportError as failure:
+            return JsonResponse({'error': str(failure)}, status=503)
+    elif row['artifact_type'] == 'transcript' and request.GET.get('format') == 'cues':
         if not transcript_timing_ready(row):
             return JsonResponse({'error': 'Transcript timing is being prepared.', 'code': 'transcript_timing_pending'}, status=409)
         response = JsonResponse({'cues': artifact_metadata(row)['lmsTranscriptTimeline']['cues']})

@@ -21,6 +21,15 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock); fetchM
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Saved session results', () => {
+  it('accepts a curriculum display label while requesting the original session identity', async () => {
+    const saved = { ...session, title: 'Stored module title' };
+    fetchMock.mockImplementation(() => ok({ sessions: [saved] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} displayTitle="Pricing (Live Teams Session)" /></MemoryRouter>);
+    expect(await screen.findByText('Pricing (Live Teams Session)')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/S1/sessions/1/'))).toBe(true);
+    expect(saved.title).toBe('Stored module title');
+  });
+
   it('filters by displayed attendance and manual corrections, with normalized search', async () => {
     const absent = { ...session.attendance[0], email: 'absent@example.invalid', name: 'Absent Learner', status: 'absent', rawStatus: 'absent' };
     const corrected = { ...absent, email: 'corrected@example.invalid', name: 'Corrected Learner' };

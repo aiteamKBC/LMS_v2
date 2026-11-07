@@ -58,6 +58,7 @@ export interface AttendanceCandidate {
 }
 export interface SessionFile {
   id: string; type: 'recording' | 'transcript'; state: 'pending' | 'ready' | 'failed';
+  playbackProvider?: 'bunny';
   createdAt?: string; text?: string | null;
   hiddenFromLearners?: boolean;
   endsAt?: string | null; timingReady?: boolean;
@@ -72,6 +73,8 @@ export interface SessionResult {
   title?: string; actualStartsAt?: string | null; actualEndsAt?: string | null;
   /** Title of the Course structure item linked to this session; null when none or ambiguous. */
   itemTitle?: string | null;
+  /** Owning week title only when the occurrence has one linked component and week. Display only. */
+  itemWeekTitle?: string | null;
   runs?: { startsAt: string; endsAt: string }[];
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
   attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
@@ -156,6 +159,8 @@ export const loadSessionResult = (seriesId: string, number: number, learner?: Se
 };
 export const sessionFileUrl = (seriesId: string, file: SessionFile, learner?: SessionLearner, text = false) =>
   personalLearningUrl(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`);
+export const loadRecordingPlayer = (seriesId: string, file: SessionFile, learner?: SessionLearner, signal?: AbortSignal) =>
+  read<{ url: string; provider: 'bunny' }>(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/?format=player`, signal);
 export interface RecordingWatchState { watchedSeconds: number; durationSeconds: number; csrfToken?: string }
 const watchUrl = (seriesId: string, file: SessionFile, learner: SessionLearner) =>
   `${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/watch/`;
@@ -223,7 +228,10 @@ export async function setRecordingVisibility(seriesId: string, artifactId: strin
 export type LibraryRecordingStatus = 'available' | 'missingAzureFile' | 'verificationRequired';
 /** One saved recording on the Recordings page. `state` is the saved playback copy, not Teams. */
 export interface LibraryRecording {
+  /** A uniquely linked owning week, verified independently of legacy file placement. */
+  displayWeekTitle?: string;
   id: string; seriesId: string; occurrenceId?: string | null; sessionNumber: number | null;
+  playbackProvider?: 'bunny';
   startsAt: string | null; recordedAt: string | null; endsAt: string | null;
   state: 'pending' | 'ready' | 'failed'; status: LibraryRecordingStatus;
   /** More stored copies of this same Teams recording (Graph listed it under another id). */
@@ -233,6 +241,7 @@ export interface LibraryRecording {
 }
 /** A past session with no recording, judged only from persisted sync results. */
 export interface RecordingsAttention {
+  displayWeekTitle?: string;
   occurrenceId: string; weekId: string | null; weekNumber: number | null; weekTitle: string;
   sessionNumber: number | null; startsAt: string | null;
   status: 'missingSync' | 'notRecorded' | 'verificationRequired'; reason: string;
@@ -249,6 +258,8 @@ export interface RecordingsDelivery {
 }
 /** A persisted LMS Teams occurrence, whether or not a week component is linked. */
 export interface RecordingsSession {
+  /** Empty when no unique occurrence/component/week link can be proved. */
+  displayWeekTitle?: string;
   occurrenceId: string; moduleId: string; title: string; weekId: string | null;
   moduleTitle: string; programme: string; programmeActive: boolean; cohort: string; group: string;
   weekNumber: number | null; weekTitle: string; sessionNumber: number | null;

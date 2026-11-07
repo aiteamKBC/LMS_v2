@@ -35,9 +35,10 @@ const recoveryLabel = (person: SessionPerson) => {
   if (person.recoveryStatus === 'requested') return 'Recovery requested';
   return 'Not requested';
 };
-export function SessionResults({ seriesId, sessionNumber, moduleId, learner, attendanceType, preview = false, recordingDate, recordingsOnly = false, onRecordingWatchTimeChange, onRecordingPlayingChange }: {
+export function SessionResults({ seriesId, sessionNumber, moduleId, displayTitle, learner, attendanceType, preview = false, recordingDate, recordingsOnly = false, onRecordingWatchTimeChange, onRecordingPlayingChange }: {
   seriesId: string; sessionNumber: number; learner?: SessionLearner; attendanceType?: string | null; preview?: boolean;
   moduleId?: string;
+  displayTitle?: string;
   recordingDate?: string | null;
   recordingsOnly?: boolean;
   onRecordingWatchTimeChange?: (seconds: number) => void;
@@ -189,7 +190,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 bg-primary-50/50 p-5">
       <div><p className="text-xs font-bold uppercase tracking-wider text-primary-600">{recordingsOnly ? 'Recorded event' : `Session ${sessionNumber}`}</p>
         <h2 className="mt-1 text-lg font-bold">{recordingsOnly ? 'Event recordings' : 'Recording & session results'}</h2>
-        {!recordingsOnly && session?.title && <p className="mt-1 font-semibold">{session.title}</p>}
+        {!recordingsOnly && (displayTitle || session?.title) && <p className="mt-1 font-semibold">{displayTitle || session?.title}</p>}
         {recordingsOnly && recordingDate && <p className="mt-1 text-xs text-foreground-500">Recorded on {recordingDate} (UK date)</p>}
         {!recordingsOnly && session?.startsAt && <p className="mt-1 text-xs text-foreground-500">Scheduled: {formatSystemTimestamp(session.startsAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)</p>}
         {!recordingsOnly && session?.actualStartsAt && <p className="mt-1 text-xs text-foreground-500">Recorded meeting: {formatSystemTimestamp(session.actualStartsAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)</p>}
@@ -224,7 +225,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
         </div>}
       {learner && !preview && !recordingsOnly && (!recordedSessionsLearner || liveAttendanceSatisfied) && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
         <strong>Your original attendance: {ownRawStatus ? rawLabels[ownRawStatus] : upcoming ? 'Not available yet' : session.reportReady ? 'Identity needs review' : 'Awaiting report'}</strong>
-        {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams. Presence requires more than 3 minutes.</p>}
+        {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams.</p>}
         {recordedSessionsLearner && liveAttendanceSatisfied && <p className="mt-1 font-semibold text-primary-700">Your live attendance counts for this session. Watching the recording is optional.</p>}
         {ownFinalOutcome && ownRawStatus && ownFinalOutcome !== ownRawStatus && <p className="mt-1 font-semibold text-primary-700">Effective outcome: {outcomeLabels[ownFinalOutcome]}</p>}
         {own?.attendance === 0 && !own.catchupCompleted && <Link className="mt-2 inline-block font-semibold text-primary-700 underline" to="/learner/attendance">{own.absenceReported ? 'View recovery plan' : 'Open attendance and report absence'}</Link>}

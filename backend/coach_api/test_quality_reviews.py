@@ -111,8 +111,54 @@ class ReviewStorageTests(SimpleTestCase):
         self.assertEqual(image,store.save_image(saved['id'],'progress','screenshot.jpg',b'JPEG fixture'))
         self.assertEqual(bytes(store.read_image(saved['id'],image)['content']),b'JPEG fixture')
 
+    def test_action_timing_survives_reopening_and_clearing_without_rewriting_history(self):
+        value=snapshot()
+        value['form']['actions']=[{'action':'Follow up','outcome':'Learner impact','supportedBy':'Coach','dueDate':'Next review'}]
+        first=self.save(value)
+        self.assertEqual(store.read_review(review_id=first['id'])['form'],value['form'])
+        changed=deepcopy(value);changed['form']['actions'][0]['dueDate']=''
+        self.save(changed,expected=1)
+        self.assertEqual(store.read_review(review_id=first['id'])['form'],changed['form'])
+        old=store._payload(self.db.execute('SELECT payload FROM revision WHERE version=1').fetchone())
+        self.assertEqual(old['form'],value['form'])
+
 
 class ReviewFormTests(SimpleTestCase):
+    def validators(self):
+        from .quality_form_definition import clean_answers, default_definition
+        return (validate_form,lambda value,status:clean_answers(value,status,default_definition()))
+
+    def test_action_timing_accepts_optional_text_and_existing_dates(self):
+        for validate in self.validators():
+            for status in ('draft','completed'):
+                for timing in ('Next review','Ongoing','2026-11-10','',None):
+                    with self.subTest(validator=validate,status=status,timing=timing):
+                        value=form(True)
+                        action={'action':'Follow up','outcome':'Learner impact','supportedBy':'Coach'}
+                        if timing is not None:action['dueDate']=timing
+                        value['actions']=[action];before=deepcopy(value)
+                        cleaned=validate(value,status)
+                        self.assertEqual(cleaned['actions'],[{**action,'dueDate':timing or ''}])
+                        self.assertEqual(cleaned['criteria'],value['criteria'])
+                        self.assertEqual(value,before)
+
+    def test_optional_timing_keeps_other_action_fields_required(self):
+        for validate in self.validators():
+            for missing in ('action','outcome','supportedBy'):
+                value=form(True)
+                action={'action':'Follow up','outcome':'Learner impact','supportedBy':'Coach','dueDate':'Next review'}
+                action[missing]='';value['actions']=[action]
+                with self.subTest(validator=validate,missing=missing),self.assertRaises(InvalidReview):
+                    validate(value,'completed')
+
+    def test_action_timing_keeps_text_safety_and_length_validation(self):
+        for validate in self.validators():
+            for timing in (123,None,'x'*301,'bad\x00value'):
+                value=form(True)
+                value['actions']=[{'action':'Follow up','outcome':'Learner impact','supportedBy':'Coach','dueDate':timing}]
+                with self.subTest(validator=validate,timing=timing),self.assertRaises(InvalidReview):
+                    validate(value,'completed')
+
     def test_template_does_not_inherit_the_two_sample_checked_ratings(self):
         cleaned=validate_form(form(),'draft')
         self.assertEqual(len(cleaned['criteria']),17)
@@ -160,6 +206,23 @@ class ReviewApiTests(SimpleTestCase):
         self.assertEqual(self.saver.call_args.args[0]['reviewer']['id'],'staff:1')
         self.staff.access='coach';self.staff.access_extra='curriculum'
         self.assertEqual(api.reviews(self.request()).status_code,201)
+
+    def test_save_and_update_accept_optional_action_timing(self):
+        self.enterContext(patch.object(api,'document_state',return_value=None))
+        for status in ('draft','completed'):
+            for timing in ('Next review',''):
+                with self.subTest(status=status,timing=timing):
+                    value=form(True)
+                    value['actions']=[{'action':'Follow up','outcome':'Learner impact','supportedBy':'Coach','dueDate':timing}]
+                    self.reader.return_value=None
+                    response=api.reviews(self.request(status=status,form=value))
+                    self.assertEqual(response.status_code,201)
+                    saved=json.loads(response.content)['review']
+                    self.assertEqual(saved['form'],{**value,'answers':{}})
+                    self.reader.return_value=saved
+                    response=api.review_detail(self.request('put',expectedVersion=1,status=status,form=value),saved['id'])
+                    self.assertEqual(response.status_code,200)
+                    self.assertEqual(json.loads(response.content)['review']['form']['actions'],value['actions'])
 
     def test_coach_or_revoked_curriculum_cannot_save_even_if_cached_gate_claims_allowed(self):
         self.staff.access='coach'
@@ -294,6 +357,21 @@ class ReviewPdfTests(SimpleTestCase):
             self.assertEqual(render.call_count,1)
             self.review['version']=2;pdf.review_pdf(self.review)
             self.assertEqual(render.call_count,2)
+
+    def test_action_timing_text_blank_and_existing_date_are_exported(self):
+        from .quality_review_pdf import _render
+        from pypdf import PdfReader
+        from io import BytesIO
+        for timing in ('Next review','Ongoing','2026-11-10','','Before <next> review & follow-up'):
+            with self.subTest(timing=timing):
+                self.review['form']['actions']=[{'action':'Follow up','outcome':'Learner impact','supportedBy':'Coach','dueDate':timing}]
+                before=deepcopy(self.review)
+                content=_render(self.review,{})
+                text='\n'.join(page.extract_text() for page in PdfReader(BytesIO(content)).pages)
+                self.assertIn('By when',text)
+                self.assertIn(timing or 'Not recorded',text)
+                for expected in ('Follow up','Learner impact','Coach'):self.assertIn(expected,text)
+                self.assertEqual(self.review,before)
 
     def test_drafts_cannot_be_exported(self):
         from .quality_review_pdf import review_pdf

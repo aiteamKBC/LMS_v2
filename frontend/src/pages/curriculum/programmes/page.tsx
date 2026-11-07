@@ -1,3 +1,5 @@
+import { LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { LearnerStatusCounts } from '../shared/entities/LearnerStatusCounts';
 import { type CSSProperties, type FormEvent, type ReactNode, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -340,6 +342,10 @@ function programmeIsArchived(programme: CurriculumProgramme) {
 }
 
 export default function CurriculumProgrammes() {
+  return <LearnerDirectoryProvider><CurriculumProgrammesContent /></LearnerDirectoryProvider>;
+}
+
+function CurriculumProgrammesContent() {
   const navigate = useNavigate();
   // Keep the search in the URL so it survives opening a programme and returning.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1145,6 +1151,7 @@ export default function CurriculumProgrammes() {
                 <span><small>{programmeStatus(prog)}</small><strong>{prog.name}</strong><small>{prog.learners} learners &middot; {prog.modules} modules</small></span>
                 <span aria-hidden="true">&rsaquo;</span>
               </button>
+              <LearnerStatusCounts target={{ scope: 'programme', id: prog.sourceId || prog.id, name: prog.name }} refreshKey={prog} />
               </div>
             );
             })}

@@ -1,4 +1,4 @@
-"""Deleted curriculum weeks never reach a learner unless they are an archived
+"""CI regression: deleted weeks reach learners only as an archived
 module's own history.
 
 Regression: a module deleted and later restored kept the weeks of that earlier
@@ -29,7 +29,11 @@ READER_PATHS = {
     'learner_api/training_plan_dashboard.py': 1,
     'learner_api/overview_week.py': 3,
     'learner_api/mobile.py': 2,
-    'learner_api/learner_detail.py': 4,
+    'learner_api/learner_detail.py': 5,
+    'learner_api/dashboard_header.py': 2,
+    'learner_api/dashboard_training.py': 1,
+    'learner_api/my_learning.py': 2,
+    'learner_api/live_session_progress.py': 1,
     'learner_api/builder_activity_dates.py': 1,
     'learner_api/personal_learning_reads.py': 1,
     'learner_api/training_plan_targets.py': 1,
@@ -41,6 +45,29 @@ READER_PATHS = {
     'coach_api/otjh_ksb.py': 1,
     'coach_api/learning_plan_projection.py': 2,
     'coach_api/weekly_learning.py': 1,
+}
+
+CHILD_READER_PATHS = {
+    'learner_api/active_users.py': 1,
+    'learner_api/builder_activity_dates.py': 1,
+    'learner_api/curriculum.py': 1,
+    'learner_api/dashboard_header.py': 1,
+    'learner_api/dashboard_metrics.py': 4,
+    'learner_api/dashboard_training.py': 1,
+    'learner_api/learner_detail.py': 7,
+    'learner_api/live_session_progress.py': 1,
+    'learner_api/mobile.py': 2,
+    'learner_api/module_shift.py': 2,
+    'learner_api/my_learning.py': 2,
+    'learner_api/overview_week.py': 4,
+    'learner_api/student_activity_data.py': 2,
+    'learner_api/training_plan_dashboard.py': 2,
+    'learner_api/training_plan_document.py': 1,
+    'coach_api/learning_plan_projection.py': 1,
+    'coach_api/monthly_focus.py': 2,
+    'coach_api/otjh_ksb.py': 1,
+    'coach_api/overview_modules.py': 1,
+    'coach_api/weekly_learning.py': 2,
 }
 
 # The old rule: any parent stamp kept a deleted week visible.

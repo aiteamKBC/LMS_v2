@@ -88,6 +88,22 @@ describe('WeekComponentRail add flow', () => {
     expect(screen.queryByRole('dialog', { name: 'Add a component' })).not.toBeInTheDocument();
   });
 
+  it('shows week titles for live sessions and recordings without changing their saved cards', () => {
+    const onChange = vi.fn();
+    const base = { weekId: 'W2', moduleId: 'M1', title: 'Live Teams Session 1', description: '', expectedOtjh: 1, points: 5,
+      reflectionRequired: false, reflectionQuestion: '', workplaceEvidenceRequired: false, tutorValidationRequired: false,
+      coachValidationRequired: false, ksbMappings: [], settings: {} };
+    const components = [{ ...base, id: 'C1', type: 'live-session' as const },
+      { ...base, id: 'R1', type: 'recording-placeholder' as const, title: 'Session Recording 1' }];
+    const before = structuredClone(components);
+    render(<WeekComponentRail weekId="W2" displayWeek={{ id: 'W2', moduleId: 'M1', title: 'Pricing' }}
+      components={components} selectedId={null} onSelectId={vi.fn()} onChange={onChange} pointsByType={{}} variant="nested" />);
+    expect(screen.getByText('Pricing (Live Teams Session)')).toBeInTheDocument();
+    expect(screen.getByText('Pricing (Recording Session)')).toBeInTheDocument();
+    expect(components).toEqual(before);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('filters components in this week without changing their order', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

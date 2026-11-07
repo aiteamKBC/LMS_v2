@@ -14,6 +14,11 @@ import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedRe
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 const coachMode = vi.hoisted(() => ({ email: 'coach@example.invalid', isInitialized: true, isViewingAsCoach: false }));
+const nativeArtifacts = vi.hoisted(() => vi.fn());
+vi.mock('./calendarEvents', async importOriginal => ({
+  ...await importOriginal<typeof import('./calendarEvents')>(),
+  fetchCoachMeetingArtifacts: nativeArtifacts,
+}));
 vi.mock('@/features/monthly-logs/page', () => ({ LearnerLogs: () => null }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => coachMode }));
@@ -106,6 +111,7 @@ function mount(instanceId = 'instance-1') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  nativeArtifacts.mockResolvedValue({ artifacts: [], attendance: null, meetingSummary: null });
   vi.mocked(fetchCoachReviewSlots).mockResolvedValue(['09:00', '10:00', '10:30', '11:00', '12:00', '14:30', '15:00']);
   account.name = 'Sam Coach';
   coachMode.email = 'coach@example.invalid';
@@ -124,6 +130,44 @@ beforeEach(() => {
     transcriptText: '',
     transcriptAvailable: false,
     transcriptTruncated: false,
+  });
+});
+
+describe('Native Review Teams resources', () => {
+  it.each(['mcr', 'progress-review', 'review'])('checks the linked %s meeting without losing unsaved answers', async source => {
+    const data = definition('scheduled');
+    data.calendarMeeting = { eventKey: 'native:exact-meeting', source, status: 'scheduled',
+      meetingLink: 'https://example.invalid/teams', graphWebLink: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    nativeArtifacts.mockResolvedValue({ artifacts: [], attendance: null, meetingSummary: null,
+      event: { eventKey: 'native:exact-meeting', status: 'in-progress' } });
+    mount();
+    const answer = await screen.findByDisplayValue('Review the next module');
+    fireEvent.change(answer, { target: { value: 'Unsaved answer' } });
+    const check = await screen.findByRole('button', { name: 'Check Teams' });
+    await waitFor(() => expect(check).toBeEnabled());
+    fireEvent.click(check);
+    await waitFor(() => expect(nativeArtifacts).toHaveBeenCalledWith('native:exact-meeting', undefined, { refresh: true }));
+    expect(answer).toHaveValue('Unsaved answer');
+  });
+
+  it('does not expose a check without a linked meeting', async () => {
+    mount();
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+    expect(nativeArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('disables checking in coach view-as mode', async () => {
+    coachMode.isViewingAsCoach = true;
+    const data = definition('scheduled');
+    data.calendarMeeting = { eventKey: 'native:exact-meeting', source: 'mcr', status: 'scheduled',
+      meetingLink: 'https://example.invalid/teams', graphWebLink: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    mount();
+    const check = await screen.findByRole('button', { name: 'Check Teams' });
+    await waitFor(() => expect(check).toBeDisabled());
+    expect(nativeArtifacts.mock.calls.every(call => call[2]?.refresh === false)).toBe(true);
   });
 });
 
@@ -2153,6 +2197,53 @@ describe('migrated signed PDF lifecycle', () => {
   });
 });
 
+describe('Monthly Coaching Meeting completion without a booking', () => {
+  it.each(['mcm', 'aptem_mcm'].flatMap(typeCode => ['not-scheduled', 'scheduled', 'in-progress'].map(status => [typeCode, status])))(
+    'keeps %s completion beside the steps when %s and validates before requesting signatures', async (typeCode, status) => {
+    const review = mcmDefinition(status);
+    review.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };
+    review.template.reviewTypeCode = typeCode;
+    if (typeCode === 'aptem_mcm') {
+      Object.assign(review, { source: 'aptem', migratedForm: true, localStatus: status, readOnly: false });
+      review.instance.id = 'imported-review:synthetic';
+      review.meetingSummarySource = undefined;
+    }
+    review.sections[1].fields[0].answer = null;
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(review);
+    const pending = structuredClone(review);
+    pending.instance.status = 'awaiting-signature';
+    pending.localStatus = 'awaiting-signature';
+    vi.mocked(submitMigratedReview).mockResolvedValue(pending);
+    vi.mocked(completeReviewInstance).mockResolvedValue(pending);
+    render(<MemoryRouter><ReviewInstanceModal instanceId={review.instance.id} presentation="page" onClose={vi.fn()} /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Next steps' });
+    const completeButton = await screen.findByRole('button', { name: 'Complete review' });
+    expect(completeButton.closest('section')).toHaveAttribute('id', 'review-section-section-1');
+    fireEvent.click(completeButton);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please complete every required field');
+    expect(completeReviewInstance).not.toHaveBeenCalled();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Meeting Summary' })).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: typeCode === 'mcm' ? 'Meeting Summary' : 'Summary' }), { target: { value: 'Coach-approved summary' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+    const submit = typeCode === 'mcm' ? completeReviewInstance : submitMigratedReview;
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(review.instance.id,
+      { 'field-1': 'Review the next module', 'summary-field': 'Coach-approved summary' }));
+    expect(await screen.findByRole('heading', { name: 'Coach signature required' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(startMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('keeps unbooked %s submission unavailable', async family => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migratedPrDefinition('not-scheduled', family));
+    mount('imported-review:synthetic');
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.queryByRole('button', { name: 'Submit Review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+  });
+});
+
 describe('Monthly Coaching Meeting signature summary + signed PDF', () => {
   it('does not offer migrated generation when a historical original PDF is unavailable', async () => {
     const imported = mcmDefinition('completed');
@@ -2304,7 +2395,7 @@ describe('Progress Review learning progress snapshot', () => {
     expect(screen.getByText('64%')).toBeVisible();
     expect(screen.getByText('12% Above')).toBeVisible();
     expect(screen.getByText('2% Below')).toBeVisible();
-    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%' })).toBeVisible();
+    expect(screen.getByRole('img', { name: /Learning Plan Progress: 28%; target/ })).toBeVisible();
     expect(screen.getByText('27% Below')).toBeVisible();
   });
 
@@ -2346,7 +2437,7 @@ describe('Progress Review learning progress snapshot', () => {
     mount();
     expect(await screen.findByText('Review completed')).toBeVisible();
     expect(screen.getByText('64%')).toBeVisible();
-    expect(screen.getAllByText('28%')).toHaveLength(2);
+    expect(screen.getByText('28%')).toBeVisible();
     expect(screen.getByText('Green')).toBeVisible();
     // A past review that captured no RAG still appears, as "None".
     expect(screen.getByText('None')).toBeVisible();

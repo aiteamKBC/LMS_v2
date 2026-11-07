@@ -65,6 +65,7 @@ def session_read(request, context, detail, path, query):
         raise LookupError('File not found in this course.')
     scoped_request = copy.copy(request)
     scoped_request.GET = request.GET.copy()
-    if query.get('format') in ('txt', 'cues'):
+    # Bunny player resolution must stay JSON through the personal-course adapter.
+    if query.get('format') in ('txt', 'cues', 'player'):
         scoped_request.GET['format'] = query['format']
     return stored_content(scoped_request, series_id, artifact, learner_view=True)

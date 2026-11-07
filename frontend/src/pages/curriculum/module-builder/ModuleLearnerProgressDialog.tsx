@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { learnerStatusLabel } from '../shared/entities/learnerStatusLabels';
+import { moduleLearnerStatus, moduleLearnerStatuses } from './moduleLearnerStatus';
+import { moduleProgressTotals } from './moduleProgressTotals';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import {
   fetchCurriculumScopeLearnerKsbImpact,
@@ -37,6 +40,43 @@ const ACTIVITY_ICON: Record<RecentActivityItem['kind'], string> = {
   started: 'ri-time-line',
   evidence: 'ri-file-upload-line',
 };
+
+function percentage(value: number) {
+  return Math.max(0, Math.min(100, Math.round(Number(value || 0) * 100) / 100));
+}
+
+function hoursPercentage(value: number) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+/** A figure whose meaning is explained on hover or keyboard focus. */
+function Hint({ text, children }: { text: string; children: ReactNode }) {
+  return (
+    <span title={text} tabIndex={0} className="cursor-help underline decoration-dotted decoration-foreground-300 underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-200">
+      {children}
+    </span>
+  );
+}
+
+function ksbHint(achieved: number, expected: number, whose: 'learner' | 'module') {
+  if (expected <= 0) {
+    return whose === 'learner'
+      ? 'No KSB weight is expected from this module for this learner: no KSBs are mapped to the activities their group takes.'
+      : 'No KSB weight is expected from this module: no KSBs are mapped to its activities.';
+  }
+  if (achieved <= 0) {
+    return whose === 'learner'
+      ? '0%: none of this learner’s activities in this module has KSB progress linked yet.'
+      : '0%: no assigned learner has KSB progress linked to this module’s activities yet.';
+  }
+  return `${weight(achieved)} of ${weight(expected)} expected KSB weight earned.`;
+}
+
+function completionHint(completed: number, total: number) {
+  if (total <= 0) return 'N/A: no activities in this module are planned for this learner’s group.';
+  if (completed <= 0) return '0%: none of the planned activities has a completed progress record yet.';
+  return `${completed} of ${total} planned activities have a completed progress record.`;
+}
 
 function weight(value: number) {
   return Number(value || 0).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
@@ -118,6 +158,27 @@ function StatusPill({ status }: { status: string }) {
       {value.replace(/_/g, ' ')}
     </span>
   );
+
+}
+
+function otjhHint(achieved: number | null, planned: number, progress: number | null, whose: 'learner' | 'module') {
+  if (achieved == null) {
+    return whose === 'learner'
+      ? 'N/A: accepted Activity Log hours are unavailable for this learner. Reload to retrieve the recorded total.'
+      : 'N/A: accepted Activity Log hours are unavailable for this module. Reload to retrieve the recorded total.';
+  }
+  if (planned <= 0) {
+    return whose === 'learner'
+      ? 'N/A: this learner has no planned OTJH in this module, so there is no target to measure against.'
+      : 'N/A: no planned OTJH is assigned to these learners in this module, so there is no target to measure against.';
+  }
+  if (progress == null) return 'N/A: accepted records have missing time. Known recorded hours are shown; complete the time allocation before measuring progress.';
+  if (!progress) {
+    return whose === 'learner'
+      ? '0%: no accepted Activity Log hours are recorded for this learner in this module yet.'
+      : '0%: no accepted Activity Log hours are recorded for any assigned learner in this module yet.';
+  }
+  return `${hoursPercentage(progress)}% of the planned OTJH, counted from accepted Activity Log hours.`;
 }
 
 function Avatar({ name, id, size }: { name: string; id: string; size: 'sm' | 'lg' }) {
@@ -201,7 +262,7 @@ export interface ModuleLearnerProgrammeOption {
   name: string;
 }
 
-export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assignedLearners, programmes = [], onClose, onAssignMore, onRemoveLearner }: {
+export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assignedLearners, programmes = [], initialStatus = 'all', onStatusChange, onClose, onAssignMore, onRemoveLearner }: {
   moduleName: string;
   moduleId?: string;
   /** Null when the module has no learners yet, so there is no progress to read. */
@@ -214,6 +275,8 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
   assignedLearners?: CurriculumProgrammeAssignedLearner[];
   /** Used to find each learner's programme for their programme-wide progress. */
   programmes?: ModuleLearnerProgrammeOption[];
+  initialStatus?: string;
+  onStatusChange?: (status: string) => void;
   onClose: () => void;
   onAssignMore: () => void;
   onRemoveLearner: (learner: CurriculumProgrammeAssignedLearner) => Promise<void>;
@@ -236,10 +299,21 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
   const [to, setTo] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [removingLearnerId, setRemovingLearnerId] = useState<string | null>(null);
-
+  const [status, setStatus] = useState(() => moduleLearnerStatus(initialStatus));
+  const statusFor = useCallback((learner: CurriculumProgrammeAssignedLearner) => {
+    const key = profileKey(learner, roster);
+    const profile = key == null ? undefined : roster.find(row => learnerKey(row.id) === key);
+    return moduleLearnerStatus(profile?.lifecycleStatus?.trim() || profile?.programmeStatus?.trim()
+      || learner.lifecycleStatus?.trim() || learner.programmeStatus || '');
+  }, [roster]);
+  const statuses = [...moduleLearnerStatuses];
+  for (const value of [status, ...learners.map(statusFor)]) {
+    if (!statuses.some(option => option.value === value)) statuses.push({ value, label: learnerStatusLabel(value) });
+  }
   const visible = useMemo(() => {
     const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     return learners.filter(learner => {
+      if (status !== 'all' && statusFor(learner) !== status) return false;
       const text = `${learner.name} ${learner.email}`.toLocaleLowerCase();
       if (!terms.every(term => text.includes(term))) return false;
       if (!from && !to) return true;
@@ -247,9 +321,18 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
       const day = last ? systemDay(last) : '';
       return Boolean(day) && (!from || day >= from) && (!to || day <= to);
     });
-  }, [learners, summaries, query, from, to]);
+  }, [learners, summaries, query, from, to, status, statusFor]);
 
-  const selected = learners.find(learner => learnerKey(learner.id) === selectedId) || visible[0] || learners[0] || null;
+  const totals = impact ? moduleProgressTotals(impact, visible.map(learner => profileKey(learner, impact.assignedLearners || []))) : moduleProgressTotals({} as CurriculumScopeLearnerKsbImpactResponse, []);
+  const log = impact?.activityLogOtjh;
+  const activity = impact?.activityLogProgress;
+  const activityPercent = totals.activity?.known && totals.activity.total > 0 ? totals.activity.completed / totals.activity.total * 100 : null;
+  const totalHours = totals.hours;
+  const plannedHours = totals.plannedHours;
+  const totalPercent = totalHours != null && plannedHours > 0 && totals.unallocatedHours === 0 ? totalHours / plannedHours * 100 : null;
+  const ksbPercent = totals.ksbsKnown && totals.expectedKsb > 0 ? totals.achievedKsb / totals.expectedKsb * 100 : null;
+
+  const selected = visible.find(learner => learnerKey(learner.id) === selectedId) || visible[0] || null;
   const selectedSummary = selected ? summaries.get(learnerKey(selected.id))! : null;
   const selectedKey = selectedSummary?.key ?? null;
   const rosterRow = selectedKey == null ? undefined : roster.find(row => learnerKey(row.id) === selectedKey);
@@ -276,7 +359,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
     }
   };
 
-  const clearFilters = () => { setQuery(''); setFrom(''); setTo(''); };
+  const clearFilters = () => { setQuery(''); setFrom(''); setTo(''); setStatus('all'); onStatusChange?.('all'); };
   const summaryLine = `${plural(learners.length, 'learner')}${averageProgress == null ? '' : ` · average progress ${averageProgress}%`}`;
 
   return (
@@ -304,6 +387,40 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
           </button>
         </header>
 
+        <div role="group" aria-label="Shown learner progress totals" className={`grid gap-3 border-b border-background-200 bg-background-100/60 p-4 ${activity ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+          {activity && (
+            <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Activities completed</p>
+              <p className="mt-1 text-lg font-black text-foreground-900">{totals.activity?.known ? totals.activity.completed : 'N/A'} <span className="text-[11px] font-bold text-foreground-400">/ {totals.activity?.known ? totals.activity.total : 'N/A'}</span></p>
+              <ProgressBar value={activityPercent || 0} tone="emerald" />
+              <p className="mt-1 text-[10px] font-semibold text-foreground-500">
+                <Hint text={totals.activity?.known ? completionHint(totals.activity.completed, totals.activity.total) : 'Some learner activity records are unavailable. Reload to retrieve the complete total.'}>
+                  {activityPercent == null ? 'N/A: no measurable activity target' : `${percentage(activityPercent)}% of current planned activities, shown learners`}
+                </Hint>
+                {totals.activity?.earlier ? ` · ${plural(totals.activity.earlier, 'historical record')} reported separately` : ''}
+              </p>
+            </div>
+          )}
+          <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">OTJH progress</p>
+            <p className="mt-1 text-lg font-black text-foreground-900"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{totalHours == null ? 'N/A' : formatHoursClock(totalHours)}</Hint> <span className="text-[11px] font-bold text-foreground-400">/ {totals.hoursTargetsKnown ? formatHoursClock(plannedHours) : 'N/A'}</span></p>
+            <ProgressBar value={totalPercent || 0} tone="primary" />
+            <p className="mt-1 text-[10px] font-semibold text-foreground-500"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{`${totalPercent == null ? 'N/A' : `${hoursPercentage(totalPercent)}%`} of assigned planned hours${log ? ' · Activity Log accepted hours' : ''}`}</Hint></p>
+            {Boolean(totals.unallocatedHours) && <p className="mt-1 text-[10px] text-foreground-500">{plural(totals.unallocatedHours, 'accepted record')} without allocated time; recorded hours are included.</p>}
+            {totals.historicalHours > 0 && <p className="mt-1 text-[10px] text-foreground-500">Historical OTJH: {formatHoursClock(totals.historicalHours)} · excluded from current progress.</p>}
+            {totals.historicalUnallocatedHours > 0 && <p className="mt-1 text-[10px] text-foreground-500">{totals.historicalUnallocatedHours} historical accepted record(s) without allocated time.</p>}
+          </div>
+          <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">KSB weights achieved</p>
+            <p className="mt-1 text-lg font-black text-foreground-900">{totals.ksbsKnown ? weight(totals.achievedKsb) : 'N/A'} <span className="text-[11px] font-bold text-foreground-400">/ {totals.ksbsKnown ? weight(totals.expectedKsb) : 'N/A'}</span></p>
+            <ProgressBar value={ksbPercent || 0} tone="emerald" />
+            <p className="mt-1 text-[10px] font-semibold text-foreground-500"><Hint text={ksbHint(totals.achievedKsb, totals.expectedKsb, 'module')}>{ksbPercent == null ? 'N/A: no measurable KSB target' : `${percentage(ksbPercent)}% of current expected KSB weight`}</Hint></p>
+            {totals.historicalKsb > 0 && <p className="mt-1 text-[10px] text-foreground-500">Historical KSB weight: {weight(totals.historicalKsb)} · excluded from current progress.</p>}
+            {totals.unallocatedKsb > 0 && <p className="mt-1 text-[10px] text-foreground-500">{weight(totals.unallocatedKsb)} planned KSB weight is mapped without a current activity target.</p>}
+          </div>
+        </div>
+
+        {totals.unavailable > 0 && <p role="alert" className="px-4 pt-3 text-xs text-amber-800">Progress is unavailable for {totals.unavailable} shown learner(s). Missing records are not counted as zero.</p>}
         {learners.length === 0 ? (
           <div className="flex min-h-0 flex-1 items-center justify-center p-6">
             <div className="max-w-sm rounded-xl border border-dashed border-background-300 bg-background-50 px-6 py-10 text-center">
@@ -320,6 +437,12 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
           <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,390px)_minmax(0,1fr)] lg:overflow-hidden">
             <aside className="border-b border-background-200 lg:flex lg:min-h-0 lg:flex-col lg:border-b-0 lg:border-r">
               <div className="space-y-2.5 p-3">
+                <label className="block text-xs font-semibold">Status
+                  <select aria-label="Learner status" value={status} disabled={Boolean(removingLearnerId)}
+                    onChange={event => { setStatus(event.target.value); setSelectedId(null); onStatusChange?.(event.target.value); }}>
+                    {statuses.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
                 <label className="relative block">
                   <span className="sr-only">Search learners</span>
                   <AppIcon name="ri-search-line" size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
@@ -354,7 +477,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
               <ul aria-label="Learners" className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
                 {visible.length === 0 ? (
                   <li className="px-4 py-8 text-center text-[12px] text-foreground-500">
-                    No learners match these filters.
+                    {status !== 'all' && !query && !from && !to ? 'No assigned learners match this status.' : 'No learners match these filters.'}
                     <button type="button" onClick={clearFilters} className="mt-2 block w-full font-semibold text-primary-700 hover:underline">Clear filters</button>
                   </li>
                 ) : visible.map(learner => {
@@ -374,7 +497,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-2">
                             <span className="truncate text-[13px] font-semibold text-foreground-900">{name}</span>
-                            <StatusPill status={learner.programmeStatus || learner.lifecycleStatus || ''} />
+                            <StatusPill status={learnerStatusLabel(statusFor(learner))} />
                             <span className="ml-auto shrink-0 text-[12px] font-semibold text-foreground-800">{summary.overall == null ? '—' : `${summary.overall}%`}</span>
                           </span>
                           <span className="mt-0.5 block truncate text-[11px] text-foreground-500">{learner.email || 'No email on record'}</span>
@@ -401,6 +524,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
                   impact={impact}
                   moduleName={moduleName}
                   moduleId={moduleId}
+                  learnerStatus={status}
                   thisModuleId={impact?.lineage?.moduleCatalogueId || moduleId || ''}
                   programmeAvailable={Boolean(programmeId && selectedKey)}
                   reads={reads}
@@ -440,13 +564,14 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
   );
 }
 
-function LearnerDetail({ learner, summary, rosterRow, impact, moduleName, moduleId, thisModuleId, programmeAvailable, reads, removing, removeDisabled, onRemove }: {
+function LearnerDetail({ learner, summary, rosterRow, impact, moduleName, moduleId, learnerStatus, thisModuleId, programmeAvailable, reads, removing, removeDisabled, onRemove }: {
   learner: CurriculumProgrammeAssignedLearner;
   summary: LearnerProgressSummary;
   rosterRow?: CurriculumProgrammeAssignedLearner;
   impact: CurriculumScopeLearnerKsbImpactResponse | null;
   moduleName: string;
   moduleId?: string;
+  learnerStatus: string;
   thisModuleId: string;
   programmeAvailable: boolean;
   reads: ReturnType<typeof useLearnerReads>;
@@ -476,9 +601,10 @@ function LearnerDetail({ learner, summary, rosterRow, impact, moduleName, module
   const attendanceState = !attendanceRead ? 'error' : attendanceRead.status === 'ready' ? 'ready' : attendanceRead.status === 'error' ? 'error' : 'loading';
   const titles = new Map((impact?.coverage?.items || []).map(item => [item.code, item.title || item.description]));
   const ksbs = summary.consumption?.ksbs || [];
+  const moduleLog = impact?.activityLogOtjh?.learners.find(row => learnerKey(row.learnerId) === summary.key);
   const placement = [learner.programme || rosterRow?.programme, learner.cohort, learner.group].filter(Boolean).join(' · ');
   const progressLink = moduleId
-    ? `/curriculum/learner-module-progress?moduleId=${encodeURIComponent(moduleId)}&${learner.enrolmentId != null ? 'enrolmentId' : 'learnerId'}=${encodeURIComponent(String(learner.enrolmentId ?? id))}`
+    ? `/curriculum/learner-module-progress?moduleId=${encodeURIComponent(moduleId)}&${learner.enrolmentId != null ? 'enrolmentId' : 'learnerId'}=${encodeURIComponent(String(learner.enrolmentId ?? id))}${learnerStatus === 'all' ? '' : `&learnerStatus=${encodeURIComponent(learnerStatus)}`}`
     : '';
 
   return (
@@ -488,7 +614,7 @@ function LearnerDetail({ learner, summary, rosterRow, impact, moduleName, module
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-[17px] font-semibold text-foreground-950">{name}</h3>
-            <StatusPill status={learner.programmeStatus || learner.lifecycleStatus || ''} />
+            <StatusPill status={rosterRow?.lifecycleStatus || learner.lifecycleStatus || learner.programmeStatus || ''} />
           </div>
           <p className="truncate text-[12.5px] text-foreground-600">{learner.email || 'No email on record'}</p>
           <p className="mt-0.5 truncate text-[11.5px] text-foreground-500">{placement || 'No programme placement recorded'}</p>
@@ -550,6 +676,10 @@ function LearnerDetail({ learner, summary, rosterRow, impact, moduleName, module
         )}
       </div>
 
+      {Boolean(moduleLog?.historicalOtjh) && <p className="mt-2 text-[11px]">Historical OTJH: {formatHoursClock(moduleLog!.historicalOtjh!)} ? excluded from current progress.</p>}
+      {Boolean(moduleLog?.historicalUnallocatedRecords) && <p className="mt-2 text-[11px]">{moduleLog!.historicalUnallocatedRecords} historical accepted record(s) without allocated time.</p>}
+      {Boolean(summary.consumption?.historicalConsumedWeightTotal) && <p className="mt-2 text-[11px]">Historical KSB weight: {weight(summary.consumption!.historicalConsumedWeightTotal!)} ? excluded from current progress.</p>}
+      {Boolean(summary.consumption?.unallocatedPlannedWeight) && <p className="mt-2 text-[11px]">{weight(summary.consumption!.unallocatedPlannedWeight!)} planned KSB weight is mapped without a current activity target.</p>}
       <SectionHeading action={programmeState === 'error' && programmeAvailable
         ? <button type="button" onClick={reads.retry} className="text-[11px] font-semibold text-primary-700 hover:underline">Try again</button>
         : undefined}>All modules</SectionHeading>

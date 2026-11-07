@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { CalendarEvent } from '@/pages/learner/clubs/data';
+import { buildReviewTypeLookup } from '@/lib/reviewTypeFilters';
 import {
   buildSourceFilters,
   countBySource,
@@ -92,6 +93,26 @@ const imported = (type: string, overrides: Partial<CalendarEvent> = {}) => event
 });
 
 describe('Aptem review types without Curriculum IDs', () => {
+  it('counts a custom imported type using native metadata outside the selected date range', () => {
+    const aptem = imported('Gateway Review');
+    const events = [aptem, gatewayReview(), mcm()];
+    const options = buildSourceFilters(events);
+    const lookup = buildReviewTypeLookup(events);
+    expect(options.filter(option => option.label === 'Gateway Review')).toHaveLength(1);
+    expect(countBySource([aptem], options, lookup)['review:REVT-GATEWAY']).toBe(1);
+    expect(filterBySource([aptem], 'review:REVT-GATEWAY', lookup)).toEqual([aptem]);
+  });
+
+  it.each(['first-session', 'lms-introduction', 'gateway', 'eligibility-review'] as const)('keeps %s separate from personal appointments', source => {
+    const appointment = event({ source });
+    const events = [appointment, personal(), busy(), other()];
+    const options = buildSourceFilters(events);
+    expect(options.some(option => option.key === source)).toBe(true);
+    expect(countBySource(events, options)[source]).toBe(1);
+    expect(filterBySource(events, source)).toEqual([appointment]);
+    expect(options.some(option => option.key === 'personal')).toBe(true);
+    expect(options.some(option => option.key === 'busy')).toBe(true);
+  });
   const types = ['Personal Support Plan', 'Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)'];
 
   it('offers a distinct named filter for every imported type', () => {
@@ -142,7 +163,25 @@ describe('Aptem review types without Curriculum IDs', () => {
     expect(learnerEventSource(native)).toBe('review:REVT-PROGRESS_REVIEW');
     expect(learnerEventSource(assigned)).toBe(learnerEventSource(native));
     expect(learnerEventSource(unknown)).toBe('review:');
-    expect(new Set([native, aptem, unknown].map(learnerEventSource)).size).toBe(3);
+    // Imported and native instances of the same system type share one chip.
+    expect(learnerEventSource(aptem)).toBe(learnerEventSource(native));
+    expect(new Set([native, aptem, unknown].map(event => learnerEventSource(event))).size).toBe(2);
+  });
+
+  it('combines imported MCMs and native bookings in one filter with a combined count', () => {
+    const importedMeetings = Array.from({ length: 6 }, () => imported('Monthly Coaching Meeting'));
+    const events = [...importedMeetings, mcm(), mcm(), imported('Personal Support Plan')];
+    const options = buildSourceFilters(events);
+    expect(options.filter(option => option.label === 'Monthly Coaching Meeting')).toHaveLength(1);
+    expect(countBySource(events, options)['review:REVT-MCM']).toBe(8);
+    expect(filterBySource(events, 'review:REVT-MCM')).toEqual(events.slice(0, 8));
+    expect(countBySource(importedMeetings, options)['review:REVT-MCM']).toBe(6);
+    importedMeetings.forEach(item => expect(item.reviewTypeId).toBeUndefined());
+  });
+
+  it('retains a renamed Curriculum label when imported MCMs arrive first', () => {
+    const native = { ...mcm(), reviewTypeName: 'Monthly Development Review' };
+    expect(reviewTypeBuckets([imported('Monthly Coaching Meeting'), native])).toEqual(reviewTypeBuckets([native]));
   });
 });
 

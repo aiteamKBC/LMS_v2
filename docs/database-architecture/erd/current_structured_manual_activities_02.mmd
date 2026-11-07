@@ -1,0 +1,59 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    structured_manual_activities__manual_activity_hours_revision {
+        bigint revision_id PK
+        bigint row_id FK
+    }
+    structured_manual_activities__manual_learner_activities {
+        bigint id PK
+    }
+    structured_manual_activities__manual_month_finalization_events {
+        bigint id PK
+    }
+    structured_manual_activities__manual_month_restore_events {
+        bigint id PK
+        bigint restore_point_id FK
+        bigint pre_restore_point_id FK
+    }
+    structured_manual_activities__manual_month_restore_points {
+        bigint id PK
+        bigint related_point_id FK
+    }
+    structured_manual_activities__monthly_log_provisional_rows {
+        bigint id PK
+    }
+    structured_manual_activities__monthly_log_reconciliation_audit {
+        bigint audit_id PK
+    }
+    structured_manual_activities__planned_hours_bulk_batches {
+        bigint id PK
+    }
+    structured_manual_activities__planned_hours_bulk_items {
+        bigint id PK
+        bigint batch_id FK
+        bigint row_id FK
+    }
+    structured_manual_activities__planned_hours_default_revisions {
+        bigint id PK
+        bigint default_id FK
+        bigint bulk_batch_id FK
+    }
+    structured_manual_activities__planned_hours_defaults {
+        bigint id PK
+    }
+    structured_manual_activities__reading_quiz_pairs {
+        bigint id PK
+    }
+    structured_manual_activities__training_plan_target_overrides {
+        bigint aptem_id PK
+        text programme_profile_id PK
+        text month PK
+    }
+    structured_manual_activities__manual_learner_activities ||..o{ structured_manual_activities__manual_activity_hours_revision : "manual_activity_hours_revision_row_id_fkey"
+    structured_manual_activities__manual_month_restore_points ||..o{ structured_manual_activities__manual_month_restore_events : "manual_month_restore_events_pre_restore_point_id_fkey"
+    structured_manual_activities__manual_month_restore_points ||..o{ structured_manual_activities__manual_month_restore_events : "manual_month_restore_events_restore_point_id_fkey"
+    structured_manual_activities__manual_month_restore_points |o..o{ structured_manual_activities__manual_month_restore_points : "manual_month_restore_points_related_point_id_fkey"
+    structured_manual_activities__planned_hours_bulk_batches ||..o{ structured_manual_activities__planned_hours_bulk_items : "planned_hours_bulk_items_batch_id_fkey"
+    structured_manual_activities__manual_learner_activities |o..o{ structured_manual_activities__planned_hours_bulk_items : "planned_hours_bulk_items_row_id_fkey"
+    structured_manual_activities__planned_hours_bulk_batches |o..o{ structured_manual_activities__planned_hours_default_revisions : "planned_hours_default_revisions_bulk_batch_id_fkey"
+    structured_manual_activities__planned_hours_defaults ||..o{ structured_manual_activities__planned_hours_default_revisions : "planned_hours_default_revisions_default_id_fkey"

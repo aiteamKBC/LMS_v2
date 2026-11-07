@@ -320,6 +320,8 @@ $RECYCLE.BIN/
 !/frontend/
 !/mobile/
 !/.gitattributes
+# CI/CD workflows (deploy to AWS)
+!/.github/
 
 # performance diagnostics — local only
 /backend/perf/

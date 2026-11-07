@@ -61,6 +61,7 @@ class QuizReviewTests(unittest.TestCase):
         self.scope = load(ROOT / 'legacy_quiz_review.py', {'read_review'}, dict(json=json,
             subject_store=SimpleNamespace(state=Mock(return_value={'ready': True, 'progress': [], 'history': []})),
             canonical_learning=self.canonical, repository=self.repository,
+            retakes=SimpleNamespace(allowed=Mock(return_value=False)),
             connections={'isolated': SimpleNamespace(cursor=lambda: nullcontext(self.cursor))},
             imported_quiz=imported_quiz, public_quiz=public_quiz, quiz_definition=quiz_definition))
 
@@ -172,6 +173,17 @@ class QuizReviewTests(unittest.TestCase):
         self.assertTrue(result['completed'])
         self.assertFalse(result['can_attempt'])
 
+    def test_one_granted_retake_preserves_historical_completion_and_answers(self):
+        self.scope['retakes'].allowed.return_value = True
+        result = self.scope['read_review'](self.owner, 50, 60, allow_attempts=True)
+        self.assertTrue(result['completed'])
+        self.assertTrue(result['can_retake'])
+        self.assertTrue(result['can_attempt'])
+        self.assertEqual(result['historical']['answers'][0]['learner_answer'], ['Yes'])
+        self.scope['retakes'].allowed.assert_called_once_with(9, 11, 50, 60)
+        self.assertNotIn('solution_ids', json.dumps(result))
+        self.assertFalse(self.review()['can_retake'])
+
     def test_missing_grading_keys_or_unavailable_store_disable_new_attempt(self):
         self.item['completed'] = False
         self.export['quiz_definition']['questions'][0]['correct_answers'] = []
@@ -188,6 +200,7 @@ class QuizReviewEndpointTests(unittest.TestCase):
         canonical = ModuleType('learner_api.canonical_learning')
         canonical.require_profile = Mock(return_value=self.owner)
         canonical.ServiceError = ServiceError
+        self.enterContext(patch('learner_api.canonical_learning', canonical, create=True))
         review = ModuleType('learner_api.legacy_quiz_review')
         review.read_review = Mock(return_value={'completed': True, 'can_attempt': False})
         case_file = ModuleType('learner_api.case_file_sources')
@@ -200,6 +213,7 @@ class QuizReviewEndpointTests(unittest.TestCase):
         self.staff_owns = Mock(return_value=False)
         scope = dict(__package__='learner_api', functools=functools, JsonResponse=JsonResponse,
             require_GET=require_GET, learner_journal_view=lambda view: view,
+            cached_learner_read=lambda _name: lambda view: view,
             authenticate_request=lambda request: request.account, _auth_gate_enabled=lambda: True,
             _target_learner_id=lambda request, kwargs, **_: kwargs['pk'],
             _unauthenticated=lambda _: JsonResponse({}, status=401),

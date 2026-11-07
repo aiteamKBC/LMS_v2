@@ -1,0 +1,54 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Manual_audit__learners {
+        bigint record_id PK
+    }
+    Manual_audit__manual_programme_aliases {
+        bigint programme_id PK
+        text alias PK
+    }
+    Manual_audit__manual_programmes {
+        bigint id PK
+    }
+    Manual_audit__monthly_audit_signoffs {
+        bigint id PK
+    }
+    Manual_audit__plan_activities {
+        uuid activity_key PK
+    }
+    Manual_audit__plan_activity_exemptions {
+        uuid activity_key PK
+        bigint aptem_id PK
+    }
+    Manual_audit__plan_assignment_refs {
+        bigint group_id PK
+        text name_key PK
+        bigint aptem_id PK
+    }
+    Manual_audit__plan_events {
+        bigint id PK
+    }
+    Manual_audit__plan_group_members {
+        bigint id PK
+    }
+    Manual_audit__plan_groups {
+        bigint id PK
+    }
+    Manual_audit__plan_learner_progress {
+        bigint aptem_id PK
+        uuid activity_key PK
+    }
+    Manual_audit__plan_member_dates {
+        bigint group_id PK
+        bigint aptem_id PK
+        uuid activity_key PK
+    }
+    Manual_audit__plan_member_months {
+        bigint group_id PK
+        bigint aptem_id PK
+        integer month_index PK
+    }
+    Manual_audit__plan_months {
+        bigint group_id PK
+        integer month_index PK
+    }

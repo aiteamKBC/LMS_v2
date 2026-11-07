@@ -7,7 +7,9 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
+from .response_cache import cached_learner_read
 from . import canonical_learning, journal_sources
 from .apprenticeship_agreement import _group_dates
 from .learner_detail import (SOURCE_MODELS, _first_session_unlocked, _iso_date,
@@ -114,16 +116,16 @@ def lecture_href(cur, sessions, kind, pk, now):
     if not upcoming:
         return None
     session = min(upcoming, key=lambda s: (s['start'], f"session-{s['id']}"))
-    cur.execute('''SELECT c.id,m.title,coalesce(nullif(btrim(w.title),''),'Week ' || w.week_number),c.settings_json->>'sessionDate',
+    cur.execute(f'''SELECT c.id,m.title,coalesce(nullif(btrim(w.title),''),'Week ' || w.week_number),c.settings_json->>'sessionDate',
             c.settings_json->>'sessionDateTimeUtc'
         FROM curriculum.components c
         JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
         WHERE c.module_catalogue_id=%s
           AND lower(regexp_replace(btrim(coalesce(c.type,'')), '[[:space:]-]+', '_', 'g'))='live_session'
-          AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+          AND {visible_child_sql('c')}
           AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
-          AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
+          AND {visible_week_sql('w')}
         ORDER BY w.display_order,w.week_number,w.id,c.display_order,c.id''', [session['moduleId']])
     candidates = cur.fetchall()
     day = session['start'][:10]
@@ -226,8 +228,8 @@ def dashboard_modules(source, owner, *, include_coach=True, include_week_counts=
         return ids, []
     coach_column = ",coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name" if include_coach else ''
     coach_join = ' LEFT JOIN curriculum.groups g ON g.group_id=m.group_id' if include_coach else ''
-    week_count = '''EXISTS (SELECT 1 FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id
-             AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>''))''' if include_week_counts else '0'
+    week_count = f'''EXISTS (SELECT 1 FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id
+             AND {visible_week_sql('w')})''' if include_week_counts else '0'
     with connections['enrolment'].cursor() as cur:
         cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
             m.programme_name,m.cohort_name,m.group_name,m.sessions_number,
@@ -250,6 +252,7 @@ def build_dashboard_bootstrap(source, pk, *, include_pending_delivery=False):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
+@cached_learner_read('dashboard-bootstrap')
 def dashboard_bootstrap(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
@@ -421,6 +424,7 @@ def compact_header(payload):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
+@cached_learner_read('dashboard-header')
 def dashboard_header(request, kind, pk, presentation=False, minimal=False):
     model = SOURCE_MODELS.get(kind)
     if model is None:

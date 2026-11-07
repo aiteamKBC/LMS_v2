@@ -15,6 +15,11 @@ from .teams_cancellation_checks import CalendarStateError, cancellation_plan
 
 @contextmanager
 def calendar_reader():
+    from .teams_original_calendar import current_calendar
+    original = current_calendar()
+    if original:
+        yield original.read
+        return
     from coach_api.views import get_graph_settings, microsoft_graph_token
 
     settings = get_graph_settings()
@@ -110,11 +115,15 @@ def reconcile_calendar(live_id):
     series, rows, snapshot = load_calendar_state(live_id)
     if series.get('status') != 'active':
         return {'changed': False, 'seriesStatus': series.get('status'), 'cancelledSessions': [], 'errors': []}
+    from .teams_original_calendar import calendar_authorized, OriginalCalendarRequired, current_calendar
+    if series.get('meeting_type') == 'linked-external' and not calendar_authorized(live_id):
+        raise OriginalCalendarRequired('Verify the original calendar before checking its status.')
     if not rows:
         raise CalendarStateError('No stored sessions are available to verify this calendar.')
     signature = state_signature(series, rows)
     with calendar_reader() as read:
-        plan = cancellation_plan(series, rows, snapshot, read)
+        original = current_calendar()
+        plan = cancellation_plan(series, rows, snapshot, read, **({'original_prefix': original.original_prefix} if original else {}))
     cancelled_ids = list(plan.get('cancelledIds') or [])
     cancelled_sessions = sorted(
         row.get('session_number') for row in rows
@@ -172,11 +181,14 @@ def reconcile_calendar(live_id):
 @require_role('admin', 'staff')
 @require_POST
 def sync_calendar_state(request, live_session_id):
+    from .teams_original_calendar import OriginalCalendarRequired, original_calendar_request
     try:
         result = reconcile_calendar(live_session_id)
         return JsonResponse(result, status=207 if result['errors'] else 200)
     except LookupError:
         return JsonResponse({'error': 'Calendar not found.'}, status=404)
+    except OriginalCalendarRequired:
+        return original_calendar_request(sync_calendar_state)(request, live_session_id)
     except CalendarStateError as exc:
         _note_failed_check(live_session_id, str(exc))
         return JsonResponse({'error': str(exc)}, status=409)

@@ -588,19 +588,47 @@ it('reads the assignment a Training Plan month names from its coach-led assignme
   expect(groups.find(group => group.month === '2026-10')?.planAssignments).toEqual([]);
 });
 
-it('lists only flagged assignments once an author flags the monthly assignment, under the title learners were given', async () => {
+it('lists all assignments regardless of the legacy flag, under the titles learners were given', async () => {
   mockPlan([component('A1'), component('A2', { week: 'Digital analytics', monthlyAssignment: true,
     component: 'Assignment · Month 4 coach led assignment', assignmentBrief: 'Evaluate the analytics tools.' }), component('R1', { type: 'reading' })]);
-  mount();
+  mount('?month=2026-09&assignment=A2');
   const cards = await screen.findByRole('region', { name: 'Assignments for Month 4 — Martech' });
   expect(within(cards).getByRole('button', { name: /Month 4 coach led assignment/ })).toBeVisible();
-  expect(within(cards).queryByRole('button', { name: /Data and insight/ })).toBeNull();
+  expect(within(cards).getByRole('button', { name: /Data and insight/ })).toBeVisible();
   expect(within(cards).queryByText(/Assignment ·/)).toBeNull();
   expect(screen.getByRole('heading', { name: 'Month 4 coach led assignment' })).toBeVisible();
-  expect(screen.getByRole('region', { name: 'Selected submission month' })).toHaveTextContent('1 assignment · 1 submitted');
+  expect(screen.getByRole('region', { name: 'Selected submission month' })).toHaveTextContent('2 assignments · 1 submitted');
   expect(screen.getByRole('link', { name: 'View submission' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A2?month=2026-09');
   expect(groupMonthlyAssignments({ ...real, components: [component('A1'), component('A2', { monthlyAssignment: false })] }, metadata, contract, {})
     .flatMap(group => group.assignments.map(row => row.id))).toEqual(['A1', 'A2']);
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('includes week 6 and 7 assignments alongside existing work in the same month for %s learners', async kind => {
+  vi.mocked(useResolvedLearner).mockReturnValue({ kind, id: '125' });
+  const msp = component('MSP-1', { moduleId: 'MSP', module: 'Managing Successful Programmes',
+    weekId: 'MSP-W6', week: 'Week 06: Justification', component: 'Assignment 1 — Brambleford', monthlyAssignment: false });
+  const sp = component('SP-1', { moduleId: 'SP', module: 'PMI-SP Scheduling Professional',
+    weekId: 'SP-W7', week: 'Week 07: Testing Resource Feasibility', component: 'TARP Assignment 1 — Recovery Schedule' });
+  mockPlan([component('A1', { monthlyAssignment: true }), component('A2', { week: 'Digital analytics', monthlyAssignment: true }), msp, sp, msp,
+    component('R1', { type: 'reading', monthlyAssignment: true })]);
+  mockRequests({ dates: { covers: {}, activity_dates: {
+    A1: { date: '2026-10-07', month: '2026-10', date_source: 'builder_week' },
+    A2: { date: '2026-10-14', month: '2026-10', date_source: 'builder_week' },
+    'MSP-1': { date: '2026-10-19', month: '2026-10', date_source: 'builder_week' },
+    'SP-1': { date: '2026-10-26', month: '2026-10', date_source: 'builder_week' },
+  } } });
+  mount('?month=2026-10');
+  const cards = within(await screen.findByRole('region', { name: 'Assignments for October 2026' }));
+  expect(cards.getAllByRole('button', { name: /View details|Selected/ })).toHaveLength(4);
+  expect(screen.getByRole('region', { name: 'Selected submission month' })).toHaveTextContent('4 assignments · 1 submitted');
+  for (const [title, id] of [['Assignment 1 — Brambleford', 'MSP-1'], ['TARP Assignment 1 — Recovery Schedule', 'SP-1']]) {
+    fireEvent.click(cards.getByRole('button', { name: new RegExp(title) }));
+    expect(screen.getByRole('link', { name: 'Start assignment' })).toHaveAttribute('href', `/learner/monthly-submission/${kind}/125/${id}?month=2026-10`);
+  }
+  fireEvent.click(cards.getByRole('button', { name: /Digital analytics/ }));
+  expect(screen.getByRole('link', { name: 'View submission' })).toHaveAttribute('href', `/learner/monthly-submission/${kind}/125/A2?month=2026-10`);
+  fireEvent.click(cards.getByRole('button', { name: /Data and insight/ }));
+  expect(screen.getByRole('link', { name: 'Continue assignment' })).toHaveAttribute('href', `/learner/monthly-submission/${kind}/125/A1?month=2026-10`);
 });
 
 it('labels the Training Plan assignment and shows the options and their instructions before starting', async () => {

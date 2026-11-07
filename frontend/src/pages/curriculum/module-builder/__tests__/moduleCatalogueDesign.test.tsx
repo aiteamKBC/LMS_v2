@@ -22,6 +22,11 @@ vi.mock('@/hooks/useCurriculumProgrammes', () => ({ useCurriculumProgrammes: () 
 vi.mock('@/hooks/useCurriculumKsbSets', () => ({ useCurriculumKsbSets: () => ({ ksbSets: [], loading: false, error: null }) }));
 vi.mock('@/pages/curriculum/shared/entities/moduleForm', () => ({ ModuleFormDrawer: ({ open, module }: { open: boolean; module?: { id: string } }) => open ? <output data-testid="form-target">{module?.id || 'new'}</output> : null }));
 vi.mock('@/pages/curriculum/shared/entities/LearnerAssignmentDrawer', () => ({ LearnerAssignmentDrawer: ({ target }: { target: { id: string } | null }) => target ? <output data-testid="learner-target">{target.id}</output> : null }));
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => ({})) }));
+vi.mock('@/api/assignedLearners', async original => ({
+  ...(await original<typeof import('@/api/assignedLearners')>()),
+  fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => [id, { total: 0, statuses: {} }]))),
+}));
 vi.mock('@/api/curriculumLearnerAssignments', async original => ({ ...(await original<typeof import('@/api/curriculumLearnerAssignments')>()), fetchLearnerAssignments: fixtures.assignments }));
 vi.mock('@/lib/curriculumApi', async original => ({
   ...(await original<typeof import('@/lib/curriculumApi')>()),
@@ -43,7 +48,7 @@ const row = (id: string, overrides: Partial<CurriculumModule> = {}) => ({
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 async function open() {
   const { default: Page } = await import('../page');
-  return render(<MemoryRouter initialEntries={['/curriculum/module-builder']}><Page /></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={['/curriculum/module-builder?catalogue=all']}><Page /></MemoryRouter>);
 }
 const card = (id: string) => within(screen.getByRole('article', { name: `Same title - ${id}` }));
 
@@ -95,6 +100,7 @@ describe('Module catalogue design and record scope', () => {
     expect(screen.queryByRole('article', { name: 'Same title - M1' })).not.toBeInTheDocument();
     expect(card('M2').getByText('M2')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /^Reset$/ }));
+    await user.click(screen.getByRole('button', { name: /^All modules/ }));
     expect(screen.getByText('2 of 2 shown')).toBeInTheDocument();
   });
 
@@ -142,7 +148,7 @@ describe('Module catalogue design and record scope', () => {
   });
 
   it('opens learners using the selected module identity', async () => {
-    await open(); await userEvent.click(card('M2').getByRole('button', { name: /Assign learners|Learners/ }));
+    await open(); await userEvent.click(card('M2').getByRole('button', { name: /Same title: .* learners/ }));
     expect(fixtures.assignments).toHaveBeenCalledWith({ scope: 'module', id: 'M2', name: 'Same title' });
     expect(fixtures.structure).not.toHaveBeenCalled();
   });
@@ -190,8 +196,8 @@ describe('Module catalogue design and record scope', () => {
     fixtures.modules = [row('M1', { name: 'First module' }), row('M2', { name: 'Second module' })];
     const first = deferred<{ learners: [] }>(); fixtures.assignments.mockImplementation((target: { id: string }) => target.id === 'M1' ? first.promise : Promise.resolve({ learners: [] }));
     await open();
-    await userEvent.click(within(screen.getByRole('article', { name: 'First module - M1' })).getByRole('button', { name: /^Learners/ }));
-    await userEvent.click(within(screen.getByRole('article', { name: 'Second module - M2' })).getByRole('button', { name: /^Learners/ }));
+    await userEvent.click(within(screen.getByRole('article', { name: 'First module - M1' })).getByRole('button', { name: /: .* learners$/ }));
+    await userEvent.click(within(screen.getByRole('article', { name: 'Second module - M2' })).getByRole('button', { name: /: .* learners$/ }));
     expect(await screen.findByRole('dialog', { name: 'Second module learner progress' })).toBeInTheDocument();
     await act(async () => { first.resolve({ learners: [] }); });
     expect(fixtures.assignments.mock.calls.map(call => call[0].id)).toEqual(['M1', 'M2']);
@@ -200,7 +206,7 @@ describe('Module catalogue design and record scope', () => {
   });
 
   it('opens the learners dialog for an empty module and adds learners from it', async () => {
-    await open(); await userEvent.click(card('M1').getByRole('button', { name: 'Learners' }));
+    await open(); await userEvent.click(card('M1').getByRole('button', { name: /Same title: .* learners/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Same title learner progress' });
     expect(within(dialog).getByText('No learners are assigned to this module yet.')).toBeInTheDocument();
     expect(screen.queryByTestId('learner-target')).not.toBeInTheDocument();

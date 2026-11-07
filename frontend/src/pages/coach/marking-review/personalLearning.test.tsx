@@ -39,6 +39,21 @@ function review() {
 }
 
 describe('personal coursework review', () => {
+  it('keeps a KSB-only review separate from the original acceptance decision', async () => {
+    const ksbReview = { status: 'pending', revision: 'r1', programme: 'Programme Six',
+      sourceId: 'standard:six', originalCodes: ['B4.1'], items: [{ code: 'B7', description: 'Programme behaviour' }] };
+    vi.mocked(coachFetch).mockImplementation(async url => new Response(JSON.stringify(String(url).endsWith('/sub-1')
+      ? { item: { ...item, learnerKind: 'commercial', learnerId: '7', status: 'ksb_review', ksbReview } }
+      : { available: false, items: [], summary: {} })));
+    render(<MemoryRouter initialEntries={['/coach/marking-queue/sub-1']}><Routes>
+      <Route path="/coach/marking-queue/:submissionId" element={<CoachMarkingReviewPage />} />
+    </Routes></MemoryRouter>);
+    expect(await screen.findByRole('region', { name: 'Programme KSB review' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Accept assignment|Refer back/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Review feedback')).not.toBeInTheDocument();
+    expect(screen.getByText(/submission remains accepted/)).toBeVisible();
+  });
+
   it.each(['personal', 'official'])('retains the first feedback edit while auxiliary reads finish for %s', async scope => {
     let finishEvidence!: (value: Response) => void;
     const evidence = new Promise<Response>(resolve => { finishEvidence = resolve; });

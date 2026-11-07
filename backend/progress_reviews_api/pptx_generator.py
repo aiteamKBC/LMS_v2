@@ -37,10 +37,13 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import os
 from pathlib import Path
 
 from pptx import Presentation
+from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.util import Emu, Pt
 
 from . import slide_cloner as sc
 from . import text_fit as fit
@@ -743,9 +746,63 @@ def _remove_source_employer_logos(prs) -> None:
 # entry point
 # --------------------------------------------------------------------------- #
 
+def _fit_card_text(shape):
+    """Shrink overflowing card text without allowing the box to grow.
+
+    Use a conservative line estimate rather than relying on Office's deferred
+    autofit, which can leave text overflowing when a deck is exported to PDF.
+    Preserve each run's formatting and the relative size of headings and text.
+    """
+    frame = shape.text_frame
+    width = (shape.width - frame.margin_left - frame.margin_right) / 12700
+    height = (shape.height - frame.margin_top - frame.margin_bottom) / 12700
+    if width <= 0 or height <= 0:
+        return
+
+    def estimated_height(scale):
+        total = 0.0
+        for paragraph in frame.paragraphs:
+            sizes = [run.font.size.pt for run in paragraph.runs if run.font.size]
+            size = max(sizes, default=20) * scale
+            # Wider characters and wrapping at word boundaries both need more
+            # space than a simple character count would suggest.
+            chars_per_line = max(1, int(width / (size * 0.62)))
+            lines = sum(max(1, math.ceil(len(line) / chars_per_line)) for line in paragraph.text.split('\n'))
+            spacing = paragraph.line_spacing
+            line_height = max(size * 1.25, (spacing / 12700 * scale) if isinstance(spacing, int) else 0)
+            total += lines * line_height
+            for gap in (paragraph.space_before, paragraph.space_after):
+                if gap is not None:
+                    total += gap / 12700 * scale
+        return total
+
+    scale = 1.0
+    while scale > 0.3 and estimated_height(scale) > height * 0.90:
+        scale -= 0.02
+    if scale < 1:
+        for paragraph in frame.paragraphs:
+            for run in paragraph.runs:
+                if run.font.size:
+                    run.font.size = Pt(run.font.size.pt * scale)
+            if isinstance(paragraph.line_spacing, int):
+                paragraph.line_spacing = Emu(int(paragraph.line_spacing * scale))
+            for attr in ('space_before', 'space_after'):
+                value = getattr(paragraph, attr)
+                if value is not None:
+                    setattr(paragraph, attr, Emu(int(value * scale)))
+    frame.auto_size = MSO_AUTO_SIZE.NONE
+
+
 def generate_progress_review_pptx(pack: dict, *, fetch_image: ImageFetcher = default_image_fetcher) -> bytes:
     """Clone the KBC template and populate all 19 slides from `pack`."""
     prs = render_progress_review(pack, fetch_image=fetch_image)
+    # These cards have fixed backgrounds and neighbouring elements, but the
+    # template lets their text boxes grow beyond them. Keep each box within
+    # its designed bounds and scale its text before the deck is rendered.
+    # Apply this after the shared render so legacy MCM layouts are unaffected.
+    for slide_index, shape_indices in ((1, (31, 33)), (6, (10, 16, 22)), (16, (8, 9, 12, 15))):
+        for shape_index in shape_indices:
+            _fit_card_text(prs.slides[slide_index].shapes[shape_index])
     _remove_source_employer_logos(prs)
     buffer = io.BytesIO()
     prs.save(buffer)

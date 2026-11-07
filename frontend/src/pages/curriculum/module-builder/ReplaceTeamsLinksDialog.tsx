@@ -1,12 +1,17 @@
 import { useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { ModuleWeek } from './moduleAuthoringData';
+import type { ModuleCatalogueItem } from './moduleAuthoringData';
+import { ExistingTeamsSeriesImport } from './ExistingTeamsSeriesImport';
 
 interface ReplaceTeamsLinksDialogProps {
   weeks: ModuleWeek[];
   onClose: () => void;
   /** Saves the replacement. Rejecting keeps the dialog open with the reason shown. */
   onApply: (weekIds: string[], link: string) => Promise<void>;
+  moduleId?: string;
+  unsavedChanges?: boolean;
+  onSeriesLinked?: (module: ModuleCatalogueItem) => void;
 }
 
 function isWebUrl(value: string) {
@@ -18,13 +23,14 @@ function isWebUrl(value: string) {
   }
 }
 
-export function ReplaceTeamsLinksDialog({ weeks, onClose, onApply }: ReplaceTeamsLinksDialogProps) {
+export function ReplaceTeamsLinksDialog({ weeks, onClose, onApply, moduleId, unsavedChanges = false, onSeriesLinked }: ReplaceTeamsLinksDialogProps) {
   const replaceableWeeks = useMemo(
     () => weeks.map(week => ({
       week,
       liveCount: week.components.filter(component => (
         component.type === 'live-session'
         && !String(component.settings.extraTeamsMeetingUrl || '').trim()
+        && component.settings.teamsMeetingScope !== 'additional'
       )).length,
     })),
     [weeks],
@@ -33,7 +39,10 @@ export function ReplaceTeamsLinksDialog({ weeks, onClose, onApply }: ReplaceTeam
     () => replaceableWeeks.filter(item => item.liveCount > 0),
     [replaceableWeeks],
   );
-  const [selectedWeekIds, setSelectedWeekIds] = useState<Set<string>>(new Set());
+  const [selectedWeekIds, setSelectedWeekIds] = useState<Set<string>>(
+    () => new Set(moduleId ? weeksWithLinks.map(item => item.week.id) : []),
+  );
+  const [mode, setMode] = useState<'series' | 'links'>(moduleId ? 'series' : 'links');
   const [link, setLink] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -83,8 +92,7 @@ export function ReplaceTeamsLinksDialog({ weeks, onClose, onApply }: ReplaceTeam
             </span>
             <div className="min-w-0">
               <h2 id="replace-teams-links-title" className="text-base font-heading font-bold text-foreground-950">Replace Teams links</h2>
-              <p className="mt-1 text-[12px] leading-5 text-foreground-500">Paste a new link, then choose the weeks whose live-session components should use it. This also works for a new live session with no link yet. It is saved straight away; the Teams meetings and invitations are not changed.</p>
-              <p className="mt-2 text-[12px] leading-5 text-foreground-600">A pasted link stays managed in its original Teams calendar. Update Teams meeting will show the saved link and calendar status; creating a replacement module meeting is blocked. Adding a week does not extend the Teams series.</p>
+              <p className="mt-1 text-[12px] leading-5 text-foreground-500">Use a Teams meeting that already exists. Link its original series and recordings, or save join links only for the chosen weeks. Microsoft meetings and invitations stay as they are.</p>
             </div>
           </div>
           <button type="button" onClick={close} disabled={saving} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900">
@@ -93,10 +101,15 @@ export function ReplaceTeamsLinksDialog({ weeks, onClose, onApply }: ReplaceTeam
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-background-100/45 p-5">
+          {moduleId && <fieldset disabled={saving} className="mb-4 flex flex-wrap gap-4 text-xs" aria-label="How to use this Teams link">
+            <label><input type="radio" name="teams-link-mode" checked={mode === 'series'} onChange={() => setMode('series')} /> Existing Teams series</label>
+            <label><input type="radio" name="teams-link-mode" checked={mode === 'links'} onChange={() => setMode('links')} /> Join links only</label>
+          </fieldset>}
           <label className="block text-[11px] font-bold uppercase tracking-wide text-foreground-600" htmlFor="replacement-teams-link">New Teams meeting link</label>
           <input
             id="replacement-teams-link"
             type="url"
+            disabled={saving}
             value={link}
             onChange={event => setLink(event.target.value)}
             placeholder="https://teams.microsoft.com/..."
@@ -111,15 +124,15 @@ export function ReplaceTeamsLinksDialog({ weeks, onClose, onApply }: ReplaceTeam
               <p className="mt-1 text-[11px] text-foreground-500">Only selected weeks are changed. Additional one-off meetings keep their own link.</p>
             </div>
             <div className="flex items-center gap-1.5">
-              <button type="button" onClick={() => setSelectedWeekIds(new Set(weeksWithLinks.map(item => item.week.id)))} disabled={!weeksWithLinks.length} className="h-8 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40">Select live weeks</button>
-              <button type="button" onClick={() => setSelectedWeekIds(new Set())} disabled={!selectedCount} className="h-8 rounded-lg border border-background-200 bg-background-50 px-2.5 text-[10px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40">Clear</button>
+              <button type="button" onClick={() => setSelectedWeekIds(new Set(weeksWithLinks.map(item => item.week.id)))} disabled={saving || !weeksWithLinks.length} className="h-8 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40">Select live weeks</button>
+              <button type="button" onClick={() => setSelectedWeekIds(new Set())} disabled={saving || !selectedCount} className="h-8 rounded-lg border border-background-200 bg-background-50 px-2.5 text-[10px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40">Clear</button>
             </div>
           </div>
 
           <div className="mt-3 grid gap-2 sm:grid-cols-2" role="group" aria-label="Weeks to update">
             {replaceableWeeks.map(({ week, liveCount }) => (
               <label key={week.id} className={`flex min-h-12 cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2 transition-smooth ${selectedWeekIds.has(week.id) ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-50 text-foreground-700 hover:border-primary-200'}`}>
-                <input type="checkbox" checked={selectedWeekIds.has(week.id)} onChange={() => toggleWeek(week.id)} className="h-4 w-4 rounded border-foreground-300 accent-primary-500" aria-label={`Week ${week.weekNumber}`} />
+                <input type="checkbox" disabled={saving} checked={selectedWeekIds.has(week.id)} onChange={() => toggleWeek(week.id)} className="h-4 w-4 rounded border-foreground-300 accent-primary-500" aria-label={`Week ${week.weekNumber}`} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12px] font-bold">Week {week.weekNumber}{week.title ? ` · ${week.title}` : ''}</span>
                   <span className="mt-0.5 block text-[10px] font-semibold text-foreground-500">{liveCount ? `${liveCount} live session${liveCount === 1 ? '' : 's'}` : 'No replaceable live session'}</span>
@@ -138,13 +151,17 @@ export function ReplaceTeamsLinksDialog({ weeks, onClose, onApply }: ReplaceTeam
         )}
 
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-background-200 bg-background-50 px-5 py-3">
+          {mode === 'series' && moduleId && onSeriesLinked && <ExistingTeamsSeriesImport
+            key={JSON.stringify([moduleId, link, [...selectedWeekIds].sort()])}
+            moduleId={moduleId} link={link} weekIds={[...selectedWeekIds]} unsaved={unsavedChanges}
+            onBusy={setSaving} onLinked={onSeriesLinked} />}
           <p className="text-[11px] font-semibold text-foreground-500">{selectedCount} week{selectedCount === 1 ? '' : 's'} · {selectedLiveCount} live session{selectedLiveCount === 1 ? '' : 's'} selected</p>
           <div className="flex items-center gap-2">
             <button type="button" onClick={close} disabled={saving} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-45">Cancel</button>
-            <button type="button" onClick={apply} disabled={!canApply} aria-busy={saving} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-45">
+            {mode === 'links' && <button type="button" onClick={apply} disabled={!canApply} aria-busy={saving} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-45">
               <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-link-m'} />
               {saving ? 'Saving…' : `Replace ${selectedLiveCount || ''} link${selectedLiveCount === 1 ? '' : 's'}`}
-            </button>
+            </button>}
           </div>
         </footer>
       </section>

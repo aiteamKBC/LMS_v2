@@ -104,11 +104,12 @@ export interface ReviewProgressSnapshot {
   schemaVersion?: number;
   formulaVersion?: string;
   /** Source captured for newly calculated snapshots; absent on historical snapshots. */
-  actualHoursSource?: 'learner.completed_hours';
+  actualHoursSource?: 'learner.completed_hours' | 'canonical_learning.dashboard' | 'canonical.accepted_hours';
   calculatedFrom: string;
   calculatedAt: string;
   calculatedBy: string;
   weeksElapsed: number | null;
+  programmeTimeline?: { startDate: string; asOfDate: string; gatewayDate: string | null; endDate: string | null } | null;
   programmeProgress: ReviewProgressMetric;
   offTheJobHours: ReviewProgressMetric;
   /** Additive and optional so signed snapshots from before this contract keep
@@ -221,6 +222,8 @@ export interface ReviewInstanceFormDefinition {
     meetingLink: string | null;
     syncState: string | null;
   };
+  /** Exact server-authorized Native Review calendar association. */
+  calendarMeeting?: { eventKey: string; source: string; status: string; meetingLink: string; graphWebLink: string };
   fieldWarnings?: { fieldKey: string; aptemType: number }[];
   pdf?: { available: boolean; reason: string; source?: string; originalAvailable?: boolean } | null;
   /** Progress Review only, and null until a coach calculates it. */

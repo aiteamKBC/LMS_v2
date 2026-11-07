@@ -1,0 +1,3 @@
+owner,schema,object_type,acl
+cloud_admin,public,r,{neon_superuser=a*r*w*d*D*x*t*m*/cloud_admin}
+cloud_admin,public,S,{neon_superuser=r*w*U*/cloud_admin}

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { coachingRecordingUrl, coachingEvidenceUrl, invalidateCoachingPdfs, invalidateCoachingDetails, loadCoachingSession, type CoachingMeeting, type CoachingSessionDetails } from '@/api/coachingRecordings';
 import { recordingLabel, recordingLabels } from './model';
 import QualitySuggestion from './QualitySuggestion';
 import SavedMeetingEvidence from './SavedMeetingEvidence';
 import { Download, Play, RefreshCw } from 'lucide-react';
 import type { EvidenceTab } from './location';
+import { prepareRecordingPlayback, type RecordingOccurrence } from './recordingPlayback';
 
 function durationLabel(seconds: number) {
   const value = Math.max(0, Math.floor(seconds));
@@ -18,23 +19,46 @@ function recordedSeconds(files: CoachingSessionDetails['media']['recordings']) {
   return total / 1000;
 }
 
-export default function SessionDetails({ eventKey, analysisContext, analysisEventKey, reference, category, timeZone = 'UTC', onPreviewChange, activeTab, onTabChange }: { eventKey: string; analysisContext?: string; analysisEventKey?: string; reference?: string; category?: CoachingMeeting['category']; timeZone?: string; onPreviewChange?: (open: boolean) => void; activeTab?: EvidenceTab; onTabChange?: (tab: EvidenceTab) => void }) {
+export default function SessionDetails({ eventKey, analysisContext, analysisEventKey, reference, occurrence, category, timeZone = 'UTC', onPreviewChange, activeTab, onTabChange }: { eventKey: string; analysisContext?: string; analysisEventKey?: string; reference?: string; occurrence?: RecordingOccurrence; category?: CoachingMeeting['category']; timeZone?: string; onPreviewChange?: (open: boolean) => void; activeTab?: EvidenceTab; onTabChange?: (tab: EvidenceTab) => void }) {
   const [data, setData] = useState<CoachingSessionDetails | null>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const [playing, setPlaying] = useState('');
-  const [playError, setPlayError] = useState(false);
+  const [playError, setPlayError] = useState('');
+  const [preparing, setPreparing] = useState(false);
+  const [playback, setPlayback] = useState<{ url: string; reference?: string; attempt: number } | null>(null);
+  const playbackRequest = useRef<AbortController | null>(null);
+  const playbackAttempt = useRef(0);
   const [showTypeReview, setShowTypeReview] = useState(false);
   const [attendancePaused, setAttendancePaused] = useState(false);
   const refresh = () => { invalidateCoachingPdfs(); invalidateCoachingDetails(); setRevision(value => value + 1); };
   useEffect(() => {
     const controller = new AbortController();
-    setData(null); setError(''); setPlaying(''); setPlayError(false); setShowTypeReview(false); setAttendancePaused(false);
+    playbackRequest.current?.abort();
+    setData(null); setError(''); setPlaying(''); setPlayError(''); setPlayback(null); setPreparing(false); setShowTypeReview(false); setAttendancePaused(false);
     void loadCoachingSession(eventKey, controller.signal, reference, 'attendance')
       .then(value => { if (!controller.signal.aborted) setData(value); })
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Session details could not be loaded.'); });
-    return () => controller.abort();
+    return () => { controller.abort(); playbackRequest.current?.abort(); };
   }, [eventKey, revision, reference]);
+
+  const play = async (id: string) => {
+    if (!data) return;
+    playbackRequest.current?.abort();
+    const controller = new AbortController();
+    playbackRequest.current = controller;
+    const attempt = ++playbackAttempt.current;
+    setPlaying(id); setPlayError(''); setPlayback(null); setPreparing(true);
+    try {
+      const result = await prepareRecordingPlayback({ eventKey: data.eventKey, recordingId: id,
+        reference, occurrence }, controller.signal);
+      if (!controller.signal.aborted) setPlayback({ ...result, attempt });
+    } catch (reason) {
+      if (!controller.signal.aborted) setPlayError(reason instanceof Error ? reason.message : 'This recording could not be played. Retry playback.');
+    } finally {
+      if (!controller.signal.aborted) setPreparing(false);
+    }
+  };
 
   const attendancePending = data?.attendance.state === 'pending';
   const evidencePending = attendancePending || data?.media.check?.state === 'pending';
@@ -84,15 +108,16 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
             {file.source === 'microsoft' && <span>SharePoint recording</span>}</div>
           {file.startsAt && file.endsAt && duration !== null && duration > 0 && <p className="mt-2 break-words text-[11px] leading-5 text-foreground-600">Microsoft recording times: {stamp(file.startsAt)} – {stamp(file.endsAt)}</p>}
           {file.state === 'ready' && <div className="mt-3 flex flex-wrap gap-2">
-            <button aria-label={`Play recording ${index + 1}`} aria-pressed={playing === file.id} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50" onClick={() => { setPlaying(file.id); setPlayError(false); }}><Play size={13} />Play</button>
-            <a aria-label={`Download recording ${index + 1}`} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700" href={coachingRecordingUrl(data.eventKey, file.id, false, reference)} target="_blank" rel="noopener noreferrer"><Download size={13} />Download</a>
+            <button aria-label={`Play recording ${index + 1}`} aria-pressed={playing === file.id} disabled={preparing && playing === file.id} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-50" onClick={() => void play(file.id)}><Play size={13} />Play</button>
+            <a aria-label={`Download recording ${index + 1}`} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700" href={coachingRecordingUrl(data.eventKey, file.id, false, playback?.reference ?? reference)} target="_blank" rel="noopener noreferrer"><Download size={13} />Download</a>
           </div>}
         </li>;
       })}</ul>
       {playing && data.media.recordings.some(file => file.id === playing && file.state === 'ready') && <div className="mt-4">
-        <video key={playing} aria-label="Coaching recording player" className="aspect-video w-full rounded-lg bg-black" controls preload="metadata"
-          src={coachingRecordingUrl(data.eventKey, playing, true, reference)} onError={() => setPlayError(true)} />
-        {playError && <p role="alert" className="mt-2 text-sm text-rose-800">This recording could not be played. Refresh details and retry.</p>}
+        {preparing && <p role="status" className="text-sm">Preparing recording…</p>}
+        {playback && <video key={playback.attempt} aria-label="Coaching recording player" className="aspect-video w-full rounded-lg bg-black" controls autoPlay preload="metadata"
+          src={playback.url} onError={() => setPlayError('This recording could not be played. Retry playback to reload the video.')} />}
+        {playError && <p role="alert" className="mt-2 text-sm text-rose-800">{playError} <button className="font-semibold underline" onClick={() => void play(playing)}>Retry playback</button></p>}
       </div>}
       <h3 className="mt-6 border-t border-background-200 pt-4 text-sm font-bold">Attendance</h3>
       {data.attendance.source === 'coaching-session' && <p className="mt-1 text-xs text-foreground-500">From the saved Coaching Session attendance report.</p>}

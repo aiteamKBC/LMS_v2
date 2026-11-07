@@ -1,0 +1,15 @@
+{
+  "command": "git diff --cached --check",
+  "status": "PASS",
+  "staged_scope": "docs/database-architecture only",
+  "application_changes": false,
+  "environment_changes": false,
+  "policy_changes": false,
+  "production_database_access": false,
+  "database_mutations": false,
+  "branch": "attendance_bugs",
+  "publication": "local commit only; no push/merge/deployment",
+  "teams_baseline": "NOT REQUIRED",
+  "expanded_teams_checks": "NOT REQUIRED",
+  "live_teams": "NOT RUN"
+}

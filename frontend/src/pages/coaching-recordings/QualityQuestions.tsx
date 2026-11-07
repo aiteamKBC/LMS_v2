@@ -15,6 +15,7 @@ export default function QualityQuestions({ template, sectionId, form, onChange, 
   const setAnswer = (key: string, value: QualityAnswer) => onChange({ ...form, answers: { ...form.answers, [key]: value } });
   const images = (key: string, label: string) => renderImages ? renderImages(key, label) : <div className="rounded-xl border border-dashed border-primary-200 bg-primary-50 p-4 text-sm text-primary-800">{label} · Image upload appears when completing a saved review.</div>;
   return <section aria-label={section.title} className="space-y-4">
+    {sectionId === template.sections[0]?.id && template.purpose && <p className="rounded-xl bg-primary-50 p-4 text-sm leading-6 text-foreground-700">{template.purpose}</p>}
     <h3 className="text-lg font-bold">{section.title}</h3>
     {section.criteria.map((item, index) => {
       const kind = item.type || 'rating', value = form.answers?.[item.id];
@@ -24,7 +25,7 @@ export default function QualityQuestions({ template, sectionId, form, onChange, 
         <p className="break-words text-sm font-semibold leading-6">{index + 1}. {item.text} <span className="ml-1 text-[10px] font-normal text-foreground-500">{item.required === false ? 'Optional' : 'Required'}</span></p>
         {item.help && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-foreground-500">{item.help}</p>}
         {kind === 'rating' ? <>
-          <div className="mt-3 flex flex-wrap gap-2">{Object.entries(template.ratings).filter(([rating]) => rating !== 'na' || item.allowNa !== false).map(([rating, description]) => <label key={rating} title={item.descriptors?.[rating as Exclude<Rating, ''>] || description} className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-2 text-xs font-semibold ${answer.rating === rating ? tones[rating] : 'border-background-200 text-foreground-600'}`}>
+          <div className="mt-3 flex flex-wrap gap-2">{Object.entries(template.ratings).map(([rating, description]) => <label key={rating} title={item.descriptors?.[rating as Exclude<Rating, ''>] || description} className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-2 text-xs font-semibold ${answer.rating === rating ? tones[rating] : 'border-background-200 text-foreground-600'}`}>
             <input type="radio" name={item.id} value={rating} checked={answer.rating === rating} onChange={() => onChange({ ...form, criteria: { ...form.criteria, [item.id]: { ...answer, rating: rating as Rating } } })} />{ratingLabels[rating]}</label>)}</div>
           {answer.rating && <p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-foreground-600">{item.descriptors?.[answer.rating] || template.ratings[answer.rating]}</p>}
           {item.descriptors && <details className="mt-3 rounded-lg bg-background-50 p-3 text-xs"><summary className="cursor-pointer font-semibold text-primary-700">Reference criteria · what each rating means</summary><div className="mt-3 space-y-3">{Object.entries(item.descriptors).map(([key, text]) => <div key={key}><p className="font-bold">{ratingLabels[key]}</p><p className="mt-1 whitespace-pre-wrap leading-6">{text}</p></div>)}</div></details>}

@@ -25,6 +25,7 @@ import { completedComponentIds } from '@/utils/learnerJourney';
 import { PreviousLearningNotice } from '@/pages/learner/my-learning/PreviousLearningNotice';
 import { placeActivity } from '@/pages/learner/video-watch/weekPreview';
 import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
+import { ActivityPlanDetails } from '@/pages/learner/video-watch/ActivityPlanDetails';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
 import { formatClock } from "@/components/feature/ReflectionWindow.helpers";
@@ -37,12 +38,16 @@ import { startTimeTracking, checkpointTimeTracking, type TimeTrackingSession } f
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
-import { RetakeTimeDialog, type RetakeTimeChoice } from '@/components/feature/RetakeTimeDialog';
+import { ActivityRetakeTimeDialog, ActivityTimeLimitNotice } from '@/components/feature/ActivityRetakeTimeDialog';
+import { countedActivityTime, activityTimeIssue, type ActivityTimeChoice } from '@/lib/activityTimeDecision';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
+import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
 
 const learnerNav = roleNavMap.learner;
 
 type Phase = 'intro' | 'quiz' | 'reflect' | 'results';
+type QuizReflection = { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number };
+type QuizCompletionOptions = { skipReflection?: boolean; declaredCompletedAt?: string; timerSeconds?: number };
 
 function latestQuizAttempt(attempts: LearnerQuizAttempt[], quizId: string | undefined, componentId?: string | null) {
   return attempts
@@ -184,6 +189,9 @@ export default function QuizTakePage() {
   const [timingGeneration, setTimingGeneration] = useState(0);
   useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [kind, id, quizId]);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [timeConflict, setTimeConflict] = useState<{
+    previousSeconds: number; message: string; reflection: QuizReflection; options: QuizCompletionOptions;
+  } | null>(null);
   // Open only after the server refused the Submit click's instant.
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
   const [correctionError, setCorrectionError] = useState('');
@@ -323,10 +331,14 @@ export default function QuizTakePage() {
   const showSidebar = Boolean(placement) && (phase === 'intro' || phase === 'results');
 
   const [retakeTimeOpen, setRetakeTimeOpen] = useState(false);
-  const retakeTimeChoice = useRef<RetakeTimeChoice | undefined>(undefined);
+  const retakeTimeChoice = useRef<ActivityTimeChoice | undefined>(undefined);
+  const retakeReason = useRef(''), retakePrevious = useRef(0);
+  const [timeLimitIssue, setTimeLimitIssue] = useState('');
+  const previousQuizSeconds = result?.attempt?.countedSeconds ?? countedActivityTime((detail?.quizAttempts || []).filter(row => String(row.quizId) === String(quizId)));
   const startQuiz = () => {
     if (latestAttempt || result) { setRetakeTimeOpen(true); return; }
     retakeTimeChoice.current = undefined;
+    retakePrevious.current = 0; retakeReason.current = '';
     beginQuiz();
   };
   const beginQuiz = () => {
@@ -398,13 +410,17 @@ export default function QuizTakePage() {
     : undefined;
 
   const finalizeSubmit = async (
-    reflection: { ksbs: string[]; feedback: string; reportedTime: string; timeTakenSeconds?: number },
-    options: { skipReflection?: boolean; declaredCompletedAt?: string } = {},
+    reflection: QuizReflection,
+    options: QuizCompletionOptions = {},
   ) => {
     if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    const timerSeconds = options.timerSeconds ?? elapsedSeconds;
+    const timeIssue = activityTimeIssue(retakePrevious.current, reflection.timeTakenSeconds ?? timerSeconds, retakeTimeChoice.current);
+    if (timeIssue) { setTimeLimitIssue(timeIssue); return; }
     completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
+    if (options.declaredCompletedAt) setCorrectionError('');
     // Remembered so a correction re-posts the SAME submission. The answers and
     // the frozen timer go back unchanged, so the server grades the attempt to
     // exactly the score it would have given the refused click -- the learner
@@ -421,7 +437,7 @@ export default function QuizTakePage() {
       if (tracking.rewardTracking) await flushRewardObservations(tracking,'quiz',String(quiz.id), Boolean(tracking.persistent));
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
         answers,
-        timeTakenSeconds: reflection.timeTakenSeconds ?? elapsedSeconds,
+        timeTakenSeconds: reflection.timeTakenSeconds ?? timerSeconds,
         startedAt: tracking.startedAt,
         trackingToken: tracking.trackingToken,
         module: moduleTitle,
@@ -432,6 +448,8 @@ export default function QuizTakePage() {
         skipReflection: options.skipReflection === true,
         declaredCompletedAt: options.declaredCompletedAt,
         retakeTimeChoice: retakeTimeChoice.current,
+        ...(retakeTimeChoice.current ? { retakeTimeReason: retakeReason.current, retakePreviousSeconds: retakePrevious.current } : {}),
+        timeEntrySource: reflection.timeTakenSeconds != null ? 'input' : 'timer',
       });
       setReflectionChoiceOpen(false);
       setResult(res);
@@ -440,6 +458,12 @@ export default function QuizTakePage() {
       setCorrection(null);
       setCorrectionError('');
     } catch (e) {
+      if (e instanceof ActivityTimeConflictError) {
+        setCorrectionError('');
+        setTimeConflict({ previousSeconds: e.previousSeconds, message: e.message, reflection,
+          options: { ...options, timerSeconds } });
+        return;
+      }
       // A working-rules refusal wrote nothing: no attempt, no progress, no
       // OTJH. The dialog collects a working instant and the same submission
       // goes back. A refusal OF the declared instant keeps the dialog open.
@@ -450,7 +474,9 @@ export default function QuizTakePage() {
         return;
       }
       if (timingSessionExpired(e)) setExpiredTiming(true);
-      setSubmitError(e instanceof Error ? e.message : 'Could not submit quiz');
+      const message = e instanceof Error ? e.message : 'Could not submit quiz';
+      if (options.declaredCompletedAt) setCorrectionError(message);
+      else setSubmitError(message);
     } finally {
       completionInFlightRef.current = false;
       setSubmitting(false);
@@ -499,6 +525,7 @@ export default function QuizTakePage() {
           <PreviousLearningNotice learning={placement?.weekComponents.find(component => String(component.quizMeta?.quizId) === String(quizId))?.previousLearning} kind={kind} learnerId={id} />
           <IntroScreen
             quiz={quiz}
+            allocatedHours={placement?.weekComponents.find(component => String(component.quizMeta?.quizId) === String(quizId))?.expectedOtjh}
             totalPoints={totalPoints}
             latestAttempt={latestAttempt}
             onStart={startQuiz}
@@ -575,9 +602,19 @@ export default function QuizTakePage() {
             accessOpen={componentAccess.open}
           />
         )}
-        {retakeTimeOpen && <RetakeTimeDialog onClose={() => setRetakeTimeOpen(false)} onChoose={selection => {
-          retakeTimeChoice.current = selection; setRetakeTimeOpen(false); beginQuiz();
+        {timeLimitIssue && <ActivityTimeLimitNotice message={timeLimitIssue} onEdit={() => setTimeLimitIssue('')} />}
+        {retakeTimeOpen && <ActivityRetakeTimeDialog previousSeconds={previousQuizSeconds} onClose={() => setRetakeTimeOpen(false)} onChoose={(selection, reason) => {
+          retakeTimeChoice.current = selection; retakeReason.current = reason; retakePrevious.current = previousQuizSeconds; setRetakeTimeOpen(false); beginQuiz();
         }} />}
+        {timeConflict && <ActivityRetakeTimeDialog previousSeconds={timeConflict.previousSeconds}
+          notice={timeConflict.message} confirmLabel="Confirm and submit"
+          onClose={() => setTimeConflict(null)} onChoose={(selection, reason) => {
+            retakeTimeChoice.current = selection;
+            retakeReason.current = reason;
+            retakePrevious.current = timeConflict.previousSeconds;
+            setTimeConflict(null);
+            void finalizeSubmit(timeConflict.reflection, timeConflict.options);
+          }} />}
         {correction && (
           <CompletionTimeDialog
             reason={correction.reason}
@@ -613,8 +650,9 @@ export default function QuizTakePage() {
 /* ═══════════════════════════════════════════════════════
    INTRO
    ═══════════════════════════════════════════════════════ */
-function IntroScreen({ quiz, totalPoints, latestAttempt, onStart, onViewResult, onBack }: {
+function IntroScreen({ quiz, allocatedHours, totalPoints, latestAttempt, onStart, onViewResult, onBack }: {
   quiz: Quiz;
+  allocatedHours?: number | null;
   totalPoints: number;
   latestAttempt: LearnerQuizAttempt | null;
   onStart: () => void;
@@ -627,9 +665,10 @@ function IntroScreen({ quiz, totalPoints, latestAttempt, onStart, onViewResult, 
         <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
           <AppIcon className="ri-questionnaire-line text-amber-600 text-xl" />
         </div>
-        <div>
+        <div className="min-w-0">
           <h1 className="text-lg font-heading font-bold text-foreground-900">{quiz.title}</h1>
           <p className="text-sm text-foreground-400">{quiz.questions.length} questions · {totalPoints} points</p>
+          <ActivityPlanDetails hours={allocatedHours} />
         </div>
       </div>
 

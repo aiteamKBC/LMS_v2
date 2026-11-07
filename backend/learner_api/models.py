@@ -758,6 +758,20 @@ class LearnerProfile(models.Model):
                 entries, "ksb_links", "quiz_answers__chosen_answers",
                 "quiz_answers__correct_answers",
             )
+        entries = list(entries)
+        time_choices = {}
+        persisted = [entry.pk for entry in entries if entry.pk and entry._state.db and not entry._state.adding
+                     and entry.deleted_at is None and entry.kind != 'activity_event']
+        if persisted:
+            database = entries[0]._state.db or 'enrolment'
+            connection = connections[database]
+            extract = "source_payload->>'retakeTimeChoice'" if connection.vendor == 'postgresql' else "json_extract(source_payload,'$.retakeTimeChoice')"
+            previous = "source_payload->>'retakePreviousSeconds'" if connection.vendor == 'postgresql' else "json_extract(source_payload,'$.retakePreviousSeconds')"
+            placeholders = ','.join(['%s'] * len(persisted))
+            with connection.cursor() as cursor:
+                cursor.execute(f'''SELECT id,{extract},{previous} FROM "Learner".learner_progress_entries
+                    WHERE learner_id=%s AND id IN ({placeholders}) AND {extract} IS NOT NULL''', [self.pk, *persisted])
+                time_choices = {ident: (mode, before) for ident, mode, before in cursor.fetchall()}
         for entry in entries:
             if entry.kind == "activity_event" or entry.deleted_at is not None:
                 continue
@@ -830,6 +844,10 @@ class LearnerProfile(models.Model):
                     for row in entry.ksb_links.all()
                 ],
             }
+            if time_choices.get(entry.pk):
+                record['retakeTimeChoice'] = time_choices[entry.pk][0]
+                if time_choices[entry.pk][1] is not None:
+                    record['retakePreviousSeconds'] = float(time_choices[entry.pk][1])
             if entry.kind == "quiz":
                 record["questions"] = [
                     {

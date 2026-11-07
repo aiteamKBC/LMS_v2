@@ -52,6 +52,14 @@ describe('Quality review request limits', () => {
     await expect(qualityContext('event')).rejects.toBeInstanceOf(QualityReviewError);
     await qualityContext('event'); expect(learningFetch).toHaveBeenCalledTimes(2);
   });
+  it('retains the calendar-reference error code on reads and first saves', async () => {
+    const failure = { error: 'Refresh the calendar to renew this meeting reference.', code: 'invalid_calendar_reference' };
+    vi.mocked(learningFetch).mockResolvedValue(response(failure, 400));
+    vi.mocked(coachFetch).mockResolvedValue(response(failure, 400));
+    await expect(qualityContext('', 'expired', '1')).rejects.toMatchObject({ status: 400, code: failure.code, message: failure.error });
+    await expect(saveQualityReview({ learnerId: '1', expectedVersion: 0, requestId: 'stable-id', status: 'draft', form: {} as QualityForm }, undefined, '', 'expired'))
+      .rejects.toMatchObject({ status: 400, code: failure.code });
+  });
   it('reuses the same PDF for preview/download and separates saved revisions', async () => {
     vi.mocked(learningFetch).mockImplementation(async () => new Response('%PDF-1.4 synthetic', { headers: { 'Content-Type': 'application/pdf' } }));
     const review = { id: 'saved', version: 1 } as QualityReview;

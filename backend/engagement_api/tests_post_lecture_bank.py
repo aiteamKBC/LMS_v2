@@ -21,7 +21,7 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
         # old attendance whose feedback delivery has already been deleted.
         # Exercise the actual hook, SQL adapter, UTC conversion and matcher.
         columns = (
-            'occurrence_id', 'module_catalogue_id', 'module_title', 'programme_id', 'programme_name',
+            'occurrence_id', 'module_catalogue_id', 'module_title', 'lecture_tutor_name', 'programme_id', 'programme_name',
             'cohort_id', 'cohort_name', 'group_id', 'group_name', 'session_number', 'scheduled_start',
             'session_end', 'attendance_report_id', 'attendance_id', 'learner_name', 'attendance_status', 'learner_id',
         )
@@ -32,7 +32,7 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
             ('TODAY-1', datetime(2026, 10, 27, 11)),
             ('TODAY-2', datetime(2026, 10, 27, 12)),
         ), start=1):
-            rows.append((key, 'MOD-1', 'Synthetic module', '', '', '', '', '', '', index,
+            rows.append((key, 'MOD-1', 'Synthetic module', 'Original Tutor', '', '', '', '', '', '', index,
                          starts_at, starts_at + timedelta(hours=1), f'REPORT-{index}', index,
                          'Synthetic Learner', 'present', 7))
         cursor = mock.MagicMock()
@@ -42,10 +42,10 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
         form = SimpleNamespace(id=4, created_at=self.created_at, due_date=None)
         saved = {}
 
-        def upsert_delivery(*, occurrence_key, defaults):
+        def upsert_delivery(*, occurrence_key, defaults, create_defaults):
             created = occurrence_key not in saved
             if created:
-                saved[occurrence_key] = SimpleNamespace(id=len(saved) + 1, **defaults)
+                saved[occurrence_key] = SimpleNamespace(id=len(saved) + 1, **create_defaults)
             return saved[occurrence_key], created
 
         selected = mock.Mock()
@@ -67,7 +67,9 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
             mock.patch.object(feedback_delivery, 'ensure_delivery_questions') as ensure,
             mock.patch.object(feedback_delivery.transaction, 'atomic'),
         ):
-            for _ in range(2):
+            for attempt in range(2):
+                if attempt:
+                    cursor.fetchall.return_value = [row[:3] + ('Replacement Tutor',) + row[4:] for row in rows]
                 result_hook('SERIES-1')
                 self.assertEqual(set(saved), {'TODAY-1', 'TODAY-2'})
             self.assertEqual([call.kwargs['occurrence_key'] for call in upsert.call_args_list],
@@ -80,6 +82,34 @@ class PostLectureCreationBoundaryTests(SimpleTestCase):
         self.assertEqual(cursor.execute.call_args.args[1], [['SERIES-1']])
         self.assertEqual(saved['TODAY-1'].starts_at, self.created_at)
         self.assertEqual(saved['TODAY-1'].available_at, self.created_at + timedelta(hours=1))
+        self.assertEqual(saved['TODAY-1'].tutor_name, 'Original Tutor')
+        self.assertNotIn('tutor_name', upsert.call_args.kwargs['defaults'])
+        self.assertIn('lecture_module.module_catalogue_id = s.module_catalogue_id', cursor.execute.call_args.args[0])
+
+    def test_staff_response_uses_saved_lecture_tutor_only_for_live_sessions(self):
+        form = SimpleNamespace(
+            title='Live Sessions Feedback', form_type='post_lecture', anonymous_responses=False,
+            template_key='template-family-1',
+        )
+        delivery = SimpleNamespace(
+            session_title='Synthetic module - Session 2', tutor_name='Original Tutor', starts_at=self.created_at,
+        )
+        response = SimpleNamespace(
+            id=1, form_id=4, form=form, learner_id='7', learner_name='Synthetic Learner',
+            programme='Synthetic Programme', delivery_id=11, delivery=delivery,
+            status='completed', started_at=self.created_at, updated_at=self.created_at,
+            submitted_at=self.created_at,
+        )
+        result = feedback._response_dict(response)
+        self.assertEqual((result['formType'], result['sessionTitle'], result['tutorName']),
+                         ('post_lecture', 'Synthetic module - Session 2', 'Original Tutor'))
+        self.assertEqual(result['templateKey'], 'template-family-1')
+        self.assertEqual(result['sessionStartsAt'], '2026-10-27T11:00:00+00:00')
+        delivery.tutor_name = ''
+        self.assertEqual(feedback._response_dict(response)['tutorName'], '')
+        form.form_type = 'mid_module'
+        delivery.tutor_name = 'Different Tutor'
+        self.assertEqual(feedback._response_dict(response)['tutorName'], '')
 
     def test_finalized_attendance_only_assigns_lectures_starting_at_or_after_form_creation(self):
         for scope in ('module', 'all_modules'):
@@ -470,15 +500,36 @@ class PostLectureBankTests(SimpleTestCase):
             data=json.dumps({'answers': {'2': 'Attempted'}, 'submit': True}),
             content_type='application/json',
         )
+        response_query = mock.MagicMock()
+        response_query.prefetch_related.return_value.first.return_value = None
         with (
             mock.patch.object(feedback, 'require_learner_identity', return_value=('7', 'Learner', None)),
             mock.patch.object(feedback, '_learner_feedback_context', return_value=(form, delivery, None)),
             mock.patch.object(feedback, '_selected_delivery_question_ids', return_value={1}),
             mock.patch.object(feedback.FeedbackQuestion.objects, 'filter', return_value=questions),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=response_query),
         ):
             response = feedback.learner_response_save(request, delivery_id=30)
         self.assertEqual(response.status_code, 400)
         self.assertIn(b'do not belong', response.content)
+
+    def test_recipient_question_correction_preserves_started_response(self):
+        changed_at = datetime(2026, 10, 28, tzinfo=timezone.utc)
+        selected = mock.Mock()
+        selected.values_list.return_value = [1, 3]
+        delivery = SimpleNamespace(question_set_pinned=True, selected_questions=selected)
+        recipient = SimpleNamespace(id=9)
+        override_query = mock.Mock()
+        override_query.values_list.return_value = [(1, 2, changed_at)]
+        with mock.patch.object(feedback.FeedbackDeliveryQuestionOverride.objects, 'filter', return_value=override_query):
+            self.assertEqual(feedback._selected_delivery_question_ids(delivery, recipient), {2, 3})
+            prior = SimpleNamespace(started_at=changed_at - timedelta(minutes=1))
+            later = SimpleNamespace(started_at=changed_at + timedelta(minutes=1))
+            self.assertEqual(feedback._selected_delivery_question_ids(delivery, recipient, prior), {1, 3})
+            self.assertEqual(feedback._selected_delivery_question_ids(delivery, recipient, later), {2, 3})
+            self.assertEqual(feedback._selected_delivery_question_ids(delivery), {1, 3})
+            override_query.values_list.return_value = [(1, 2, datetime.now(timezone.utc) + timedelta(days=1))]
+            self.assertEqual(feedback._selected_delivery_question_ids(delivery, recipient), {1, 3})
 
     @override_settings(LEARNER_FEEDBACK_ENABLED=True)
     def test_learner_detail_shows_only_questions_pinned_to_the_delivery(self):
@@ -502,3 +553,74 @@ class PostLectureBankTests(SimpleTestCase):
             response = feedback.learner_form_detail(RequestFactory().get('/'), delivery_id=30)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)['form']['sections'][0]['questions'], [{'id': 1}])
+
+    @override_settings(LEARNER_FEEDBACK_ENABLED=True)
+    def test_corrected_lecture_shows_new_question_only_to_unstarted_recipient(self):
+        form = SimpleNamespace(form_type='post_lecture')
+        selected = mock.Mock()
+        selected.values_list.return_value = [1]
+        delivery = SimpleNamespace(
+            id=30, occurrence_key='lecture-30', session_title='Lecture 30',
+            starts_at=None, ends_at=None, question_set_pinned=True, selected_questions=selected,
+        )
+        recipient = SimpleNamespace(id=9)
+        old_response = SimpleNamespace(
+            id=8, status='completed', submitted_at=datetime(2026, 10, 27, tzinfo=timezone.utc),
+            started_at=datetime(2026, 10, 27, tzinfo=timezone.utc),
+            answers=SimpleNamespace(all=lambda: []),
+        )
+        response_query = mock.MagicMock()
+        response_query.prefetch_related.return_value.first.side_effect = [None, old_response]
+        override_query = mock.Mock()
+        override_query.values_list.return_value = [(1, 2, datetime(2026, 10, 28, tzinfo=timezone.utc))]
+        with (
+            mock.patch.object(feedback, 'learner_read_scope', return_value=('7', None)),
+            mock.patch.object(feedback, '_learner_feedback_context', return_value=(form, delivery, recipient)),
+            mock.patch.object(feedback, 'form_dict', side_effect=lambda *_args, **_kwargs: {
+                'sections': [{'id': 10, 'title': 'Teaching', 'questions': [{'id': 1}, {'id': 2}]}],
+            }),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=response_query),
+            mock.patch.object(feedback.FeedbackDeliveryQuestionOverride.objects, 'filter', return_value=override_query),
+        ):
+            new_view = feedback.learner_form_detail(RequestFactory().get('/'), delivery_id=30)
+            old_view = feedback.learner_form_detail(RequestFactory().get('/'), delivery_id=30)
+        self.assertEqual([q['id'] for q in json.loads(new_view.content)['form']['sections'][0]['questions']], [2])
+        self.assertEqual([q['id'] for q in json.loads(old_view.content)['form']['sections'][0]['questions']], [1])
+
+    @override_settings(LEARNER_FEEDBACK_ENABLED=True)
+    def test_unstarted_recipient_can_submit_replacement_but_not_old_question(self):
+        form = SimpleNamespace(form_type='post_lecture', allow_save_continue=True,
+                               allow_edit_after_submission=False)
+        selected = mock.Mock()
+        selected.values_list.return_value = [1]
+        delivery = SimpleNamespace(question_set_pinned=True, selected_questions=selected)
+        recipient = SimpleNamespace(id=9)
+        override_query = mock.Mock()
+        override_query.values_list.return_value = [(1, 2, datetime(2026, 10, 28, tzinfo=timezone.utc))]
+        response_query = mock.MagicMock()
+        response_query.prefetch_related.return_value.first.return_value = None
+        questions = [SimpleNamespace(id=key, question_type='rating', config={}, required=True) for key in (1, 2)]
+        learner = SimpleNamespace(username='Synthetic learner', programme='Synthetic programme')
+        response = SimpleNamespace(id=12, status='in_progress', submitted_at=None,
+                                   updated_at=datetime(2026, 10, 28, tzinfo=timezone.utc), save=mock.Mock())
+        write_query = mock.Mock()
+        write_query.get_or_create.return_value = (response, True)
+        def request(question_id):
+            return RequestFactory().post('/', data=json.dumps({'answers': {str(question_id): 5}, 'submit': True}),
+                                         content_type='application/json')
+        with (
+            mock.patch.object(feedback, 'require_learner_identity', return_value=('7', 'Learner', None)),
+            mock.patch.object(feedback, '_learner_feedback_context', return_value=(form, delivery, recipient)),
+            mock.patch.object(feedback.FeedbackQuestion.objects, 'filter', return_value=questions),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=response_query),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'select_for_update', return_value=write_query),
+            mock.patch.object(feedback.FeedbackDeliveryQuestionOverride.objects, 'filter', return_value=override_query),
+            mock.patch.object(feedback.EnrolmentUser.all_learners, 'get', return_value=learner),
+            mock.patch.object(feedback.FeedbackAnswer.objects, 'update_or_create') as save_answer,
+            mock.patch.object(feedback.transaction, 'atomic'),
+        ):
+            rejected = feedback.learner_response_save(request(1), delivery_id=30)
+            accepted = feedback.learner_response_save(request(2), delivery_id=30)
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(accepted.status_code, 200)
+        save_answer.assert_called_once_with(response=response, question_id=2, defaults={'answer': 5})

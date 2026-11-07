@@ -37,6 +37,10 @@ class CurriculumApiConfig(AppConfig):
             'process_read_model_events',
             'import_global_migrated_review_template',
             'enable_personal_support_form',
+            'bootstrap_module_hours_manager',
+            'process_curriculum_videos', 'import_curriculum_videos',
+            'import_live_session_recordings',
+            'grant_legacy_quiz_retake',
         }:
             return
         # runserver spawns a reloader child that does the actual serving; the

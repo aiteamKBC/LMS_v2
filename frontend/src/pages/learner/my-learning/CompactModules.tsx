@@ -10,6 +10,8 @@ import { recommendedLearningSubject } from './subjectLearning';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import styles from './SubjectWorkspace.module.css';
 import { TransferProgress } from './TransferProgress';
+import { moduleTeachingActive } from './teachingActivity';
+import { learningToday } from './subjectLearning';
 
 const tones = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 
@@ -127,6 +129,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     {upcomingLoading && <p role="status">Loading upcoming learning…</p>}
     <p className="text-sm text-foreground-500">{catalogue.learner.name}</p>
     <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={current}
+      moduleActivity={catalogue.moduleActivity}
       transferAction={canRequestTransfer && kind && id ? <TransferProgress kind={kind} learnerId={id} onRequested={refresh} /> : undefined}
       total={summary.activityCount} done={summary.completedActivityCount} percent={summary.percent}
       kind={kind} learnerId={id} activityMatches={activitySearch.ids}
@@ -147,6 +150,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
       onContinue={subject => open(subject, true)} renderCard={subject => {
         const card = catalogue.modules.find(item => item.id === subject.id)!;
         return <SubjectCard key={subject.id} subject={subject} cover={card.cover || undefined}
+          teachingActive={moduleTeachingActive(catalogue.moduleActivity?.[subject.id], learningToday())}
           tone={subjectTones.get(subject.id)} onOpen={() => open(subject)} template={certificate.template}
           csrfToken={certificate.csrfToken} kind={kind} learnerId={id} planModule={schedule.modules.find(item => item.id === subject.moduleId)}
           moduleProgress={card.actualHours == null ? undefined : { hours: { actual: card.actualHours } }} />;

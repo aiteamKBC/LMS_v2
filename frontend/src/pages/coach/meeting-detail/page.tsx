@@ -1,3 +1,4 @@
+import { ukOffsetForDate } from '@/lib/timeZones';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -353,7 +354,7 @@ export default function CoachMeetingDetail() {
         scheduledDate: useExistingMeeting ? booking.scheduledDate || '' : scheduleForm.date,
         scheduledTime: useExistingMeeting ? booking.scheduledTime || '' : scheduleForm.time,
         durationMinutes: useExistingMeeting ? booking.durationMinutes || 60 : scheduleForm.durationMinutes,
-        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        timezoneOffsetMinutes: ukOffsetForDate(useExistingMeeting ? booking.scheduledDate || '' : scheduleForm.date),
       };
       const updated = useExistingMeeting
         ? await adoptMigratedReviewBooking(importedReview.instance.id)

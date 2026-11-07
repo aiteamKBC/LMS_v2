@@ -104,3 +104,69 @@ describe('week component assigned groups', () => {
     }));
   });
 });
+
+describe('opening a component is read-only', () => {
+  const groupOptions = [
+    { key: 'G1', name: 'Group One', programmeId: 'P1', programme: 'Programme One', cohortId: 'C1', cohort: 'Cohort One', moduleCount: 1 },
+  ];
+  function component(type: 'live-session' | 'recording-placeholder' | 'video' | 'reading', settings = {}) {
+    return {
+      id: `COMP-${type}`, weekId: 'W1', type, title: 'Untouched component', description: '',
+      expectedOtjh: 1, points: 0, reflectionRequired: false, reflectionQuestion: '',
+      workplaceEvidenceRequired: false, tutorValidationRequired: false, coachValidationRequired: true,
+      ksbMappings: [], settings: { sessionDate: '2026-11-05', sessionTime: '09:00', ...settings },
+    } as ComponentProps<typeof ComponentEditor>['component'];
+  }
+  function open(value: ComponentProps<typeof ComponentEditor>['component'], onChange = vi.fn()) {
+    render(<ComponentEditor component={value} onChange={onChange} onBack={vi.fn()} groupOptions={groupOptions}
+      weekScope={{ programmeId: 'P1', groupName: 'Group One' } as ComponentProps<typeof ComponentEditor>['weekScope']} />);
+    return onChange;
+  }
+  async function showOwnGroup() {
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Assigned groups programme' }), 'P1');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Assigned groups cohort' }), 'C1');
+    return user;
+  }
+
+  it.each(['live-session', 'recording-placeholder', 'video', 'reading'] as const)(
+    'opens and browses a %s without changing its saved data', async type => {
+      const value = component(type);
+      const before = JSON.stringify(value);
+      const onChange = open(value);
+      expect(onChange).not.toHaveBeenCalled();
+      const user = await showOwnGroup();
+      await user.click(screen.getByRole('textbox', { name: 'Title' }));
+      await user.tab();
+      expect(screen.getByRole('checkbox')).toBeChecked();
+      expect(onChange).not.toHaveBeenCalled();
+      expect(JSON.stringify(value)).toBe(before);
+    },
+  );
+
+  it('reports a real title edit while retaining the existing schedule', async () => {
+    const value = component('recording-placeholder');
+    const onChange = open(value);
+    await userEvent.type(screen.getByRole('textbox', { name: 'Title' }), '!');
+    expect(onChange.mock.calls).toEqual([[{ title: 'Untouched component!' }]]);
+    expect(value.settings.sessionDate).toBe('2026-11-05');
+  });
+
+  it('persists clearing an inherited group only when the author clicks it', async () => {
+    const value = component('recording-placeholder');
+    const onChange = open(value);
+    const user = await showOwnGroup();
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('checkbox'));
+    expect(onChange.mock.calls).toEqual([[{ settings: {
+      ...value.settings, selectedGroupKeys: [], selectedGroupNames: [],
+    } }]]);
+  });
+
+  it('respects a deliberately cleared group when the component is reopened', async () => {
+    const onChange = open(component('live-session', { selectedGroupKeys: [], selectedGroupNames: [] }));
+    await showOwnGroup();
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});

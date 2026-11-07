@@ -115,7 +115,7 @@ def _tutor_display_date(value):
     return str(value)[:10]
 
 
-def _tutor_live_learner_row(profile, attendance_rate=0, allowed_module_ids=None):
+def _tutor_live_learner_row(profile, attendance_rate=0, allowed_module_ids=None, *, hour_summaries=None):
     """Project Learner.learners into the compact My Learners card shape."""
     allowed_module_ids = None if allowed_module_ids is None else {
         str(module_id).strip()
@@ -157,7 +157,8 @@ def _tutor_live_learner_row(profile, attendance_rate=0, allowed_module_ids=None)
     completed_components = len(completed_keys)
     component_progress = _tutor_percent(completed_components, planned_components)
 
-    otjh_hours = _tutor_number(profile.completed_hours)
+    from .canonical_hours import profile_actual_hours
+    otjh_hours = profile_actual_hours(profile, summaries=hour_summaries)
     otjh_target = (
         _tutor_number(profile.target_hours)
         or _tutor_number(profile.planned_hours)
@@ -275,6 +276,8 @@ def tutor_learners(request):
             .order_by('full_name', 'id')
         )
         profiles = list(profiles)
+        from .canonical_learning import otjh_summary_bulk
+        hour_summaries = otjh_summary_bulk([profile.enrolment_id for profile in profiles])
         attendance_by_learner = {}
         try:
             attendance_rows = fetch_verified_teams_attendance_rows(
@@ -303,6 +306,7 @@ def tutor_learners(request):
                 profile,
                 attendance_by_learner.get(str(profile.id), 0),
                 requested_module_ids,
+                hour_summaries=hour_summaries,
             )
             for profile in profiles
         ]

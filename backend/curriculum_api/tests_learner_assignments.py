@@ -16,7 +16,7 @@ def learner(plan=None, **overrides):
         'programme': 'Original programme', 'cohort': 'Original cohort', 'group': 'Original group',
         'employer': 'Al Fanar', 'organization': '', 'programme_status': 'Active',
         'learner_type': 'commercial', 'learning_plan': plan, 'training_plan': None,
-        'save': Mock(), **overrides,
+        'save': Mock(), 'free_courses': [], **overrides,
     })
 
 
@@ -83,13 +83,19 @@ class AssignmentTests(SimpleTestCase):
 
     def test_existing_cohort_member_missing_modules_can_be_assigned(self):
         row = learner([{'moduleId': 'MOD-1'}], programme='Business', cohort='September', group='Group A')
-        self.assertFalse(assignments._payload(COHORT, [row])['learners'][0]['assigned'])
-        assignments._assign(row, COHORT, CATALOGUE, {})
-        self.assertEqual(row.group, 'Group A')
-        self.assertTrue(assignments._payload(COHORT, [row])['learners'][0]['assigned'])
+        def facts(_ids):
+            ids = set(_effective_plan_ids(row, {}))
+            return {row.pk: {'effective': ids, 'moduleCount': len(ids)}}, []
+        with patch('curriculum_api.learner_assignment_counts_sql.assignment_directory_facts', side_effect=facts):
+            self.assertFalse(assignments._payload(COHORT, [row])['learners'][0]['assigned'])
+            assignments._assign(row, COHORT, CATALOGUE, {})
+            self.assertEqual(row.group, 'Group A')
+            self.assertTrue(assignments._payload(COHORT, [row])['learners'][0]['assigned'])
 
     def test_directory_includes_company_and_accurate_assignment_state(self):
-        data = assignments._payload(MODULE, [learner([]), learner([{'moduleId': 'MOD-1'}], pk=2)])
+        facts = {1: {'effective': set(), 'moduleCount': 0}, 2: {'effective': {'MOD-1'}, 'moduleCount': 1}}
+        with patch('curriculum_api.learner_assignment_counts_sql.assignment_directory_facts', return_value=(facts, [])):
+            data = assignments._payload(MODULE, [learner([]), learner([{'moduleId': 'MOD-1'}], pk=2)])
         self.assertEqual(data['totals'], {'learnerCount': 2, 'assignedCount': 1})
         self.assertEqual(data['learners'][0]['company'], 'Al Fanar')
 

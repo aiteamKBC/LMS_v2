@@ -36,16 +36,15 @@ it('moves focus to the selected component without stealing it while editing', ()
   expect(screen.getByRole('region', { name: 'Component editor' })).toHaveFocus();
 });
 
-it('saves the title shown to learners and the monthly assignment flag as assignment settings', async () => {
+it('saves the learner title without changing legacy settings and explains automatic monthly submission', async () => {
   const { normaliseComponentSettings, validateComponentAuthoring } = await import('../module-builder/componentAuthoringModel');
   const onChange = vi.fn();
-  const component = { id: 'A1', type: 'assignment', title: 'Imported legacy title', description: '', settings: {}, expectedOtjh: 2, points: 25, groupIds: [] } as unknown as ComponentProps<typeof ComponentEditor>['component'];
+  const component = { id: 'A1', type: 'assignment', title: 'Imported legacy title', description: '', settings: { isMonthlyAssignment: true }, expectedOtjh: 2, points: 25, groupIds: [] } as unknown as ComponentProps<typeof ComponentEditor>['component'];
   render(<ComponentEditor component={component} onChange={onChange} onBack={vi.fn()} groupOptions={[]} weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} />);
-  const flag = screen.getByRole('checkbox', { name: /Monthly assignment \(8-step submission\)/ });
-  expect(flag).not.toBeChecked();
+  expect(screen.queryByRole('checkbox', { name: /Monthly assignment \(8-step submission\)/ })).toBeNull();
+  expect(screen.getByText('All assignments appear automatically in Monthly submission and use the 8-step submission.')).toBeVisible();
   fireEvent.change(screen.getByLabelText('Title shown to learners'), { target: { value: 'Month 2 coach led assignment' } });
   expect(onChange.mock.calls.at(-1)![0].settings.learnerTitle).toBe('Month 2 coach led assignment');
-  fireEvent.click(flag);
   expect(onChange.mock.calls.at(-1)![0].settings.isMonthlyAssignment).toBe(true);
 
   // Both survive normalisation as first-class keys: a key the schema does not

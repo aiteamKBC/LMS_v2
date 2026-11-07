@@ -1,8 +1,8 @@
 """Read-only Review OTJ inputs used by frozen Progress Review snapshots.
 
 This module deliberately projects only planned Review hours and the subset due
-at the snapshot cutoff. Actual hours belong to ``LearnerProfile.completed_hours``
-and are never calculated, refreshed, or persisted here.
+at the snapshot cutoff. Actual hours come from the canonical accepted-hour
+projection and are never calculated, refreshed, or persisted here.
 """
 from __future__ import annotations
 

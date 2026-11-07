@@ -46,7 +46,7 @@ def event_matches(link, event):
             and event.get("source") == "mcr")
 
 
-def require_schedulable(record):
+def require_schedulable(record, *, allow_started=False):
     """Caller holds the calendar row and transaction; imported status is authority."""
     link = for_calendar(record)
     if link:
@@ -56,7 +56,12 @@ def require_schedulable(record):
         from .migrated_reviews import initial_local_status, review_family
         overlay = ImportedReviewInstance.objects.select_for_update().get(pk=link.overlay_id)
         source = read_source(link.source_review_id)
-        if (overlay.status not in {"scheduled", "not-scheduled"} or source.get("completed_date")
+        allowed = {"scheduled", "not-scheduled"}
+        if allow_started and overlay.status == 'in-progress':
+            from .review_rescheduling import require_started_reschedule
+            require_started_reschedule(record, overlay.status)
+            allowed.add('in-progress')
+        if (overlay.status not in allowed or source.get("completed_date")
                 or not initial_local_status(source.get("status"))
                 or source.get("learner_id") != link.learner_id
                 or str(source.get("aptem_review_id")) != link.aptem_review_id

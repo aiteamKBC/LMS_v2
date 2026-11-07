@@ -21,6 +21,8 @@ import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type Cove
 import { PreviousLearningNotice } from './PreviousLearningNotice';
 import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
 import { resolveSubjectWeek } from './subjectLearning';
+import { subjectActivityHours } from '@/utils/activityPlan';
+import { ActivityPlanDetails } from '../video-watch/ActivityPlanDetails';
 export type { SubjectEntry, Subject, CoverMetadata, UnifiedLearningSummary } from './learningSummary';
 
 
@@ -167,7 +169,7 @@ function SubjectCertificateAction({
   </div>;
 }
 
-export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress }: {
+export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress, teachingActive = false }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
@@ -178,6 +180,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   learnerId?: string;
   planModule?: Omit<PlanModule, 'description' | 'coach_name'> & Partial<Pick<PlanModule, 'description' | 'coach_name'>>;
   moduleProgress?: Pick<PlanModuleProgress, 'hours'> & Partial<Omit<PlanModuleProgress, 'hours'>>;
+  teachingActive?: boolean;
 }) {
   const total = subject.card?.activityCount ?? subject.activities.length;
   const completed = subject.card?.completedActivityCount ?? subject.activities.filter((activity) => activity.completed).length;
@@ -209,6 +212,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           {subject.source === 'legacy' && <span className={styles.learningModeBadge} data-source="legacy">Review only</span>}
           {subject.transferPending && <span className={styles.learningModeBadge}>Transfer pending</span>}
           {subject.demoProgress && <span className={styles.learningModeBadge}>Demo progress</span>}
+          {teachingActive && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800">Active</span>}
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>
@@ -216,7 +220,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           {certificateReady && <span className={styles.certificateBadge}><Award size={13} aria-hidden="true" />Ready</span>}
         </div>
         <h3 className={styles.cardTitle}>{subject.title}</h3>
-        <p className="mb-2 text-xs text-foreground-500 break-words">Cohort: <span className="font-semibold">{planModule?.cohort_name?.trim() || 'Not available'}</span></p>
+        <p className={`${styles.cardCohort} mb-2 text-xs text-foreground-500 break-words`}>Cohort: <span className="font-semibold">{planModule?.cohort_name?.trim() || 'Not available'}</span></p>
         <dl className={styles.moduleDetails} aria-label={`${moduleName} module details`}>
           <div><dt>Tutor</dt><dd>{tutorName}</dd></div>
           <div><dt>Start date</dt><dd>{startDate}</dd></div>
@@ -224,7 +228,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} transferred={subject.transferredProgress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
+        <div className={styles.cardProgress}><Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>
@@ -232,6 +236,10 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
       </div>
     </button>
+    {subject.transferredProgress != null && <div role="status" className={styles.cardTransferNotice}>
+      <CheckCircle2 size={16} aria-hidden="true" />
+      <p><strong>Progress merged.</strong> Completed components from both systems count once. Old LMS progress before transfer: {subject.transferredProgress}% (historical).</p>
+    </div>}
     <SubjectCertificateAction subject={subject} template={template} csrfToken={csrfToken} kind={kind} learnerId={learnerId} />
   </article>;
 }
@@ -267,6 +275,7 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, 
       {legacy && canOpen && kind && learnerId && !direct ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
         : href ? <Link to={href} className="text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</Link> : entry.title}
     </h5><p className="mt-1 text-xs text-foreground-500">{[entry.category, entry.schedule.date, score != null ? `Best score ${Math.round(score)}%` : ''].filter(Boolean).join(' · ')}</p>
+      <ActivityPlanDetails hours={subjectActivityHours(entry)} />
       {legacy?.section_title && <p className="mt-1 text-xs text-foreground-500">Lecture: {legacy.section_title}</p>}
     </div>
     <div className="col-start-2 flex flex-wrap items-center gap-2 sm:ml-auto"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.completed ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{entry.completed ? 'Complete' : 'Not complete'}</span>
@@ -276,8 +285,8 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, 
     {((legacy && !canOpen && !sourceHref) || (!legacy && !href)) && <span className="text-xs text-foreground-500">{entry.native?.retired ? 'No longer in this module' : 'Content not available yet'}</span>}</div>
   </div>
     <PreviousLearningNotice learning={entry.native?.previousLearning} kind={kind} learnerId={learnerId} />
-    {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'} · Planned: {legacy.planned_hours_mapped ? formatHoursMinutes(legacy.planned) : 'Unavailable'}</p>}
-    <div id={contentId}>{(direct || open) && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly || canReviewQuiz} reviewQuiz={canReviewQuiz} catalogueQuiz={legacy.catalogue_kind === 'quiz'} onProgress={readOnly || canReviewQuiz ? undefined : onProgress} /></div>}</div>
+    {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'}</p>}
+    <div id={contentId}>{(direct || open) && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly} reviewQuiz={canReviewQuiz} catalogueQuiz={legacy.catalogue_kind === 'quiz'} onProgress={readOnly ? undefined : onProgress} /></div>}</div>
   </div>;
 }
 

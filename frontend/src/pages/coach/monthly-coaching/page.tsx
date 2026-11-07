@@ -10,6 +10,7 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ReviewAttendanceBadge } from '../shared/ReviewAttendanceBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { cn } from '@/lib/cn';
@@ -234,6 +235,7 @@ export default function CoachMonthlyCoaching() {
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
   const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -443,6 +445,7 @@ export default function CoachMonthlyCoaching() {
   };
 
   const openForm = async (event: CoachCalendarEvent) => {
+    setFormError(null);
     if (event.reviewInstanceId) {
       navigate(reviewInstancePath(event.reviewInstanceId), { state: reviewInstanceRouteState(event, listUrl()) });
       return;
@@ -451,15 +454,21 @@ export default function CoachMonthlyCoaching() {
       navigate(reviewInstancePath(eventIdentity(event)), { state: reviewInstanceRouteState(event, listUrl()) });
       return;
     }
-    if (!event.reviewTemplateId) {
+    const bookedNativeMcm = event.source === 'mcr' && event.reviewSource !== 'aptem' && !event.aptemReviewId
+      && (event.status === 'scheduled' || event.status === 'in-progress');
+    if (!event.reviewTemplateId && !bookedNativeMcm) {
       openDetails(event);
       return;
     }
     try {
       const { instanceId } = await openReviewInstanceForEvent(eventIdentity(event));
       navigate(reviewInstancePath(instanceId), { state: reviewInstanceRouteState(event, listUrl()) });
-    } catch {
-      openDetails(event);
+    } catch (failure) {
+      if (bookedNativeMcm) {
+        setFormError(failure instanceof Error ? failure.message : 'The MCM form could not be opened.');
+      } else {
+        openDetails(event);
+      }
     }
   };
 
@@ -562,6 +571,7 @@ export default function CoachMonthlyCoaching() {
           <img src={CALENDAR_IMAGE_URL} alt="" aria-hidden="true" width={312} height={312} />
         </section>
         {error ? <EmptyState variant="error" title="Unable to load coaching meetings." description={error} /> : null}
+        {formError ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">MCM form could not be opened: {formError}</p> : null}
         <ReviewIdentityNotice issues={issues} />
         {joinError ? <p role="alert" className="text-sm text-red-700">{joinError}</p> : null}
         {bookingNotice ? <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{bookingNotice}</p> : null}
@@ -606,6 +616,7 @@ export default function CoachMonthlyCoaching() {
                       <td><ReviewCompletedDate event={event} /></td>
                       <td>
                         <span className={styles.status} data-status={event.status}><AppIcon className={statusIcon} />{statusLabel(event.status)}</span>
+                        <ReviewAttendanceBadge event={event} />
                         {isAtRiskEvent(event) || isDueSoonEvent(event) ? <div className={styles.alerts}>{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}
                       </td>
                       <td onClick={(clickEvent) => clickEvent.stopPropagation()}>

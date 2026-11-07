@@ -53,6 +53,17 @@ const reviews = [
   review(4, { learner: 'Next Month Review', targetDate: '2026-10-12' }),
 ];
 
+it.each(['curriculum', 'aptem'])('keeps %s form status alongside its attendance badge', async reviewSource => {
+  fetchEvents.mockResolvedValue({ events: [review(40, { learner: 'Absent learner', reviewSource,
+    status: 'in-progress', reviewAttendance: 'missed', scheduledDate: '2026-09-13', scheduledTime: '10:00',
+    ...(reviewSource === 'aptem' ? { importedReviewType: 'Progress Review', aptemReviewId: '40', calendarEventKey: 'progress-review:40' } : {}),
+  })] });
+  mount();
+  const badge = await screen.findByText('Learner missed');
+  expect(within(badge.closest('tr')!).getByText('In Progress')).toBeInTheDocument();
+  expect(badge).toHaveClass('text-red-700');
+});
+
 function LocationOutput() {
   const location = useLocation();
   return <output data-testid="route">{location.pathname}{location.search}</output>;

@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from .migrated_reviews import EDITABLE_STATUSES, all_fields, validate_answers, _visible_fields
 from .migrated_templates import FAMILIES, fingerprint, resolve_template, snapshot_for, validate_managed_definition
-from .migrated_signature_rules import requirements_for_definition
+from .migrated_signature_rules import requirements_for_overlay
 
 
 class TemplateSyncConflict(ValueError):
@@ -43,7 +43,9 @@ def lock_template_family(family):
 
 def snapshot_fingerprint(snapshot):
     # Exclude bookkeeping and retained field history from the definition version.
-    return fingerprint({key: snapshot.get(key) for key in ("sections", "name", "templateSource", "otjh", "signatures")})
+    from .migrated_skills_radar import definition_fingerprint_input
+    normalized = definition_fingerprint_input(snapshot)
+    return fingerprint({key: normalized.get(key) for key in ("sections", "name", "templateSource", "otjh", "signatures")})
 
 
 def snapshot_state(overlay):
@@ -77,6 +79,8 @@ def merge_snapshot(previous, answers, template, family):
     except ValueError as exc:
         raise TemplateSyncConflict("The resolved migrated template is invalid. Ask a template administrator to correct it.") from exc
     latest = snapshot_for(template)
+    from .migrated_skills_radar import preserve_radar_definition
+    latest = preserve_radar_definition(latest, previous)
     old_fields = {field["key"]: field for field in all_fields(previous)}
     new_fields = {field["key"]: field for field in all_fields(latest)}
     retired = deepcopy((previous.get("templateSync") or {}).get("retiredFields") or {})
@@ -94,7 +98,8 @@ def merge_snapshot(previous, answers, template, family):
             continue
         standalone = {**field, "ifTrue": [], "ifFalse": []}
         try:
-            validate_answers({"sections": [{"key": "validation", "fields": [standalone]}]}, {key: answers[key]})
+            validate_answers({"templateSource": latest['templateSource'],
+                              "sections": [{"key": "validation", "fields": [standalone]}]}, {key: answers[key]})
         except ValueError:
             conflicts.append(key)
     if conflicts:
@@ -121,13 +126,23 @@ def synchronize_locked(overlay, family, programme_key):
     if template is None:
         raise TemplateSyncConflict("No active migrated template is available for this review family. Your saved work is unchanged. Ask a template administrator to configure one.", code="template_sync_missing")
     if overlay.migrated_template_id == template.pk and snapshot_fingerprint(overlay.template_snapshot) == snapshot_fingerprint(snapshot_for(template)):
-        return False
+        from .migrated_skills_radar import expand_snapshot
+        expanded = expand_snapshot(overlay.template_snapshot, overlay.learner_id,
+            answers=overlay.answers or {}, answer_audit=(overlay.meeting_intelligence or {}).get('answerEdits') or {})
+        if expanded == overlay.template_snapshot:
+            return False
+        overlay.template_snapshot = expanded
+        overlay.save(update_fields=['template_snapshot', 'updated_at'])
+        return True
     latest = merge_snapshot(overlay.template_snapshot, overlay.answers or {}, template, family)
+    from .migrated_skills_radar import expand_snapshot
+    latest = expand_snapshot(latest, overlay.learner_id,
+        answers=overlay.answers or {}, answer_audit=(overlay.meeting_intelligence or {}).get('answerEdits') or {})
     update_fields = ["template_snapshot", "migrated_template", "updated_at"]
     if "signatures" in latest or "signatures" in overlay.template_snapshot:
         # Unrelated edits to legacy templates must not reset stored rules.
         # Removing explicit settings restores the family defaults.
-        overlay.signature_requirements = requirements_for_definition(latest, family)
+        overlay.signature_requirements = requirements_for_overlay(overlay, family, definition=latest)
         update_fields.append("signature_requirements")
     overlay.template_snapshot = latest
     overlay.migrated_template = template
@@ -154,6 +169,8 @@ def synchronize_on_open(owner, review_id, definition):
             return current
         try:
             changed = synchronize_definition_locked(overlay, current)
+            from .migrated_radar_carry_forward import carry_forward_locked
+            changed = carry_forward_locked(overlay, current) or changed
         except TemplateSyncConflict as exc:
             current["templateSync"] = {**snapshot_state(overlay), **exc.response()}
             current["readOnly"] = True

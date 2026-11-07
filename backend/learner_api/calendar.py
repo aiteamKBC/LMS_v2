@@ -293,6 +293,33 @@ def _belongs_to_current_cycle(record, mirror):
     return str(record.learner_id or "") in ("", str(mirror.id))
 
 
+def _verified_native_review_booking(learner, mirror, record, instance, emails):
+    """Check both durable Native links before trusting a stored booking's old email."""
+    if (mirror is None or not instance
+            or record.event_type not in {"mcr", "progress-review", "review"}
+            or not _s(getattr(record, "review_instance_id", ""))
+            or not _s(getattr(record, "review_template_id", ""))
+            or str(record.learner_id) != str(mirror.id)):
+        return False
+    source_id = getattr(mirror, "enrolment_id", None)
+    if source_id is not None and str(source_id) != str(learner.pk):
+        return False
+    stored_email = _s(getattr(record, "learner_email", "")).strip().casefold()
+    if stored_email not in emails and str(source_id) != str(learner.pk):
+        # A profile ID is a different namespace from the enrolment ID. An old
+        # email can only be ignored when their stable link is present.
+        return False
+    if (not _s(getattr(record, "owner_email", "")).strip()
+            or str(instance.get("id")) != str(record.review_instance_id)
+            or str(instance.get("calendar_event_id")) != str(record.pk)
+            or str(instance.get("learner_id")) != str(mirror.id)
+            or str(instance.get("review_template_id")) != str(record.review_template_id)
+            or _s(instance.get("coach_email")).strip().casefold()
+            != _s(getattr(record, "owner_email", "")).strip().casefold()):
+        return False
+    return True
+
+
 def _generated_cycle_events(learner, mirror, stored_by_key, *, month=None):
     """Generate the same Curriculum cycle the coach timetable exposes.
 
@@ -590,7 +617,8 @@ def _assignment_imported_mcm_month(profile_id, review_id):
     return (review["plannedDate"] or "")[:7] or None, None
 
 
-def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=None, dates_only=False, header_only=False):
+def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=None, dates_only=False, header_only=False,
+                                include_unlinked_bookings=False):
     """One source for the calendar and Training Plan coaching dates/statuses.
 
     ``only_sources`` is for a caller that keeps only those event sources. It
@@ -625,7 +653,17 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
         query = query.filter(Q(scheduled_date__range=(first, last)) | Q(target_date__range=(first, last)))
         query = query.filter(event_type__in=('mcr', 'progress-review', 'review'))
         query = query.defer('review_responses', 'notes')
-    for record in query.order_by('target_date', 'event_type', 'sequence'):
+    stored = list(query.order_by('target_date', 'event_type', 'sequence'))
+    native_instances = {}
+    if (review_source.kind == "curriculum" and mirror is not None
+            and any(record.event_type in {"mcr", "progress-review", "review"}
+                    and _s(getattr(record, "review_instance_id", "")) for record in stored)):
+        from curriculum_api.review_instances import list_review_instances_for_learner
+        native_instances = {
+            str(instance['id']): instance
+            for instance in list_review_instances_for_learner(mirror.id)
+        }
+    for record in stored:
         email = _s(getattr(record, 'learner_email', '')).strip().casefold()
         # Created_users and learner profiles have different ID sequences.
         # A matching number must never override another learner's email.
@@ -633,7 +671,15 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
         imported_owned = (review_source.kind == "aptem" and mirror is not None
                           and record.event_type in {"mcr", "progress-review"}
                           and str(record.learner_id) in {str(mirror.id), str(learner.pk)})
-        belongs = imported_owned or (email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id))
+        if (review_source.kind == "curriculum"
+                and record.event_type in {"mcr", "progress-review", "review"}
+                and _s(getattr(record, "review_instance_id", ""))):
+            belongs = _verified_native_review_booking(
+                learner, mirror, record,
+                native_instances.get(str(record.review_instance_id)), emails,
+            )
+        else:
+            belongs = imported_owned or (email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id))
         if belongs and _belongs_to_current_cycle(record, mirror):
             records.append(record)
     if review_source.kind == "aptem":
@@ -661,6 +707,10 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
             for record in records
             if record.event_type not in {"mcr", "progress-review", "review"} and may_match(record)
         ]
+        if include_unlinked_bookings and mirror is not None:
+            from coach_api.calendar_booking_only import unlinked_review_bookings, booking_only_projection
+            for record, _profile in unlinked_review_bookings(records, [mirror], {mirror.id}, events=imported):
+                other.append(booking_only_projection(_serialize_event(record), record))
         return [*imported, *other]
     options = {'compact': True} if header_only else {}
     return _curriculum_cycle_events(learner, mirror, records, month=month, **options)
@@ -988,6 +1038,7 @@ def _learner_calendar_record(kind, pk, event_key):
         return None
     mirror = _calendar_profile(learner, pk)
     existing = CoachCalendarEvent.objects.filter(event_key=event_key).first()
+    review_source = source_for_learner(learner, mirror)
     if existing and mirror and str(existing.learner_id) == str(mirror.id):
         from coach_api.reconciliation_links import for_calendar
         link = for_calendar(existing)
@@ -1000,13 +1051,17 @@ def _learner_calendar_record(kind, pk, event_key):
                 return None
             existing._imported_review_event = imported
             return existing
-    if (existing and mirror and getattr(existing, "review_instance_id", None)
-            and getattr(existing, "review_template_id", None)
-            and not event_key.startswith("imported-review:")
-            and str(existing.learner_id) == str(mirror.id)
-            and existing.event_type in {"mcr", "progress-review", "review"}):
-        return existing
-    if source_for_learner(learner, mirror).kind != "curriculum":
+    if (existing and review_source.kind == "curriculum"
+            and existing.event_type in {"mcr", "progress-review", "review"}
+            and _s(getattr(existing, "review_instance_id", ""))):
+        from curriculum_api.review_instances import get_review_instance
+        emails = {_s(getattr(learner, "email", "")).strip().casefold(),
+                  _s(getattr(mirror, "email", "")).strip().casefold()} - {""}
+        instance = get_review_instance(existing.review_instance_id)
+        return existing if _verified_native_review_booking(
+            learner, mirror, existing, instance, emails,
+        ) else None
+    if review_source.kind != "curriculum":
         mirror = review_profile_for_source(learner, mirror)
         occurrences = coaching_events_for_learner(learner, mirror)
         imported = [item for item in occurrences if item.get("reviewSource") == "aptem"
@@ -1024,7 +1079,7 @@ def _learner_calendar_record(kind, pk, event_key):
         emails.add(_s(mirror.email).strip().casefold())
     emails.discard("")
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
-    if not record or (source_for_learner(learner, mirror).kind == "aptem"
+    if not record or (review_source.kind == "aptem"
                       and record.event_type in {"mcr", "progress-review", "review"}):
         return None
     owner_ids = _record_owner_ids(record, created_user_id=pk, profile_id=mirror.id if mirror else None)
@@ -1445,6 +1500,10 @@ def _serialize_live_session_event(event):
         "targetDate": event.get("targetDate") or event.get("date"),
         "scheduledDate": event.get("date"),
         "scheduledTime": scheduled_time,
+        "timeZone": event.get("timeZone"),
+        "startsAt": event.get("startsAt"),
+        "endsAt": event.get("endsAt"),
+        "isTimeEstimated": bool(event.get("isTimeEstimated")),
         "durationMinutes": event.get("durationMinutes") or 60,
         "coachName": event.get("tutor") or event.get("ownerName") or "",
         "coachEmail": event.get("ownerEmail") or "",
@@ -1597,7 +1656,7 @@ def learner_calendar(request, kind, pk):
         })
 
     try:
-        events = coaching_events_for_learner(learner, mirror)
+        events = coaching_events_for_learner(learner, mirror, include_unlinked_bookings=True)
         events.extend(alternative_recovery_events_for_learner(pk))
 
         # Live curriculum sessions belong to the learner's explicit module

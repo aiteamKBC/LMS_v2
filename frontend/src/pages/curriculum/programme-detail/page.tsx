@@ -2,6 +2,8 @@ import { type ReactNode, type ComponentProps, type CSSProperties, useCallback, u
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { LearnerAssignmentDrawer } from '@/pages/curriculum/shared/entities/LearnerAssignmentDrawer';
+import { LearnerDirectoryProvider } from '@/pages/curriculum/shared/entities/AssignedLearners';
+import { LearnerStatusCounts } from '@/pages/curriculum/shared/entities/LearnerStatusCounts';
 import type { LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import { useRefreshOnRemoteWrite, useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -2352,7 +2354,7 @@ type Tab = 'learners' | 'overview' | 'cohorts' | 'groups' | 'modules' | 'session
 // Actions now carries the "Groups" jump plus Edit and Archive, so the fixed
 // 120px column that fit "Groups" alone is widened to a minmax that keeps room
 // for all three without squeezing them onto a second line.
-const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(330px,auto)]';
+const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_220px_80px_minmax(330px,auto)]';
 /**
  * The date window shown on a module row.
  *
@@ -2395,8 +2397,8 @@ function groupDatesLabel(cohort: { startDate: string; endDate: string; apprentic
 // Actions need room for "Add first module", Edit and Archive on one line. Below
 // this width EntityTable scrolls horizontally instead of squeezing the buttons
 // or turning a single row into an uneven two-line layout.
-const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_minmax(210px,auto)]';
-const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(340px,auto)]';
+const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_220px_minmax(210px,auto)]';
+const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_220px_minmax(340px,auto)]';
 
 const TAB_LABELS: Record<Tab, string> = {
   learners: 'Learners',
@@ -2446,7 +2448,11 @@ interface ProgrammeDetailPresentationProps {
   summaryActions?: ReactNode;
 }
 
-export default function ProgrammeDetailPage({ programmeId, embedded = false, programmeSnapshot, refreshVersion = 0, onReloaded, summaryContent, summaryActions }: ProgrammeDetailPresentationProps = {}) {
+export default function ProgrammeDetailPage(props: ProgrammeDetailPresentationProps = {}) {
+  return <LearnerDirectoryProvider><ProgrammeDetailContent {...props} /></LearnerDirectoryProvider>;
+}
+
+function ProgrammeDetailContent({ programmeId, embedded = false, programmeSnapshot, refreshVersion = 0, onReloaded, summaryContent, summaryActions }: ProgrammeDetailPresentationProps = {}) {
   const { id: routeId } = useParams();
   const id = programmeId ?? routeId;
   const navigate = useNavigate();
@@ -3837,14 +3843,17 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
                 <DetailRow
                   label="Learners"
                   value={(
+                    <span className="flex flex-wrap items-center justify-end gap-2">
+                    <LearnerStatusCounts target={{ scope: 'programme', id: PROGRAMME.sourceId || PROGRAMME.id, name: PROGRAMME.name }} refreshKey={readRevision} />
                     <button
                       type="button"
                       onClick={() => setProgrammeLearnersOpen(open => !open)}
                       className="inline-flex items-center gap-1 font-semibold text-primary-700 underline-offset-2 hover:underline"
                     >
-                      {totalLearners}
+                      View learner progress
                       <AppIcon className={`${programmeLearnersOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></AppIcon>
                     </button>
+                    </span>
                   )}
                 />
                 <DetailRow label="Programme ID" value={<code className="text-[11px]">{clean(PROGRAMME.sourceId) || PROGRAMME.id || '—'}</code>} />
@@ -4294,7 +4303,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
                         </span>
                       )}
                     </PlainCell>
-                    <PlainCell align="center">{cohortItem.learners}</PlainCell>
+                    <PlainCell align="center"><LearnerStatusCounts target={{ scope: 'cohort', id: cohortItem.id, name: cohortItem.name }} refreshKey={readRevision} /></PlainCell>
                     <PlainCell align="center">{cohortItem.groups.length}</PlainCell>
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
@@ -4406,6 +4415,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
                     { label: 'Coach' },
                     { label: 'Delivery' },
                     { label: 'Modules', align: 'center' },
+                    { label: 'Learners', align: 'center' },
                     { label: 'Actions', align: 'right' },
                   ]}
                   gridClass={GROUP_GRID}
@@ -4461,6 +4471,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
                           : 'Not scheduled'}
                       </PlainCell>
                       <PlainCell align="center">{group.modules.length}</PlainCell>
+                      <PlainCell align="center"><LearnerStatusCounts target={{ scope: 'group', id: group.id, name: group.name }} refreshKey={readRevision} /></PlainCell>
                       <span className="flex items-center justify-end gap-1.5">
                         <NamedActions
                           actions={[
@@ -4536,6 +4547,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
                 { label: 'Components', align: 'center' },
                 { label: 'OTJH', align: 'center' },
                 { label: 'KSBs', align: 'center' },
+                { label: 'Learners', align: 'center' },
                 { label: 'Actions', align: 'right' },
               ]}
               gridClass={MODULE_GRID}
@@ -4601,6 +4613,7 @@ export default function ProgrammeDetailPage({ programmeId, embedded = false, pro
                     <PlainCell align="center">{componentCount}</PlainCell>
                     <PlainCell align="center">{formatHoursMinutes(mod.otjh)}</PlainCell>
                     <PlainCell align="center">{ksbCount}</PlainCell>
+                    <PlainCell align="center"><LearnerStatusCounts target={{ scope: 'module', id: moduleBuilderIdentifier(mod), name: mod.name }} refreshKey={readRevision} /></PlainCell>
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
                         actions={[{

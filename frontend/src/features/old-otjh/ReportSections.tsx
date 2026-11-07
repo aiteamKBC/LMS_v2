@@ -32,6 +32,9 @@ export function LearnerInformation({ summary, data, actions }: { summary: Journa
 export function MonthlyHours({ data }: { data: MonthDetail }) {
   return <section className={`${journal.card} ${journal.hours}`} aria-label="Monthly hours check">
     <div className={journal.hoursHeading}><h2 className={journal.label}>Monthly hours check</h2><p>Training Plan and LMS figures in one place</p></div>
+    {data.rows.some(row => row.actual_hours_recorded === false) && <p role="status" className="px-5 pb-3 text-sm text-amber-800">
+      Some activities have no recorded duration. Their hours are unavailable and are excluded from totals.
+    </p>}
     <div className={journal.hoursGrid}>
       <div className={journal.metric}><h3 className={journal.label}>Training plan target</h3>
         <p className={journal.metricValue}>{data.training_plan_target == null ? '—' : `${hours(data.training_plan_target)} h`}</p>
@@ -111,8 +114,8 @@ export function ActivityLog({ data, aptemId, loadContent, contentScope, initialS
             <td data-label="Category"><span className="text-[12px] text-foreground-600">{row.category}</span></td>
             <td className={styles.activityCell}><ActivityDescription row={row} expanded={expanded?.rowId === row.id} onOpen={documentId => open(row.id, documentId)} /></td>
             <td data-label="Timestamp"><span className="font-mono text-[11px]">{row.timestamp_label || row.activity_time || '—'}</span></td>
-            <td data-label="Actual"><span className={`${styles.actualValue} whitespace-nowrap font-mono text-[12px] font-medium`}>{row.actual_pending ? 'Pending' : duration(row.actual_hours)}</span>
-              <span className={`mt-1 block text-[10px] ${row.actual_pending || row.actual_estimated ? 'text-amber-700' : row.accepted ? 'text-emerald-700' : 'text-foreground-500'}`}>{row.actual_pending ? 'Actual pending' : row.actual_estimated ? 'Estimated — approval required' : row.actual_status_label || (row.accepted ? 'Accepted' : 'Not accepted')}</span>
+            <td data-label="Actual"><span className={`${styles.actualValue} whitespace-nowrap font-mono text-[12px] font-medium`}>{row.actual_pending ? 'Pending' : row.actual_hours_recorded === false ? 'Unavailable' : duration(row.actual_hours)}</span>
+              <span className={`mt-1 block text-[10px] ${row.actual_pending || row.actual_estimated || row.actual_hours_recorded === false ? 'text-amber-700' : row.accepted ? 'text-emerald-700' : 'text-foreground-500'}`}>{row.actual_pending ? 'Actual pending' : row.actual_hours_recorded === false ? 'Duration not recorded — review required' : row.actual_estimated ? 'Estimated — approval required' : row.actual_status_label || (row.accepted ? 'Accepted' : 'Not accepted')}</span>
               {row.manual_time && onCorrectTime && <button type="button" className="mt-2 text-xs font-semibold text-primary-700 underline" aria-label={`Correct manual time for ${row.title}`} onClick={() => onCorrectTime(row)}>Correct manual time</button>}</td>
             <td data-label="KSB scope"><div className="flex flex-wrap gap-1">{row.ksb_codes?.length ? row.ksb_codes.map(code => <span key={code} className={styles.ksbBadge} data-kind={code.charAt(0).toUpperCase()}>{code}</span>) : <span className="text-foreground-400">—</span>}</div></td>
           </tr>{expanded?.rowId === row.id && <tr className={styles.expansionRow}><td colSpan={6} id={`activity-content-${row.id}`}>

@@ -659,6 +659,7 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-evidence', label: 'Evidence', icon: 'ri-folder-shield-2-line', href: '/admin/evidence' },
       { id: 'admin-certificates', label: 'Certificates', icon: 'ri-award-line', href: '/workspace/admin/certificates' },
       { id: 'admin-notifications', label: 'Email Delivery', icon: 'ri-mail-send-line', href: '/admin/notifications' },
+      { id: 'admin-announcements', label: 'Announcements', icon: 'ri-megaphone-line', href: '/admin/announcements' },
       { id: 'admin-system', label: 'System Status', icon: 'ri-pulse-line', href: '/admin/system' },
     ],
   },

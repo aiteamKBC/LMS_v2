@@ -12,6 +12,13 @@ const module: TransferReview['modules'][number] = {
 };
 
 describe('component counts after transfer', () => {
+  it('counts all destinations from one source, including additions to automatic matches, without repeating native credit', () => {
+    for (const sourceActivityRef of ['material:1', 'material:2']) {
+      const mappings = ['B', 'C'].map(targetComponentId => ({ moduleId: 'M1', sourceActivityRef, targetComponentId }));
+      expect(previewComponentCounts({ ...module, completedTargetIds: ['A', 'B'] }, mappings))
+        .toEqual({ total: 3, matched: 3, completed: 3, remaining: 0 });
+    }
+  });
   it('keeps passed archived quiz credit in the preview without duplicating active destinations', () => {
     expect(previewComponentCounts({ ...module, retainedCompletedIds: ['OLD', 'OLD', 'A'] }, []))
       .toEqual({ total: 4, matched: 1, completed: 2, remaining: 2 });

@@ -1900,13 +1900,15 @@ def _performance(kind, learner):
 
     ksbs = profile.ksbs if isinstance(profile.ksbs, list) else []
 
+    from .canonical_hours import profile_actual_hours
+    actual_hours = profile_actual_hours(profile)
     summary.update({
         "quizzesTaken": len(quizzes),
         "quizzesPassed": passed,
         "averageScore": round(sum(scores) / len(scores), 1) if scores else None,
         "componentsCompleted": len(others),
         "ksbsEvidenced": len([k for k in ksbs if isinstance(k, dict) and k.get("evidenced")]),
-        "completedHours": _s(getattr(profile, "completed_hours", "")) or None,
+        "completedHours": str(round(actual_hours, 2)) if actual_hours is not None else None,
         "lastActivityAt": dates[-1] if dates else None,
     })
     return summary

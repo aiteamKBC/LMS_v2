@@ -19,7 +19,7 @@ from urllib.parse import quote, urlencode, unquote_plus
 from zoneinfo import ZoneInfo
 import unittest
 
-from test_calendar_state_no_db import CalendarFixture, ROOT, Response, functions, package
+from test_calendar_state_no_db import CalendarFixture, ROOT, Response, functions, package, native_calendar_context
 from curriculum_api.session_overrides import (
     apply_session_overrides, override_clock, schedule_override, session_overrides, validate_exception_plan,
 )
@@ -402,6 +402,7 @@ class ManagementTests(CalendarFixture):
 
 class PureTests(unittest.TestCase):
     def setUp(self):
+        native_calendar_context(self)
         self.socket = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
         self.socket.start()
         self.addCleanup(self.socket.stop)
@@ -564,6 +565,7 @@ class PureTests(unittest.TestCase):
             # by `weekNumber`; these plan entries carry none, so every component
             # is matched by the session number it already names.
             'module_session_plan_for_weeks': lambda *_args, **_kwargs: plan,
+            'module_week_delivery_slots': lambda *_args, **_kwargs: ([[row] for row in plan['sessions']], copy.deepcopy(plan['sessions'])),
             'defaultdict': defaultdict,
             'module_session_clock': lambda module, group=None, session_date=None: override_clock(module, session_date) or ('09:00', '11:00', 120),
             # Group-first resolution is its own subject, in
@@ -621,6 +623,7 @@ class PureTests(unittest.TestCase):
             'parse_int': lambda value, default=0: int(value or default),
             'cohort_selected_holidays_by_cohort': lambda _ids: {'COHORT-1': []},
             'module_session_plan_for_weeks': lambda *_args, **_kwargs: copy.deepcopy(plan),
+            'module_week_delivery_slots': lambda *_args, **_kwargs: ([[row] for row in plan['sessions']], copy.deepcopy(plan['sessions'])),
             'module_session_clock': lambda *_args, **_kwargs: ('09:00', '11:00', 120),
             # As above: this call passes no group row of its own.
             'module_delivery_row': lambda module, group=None: module,

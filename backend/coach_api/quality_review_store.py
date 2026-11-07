@@ -74,6 +74,14 @@ def save_review(snapshot, *, expected, request_id, actor):
         from datetime import datetime, timezone
         saved = {**snapshot, 'id':review_id, 'version':expected+1,
                  'updatedBy':actor, 'updatedAt':datetime.now(timezone.utc).isoformat()}
+        # New reviews opt into the new PDF presentation. Existing reviews keep
+        # their original layout, including later saves and first-time exports.
+        # Take this only from the stored record, never from a caller's snapshot.
+        saved.pop('pdfLayoutVersion', None)
+        if not current:
+            saved['pdfLayoutVersion'] = 2
+        elif 'pdfLayoutVersion' in _payload(current):
+            saved['pdfLayoutVersion'] = _payload(current)['pdfLayoutVersion']
         if 'attachments' in snapshot['form']:
             saved['evidenceFiles'] = [{key:row[key] for key in ('id','section','filename','size','contentType','hasPreview')} for row in attachments]
         params = [saved['coach']['email'],saved['learner']['id'],saved['learner']['name'],

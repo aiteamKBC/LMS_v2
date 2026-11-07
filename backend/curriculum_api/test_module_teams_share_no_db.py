@@ -44,6 +44,8 @@ class SharedTeamsProjectionTests(unittest.TestCase):
             and node.name in {'strip_shared_teams_delivery_settings', 'apply_shared_teams_settings_to_weeks'}
         }
         namespace = {
+            '__name__': 'curriculum_api.views',
+            '__package__': 'curriculum_api',
             'SHARED_TEAMS_DELIVERY_SETTING_KEYS': {
                 'teamsLiveSessionId', 'teamsMeetingUrl', 'teamsOccurrenceId',
             },
@@ -83,7 +85,7 @@ class SharedTeamsProjectionTests(unittest.TestCase):
         weeks = [{'id': 'W-ALIAS', 'components': [{
             'id': 'C-ALIAS', 'type': 'live-session',
             'settings': {'sessionDate': '2026-12-16', 'sessionTime': '09:00',
-                         'durationMinutes': 60, 'liveSessionLinkOverride': 'https://teams.example/own'},
+                         'durationMinutes': 60, 'liveSessionLinkOverride': 'https://teams.example/source'},
         }]}]
         self.apply({'teams_shared_source_module_id': 'SOURCE'}, weeks)
         card = weeks[0]['components'][0]
@@ -91,7 +93,23 @@ class SharedTeamsProjectionTests(unittest.TestCase):
         self.assertEqual(weeks[0]['id'], 'W-ALIAS')
         self.assertEqual((card['settings']['sessionDate'], card['settings']['sessionTime'],
                           card['settings']['durationMinutes']), ('2026-12-30', '12:00', 120))
-        self.assertEqual(card['settings']['liveSessionUrl'], 'https://teams.example/own')
+        self.assertEqual(card['settings']['liveSessionUrl'], 'https://teams.example/source')
+        self.assertEqual(card['settings']['teamsLiveSessionId'], 'LIVE-SOURCE')
+
+    def test_a_different_alias_link_keeps_its_clock_without_borrowing_source_identity(self):
+        weeks = [{'components': [{'type': 'live-session', 'settings': {
+            'sessionDate': '2026-12-16', 'sessionTime': '09:00', 'durationMinutes': 60,
+            'liveSessionLinkOverride': 'https://teams.example/own',
+            'teamsLiveSessionId': 'STALE-SOURCE', 'teamsOccurrenceId': 'STALE-OCCURRENCE',
+        }}]}]
+        self.apply({'teams_shared_source_module_id': 'SOURCE'}, weeks)
+        settings = weeks[0]['components'][0]['settings']
+        self.assertEqual((settings['sessionDate'], settings['sessionTime'], settings['durationMinutes']),
+                         ('2026-12-16', '09:00', 60))
+        self.assertEqual(settings['liveSessionUrl'], 'https://teams.example/own')
+        self.assertEqual(settings['teamsCalendarBinding'], 'unverified')
+        self.assertNotIn('teamsLiveSessionId', settings)
+        self.assertNotIn('teamsOccurrenceId', settings)
 
 
 if __name__ == '__main__':

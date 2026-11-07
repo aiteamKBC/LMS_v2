@@ -58,6 +58,7 @@ export interface TeamsPlannedSession {
   componentId?: string;
   /** Display-only title from the matched live-session component. */
   componentTitle?: string;
+  weekTitle?: string;
 }
 
 
@@ -256,7 +257,7 @@ export function teamsCalendarOccurrences(row: TeamsCalendarTarget, timeZone?: st
  * moves each Graph instance onto.
  */
 export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCalendarForm): TeamsMeetingInput {
-  const invalid = calendarInputError(row);
+  const invalid = calendarInputError({ ...row, timeZone: form.scheduleTimeZone || row.timeZone });
   if (invalid) throw new Error(invalid);
   const meetingTitle = cleanText(row.name) || 'Live session';
   const duration = Math.max(15, Number(form.durationMinutes) || row.durationMinutes || DEFAULT_DURATION_MINUTES);

@@ -85,3 +85,14 @@ class ImportedPersonalCalendarTimezoneTests(SimpleTestCase):
                 business_time_zone="Europe/London")
         self.assertEqual(cached.call_args.args[2].isoformat(), "2026-12-17T09:00:00+00:00")
         self.assertEqual(cached.call_args.kwargs["exclude_start_dt"].isoformat(), "2026-07-01T08:00:00+00:00")
+
+
+    def test_all_coach_booking_types_use_the_booking_date_not_the_device_offset(self):
+        from learner_api import calendar_connections as calendar
+        for kind in ('commercial', 'apprenticeship'):
+            for day, expected in ((date(2026, 10, 23), '08:00'), (date(2026, 10, 30), '09:00')):
+                with self.subTest(kind=kind, day=day), \
+                     patch.object(calendar, '_db', side_effect=RuntimeError('Use cached slots')), \
+                     patch.object(calendar, '_cached_booking_conflicts', return_value=False) as cached:
+                    calendar.booking_conflicts(kind, 1, day, time(9), 60, -180)
+                    self.assertEqual(cached.call_args.args[2].strftime('%H:%M'), expected)

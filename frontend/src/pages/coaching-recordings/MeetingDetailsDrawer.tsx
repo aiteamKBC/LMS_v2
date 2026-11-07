@@ -74,6 +74,7 @@ export default function MeetingDetailsDrawer({ meeting, reference, timeZone, now
         {meeting.match !== 'matched' && <details className="mt-5 rounded-lg border border-background-200 bg-background-50 p-3 text-xs text-foreground-600"><summary className="cursor-pointer font-semibold">LMS booking link: {meeting.match === 'external' ? 'not linked' : 'needs review'}</summary><p className="mt-2 leading-5">This Microsoft calendar meeting is not linked to one confirmed LMS booking. This is a booking comparison notice; recordings, attendance and transcripts are checked separately using the verified meeting identity.</p></details>}
         {Boolean(meeting.cancellationSources?.length) && <p className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-900">Cancellation source: {meeting.cancellationSources!.map(source => source === 'lms' ? 'LMS' : 'Microsoft').join(' + ')}{phase !== 'cancelled' ? ' · Microsoft still shows an active meeting; needs review.' : ''}</p>}
         {canReview && phase !== 'upcoming' ? <SessionDetails eventKey={reference ? '' : meeting.eventKey!} reference={reference} category={meetingCategory(meeting)} timeZone={timeZone}
+          occurrence={meeting.meetingId ? { id: meeting.meetingId, startsAt: meeting.startsAt, endsAt: meeting.endsAt, timeZone } : undefined}
           activeTab={activeTab} onTabChange={onTabChange}
           analysisEventKey={meeting.eventKey || undefined} analysisContext={phase === 'ended' ? meeting.analysisContext : undefined} onPreviewChange={setReportOpen} />
           : <p className="mt-6 rounded-lg bg-primary-50 p-4 text-sm text-primary-800">{phase === 'upcoming' ? 'Recording and attendance checks start once the scheduled meeting begins. Published evidence can then be viewed before its scheduled end.' : 'A verified recording or attendance source is not available for this meeting yet.'}</p>}
@@ -81,6 +82,7 @@ export default function MeetingDetailsDrawer({ meeting, reference, timeZone, now
     </aside>
     {qualityOpen && <Suspense fallback={<div role="status" className="fixed inset-0 z-[90] flex items-center justify-center bg-white/95 text-sm">Loading the quality form…</div>}>
       <QualityReviewDialog eventKey={reference ? '' : meeting.eventKey ?? ''} reference={reference} initialLearnerId={meeting.learnerIds.length === 1 ? meeting.learnerIds[0] : ''}
+        meetingId={meeting.meetingId} meetingStartsAt={meeting.startsAt} meetingEndsAt={meeting.endsAt}
         reviewId={reviewId} timeZone={timeZone} onClose={() => setQualityOpen(false)} onSaved={() => { invalidateQualityReviews(); setQualityRefresh(value => value + 1); }} />
     </Suspense>}
   </div>, document.body);

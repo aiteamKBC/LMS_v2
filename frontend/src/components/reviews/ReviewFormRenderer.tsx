@@ -1,8 +1,9 @@
-import { fieldAnswered, fieldAllowsRespondent, importedTableRows, computeVisibleRequiredFields, computeWritableFieldIds, computeVisibleWritableFieldIds, computeMissingRequiredFieldsForRole, computeMissingRequiredFields } from './ReviewFormRenderer.helpers';
+import { hasSkillsRadar, fieldAnswered, fieldAllowsRespondent, importedTableRows, computeVisibleRequiredFields, computeWritableFieldIds, computeVisibleWritableFieldIds, computeMissingRequiredFieldsForRole, computeMissingRequiredFields } from './ReviewFormRenderer.helpers';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 import { flattenReviewFields, type ReviewFieldDefinition, type ReviewSectionDefinition } from '@/api/reviewInstances';
 import type { ReactNode } from 'react';
+import { SkillsRadarSection } from './SkillsRadarSection';
 
 /**
  * Renders whatever sections/fields a Curriculum Review template defines --
@@ -54,6 +55,8 @@ interface ReviewFormRendererProps {
   /** Optional read-only presentation; callers retain the original field controls. */
   renderSectionContent?: (section: ReviewSectionDefinition, renderFields: (fields: ReviewFieldDefinition[]) => ReactNode) => ReactNode;
   variant?: 'accordion' | 'steps';
+  /** Coach lifecycle actions displayed beside step navigation. */
+  stepActions?: ReactNode;
 }
 
 function computeSectionRespondentSummary(
@@ -121,6 +124,7 @@ export function ReviewFormRenderer({
   renderFieldInput,
   renderSectionContent,
   variant = 'accordion',
+  stepActions,
 }: ReviewFormRendererProps) {
   const enabledSections = sections
     .filter((section) => section.enabled)
@@ -133,8 +137,10 @@ export function ReviewFormRenderer({
       answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly}
       fieldReadOnly={fieldReadOnly} respondentRole={respondentRole}
       renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />);
-  const renderContent = (section: ReviewSectionDefinition) => renderSectionContent
-    ? renderSectionContent(section, renderFields) : renderFields(section.fields);
+  const renderContent = (section: ReviewSectionDefinition) => hasSkillsRadar(section)
+    ? <SkillsRadarSection section={section} answers={answers} onAnswerChange={onAnswerChange}
+      readOnly={readOnly} fieldReadOnly={fieldReadOnly} respondentRole={respondentRole} />
+    : renderSectionContent ? renderSectionContent(section, renderFields) : renderFields(section.fields);
 
   if (variant === 'steps') {
     const activeIndex = Math.max(0, enabledSections.findIndex(section => section.id === openSectionId));
@@ -154,7 +160,10 @@ export function ReviewFormRenderer({
                 : null;
               const complete = respondentSummary
                 ? respondentSummary.count > 0 && respondentSummary.unanswered === 0
-                : computeMissingRequiredFields([section], answers).size === 0;
+                : hasSkillsRadar(section)
+                  ? section.fields.filter(field => (field.configuration.skillsRadar as { role?: string } | undefined)?.role === 'advisor')
+                    .every(field => fieldAnswered(field, answers))
+                  : computeMissingRequiredFields([section], answers).size === 0;
               const savedAnswer = showSavedAnswerStatus && sectionHasAnsweredFields(section, answers);
               const pending = Boolean(respondentSummary && respondentSummary.count > 0 && respondentSummary.unanswered > 0);
               const stepNumber = sectionIndex + 1;
@@ -220,7 +229,7 @@ export function ReviewFormRenderer({
             {renderContent(activeSection)}
           </div>
 
-          {enabledSections.length > 1 ? (
+          {enabledSections.length > 1 || stepActions ? (
             <footer className="flex items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-4 py-3 sm:px-6">
               <button
                 type="button"
@@ -230,19 +239,22 @@ export function ReviewFormRenderer({
               >
                 <AppIcon className="ri-arrow-left-line"></AppIcon>Previous
               </button>
-              {activeIndex < enabledSections.length - 1 ? (
-                <button
-                  type="button"
-                  onClick={() => onOpenSectionChange(enabledSections[activeIndex + 1].id)}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700"
-                >
-                  Next step<AppIcon className="ri-arrow-right-line"></AppIcon>
-                </button>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
-                  <AppIcon className="ri-checkbox-circle-line"></AppIcon>Final form step
-                </span>
-              )}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {activeIndex < enabledSections.length - 1 ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenSectionChange(enabledSections[activeIndex + 1].id)}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700"
+                  >
+                    Next step<AppIcon className="ri-arrow-right-line"></AppIcon>
+                  </button>
+                ) : !stepActions ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                    <AppIcon className="ri-checkbox-circle-line"></AppIcon>Final form step
+                  </span>
+                ) : null}
+                {stepActions}
+              </div>
             </footer>
           ) : null}
         </section>

@@ -1,0 +1,65 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    khaled_learning_hub__activities {
+        bigint activity_id PK
+        uuid run_id FK
+        bigint raw_record_id FK
+    }
+    khaled_learning_hub__activity_assets {
+        bigint asset_id PK
+        bigint activity_id FK
+    }
+    khaled_learning_hub__activity_ksbs {
+        bigint activity_id PK
+        text ksb_code PK
+    }
+    khaled_learning_hub__identity_decision_batches {
+        character_64_ plan_sha256 PK
+        uuid match_run_id FK
+    }
+    khaled_learning_hub__ingestion_issues {
+        bigint issue_id PK
+        uuid run_id FK
+    }
+    khaled_learning_hub__ingestion_runs {
+        uuid run_id PK
+        uuid match_run_id FK
+    }
+    khaled_learning_hub__learner_identity_map {
+        bigint enrolment_id PK
+        uuid match_run_id FK
+        bigint review_id FK
+    }
+    khaled_learning_hub__learner_match_review {
+        bigint id PK
+        uuid run_id FK
+    }
+    khaled_learning_hub__learner_source_accounts {
+        text source_system PK
+        text source_learner_id PK
+        bigint enrolment_id FK
+        bigint review_id FK
+        character_64_ plan_sha256 FK
+    }
+    khaled_learning_hub__match_runs {
+        uuid run_id PK
+    }
+    khaled_learning_hub__raw_source_records {
+        bigint record_id PK
+        uuid run_id FK
+    }
+    khaled_learning_hub__raw_source_records |o..o{ khaled_learning_hub__activities : "activities_raw_record_id_fkey"
+    khaled_learning_hub__ingestion_runs ||..o{ khaled_learning_hub__activities : "activities_run_id_fkey"
+    khaled_learning_hub__activities ||..o{ khaled_learning_hub__activity_assets : "activity_assets_activity_id_fkey"
+    khaled_learning_hub__activities ||..o{ khaled_learning_hub__activity_ksbs : "activity_ksbs_activity_id_fkey"
+    khaled_learning_hub__match_runs ||..o{ khaled_learning_hub__identity_decision_batches : "identity_decision_batches_match_run_id_fkey"
+    khaled_learning_hub__ingestion_runs ||..o{ khaled_learning_hub__ingestion_issues : "ingestion_issues_run_id_fkey"
+    khaled_learning_hub__match_runs |o..o{ khaled_learning_hub__ingestion_runs : "ingestion_runs_match_run_id_fkey"
+    khaled_learning_hub__match_runs ||..o{ khaled_learning_hub__learner_identity_map : "learner_identity_map_match_run_id_fkey"
+    khaled_learning_hub__learner_match_review |o..o{ khaled_learning_hub__learner_identity_map : "learner_identity_map_review_id_fkey"
+    khaled_learning_hub__match_runs ||..o{ khaled_learning_hub__learner_match_review : "learner_match_review_run_id_fkey"
+    khaled_learning_hub__learner_identity_map ||..o{ khaled_learning_hub__learner_source_accounts : "learner_source_accounts_enrolment_id_fkey"
+    khaled_learning_hub__identity_decision_batches ||..o{ khaled_learning_hub__learner_source_accounts : "learner_source_accounts_plan_sha256_fkey"
+    khaled_learning_hub__learner_match_review ||..o{ khaled_learning_hub__learner_source_accounts : "learner_source_accounts_review_id_fkey"
+    khaled_learning_hub__ingestion_runs ||..o{ khaled_learning_hub__raw_source_records : "raw_source_records_run_id_fkey"

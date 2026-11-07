@@ -1,0 +1,5 @@
+[
+{"tables": ["Feedback.feedback_forms"], "classification": "potential improvement; cycles may be intentional"},
+{"tables": ["knowledge.sections"], "classification": "potential improvement; cycles may be intentional"},
+{"tables": ["structured_manual_activities.manual_month_restore_points"], "classification": "potential improvement; cycles may be intentional"}
+]
