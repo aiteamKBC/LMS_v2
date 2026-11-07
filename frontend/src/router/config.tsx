@@ -53,6 +53,7 @@ const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLe
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
+const QRAttendancePage = lazyRoute(() => import("../pages/qr-attendance/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
@@ -345,6 +346,10 @@ const routes: RouteObject[] = [
   {
     path: "/event-check-in",
     element: <EventCheckInPage />,
+  },
+  {
+    path: "/qr-attendance",
+    element: <QRAttendancePage />,
   },
   {
     // The public launcher that used to be at "/". Kept reachable: it is the
@@ -1897,6 +1902,7 @@ const PUBLIC_PATHS = new Set([
   "/event-feedback",
   "/event-rsvp",
   "/event-check-in",
+  "/qr-attendance",
   "/access-required",
   "/forgot-password",
   "/set-password",

@@ -1572,13 +1572,49 @@ describe('coach review signature workflow', () => {
     expect(completeMigratedReview).not.toHaveBeenCalled();
   });
 
-  it('retains the existing Scheduled start guidance for Native reviews', async () => {
+  it('explains that Native submission does not require attendance', async () => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(definition('scheduled'));
     mount();
-    expect(await screen.findByText('Not yet in progress')).toBeVisible();
-    expect(screen.getByText('Start the review from the meeting actions before completing this form.')).toBeVisible();
+    expect(await screen.findByText('Complete the review form')).toBeVisible();
+    expect(screen.getByText('You can submit this form when all required questions are answered. A booking or attendance confirmation is not required.')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Submit Review' })).not.toBeInTheDocument();
     expect(startMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR'] as const)('submits an unscheduled %s only after required answers, without booking', async family => {
+    const initial = family === 'MCM' ? migratedDefinition('not-scheduled') : migratedPrDefinition('not-scheduled', family);
+    initial.sourceStatus = 'Not Scheduled';
+    initial.booking = { booked: false, conflict: false, canBook: true, eventKey: null,
+      scheduledDate: null, scheduledTime: null, durationMinutes: null, meetingLink: null, syncState: null };
+    initial.sections[0].fields[0] = { ...initial.sections[0].fields[0], answer: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    vi.mocked(submitMigratedReview).mockResolvedValue({ ...initial, localStatus: 'awaiting-signature', readOnly: true,
+      instance: { ...initial.instance, status: 'awaiting-signature' } });
+    mount(initial.instance.id);
+    const submit = await screen.findByRole('button', { name: 'Submit Review' });
+    fireEvent.click(submit);
+    expect(submitMigratedReview).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Approved review answers' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(submitMigratedReview).toHaveBeenCalledWith(initial.instance.id,
+      { 'field-1': 'Approved review answers' }));
+    await waitFor(() => expect(screen.getByRole('textbox')).toBeDisabled());
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(startMigratedReview).not.toHaveBeenCalled();
+    expect(completeMigratedReview).not.toHaveBeenCalled();
+    expect(completeReviewInstance).not.toHaveBeenCalled();
+  });
+
+  it('sends an unscheduled Native form for signatures without a meeting', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(definition('not-scheduled'));
+    vi.mocked(completeReviewInstance).mockResolvedValue(definition('awaiting-signature'));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Send for signatures' }));
+    await waitFor(() => expect(completeReviewInstance).toHaveBeenCalledWith('instance-1',
+      { 'field-1': 'Review the next module' }));
+    expect(await screen.findByRole('heading', { name: 'Coach signature required' })).toBeVisible();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
   });
 
   it('submits migrated answers and shows the frozen signature progress', async () => {

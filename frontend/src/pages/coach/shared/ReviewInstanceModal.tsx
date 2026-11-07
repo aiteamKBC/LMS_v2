@@ -1149,7 +1149,7 @@ function ReviewInstanceContent({
               <p className="text-sm text-primary-800">{signatureFreePersonalSupport ? 'Save your answers to complete this Personal Support Plan once all required questions are answered.' : 'Save all required answers to send this Personal Support Plan for the selected signatures.'}</p>
             ) : null}
             {definition.migratedForm && !personalSupportForm && definition.localStatus === 'not-scheduled' && !isViewingAsCoach ? (
-              <p className="text-sm text-amber-800">This form can be saved as a draft. Starting the review requires a scheduled state.</p>
+              <p className="text-sm text-amber-800">Complete all required questions to submit this review. A booking is not required.</p>
             ) : null}
             {definition.migratedForm && definition.fieldWarnings?.length ? (
               <p role="status" className="text-sm text-amber-800">
@@ -1340,9 +1340,9 @@ function ReviewInstanceContent({
             {definition.instance.status === 'scheduled' && !definition.migratedForm ? (
               <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-[13px] font-bold text-amber-900">Not yet in progress</p>
+                  <p className="text-[13px] font-bold text-amber-900">Complete the review form</p>
                   <p className="mt-0.5 text-[12px] text-amber-800">
-                    Start the review from the meeting actions before completing this form.
+                    You can submit this form when all required questions are answered. A booking or attendance confirmation is not required.
                   </p>
                 </div>
               </div>
@@ -1606,7 +1606,7 @@ function ReviewInstanceContent({
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>{personalSupportForm ? missingFieldIds.size ? 'Save draft' : signatureFreePersonalSupport ? 'Save & complete' : 'Save & send for signatures' : 'Save draft'}
           </button>
-          {!personalSupportForm && (!definition?.migratedForm || definition.localStatus === 'scheduled' || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
+          {!personalSupportForm && definition && ['not-scheduled', 'scheduled', 'in-progress'].includes(definition.migratedForm ? definition.localStatus || '' : definition.instance.status) ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
             {saving ? 'Saving...' : definition?.migratedForm ? 'Submit Review' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
           </button> : null}

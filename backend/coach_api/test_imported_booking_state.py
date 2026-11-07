@@ -242,6 +242,16 @@ class CoachBookingPlaceholderRecoveryTests(TestCase):
     slot = {"scheduledDate": "2026-11-02", "scheduledTime": "10:00", "durationMinutes": 60}
 
     def setUp(self):
+        class BookingDate(date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 10, 1)
+
+        # These fixtures book November 2026; time passing must not turn every
+        # ownership/retry case into an unrelated past-date validation failure.
+        self.enterContext(patch.object(views, "date", BookingDate))
+        self.enterContext(patch("learner_api.coach_availability.free_slots",
+                                return_value=["10:00", "11:00"]))
         self.key = "imported-review:5101"
         self.template = MigratedReviewTemplate.objects.create(
             scope="GLOBAL", programme_key="", review_family="MCM", name="Approved Global",

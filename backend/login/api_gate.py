@@ -211,6 +211,10 @@ def _enabled():
 
 def rule_for(path):
     """The ``(prefix, roles)`` governing ``path``, or None if it is not gated."""
+    # Public email-only declarations. Exact endpoint; other curriculum APIs
+    # retain their session/role gates. The view owns CSRF and programme checks.
+    if path == '/curriculum_api/qr-attendance/':
+        return None
     # Email approval authenticates with an expiring, single-use signed request.
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':
