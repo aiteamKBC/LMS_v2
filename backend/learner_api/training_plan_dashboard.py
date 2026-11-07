@@ -24,6 +24,7 @@ from .subject_content import as_list, clean_text, safe_url
 from .subject_dates import is_introduction_section
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 from .projection_performance import measure_projection
+from .upcoming_503_diagnostic import capture_upcoming_database_error
 from . import canonical_learning
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
@@ -787,10 +788,12 @@ def training_plan_dashboard(request, kind, pk):
     except DatabaseError as error:
         cause = getattr(error, '__cause__', None)
         sqlstate = getattr(error, 'sqlstate', None) or getattr(cause, 'sqlstate', None)
+        stage = (measurement.failed_stage or measurement.current_stage) if measurement else 'source'
+        if section == 'upcoming':
+            capture_upcoming_database_error(error, stage=stage)
         log.exception(
             'Could not read training-plan dashboard exception_class=%s sqlstate=%s section=%s kind=%s learner_id=%s stage=%s',
-            type(error).__name__, sqlstate, section, kind, pk,
-            (measurement.failed_stage or measurement.current_stage) if measurement else 'source',
+            type(error).__name__, sqlstate, section, kind, pk, stage,
         )
         return JsonResponse({'error': 'Could not load your training plan. Please try again.'}, status=503)
     response = JsonResponse(payload)

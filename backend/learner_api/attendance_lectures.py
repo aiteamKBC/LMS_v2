@@ -14,6 +14,9 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from audit_api.last_audit_ledger_views import _is_completed
+from curriculum_api.canonical_read_sql import (component_ksb_codes_sql,
+                                                component_ksb_mappings_sql)
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from login.permissions import learner_self_or_staff
 from old_otjh.repository import ksb_codes
 from .attendance import combined_attendance_rows, _summarize_attendance
@@ -807,6 +810,8 @@ def read_native_components(source, module_refs=None, *, monthly=False):
         cur.execute(ATTENDANCE_SUBJECTS_SQL, [effective_assigned_module_ids(source)])
         modules = [row[0] for row in cur.fetchall() if module_refs is None or row[0] in module_refs]
         description = "''::text" if monthly else 'c.description'
+        mappings = "'[]'::jsonb" if monthly else component_ksb_mappings_sql('c')
+        mapped_codes = "NULL::jsonb" if monthly else component_ksb_codes_sql('c')
         cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.type,c.title,{description} AS description,
             jsonb_build_object(
                 'teamsOccurrenceId',c.settings_json->'teamsOccurrenceId',
@@ -816,13 +821,12 @@ def read_native_components(source, module_refs=None, *, monthly=False):
                 'legacySettings',CASE WHEN jsonb_typeof(c.settings_json->'legacySettings')='object'
                     THEN jsonb_build_object('teamsOccurrenceId',c.settings_json #> '{{legacySettings,teamsOccurrenceId}}')
                     ELSE c.settings_json->'legacySettings' END
-            ) AS settings_json,c.expected_otjh,{"'[]'::jsonb" if monthly else 'c.ksb_mappings'} AS ksb_mappings,
-            {"NULL::jsonb" if monthly else '(SELECT jsonb_agg(k.ksb_code ORDER BY k.ksb_code) FROM curriculum.ksb_mappings k WHERE k.component_id=c.id AND k.deleted_at IS NULL)'} AS mapped_ksbs
+            ) AS settings_json,c.expected_otjh,{mappings} AS ksb_mappings,
+            {mapped_codes} AS mapped_ksbs
             FROM curriculum.components c
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND c.deleted_at IS NULL
-              AND NOT c.is_programme_deleted AND (w.id IS NULL OR
-                (w.deleted_at IS NULL AND NOT w.is_programme_deleted))
+            WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
+              AND (w.id IS NULL OR {visible_week_sql('w')})
             ORDER BY c.display_order,c.id''', [modules])
         components = dict_rows(cur)
     progress = [] if monthly else _direct_progress_records(source.id)

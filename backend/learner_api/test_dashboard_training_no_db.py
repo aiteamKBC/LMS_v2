@@ -7,6 +7,7 @@ from django.test import SimpleTestCase, RequestFactory
 from django.db import DatabaseError
 from old_otjh.service import ServiceError
 from . import dashboard_training as training
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 
 class TrainingProjectionTests(SimpleTestCase):
@@ -19,7 +20,9 @@ class TrainingProjectionTests(SimpleTestCase):
         sql, params = cursor.execute.call_args_list[1].args
         self.assertIn('GROUP BY c.module_catalogue_id,c.week_id', sql)
         self.assertIn('coalesce(live_counts.live_session_count,0)', sql)
-        self.assertIn("c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>''", sql)
+        self.assertIn(visible_child_sql('c'), sql)
+        self.assertIn(visible_week_sql('w'), sql)
+        self.assertNotIn('deleted_via_parent', sql)
         self.assertEqual(params, [['M1', 'M2'], 'M2', ['M1', 'M2']])
 
     def test_selected_native_facts_use_global_retained_quiz_decision(self):

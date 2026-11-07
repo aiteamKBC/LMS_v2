@@ -19,6 +19,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from curriculum_api.canonical_read_sql import current_status_sql, standard_ksb_join_sql
+
 from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
@@ -152,35 +154,13 @@ def _component_ksb_mappings(component_id):
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT ksb_mappings FROM curriculum.components WHERE id = %s LIMIT 1",
-                [component_id],
-            )
-            row = cur.fetchone()
-            canonical = row[0] if row else []
-            if isinstance(canonical, str):
-                try:
-                    canonical = json.loads(canonical) if canonical else []
-                except (TypeError, ValueError):
-                    canonical = []
-            mappings = []
-            if isinstance(canonical, list):
-                for item in canonical:
-                    if not isinstance(item, dict):
-                        continue
-                    code = str(item.get("code") or item.get("ksbCode") or item.get("ksb_code") or "").strip()
-                    if code:
-                        mappings.append({
-                            "code": code,
-                            "weight": item.get("weight") or 0,
-                        })
-            if mappings:
-                return mappings
-
-            cur.execute(
-                "SELECT ksb_code, weight FROM curriculum.ksb_mappings "
-                "WHERE component_id = %s AND ksb_code IS NOT NULL AND ksb_code <> '' "
-                "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
-                "ORDER BY ksb_code",
+                f"SELECT standard_ksb.ksb_code, mapping.weight "
+                f"FROM curriculum.ksb_mappings mapping "
+                f"{standard_ksb_join_sql('mapping', 'standard_ksb')} "
+                f"WHERE mapping.component_id = %s "
+                f"AND {current_status_sql('mapping')} "
+                f"AND NULLIF(BTRIM(standard_ksb.ksb_code), '') IS NOT NULL "
+                f"ORDER BY standard_ksb.ksb_code, mapping.id",
                 [component_id],
             )
             return [{"code": row[0], "weight": row[1] or 0} for row in cur.fetchall()]

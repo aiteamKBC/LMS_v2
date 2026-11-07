@@ -8,6 +8,7 @@ import psycopg
 from . import journal_sources
 from django.db import DatabaseError, connections
 from curriculum_api.week_visibility import visible_child_sql
+from curriculum_api.canonical_read_sql import component_ksb_mappings_sql
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from .projection_performance import measure_projection
@@ -361,16 +362,14 @@ def _read_legacy_metrics(source, kind, preloaded=None):
         if preloaded is not None and 'native_components' in preloaded:
             native = preloaded['native_components']
         else:
-            cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
-                (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
-                 FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
+            cursor.execute(f'''SELECT c.id,c.type,c.expected_otjh AS expected_hours,
+                {component_ksb_mappings_sql('c')} AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
                 FROM curriculum.components c
                 WHERE c.module_catalogue_id=ANY(%s)
-                  AND ''' + visible_child_sql('c'), [module_ids])
+                  AND {visible_child_sql('c')}''', [module_ids])
             native = rows(cursor)
         if preloaded is not None and 'native_progress' in preloaded:
             progress = preloaded['native_progress']
@@ -744,17 +743,14 @@ def load_native_components_bulk(module_ids):
     if not ids:
         return result
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('''SELECT c.module_catalogue_id,c.id,c.type,c.expected_otjh AS expected_hours,
-                coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
-                (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
-                 FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
+        cursor.execute(f'''SELECT c.module_catalogue_id,c.id,c.type,c.expected_otjh AS expected_hours,
+                {component_ksb_mappings_sql('c')} AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c
             WHERE c.module_catalogue_id=ANY(%s)
-              AND ''' + visible_child_sql('c'), [ids])
+              AND {visible_child_sql('c')}''', [ids])
         for item in rows(cursor):
             result.setdefault(str(item.pop('module_catalogue_id')), []).append(item)
     return result

@@ -1,6 +1,6 @@
-"""Phase 1C: curriculum.modules without deleted_at/deleted_via_parent/programme_name.
+"""Normalised Curriculum status/FK compatibility for learner readers.
 
-The shared visibility predicate shows only rows without a deletion stamp;
+The shared visibility predicate hides only explicitly inactive current rows;
 _resolve_from_master and _append_week_quizzes read modules through the
 learner's assigned ids and derive a module's programme name through
 modules.programme_id -> curriculum.programmes. No database: a recorder cursor
@@ -22,10 +22,13 @@ PROGRAMME_NAME_SQL = ("COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(p.name) 
 
 
 def visible(predicate, row):
-    """Evaluate the shared predicate for one row (it is a single IS NULL test)."""
-    match = re.fullmatch(r'\((\w+)\.deleted_at IS NULL\)', predicate)
+    """Evaluate the shared status predicate for one synthetic row."""
+    match = re.fullmatch(
+        r"\(lower\(btrim\(coalesce\((\w+)\.status, ''\)\)\) <> 'inactive'\)",
+        predicate,
+    )
     assert match, f'unexpected predicate: {predicate}'
-    return row.get('deleted_at') is None
+    return str(row.get('status') or '').strip().casefold() != 'inactive'
 
 
 class Recorder:
@@ -61,30 +64,34 @@ class Recorder:
 
 
 class SharedPredicateTests(SimpleTestCase):
-    def test_every_child_table_gets_the_same_stamp_only_rule(self):
+    def test_every_child_table_gets_the_same_status_rule(self):
         for alias in ('weeks', 'w', 'components', 'c', 'component', 'k', 'mapping', 'visible_parent'):
             with self.subTest(alias=alias):
-                self.assertEqual(visible_child_sql(alias), f'({alias}.deleted_at IS NULL)')
+                self.assertEqual(
+                    visible_child_sql(alias),
+                    f"(lower(btrim(coalesce({alias}.status, ''))) <> 'inactive')",
+                )
                 self.assertEqual(visible_week_sql(alias), visible_child_sql(alias))
 
-    def test_no_stamped_row_is_ever_visible(self):
+    def test_only_inactive_is_hidden_and_unknown_status_is_preserved(self):
         rows = {
-            'live': {'deleted_at': None, 'deleted_via_parent': None},
-            'live with a leftover parent link': {'deleted_at': None, 'deleted_via_parent': 'MOD-1'},
-            'deleted directly': {'deleted_at': '2026-10-01T10:00:00Z', 'deleted_via_parent': None},
-            'archived with its module': {'deleted_at': '2026-10-01T10:00:00Z', 'deleted_via_parent': 'MOD-1'},
-            'archived with its programme': {'deleted_at': '2026-10-01T10:00:00Z', 'deleted_via_parent': 'PROG-1'},
-            'stale child of a restored module': {'deleted_at': '2026-09-01T10:00:00Z', 'deleted_via_parent': 'MOD-1'},
+            'active': {'status': 'active'},
+            'inactive': {'status': 'inactive'},
+            'spaced inactive': {'status': ' INACTIVE '},
+            'planned': {'status': 'planned'},
+            'unknown': {'status': 'future-state'},
+            'blank': {'status': ''},
+            'null': {'status': None},
         }
         for table in ('weeks', 'components', 'k'):
             predicate = visible_child_sql(table)
             shown = {name for name, row in rows.items() if visible(predicate, row)}
             with self.subTest(table=table):
-                self.assertEqual(shown, {'live', 'live with a leftover parent link'})
+                self.assertEqual(shown, {'active', 'planned', 'unknown', 'blank', 'null'})
 
     def test_the_predicate_reads_nothing_from_curriculum_modules(self):
         sql = visible_child_sql('weeks')
-        for removed in ('curriculum.modules', 'archived_module', 'deleted_via_parent', 'interval', ' OR ', 'EXISTS'):
+        for removed in ('curriculum.modules', 'archived_module', 'deleted_at', 'deleted_via_parent', 'interval', ' OR ', 'EXISTS'):
             self.assertNotIn(removed, sql)
 
 

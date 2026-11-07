@@ -1,5 +1,7 @@
 """Original course identities for the learner's assigned imported modules."""
 
+from .module_placement_sql import current_module_sql
+
 
 def imported_course_links(rows, current_subjects):
     """Shared exact provenance rule for SQL and request-local module facts."""
@@ -13,12 +15,12 @@ def read_imported_courses(cursor, current_subjects):
     assigned = {str(subject['id']) for subject in current_subjects}
     if not assigned:
         return {}
-    cursor.execute('''SELECT module_catalogue_id,source_id
-        FROM curriculum.modules
-        WHERE module_catalogue_id=ANY(%s) AND source_type='mba-legacy'
-          AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
-          AND source_id ~ '^[0-9]+$'
-        ORDER BY module_catalogue_id''', [sorted(assigned)])
+    cursor.execute(f'''SELECT m.module_catalogue_id,m.source_id
+        FROM curriculum.modules m
+        WHERE m.module_catalogue_id=ANY(%s) AND m.source_type='mba-legacy'
+          AND {current_module_sql('m')}
+          AND m.source_id ~ '^[0-9]+$'
+        ORDER BY m.module_catalogue_id''', [sorted(assigned)])
     # Provenance is not enrolment permission. The consumer must also receive
     # the owned legacy course from student-activity before replacing a card.
     return imported_course_links(cursor.fetchall(),current_subjects)

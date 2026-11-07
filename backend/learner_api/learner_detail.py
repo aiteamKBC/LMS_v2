@@ -43,6 +43,7 @@ from .models import EnrolmentUser, LearnerProfile
 from .retained_quiz_progress import retain_quiz_progress
 from .student_activity_access import student_activity_available
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, standard_ksb_join_sql
 from .module_placement_sql import current_module_sql
 
 logger = logging.getLogger(__name__)
@@ -1675,7 +1676,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
 
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
-                              "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required")
+                              f"live_sessions_link, display_order, {component_ksb_mappings_sql('components')} AS ksb_mappings, "
+                              "reflection_required, \"Reflection_Question\", tutor_validation_required")
             schedule_column = ''
             if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
                 from .builder_activity_dates import COMPONENT_SCHEDULE_SETTINGS
@@ -1885,19 +1887,22 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # automatically (see components.py), so the UI shows what will be
             # credited rather than asking.
             if component_ids and not routing_only:
-                ksb_description = 'NULL AS ksb_description' if compact_content else 'mapping.ksb_description'
+                ksb_description = ('NULL AS ksb_description' if compact_content
+                                   else 'standard_ksb.ksb_description AS ksb_description')
                 component_scope = ('WHERE mapping.component_id=ANY(%s) '
                     if compact_content else
                     'JOIN curriculum.components component ON component.id = mapping.component_id '
                     'WHERE component.module_catalogue_id = ANY(%s) AND component.id = ANY(%s) '
                     f"AND {visible_child_sql('component')} ")
                 cur.execute(
-                    f"SELECT mapping.component_id, mapping.ksb_code, {ksb_description}, "
+                    f"SELECT mapping.component_id, standard_ksb.ksb_code AS ksb_code, {ksb_description}, "
                     "mapping.classification, mapping.weight, mapping.weight_class "
                     "FROM curriculum.ksb_mappings mapping "
+                    + standard_ksb_join_sql('mapping', 'standard_ksb') + " "
                     + component_scope +
                     f"AND {visible_child_sql('mapping')} "
-                    "ORDER BY mapping.component_id, mapping.ksb_code",
+                    "AND nullif(btrim(standard_ksb.ksb_code),'') IS NOT NULL "
+                    "ORDER BY mapping.component_id, standard_ksb.ksb_code",
                     [component_ids] if compact_content else [module_ids, component_ids],
                 )
                 for comp_id, code, description, classification, weight, weight_class in cur.fetchall():

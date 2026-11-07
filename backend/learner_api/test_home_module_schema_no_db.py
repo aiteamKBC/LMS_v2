@@ -2,8 +2,8 @@
 
 curriculum.modules has no deleted_at/deleted_via_parent and no copied
 programme_name/cohort_name/group_name. Module names now come through
-programme_id/cohort_id/group_id; child weeks/components keep their own
-deletion filters; no module status rule is added. No database: a recorder
+programme_id/cohort_id/group_id; child weeks/components use status; module
+status affects current-list membership only. No database: a recorder
 answers each SELECT and refuses anything else.
 """
 import inspect
@@ -16,6 +16,7 @@ from django.test import SimpleTestCase
 
 from . import dashboard_header, overview_week, training_plan_dashboard
 from .module_placement_sql import module_placement_names_sql
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 REMOVED_MODULE = re.compile(r'\b(?:m|cm)\.(?:deleted_at|deleted_via_parent|is_programme_deleted|programme_name|'
                             r'cohort_name|group_name|status)\b')
@@ -87,8 +88,9 @@ class LectureHrefTests(SimpleTestCase):
         [(sql, params)] = cursor.calls
         self.assertEqual(params, ['M1'])
         self.assertEqual(REMOVED_MODULE.findall(sql), [])
-        self.assertIn("(c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')", sql)
-        self.assertIn("(w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')", sql)
+        self.assertIn(visible_child_sql('c'), sql)
+        self.assertIn(visible_week_sql('w'), sql)
+        self.assertNotRegex(sql, r'\b[wc]\.(?:deleted_at|deleted_via_parent|is_programme_deleted)\b')
         self.assertIn('JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id', sql)
 
 

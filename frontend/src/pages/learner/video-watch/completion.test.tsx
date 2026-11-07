@@ -26,6 +26,7 @@ vi.mock('pdfjs-dist', () => ({
 const session = vi.hoisted(() => ({
   account: { role: 'learner' as 'learner' | 'admin' | 'staff', subjectType: 'learner', subjectId: 1, learnerRecordId: null as number | null },
   isInitialized: true,
+  accessOpen: true,
   outsideWorkingHours: true,
   holidayCalendarReady: true,
   holidays: [] as { start: string; end: string; label?: string }[],
@@ -46,7 +47,7 @@ vi.mock('@/api/evidence', () => ({
 }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
-vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
+vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: session.accessOpen, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
 vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles, onSubmitProgress }: {
   questionFiles?: { url: string; fileName: string }[];
@@ -63,14 +64,19 @@ vi.mock('@/components/feature/SessionResults', () => ({
   ),
 }));
 
-const component = (id: string, weekId: string, date: string) => ({
+const liveComponent = (id: string, weekId: string, date: string) => ({
   componentId: id, component: 'Live Session · Live Teams Session 1', type: 'live_session',
   module: 'Marketing', moduleId: 'M1', week: 'Marketing Week', weekId,
   sessionDate: date, sessionTime: '12:00', durationMinutes: 60,
   expectedOtjh: 2.5, reflectionRequired: false,
 });
-const first = component('C1', 'W1', '2026-10-22');
-const second = component('C2', 'W2', '2026-10-29');
+const component = (id: string, weekId: string) => ({
+  componentId: id, component: 'Activity · Learning activity', type: 'activity', description: 'Learning activity',
+  module: 'Marketing', moduleId: 'M1', week: 'Marketing Week', weekId,
+  expectedOtjh: 2.5, reflectionRequired: false,
+});
+const first = component('C1', 'W1');
+const second = component('C2', 'W2');
 const empty = { ...first, componentId: 'EMPTY', component: 'Video · Recorded Session P1', type: 'video' };
 const progress = { kind: 'component', componentId: 'C1', timeTaken: '00:20', submittedAt: '2026-09-13T12:58:12Z', passed: null };
 const detail = (done = false) => ({
@@ -99,6 +105,7 @@ beforeEach(() => {
   programmeRead.loadError = '';
   Object.assign(session.account, { role: 'learner', subjectType: 'learner', subjectId: 1, learnerRecordId: null });
   session.isInitialized = true;
+  session.accessOpen = true;
   session.outsideWorkingHours = true;
   session.holidayCalendarReady = true;
   session.holidays = [];
@@ -261,19 +268,22 @@ it('waits for Finish before offering reflection after media playback ends', asyn
   expect(await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' })).toBeVisible();
 });
 
-it('lays out recording watch time, evidence, manual input, and Finish in one live-session panel', async () => {
-  const live = { ...first, teamsLiveSessionId: 'LIVE-1', teamsSessionNumber: 1 };
+it('opens a scheduled live session when generic content availability is false and keeps the legacy completion controls', async () => {
+  const live = { ...liveComponent('C1', 'W1', '2099-10-22'), contentAvailable: false, sessionDateTimeUtc: '2099-10-22T11:00:00Z',
+    liveSessionUrl: 'https://teams.example/join', teamsLiveSessionId: 'LIVE-1', teamsSessionNumber: 1 };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as unknown as LearnerDetail);
   mount();
 
-  const input = await screen.findByLabelText('Minutes spent');
-  const timer = screen.getByRole('timer', { name: 'Time on this activity: 00 hours, 00 minutes, 00 seconds' });
-  const actionPanel = timer.parentElement;
-  expect(actionPanel).toContainElement(input);
-  expect(actionPanel).toContainElement(screen.getByText('Upload evidence'));
-  expect(actionPanel).toContainElement(screen.getByRole('button', { name: 'Finish' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Simulate recording watch' }));
-  expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
+  expect(await screen.findByText('Microsoft Teams live session')).toBeVisible();
+  expect(screen.getByText('Scheduled')).toBeVisible();
+  expect(screen.getByRole('link', { name: /Join live session/ })).toHaveAttribute(
+    'href', '/learner_api/session-results/apprenticeship/1/LIVE-1/sessions/1/join/',
+  );
+  expect(screen.getByLabelText('Minutes spent')).toBeInTheDocument();
+  expect(screen.getByText('Upload evidence')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Finish' })).toBeEnabled();
+  await waitFor(() => expect(startTimeTracking).toHaveBeenCalledWith('component', 'C1', 'apprenticeship', '1', 'visible_page'));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
 });
 
 it.each(['video', 'live_session'])('opens a dated recorded %s event without a placeholder video URL', async type => {
@@ -289,105 +299,51 @@ it.each(['video', 'live_session'])('opens a dated recorded %s event without a pl
 });
 
 it('limits live-session recordings to the component date when no separate recording date is set', async () => {
-  const live = { ...first, sessionDate: '2026-10-28', teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1 };
+  const live = { ...liveComponent('C1', 'W1', '2026-10-28'), teamsLiveSessionId: 'SERIES', teamsSessionNumber: 1 };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as LearnerDetail);
   mount('C1');
   expect(await screen.findByRole('button', { name: 'Simulate recording watch' })).toHaveAttribute('data-recording-date', '2026-10-28');
 });
 
-it.each(['commercial', 'apprenticeship'])('opens live session Finish before entering time for %s learners', async kind => {
-  mount('C1', kind);
-  const finishButton = await screen.findByRole('button', { name: 'Finish' });
-  expect(finishButton).toBeEnabled();
-  fireEvent.click(finishButton);
+it('shows the existing unscheduled live-session interface with the legacy completion controls', async () => {
+  const unscheduled = { ...liveComponent('C1', 'W1', ''), contentAvailable: false, sessionDate: undefined, sessionTime: undefined };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [unscheduled] } as unknown as LearnerDetail);
+  mount();
 
-  const dialog = await screen.findByRole('dialog', { name: /Confirm .* completion/ });
-  expect(within(dialog).getByText('Enter the time you spent on this session to continue.')).toBeVisible();
-  const confirm = within(dialog).getByRole('button', { name: 'Confirm' });
-  expect(confirm).toBeDisabled();
-  fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '0' } });
-  expect(confirm).toBeDisabled();
+  expect(await screen.findAllByText('Not scheduled yet')).not.toHaveLength(0);
+  expect(screen.getByText('Contact your tutor if you expect a meeting link here.')).toBeVisible();
+  expect(screen.getByLabelText('Minutes spent')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Finish' })).toBeEnabled();
+  await waitFor(() => expect(startTimeTracking).toHaveBeenCalledWith('component', 'C1', 'apprenticeship', '1', 'visible_page'));
   expect(submitComponentProgress).not.toHaveBeenCalled();
-  fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '5' } });
-  expect(confirm).toBeEnabled();
-  fireEvent.click(confirm);
-  expect(submitComponentProgress).not.toHaveBeenCalled();
-  expect(screen.getByRole('alertdialog')).toHaveTextContent('0 hours and 5 minutes');
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
-  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
-    timeTakenSeconds: 300, timeEntrySource: 'input',
-  })));
-  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
 });
 
-it.each(['reflect', 'skip'])('asks for missing live-session time before the %s reflection path', async choice => {
-  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
-  mount();
-  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Enter time spent' });
-  const next = within(dialog).getByRole('button', { name: 'Continue' });
-  expect(next).toBeDisabled();
-  expect(screen.queryByRole('dialog', { name: 'Do you want to complete a reflection?' })).not.toBeInTheDocument();
-  fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '5' } });
-  fireEvent.click(next);
-  expect(screen.queryByRole('dialog', { name: 'Do you want to complete a reflection?' })).not.toBeInTheDocument();
+it.each(['commercial', 'apprenticeship'])('completes a live session with the existing manual-time workflow for %s learners', async kind => {
+  const live = { ...liveComponent('C1', 'W1', '2026-10-22'), teamsLiveSessionId: 'LIVE-1', teamsSessionNumber: 1 };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as unknown as LearnerDetail);
+  mount('C1', kind);
+
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '5' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
-  const reflection = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
-  expect(submitComponentProgress).not.toHaveBeenCalled();
-  if (choice === 'skip') {
-    fireEvent.click(within(reflection).getByRole('button', { name: 'No, finish without reflection' }));
-    await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
-      timeTakenSeconds: 300, timeEntrySource: 'input', skipReflection: true,
-    })));
-  } else {
-    fireEvent.click(within(reflection).getByRole('button', { name: 'Yes, add reflection' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'OTJH' }));
-    expect(screen.getByLabelText('Selected activity time')).toHaveValue('00:05:00');
-    expect(submitComponentProgress).not.toHaveBeenCalled();
-  }
+
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    componentType: 'live_session',
+    timeTakenSeconds: 300,
+    timeEntrySource: 'input',
+  })));
 });
 
-it.each([
-  { kind: 'commercial', reflectionRequired: false },
-  { kind: 'commercial', reflectionRequired: true },
-  { kind: 'apprenticeship', reflectionRequired: false },
-  { kind: 'apprenticeship', reflectionRequired: true },
-])('keeps previous live-session time when cancelling a time decision for $kind (reflection: $reflectionRequired)', async ({ kind, reflectionRequired }) => {
-  vi.mocked(fetchLearnerDetail).mockResolvedValue({
-    ...detail(true), components: [{ ...first, reflectionRequired }],
-  } as unknown as LearnerDetail);
-  mount('C1', kind);
-  fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
-  const dialog = await screen.findByRole('dialog');
-  expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeDisabled();
-  expect(dialog).toHaveTextContent('00:00:20');
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('00:00:20');
-  expect(submitComponentProgress).not.toHaveBeenCalled();
-
-  fireEvent.click(screen.getByRole('button', { name: 'Record another attempt' }));
-  const nextAttempt = await screen.findByRole('dialog');
-  expect(within(nextAttempt).getAllByRole('radio').every(radio => !(radio as HTMLInputElement).checked)).toBe(true);
-  expect(within(nextAttempt).getByRole('button', { name: 'Continue' })).toBeDisabled();
-});
-
-it('retains live-session time on cancelling the prompt and restores keyboard focus', async () => {
+it('keeps an inaccessible live session behind the existing access gate', async () => {
+  session.accessOpen = false;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...liveComponent('C1', 'W1', '2026-10-22'), contentAvailable: false }] } as unknown as LearnerDetail);
   mount();
-  const finishButton = await screen.findByRole('button', { name: 'Finish' });
-  fireEvent.change(screen.getByLabelText('Minutes spent'), { target: { value: '0' } });
-  finishButton.focus();
-  fireEvent.click(finishButton);
-  const dialog = await screen.findByRole('dialog', { name: /Confirm .* completion/ });
-  const minutes = within(dialog).getByLabelText('Minutes spent');
-  fireEvent.change(minutes, { target: { value: '5' } });
-  fireEvent.keyDown(minutes, { key: 'Escape' });
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByLabelText('Minutes spent')).toHaveValue('05');
-  expect(finishButton).toHaveFocus();
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Learning components are currently closed');
+  expect(screen.queryByText('Microsoft Teams live session')).not.toBeInTheDocument();
+  expect(startTimeTracking).not.toHaveBeenCalled();
   expect(submitComponentProgress).not.toHaveBeenCalled();
-  fireEvent.click(finishButton);
-  expect(within(await screen.findByRole('dialog')).getByLabelText('Minutes spent')).toHaveValue('05');
 });
 
 it('connects the content Upload evidence control to a mounted file input', async () => {

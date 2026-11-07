@@ -10,9 +10,10 @@ from zoneinfo import ZoneInfo
 from django.db import connections
 
 from curriculum_api.session_component_identity import TIMEZONE_ALIASES
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 
-SHARED_DELIVERY_SQL = """WITH RECURSIVE chain(target, source, path) AS (
+SHARED_DELIVERY_SQL = f"""WITH RECURSIVE chain(target, source, path) AS (
     SELECT module_catalogue_id, btrim(teams_shared_source_module_id), ARRAY[module_catalogue_id]::text[]
     FROM curriculum.modules WHERE module_catalogue_id=ANY(%s)
       AND coalesce(btrim(teams_shared_source_module_id),'')<>''
@@ -43,10 +44,8 @@ SHARED_DELIVERY_SQL = """WITH RECURSIVE chain(target, source, path) AS (
       ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
     WHERE c.module_catalogue_id IN (SELECT target FROM owners UNION SELECT source FROM owners)
       AND c.type IN ('live_session','live-session')
-      AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
-      AND coalesce(c.library_state,'')<>'library'
-      AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
-      AND coalesce(w.library_state,'')<>'library'
+      AND {visible_child_sql('c')}
+      AND {visible_week_sql('w')}
 ), deliveries AS (
 SELECT alias.id AS component_id,s.id AS series_id,o.id AS occurrence_id,o.session_number,o.scheduled_start,o.scheduled_end,s.timezone,
        coalesce(nullif(btrim(alias.link_override),''),nullif(btrim(source.link_override),''),

@@ -21,6 +21,7 @@ from .session_media_policy import hidden_artifact_ids, recording_transcript_link
 from .session_sync_runtime import start_requested_sync
 from .session_transfer_progress import summarize_transfers
 from .session_sync_issues import sync_issues
+from .canonical_read_sql import current_status_sql
 
 log = logging.getLogger(__name__)
 
@@ -891,9 +892,13 @@ def learner_series(kind, learner_id, series_id, linked_recordings=False):
     if not learner:
         return None, None
     modules = {str(item['id']) for item in read_assigned_modules(learner)}
-    rows = read('''SELECT s.* FROM curriculum.live_sessions s JOIN curriculum.modules m
+    # Joining is a current-content action, so an explicitly inactive module is
+    # unavailable. Saved recordings/results are historical evidence: keep them
+    # readable for an assigned learner even if the parent later becomes inactive.
+    module_visibility = '' if linked_recordings else f' AND {current_status_sql("m")}'
+    rows = read(f'''SELECT s.* FROM curriculum.live_sessions s JOIN curriculum.modules m
         ON m.module_catalogue_id=s.module_catalogue_id
-        WHERE s.id=%s AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+        WHERE s.id=%s{module_visibility}
         AND lower(btrim(s.status)) NOT IN ('deleted','superseded','failed')''', [series_id])
     if not rows:
         return None, None

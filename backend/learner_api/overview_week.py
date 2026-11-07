@@ -66,6 +66,7 @@ from .subject_content import clean_text
 from .training_plan_dashboard import number, rows
 from .projection_performance import local_home_summary_trace, measure_projection, projection_stage
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.canonical_read_sql import component_ksb_mappings_sql
 
 log = logging.getLogger(__name__)
 UK = ZoneInfo('Europe/London')
@@ -503,9 +504,8 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
             assigned = subject_rows
         module_ids = [row[0] for row in assigned]
         # The compact home projection returns no KSB codes, so skip the per-component lookup.
-        ksb_mappings = "'[]'::jsonb" if home_summary or monthly_hours_only else '''coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
-                (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
-                 WHERE k.component_id=c.id AND ''' + visible_child_sql('k') + '''), '[]'::jsonb)'''
+        ksb_mappings = ("'[]'::jsonb" if home_summary or monthly_hours_only
+                        else component_ksb_mappings_sql('c'))
         cur.execute(component_sql(ksb_mappings, builder_columns=home_summary), [module_ids])
         native = rows(cur)
         # Match My Learning's delivery calendar, including undated lesson titles,

@@ -1,14 +1,7 @@
-"""Deleted curriculum weeks never reach a learner unless they are an archived
-module's own history.
+"""Current Curriculum children use canonical status visibility.
 
-Regression: a module deleted and later restored kept the weeks of that earlier
-deletion stamped ``deleted_via_parent=<module id>``. Every learner/coach read
-treated any parent stamp as "archived with its module", so the stale set
-(Event MasterClass, then every title one week late) outranked the live weeks
-the Module Builder shows. The components and KSB mappings archived with those
-weeks carried the same stamp, so the same rule covers them.
-the Module Builder shows. The components and KSB mappings archived with those
-weeks carried the same stamp, so the same rule covers them.
+Only ``inactive`` is hidden. NULL, blank and future status values retain their
+existing visibility, while historical projections keep their own lineage rules.
 """
 import re
 from pathlib import Path
@@ -43,6 +36,24 @@ READER_PATHS = {
     'coach_api/weekly_learning.py': 1,
 }
 
+CHILD_READER_PATHS = {
+    'learner_api/training_plan_dashboard.py': 2,
+    'learner_api/overview_week.py': 3,
+    'learner_api/mobile.py': 2,
+    'learner_api/learner_detail.py': 7,
+    'learner_api/builder_activity_dates.py': 1,
+    'learner_api/curriculum.py': 1,
+    'learner_api/module_shift.py': 2,
+    'learner_api/training_plan_document.py': 1,
+    'learner_api/active_users.py': 1,
+    'learner_api/live_session_progress.py': 1,
+    'learner_api/student_activity_data.py': 2,
+    'coach_api/overview_modules.py': 1,
+    'coach_api/otjh_ksb.py': 1,
+    'coach_api/learning_plan_projection.py': 1,
+    'coach_api/weekly_learning.py': 2,
+}
+
 # The old rule: any parent stamp kept a deleted week visible.
 LEAKY_WEEK_RULE = re.compile(
     r"(?:\b(?:w|c|k|component|mapping)\.deleted_at IS NULL\W+OR COALESCE\((?:w|c|k|component|mapping)\.deleted_via_parent"
@@ -55,21 +66,17 @@ class VisibleWeekSqlTests(SimpleTestCase):
     def test_week_rule_is_the_child_rule(self):
         self.assertEqual(visible_week_sql('w'), visible_child_sql('w'))
 
-    def test_every_week_column_is_qualified_by_the_callers_alias(self):
+    def test_every_status_column_is_qualified_by_the_callers_alias(self):
         sql = visible_week_sql('w')
-        for column in ('deleted_at', 'deleted_via_parent', 'module_catalogue_id'):
+        for column in ('status',):
             for match in re.finditer(rf'(?<![\w.]){column}\b', sql):
                 self.fail(f'unqualified {column} at {match.start()}: {sql}')
-        self.assertEqual(sql, '(w.deleted_at IS NULL)')
+        self.assertEqual(sql, "(lower(btrim(coalesce(w.status, ''))) <> 'inactive')")
 
-    def test_a_stamped_row_is_hidden_whatever_its_module(self):
-        # The canonical curriculum.modules table has no deletion marker, so the
-        # former "archived with its module" exception is gone: any row with a
-        # deletion stamp stays hidden, including the stale children of a module
-        # that was later restored. Nothing reads the module row any more.
+    def test_only_inactive_is_interpreted_as_hidden(self):
         sql = visible_week_sql('weeks')
-        self.assertEqual(sql, '(weeks.deleted_at IS NULL)')
-        for removed in ('curriculum.modules', 'archived_module', 'deleted_via_parent', "interval '5 minutes'", ' OR '):
+        self.assertEqual(sql, "(lower(btrim(coalesce(weeks.status, ''))) <> 'inactive')")
+        for removed in ('curriculum.modules', 'archived_module', 'deleted_at', 'deleted_via_parent', "interval '5 minutes'", ' OR '):
             self.assertNotIn(removed, sql)
 
 

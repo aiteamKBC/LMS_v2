@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
+from curriculum_api.week_visibility import visible_child_sql
 from learner_api.teams_attendance import annotate_attendance_completion
 from learner_api.module_progress import aggregate_module_progress
 from coach_api.learning_plan_projection import native_state
@@ -35,6 +36,9 @@ class AttendanceCompletionTests(SimpleTestCase):
         self.assertEqual(set(params[1]), {'C1', 'C2'})
         self.assertEqual(cursor.execute.call_count, 1)
         self.assertTrue(sql.lstrip().startswith('SELECT'))
+        self.assertIn(visible_child_sql('c'), sql)
+        self.assertNotIn('c.deleted_at', sql)
+        self.assertNotIn('c.is_programme_deleted', sql)
 
     def test_missing_verified_evidence_clears_untrusted_flags(self):
         connection = MagicMock()

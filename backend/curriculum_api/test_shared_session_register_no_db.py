@@ -10,6 +10,13 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 
 
+def string_constant(filename, name):
+    tree = ast.parse((ROOT / filename).read_text(encoding='utf-8-sig'))
+    node = next(node for node in tree.body if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == name for target in node.targets))
+    return ast.literal_eval(node.value)
+
+
 def functions(filename, names, namespace):
     tree = ast.parse((ROOT / filename).read_text(encoding='utf-8-sig'))
     selected = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
@@ -95,6 +102,14 @@ class SharedRegisterTests(unittest.TestCase):
         self.assertEqual((row['occurrence_id'], row['live_session_id'], row['attendance_report_id']),
                          ('O', 'SOURCE-SERIES', 'REPORT'))
         self.assertEqual((row['last_leave_at']-row['first_join_at']).total_seconds(), 300)
+
+    def test_shared_history_uses_canonical_module_schema_without_hiding_inactive_parents(self):
+        sql = string_constant('shared_session_register.py', 'SHARED_SERIES_SQL')
+        for alias in ('m', 'owner'):
+            self.assertNotIn(f'{alias}.deleted_at', sql)
+            self.assertNotIn(f'{alias}.is_programme_deleted', sql)
+            self.assertNotRegex(sql, rf'\b{alias}\.status\b')
+        self.assertIn("lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')", sql)
 
 
 if __name__ == '__main__':

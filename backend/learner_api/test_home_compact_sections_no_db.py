@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from old_otjh.service import ServiceError
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from . import overview_week as week_module
 from . import training_plan_dashboard as plan_module
@@ -153,7 +154,9 @@ class ComponentSqlTests(SimpleTestCase):
         self.assertIn(f'{COMPONENT_SCHEDULE_SETTINGS} AS builder_settings', sql)
         self.assertIn('c.week_id AS builder_week_id', sql)
         # The same component and week filters as before.
-        self.assertIn("(w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')", sql)
+        self.assertIn(f"(w.id IS NULL OR {visible_week_sql('w')})", sql)
+        self.assertIn(visible_child_sql('c'), sql)
+        self.assertNotIn('deleted_via_parent', sql)
 
 
 class UpcomingSectionTests(SimpleTestCase):

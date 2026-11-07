@@ -19,6 +19,7 @@ from curriculum_api.models import (
 from curriculum_api.live_session_register import upsert_live_session_register
 from curriculum_api.attendance_link_policy import apply_reviewed_identities
 from curriculum_api.attendance_link_store import identity_rules
+from curriculum_api.week_visibility import visible_child_sql
 
 from .models import LearnerProfile, LearnerTrainingPlanModule
 from .projection_performance import projection_call, projection_operation
@@ -57,8 +58,7 @@ def annotate_attendance_completion(components, learner_profile):
               AND r.module_catalogue_id=c.module_catalogue_id
               AND r.learner_profile_id=%s
             {REPLACED_ATTENDANCE_LATERAL_SQL}
-            WHERE c.id=ANY(%s) AND c.deleted_at IS NULL
-              AND NOT coalesce(c.is_programme_deleted,false)
+            WHERE c.id=ANY(%s) AND {visible_child_sql('c')}
               AND lower(replace(c.type,'-','_'))='live_session'
               AND c.reflection_required IS FALSE
               AND c.tutor_validation_required IS FALSE

@@ -18,6 +18,7 @@ from django.db.models import Max
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, current_status_sql
 from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
@@ -348,16 +349,14 @@ def component_reference_exists(component_id):
     return False
 
 
-# Effective soft-delete of a component, level by level, in the order a rejection
-# should name. Mirrors the ``is_deleted`` expression of the
-# curriculum.component_learning_lineage view (curriculum_api migration 0041):
-# deleted_at / is_programme_deleted at every level, and is_archived on
-# programmes, which carries no is_programme_deleted column.
-_COMPONENT_LINEAGE_DELETED_SQL = """
+# Effective inactive state of a component, level by level, in the order a
+# rejection should name. Components, weeks and modules use the normalised
+# status contract; NULL, blank and unknown values remain visible.
+_COMPONENT_LINEAGE_DELETED_SQL = f"""
     select
-        (c.deleted_at is not null or coalesce(c.is_programme_deleted, false)) as component_deleted,
-        (w.id is not null and (w.deleted_at is not null or coalesce(w.is_programme_deleted, false))) as week_deleted,
-        (m.module_catalogue_id is not null and (m.deleted_at is not null or coalesce(m.is_programme_deleted, false))) as module_deleted,
+        (not ({current_status_sql('c')})) as component_deleted,
+        (w.id is not null and not ({current_status_sql('w')})) as week_deleted,
+        (m.module_catalogue_id is not null and not ({current_status_sql('m')})) as module_deleted,
         (g.group_id is not null and (g.deleted_at is not null or coalesce(g.is_programme_deleted, false))) as group_deleted,
         (ch.cohort_id is not null and (ch.deleted_at is not null or coalesce(ch.is_programme_deleted, false))) as cohort_deleted,
         (p.programme_id is not null and (p.deleted_at is not null or coalesce(p.is_archived, false))) as programme_deleted
@@ -427,14 +426,14 @@ def _component_learning_context(component_id):
         try:
             with connections[alias].cursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     select
                         c.id,
                         c.title,
                         c.type,
                         c.expected_otjh,
                         c.points,
-                        c.ksb_mappings,
+                        {component_ksb_mappings_sql('c')},
                         w.id,
                         w.title,
                         m.module_catalogue_id,
@@ -482,32 +481,6 @@ def _component_learning_context(component_id):
                     group_title,
                 ) = row
                 mappings = _normalise_component_ksb_mappings(canonical_mappings)
-                if not mappings:
-                    cursor.execute(
-                        """
-                        select ksb_code, ksb_description, source_type, source_id, classification, weight, weight_class
-                          from curriculum.ksb_mappings
-                         where component_id = %s
-                           and coalesce(ksb_code, '') <> ''
-                           and deleted_at is null
-                           and coalesce(is_programme_deleted, false) = false
-                         order by ksb_code, id
-                        """,
-                        [component_id],
-                    )
-                    mappings = [
-                        {
-                            "code": _s(code).upper(),
-                            "description": _s(description),
-                            "sourceType": _s(source_type),
-                            "sourceId": _s(source_id),
-                            "classification": _s(classification),
-                            "weight": _decimal(weight),
-                            "weightClass": _normalise_weight_class(weight_class, classification),
-                        }
-                        for code, description, source_type, source_id, classification, weight, weight_class in cursor.fetchall()
-                        if _s(code)
-                    ]
                 context = {
                     "componentTitle": _s(component_title),
                     "componentType": _s(component_type),

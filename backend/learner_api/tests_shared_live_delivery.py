@@ -3,10 +3,20 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from .shared_live_delivery import read_shared_live_delivery
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+
+from .shared_live_delivery import SHARED_DELIVERY_SQL, read_shared_live_delivery
 
 
 class SharedLiveDeliveryTests(SimpleTestCase):
+    def test_current_cards_use_canonical_status_visibility(self):
+        self.assertIn(visible_child_sql('c'), SHARED_DELIVERY_SQL)
+        self.assertIn(visible_week_sql('w'), SHARED_DELIVERY_SQL)
+        for removed in ('c.deleted_at', 'c.is_programme_deleted', 'c.library_state',
+                        'w.deleted_at', 'w.is_programme_deleted', 'w.library_state'):
+            self.assertNotIn(removed, SHARED_DELIVERY_SQL)
+        self.assertNotIn("status = 'active'", SHARED_DELIVERY_SQL)
+
     def test_booked_occurrence_supplies_clock_in_business_timezone(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
