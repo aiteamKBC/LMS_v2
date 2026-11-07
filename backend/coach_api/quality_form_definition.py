@@ -37,7 +37,7 @@ def _identifier(value):
 
 
 def clean_definition(value):
-    if not isinstance(value, dict) or set(value)-{'id','version','title','sections','ratings','actionsTitle','reviewType'}:
+    if not isinstance(value, dict) or set(value)-{'id','version','title','sections','ratings','actionsTitle','reviewType','purpose'}:
         raise InvalidReview('The quality form definition is invalid.')
     review_kind = review_type(value.get('reviewType', ''))
     title = _text(value.get('title', ''), 160)
@@ -99,7 +99,8 @@ def clean_definition(value):
         result.append({'id':key,'title':heading,'screenshots':bool(section.get('screenshots',False)), 'criteria':fields})
     return {'id':('feedback-' + review_kind.lower()) if review_kind.startswith('FORM_') else template()['id'] + (f'-{review_kind.lower()}' if review_kind else ''),'version':1,'title':title,'ratings':ratings,'sections':result,
             'actionsTitle':_text(value.get('actionsTitle','SMART action plan'),160) or 'SMART action plan',
-            **({'reviewType':review_kind} if review_kind else {})}
+            **({'reviewType':review_kind} if review_kind else {}),
+            **({'purpose':_text(value['purpose'],1000)} if 'purpose' in value else {})}
 
 
 def definition_for(review):
