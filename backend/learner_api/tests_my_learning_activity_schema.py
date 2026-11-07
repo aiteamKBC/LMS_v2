@@ -1,4 +1,4 @@
-"""Execute teaching-window SQL on PostgreSQL with both authoring schemas."""
+"""Execute teaching-window SQL against the canonical PostgreSQL schema."""
 from unittest.mock import patch
 
 from django.db import connections
@@ -18,8 +18,7 @@ class MyLearningActivitySchemaTests(SimpleTestCase):
         with self.db.cursor() as cur:
             cur.execute('''CREATE TEMP TABLE learning_activity_modules (
                 module_catalogue_id varchar(100) PRIMARY KEY,start_date date,source_type text,
-                teams_shared_source_module_id varchar(100),deleted_at timestamptz,
-                is_programme_deleted boolean)''')
+                teams_shared_source_module_id varchar(100),status text)''')
             cur.execute('''CREATE TEMP TABLE learning_activity_sessions (
                 id bigint PRIMARY KEY,module_catalogue_id varchar(100),status text,
                 start_datetime timestamptz,duration_minutes integer,provider text,
@@ -48,7 +47,7 @@ class MyLearningActivitySchemaTests(SimpleTestCase):
             names = [column[0] for column in cur.description]
             return [dict(zip(names, row)) for row in cur.fetchall()]
 
-    def test_missing_optional_columns_load_owned_and_shared_teaching_windows(self):
+    def test_canonical_schema_loads_owned_and_shared_teaching_windows(self):
         with self.db.cursor() as cur:
             cur.execute('''INSERT INTO learning_activity_modules
                 (module_catalogue_id,start_date,teams_shared_source_module_id) VALUES
@@ -67,17 +66,19 @@ class MyLearningActivitySchemaTests(SimpleTestCase):
             'legacy:2': {'startDate': '2026-10-01', 'lastLiveDate': '2026-12-01'},
         })
 
-    def test_optional_archive_library_and_deletion_flags_still_filter_cards(self):
+    def test_canonical_current_status_hides_only_explicit_inactive_modules(self):
         with self.db.cursor() as cur:
-            cur.execute('ALTER TABLE learning_activity_modules ADD COLUMN status text, ADD COLUMN library_state text')
             cur.execute('''INSERT INTO learning_activity_modules
-                (module_catalogue_id,start_date,status,library_state,deleted_at,is_programme_deleted) VALUES
-                ('VISIBLE','2026-09-01',NULL,NULL,NULL,false),
-                ('ARCHIVED','2026-09-01','archived',NULL,NULL,false),
-                ('LIBRARY','2026-09-01',NULL,'library',NULL,false),
-                ('DELETED','2026-09-01',NULL,NULL,now(),false),
-                ('PROGRAMME','2026-09-01',NULL,NULL,NULL,true)''')
+                (module_catalogue_id,start_date,status) VALUES
+                ('VISIBLE','2026-09-01',NULL),
+                ('BLANK','2026-09-01',''),
+                ('ARCHIVED','2026-09-01','archived'),
+                ('INACTIVE','2026-09-01','inactive')''')
         with patch.object(activity.canonical, 'query', side_effect=self.read):
             result = activity.card_teaching_activity([
-                {'id': 'current:' + name} for name in ('VISIBLE', 'ARCHIVED', 'LIBRARY', 'DELETED', 'PROGRAMME')])
-        self.assertEqual(result, {'current:VISIBLE': {'startDate': '2026-09-01', 'lastLiveDate': ''}})
+                {'id': 'current:' + name} for name in ('VISIBLE', 'BLANK', 'ARCHIVED', 'INACTIVE')])
+        self.assertEqual(result, {
+            'current:VISIBLE': {'startDate': '2026-09-01', 'lastLiveDate': ''},
+            'current:BLANK': {'startDate': '2026-09-01', 'lastLiveDate': ''},
+            'current:ARCHIVED': {'startDate': '2026-09-01', 'lastLiveDate': ''},
+        })

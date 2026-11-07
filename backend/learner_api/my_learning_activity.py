@@ -1,6 +1,7 @@
 """Teaching dates for owned My Learning cards, without exposing calendar data."""
 from curriculum_api.catalogue_activity import catalogue_facts
 from . import canonical_learning as canonical
+from .module_placement_sql import current_module_sql
 
 
 def card_teaching_activity(cards):
@@ -11,25 +12,24 @@ def card_teaching_activity(cards):
         return {}
     modules = []
     # Follow only the owned cards' explicitly shared delivery sources. The path
-    # prevents cycles; no global catalogue or per-card structure reads. Optional
-    # authoring flags may be absent, as in Curriculum's schema-aware reader.
+    # prevents cycles; no global catalogue or per-card structure reads. Current
+    # visibility comes from status: the canonical modules table has no legacy
+    # deletion or library flags.
     for offset in range(0, len(wanted), 400):
-        modules.extend(canonical.query('''WITH RECURSIVE delivery AS (
+        modules.extend(canonical.query(f'''WITH RECURSIVE delivery AS (
             SELECT m.module_catalogue_id,m.start_date,m.source_type,m.teams_shared_source_module_id,
-                m.deleted_at,m.is_programme_deleted,to_jsonb(m)->>'status' AS status,
-                to_jsonb(m)->>'library_state' AS library_state,ARRAY[m.module_catalogue_id]::text[] AS path
+                ARRAY[m.module_catalogue_id]::text[] AS path
             FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
+              AND {current_module_sql('m')}
             UNION ALL
             SELECT m.module_catalogue_id,m.start_date,m.source_type,m.teams_shared_source_module_id,
-                m.deleted_at,m.is_programme_deleted,to_jsonb(m)->>'status' AS status,
-                to_jsonb(m)->>'library_state' AS library_state,delivery.path || m.module_catalogue_id
+                delivery.path || m.module_catalogue_id
             FROM delivery JOIN curriculum.modules m
               ON m.module_catalogue_id=delivery.teams_shared_source_module_id
             WHERE NOT m.module_catalogue_id=ANY(delivery.path) AND cardinality(delivery.path)<8
+              AND {current_module_sql('m')}
         ) SELECT DISTINCT module_catalogue_id,start_date,source_type,teams_shared_source_module_id
-          FROM delivery WHERE deleted_at IS NULL AND is_programme_deleted IS NOT TRUE
-            AND lower(trim(coalesce(status,'')))<>'archived'
-            AND lower(trim(coalesce(library_state,'')))<>'library' ''', [wanted[offset:offset+400]]))
+          FROM delivery''', [wanted[offset:offset+400]]))
     ids = list(dict.fromkeys(str(row['module_catalogue_id']) for row in modules))
     series = []
     for offset in range(0, len(ids), 400):

@@ -48,6 +48,21 @@ def target(planned, today, **dates):
 class FormulaGoldenTests(SimpleTestCase):
     """The unchanged formula over the official value (learner dates, London day)."""
 
+    def test_default_argument_uses_the_business_date(self):
+        with patch('django.utils.timezone.localdate', return_value=MID):
+            result = coach_otjh_target_to_date(
+                SimpleNamespace(pk=265), {'actual': ACTUAL, 'planned': 288.0}, owner=owner(),
+            )
+        self.assertEqual(result, 143.61)
+
+    def test_explicit_cutoff_overrides_the_business_date(self):
+        with patch('django.utils.timezone.localdate', return_value=END):
+            result = coach_otjh_target_to_date(
+                SimpleNamespace(pk=265), {'actual': ACTUAL, 'planned': 288.0},
+                owner=owner(), as_of=MID,
+            )
+        self.assertEqual(result, 143.61)
+
     def test_official_288_over_the_programme_window(self):
         for today, expected in ((date(2025, 12, 1), 0.0), (START, 0.0), (MID, 143.61),
                                 (date(2026, 12, 31), 287.21), (END, 288.0), (date(2027, 2, 1), 288.0)):

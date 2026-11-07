@@ -64,8 +64,11 @@ class Harness:
         stack.enter_context(patch.object(module_progress, 'read_native_progress', return_value=(
             {'components': list(self.components)}, [], [], {})))
         self.aggregate = stack.enter_context(patch.object(
-            module_progress, 'aggregate_module_progress',
-            side_effect=lambda activity, detail, current, progress, titles: list(progress)))
+            module_progress, '_module_progress_facts',
+            side_effect=lambda activity, detail, current, progress, titles: {
+                'modules': list(progress), 'nativeComponents': [],
+                'historicalComponents': 0, 'retainedComponents': 0,
+            }))
         self.build = stack.enter_context(patch('learner_api.attendance_lectures.lecture_register',
                                                return_value=list(self.built)))
         self.manual = stack.enter_context(patch('learner_api.live_session_progress.read_manual_live_credits',
@@ -184,8 +187,10 @@ class HomeCallerTests(SimpleTestCase):
                 patch('learner_api.home_progress._group_dates',
                       return_value=(date(2026, 9, 1), date(2027, 9, 1), 'learner')), \
                 patch('learner_api.home_progress.lecture_register', return_value=list(REGISTER)) as home_build, \
-                patch.object(module_progress, 'aggregate_module_progress',
-                             return_value=[{'completed': 1, 'total': 2}, {'completed': 2, 'total': 2}]), \
+                patch.object(module_progress, '_module_progress_facts', return_value={
+                    'modules': [{'completed': 1, 'total': 2}, {'completed': 2, 'total': 2}],
+                    'nativeComponents': [], 'historicalComponents': 0, 'retainedComponents': 0,
+                }), \
                 patch('learner_api.home_progress.canonical_learning.entries_for', return_value=[]):
             result = read_home_progress(
                 src, 'commercial', [], [], [], [('M1', 'One'), ('M2', 'Two')], date(2026, 10, 4),

@@ -130,7 +130,10 @@ class PhaseCoverageTests(SimpleTestCase):
                 patch('learner_api.home_progress._group_dates',
                       return_value=(date(2026, 9, 1), date(2027, 9, 1), 'learner')), \
                 patch('learner_api.home_progress.lecture_register', return_value=list(REGISTER)), \
-                patch('learner_api.module_progress.aggregate_module_progress', return_value=[]), \
+                patch('learner_api.module_progress._module_progress_facts', return_value={
+                    'modules': [], 'nativeComponents': [],
+                    'historicalComponents': 0, 'retainedComponents': 0,
+                }), \
                 patch('learner_api.home_progress.canonical_learning.entries_for', return_value=[]):
             result = read_home_progress(
                 learner_source(), 'commercial', [], [], [], [('M1', 'One'), ('M2', 'Two')], date(2026, 10, 4),
@@ -163,7 +166,10 @@ class PhaseCoverageTests(SimpleTestCase):
                 patch('learner_api.home_progress._group_dates',
                       return_value=(date(2026, 9, 1), date(2027, 9, 1), 'learner')), \
                 patch('learner_api.home_progress.lecture_register', return_value=list(REGISTER)), \
-                patch('learner_api.module_progress.aggregate_module_progress', return_value=[]), \
+                patch('learner_api.module_progress._module_progress_facts', return_value={
+                    'modules': [], 'nativeComponents': [],
+                    'historicalComponents': 0, 'retainedComponents': 0,
+                }), \
                 patch('learner_api.home_progress.canonical_learning.entries_for', return_value=[]):
             plain = read_home_progress(
                 learner_source(), 'commercial', [], [], [], [('M1', 'One'), ('M2', 'Two')], date(2026, 10, 4),

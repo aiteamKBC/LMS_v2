@@ -32,8 +32,7 @@ log = logging.getLogger(__name__)
 _MISSING = object()
 
 
-def coach_otjh_target_to_date(source, otjh, *, owner=None):
-    from coach_api.selectors.otjh import learner_programme_window
+def coach_otjh_target_to_date(source, otjh, *, owner=None, as_of=None):
     from coach_api.views import apply_otjh_to_date_metrics
     # Projection callers may reuse this source's already-verified SSOT owner.
     profile = canonical_learning.require_profile(source.pk) if owner is None else owner

@@ -24,8 +24,10 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
             ATTACH DATABASE ':memory:' AS Learner;
             CREATE TABLE curriculum.live_session_learner_attendance (
                 occurrence_id text,live_session_id text,module_catalogue_id text,learner_profile_id integer,
-                session_date text,attendance_status text,attended_seconds integer);
-            CREATE TABLE curriculum.live_sessions (id text,module_title text,status text);
+                attendance_status text,attended_seconds integer);
+            CREATE TABLE curriculum.live_sessions (id text,module_catalogue_id text,status text);
+            CREATE TABLE curriculum.modules (module_catalogue_id text PRIMARY KEY,title text);
+            INSERT INTO curriculum.modules VALUES ('M1','Synthetic module'),('M2','Second module');
             CREATE TABLE curriculum.live_session_occurrences (
                 id text,live_session_id text,session_number integer,scheduled_start text,scheduled_end text,status text);
             CREATE TABLE curriculum.components (id text,settings_json text);
@@ -46,16 +48,22 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
     def read(self, sql, params):
         self.assertTrue(sql.lstrip().upper().startswith('SELECT'))
         self.assertEqual(params, [self.owner['id']])
+        if 'FROM curriculum.live_session_learner_attendance r' in sql:
+            projection = "(o.scheduled_start AT TIME ZONE 'Europe/London')::date AS session_date"
+            self.assertIn(projection, sql)
+            self.assertNotIn('r.session_date', sql)
+            # SQLite has no AT TIME ZONE; exercise the equivalent Python fallback.
+            sql = sql.replace(projection, 'NULL AS session_date')
         return [dict(record) for record in self.db.execute(sql.replace('%s', '?'), params)]
 
     def lecture(self, occurrence='O1', *, owner=70, status='present', start='2026-10-15T09:00:00+00:00',
-                end='2026-10-15T11:00:00+00:00', day='2026-10-15', module='M1', state='completed'):
+                end='2026-10-15T11:00:00+00:00', module='M1', state='completed'):
         self.db.execute('INSERT INTO curriculum.live_sessions VALUES (?,?,?)',
-                        [occurrence, 'Synthetic module', 'active'])
+                        [occurrence, module, 'active'])
         self.db.execute('INSERT INTO curriculum.live_session_occurrences VALUES (?,?,?,?,?,?)',
                         [occurrence, occurrence, 1, start, end, state])
-        self.db.execute('INSERT INTO curriculum.live_session_learner_attendance VALUES (?,?,?,?,?,?,?)',
-                        [occurrence, occurrence, module, owner, day, status, 240])
+        self.db.execute('INSERT INTO curriculum.live_session_learner_attendance VALUES (?,?,?,?,?,?)',
+                        [occurrence, occurrence, module, owner, status, 240])
 
     def allocation(self, *, payload=None, session_ref='', settings=None, owner=70, seconds=3600,
                    deleted=None, accepted=True, basis=None):
@@ -84,6 +92,20 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
         self.assertTrue(item['accepted'])
         self.assertEqual(self.rows(), [item])
 
+    def test_module_title_uses_canonical_module_fk(self):
+        self.lecture(module='M2')
+        item, = self.rows()
+        self.assertEqual(item['group_name'], 'Second module')
+        self.assertTrue(item['title'].startswith('Second module'))
+
+    def test_session_date_is_derived_from_occurrence_start_in_london(self):
+        self.lecture()
+        self.rows()
+        sql = next(call.args[0] for call in self.reader.call_args_list
+                   if 'FROM curriculum.live_session_learner_attendance r' in call.args[0])
+        self.assertIn("(o.scheduled_start AT TIME ZONE 'Europe/London')::date AS session_date", sql)
+        self.assertNotIn('r.session_date', sql)
+
     def test_owner_scope_for_both_learner_types_and_absence(self):
         self.lecture()
         self.lecture('other-learner', owner=80)
@@ -96,17 +118,19 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
                 self.assertEqual([item['source_ref'] for item in self.rows()], ['attendance:O1'])
 
     def test_future_in_progress_cancelled_and_invalid_duration_are_not_credited(self):
-        self.lecture('future', start='2026-11-08T09:00:00Z', end='2026-11-08T11:00:00Z', day='2026-11-08')
-        self.lecture('ongoing', start='2026-11-07T11:00:00Z', end='2026-11-07T13:00:00Z', day='2026-11-07')
+        self.lecture('future', start='2026-11-08T09:00:00Z', end='2026-11-08T11:00:00Z')
+        self.lecture('ongoing', start='2026-11-07T11:00:00Z', end='2026-11-07T13:00:00Z')
         self.lecture('cancelled', state='cancelled')
         self.lecture('bad', end='2026-10-15T08:00:00Z')
         self.lecture('missing', end=None)
+        self.lecture('invalid-start', start='not-a-date')
+        self.lecture('invalid-end', end='not-a-date')
         self.assertEqual(self.rows(), [])
 
     def test_shared_occurrence_counts_once_and_different_occurrence_survives(self):
         self.lecture()
         self.db.execute('''INSERT INTO curriculum.live_session_learner_attendance
-            SELECT occurrence_id,live_session_id,'M2',learner_profile_id,session_date,attendance_status,attended_seconds
+            SELECT occurrence_id,live_session_id,'M2',learner_profile_id,attendance_status,attended_seconds
             FROM curriculum.live_session_learner_attendance''')
         self.lecture('O2')
         self.assertEqual(len(self.rows()), 2)
@@ -115,14 +139,14 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
     def test_allocation_on_shared_module_prevents_duplicate_for_source_module(self):
         self.lecture()
         self.db.execute('''INSERT INTO curriculum.live_session_learner_attendance
-            SELECT occurrence_id,live_session_id,'M2',learner_profile_id,session_date,attendance_status,attended_seconds
+            SELECT occurrence_id,live_session_id,'M2',learner_profile_id,attendance_status,attended_seconds
             FROM curriculum.live_session_learner_attendance''')
         self.allocation(settings={'teamsLiveSessionId': 'O1', 'teamsSessionNumber': 1})
         self.db.execute("UPDATE Learner.learner_progress_entries SET module_ref='M2'")
         self.assertEqual(self.rows(), [])
 
-    def test_register_date_is_used_instead_of_report_processing_time(self):
-        self.lecture(day='2026-09-30', start='2026-09-30T22:00:00Z', end='2026-10-01T00:00:00Z')
+    def test_occurrence_date_is_used_instead_of_report_processing_time(self):
+        self.lecture(start='2026-09-30T22:00:00Z', end='2026-10-01T00:00:00Z')
         item, = self.rows()
         self.assertEqual(item['reporting_month'], '2026-09')
         self.assertEqual(item['activity_date'], '2026-09-30')
@@ -173,13 +197,17 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
         self.allocation(payload={'original_source_ref': 'attendance:O1'}, deleted='2026-10-16')
         self.assertEqual(len(self.rows()), 1)
 
-    def test_uk_month_boundary_and_dst_use_real_elapsed_duration(self):
-        self.lecture('boundary', start='2026-09-30T23:30:00Z', end='2026-10-01T01:30:00Z', day=None)
-        self.lecture('dst', start='2026-10-25T00:30:00Z', end='2026-10-25T02:30:00Z', day='2026-10-25')
-        boundary, dst = self.rows()
-        self.assertEqual((boundary['activity_date'], boundary['reporting_month']), ('2026-10-01', '2026-10'))
-        self.assertEqual(dst['actual_hours'], 2)
-        self.assertEqual(dst['timestamp_label'], '01:30:00 - 02:30:00')
+    def test_uk_midnight_boundary_uses_london_calendar_date(self):
+        self.lecture('boundary', start='2026-09-30T23:30:00Z', end='2026-10-01T01:30:00Z')
+        item, = self.rows()
+        self.assertEqual((item['activity_date'], item['reporting_month']), ('2026-10-01', '2026-10'))
+
+    def test_dst_transitions_use_real_elapsed_duration(self):
+        self.lecture('spring', start='2026-03-29T00:30:00Z', end='2026-03-29T02:30:00Z')
+        self.lecture('autumn', start='2026-10-25T00:30:00Z', end='2026-10-25T02:30:00Z')
+        spring, autumn = self.rows()
+        self.assertEqual((spring['actual_hours'], spring['timestamp_label']), (2, '00:30:00 - 03:30:00'))
+        self.assertEqual((autumn['actual_hours'], autumn['timestamp_label']), (2, '01:30:00 - 02:30:00'))
 
     def test_existing_signed_month_gets_no_new_attendance(self):
         self.lecture()

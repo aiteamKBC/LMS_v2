@@ -127,6 +127,11 @@ def _module_progress_facts(activity, detail, current, progress, titles=None):
             'retainedComponents': len(retained_components)}
 
 
+def aggregate_module_progress(activity, detail, current, progress, titles=None):
+    """Roll up Student's catalogue/native cards using verified identities only."""
+    return _module_progress_facts(activity, detail, current, progress, titles)['modules']
+
+
 def _reusable_register(source, components, register, register_module_ids):
     """The caller's lecture register when it provably serves these components.
 
@@ -148,8 +153,9 @@ def _reusable_register(source, components, register, register_module_ids):
     return register
 
 
-def canonical_module_progress(source, profile, *, read_projection=None, register=None, register_module_ids=None):
-    """The single final calculation called by both HTTP consumers.
+def canonical_module_facts(source, profile, *, read_projection=None, as_of=None,
+                           register=None, register_module_ids=None):
+    """The shared calculation plus private metadata needed by Review targets.
 
     ``register`` is an already-built ``lecture_register`` for this ``source``,
     and ``register_module_ids`` the module scope it was built for. Both are
@@ -196,15 +202,22 @@ def canonical_module_progress(source, profile, *, read_projection=None, register
                               else 'module_credits_register_built'):
         credits = read_live_credits(source, components=detail['components'],
                                     **({'register': reusable} if reusable is not None else {}))
+    if as_of is not None:
+        from .progress_cutoff import records_as_of
+        credits = records_as_of(credits, as_of)
     progress = [*progress, *({'kind': 'component', 'passed': None,
                             'component_ref': row['componentId'], 'submitted_at': row['submittedAt']}
                            for row in credits)]
     return _module_progress_facts(activity, detail, current, progress, titles)
 
 
-def canonical_module_progress(source, profile, *, read_projection=None):
+def canonical_module_progress(source, profile, *, read_projection=None,
+                              register=None, register_module_ids=None):
     """Keep the existing Dashboard/Coach response and counting rule unchanged."""
-    return canonical_module_facts(source, profile, read_projection=read_projection)['modules']
+    return canonical_module_facts(
+        source, profile, read_projection=read_projection,
+        register=register, register_module_ids=register_module_ids,
+    )['modules']
 
 
 def compact_module_progress(rows):

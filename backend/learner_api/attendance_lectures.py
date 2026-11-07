@@ -812,7 +812,7 @@ def read_native_components(source, module_refs=None, *, monthly=False):
         description = "''::text" if monthly else 'c.description'
         mappings = "'[]'::jsonb" if monthly else component_ksb_mappings_sql('c')
         mapped_codes = "NULL::jsonb" if monthly else component_ksb_codes_sql('c')
-        cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.type,c.title,{description} AS description,
+        cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,w.title AS week_title,c.type,c.title,{description} AS description,
             jsonb_build_object(
                 'teamsOccurrenceId',c.settings_json->'teamsOccurrenceId',
                 'teamsLiveSessionId',c.settings_json->'teamsLiveSessionId',
