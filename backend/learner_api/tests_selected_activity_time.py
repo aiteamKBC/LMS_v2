@@ -224,6 +224,21 @@ class SelectedActivityTimeTests(SimpleTestCase):
                         self.assertEqual(history[0]['claimedSeconds'], 3600)
                         save.assert_called_once()
 
+    def test_first_live_reflection_uses_server_attendance_for_both_learner_types(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for mode, expected in (('correct', 1800), ('add', 9000), ('retry', 7200)):
+                with self.subTest(kind=kind, mode=mode), patch(
+                    'learner_api.activity_time_history.attendance_baseline', return_value=7200
+                ) as baseline:
+                    response, save, _ = self.submit(kind=kind, component_type='live_session',
+                        selected=1800, decision=mode, previous=7200)
+                    self.assertEqual(response.status_code, 200, response.content)
+                    record = json.loads(response.content)['record']
+                    self.assertEqual(record['countedSeconds'], expected)
+                    self.assertEqual(record['claimedSeconds'], 1800)
+                    save.assert_called_once()
+                    baseline.assert_called_once()
+
     def test_addition_above_eight_hours_cannot_save_and_a_smaller_retry_can(self):
         for media in ('video', 'component'):
             history = [{'kind': media, 'componentId': 'COMP-TIME', 'claimedSeconds': 21600,
