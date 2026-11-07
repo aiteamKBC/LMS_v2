@@ -79,7 +79,7 @@ def save_review(snapshot, *, expected, request_id, actor):
         # Take this only from the stored record, never from a caller's snapshot.
         saved.pop('pdfLayoutVersion', None)
         if not current:
-            saved['pdfLayoutVersion'] = 2
+            saved['pdfLayoutVersion'] = 3
         elif 'pdfLayoutVersion' in _payload(current):
             saved['pdfLayoutVersion'] = _payload(current)['pdfLayoutVersion']
         if 'attachments' in snapshot['form']:
