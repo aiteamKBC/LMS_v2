@@ -140,11 +140,13 @@ FULL_WATCH_SLACK_RATIO = 0.02
 
 def fully_watched_occurrences(kind, learner_id, occurrence_ids):
     """Occurrences whose every recording the learner can play was watched to the end."""
-    from .session_bunny_policy import bunny_recording
+    from .session_bunny_policy import bunny_recording, recording_uses_bunny
     ids = sorted({str(value) for value in occurrence_ids if value})
     if not ids:
         return set()
-    artifacts = read('''SELECT a.*, r.status AS archive_status FROM curriculum.live_session_artifacts a
+    artifacts = read('''SELECT a.*, r.status AS archive_status,o.scheduled_start
+        FROM curriculum.live_session_artifacts a
+        JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
         LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
         WHERE a.occurrence_id = ANY(%s)''', [ids])
     by_occurrence = {}
@@ -165,13 +167,20 @@ def fully_watched_occurrences(kind, learner_id, occurrence_ids):
     complete = set()
     for occurrence_id, rows in by_occurrence.items():
         hidden = hidden_artifact_ids(rows)
-        # Only recordings the learner can actually play (archived and not hidden) are required.
-        copies = {}
+        aliases = {}
         for row in rows:
-            bunny = bunny_recording(row.get('metadata'))
-            state = bunny.get('state') if bunny else row.get('archive_status')
-            if row['artifact_type'] == 'recording' and state == 'ready' and row['id'] not in hidden:
-                copies.setdefault(_recording_identity(row), []).append(row['id'])
+            if row['artifact_type'] == 'recording' and row['id'] not in hidden:
+                aliases.setdefault(_recording_identity(row), []).append(row)
+        # Choose the provider before readiness: an Azure alias cannot make a
+        # pending Bunny recording playable. Keep watch evidence on either id.
+        copies = {}
+        for identity, group in aliases.items():
+            uses_bunny = any(bunny_recording(row.get('metadata')) or recording_uses_bunny(row, row)
+                             for row in group)
+            ready = any((bunny_recording(row.get('metadata')).get('state') if uses_bunny
+                         else row.get('archive_status')) == 'ready' for row in group)
+            if ready:
+                copies[identity] = [row['id'] for row in group]
         # Teams can return one recording twice under different ids: watching either copy counts.
         if copies and all(any(watched_to_end(artifact_id) for artifact_id in ids) for ids in copies.values()):
             complete.add(occurrence_id)

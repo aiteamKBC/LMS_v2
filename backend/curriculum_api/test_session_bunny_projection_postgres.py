@@ -115,3 +115,18 @@ class SessionBunnyProjectionTests(TestCase):
             response = stored_content(RequestFactory().get('/recording/'), 'BUNNY-S', 'BUNNY-A')
         self.assertEqual(response.status_code, 409)
         azure.assert_not_called()
+
+    def test_watch_credit_reads_the_actual_lecture_date_before_using_archive_readiness(self):
+        from . import recording_views
+        self.archive('original/recording.mp4')
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE curriculum.live_session_artifacts SET metadata='{}'::jsonb WHERE id='BUNNY-A'")
+        original_read = recording_views.read
+
+        def read(sql, params=()):
+            if 'live_session_recording_views' in sql:
+                return [{'artifact_id': 'BUNNY-A', 'watched_seconds': 600, 'duration_seconds': 600}]
+            return original_read(sql, params)
+
+        with patch.object(recording_views, 'read', side_effect=read):
+            self.assertEqual(recording_views.fully_watched_occurrences('commercial', 101, ['BUNNY-O']), set())
