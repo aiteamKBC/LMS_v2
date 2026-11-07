@@ -16,6 +16,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
@@ -54,18 +55,18 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
         ORDER BY m.title''',[ids])
     found = rows(cur)
     modules = {r['id']:plan_module({**r,'weeks_number':None}) for r in found}
-    cur.execute('''WITH live_counts AS (
+    cur.execute(f'''WITH live_counts AS (
         SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
         FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
-          AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>'')
+          AND {visible_child_sql('c')}
         GROUP BY c.module_catalogue_id,c.week_id
     ) SELECT w.id,w.module_catalogue_id,w.week_number,w.title,w.display_order,
         coalesce(live_counts.live_session_count,0) AS live_session_count
         FROM curriculum.weeks w LEFT JOIN live_counts
           ON live_counts.module_catalogue_id=w.module_catalogue_id AND live_counts.week_id=w.id
         WHERE w.module_catalogue_id=ANY(%s)
-          AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>'')
+          AND {visible_week_sql('w')}
         ORDER BY w.display_order,w.week_number,w.id''',[ids,ids])
     weeks = rows(cur)
     for week in weeks:
@@ -690,7 +691,6 @@ def read_module(source, kind, owner, subject_id):
                 candidate_ids = [ident for ident, placement in continuation_dates.items()
                                  if teaching_date(placement) > cutoff['afterDate']]
                 if candidate_ids:
-                    from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
                     cur.execute(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
                         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
                         WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)

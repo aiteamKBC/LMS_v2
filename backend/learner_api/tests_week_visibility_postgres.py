@@ -1,6 +1,6 @@
 """The shared deleted-row rule against real rows (PostgreSQL only).
 
-Kept apart from ``tests_week_visibility`` so that module stays database-free:
+Kept apart from ``test_week_visibility_no_db`` so that module stays database-free:
 any suite that asks for a database cannot build one on sqlite.
 
 The fixture mirrors the AI in Marketing incident: a running module still holds
@@ -8,7 +8,10 @@ a set of weeks and components from an earlier archive, stamped with its own id,
 sharing week numbers with the live set and sorting first by id.
 """
 import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest import skipUnless
+from unittest.mock import patch
 
 from django.conf import settings
 from django.db import connections
@@ -156,6 +159,69 @@ class VisibleWeekPostgresTests(IncidentFixture, TestCase):
 
         resolved = _resolve_week_ids([{'module': self.LIVE_MOD, 'week': 'Introduction'}])
         self.assertEqual(resolved, {(self.LIVE_MOD, 'Introduction'): 'WEEK-B-LIVE-1'})
+
+    def _teaching_lectures(self):
+        with connections[self.ALIAS].cursor() as cur:
+            cur.execute("UPDATE curriculum.weeks SET title='Week 1' WHERE id='WEEK-B-LIVE-1'")
+            cur.execute("""UPDATE curriculum.components SET type='live_session',
+                settings_json='{"sessionDate":"2026-11-09"}'::jsonb
+                WHERE module_catalogue_id=ANY(%s)""",
+                [[self.LIVE_MOD, self.ARCHIVED_MOD, self.PROGRAMME_MOD]])
+
+    def test_training_keeps_live_weeks_and_exact_archived_history(self):
+        from learner_api import dashboard_training
+
+        self._teaching_lectures()
+        with connections[self.ALIAS].cursor() as cur, \
+             patch.object(dashboard_training.schedule, 'attach_curriculum_slots') as slots:
+            modules = dashboard_training.module_rows(cur, [self.LIVE_MOD, self.ARCHIVED_MOD, self.PROGRAMME_MOD])
+        weeks = slots.call_args.args[3]
+        self.assertEqual({value['id'] for value in weeks.values()}, {
+            'WEEK-B-LIVE-1', 'WEEK-B-LIVE-2', 'WEEK-D-HIST-1', 'WEEK-D-HIST-2', 'WEEK-E-HIST-1'})
+        for module_id in (self.LIVE_MOD, self.ARCHIVED_MOD, self.PROGRAMME_MOD):
+            self.assertEqual(modules[module_id]['educational_session_count'], 1)
+
+    def test_my_learning_counts_visible_lectures_and_retains_programme_history(self):
+        from learner_api.my_learning import catalogue_module_rows
+
+        self._teaching_lectures()
+        metadata = {}
+        with connections[self.ALIAS].cursor() as cur, \
+             patch('learner_api.subject_origins.imported_course_links', return_value={}):
+            cur.execute('SELECT count(*) FROM curriculum.components WHERE deleted_at IS NOT NULL')
+            historical_count = cur.fetchone()[0]
+            modules = catalogue_module_rows(cur, [self.LIVE_MOD, self.PROGRAMME_MOD], identity_metadata=metadata)
+            cur.execute('SELECT count(*) FROM curriculum.components WHERE deleted_at IS NOT NULL')
+            self.assertEqual(cur.fetchone()[0], historical_count)
+        self.assertEqual({row[0] for row in metadata['weeks']}, {
+            'WEEK-B-LIVE-1', 'WEEK-B-LIVE-2', 'WEEK-E-HIST-1'})
+        self.assertEqual(modules[self.LIVE_MOD]['educational_session_count'], 1)
+        self.assertEqual(modules[self.PROGRAMME_MOD]['educational_session_count'], 1)
+
+    def test_header_does_not_offer_weeks_left_by_an_earlier_archive(self):
+        from learner_api import dashboard_header
+
+        with connections[self.ALIAS].cursor() as cur:
+            self._module(cur, 'MOD-WV-GHOST-ONLY')
+            self._week(cur, 'WEEK-GHOST-ONLY', 'MOD-WV-GHOST-ONLY', 1, 'Ghost', EARLIER, 'MOD-WV-GHOST-ONLY')
+        ids = [self.LIVE_MOD, self.ARCHIVED_MOD, 'MOD-WV-GHOST-ONLY']
+        with patch.object(dashboard_header, '_effective_plan_ids', return_value=ids), \
+             patch.object(dashboard_header.canonical_learning, 'curriculum_module_ids_for', return_value=[]):
+            _, modules = dashboard_header.dashboard_modules(SimpleNamespace(), {}, include_coach=False)
+        counts = {row['id']: row['week_count'] for row in modules}
+        self.assertTrue(counts[self.LIVE_MOD])
+        self.assertTrue(counts[self.ARCHIVED_MOD])
+        self.assertFalse(counts['MOD-WV-GHOST-ONLY'])
+
+    def test_header_lecture_link_uses_the_live_activity_instead_of_a_ghost(self):
+        from learner_api.dashboard_header import lecture_href
+
+        self._teaching_lectures()
+        sessions = [{'id': 'synthetic-session', 'moduleId': self.LIVE_MOD,
+                     'status': 'scheduled', 'start': '2026-11-09T12:00:00+00:00'}]
+        with connections[self.ALIAS].cursor() as cur:
+            href = lecture_href(cur, sessions, 'commercial', 101, datetime(2026, 11, 8, tzinfo=timezone.utc))
+        self.assertIn('/COMP-B-LIVE-1?', href)
 
 
 @skipUnless(ENROLMENT_IS_POSTGRES, 'needs PostgreSQL (interval arithmetic, curriculum schema)')
