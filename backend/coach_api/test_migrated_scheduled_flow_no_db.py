@@ -204,7 +204,7 @@ class ScheduledContinuationTests(SimpleTestCase):
         self.saved.save.assert_not_called()
 
     def test_unsupported_local_states_cannot_submit_or_bypass_frozen_answers(self):
-        for status in ("not-scheduled", "awaiting-signature", "completed"):
+        for status in ("awaiting-signature", "completed"):
             with self.subTest(status=status):
                 self.saved.status = status
                 with self.assertRaises(ValueError):
@@ -213,6 +213,31 @@ class ScheduledContinuationTests(SimpleTestCase):
                 if status != "not-scheduled":
                     self.assertEqual(self._post(views.coach_review_instance_answers, answers=self.answers,
                         answerVersion=answer_version(self.saved)).status_code, 409)
+                self.saved.save.assert_not_called()
+
+    def test_unbooked_mcm_submits_without_creating_or_starting_a_meeting(self):
+        self.saved.status = 'not-scheduled'
+        self.calendar = None
+        source = deepcopy(self.cursor.fetchall.return_value)
+        snapshot = deepcopy(self.saved.template_snapshot)
+        response = self._submit()
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(self.saved.status, 'awaiting-signature')
+        self.assertEqual(self.saved.answers, self.answers)
+        self.assertEqual(self.saved.template_snapshot, snapshot)
+        self.assertEqual(self.cursor.fetchall.return_value, source)
+        self.calendar_updates.return_value.update.assert_not_called()
+        with self.assertRaisesRegex(ValueError, 'All required signatures'):
+            complete(self.saved)
+
+    def test_unbooked_other_families_still_cannot_submit(self):
+        for family in ('PR', 'PR_SKILLS_RADAR'):
+            with self.subTest(family=family):
+                self._new_overlay(family)
+                self.saved.status = 'not-scheduled'
+                with self.assertRaises(ValueError):
+                    submit(self.saved, self.answers)
+                self.assertIn(self._submit().status_code, (400, 409))
                 self.saved.save.assert_not_called()
 
     def test_source_completed_by_status_or_date_cannot_enter_scheduled_flow(self):

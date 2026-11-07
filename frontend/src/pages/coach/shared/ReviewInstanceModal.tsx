@@ -567,6 +567,7 @@ function ReviewInstanceContent({
   const advisorSignatureSaved = Boolean(definition && advisorSignature?.required && advisorSignature.signed);
   const requiredSignatures = definition ? Object.values(definition.signatures).filter(state => state.required) : [];
   const personalSupportForm = Boolean(definition?.migratedForm && definition.template.reviewTypeCode === 'aptem_psp');
+  const isMonthlyCoachingMeeting = ['mcm', 'aptem_mcm'].includes(definition?.template.reviewTypeCode || '');
   const signatureFreePersonalSupport = personalSupportForm && requiredSignatures.length === 0;
   const allRequiredSignaturesSaved = requiredSignatures.length > 0 && requiredSignatures.every(state => state.signed);
   const waitingForOtherSignatures = Boolean(
@@ -921,6 +922,17 @@ function ReviewInstanceContent({
   const hasPreviousOccurrence = previousOccurrenceNumber !== null && previousOccurrenceNumber >= 1;
   const hasImportedPreviousContext = definition?.source === 'aptem'
     && (definition.migratedForm || ['aptem_mcm', 'aptem_progress_review'].includes(definition.template.reviewTypeCode || ''));
+  const inlineCompletionAction = pageMode && isMonthlyCoachingMeeting
+    && Boolean(definition?.sections.some(section => section.enabled));
+  const canSubmitReview = !formReadOnly && !personalSupportForm
+    && (!definition?.migratedForm || definition.localStatus === 'scheduled' || definition.localStatus === 'in-progress'
+      || (isMonthlyCoachingMeeting && definition.localStatus === 'not-scheduled'));
+  const completionAction = canSubmitReview ? (
+    <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
+      <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
+      {saving ? 'Saving...' : isMonthlyCoachingMeeting ? 'Complete review' : definition?.migratedForm ? 'Submit Review' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
+    </button>
+  ) : null;
 
   if (expandedSummaryFieldId && meetingSummaryField) {
     return (
@@ -1148,7 +1160,7 @@ function ReviewInstanceContent({
             {personalSupportForm && !formReadOnly ? (
               <p className="text-sm text-primary-800">{signatureFreePersonalSupport ? 'Save your answers to complete this Personal Support Plan once all required questions are answered.' : 'Save all required answers to send this Personal Support Plan for the selected signatures.'}</p>
             ) : null}
-            {definition.migratedForm && !personalSupportForm && definition.localStatus === 'not-scheduled' && !isViewingAsCoach ? (
+            {definition.migratedForm && !personalSupportForm && !isMonthlyCoachingMeeting && definition.localStatus === 'not-scheduled' && !isViewingAsCoach ? (
               <p className="text-sm text-amber-800">This form can be saved as a draft. Starting the review requires a scheduled state.</p>
             ) : null}
             {definition.migratedForm && definition.fieldWarnings?.length ? (
@@ -1337,7 +1349,7 @@ function ReviewInstanceContent({
               </section>
             ) : null}
 
-            {definition.instance.status === 'scheduled' && !definition.migratedForm ? (
+            {definition.instance.status === 'scheduled' && !definition.migratedForm && !isMonthlyCoachingMeeting ? (
               <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-[13px] font-bold text-amber-900">Not yet in progress</p>
@@ -1512,6 +1524,7 @@ function ReviewInstanceContent({
                 ? <ImportedValue value={context.value} label={field.title} fieldType={field.fieldType} />
                 : undefined}
               variant={pageMode ? 'steps' : 'accordion'}
+              stepActions={inlineCompletionAction ? completionAction : undefined}
             />
             {advisorSignaturePending && !isViewingAsCoach ? (
               <section aria-label="Review signature step" tabIndex={-1} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
@@ -1606,10 +1619,7 @@ function ReviewInstanceContent({
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>{personalSupportForm ? missingFieldIds.size ? 'Save draft' : signatureFreePersonalSupport ? 'Save & complete' : 'Save & send for signatures' : 'Save draft'}
           </button>
-          {!personalSupportForm && (!definition?.migratedForm || definition.localStatus === 'scheduled' || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
-            <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
-            {saving ? 'Saving...' : definition?.migratedForm ? 'Submit Review' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
-          </button> : null}
+          {!inlineCompletionAction ? completionAction : null}
         </div> : null}
       </footer>
     </>

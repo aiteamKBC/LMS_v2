@@ -86,10 +86,12 @@ def submit(overlay, answers):
                 raise ValueError("Required review fields are unanswered.")
             overlay.save(update_fields=["answers", "updated_at"])
         return
-    if overlay.status not in SCHEDULED_WORK_STATUSES:
+    family = (overlay.template_snapshot.get("templateSource") or {}).get("family") or overlay.migrated_template.review_family
+    # MCM completion records the review independently of calendar booking.
+    # Other review families retain their existing scheduled-work gate.
+    if overlay.status not in SCHEDULED_WORK_STATUSES and not (family == "MCM" and overlay.status == "not-scheduled"):
         raise ValueError("Only a scheduled or in-progress migrated review can be submitted.")
     validate_answers(overlay.template_snapshot, answers, completing=True)
-    family = (overlay.template_snapshot.get("templateSource") or {}).get("family") or overlay.migrated_template.review_family
     overlay.signature_requirements = requirements_for_overlay(overlay, family)
     overlay.answers = preserve_inactive_answers(overlay.template_snapshot, overlay.answers or {}, answers)
     overlay.status = ImportedReviewInstance.STATUS_AWAITING_SIGNATURE
