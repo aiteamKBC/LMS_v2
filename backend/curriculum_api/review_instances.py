@@ -2414,8 +2414,9 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
     Curriculum template requires any signature) or straight to Completed (if
     it requires none). Returns (ok, errors).
 
-    A scheduled review requiring signatures can be submitted without a
-    confirmed attendance transition. Reviews without signatures still require
+    Monthly Coaching Meetings do not require a booking or attendance transition.
+    Other scheduled reviews requiring signatures can be submitted without a
+    confirmed attendance transition; without signatures they still require
     in-progress. The DB write is guarded by the locked current status, so a
     concurrent completion attempt or an out-of-order request
     can't silently move the same instance twice or race a legitimate
@@ -2424,7 +2425,8 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
     invalid status transition, so callers can tell the two apart.
     """
     current_status = instance_row.get('status')
-    if current_status not in (STATUS_SCHEDULED, STATUS_IN_PROGRESS):
+    editable_statuses = (STATUS_NOT_SCHEDULED, STATUS_SCHEDULED, STATUS_IN_PROGRESS)
+    if current_status not in editable_statuses:
         return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
 
     with transaction.atomic():
@@ -2435,12 +2437,21 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
         if not locked:
             return False, {'status': ['Review not found.']}
         current_status = locked.get('status')
-        if current_status not in (STATUS_SCHEDULED, STATUS_IN_PROGRESS):
+        if current_status not in editable_statuses:
             return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
-        if current_status == STATUS_SCHEDULED:
+        if current_status != STATUS_IN_PROGRESS:
+            snapshot = curriculum_views.as_json_value(locked.get('definition_snapshot'), {})
+            type_code = snapshot.get('reviewTypeCode')
+            if not type_code and locked.get('review_template_id'):
+                template = reviews.get_review_template_row(locked['review_template_id'])
+                type_row = review_types.get_review_type((template or {}).get('review_type_id'))
+                type_code = (type_row or {}).get('code')
+            is_mcm = type_code == review_types.REVIEW_TYPE_CODE_MCM
+            if current_status == STATUS_NOT_SCHEDULED and not is_mcm:
+                return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
             locked = _refresh_locked_editable_definition_snapshot(locked, actor=actor)
             snapshot = curriculum_views.as_json_value(locked.get('definition_snapshot'), {})
-            if not required_signature_roles(snapshot.get('signatures', {})):
+            if not is_mcm and not required_signature_roles(snapshot.get('signatures', {})):
                 return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
         if answers is not None:
             locked = _save_review_instance_answers_locked(locked, answers, actor=actor)
@@ -2463,7 +2474,7 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
         else:
             updated = curriculum_views.update_rows(
                 REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
-                [locked.get('id'), STATUS_IN_PROGRESS],
+                [locked.get('id'), current_status],
                 {
                     'status': STATUS_COMPLETED, 'completed_at': datetime.utcnow(),
                     'updated_by': actor, 'updated_at': datetime.utcnow(),
