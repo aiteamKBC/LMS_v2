@@ -280,6 +280,7 @@ class CanonicalHoursTests(SimpleTestCase):
         learner = {'id': 201, 'name': 'Synthetic learner', 'programme': 'Programme', '_canonical_profile': self.owner}
         with patch.object(canonical, 'query', side_effect=self.read), \
              patch.object(monthly_logs, 'query', side_effect=[[], []]), \
+             patch.object(monthly_logs.logs, 'attendance_rows', return_value=[]), \
              patch.object(canonical, 'targets_for', return_value={'2026-10': 2}), \
              patch.object(monthly_logs.timezone, 'localdate', return_value=date(2026, 10, 26)):
             result = monthly_logs.project_year(learner, 2026)

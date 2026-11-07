@@ -18,6 +18,7 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
         self.learner = {'id': 7, 'name': 'Synthetic learner', 'programme': 'Programme',
                         '_canonical_profile': {'id': 70, 'enrolment_id': 7, 'programme_id': 'P'}}
         self.pending_read = self.enterContext(patch.object(logs, 'pending_hour_records', return_value={70: []}))
+        self.attendance_read = self.enterContext(patch.object(existing, 'attendance_rows', return_value=[]))
 
     def project(self, count):
         activities = [{'month': f'2026-{index:02}', 'activities': 2, 'accepted_hours': 1.5}

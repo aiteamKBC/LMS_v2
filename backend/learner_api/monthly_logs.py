@@ -23,6 +23,7 @@ from login.permissions import audit_admin_learner_action, login_required
 from old_otjh import repository as old_repo, service as old, storage
 from old_otjh.views import public_detail, public_state
 from . import monthly_log_sources as sources
+from . import monthly_log_attendance
 from . import monthly_log_history as history
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view
@@ -312,6 +313,11 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
             'can_unlock': False}
 
 
+def attendance_rows(learner):
+    owner = learner.get('_canonical_profile') or learner.get('_profile')
+    return monthly_log_attendance.read_rows(owner, now=timezone.now()) if owner else []
+
+
 def current_months(learner, signs=(), *, include_open=False, include_future=False, ensure_month=None):
     grouped = defaultdict(list)
     open_month = timezone.localdate().strftime('%Y-%m')
@@ -319,7 +325,7 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
         return month < open_month or (include_open and month == open_month) or (include_future and month > open_month)
 
     if canonical.enabled(learner['id']):
-        for item in canonical.activity_rows(learner['id']):
+        for item in [*canonical.activity_rows(learner['id']), *attendance_rows(learner)]:
             month = item.get('reporting_month')
             if month and allowed_month(month):
                 grouped[month].append(item)
@@ -364,6 +370,7 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
     if canonical_owner is not None:
         retained = {'months': []}
         records = canonical.entries_for(canonical_owner)
+        attendance = attendance_rows(learner)
         signs = canonical.signatures_for(canonical_owner)
         targets = canonical.targets_for(canonical_owner)
         grouped = defaultdict(list)
@@ -374,7 +381,7 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
                 or (include_open and month == open_month)
                 or (include_future and month > open_month)
             )
-        for item in canonical.rows_for(canonical_owner, records):
+        for item in [*canonical.rows_for(canonical_owner, records), *attendance]:
             month = item.get('reporting_month')
             if not month:
                 unallocated.append({key: item.get(key) for key in
@@ -392,7 +399,8 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
                   for month, rows in grouped.items()]
         programme_metrics = canonical.metrics_from_records(records, targets)['otjh']
         training_plan_totals = {
-            'accepted_hours': programme_metrics.get('completed_actual', programme_metrics.get('actual')),
+            'accepted_hours': programme_metrics.get('completed_actual', programme_metrics.get('actual'))
+                + sum(item['actual_hours'] for item in attendance),
             'planned_hours': programme_metrics['planned'],
         }
     else:
@@ -613,8 +621,18 @@ def content_response(learner, month, row_id):
     learner_id = learner['id']
     if canonical.enabled(learner_id):
         valid_month(month)
-        row, record = canonical.content_row(learner['_profile'], month, row_id)
-        payload = canonical.content(row, learner['_profile'], record)
+        try:
+            row, record = canonical.content_row(learner['_profile'], month, row_id)
+        except old.ServiceError as exc:
+            if exc.code != 'not_found':
+                raise
+            row = next((item for item in attendance_rows(learner)
+                        if item['id'] == row_id and item['reporting_month'] == month), None)
+            if row is None:
+                raise
+            payload = sources.activity_content(learner, row)
+        else:
+            payload = canonical.content(row, learner['_profile'], record)
         for part in payload['parts']:
             if part.get('url'):
                 part['url'] = f'/learner_api/monthly-logs/{learner_id}/{month}/activities/{row_id}/materials/{part["id"]}/'

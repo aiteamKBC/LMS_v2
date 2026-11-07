@@ -68,6 +68,11 @@ def project_year(learner, year):
             row['activities'] += 1
         if record.get('accepted') is True:
             row['accepted_hours'] = float(row['accepted_hours']) + canonical.recorded_seconds(record) / 3600
+    for item in logs.attendance_rows(learner):
+        month = item['reporting_month']
+        row = by_month.setdefault(month, {'month': month, 'activities': 0, 'accepted_hours': 0})
+        row['activities'] += 1
+        row['accepted_hours'] = float(row['accepted_hours']) + item['actual_hours']
     activities = list(by_month.values())
     targets = canonical.targets_for(owner)
     signs = query('''SELECT report_month AS month,
