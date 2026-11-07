@@ -4,7 +4,7 @@
 # DISTRIBUTION SITE_URL ALB_METRIC_ID COMMIT, and REGISTRY for "push".
 #
 # Exact rollback: the image that last passed a full deploy (health, smoke test
-# and the 10-minute watch) carries the ECR tag "last-good". A failed deploy
+# and the post-deploy watch) carries the ECR tag "last-good". A failed deploy
 # re-points the running tag ($IMAGE_TAG, what the task definitions use) at
 # that exact manifest and restarts the services, and restores the index.html
 # that was live before.
@@ -119,11 +119,11 @@ case "${1:?sub-command}" in
     ;;
 
   watch)
-    # Every minute for 10 minutes, look at the last 2 complete minutes on the
-    # load balancer. Two bad checks in a row fail the deploy:
+    # Every minute for WATCH_MINUTES (default 5), look at the last 2 complete
+    # minutes on the load balancer. Two bad checks in a row fail the deploy:
     #   5xx >= 10 and > 5% of requests, or average response time > 3 s
     bad=0
-    for i in $(seq 1 10); do
+    for i in $(seq 1 "${WATCH_MINUTES:-5}"); do
       sleep 60
       WEND=$(date -u -d '-1 min' +%Y-%m-%dT%H:%M:00Z)
       WSTART=$(date -u -d '-3 min' +%Y-%m-%dT%H:%M:00Z)

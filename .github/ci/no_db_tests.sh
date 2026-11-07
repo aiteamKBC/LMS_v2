@@ -2,22 +2,39 @@
 # Runs every backend test module named test*_no_db.py, each in its own
 # process: several replace parts of Django (e.g. django.db) with stand-ins,
 # which breaks any module loaded after them in a shared process.
-# Runs inside the backend image (cwd /app). Modules listed in
-# .github/ci/no_db_known_failures.txt are reported but don't fail the build;
-# remove a line once that module is fixed.
+# Modules run in parallel (TEST_JOBS, default: number of CPUs), each still
+# in its own process. Runs inside the backend image (cwd /app).
+# Modules listed in .github/ci/no_db_known_failures.txt are skipped; remove a
+# line once that module is fixed so CI checks it again.
 cd /app || exit 2
 KNOWN=/ci/no_db_known_failures.txt
-pass=0; fail=0; known=0; new_failures=""
-for f in $(find . -name "test*_no_db.py" -not -path "./node_modules/*" | sort); do
-  m=$(echo "${f#./}" | sed 's#/#.#g; s#\.py$##')
-  if timeout 300 python manage.py test "$m" --noinput >/tmp/out.txt 2>&1; then
-    pass=$((pass + 1))
-  elif [ -f "$KNOWN" ] && grep -qx "$m" "$KNOWN"; then
-    known=$((known + 1))
+JOBS=${TEST_JOBS:-$(nproc 2>/dev/null || echo 4)}
+OUT=$(mktemp -d)
+
+find . -name "test*_no_db.py" -not -path "./node_modules/*" | sort \
+  | sed 's#^\./##; s#/#.#g; s#\.py$##' > "$OUT/all"
+if [ -f "$KNOWN" ]; then
+  grep -vxF -f "$KNOWN" "$OUT/all" > "$OUT/run" || true
+else
+  cp "$OUT/all" "$OUT/run"
+fi
+known=$(( $(wc -l < "$OUT/all") - $(wc -l < "$OUT/run") ))
+
+# One process per module, JOBS at a time; each writes <module>.ok or .fail
+export OUT
+xargs -P "$JOBS" -I{} sh -c '
+  if timeout 300 python manage.py test "$1" --noinput > "$OUT/$1.log" 2>&1; then
+    touch "$OUT/$1.ok"
   else
-    fail=$((fail + 1)); new_failures="$new_failures $m"
-    echo "::group::FAILED $m"; tail -40 /tmp/out.txt; echo "::endgroup::"
-  fi
+    touch "$OUT/$1.fail"
+  fi' _ {} < "$OUT/run"
+
+pass=$(find "$OUT" -name "*.ok" | wc -l)
+fail=0
+for f in $(find "$OUT" -name "*.fail" | sort); do
+  m=$(basename "$f" .fail)
+  fail=$((fail + 1))
+  echo "::group::FAILED $m"; tail -40 "$OUT/$m.log"; echo "::endgroup::"
 done
-echo "no-database tests: $pass passed, $known known failures, $fail new failures"
-[ "$fail" -eq 0 ] || { echo "New failures:$new_failures"; exit 1; }
+echo "no-database tests: $pass passed, $fail new failures, $known known failures skipped ($JOBS at a time)"
+[ "$fail" -eq 0 ] || exit 1

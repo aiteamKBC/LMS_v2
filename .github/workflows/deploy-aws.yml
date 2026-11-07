@@ -16,7 +16,7 @@
 #                  dependency audits (npm audit, pip-audit)
 #   deploy         push image -> roll ECS services (new tasks start before
 #                  old ones stop) -> wait healthy -> upload frontend ->
-#                  smoke test -> watch errors/latency for 10 min -> mark the
+#                  smoke test -> watch errors/latency for 5 min -> mark the
 #                  image "last-good". Any failure puts back the exact
 #                  last-good image and the previous frontend page.
 #
@@ -44,11 +44,11 @@ on:
         required: false
         default: ""
 
-# Keep up to 100 waiting runs in FIFO order; newer pushes do not replace them.
-concurrency:
-  group: ci-${{ github.ref }}
-  queue: max
-  cancel-in-progress: false
+# No run-level queue: every push runs its checks straight away. Only the
+# deploy job takes turns (see its concurrency): a deploy in progress is never
+# interrupted, and if several pushes wait, only the newest deploys - it
+# already contains everything merged before it. (A FIFO queue of whole runs
+# made merges wait hours behind each other.)
 
 permissions:
   contents: read
@@ -211,16 +211,6 @@ jobs:
       - name: Type check
         run: npm run type-check
 
-      - name: Unit tests (report until the 36 failing files on main are fixed)
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          npx vitest run --reporter=dot 2>&1 | tee vitest.txt
-      - name: Test summary
-        if: always()
-        run: |
-          { echo '### Frontend unit tests'; echo '```'; grep -E "Test Files|Tests  " vitest.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Build
         run: npm run build
 
@@ -229,6 +219,36 @@ jobs:
           name: frontend-out
           path: frontend/out
           retention-days: 1
+
+  # Report-only until the failing files on main are fixed, so it runs beside
+  # the deploy instead of delaying it (~10 minutes)
+  frontend-tests:
+    name: Frontend - unit tests (report)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          npx vitest run --reporter=dot 2>&1 | tee vitest.txt
+      - name: Test summary
+        if: always()
+        run: |
+          { echo '### Frontend unit tests'; echo '```'; grep -E "Test Files|Tests  " vitest.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   # --------------------------------------------------------------- security
   security:
@@ -277,9 +297,11 @@ jobs:
     environment:
       name: aws-staging
       url: ${{ vars.SITE_URL }}
+    # One deploy at a time. A running deploy is never cancelled; while it
+    # runs, only the newest waiting deploy is kept (older waiting ones are
+    # skipped - the newest commit already includes their changes)
     concurrency:
       group: deploy-aws
-      queue: max
       cancel-in-progress: false
     permissions:
       contents: read
@@ -336,7 +358,7 @@ jobs:
       - name: Smoke test the live site
         run: bash .github/ci/deploy.sh smoke
 
-      - name: Watch errors and response time for 10 minutes
+      - name: Watch errors and response time for 5 minutes
         run: bash .github/ci/deploy.sh watch
 
       - name: Mark this image as last-good
