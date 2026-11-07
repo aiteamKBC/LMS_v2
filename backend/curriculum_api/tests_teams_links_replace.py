@@ -1,7 +1,7 @@
 import json
 
 from curriculum_api import views
-from curriculum_api.tests import CurriculumPersistenceHarness
+from curriculum_api.tests import CurriculumPersistenceTransactionHarness
 
 
 OLD_LINK = 'https://teams.example/old'
@@ -9,17 +9,20 @@ NEW_LINK = 'https://teams.microsoft.com/l/meetup-join/new'
 SOURCE_LINK = 'https://teams.example/source-meeting'
 
 
-class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
+class TeamsLinksReplaceTests(CurriculumPersistenceTransactionHarness):
     """The Replace Teams links save: stored join links only, selected weeks only."""
 
     def setUp(self):
         super().setUp()
+        self.addCleanup(self.clean_source_series)
         response = self.post_json('/curriculum_api/curriculum/modules/', {
             'moduleType': 'authoring', 'title': 'Link replacement', 'weeks': 3, 'sessionsNumber': 3,
             'weekStructure': [{'weekNumber': index + 1, 'title': f'Week {index + 1}', 'components': []} for index in range(3)],
         })
         self.assertEqual(response.status_code, 201, response.content)
         self.module_id = response.json()['moduleCatalogueId']
+        self.fixture_module_ids = {self.module_id}
+        self.addCleanup(self.clean_shared_links)
         structure = views.get_authoring_structure_payload(self.module_id)
         live = {'liveSessionUrl': OLD_LINK, 'teamsMeetingUrl': OLD_LINK, 'teamsEventId': 'EVENT-1'}
         for week in structure['weekStructure']:
@@ -41,6 +44,19 @@ class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
 
     def component_row(self, component_id):
         return views.authoring_fetch_all(views.AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])[0]
+
+    def clean_source_series(self):
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute('DELETE FROM curriculum.session_result_jobs WHERE live_session_id=%s', ['SOURCE-SERIES'])
+        views.authoring_delete(views.LIVE_SESSIONS_TABLE, 'id = %s', ['SOURCE-SERIES'])
+
+    def clean_shared_links(self):
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute('DELETE FROM curriculum.module_teams_shares WHERE module_catalogue_id=ANY(%s) '
+                           'OR source_module_catalogue_id=ANY(%s)',
+                           [list(self.fixture_module_ids), list(self.fixture_module_ids)])
 
     def settings_of(self, component_id):
         return views.component_builder_settings(self.component_row(component_id))
@@ -65,8 +81,10 @@ class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
         self.assertEqual(replaced['liveSessionUrl'], NEW_LINK)
         self.assertEqual(replaced['teamsMeetingUrl'], NEW_LINK)
         self.assertEqual(replaced['liveSessionLinkOverride'], NEW_LINK)
-        # The meeting identity stays: only the link moved.
-        self.assertEqual(replaced['teamsEventId'], 'EVENT-1')
+        # Pasting another URL cannot retain the former meeting's identity.
+        # Historical occurrence/artifact rows are not deleted by this edit.
+        self.assertFalse(replaced.get('teamsEventId'))
+        self.assertEqual(replaced['teamsCalendarBinding'], 'unverified')
         self.assertEqual(self.component_row(self.live_ids[0])['live_sessions_link'], NEW_LINK)
         # The one-off meeting and the unselected week keep their own link.
         self.assertEqual(self.settings_of(self.live_ids[1])['liveSessionUrl'], OLD_LINK)
@@ -80,8 +98,8 @@ class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
         first_live = next(c for c in saved['weekStructure'][0]['components'] if c['type'] == 'live-session')
         self.assertEqual(first_live['settings']['liveSessionUrl'], NEW_LINK)
 
-    def test_pasting_a_tracked_meeting_into_a_new_live_session_links_its_saved_results(self):
-        """Evidence remains on its original series but is visible in this module."""
+    def test_a_single_pasted_link_does_not_switch_the_unselected_weeks_source_calendar(self):
+        """A module-wide alias must not be introduced by a per-week link edit."""
         source_id = self.make_source_module()
         views.ensure_live_session_tracking_tables()
         views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
@@ -105,10 +123,11 @@ class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
 
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['updatedComponentIds'], [self.live_ids[0]])
-        self.assertEqual(response.json()['recordingsSourceModuleId'], source_id)
+        self.assertEqual(response.json()['recordingsSourceModuleId'], '')
         target = views.authoring_module_exists(self.module_id)
-        self.assertEqual(target['teams_shared_source_module_id'], source_id)
-        # The new module is an alias, not a second owner of the Teams series.
+        self.assertFalse(target.get('teams_shared_source_module_id'))
+        self.assertEqual(self.settings_of(self.live_ids[2])['liveSessionUrl'], OLD_LINK)
+        # A per-week URL does not create another owner of the Teams series.
         self.assertEqual(
             views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'module_catalogue_id = %s', [self.module_id]),
             [],
@@ -141,6 +160,7 @@ class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
             'weekStructure': [{'weekNumber': index + 1, 'title': f'Week {index + 1}', 'components': []} for index in range(3)],
         })
         source_id = response.json()['moduleCatalogueId']
+        self.fixture_module_ids.add(source_id)
         structure = views.get_authoring_structure_payload(source_id)
         for week in structure['weekStructure']:
             week['components'] = [{'id': f"SRC-LIVE-{week['weekNumber']}", 'type': 'live-session', 'title': 'Live',
@@ -162,7 +182,9 @@ class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
         response = self.post_json(self.url, {'weekIds': [self.weeks[0]['id'], self.weeks[2]['id']], 'link': NEW_LINK})
 
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(response.json()['updatedComponentIds'], [self.live_ids[0], self.live_ids[2]])
+        # The endpoint returns a set of changed IDs; SQL row order is not a
+        # delivery-order contract. Both selected main cards must be present.
+        self.assertCountEqual(response.json()['updatedComponentIds'], [self.live_ids[0], self.live_ids[2]])
         after = views.get_authoring_structure_payload(self.module_id)
         links = [week['components'][0]['settings']['liveSessionUrl'] for week in after['weekStructure']]
         # Weeks 1 and 3 replaced; week 2 is the one-off meeting and keeps its own.

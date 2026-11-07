@@ -1,0 +1,5 @@
+[
+{"probe": "learner_normalized_email", "status": "exact", "result": [{"duplicate_groups": 0, "excess_rows": "0"}]},
+{"probe": "staff_normalized_email", "status": "exact", "result": [{"duplicate_groups": 5, "excess_rows": "6"}]},
+{"probe": "enrolment_normalized_email", "status": "exact", "result": [{"duplicate_groups": 0, "excess_rows": "0"}]}
+]

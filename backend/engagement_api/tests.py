@@ -91,7 +91,7 @@ class FeedbackValidationTests(SimpleTestCase):
                 occurrence, [feedback_delivery.Attendee('7', 'ATT-7')], attendance_finalized=True,
             )
 
-        delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY)
+        delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY, create_defaults=mock.ANY)
         self.assertIs(delivery_upsert.call_args.kwargs['defaults']['form'], form)
         pin_questions.assert_called_once_with(delivery, form)
         recipient_upsert.assert_called_once_with(delivery=delivery, learner_id='7', defaults=mock.ANY)
@@ -345,6 +345,22 @@ class FeedbackValidationTests(SimpleTestCase):
         response = feedback.csrf_token(RequestFactory().get('/engagement_api/feedback/csrf/'))
         self.assertEqual(response.status_code, 200)
         self.assertTrue(json.loads(response.content)['csrfToken'])
+
+    def test_forms_summary_counts_completed_responses_across_historical_versions(self):
+        current_form = SimpleNamespace(status='published')
+        completed_responses = mock.MagicMock()
+        completed_responses.count.return_value = 11
+        with (
+            mock.patch.object(feedback, 'sync_module_feedback'),
+            mock.patch.object(feedback, '_forms_queryset', return_value=[current_form]),
+            mock.patch.object(feedback, 'form_dict', return_value={'id': 20}),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=completed_responses) as response_filter,
+        ):
+            response = feedback.forms_collection.__wrapped__(RequestFactory().get('/'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['summary']['totalResponses'], 11)
+        response_filter.assert_called_once_with(status='completed')
 
     def test_recipient_rows_show_attendance_learner_lecture_and_response(self):
         form = SimpleNamespace(id=19, form_type='post_lecture', template_key='template-1')

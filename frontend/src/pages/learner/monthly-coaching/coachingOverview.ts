@@ -1,6 +1,7 @@
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { meetingJoinUrl } from '../reviews/featuredSession';
+import { reviewAttendanceResult } from '@/lib/reviewAttendance';
 
 export type CoachingGroup = 'needs-action' | 'upcoming' | 'past';
 export type CoachingAction = 'sign' | 'join' | 'prepare' | 'schedule' | 'reschedule' | 'view';
@@ -116,17 +117,23 @@ export function coachingSessionState(
       ? result('past', 'Signature pending', 'Open the summary to check which signatures are still needed.', 'view', 'View summary')
       : result('past', 'Summary available', 'You can read the saved meeting summary.', 'view', 'View summary');
   }
-  // Confirmation takes precedence over historical absence/missed flags.
-  if (attendance?.attendanceConfirmed) {
+  const outcome = reviewAttendanceResult(session, attendance);
+  if (outcome === 'attended') {
     return result('past', 'Attended', 'Your attendance is recorded. Your coach will update the meeting summary.', 'view', 'View meeting');
   }
-  if (attendance?.absenceReported || attendance?.missed) {
+  if (outcome === 'pending' || outcome === 'unavailable') {
+    return result(date && date < today ? 'past' : 'upcoming',
+      outcome === 'pending' ? 'Awaiting attendance report' : 'Attendance unavailable',
+      outcome === 'pending' ? 'The meeting has ended. Waiting for its attendance report.' : 'Attendance could not be checked. Please try again later.',
+      'view', 'View meeting');
+  }
+  if (outcome === 'missed') {
     if (status === 'in-progress') {
-      return result(date && date < today ? 'past' : 'upcoming', attendance.absenceReported ? 'Absence reported' : 'Meeting missed',
+      return result(date && date < today ? 'past' : 'upcoming', attendance?.absenceReported ? 'Absence reported' : 'Meeting missed',
         'Contact your coach about the next steps for this meeting.', 'view', 'View meeting');
     }
-    return result('needs-action', attendance.absenceReported ? 'Absence reported' : 'Meeting missed',
-      attendance.absenceReported ? 'Your absence is recorded. Choose another time with your coach.' : 'Choose another time to catch up with your coach.',
+    return result('needs-action', attendance?.absenceReported ? 'Absence reported' : 'Meeting missed',
+      attendance?.absenceReported ? 'Your absence is recorded. Choose another time with your coach.' : 'Choose another time to catch up with your coach.',
       'reschedule', 'Reschedule meeting');
   }
   if (bookingStatus === 'failed') {

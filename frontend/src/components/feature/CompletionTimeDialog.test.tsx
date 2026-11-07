@@ -4,7 +4,7 @@ import { CompletionTimeDialog } from './CompletionTimeDialog';
 
 afterEach(cleanup);
 
-it('limits clock choices and submits both inclusive boundaries without changing the date', () => {
+it('offers 08:00 through 17:00 and distinguishes allowed hours from the closing-time warning', () => {
   const onSubmit = vi.fn();
   render(<CompletionTimeDialog reason="outside_working_hours" holidayName="" holidays={[]}
     submitting={false} serverError="" onSubmit={onSubmit} onClose={vi.fn()} />);
@@ -12,22 +12,29 @@ it('limits clock choices and submits both inclusive boundaries without changing 
   const minutes = screen.getByLabelText('Completion minutes');
   const submit = screen.getByRole('button', { name: 'Final Submit' });
   expect(within(hours).getAllByRole('option').map(option => (option as HTMLOptionElement).value))
-    .toEqual(['', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19']);
+    .toEqual(['', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17']);
+  expect(screen.getByText(/Official working hours are Monday to Friday, from 08:00 to before 17:00 UK time/))
+    .toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-01-15' } });
-  fireEvent.change(hours, { target: { value: '07' } });
+  fireEvent.change(hours, { target: { value: '08' } });
   expect(submit).toBeDisabled();
   fireEvent.change(minutes, { target: { value: '00' } });
   fireEvent.click(submit);
-  expect(onSubmit).toHaveBeenLastCalledWith('2026-01-15T07:00:00');
-  fireEvent.change(hours, { target: { value: '18' } });
+  expect(onSubmit).toHaveBeenLastCalledWith('2026-01-15T08:00:00');
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  fireEvent.change(hours, { target: { value: '16' } });
   fireEvent.change(minutes, { target: { value: '59' } });
   fireEvent.click(submit);
-  expect(onSubmit).toHaveBeenLastCalledWith('2026-01-15T18:59:00');
-  fireEvent.change(hours, { target: { value: '19' } });
+  expect(onSubmit).toHaveBeenLastCalledWith('2026-01-15T16:59:00');
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  fireEvent.change(hours, { target: { value: '17' } });
   expect(minutes).toHaveValue('00');
   expect(within(minutes).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['', '00']);
   fireEvent.click(submit);
-  expect(onSubmit).toHaveBeenLastCalledWith('2026-01-15T19:00:00');
+  expect(onSubmit).toHaveBeenLastCalledWith('2026-01-15T17:00:00');
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Allowed working hours are Monday to Friday, from 08:00 to before 17:00 UK time.',
+  );
   fireEvent.change(hours, { target: { value: '22' } });
   expect(submit).toBeDisabled();
   fireEvent.click(submit);

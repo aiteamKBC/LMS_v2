@@ -18,6 +18,7 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
         self.learner = {'id': 7, 'name': 'Synthetic learner', 'programme': 'Programme',
                         '_canonical_profile': {'id': 70, 'enrolment_id': 7, 'programme_id': 'P'}}
         self.pending_read = self.enterContext(patch.object(logs, 'pending_hour_records', return_value={70: []}))
+        self.attendance_read = self.enterContext(patch.object(existing, 'attendance_rows', return_value=[]))
 
     def project(self, count):
         activities = [{'month': f'2026-{index:02}', 'activities': 2, 'accepted_hours': 1.5}
@@ -74,6 +75,21 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
     def test_empty_targets_remain_unavailable(self):
         with patch.object(logs, 'query', side_effect=[[], []]), patch.object(canonical, 'targets_for', return_value={}):
             self.assertIsNone(logs.project_year(self.learner, 2026)['summary']['trainingPlanHours'])
+
+    def test_unallocated_review_keeps_unknowns_and_excludes_already_projected_saves(self):
+        unknown = {'id': 1, 'title': 'Undated activity', 'actual_hours': 0, 'actual_hours_recorded': False}
+        native = {**unknown, 'id': 2, 'title': 'Current native save'}
+        activities = [{'month': '', 'activities': 2, 'accepted_hours': 0,
+                       'unallocated_activities': [unknown, native]}]
+        with patch.object(logs, 'query', side_effect=[activities, []]), \
+             patch.object(logs, 'pending_hour_records', return_value={70: [
+                 {'id': 2, 'reporting_month': '2026-09', 'actual_seconds': 1800, 'accepted': True}]}), \
+             patch.object(canonical, 'targets_for', return_value={}), \
+             patch.object(logs.timezone, 'localdate', return_value=date(2026, 10, 31)):
+            result = logs.project_year(self.learner, 2026)
+        self.assertEqual(result['unallocatedActivities'], [unknown])
+        self.assertEqual([month['month'] for month in result['months']], ['2026-09'])
+        self.assertEqual(result['summary']['acceptedOtjhHours'], .5)
 
     def test_supplement_keeps_native_counts_and_excludes_hours_waiting_for_review(self):
         records = [

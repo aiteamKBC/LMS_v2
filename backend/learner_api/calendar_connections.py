@@ -3,6 +3,7 @@
 OAuth credentials never reach the browser. They are encrypted at rest and are
 only used to answer free/busy requests for the learner that owns the row.
 """
+from config.time_zones import local_clock_to_utc
 import base64
 import hashlib
 import json
@@ -685,12 +686,12 @@ def booking_conflicts(
     exclude_scheduled_date=None,
     exclude_scheduled_time=None,
     exclude_duration_minutes=None,
-    business_time_zone=None,
+    business_time_zone="Europe/London",
 ):
     """Return True when a proposed learner booking overlaps a connected calendar."""
     def instant(day, clock):
         if business_time_zone:
-            return datetime.combine(day, clock, ZoneInfo(business_time_zone)).astimezone(timezone.utc)
+            return local_clock_to_utc(datetime.combine(day, clock), business_time_zone)
         return datetime.combine(day, clock, tzinfo=timezone.utc) + timedelta(minutes=timezone_offset_minutes)
 
     start_dt = instant(scheduled_date, scheduled_time)

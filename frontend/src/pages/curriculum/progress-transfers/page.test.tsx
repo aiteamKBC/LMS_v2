@@ -15,7 +15,7 @@ afterEach(() => { vi.resetAllMocks(); auth.role = 'admin'; });
 beforeEach(() => { vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [] }); });
 
 function openChoices(choices: ReturnType<typeof within>) {
-  const trigger = choices.getByRole('button', { name: 'Choose component' });
+  const trigger = choices.getByRole('button', { name: 'Choose components' });
   if (trigger.getAttribute('aria-expanded') === 'false') fireEvent.click(trigger);
 }
 
@@ -43,15 +43,15 @@ describe('admin progress transfers', () => {
     openChoices(choices);
     fireEvent.click(choices.getByRole('button', { name: /^Week 2/ }));
     expect(choices.getByText('Recommended')).toBeVisible();
-    const option = choices.getByRole('radio', { name: /W00 - Narrated walkthrough/ });
+    const option = choices.getByRole('checkbox', { name: /W00 - Narrated walkthrough/ });
     expect(option).not.toBeChecked();
-    expect(choices.queryByRole('radio', { name: /Existing reading/ })).not.toBeInTheDocument();
+    expect(choices.queryByRole('checkbox', { name: /Existing reading/ })).not.toBeInTheDocument();
     fireEvent.click(option);
     expect(confirm).toBeEnabled();
     expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('1');
     expect(screen.getByText('Manual selection')).toBeInTheDocument();
     expect(api.approveTransferRequest).not.toHaveBeenCalled();
-    fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
+    fireEvent.click(choices.getByRole('button', { name: 'Clear matches' }));
     expect(confirm).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Reload component matches' }));
     await waitFor(() => expect(api.getTransferReview).toHaveBeenCalledTimes(2));
@@ -71,13 +71,13 @@ describe('admin progress transfers', () => {
     render(<MemoryRouter><TransferRequests /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
     const choices = within(await screen.findByRole('group', { name: 'Match Old video title (material:7) in New module' }));
-    expect(choices.getByRole('button', { name: 'Choose component' })).toHaveTextContent('P1-VID');
+    expect(choices.getByRole('button', { name: 'Choose components' })).toHaveTextContent('P1-VID');
     expect(screen.getByText('Saved match — review', { selector: 'span' })).toBeVisible();
     const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
     expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
     const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
     expect(confirm).toBeEnabled();
-    fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
+    fireEvent.click(choices.getByRole('button', { name: 'Clear matches' }));
     expect(confirm).toBeDisabled();
     expect(counts.getByText('Completed components').parentElement).toHaveTextContent('1');
     fireEvent.click(screen.getByRole('button', { name: 'Reload component matches' }));
@@ -111,7 +111,7 @@ describe('admin progress transfers', () => {
     const first = within(screen.getByRole('group', { name: /Match Original Week 1 / }));
     openChoices(first);
     fireEvent.click(first.getByRole('button', { name: /^Destination week/ }));
-    fireEvent.click(first.getByRole('radio', { name: /Destination reading/ }));
+    fireEvent.click(first.getByRole('checkbox', { name: /Destination reading/ }));
     openChoices(first);
     fireEvent.keyDown(tabs[0], { key: 'ArrowDown' });
     expect(tabs[1]).toHaveFocus();
@@ -121,7 +121,7 @@ describe('admin progress transfers', () => {
     fireEvent.keyDown(tabs[1], { key: 'End' });
     expect(screen.getByRole('tabpanel', { name: 'New module: No week specified' })).toBeVisible();
     fireEvent.keyDown(tabs[3], { key: 'Home' });
-    expect(within(screen.getByRole('group', { name: /Match Original Week 1 / })).getByRole('button', { name: 'Choose component' })).toHaveTextContent('Destination reading');
+    expect(within(screen.getByRole('group', { name: /Match Original Week 1 / })).getByRole('button', { name: 'Choose components' })).toHaveTextContent('Destination reading');
     fireEvent.change(screen.getByRole('combobox', { name: 'Week in New module' }), { target: { value: '2' } });
     expect(screen.getByRole('tabpanel', { name: 'New module: Week 10' })).toBeVisible();
     const selected = within(screen.getByRole('tabpanel', { name: 'New module: Week 10' }));
@@ -151,15 +151,15 @@ describe('admin progress transfers', () => {
     const first = within(await screen.findByRole('group', { name: 'Match Module overview (material:7) in New module' }));
     const second = within(screen.getByRole('group', { name: 'Match Unrelated legacy exercise (material:8) in New module' }));
     expect(screen.queryByRole('region', { name: 'Components by week' })).not.toBeInTheDocument();
-    expect(first.getByRole('button', { name: 'Choose component' })).toHaveAccessibleDescription('Module overview Week 30');
+    expect(first.getByRole('button', { name: 'Choose components' })).toHaveAccessibleDescription('Module overview Week 30');
     openChoices(first);
     expect(first.getAllByRole('button', { expanded: false })).toHaveLength(29);
-    expect(first.getByRole('radio', { name: /Module overview/ })).toBeChecked();
-    expect(first.getByRole('radio', { name: /Module overview/ })).toHaveFocus();
+    expect(first.getByRole('checkbox', { name: /Module overview/ })).toBeChecked();
+    expect(first.getByRole('checkbox', { name: /Module overview/ })).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     expect(screen.getByRole('dialog')).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Components by week' })).not.toBeInTheDocument();
-    expect(first.getByRole('button', { name: 'Choose component' })).toHaveFocus();
+    expect(first.getByRole('button', { name: 'Choose components' })).toHaveFocus();
     openChoices(first);
     openChoices(second);
     expect(first.queryByRole('region', { name: 'Components by week' })).not.toBeInTheDocument();
@@ -167,14 +167,14 @@ describe('admin progress transfers', () => {
     fireEvent.pointerDown(screen.getByRole('heading', { name: 'Component matching' }));
     expect(screen.queryByRole('region', { name: 'Components by week' })).not.toBeInTheDocument();
     vi.spyOn(screen.getByRole('dialog'), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 900, 800));
-    const triggerBounds = vi.spyOn(first.getByRole('button', { name: 'Choose component' }), 'getBoundingClientRect')
+    const triggerBounds = vi.spyOn(first.getByRole('button', { name: 'Choose components' }), 'getBoundingClientRect')
       .mockReturnValue(new DOMRect(100, 200, 300, 60));
     openChoices(first);
-    expect(first.getByRole('radio', { name: /Module overview/ })).toBeChecked();
+    expect(first.getByRole('checkbox', { name: /Module overview/ })).toBeChecked();
     triggerBounds.mockReturnValue(new DOMRect(100, 180, 300, 60));
     fireEvent.scroll(screen.getByRole('dialog'));
     expect(first.getByRole('region', { name: 'Components by week' })).toBeVisible();
-    expect(first.getByRole('radio', { name: /Module overview/ })).toBeChecked();
+    expect(first.getByRole('checkbox', { name: /Module overview/ })).toBeChecked();
     triggerBounds.mockReturnValue(new DOMRect(100, -100, 300, 60));
     fireEvent.scroll(screen.getByRole('dialog'));
     expect(screen.queryByRole('region', { name: 'Components by week' })).not.toBeInTheDocument();
@@ -201,9 +201,9 @@ describe('admin progress transfers', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
     const choices = within(await screen.findByRole('group', { name: `Match ${title} (material:7) in New module` }));
     expect(choices.queryByRole('region', { name: 'Components by week' })).not.toBeInTheDocument();
-    expect(choices.getByRole('button', { name: 'Choose component' })).toHaveTextContent('Project fundamentals & value delivery');
+    expect(choices.getByRole('button', { name: 'Choose components' })).toHaveTextContent('Project fundamentals & value delivery');
     openChoices(choices);
-    expect(choices.getByRole('radio', { name: /Project fundamentals/ })).toBeChecked();
+    expect(choices.getByRole('checkbox', { name: /Project fundamentals/ })).toBeChecked();
     const closedWeeks = choices.getAllByRole('button', { expanded: false });
     expect(closedWeeks).toHaveLength(3);
     expect(closedWeeks[0]).toHaveAccessibleName('Week 1 1 component');
@@ -212,7 +212,7 @@ describe('admin progress transfers', () => {
     const weekTwo = choices.getByRole('button', { name: /^Week 2 / });
     const weekTen = choices.getByRole('button', { name: /^Week 10 / });
     expect(weekTwo).toHaveAttribute('aria-expanded', 'true');
-    expect(choices.queryByRole('radio', { name: /Budget planning/ })).not.toBeInTheDocument();
+    expect(choices.queryByRole('checkbox', { name: /Budget planning/ })).not.toBeInTheDocument();
     expect(within(screen.getByRole('tabpanel', { name: 'New module: Week 2' })).getByRole('heading', { name: 'Week 2' })).toBeVisible();
     expect(screen.getByText(/^Matched components — quick review/).closest('details')).not.toHaveAttribute('open');
     fireEvent.click(screen.getByText(/^Matched components — quick review/));
@@ -234,22 +234,24 @@ describe('admin progress transfers', () => {
     const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' });
     expect(confirm).toBeEnabled();
     fireEvent.click(weekTen);
-    expect(choices.getByRole('radio', { name: /Budget planning/ })).toBeVisible();
+    expect(choices.getByRole('checkbox', { name: /Budget planning/ })).toBeVisible();
     expect(weekTwo).toHaveAttribute('aria-expanded', 'true');
     fireEvent.click(weekTwo);
     expect(weekTwo).toHaveAttribute('aria-expanded', 'false');
-    expect(choices.queryByRole('radio', { name: /Project fundamentals/ })).not.toBeInTheDocument();
+    expect(choices.queryByRole('checkbox', { name: /Project fundamentals/ })).not.toBeInTheDocument();
     expect(choices.getByText('Project fundamentals & value delivery')).toBeVisible();
     expect(confirm).toBeEnabled();
     expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('1');
-    fireEvent.click(choices.getByRole('button', { name: 'Clear match' }));
+    fireEvent.click(choices.getByRole('button', { name: 'Clear matches' }));
     expect(confirm).toBeDisabled();
     expect(screen.queryByRole('table', { name: 'Matched components review' })).not.toBeInTheDocument();
     expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('0');
     expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
     openChoices(choices);
     fireEvent.click(choices.getByRole('button', { name: /^Week 10 / }));
-    fireEvent.click(choices.getByRole('radio', { name: /Budget planning/ }));
+    fireEvent.click(choices.getByRole('checkbox', { name: /Budget planning/ }));
+    expect(choices.getByRole('region', { name: 'Components by week' })).toBeVisible();
+    fireEvent.click(choices.getByRole('button', { name: 'Done' }));
     expect(choices.queryByRole('region', { name: 'Components by week' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByText(/^Matched components — quick review/));
     expect(screen.getByText('Manual selection')).toBeVisible();
@@ -257,19 +259,132 @@ describe('admin progress transfers', () => {
     expect(counts.getByText('Remaining components').parentElement).toHaveTextContent('1');
     openChoices(choices);
     fireEvent.click(choices.getByRole('button', { name: /^Week 2 / }));
-    fireEvent.click(choices.getByRole('radio', { name: /Project fundamentals/ }));
+    fireEvent.click(choices.getByRole('checkbox', { name: /Project fundamentals/ }));
     openChoices(choices);
-    fireEvent.click(choices.getByRole('button', { name: /^Week 10 / }));
-    expect(choices.getByRole('radio', { name: /Budget planning/ })).not.toBeChecked();
+    expect(choices.getByRole('checkbox', { name: /Budget planning/ })).toBeChecked();
+    fireEvent.click(choices.getByRole('checkbox', { name: /Budget planning/ }));
+    expect(choices.getByRole('checkbox', { name: /Budget planning/ })).not.toBeChecked();
     fireEvent.click(choices.getByRole('button', { name: /^No week specified/ }));
-    expect(choices.getByRole('radio', { name: /Extra reading/ })).toBeVisible();
-    expect(choices.getByRole('radio', { name: /Project fundamentals/ })).toBeChecked();
+    expect(choices.getByRole('checkbox', { name: /Extra reading/ })).toBeVisible();
+    expect(choices.getByRole('checkbox', { name: /Project fundamentals/ })).toBeChecked();
     fireEvent.click(confirm);
     await waitFor(() => expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf', {
       reviewToken: 'review', mappings: [{ moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'MATCH' }],
     }));
     expect(await screen.findByText(/Progress merged successfully/)).toBeVisible();
     await waitFor(() => expect(api.getTransferRequests).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps multiple matches across weeks, removes individual choices and submits all remaining pairs', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    vi.mocked(api.approveTransferRequest).mockRejectedValueOnce(new Error('Please retry.')).mockResolvedValue({ ...request, status: 'approved' });
+    vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
+      moduleId: 'M1', courseRef: 'legacy:50', title: 'New module', completedTargetIds: ['NATIVE'],
+      sources: [{ sourceActivityRef: 'material:7', title: 'Combined old lesson', type: 'reading', week: 'Week 1', automaticTargetId: null, savedTargetId: 'FIRST' }],
+      targets: [
+        { componentId: 'FIRST', title: 'First section', type: 'reading', week: 'Week 1', plannedHours: 1 },
+        { componentId: 'SECOND', title: 'Second section', type: 'reading', week: 'Week 2', plannedHours: 2 },
+        { componentId: 'NATIVE', title: 'Completed section', type: 'reading', week: 'Week 2', plannedHours: 3 },
+      ],
+    }] });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    const choices = within(await screen.findByRole('group', { name: 'Match Combined old lesson (material:7) in New module' }));
+    const confirm = screen.getByRole('button', { name: 'Confirm' });
+    const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
+    openChoices(choices);
+    fireEvent.click(choices.getByRole('button', { name: /^Week 2 / }));
+    fireEvent.click(choices.getByRole('checkbox', { name: /Second section/ }));
+    fireEvent.click(choices.getByRole('checkbox', { name: /Completed section/ }));
+    expect(choices.getAllByRole('checkbox', { checked: true })).toHaveLength(3);
+    expect(choices.getByRole('button', { name: 'Choose components' })).toHaveTextContent('3 components selected');
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('3');
+    expect(counts.getByText('Progress after merge (preview): 100%')).toBeVisible();
+    expect(api.approveTransferRequest).not.toHaveBeenCalled();
+    fireEvent.keyDown(choices.getByRole('checkbox', { name: /Second section/ }), { key: 'Escape' });
+    expect(choices.queryByRole('region', { name: 'Components by week' })).not.toBeInTheDocument();
+    openChoices(choices);
+    expect(choices.getAllByRole('checkbox', { checked: true })).toHaveLength(3);
+    fireEvent.click(choices.getByRole('checkbox', { name: /Completed section/ }));
+    expect(choices.getByRole('checkbox', { name: /First section/ })).toBeChecked();
+    expect(choices.getByRole('checkbox', { name: /Second section/ })).toBeChecked();
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('3');
+    expect(counts.getByText('Matched from old LMS').parentElement).toHaveTextContent('2');
+    fireEvent.click(choices.getByRole('button', { name: 'Done' }));
+    fireEvent.click(screen.getByText(/^Matched components — quick review/));
+    const matched = within(screen.getByRole('table', { name: 'Matched components review' }));
+    expect(matched.getAllByText('Combined old lesson')).toHaveLength(2);
+    expect(matched.getByText('First section')).toBeVisible();
+    expect(matched.getByText('Second section')).toBeVisible();
+    fireEvent.click(choices.getByRole('button', { name: 'Clear matches' }));
+    expect(confirm).toBeDisabled();
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('1');
+    openChoices(choices);
+    fireEvent.click(choices.getByRole('button', { name: /^Week 1 / }));
+    fireEvent.click(choices.getByRole('checkbox', { name: /First section/ }));
+    fireEvent.click(choices.getByRole('button', { name: /^Week 2 / }));
+    fireEvent.click(choices.getByRole('checkbox', { name: /Second section/ }));
+    fireEvent.click(choices.getByRole('button', { name: 'Done' }));
+    fireEvent.click(confirm);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please retry.');
+    expect(choices.getByRole('button', { name: 'Choose components' })).toHaveTextContent('2 components selected');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.approveTransferRequest).toHaveBeenLastCalledWith('R1', 'csrf', {
+      reviewToken: 'review', mappings: [
+        { moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'FIRST' },
+        { moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'SECOND' },
+      ],
+    }));
+    expect(await screen.findByText(/Progress merged successfully/)).toBeVisible();
+  });
+
+  it('adds optional destinations to an automatic match while keeping its verified link reserved', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [request], nextOffset: null, csrfToken: 'csrf' });
+    vi.mocked(api.approveTransferRequest).mockResolvedValue({ ...request, status: 'approved' });
+    vi.mocked(api.getTransferReview).mockResolvedValue({ reviewToken: 'review', csrfToken: 'csrf', modules: [{
+      moduleId: 'M1', courseRef: 'legacy:50', title: 'New module', completedTargetIds: [],
+      sources: [
+        { sourceActivityRef: 'material:7', title: 'Verified lesson', type: 'reading', week: 'Week 1', automaticTargetId: 'AUTO' },
+        { sourceActivityRef: 'material:8', title: 'Other lesson', type: 'reading', week: 'Week 1', automaticTargetId: 'OTHER' },
+      ],
+      targets: ['AUTO', 'OTHER', 'EXTRA'].map(componentId => ({ componentId, title: componentId, type: 'reading', week: 'Week 1', plannedHours: 1 })),
+    }] });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review transfer' }));
+    const choices = within(await screen.findByRole('group', { name: 'Match Verified lesson (material:7) in New module' }));
+    const counts = within(screen.getByRole('region', { name: 'Component counts for New module' }));
+    openChoices(choices);
+    fireEvent.click(choices.getByRole('button', { name: /^Week 1 / }));
+    expect(choices.queryByRole('checkbox', { name: /AUTO/ })).not.toBeInTheDocument();
+    expect(choices.getByRole('checkbox', { name: /OTHER/ })).toBeDisabled();
+    fireEvent.click(choices.getByRole('checkbox', { name: /EXTRA/ }));
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('3');
+    fireEvent.click(choices.getByRole('button', { name: 'Clear matches' }));
+    expect(counts.getByText('Completed components').parentElement).toHaveTextContent('2');
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled();
+    openChoices(choices);
+    fireEvent.click(choices.getByRole('button', { name: /^Week 1 / }));
+    fireEvent.click(choices.getByRole('checkbox', { name: /EXTRA/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(api.approveTransferRequest).toHaveBeenCalledExactlyOnceWith('R1', 'csrf', {
+      reviewToken: 'review', mappings: [{ moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'EXTRA' }],
+    }));
+    expect(await screen.findByText(/Progress merged successfully/)).toBeVisible();
+  });
+
+  it('shows every approved destination when a completed source was matched more than once', async () => {
+    vi.mocked(api.getTransferRequests).mockResolvedValue({ requests: [{ ...request, status: 'approved', modules: [{ ...request.modules[0],
+      componentMatches: ['First section', 'Second section'].map((targetTitle, index) => ({
+        sourceActivityRef: 'material:7', sourceTitle: 'Combined old lesson', targetComponentId: `T${index}`, targetTitle, manual: true, plannedHours: 1,
+      })),
+    }] }], nextOffset: null, csrfToken: 'csrf' });
+    render(<MemoryRouter><TransferRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
+    const matches = within(screen.getByRole('region', { name: 'Approved component matches' }));
+    expect(matches.getAllByText('Combined old lesson')).toHaveLength(2);
+    expect(matches.getByText('First section')).toBeVisible();
+    expect(matches.getByText('Second section')).toBeVisible();
+    expect(matches.getAllByText(/Actual transferred hours are unchanged/)).toHaveLength(2);
   });
 
   it('shows saved counts for approved transfers and leaves older unknown counts explicit', async () => {
@@ -305,8 +420,8 @@ describe('admin progress transfers', () => {
     openChoices(choices);
     fireEvent.click(choices.getByRole('button', { name: /^No week specified/ }));
     expect(screen.getByText(/Similar names are suggested for your review/)).toBeVisible();
-    expect(choices.getByRole('radio', { name: /Quiz A/ })).toBeEnabled();
-    expect(choices.getByRole('radio', { name: /Quiz B/ })).toBeEnabled();
+    expect(choices.getByRole('checkbox', { name: /Quiz A/ })).toBeEnabled();
+    expect(choices.getByRole('checkbox', { name: /Quiz B/ })).toBeEnabled();
     expect(choices.queryByText(/unavailable/)).not.toBeInTheDocument();
     expect(choices.queryByText('Recommended')).not.toBeInTheDocument();
   });
@@ -332,24 +447,24 @@ describe('admin progress transfers', () => {
     const second = within(screen.getByRole('group', { name: `Match ${title} (material:8) in New module` }));
     openChoices(first);
     fireEvent.click(first.getByRole('button', { name: /^No week specified/ }));
-    expect(second.getByRole('button', { name: 'Choose component' })).toHaveAttribute('aria-expanded', 'false');
-    expect(first.getAllByRole('radio').map(option => (option as HTMLInputElement).value)).toEqual(['A', 'B']);
-    expect(first.getByRole('radio', { name: /Recommended/ })).toHaveAttribute('value', 'A');
-    expect(first.getByRole('radio', { name: /Recommended/ })).not.toBeChecked();
+    expect(second.getByRole('button', { name: 'Choose components' })).toHaveAttribute('aria-expanded', 'false');
+    expect(first.getAllByRole('checkbox').map(option => (option as HTMLInputElement).value)).toEqual(['A', 'B']);
+    expect(first.getByRole('checkbox', { name: /Recommended/ })).toHaveAttribute('value', 'A');
+    expect(first.getByRole('checkbox', { name: /Recommended/ })).not.toBeChecked();
     expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' })).toBeDisabled();
     expect(api.approveTransferRequest).not.toHaveBeenCalled();
-    fireEvent.click(first.getByRole('radio', { name: /quiz · A/ }));
-    expect(first.getByRole('button', { name: 'Choose component' })).toHaveTextContent(title);
+    fireEvent.click(first.getByRole('checkbox', { name: /quiz · A/ }));
+    expect(first.getByRole('button', { name: 'Choose components' })).toHaveTextContent(title);
     openChoices(second);
     fireEvent.click(second.getByRole('button', { name: /^No week specified/ }));
-    expect(second.getByRole('radio', { name: /quiz · A/ })).not.toBeChecked();
+    expect(second.getByRole('checkbox', { name: /quiz · A/ })).not.toBeChecked();
     expect(second.queryByText('Recommended')).not.toBeInTheDocument();
-    expect(second.getByRole('radio', { name: /quiz · A/ })).toBeDisabled();
-    fireEvent.click(second.getByRole('radio', { name: /quiz · B/ }));
-    fireEvent.click(first.getByRole('button', { name: 'Clear match' }));
+    expect(second.getByRole('checkbox', { name: /quiz · A/ })).toBeDisabled();
+    fireEvent.click(second.getByRole('checkbox', { name: /quiz · B/ }));
+    fireEvent.click(first.getByRole('button', { name: 'Clear matches' }));
     openChoices(second);
-    expect(second.getByRole('radio', { name: /Recommended/ })).toHaveAttribute('value', 'A');
-    expect(second.getByRole('radio', { name: /quiz · B/ })).toBeChecked();
+    expect(second.getByRole('checkbox', { name: /Recommended/ })).toHaveAttribute('value', 'A');
+    expect(second.getByRole('checkbox', { name: /quiz · B/ })).toBeChecked();
   });
 
   it('requires review then Confirm, and reloads only after success', async () => {
@@ -491,8 +606,8 @@ describe('admin progress transfers', () => {
     expect(weeks.getByRole('tab', { name: /^Week 3 / })).toHaveTextContent('1/1 matched');
     openChoices(first);
     fireEvent.click(first.getByRole('button', { name: /^Week 1/ }));
-    expect(first.getByRole('radio', { name: /New reading AUTO/ })).toBeDisabled();
-    fireEvent.click(first.getByRole('radio', { name: /reading · A(?: |$)/ }));
+    expect(first.getByRole('checkbox', { name: /New reading AUTO/ })).toBeDisabled();
+    fireEvent.click(first.getByRole('checkbox', { name: /reading · A(?: |$)/ }));
     expect(screen.getByText(/New component planned hours: 1h 30m/)).toHaveTextContent('Actual transferred hours are unchanged.');
     expect(weeks.getByRole('tab', { name: /^Week 1 / })).toHaveTextContent('1/1 matched');
     expect(confirm).toBeDisabled(); // An unvisited week still requires its match.
@@ -501,16 +616,16 @@ describe('admin progress transfers', () => {
     const second = within(screen.getByRole('group', { name: 'Match Another reading (material:8) in New module' }));
     openChoices(second);
     fireEvent.click(second.getByRole('button', { name: /^Week 1/ }));
-    expect(second.getByRole('radio', { name: /reading · A(?: |$)/ })).toBeDisabled();
+    expect(second.getByRole('checkbox', { name: /reading · A(?: |$)/ })).toBeDisabled();
     expect(confirm).toBeDisabled();
-    fireEvent.click(second.getByRole('radio', { name: /reading · B/ }));
+    fireEvent.click(second.getByRole('checkbox', { name: /reading · B/ }));
     expect(weeks.getByRole('tab', { name: /^Week 2 / })).toHaveTextContent('1/1 matched');
     expect(confirm).toBeEnabled();
     fireEvent.click(confirm);
     expect(await screen.findByRole('alert')).toHaveTextContent('Component matches changed.');
     fireEvent.click(screen.getByRole('button', { name: 'Previous week' }));
     const restored = within(screen.getByRole('group', { name: 'Match Original reading (material:7) in New module' }));
-    expect(restored.getByRole('button', { name: 'Choose component' })).toHaveTextContent('New reading A');
+    expect(restored.getByRole('button', { name: 'Choose components' })).toHaveTextContent('New reading A');
     expect(api.approveTransferRequest).toHaveBeenCalledWith('R1', 'review-csrf', { reviewToken: 'scoped-review', mappings: [
       { moduleId: 'M1', sourceActivityRef: 'material:7', targetComponentId: 'A' },
       { moduleId: 'M1', sourceActivityRef: 'material:8', targetComponentId: 'B' },
@@ -532,16 +647,16 @@ describe('admin progress transfers', () => {
     openChoices(choices);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(choices.getByRole('button', { name: /^Week 2/ })).toBeDisabled();
-    expect(choices.getByRole('button', { name: 'Clear match' })).toBeDisabled();
-    expect(choices.getByRole('button', { name: 'Choose component' })).toBeDisabled();
-    expect(choices.getByRole('radio')).toBeDisabled();
+    expect(choices.getByRole('button', { name: 'Clear matches' })).toBeDisabled();
+    expect(choices.getByRole('button', { name: 'Choose components' })).toBeDisabled();
+    expect(choices.getByRole('checkbox')).toBeDisabled();
     expect(screen.getByRole('tab', { name: /^Week 1 / })).toBeDisabled();
     expect(screen.getByRole('combobox', { name: 'Week in New module' })).toBeDisabled();
     rejectSave(new Error('Please review this request again.'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Please review this request again.');
-    expect(choices.getByRole('radio')).toBeEnabled();
+    expect(choices.getByRole('checkbox')).toBeEnabled();
     expect(screen.getByRole('tab', { name: /^Week 1 / })).toBeEnabled();
-    expect(choices.getByRole('radio')).toBeChecked();
+    expect(choices.getByRole('checkbox')).toBeChecked();
     expect(choices.getByRole('button', { name: /^Week 2/ })).toHaveAttribute('aria-expanded', 'true');
   });
 
@@ -557,8 +672,8 @@ describe('admin progress transfers', () => {
     expect(await screen.findByText(/No compatible component is available/)).toBeVisible();
     const choices = within(screen.getByRole('group', { name: 'Match Budget activity (material:7) in New module' }));
     expect(choices.queryByRole('button', { name: /^Week 1/ })).not.toBeInTheDocument();
-    expect(choices.queryByRole('radio')).not.toBeInTheDocument();
-    expect(choices.getByRole('button', { name: 'Clear match' })).toBeDisabled();
+    expect(choices.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(choices.getByRole('button', { name: 'Clear matches' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
   });
 

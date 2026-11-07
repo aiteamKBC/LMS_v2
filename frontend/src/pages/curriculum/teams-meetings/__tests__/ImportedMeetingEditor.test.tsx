@@ -51,6 +51,32 @@ function openWithSharedUpdate(disabled = false) {
 }
 
 describe('editing a verified imported meeting', () => {
+  it.each([true, false])('rejects an already selected attendee with rolesEditable=%s', async rolesEditable => {
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ ...original(), rolesEditable });
+    open(); await edit();
+    const attendeeInput = screen.getByRole('combobox', { name: 'Attendees' });
+    const count = screen.getByLabelText('Attendees selected count');
+    expect(count.compareDocumentPosition(attendeeInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.change(attendeeInput, { target: { value: 'OLD@example.invalid' } });
+    fireEvent.keyDown(attendeeInput, { key: 'Enter' });
+    expect(screen.getByText(/OLD@example.invalid already exists/)).toHaveAttribute('role', 'status');
+    expect(count).toHaveTextContent('1 selected');
+    expect(screen.getAllByRole('button', { name: 'Remove old@example.invalid' })).toHaveLength(1);
+    expect(previewImportedMeetingEdit).not.toHaveBeenCalled();
+    expect(confirmImportedMeetingEdit).not.toHaveBeenCalled();
+  });
+
+  it('counts selected attendees when the original calendar does not allow role edits', async () => {
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ ...original(), rolesEditable: false });
+    open(); await edit();
+    expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('1 selected');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Attendees' }), 'new@example.invalid{Enter}');
+    expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('2 selected');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove old@example.invalid' }));
+    expect(screen.getByLabelText('Attendees selected count')).toHaveTextContent('1 selected');
+    expect(confirmImportedMeetingEdit).not.toHaveBeenCalled();
+  });
+
   it('uses the shared Update Teams button to read first and then review the edited original', async () => {
     openWithSharedUpdate();
     expect(screen.queryByRole('button', { name: 'Edit existing Teams meeting' })).not.toBeInTheDocument();

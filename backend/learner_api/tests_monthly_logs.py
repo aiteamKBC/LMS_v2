@@ -40,6 +40,7 @@ class MonthlyLogsTests(SimpleTestCase):
         # gains canonical/history persistence dependencies. Those integrations
         # have dedicated tests; these cases exercise monthly-log orchestration.
         dependencies = [
+            patch.object(logs, 'attendance_rows', return_value=[]),
             patch.object(logs.canonical, 'enabled', return_value=False),
             patch.object(logs.history, 'later_rows', return_value={}),
             patch.object(logs.history, 'summary', side_effect=lambda learner: logs.old.summary(learner)),
@@ -185,6 +186,20 @@ class MonthlyLogsTests(SimpleTestCase):
         state = logs.month_state('2026-09', split, [])
         self.assertEqual(state['row_count'], 1)
         self.assertEqual(state['actual_hours'], 2)
+
+    def test_unknown_reporting_month_is_visible_for_review_without_a_guessed_month(self):
+        owner = {'id': 70, 'enrolment_id': 7, 'programme_id': 'P1'}
+        unknown = {**self.row, 'id': 901, 'reporting_month': '', 'title': 'Undated activity',
+                   'actual_hours': 0, 'actual_hours_recorded': False}
+        with patch.object(logs.canonical, 'entries_for', return_value=[]), \
+             patch.object(logs.canonical, 'signatures_for', return_value=[]), \
+             patch.object(logs.canonical, 'targets_for', return_value={}), \
+             patch.object(logs.canonical, 'rows_for', return_value=[unknown]):
+            summary = logs.summary_data({**self.learner, '_canonical_profile': owner})
+        self.assertEqual(summary['months'], [])
+        self.assertEqual(summary['training_plan_totals']['accepted_hours'], 0)
+        self.assertEqual(summary['unallocated_activities'], [{'id': 901, 'title': 'Undated activity',
+                          'actual_hours': 0, 'actual_hours_recorded': False}])
 
     def test_summary_exposes_audit_planned_end_date(self):
         learner = {**self.learner, '_profile': {'coach_name': 'Coach', 'end_date': date(2026, 1, 31)}}

@@ -1,13 +1,31 @@
 import type { ReactElement } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, type RouteObject } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const session = vi.hoisted(() => ({ role: 'learner' }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
+  auth: { account: { role: session.role } }, isInitialized: true,
+}) }));
+vi.mock('../lazyRoute', () => ({ lazyRoute: () => () => <h1>Assigned feedback page</h1> }));
+
+beforeEach(() => {
+  session.role = 'learner';
+  vi.doUnmock('@/lib/featureFlags');
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.doUnmock('@/lib/featureFlags');
   vi.resetModules();
 });
 
-async function learnerFeedbackRoutes(enabled: boolean) {
-  vi.stubEnv('DEV', enabled);
+async function learnerFeedbackRoutes(enabled?: boolean) {
+  if (enabled !== undefined) vi.doMock('@/lib/featureFlags', () => ({
+    CHAT_ENABLED: false,
+    LEARNER_FEEDBACK_ENABLED: enabled,
+    LEARNER_POST_LECTURE_FEEDBACK_ENABLED: true,
+  }));
   const { default: routes } = await import('../config');
   const protectedLayout = routes.find(route => 'children' in route && !('path' in route && route.path));
   const feedbackPaths = new Set([
@@ -19,17 +37,59 @@ async function learnerFeedbackRoutes(enabled: boolean) {
   return (protectedLayout?.children || []).filter(route => 'path' in route && feedbackPaths.has(route.path || ''));
 }
 
+function openFeedbackRoute(route: RouteObject, query = '') {
+  const pathname = (route.path || '').replace(/:\w+/g, '71');
+  return render(<MemoryRouter initialEntries={[`${pathname}${query}`]}><Routes>
+    <Route path={route.path} element={route.element} />
+    <Route path="/workspace/learner" element={<h1>Learner home</h1>} />
+  </Routes></MemoryRouter>);
+}
+
 describe('learner feedback routes', () => {
-  it('releases the queue and owned delivery routes while keeping other feedback routes closed in production', async () => {
+  it('opens every assigned feedback route for learners with the production release configuration', async () => {
+    vi.stubEnv('DEV', false);
+    const routes = await learnerFeedbackRoutes();
+    expect(routes).toHaveLength(4);
+    for (const route of routes) {
+      const view = openFeedbackRoute(route);
+      expect(screen.getByRole('heading', { name: 'Assigned feedback page' })).toBeVisible();
+      expect(screen.queryByRole('heading', { name: 'Learner home' })).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it('can limit the release to the queue and lecture deliveries when other feedback is explicitly disabled', async () => {
     const routes = await learnerFeedbackRoutes(false);
     expect(routes).toHaveLength(4);
     for (const route of routes) {
-      const element = route.element as ReactElement<{ to?: string; replace?: boolean }>;
+      const view = openFeedbackRoute(route);
       if (route.path === '/learner/feedback' || route.path === '/learner/feedback/delivery/:deliveryId') {
-        expect(element.props.to).toBeUndefined();
+        expect(screen.getByRole('heading', { name: 'Assigned feedback page' })).toBeVisible();
       } else {
-        expect(element.props).toMatchObject({ to: '/workspace/learner', replace: true });
+        expect(screen.getByRole('heading', { name: 'Learner home' })).toBeVisible();
       }
+      view.unmount();
+    }
+  });
+
+  it.each(['admin', 'staff'])('opens production review/general feedback for %s previewing a selected learner', async role => {
+    session.role = role;
+    const routes = await learnerFeedbackRoutes(false);
+    for (const route of routes.filter(item => item.path?.endsWith('/:formId') || item.path?.endsWith('/:reviewDeliveryId'))) {
+      const view = openFeedbackRoute(route, '?learnerId=125&kind=commercial&category=progress-review');
+      expect(screen.getByRole('heading', { name: 'Assigned feedback page' })).toBeVisible();
+      expect(screen.queryByRole('heading', { name: 'Learner home' })).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it.each(['admin', 'staff', 'learner', 'employer'])('does not open unreleased feedback for %s without an authorized preview context', async role => {
+    session.role = role;
+    const routes = await learnerFeedbackRoutes(false);
+    for (const route of routes.filter(item => item.path?.endsWith('/:formId') || item.path?.endsWith('/:reviewDeliveryId'))) {
+      const view = openFeedbackRoute(route, role === 'learner' || role === 'employer' ? '?learnerId=125' : '');
+      expect(screen.getByRole('heading', { name: 'Learner home' })).toBeVisible();
+      view.unmount();
     }
   });
 
@@ -46,6 +106,7 @@ describe('learner feedback routes', () => {
   });
 
   it('renders learner feedback pages during local development', async () => {
+    vi.stubEnv('DEV', true);
     const routes = await learnerFeedbackRoutes(true);
     expect(routes).toHaveLength(4);
     for (const route of routes) {

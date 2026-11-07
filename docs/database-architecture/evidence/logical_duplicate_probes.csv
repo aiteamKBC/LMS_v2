@@ -1,0 +1,4 @@
+probe,status,result
+learner_normalized_email,exact,"[{""duplicate_groups"": 0, ""excess_rows"": ""0""}]"
+staff_normalized_email,exact,"[{""duplicate_groups"": 5, ""excess_rows"": ""6""}]"
+enrolment_normalized_email,exact,"[{""duplicate_groups"": 0, ""excess_rows"": ""0""}]"

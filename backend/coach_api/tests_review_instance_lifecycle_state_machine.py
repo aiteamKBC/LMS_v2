@@ -168,11 +168,26 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         self.assertIn('status', errors)
         self.assertEqual(review_instances.get_review_instance(instance['id'])['status'], review_instances.STATUS_NOT_SCHEDULED)
 
-    def test_scheduled_complete_is_rejected(self):
+    def test_scheduled_submission_requires_answers_and_mirrors_calendar(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
         self.assertEqual(instance['status'], review_instances.STATUS_SCHEDULED)
         ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
+        self.assertFalse(ok)
+        self.assertIn('fields', errors)
+        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self._answer_required_field(record, actor=COACH_EMAIL)
+        response = self._complete_via_view(record.review_instance_id)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        record.refresh_from_db()
+        self.assertEqual(record.status, CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
+        self.assertIsNone(self._instance(record)['started_at'])
+
+    def test_scheduled_review_without_signatures_cannot_complete(self):
+        record = self._scheduled_linked_row(signatures={'advisor': False, 'employer': False, 'participant': False, 'referrer': False})
+        self._answer_required_field(record, actor=COACH_EMAIL)
+        ok, errors = review_instances.complete_review_instance(self._instance(record), actor=COACH_EMAIL)
         self.assertFalse(ok)
         self.assertIn('status', errors)
         self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)

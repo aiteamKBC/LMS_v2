@@ -11,6 +11,15 @@ const row = {
 };
 
 describe('Egypt schedule and England display', () => {
+  it('shows a clock-change validation error without crashing the schedule preview', () => {
+    const gap = { ...row, timeZone: 'Europe/London',
+      sessions: [{ date: '2026-03-29', startTime: '01:30', endTime: '03:30' }] };
+    render(<ModuleSessionSchedulePreview row={gap} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('clocks move forward');
+    expect(() => buildTeamsCalendarInput(gap, { ...emptyTeamsCalendarForm(), scheduleTimeZone: 'Europe/London' }))
+      .toThrow(/clocks move forward/);
+  });
+
   it('keeps 9 AM in Egypt across both countries clock changes and reviews the exact instants sent', () => {
     // Egypt is named here rather than inherited: the form's default is England,
     // and this case exists for the Egyptian clock specifically.

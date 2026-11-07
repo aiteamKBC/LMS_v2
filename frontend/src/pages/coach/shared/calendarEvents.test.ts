@@ -30,6 +30,17 @@ describe('Coach calendar booking idempotency', () => {
     );
   });
 
+  it('sends the original slot when rescheduling an in-progress review', async () => {
+    const { scheduleCoachCalendarEvent } = await import('./calendarEvents');
+    await scheduleCoachCalendarEvent({ id: 'review-1', eventKey: 'review-1', title: 'MCM', type: 'review',
+      status: 'in-progress', scheduledDate: '2099-01-02', scheduledTime: '10:00', durationMinutes: 60 },
+    { date: '2099-01-03', time: '11:00', durationMinutes: 45 });
+    expect(JSON.parse(coachFetch.mock.calls[0][1].body)).toMatchObject({
+      expectedBooking: { scheduledDate: '2099-01-02', scheduledTime: '10:00', durationMinutes: 60 },
+      scheduledDate: '2099-01-03', scheduledTime: '11:00', durationMinutes: 45,
+    });
+  });
+
   it('centralizes the Idempotency-Key header on booking requests', async () => {
     const { bookCoachCalendarEvent } = await import('./calendarEvents');
 

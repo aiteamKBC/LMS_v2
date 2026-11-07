@@ -14,10 +14,12 @@ export function ModuleConflictPanel({
   conflicts,
   onKeepMine,
   onUseTheirs,
+  saveOtherFields = false,
 }: {
   conflicts: ModuleConflict[];
   onKeepMine: (conflict: ModuleConflict) => void;
   onUseTheirs: (conflict: ModuleConflict) => void;
+  saveOtherFields?: boolean;
 }) {
   if (!conflicts.length) return null;
   return (
@@ -29,7 +31,7 @@ export function ModuleConflictPanel({
       <h2 id="module-builder-conflicts-title" className="flex items-start gap-2 font-bold">
         <AppIcon className="ri-git-merge-line mt-0.5 shrink-0 text-base"></AppIcon>
         <span>
-          {conflicts.length === 1
+          {saveOtherFields ? 'Choose which version to keep for these fields. You can save other changes while these choices remain in your draft.' : conflicts.length === 1
             ? 'Someone else changed the same thing you did. Choose which version to keep before this module is saved.'
             : `Someone else changed ${conflicts.length} of the things you did. Choose which version to keep for each before this module is saved.`}
           {' '}Everything else they saved is already on this screen, and nothing of yours has been lost.

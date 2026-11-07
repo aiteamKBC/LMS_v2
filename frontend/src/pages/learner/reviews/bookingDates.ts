@@ -1,4 +1,5 @@
-import { ukOffsetForDate, type BookingCalendarRules } from '@/api/learnerCalendar';
+import type { BookingCalendarRules } from '@/api/learnerCalendar';
+import { BUSINESS_TIME_ZONE, localClockToUtcIso } from '@/lib/timeZones';
 
 export function bookingToday(): string {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -7,19 +8,11 @@ export function bookingToday(): string {
 
 /** Booking inputs are UK wall-clock values, regardless of the browser timezone. */
 export function bookingInstant(day: string, time: string): number {
-  const wallClock = Date.parse(`${day}T${time}:00Z`);
-  if (!Number.isFinite(wallClock)) return NaN;
-  let instant = wallClock + ukOffsetForDate(day) * 60_000;
-  // Resolve the offset at the actual instant, including midnight on a DST
-  // change day when the noon offset is different from the start of the day.
-  const formatter = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const parts = formatter.formatToParts(new Date(instant));
-    const value = (type: string) => Number(parts.find(part => part.type === type)!.value);
-    const displayed = Date.UTC(value('year'), value('month') - 1, value('day'), value('hour'), value('minute'));
-    instant += wallClock - displayed;
+  try {
+    return Date.parse(localClockToUtcIso(`${day}T${time}`, BUSINESS_TIME_ZONE));
+  } catch {
+    return NaN;
   }
-  return instant;
 }
 
 export function isoDate(value: Date): string {

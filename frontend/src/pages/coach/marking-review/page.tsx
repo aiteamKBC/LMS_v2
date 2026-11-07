@@ -14,6 +14,7 @@ import { fetchMarkingDetail, fetchMarkingSidebarQueue } from '@/features/coach/m
 import { readExtraActivities } from '../extra-activities/api';
 import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { CoachPresentationDownload } from './CoachPresentationDownload';
+import { KsbReviewPanel, type KsbReview } from './KsbReviewPanel';
 
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -24,6 +25,7 @@ async function personalEvidence(submissionId: string, fileId?: string) {
 }
 
 interface Submission {
+  ksbReview?: KsbReview;
   submissionAttempts?: SubmissionAttempt[];
   version?: number;
   contentSections?: { label: string; text: string }[];
@@ -77,6 +79,7 @@ type WorkspaceTab = 'submission' | 'evidence' | 'history';
 type QueueKind = 'all' | 'assignment' | 'reflection';
 
 function statusLabel(status: string) {
+  if (status === 'ksb_review') return 'KSB review required';
   if (status === 'accepted') return 'Accepted';
   if (status === 'partial') return 'Partially awarded';
   if (status === 'referred' || status === 'rejected') return 'Referred back';
@@ -279,13 +282,17 @@ export default function CoachMarkingReviewPage() {
         ...(promptEdited ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.trim() }) } : {}),
       });
       const text = await response.text();
-      let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string; promptSource?: string } } = {};
+      let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string; promptSource?: string; evidenceFiles?: { filename: string; readable: boolean }[] } } = {};
       try { data = text ? JSON.parse(text) : {}; } catch { throw new Error(`The draft could not be generated (server error ${response.status}).`); }
       if (!response.ok) throw new Error(data.error || data.detail || 'The draft could not be generated.');
       setFeedback(data.feedback || '');
       const ksbCount = data.meta?.ksbCount ?? 0;
       const promptNote = data.meta?.promptSource === 'custom' ? ' from your edited prompt' : '';
-      setAiNotice(`AI-assisted draft generated${promptNote}${ksbCount ? ` against ${ksbCount} assigned KSB${ksbCount === 1 ? '' : 's'}` : ''}. Review and edit it before deciding.`);
+      const files = data.meta?.evidenceFiles ?? [];
+      const unreadable = files.filter(file => !file.readable);
+      const fileNote = files.length ? ` Readable text extracted from ${files.length - unreadable.length} of ${files.length} uploaded files.` : '';
+      const unreadableNote = unreadable.length ? ` Could not read: ${unreadable.map(file => file.filename || 'Unnamed file').join(', ')}. Review these files separately.` : '';
+      setAiNotice(`AI-assisted draft generated${promptNote}${ksbCount ? ` against ${ksbCount} assigned KSB${ksbCount === 1 ? '' : 's'}` : ''}.${fileNote}${unreadableNote} Review and edit it before deciding.`);
     } catch (aiError) {
       setError(aiError instanceof Error ? aiError.message : 'The draft could not be generated.');
     } finally {
@@ -390,7 +397,7 @@ export default function CoachMarkingReviewPage() {
                   <div><dt>Submitted</dt><dd>{selected.submittedDisplay}</dd></div>
                   <div><dt>Status</dt><dd>{statusLabel(selected.status)}</dd></div>
                   <div><dt>Hours</dt><dd>{selected.actualTimeHours || '—'} recorded / {selected.plannedOtjh || '—'} planned</dd></div>
-                  <div><dt>Claimed KSBs</dt><dd>{selected.ksbCodes.join(', ') || 'None claimed'}</dd></div>
+                  <div><dt>Claimed KSBs</dt><dd>{selected.ksbReview?.status === 'pending' ? 'Awaiting programme KSB review' : selected.ksbCodes.join(', ') || 'None claimed'}</dd></div>
                 </dl>
               </section>
 
@@ -468,7 +475,7 @@ export default function CoachMarkingReviewPage() {
                   ) : <p className={styles.emptyText}>{evidenceError || 'No document was uploaded with this submission.'}</p>}
                   {evidenceError && evidence.length > 0 && <p className={styles.inlineError}>{evidenceError}</p>}
 
-                  <div className={styles.sectionHeading}><div><h4>Claimed KSBs</h4><p>Knowledge, skills and behaviours recorded for this activity.</p></div></div>
+                  <div className={styles.sectionHeading}><div><h4>{selected.ksbReview?.status === 'pending' ? 'Original learner KSB claims — awaiting review' : 'Claimed KSBs'}</h4><p>Knowledge, skills and behaviours recorded for this activity.</p></div></div>
                   <div className={styles.ksbList}>
                     {selected.ksbCodes.length ? selected.ksbCodes.map(code => (
                       <article key={code}><span>{code}</span><div><strong>{selected.ksbExplanations[code] || 'No explanation supplied.'}</strong>{selected.ksbWeights[code] != null && <small>Weight {selected.ksbWeights[code]}</small>}</div></article>
@@ -493,7 +500,9 @@ export default function CoachMarkingReviewPage() {
                 </section>
               )}
 
-              <section className={styles.feedbackPanel}>
+              {selected.ksbReview && <KsbReviewPanel key={`${selected.id}:${selected.ksbReview.revision}:${selected.ksbReview.status}`}
+                submissionId={selected.id} review={selected.ksbReview} onSaved={() => void load()} />}
+              {selected.ksbReview?.status !== 'pending' && <section className={styles.feedbackPanel}>
                 <div className={styles.feedbackHeading}>
                   <div><p>Coach feedback</p><h4>Review the AI draft and make the final decision</h4></div>
                   {!personal && <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
@@ -521,7 +530,7 @@ export default function CoachMarkingReviewPage() {
                   <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
                   <button type="button" className={styles.accept} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> {selected.activityType === 'extra_activity' ? 'Accept extra activity and send feedback' : 'Accept assignment and send feedback'}</button>
                 </div>
-              </section>
+              </section>}
             </main>
           </div>
         )}

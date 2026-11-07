@@ -31,9 +31,22 @@ class FeedbackVisibilityTests(SimpleTestCase):
     @override_settings(DEBUG=False)
     def test_production_release_defaults_to_enabled(self):
         self.assertTrue(settings.LEARNER_FEEDBACK_ENABLED)
-        self.assertFalse(settings.LEARNER_NON_LECTURE_FEEDBACK_ENABLED)
+        self.assertTrue(settings.LEARNER_NON_LECTURE_FEEDBACK_ENABLED)
         with _patched(_account(role='learner', subject_type='learner')):
             self.assertIsNone(feedback._learner_feedback_disabled_response(RequestFactory().get('/')))
+            self.assertFalse(feedback._learner_feedback_lecture_only(RequestFactory().get('/')))
+
+    @override_settings(DEBUG=False)
+    def test_default_production_release_allows_every_feedback_type_for_both_learner_types(self):
+        for learner_type in ('commercial', 'apprenticeship'):
+            account = _account(role='learner', subject_type='learner')
+            account.learner_type = learner_type
+            with self.subTest(learner_type=learner_type), _patched(account):
+                for form_type in feedback.FORM_TYPES:
+                    self.assertIsNone(feedback._learner_feedback_disabled_response(
+                        RequestFactory().get('/'),
+                        form=SimpleNamespace(form_type=form_type), delivery=object(),
+                    ))
 
     @override_settings(DEBUG=False, LEARNER_FEEDBACK_ENABLED=True, LEARNER_NON_LECTURE_FEEDBACK_ENABLED=False)
     def test_production_queue_returns_assigned_forms_for_the_signed_in_learner(self):
@@ -41,9 +54,12 @@ class FeedbackVisibilityTests(SimpleTestCase):
         moment = datetime(2026, 10, 27, tzinfo=timezone.utc)
         delivery = SimpleNamespace(id=21, form=form, module_name='Synthetic module', session_title='Session 1', starts_at=moment)
         recipient = SimpleNamespace(delivery=delivery, delivery_id=21, assigned_at=moment, due_date=None)
+        provisional = SimpleNamespace(id=22, form=form, attendance_source='qr_schedule',
+                                      module_name='Synthetic module', session_title='Session 2', starts_at=moment)
+        early_recipient = SimpleNamespace(delivery=provisional, delivery_id=22, assigned_at=moment, due_date=None)
         recipients = mock.MagicMock()
         recipients.filter.return_value = recipients
-        recipients.order_by.return_value = [recipient]
+        recipients.order_by.return_value = [recipient, early_recipient]
         forms = mock.MagicMock()
         forms.filter.return_value = forms
         forms.distinct.return_value = forms
@@ -67,6 +83,8 @@ class FeedbackVisibilityTests(SimpleTestCase):
             response = feedback.learner_forms(RequestFactory().get('/?learnerId=999'))
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Assigned feedback', response.content)
+        self.assertIn(b'Session 1', response.content)
+        self.assertNotIn(b'Session 2', response.content)
         self.assertEqual(recipients.filter.call_args_list[0].kwargs['learner_id'], '61')
         self.assertEqual(recipients.filter.call_args_list[0].kwargs['delivery__form__form_type__in'], ['post_lecture'])
         assignment.assert_not_called()
@@ -131,6 +149,8 @@ class FeedbackVisibilityTests(SimpleTestCase):
             query.get.return_value = recipient
             self.assertEqual(feedback._learner_feedback_context('61', delivery_id=21, lecture_only=True), (form, delivery, recipient))
             pin.assert_called_once_with(delivery)
+            delivery.attendance_source = 'qr_schedule'
+            self.assertEqual(feedback._learner_feedback_context('61', delivery_id=21, lecture_only=True), (None, None, None))
             self.assertEqual(query.get.call_args.kwargs, {
                 'delivery_id': 21, 'learner_id': '61', 'revoked_at__isnull': True,
                 'delivery__status': 'open', 'delivery__form__status': 'published',

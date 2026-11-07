@@ -1,5 +1,6 @@
 """Synthetic transport parity; SimpleTestCase forbids every database operation."""
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -123,8 +124,11 @@ class OtjhKsbProjectionTests(SimpleTestCase):
         with sqlite3.connect(':memory:') as db:
             db.execute("ATTACH DATABASE ':memory:' AS Learner")
             db.create_function('GREATEST', 2, max)
-            db.execute('CREATE TABLE Learner.learner_progress_entries(learner_id,reporting_month,actual_seconds,accepted,deleted_at)')
-            db.executemany('INSERT INTO Learner.learner_progress_entries VALUES(?,?,?,?,?)', [
+            db.create_function('uk_month', 1, lambda value:
+                datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(ZoneInfo('Europe/London')).strftime('%Y-%m')
+                if value else None)
+            db.execute('CREATE TABLE Learner.learner_progress_entries(learner_id,reporting_month,actual_seconds,accepted,deleted_at,submitted_at,declared_completed_at)')
+            db.executemany('INSERT INTO Learner.learner_progress_entries(learner_id,reporting_month,actual_seconds,accepted,deleted_at) VALUES(?,?,?,?,?)', [
                 (101,'2026-01',3600,1,None), (101,'2026-01',300,1,None),
                 (101,'2026-01',1200,0,None), (101,'2026-01',600,None,None),
                 (101,'2026-01',-300,1,None), (101,'2026-01',None,1,None),
@@ -132,6 +136,9 @@ class OtjhKsbProjectionTests(SimpleTestCase):
                 (101,'2026-01',9000,1,'deleted'), (999,'2026-01',99000,1,None)])
             def query(sql, params):
                 # SQLite spelling only; exercise the actual aggregate/predicates.
+                sql = sql.replace("to_char(submitted_at AT TIME ZONE 'Europe/London','YYYY-MM')", 'uk_month(submitted_at)')
+                sql = sql.replace("to_char(coalesce(declared_completed_at,submitted_at)\n                 AT TIME ZONE 'Europe/London','YYYY-MM')",
+                                  'uk_month(coalesce(declared_completed_at,submitted_at))')
                 cursor = db.execute(sql.replace('actual_seconds::text', 'CAST(actual_seconds AS TEXT)').replace('%s', '?'), params)
                 return [dict(zip([column[0] for column in cursor.description], values)) for values in cursor.fetchall()]
             with patch.object(canonical, 'query', side_effect=query), \

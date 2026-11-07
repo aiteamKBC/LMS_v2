@@ -6,16 +6,18 @@ here. Analytics must never initialize a draw or move a learner's availability.
 from collections import defaultdict
 
 from django.db.models import Prefetch, Q
+from django.utils import timezone
 
 from learner_api.models import EnrolmentUser
 from .models import (
     EventRsvpRecipient, FeedbackAnswer, FeedbackAssignment, FeedbackDelivery,
-    FeedbackDeliveryQuestion, FeedbackDeliveryRecipient, FeedbackEventCampaign,
-    FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse, FeedbackReviewDelivery,
+    FeedbackDeliveryQuestion, FeedbackDeliveryQuestionOverride, FeedbackDeliveryRecipient, FeedbackEventCampaign,
+    FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse, FeedbackReviewDelivery, FeedbackEmployerReviewDelivery,
 )
 from .feedback_scoring import overall_metrics, question_metrics, response_key
 from .feedback_insights import answer_in_period, report_insights
 from .feedback_classification import response_classifications
+from .feedback_question_overrides import effective_question_ids
 
 
 def completed_report_responses(family_ids=None, *, delivery_ids=None, submitted_from=None, submitted_until=None, group_id=None, module_id=None):
@@ -137,6 +139,11 @@ def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=Non
     reviews = FeedbackReviewDelivery.objects.filter(form_id__in=manual_form_ids).values_list('form_id', 'id') if delivery_ids is None else []
     for form_id, identifier in reviews:
         base[form_id].add(('review', identifier))
+    employer_forms = {q.section.form_id for q in questions
+                      if q.section.form_id in manual_form_ids and getattr(q.section.form, 'form_type', None) == 'post_progress_review_employer'}
+    if delivery_ids is None and employer_forms:
+        for form_id, identifier in FeedbackEmployerReviewDelivery.objects.filter(form_id__in=employer_forms).values_list('form_id', 'id'):
+            base[form_id].add(('employer_review', identifier))
     campaigns = list(FeedbackEventCampaign.objects.filter(form_id__in=manual_form_ids).exclude(status='cancelled').values_list('form_id', 'event_id')) if delivery_ids is None else []
     event_forms = defaultdict(set)
     for form_id, event_id in campaigns:
@@ -171,6 +178,34 @@ def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=Non
         delivery__form_id__in=form_ids,
     ).values_list('delivery_id', 'question_id'):
         pinned[delivery_id].add(question_id)
+    replacements = defaultdict(list)
+    for delivery_id, learner_id, original_id, replacement_id, effective_at in (
+        FeedbackDeliveryQuestionOverride.objects.filter(
+            recipient__delivery_id__in=[delivery['id'] for delivery in deliveries],
+        ).values_list('recipient__delivery_id', 'recipient__learner_id',
+                      'original_question_id', 'replacement_question_id', 'effective_at')
+    ):
+        key = ('delivery', delivery_id, str(learner_id))
+        if key in recipients[delivery_id]:
+            replacements[key].append((original_id, replacement_id, effective_at))
+    recipient_questions = {}
+    if replacements:
+        started_at = {
+            ('delivery', delivery_id, str(learner_id)): timestamp
+            for delivery_id, learner_id, timestamp in FeedbackResponse.objects.filter(
+                delivery_id__in={key[1] for key in replacements},
+            ).values_list('delivery_id', 'learner_id', 'started_at')
+        }
+        recipient_questions = {
+            key: effective_question_ids(pinned[key[1]], changes, started_at.get(key), as_of=timezone.now())
+            for key, changes in replacements.items()
+        }
+    pinned_opportunities = defaultdict(set)
+    for delivery in deliveries:
+        if delivery['question_set_pinned']:
+            for key in recipients[delivery['id']]:
+                for question_id in recipient_questions.get(key, pinned[delivery['id']]):
+                    pinned_opportunities[(delivery['id'], question_id)].add(key)
     unpinned_ids = [delivery['id'] for delivery in deliveries if not delivery['question_set_pinned']]
     started = set(FeedbackResponse.objects.filter(delivery_id__in=unpinned_ids).values_list('delivery_id', flat=True)) if unpinned_ids else set()
     bank_forms = {question.section.form_id for question in questions if question.section.questions_per_delivery is not None}
@@ -193,16 +228,17 @@ def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=Non
         selected_in_scope = False
         for delivery in by_form[form_id]:
             if delivery['question_set_pinned']:
-                selected = question.id in pinned[delivery['id']]
+                eligible = pinned_opportunities[(delivery['id'], question.id)]
+                selected_in_scope |= bool(eligible) or (not recipients[delivery['id']] and question.id in pinned[delivery['id']])
+                opportunities.update(eligible)
             else:
-                selected = form_id not in bank_forms or delivery['id'] in started
-            if selected:
-                selected_in_scope = True
-                opportunities.update(recipients[delivery['id']])
-        if delivery_ids is not None and not selected_in_scope:
-            continue  # Never show the rest of a bank as if this lecture delivered it.
+                if form_id not in bank_forms or delivery['id'] in started:
+                    selected_in_scope = True
+                    opportunities.update(recipients[delivery['id']])
         all_answers = [answer for answer in question.submitted_answers
                        if delivery_ids is None or answer.response.delivery_id in delivery_ids]
+        if delivery_ids is not None and not selected_in_scope and not all_answers:
+            continue  # Never show the rest of a bank as if this lecture delivered it.
         # Date filters change only the numerator; retain historical assignment coverage.
         opportunities.update(response_key(answer.response) for answer in all_answers if answer.response.status == 'completed')
         answers = [answer for answer in all_answers if answer_in_period(answer, submitted_from, submitted_until)]

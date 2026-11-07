@@ -5,6 +5,8 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { downloadLearnerMcmPdf, downloadMigratedReviewForParty, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, retryMigratedMonthlyLogSignature, saveLearnerEventReviewAnswers, saveMigratedReviewPartyAnswers, signLearnerProgressReview, signMigratedReviewAsParty, type LearnerCalendarEvent, type MonthlyLogSignatureSync } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
+import { useAuth } from '@/hooks/useAuth';
+import { needsLearnerMigratedForm } from '@/api/learnerMigratedReview';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -295,6 +297,7 @@ export default function MonthlyCoachingPage() {
   const [searchParams] = useSearchParams();
   const { sessionId } = useParams<{ sessionId: string }>();
   const { myLearner, learner, sessions, loading, error, refresh } = useReviewSessions('mcr');
+  const { auth, isInitialized } = useAuth();
   const { canProgress } = useLearnerWorkspaceAccess(myLearner.id);
   // Keep the data-driven Aptem review details visible on first open while
   // preserving the existing learning-summary default for legacy meetings.
@@ -302,12 +305,19 @@ export default function MonthlyCoachingPage() {
   const [slidesOpen, setSlidesOpen] = useState(false);
   const [logSyncResult, setLogSyncResult] = useState<{ eventKey: string; sync?: MonthlyLogSignatureSync } | null>(null);
   const selected = sessions.find((session) => session.id === sessionId) || sessions.find(session => session.reviewSource === 'aptem' && `imported-review:${session.reviewId}` === sessionId) || null;
-  const migratedEvent = isMigratedContinuationEvent(selected);
+  const prepareImported = Boolean(isInitialized && auth.account?.role === 'learner'
+    && String(auth.account.subjectId) === String(myLearner.id)
+    && !searchParams.get('viewAsLearner') && !searchParams.get('viewAsCoach')
+    && needsLearnerMigratedForm(selected));
+  const previewImported = Boolean(isInitialized && auth.account?.role === 'admin'
+    && selected && (isMigratedContinuationEvent(selected) || needsLearnerMigratedForm(selected)));
+  const migratedEvent = isMigratedContinuationEvent(selected) || prepareImported || previewImported;
   const selectedDate = dateOf(selected);
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
     selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent ? (selected?.formEventKey || selected?.eventKey || selected?.id || '') : '',
+    false, prepareImported, previewImported,
   );
   // Monthly Logs belong to the curriculum target month. The scheduled date
   // is only the actual appointment date and may fall in another month.
@@ -403,7 +413,7 @@ export default function MonthlyCoachingPage() {
             </button>
           )}
         </div>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} monthlyLogSync={monthlyLogSync} onRetryMonthlyLogSignature={canProgress && migratedEvent ? retryMonthlyLogSignature : undefined} mcmMonthlyLog={completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : () => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={migratedEvent ? (canProgress ? (answers, version) => saveMigratedReviewPartyAnswers(selected.formEventKey || selected.eventKey || selected.id, answers, version) : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} /> : (
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} monthlyLogSync={monthlyLogSync} onRetryMonthlyLogSignature={canProgress && !previewImported && migratedEvent ? retryMonthlyLogSignature : undefined} mcmMonthlyLog={completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={previewImported ? undefined : migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : () => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress && !previewImported ? signLearnerReview : undefined} onSaveAnswers={migratedEvent ? (canProgress && !previewImported ? (answers, version) => saveMigratedReviewPartyAnswers(selected.formEventKey || selected.eventKey || selected.id, answers, version) : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} /> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
               <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>

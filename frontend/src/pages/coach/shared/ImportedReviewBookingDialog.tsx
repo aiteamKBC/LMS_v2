@@ -92,7 +92,10 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
   const locked = viewingAsCoach || (!independentBooking && definition?.readOnly) || definition?.previewOnly
     || definition?.templateSync?.status === 'conflict' || booking?.conflict
     || Boolean(definition?.instance.completedAt)
-    || ['completed', 'in-progress', 'awaiting-signature', 'cancelled'].includes(booking?.status || definition?.localStatus || definition?.instance.status || '');
+    || ['completed', 'awaiting-signature', 'cancelled'].includes(booking?.status || definition?.localStatus || definition?.instance.status || '')
+    || ((booking?.status || definition?.localStatus || definition?.instance.status) === 'in-progress'
+      && (!booking?.canReschedule || !['mcr', 'progress-review'].includes(reviewCategory(event))
+        || event.importedReviewType?.trim().toLowerCase() === 'personal support plan'));
   const eligible = Boolean(definition?.source === 'aptem' && (definition.migratedForm || independentBooking) && booking && !locked
     && (booking.canBook || booking.canAttach || booking.canReschedule));
   const attaching = Boolean(booking?.canAttach && !booking.canReschedule);

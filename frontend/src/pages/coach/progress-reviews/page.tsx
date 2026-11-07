@@ -15,6 +15,7 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ReviewAttendanceBadge } from '../shared/ReviewAttendanceBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { cn } from '@/lib/cn';
@@ -65,7 +66,7 @@ import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
 import { slidesTargetFromEvent } from './components/slidesTarget';
 import { MeetingActionsMenu } from '../monthly-coaching/components/MeetingActionsMenu';
 import styles from '../monthly-coaching/monthlyCoaching.module.css';
-import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
+import { fetchLatestRun } from '@/api/progressReviews';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
 import {
   buildKsbProgress,
@@ -221,7 +222,6 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
   const [pptxModalReview, setPptxModalReview] = useState<CoachCalendarEvent | null>(null);
   const [generatedReviewKeys, setGeneratedReviewKeys] = useState<Set<string>>(new Set());
-  const [bulkGenerating, setBulkGenerating] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
@@ -417,7 +417,7 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
 
   const schedulableReviews = selectedMonthEvents.filter(event => isImportedPersonalSupportPlan(event)
     ? Boolean(reviewActionMatrix(event).schedule)
-    : event.reviewSource !== 'aptem' && !event.aptemReviewId && !['in-progress', 'completed', 'awaiting-signature'].includes(event.status));
+    : event.reviewSource !== 'aptem' && !event.aptemReviewId && Boolean(reviewActionMatrix(event).schedule));
 
   const openSchedulePicker = () => {
     const preferred = schedulableReviews.find(needsScheduling) || schedulableReviews[0];
@@ -528,26 +528,6 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     });
   };
 
-  const handleBulkGenerateSlides = async () => {
-    const count = events.filter((event) => !isImportedReviewEvent(event) && reviewHasLearnerReference(event) && eventDisplayDate(event)).length;
-    if (!count) return;
-    if (!window.confirm(`Generate Progress Review PPTX decks for ${count} review(s) with a learner and review date? This may take a while.`)) return;
-    setBulkGenerating(true);
-    try {
-      const data = await bulkGenerateProgressReviews({});
-      const failed = data.results.filter((row) => row.generationStatus === 'failed').length;
-      if (failed) {
-        setActionError(`Bulk generation finished with ${failed} of ${data.results.length} failure(s).`);
-      } else {
-        setActionNotice(`Bulk generation complete — ${data.results.length} draft(s) generated. Open each review to review and save its slides.`);
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to run bulk generation.');
-    } finally {
-      setBulkGenerating(false);
-    }
-  };
-
   const handleCompleteReview = async (responses: ProgressReviewResponses) => {
     if (!completionEvent) return;
     setBusyEventId(eventIdentity(completionEvent));
@@ -603,7 +583,6 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
             <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={styles.control}>All months<AppIcon className="ri-arrow-down-s-line" /></button>
             {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className={styles.control}>Today</button> : null}
             <SearchInput className={styles.search} value={searchTerm} suggestions={learnerSuggestions} onChange={handleSearchChange} placeholder="Search learners..." ariaLabel={`Search ${reviewLabel} by learner`} />
-            {!otherReviews && <button type="button" onClick={handleBulkGenerateSlides} disabled={bulkGenerating} className={styles.control}><AppIcon className={bulkGenerating ? 'ri-loader-4-line animate-spin' : 'ri-stack-line'} />{bulkGenerating ? 'Generating slides...' : 'Bulk generate slides'}</button>}
             <button type="button" onClick={openSchedulePicker} disabled={schedulableReviews.length === 0} className={cn(styles.control, styles.primary)}><AppIcon className="ri-add-line text-xl" />Schedule review</button>
           </div>
           <PageTabs className={styles.tabs} items={tabItems} value={tab} onChange={(next) => changeTab(next as ReviewTab)} label={`Filter ${reviewLabel} by status`} />
@@ -631,7 +610,7 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
                     <td>{otherReviews ? (review.importedReviewType || review.reviewTypeName || review.title || 'Review') : <ReviewAge value={review.learnerId ? lastPrByLearner.get(review.learnerId) : undefined} label="PR" />}</td>
                     <td><ReviewScheduledDate event={review} /></td>
                     <td><ReviewCompletedDate event={review} /></td>
-                    <td><span className={styles.status} data-status={review.status}><AppIcon className={statusIcon} />{statusLabel(review.status)}</span>{isAtRiskProgressReview(review) || isDueSoonEvent(review) ? <div className={styles.alerts}>{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}</td>
+                    <td><span className={styles.status} data-status={review.status}><AppIcon className={statusIcon} />{statusLabel(review.status)}</span><ReviewAttendanceBadge event={review} />{isAtRiskProgressReview(review) || isDueSoonEvent(review) ? <div className={styles.alerts}>{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}</td>
                     <td onClick={(clickEvent) => clickEvent.stopPropagation()}><div className={styles.actions}>
                       {actions.viewForm ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className={cn(styles.control, styles.primary, styles.formButton)}>View form</button> : null}
                       <MeetingActionsMenu learner={review.learner || 'Unknown learner'} actions={[
@@ -666,7 +645,7 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={() => { if (!busyEventId) setScheduleModalEvent(null); }}>
             <div role="dialog" aria-modal="true" aria-labelledby="schedule-review-title" className="w-full max-w-[620px] rounded-2xl border border-foreground-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between border-b border-foreground-100 px-5 py-4">
-                <div><p className="text-[11px] font-semibold uppercase tracking-wide text-primary-600">Microsoft Teams booking</p><h2 id="schedule-review-title" className="mt-1 text-[20px] font-bold text-foreground-900">{`${scheduleModalEvent.status === 'scheduled' ? 'Reschedule' : 'Schedule'} ${otherReviews ? 'review' : 'progress review'}`}</h2><p className="mt-1 text-[12px] text-foreground-500">Choose the meeting details. The Teams booking will be updated after saving.</p></div>
+                <div><p className="text-[11px] font-semibold uppercase tracking-wide text-primary-600">Microsoft Teams booking</p><h2 id="schedule-review-title" className="mt-1 text-[20px] font-bold text-foreground-900">{`${['scheduled', 'in-progress'].includes(scheduleModalEvent.status) ? 'Reschedule' : 'Schedule'} ${otherReviews ? 'review' : 'progress review'}`}</h2><p className="mt-1 text-[12px] text-foreground-500">Choose the meeting details. The Teams booking will be updated after saving.</p></div>
                 <button type="button" aria-label="Close schedule review" disabled={Boolean(busyEventId)} onClick={() => setScheduleModalEvent(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-foreground-50"><AppIcon className="ri-close-line text-lg" /></button>
               </div>
               <div className="space-y-4 px-5 py-5">
@@ -682,7 +661,7 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
               </div>
               <div className="flex items-center justify-end gap-2 border-t border-foreground-100 px-5 py-4">
                 <button type="button" disabled={Boolean(busyEventId)} onClick={() => setScheduleModalEvent(null)} className="h-10 rounded-lg border border-foreground-200 px-4 text-[12px] font-semibold text-foreground-700 hover:bg-foreground-50">Cancel</button>
-                <button type="button" disabled={Boolean(busyEventId) || (!isImportedPersonalSupportPlan(scheduleModalEvent) && (!scheduleForm.date || !scheduleForm.time))} onClick={() => { void handleSchedule(scheduleModalEvent); }} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={busyEventId ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} />{busyEventId ? 'Saving...' : isImportedPersonalSupportPlan(scheduleModalEvent) ? 'Continue to booking' : scheduleModalEvent.status === 'scheduled' ? 'Save new time' : 'Schedule review'}</button>
+                <button type="button" disabled={Boolean(busyEventId) || (!isImportedPersonalSupportPlan(scheduleModalEvent) && (!scheduleForm.date || !scheduleForm.time))} onClick={() => { void handleSchedule(scheduleModalEvent); }} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={busyEventId ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} />{busyEventId ? 'Saving...' : isImportedPersonalSupportPlan(scheduleModalEvent) ? 'Continue to booking' : ['scheduled', 'in-progress'].includes(scheduleModalEvent.status) ? 'Save new time' : 'Schedule review'}</button>
               </div>
             </div>
           </div>

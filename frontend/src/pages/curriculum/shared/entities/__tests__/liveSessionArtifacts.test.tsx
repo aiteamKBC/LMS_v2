@@ -60,7 +60,7 @@ describe('component editor saved session results', () => {
     expect(screen.getByRole('link', { name: 'Download TXT' })).toHaveAttribute('href', '/curriculum_api/curriculum/session-results/S1/artifacts/T6/?format=txt');
     fireEvent.click(screen.getByRole('tab', { name: 'attendance' }));
     expect(screen.getByText('Learner One')).toBeInTheDocument();
-    expect(screen.getByText('Present')).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: /^Present$/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Export attendance CSV' })).toHaveAttribute('href', `${resultUrl}attendance.csv`);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -96,7 +96,7 @@ describe('component editor saved session results', () => {
     expect(screen.queryByText(/Teams held no recording/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'attendance' }));
     expect(screen.getByText('Awaiting report')).toBeInTheDocument();
-    expect(screen.queryByText('Absent')).not.toBeInTheDocument();
+    expect(screen.queryByRole('cell', { name: /^Absent$/ })).not.toBeInTheDocument();
   });
 
   it('shows a rejected queue request and leaves saved data available', async () => {

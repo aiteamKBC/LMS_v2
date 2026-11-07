@@ -62,6 +62,27 @@ class SessionRecordingsAuditTests(SimpleTestCase):
         self.assertEqual(self.read.call_args_list[0].args[1], [['S']])
         self.blob.get_blob_properties.assert_called_once_with(logging_enable=False)
 
+    def test_pending_bunny_is_not_counted_ready_because_old_azure_copy_is_ready(self):
+        self.saved['metadata'] = {'lmsBunnyRecording': {'state': 'pending'}}
+        with patch('curriculum_api.bunny_stream.BunnyStream') as bunny:
+            report = audit.audit_recordings(['S'])
+        self.assertEqual(report['readyRecordings'], 0)
+        self.assertIn('archive_not_ready', {issue['code'] for issue in report['issues']})
+        self.storage.assert_not_called()
+        bunny.assert_not_called()
+
+    def test_ready_bunny_uses_remote_encoding_state_without_azure(self):
+        self.saved.update(archive_status='pending', metadata={'lmsBunnyRecording': {
+            'state': 'ready', 'libraryId': '798153', 'videoId': 'synthetic'}})
+        with patch('curriculum_api.bunny_stream.BunnyStream') as bunny:
+            bunny.return_value.video.return_value = {'status': 4}
+            self.assertEqual(audit.audit_recordings(['S'])['readyRecordings'], 1)
+            bunny.return_value.video.return_value = {'status': 3}
+            report = audit.audit_recordings(['S'])
+        self.assertEqual(report['readyRecordings'], 0)
+        self.assertIn('archive_not_ready', {issue['code'] for issue in report['issues']})
+        self.storage.assert_not_called()
+
     def test_graph_recording_missing_from_lms_is_reported(self):
         self.saved_rows = []
         report = audit.audit_recordings(['S'])

@@ -1,3 +1,4 @@
+import { CollaborativeField } from './CollaborativeField';
 // Shared rich-text authoring surface for "component content" fields — a
 // contentEditable design view backed by execCommand, plus a raw-HTML view.
 // Extracted out of the Module Builder so other authoring surfaces (e.g. the
@@ -7,7 +8,7 @@ import { sanitizeCurriculumHtml } from '@/lib/curriculumHtml';
 
 type RichTextMode = 'design' | 'html';
 
-export function RichTextDraft({
+function RichTextDraftControl({
   label,
   value,
   onChange,
@@ -331,4 +332,8 @@ function htmlToPlainText(html: string) {
 
 function escapeAttribute(value: string) {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export function RichTextDraft({ editField, ...props }: Parameters<typeof RichTextDraftControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><RichTextDraftControl {...props} /></CollaborativeField>;
 }

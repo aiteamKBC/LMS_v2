@@ -62,8 +62,10 @@ class WorkingTimeTests(SimpleTestCase):
         return {finding.code for finding in findings}
 
     def test_start_boundaries(self):
+        self.assertEqual(self._codes("08:00:00", "08:30:00"), set())
+        self.assertEqual(self._codes("08:59:59", "09:30:00"), set())
         self.assertEqual(self._codes("09:00:00", "09:30:00"), set())
-        self.assertIn(rules.CODE_START_BEFORE_HOURS, self._codes("08:59:59", "09:30:00"))
+        self.assertIn(rules.CODE_START_BEFORE_HOURS, self._codes("07:59:59", "08:30:00"))
         self.assertEqual(self._codes("16:59:59", "17:00:00"), set())
         self.assertIn(rules.CODE_START_AT_OR_AFTER_CLOSE, self._codes("17:00:00", "17:00:30"))
         self.assertIn(rules.CODE_START_AT_OR_AFTER_CLOSE, self._codes("17:00:01", "17:30:00"))
@@ -86,8 +88,14 @@ class WorkingTimeTests(SimpleTestCase):
         self.assertEqual(codes.get(rules.CODE_CALENDAR_UNAVAILABLE), rules.SEVERITY_BLOCKING)
 
     def test_gmt_and_bst_dates_behave_identically(self):
-        self.assertEqual(self._codes("09:00:00", "09:30:00", day=WINTER_MONDAY), set())
-        self.assertEqual(self._codes("09:00:00", "09:30:00", day=MONDAY), set())
+        self.assertEqual(self._codes("08:00:00", "08:30:00", day=WINTER_MONDAY), set())
+        self.assertEqual(self._codes("08:00:00", "08:30:00", day=MONDAY), set())
+
+    def test_before_opening_message_names_the_actual_allowed_start(self):
+        findings = rules.working_time_findings(MONDAY, _time("07:59:59"), _time("08:30:00"), holiday_status=False)
+        finding = next(item for item in findings if item.code == rules.CODE_START_BEFORE_HOURS)
+        self.assertIn('before 08:00:00', finding.message)
+        self.assertTrue(finding.is_blocking)
 
     def test_missing_timestamp_is_blocking(self):
         findings = rules.working_time_findings(MONDAY, None, _time("10:00:00"), holiday_status=False)

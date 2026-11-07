@@ -12,6 +12,9 @@ import { CompletionValidationError, type WorkingRuleReason } from '@/lib/complet
 const BASE = '/learner_api/components';
 
 export interface ComponentProgressSubmission {
+  retakeTimeChoice?: 'correct' | 'add' | 'retry';
+  retakeTimeReason?: string;
+  retakePreviousSeconds?: number;
   assignmentTopicId?: string;
   week?: string | null;
   module?: string | null;
@@ -36,6 +39,8 @@ export interface ComponentProgressSubmission {
 }
 
 export interface ComponentProgressRecord {
+  retakeTimeChoice?: 'correct' | 'add' | 'retry';
+  countedSeconds?: number;
   kind: 'component';
   componentType: string;
   componentId: string;

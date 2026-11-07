@@ -126,6 +126,17 @@ class CreateGuardTests(unittest.TestCase):
         self.assertEqual(MemoryClaims.rows['module:MOD-1']['status'], 'done')
         self.assertEqual(MemoryClaims.rows['module:MOD-1']['outcomeStatus'], 502)
 
+    def test_unconfirmed_microsoft_response_keeps_the_claim_uncertain(self):
+        self.view.return_value = JsonResponse({'code': 'teams_calendar_create_uncertain', 'verificationRequired': True}, status=502)
+        self.assertEqual(self.post().status_code, 502)
+        self.assertEqual(MemoryClaims.rows['module:MOD-1']['status'], 'uncertain')
+        self.view.reset_mock()
+        refused = self.post()
+        self.assertEqual(refused.status_code, 409)
+        self.assertEqual(json.loads(refused.content)['code'], 'teams_calendar_create_uncertain')
+        self.view.assert_not_called()
+        self.assertEqual(MemoryClaims.rows['module:MOD-1']['outcomeStatus'], 502)
+
     def test_unprovisioned_guard_fails_closed_before_microsoft(self):
         with patch.object(MemoryClaims, 'check', side_effect=RuntimeError('apply the SQL')):
             response = self.post()

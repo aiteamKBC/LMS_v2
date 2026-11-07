@@ -37,9 +37,11 @@ export function externalCalendarFor(
   const links = [...new Set(main.map(component => text(component.settings?.liveSessionLinkOverride)
     || text(component.settings?.liveSessionUrl) || text(component.settings?.teamsMeetingUrl)).filter(Boolean))];
   const savedLink = text(summary?.joinUrl);
+  const ownershipKnown = Boolean(summary?.calendarManagement || summary?.meetingType
+    || (series?.id === summary?.liveSessionId && series?.meeting_type));
   const imported = summary?.calendarManagement === 'external' || summary?.meetingType === 'linked-external'
     || (Boolean(summary?.liveSessionId) && series?.id === summary?.liveSessionId && series?.meeting_type === 'linked-external')
-    || main.some(component => component.settings?.teamsMeetingType === 'linked-external');
+    || (!ownershipKnown && main.some(component => component.settings?.teamsMeetingType === 'linked-external'));
   const replacement = main.some(component => {
     const override = text(component.settings?.liveSessionLinkOverride);
     return override && override !== savedLink;

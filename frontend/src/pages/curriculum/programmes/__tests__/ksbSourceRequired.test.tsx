@@ -1,3 +1,4 @@
+import { fetchAssignedLearners, fetchLearnerStatusCounts } from '@/api/assignedLearners';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -18,6 +19,11 @@ import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries, fetchCurriculum
  * standard yet can be parked on it; it is created the first time it is asked for
  * and reused after that — never one empty profile per programme.
  */
+
+vi.mock('@/api/assignedLearners', () => ({ fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => [id, { total: 3, statuses: { active: 2, withdrawn: 1 } }]))), fetchAssignedLearners: vi.fn(async () => ({ scope: 'programme', id: 'PROG-MAPPED', status: 'active', total: 2, filteredTotal: 2, page: 1, pageSize: 25, learners: [
+  { id: 'A', name: 'Active One', email: 'active-one@example.invalid', status: 'active' },
+  { id: 'B', name: 'Active Two', email: 'active-two@example.invalid', status: 'active' },
+] })) }));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -137,6 +143,8 @@ function cardFor(name: string) {
 
 describe('Programmes page — a programme with no usable KSB source', { timeout: 15000 }, () => {
   beforeEach(() => {
+    vi.mocked(fetchAssignedLearners).mockClear();
+    vi.mocked(fetchLearnerStatusCounts).mockClear();
     listedProgrammes = [withSource, withoutSource];
     ksbSets = [realProfile];
     createCurriculumProgramme.mockClear();
@@ -146,6 +154,21 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     vi.mocked(fetchCurriculumKsbSets).mockClear();
     vi.mocked(fetchCurriculumKsbSetSummaries).mockClear();
     vi.mocked(fetchCurriculumKsbSourceDefinitions).mockClear();
+  });
+
+  it('shows automatically loaded programme status counts while names wait for an explicit open', async () => {
+    listedProgrammes = [{ ...withSource, learners: 9 }];
+    await renderProgrammes();
+    const learners = await screen.findByRole('button', { name: 'Data Analyst: 2 active learners' });
+    expect(screen.getByRole('button', { name: 'Data Analyst: 1 withdrawn learners' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Data Analyst: 3 all statuses learners' })).toBeVisible();
+    expect(fetchLearnerStatusCounts).toHaveBeenCalledTimes(1);
+    expect(fetchAssignedLearners).not.toHaveBeenCalled();
+    await userEvent.click(learners);
+    await screen.findByText('Active One');
+    expect(learners).toHaveTextContent('2');
+    expect(fetchAssignedLearners).toHaveBeenCalledTimes(1);
+    expect(fetchAssignedLearners).toHaveBeenCalledWith(expect.objectContaining({ scope: 'programme', id: 'PROG-MAPPED' }), 'active', '', 1, expect.any(AbortSignal));
   });
 
   it('loads source summaries on mount and definitions only when that source is opened', async () => {

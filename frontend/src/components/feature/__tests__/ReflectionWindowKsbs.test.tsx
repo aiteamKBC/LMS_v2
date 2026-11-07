@@ -83,6 +83,24 @@ describe('ReflectionWindow KSB tab', () => {
       .not.toHaveClass('text-emerald-700');
   });
 
+  it('shows unrated confidence honestly and lets a learner explicitly choose the minimum rating', () => {
+    renderWindow([]);
+    fireEvent.click(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ }));
+    fireEvent.change(screen.getByPlaceholderText(/Why is K1 relevant/), { target: { value: 'Applied the principles.' } });
+    expect(screen.getAllByText('Not rated')).toHaveLength(2);
+    expect(screen.getByRole('slider', { name: 'K1: Confidence before' })).toHaveAttribute('aria-valuetext', 'Not rated');
+    fireEvent.change(screen.getByRole('slider', { name: 'K1: Confidence after' }), { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    expect(screen.getByText('K1: confidence before')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Complete KSBs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'K1: set confidence before to 1 out of 5' }));
+    expect(screen.getByRole('slider', { name: 'K1: Confidence before' })).toHaveAttribute('aria-valuetext', '1 out of 5');
+    expect(screen.queryByText('Not rated')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    expect(screen.queryByText('KSB information still needed')).not.toBeInTheDocument();
+    expect(screen.getByText('Selected KSBs explained and rated (any K, S or B)').closest('p')).toHaveClass('text-emerald-700');
+  });
+
   it('shows only the authored KSBs when the component has a mapping', () => {
     renderWindow([{ code: 'S2', description: 'Campaign planning', weight: 40, classification: 'primary' }]);
 

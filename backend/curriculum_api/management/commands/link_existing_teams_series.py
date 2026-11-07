@@ -69,6 +69,8 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('--module-id', required=True)
+        parser.add_argument('--join-url', help='Review the exact existing Teams join URL using the same checked workflow as Module Builder.')
+        parser.add_argument('--week-id', action='append', dest='week_ids', help='Saved week to link; repeat for selected weeks. Defaults to all main live weeks.')
         parser.add_argument('--subject', help='Exact Teams event subject; defaults to the module group name.')
         parser.add_argument('--calendar-mailbox', help='Mailbox holding an attendee copy, if it is not an LMS organizer.')
         parser.add_argument('--join-url-sha256', help='Select one same-title Teams meeting by the SHA-256 of its join URL.')
@@ -82,6 +84,27 @@ class Command(BaseCommand):
         from curriculum_api.session_graph import collection
 
         module_id = options['module_id'].strip()
+        if options.get('join_url'):
+            import json
+            from curriculum_api.teams_existing_series import preview, apply, LinkError
+            weeks = options.get('week_ids')
+            if not weeks:
+                rows = v.active_component_rows(v.authoring_fetch_all(v.AUTHORING_COMPONENTS_TABLE,
+                    'module_catalogue_id = %s', [module_id]))
+                weeks = sorted({row['week_id'] for row in rows if v.replaceable_live_session(row)})
+            payload = {'link': options['join_url'], 'weekIds': weeks,
+                       'calendarMailbox': options.get('calendar_mailbox') or ''}
+            try:
+                report = preview(module_id, payload)
+                if options.get('apply'):
+                    report = apply(module_id, {'previewToken': report['previewToken']})
+            except LinkError as exc:
+                raise CommandError(str(exc)) from exc
+            self.stdout.write(json.dumps({'module': module_id,
+                'action': 'linked' if options.get('apply') else 'preview',
+                'matched': report['matched'], 'unmatched': report['unmatched'],
+                'alreadyLinked': report.get('alreadyLinked', False)}))
+            return
         modules = v.authoring_fetch_all(v.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id])
         if len(modules) != 1:
             raise CommandError('The requested module was not found.')

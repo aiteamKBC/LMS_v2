@@ -78,6 +78,8 @@ def public_item(item):
         result['componentCounts'] = item['componentCounts']
     if 'mergedPercent' in item:
         result['mergedPercent'] = item['mergedPercent']
+    if item.get('retainedTransferComponents'):
+        result['retainedTransferComponents'] = item['retainedTransferComponents']
     return result
 
 

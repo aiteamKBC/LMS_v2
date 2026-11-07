@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 import { prepareLearnerPersonalSupport } from '@/api/learnerPersonalSupport';
+import { prepareLearnerMigratedReview, previewLearnerMigratedReview } from '@/api/learnerMigratedReview';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 
@@ -41,6 +42,8 @@ export function useLearnerReviewInstance(
   learnerId: string,
   eventKey: string,
   preparePersonalSupport = false,
+  prepareMigratedReview = false,
+  previewMigratedReview = false,
 ): LearnerReviewInstanceState {
   const [definition, setDefinition] = useState<LearnerReviewDefinition | null>(null);
   const [loading, setLoading] = useState(false);
@@ -59,7 +62,11 @@ export function useLearnerReviewInstance(
     setLoading(true);
     setDefinition(null);
     setError('');
-    (preparePersonalSupport
+    (previewMigratedReview
+      ? previewLearnerMigratedReview(eventKey, kind, learnerId, controller.signal)
+      : prepareMigratedReview
+      ? prepareLearnerMigratedReview(eventKey, controller.signal)
+      : preparePersonalSupport
       ? prepareLearnerPersonalSupport(eventKey, controller.signal)
       : eventKey.startsWith('imported-review:')
       ? fetchMigratedReviewForParty(eventKey, controller.signal)
@@ -75,7 +82,7 @@ export function useLearnerReviewInstance(
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [kind, learnerId, eventKey, revision, preparePersonalSupport]);
+  }, [kind, learnerId, eventKey, revision, preparePersonalSupport, prepareMigratedReview, previewMigratedReview]);
 
   return { definition, loading, error, refresh };
 }

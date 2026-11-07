@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
+from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
@@ -164,6 +165,9 @@ def next_title(items, today):
     for item in items:
         placement = item.get('schedule') or {}
         start, end = placement.get('week_start'), placement.get('week_end')
+        delivery = placement.get('delivery_week')
+        if delivery:
+            start, end = delivery.get('start'), delivery.get('end')
         raw = placement.get('date')
         if not start and raw:
             at = date.fromisoformat(raw[:10])
@@ -171,11 +175,12 @@ def next_title(items, today):
         if start and not end:
             end = (date.fromisoformat(start) + timedelta(days=6)).isoformat()
         source, label = placement.get('date_source'), item.get('week') or item.get('section_title') or ''
-        month = placement.get('month')
+        month = delivery.get('month') if delivery else placement.get('month')
         month = month if month and len(month) == 7 else None
         special = 'introduction' if source == 'introduction' else 'extra' if source == 'extra_activity' else ''
         key = 'introduction' if special == 'introduction' else 'extra:' + label if special else (
-            start or item.get('weekId') or (f'{month}:{label or "activities"}' if month else label or 'undated'))
+            (f"week:{delivery['module_id']}:{delivery['id']}" if delivery else '')
+            or start or item.get('weekId') or (f'{month}:{label or "activities"}' if month else label or 'undated'))
         rank = -1 if special == 'introduction' else 2 if special else 0 if start or month else 1
         group = groups.setdefault(key, {'rank': rank, 'start': None if special else start,
             'end': None if special else end, 'sort': start or month or key, 'items': []})
@@ -192,7 +197,7 @@ def next_title(items, today):
     return next((i['title'] for i in entries if not i['completed']), None)
 
 
-def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None):
+def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
     from .progress_transfer_policy import merged_percent
     from .progress_demo import credit as demo_credit
@@ -213,11 +218,18 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             'completed': (course, ref) in done, 'started': (course, ref) in started,
             '_course_ref': course, 'title': d['source_activity_title'], 'section_title': d.get('source_section_title'),
             'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0})
+    native_component_count = len(native.get('components', []))
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
-    from .replacement_learning import project_approved_learning
+    from .replacement_learning import project_approved_learning, approved_retained_components
     components = project_approved_learning(components, metadata['replacement_settings'], metadata.get('progress_transfers', []))
-    native['components'] = components[:len(native.get('components', []))]
-    native['retiredQuizComponents'] = components[len(native['components']):]
+    native['components'] = components[:native_component_count]
+    current_module_ids = {c.get('moduleId') for c in native['components'] if c.get('moduleId')}
+    # Explicitly retained (unmatched) old components have no destination here;
+    # they bypass project_approved_learning, which only revalidates matches
+    # against real target components, and would otherwise strip them.
+    retained_transfer = approved_retained_components(metadata.get('progress_transfers', []), current_module_ids)
+    native['retiredQuizComponents'] = [*components[native_component_count:], *retained_transfer]
+    components = [*components, *retained_transfer]
     by_id = {}
     for course in courses:
         ref = str(course['source_course_ref'])
@@ -259,6 +271,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             continue
         placement = metadata['activity_dates'].get(ident) or {}
         if not placement or placement.get('date_source') in ('original_created_at', 'source_date', 'undated'):
+            delivery = placement.get('delivery_week')
             raw = c.get('sessionDate')
             placement = {'date': raw[:10] if raw else None}
             if raw:
@@ -269,6 +282,8 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                 else:
                     monday = at-timedelta(days=at.weekday())
                     placement.update(month=raw[:7],week_start=monday.isoformat(),week_end=(monday+timedelta(days=6)).isoformat())
+            if delivery:
+                placement['delivery_week'] = delivery
         subject['_items'].append(dict(id=ident, title=c.get('component') or '', completed=native_done(c, native) if search is None else False,
             position=index, week=c.get('week'), weekId=c.get('weekId'), schedule=placement, component=c,
             started=(c.get('componentId') in attempted_components or str((c.get('quizMeta') or {}).get('quizId')) in attempted_quizzes) if c.get('isQuiz') else False))
@@ -311,6 +326,11 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             subject['previousLearningFor'] = group
         if metadata['imported_courses'].get(subject['id']):
             subject['importedCourseRef'] = metadata['imported_courses'][subject['id']]
+        historical_ref = (approved.get(subject['id']) or {}).get('courseRef') or links.get(subject['id']) or subject['id']
+        historical = next((course.get('legacyProgressReference') for course in courses
+                           if f"legacy:{course['source_course_ref']}" == historical_ref), None)
+        if historical is not None:
+            subject['legacyProgressReference'] = historical
         subject.update(activityCount=count, completedActivityCount=complete, progress=percent(complete, count),
             status='Completed' if count and complete == count else 'In progress' if any(i['completed'] or i.get('started') for i in items) else 'Upcoming',
             nextTitle=next_title(items, today),
@@ -340,6 +360,12 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             subject['actualHours'] = round(transfer['hours'] + (native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual') or 0), 6)
             # Keep the component-derived status, including a started native
             # attempt with no completed components yet (0% is not "Upcoming").
+        if include_activity_items:
+            # Internal curriculum-directory projection of this exact population.
+            # Bodies, evidence and resource URLs never leave the reader.
+            subject['_activityItems'] = [dict(
+                completed=bool(item['completed']), schedule=item.get('schedule') or {},
+            ) for item in items]
         cards.append(subject)
     def totals(source):
         rows = [c for c in cards if c['source'] == source]
@@ -492,6 +518,9 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
         # Reuse native completion before selecting deadlines, just as the
         # initial catalogue does. No cover or programme metric reads on expansion.
         return dict(upcoming=upcoming_links(source,kind,ids,native,metadata,{c['id'] for c in cards}))
+    from .my_learning_activity import card_teaching_activity
+    with projection_stage('teaching_activity'):
+        module_activity = card_teaching_activity(cards)
     from .student_activity import _cover_url
     with projection_stage('covers'):
         covers = {**metadata['covers'], **{ref:_cover_url(path) for ref,path in covers_for([c['id'] for c in cards if c['source']=='legacy']).items()}}
@@ -510,7 +539,7 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     with projection_stage('upcoming'):
         upcoming = upcoming_links(source, kind, ids, native, metadata, {c['id'] for c in cards}, limit=4)
     return dict(learner=dict(id=str(source.pk),kind=kind,name=owner['name'],programme=owner.get('programme') or '',cohort=str(source.cohort or ''),group=str(source.group or '')),
-        summary=summary, modules=cards, otjh=dict(actual=actual,planned=planned),
+        summary=summary, modules=cards, moduleActivity=module_activity, otjh=dict(actual=actual,planned=planned),
         upcoming=upcoming[:3], hasMoreUpcoming=len(upcoming)>3)
 
 
@@ -682,8 +711,11 @@ def read_module(source, kind, owner, subject_id):
                             **{k:global_by_id.get(c.get('componentId'),{}).get(k) for k in ('attendanceCompleted',) if k in global_by_id.get(c.get('componentId'),{})}}
                             for c in detail['components'] if (c.get('moduleId') in native_scope_ids if mid else c.get('module')==subject_id[9:])]
     detail['retiredQuizComponents'] = [{k:v for k,v in c.items() if k != 'previousLearning'} for c in native.get('retiredQuizComponents',[]) if c.get('moduleId') in native_scope_ids]
-    from .replacement_learning import project_approved_learning
+    from .replacement_learning import project_approved_learning, approved_retained_components
     detail['components'] = project_approved_learning(detail['components'], metadata['replacement_settings'], transfers)
+    # Explicitly retained (unmatched) old components have no destination
+    # component to attach to; add them the same way assemble_cards does.
+    detail['retiredQuizComponents'] = [*detail['retiredQuizComponents'], *approved_retained_components(transfers, native_scope_ids)]
     component_set = {c.get('componentId') for c in [*detail['components'],*detail['retiredQuizComponents']]}
     quiz_ids = {str((c.get('quizMeta') or {}).get('quizId')) for c in detail['components'] if c.get('isQuiz')}
     detail['quizAttempts'] = [a for a in native['quizAttempts'] if a.get('componentId') in component_set if a.get('componentId')] + [a for a in native['quizAttempts'] if not a.get('componentId') and str(a.get('quizId')) in quiz_ids]
@@ -703,6 +735,10 @@ def read_module(source, kind, owner, subject_id):
     clean_metadata={k:{ref:value for ref,value in metadata[k].items() if ref in visible_refs}
         for k in ('covers','builder_subjects','imported_courses','replacement_courses','previous_learning_groups')}
     clean_metadata['current_subjects']=[m for m in metadata['current_subjects'] if m['id'] in native_scope_ids]
+    historical_ref = (approved.get(subject_id) or {}).get('courseRef') or links.get(subject_id) or subject_id
+    historical = owned.get(historical_ref, {}).get('legacyProgressReference')
+    if historical is not None:
+        clean_metadata['legacy_progress_references'] = {subject_id: historical}
     if continuation_weeks:
         clean_metadata['imported_continuations'] = continuation_components(metadata,
             {subject_id:activity.get('activities', [])},detail['components'],continuation_dates)
@@ -759,6 +795,7 @@ def read_module(source, kind, owner, subject_id):
 @local_catalogue_trace
 @learner_self_or_staff(kwarg='pk')
 @learner_journal_view
+@cached_learner_read('my-learning')
 def my_learning(request,kind,pk,subject_id=None,resource=None):
     model=SOURCE_MODELS.get(kind)
     if model is None:

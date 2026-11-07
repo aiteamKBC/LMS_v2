@@ -1,4 +1,4 @@
-import { zonedNaiveToUtcIso } from '../module-builder/moduleAuthoringData';
+import { BUSINESS_TIME_ZONE, localClockToUtcIso } from '@/lib/timeZones';
 
 export function localTimeInput(instant?: string | null) {
   if (!instant) return '';
@@ -11,8 +11,10 @@ export function localTimeInput(instant?: string | null) {
 
 export function completionEnd(start: string, seconds: number) {
   if (!start || !Number.isFinite(seconds) || seconds <= 0) return null;
-  const second = Number(start.split(':')[2] || 0);
-  const instant = new Date(zonedNaiveToUtcIso(start.slice(0, 16), 'Europe/London'));
-  instant.setTime(instant.getTime() + second * 1000);
-  return { start: instant.toISOString(), end: new Date(instant.getTime() + seconds * 1000).toISOString() };
+  try {
+    const instant = new Date(localClockToUtcIso(start, BUSINESS_TIME_ZONE));
+    return { start: instant.toISOString(), end: new Date(instant.getTime() + seconds * 1000).toISOString() };
+  } catch {
+    return null; // Invalid/ambiguous input stays editable in the completion form.
+  }
 }

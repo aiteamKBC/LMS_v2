@@ -17,6 +17,8 @@ from unittest.mock import Mock, patch
 from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
+from config.time_zones import local_clock_to_utc
+
 
 ROOT = Path(__file__).parent
 JOIN = 'https://teams.microsoft.com/l/meetup-join/synthetic-series'
@@ -45,6 +47,7 @@ def load_functions(path, namespace, names=None):
 def fixture_namespace():
     namespace = dict(copy=copy, hashlib=hashlib, json=json, uuid=uuid, date=date,
         datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo,
+        local_clock_to_utc=local_clock_to_utc,
         quote=quote, urlencode=urlencode, text=lambda value: str(value or '').strip(),
         httpx=types.SimpleNamespace(HTTPError=TransportError), DatabaseError=DatabaseError,
         transaction=types.SimpleNamespace(atomic=nullcontext),
@@ -272,11 +275,19 @@ class ImportedCalendarUpdateTests(unittest.TestCase):
         self.ns['store_snapshot'].assert_not_called()
 
     def test_additional_component_keeps_its_own_date_and_link(self):
+        self.assert_separate_meeting_keeps_its_slot({'teamsMeetingScope': 'additional',
+            'extraTeamsMeetingUrl': 'https://example.invalid/additional', 'sessionDate': '2026-10-24'})
+
+    def test_selected_week_replacement_is_not_adopted_by_the_original_calendar(self):
+        self.assert_separate_meeting_keeps_its_slot({'teamsMeetingScope': 'main',
+            'liveSessionLinkOverride': 'https://example.invalid/masterclass', 'sessionDate': '2026-10-24'})
+
+    def assert_separate_meeting_keeps_its_slot(self, separate_settings):
         weeks = [{'id': 'W1'}, {'id': 'W2'}, {'id': 'W3'}]
         components = [
             {'id': 'C1', 'week_id': 'W1', 'type': 'live-session', 'settings': {'teamsMeetingScope': 'main'}},
             {'id': 'EXTRA', 'week_id': 'W2', 'type': 'live-session',
-             'settings': {'teamsMeetingScope': 'additional', 'extraTeamsMeetingUrl': 'https://example.invalid/additional', 'sessionDate': '2026-10-24'}},
+             'settings': separate_settings},
             {'id': 'C3', 'week_id': 'W3', 'type': 'live-session', 'settings': {'teamsMeetingScope': 'main'}},
         ]
         original = copy.deepcopy(components)

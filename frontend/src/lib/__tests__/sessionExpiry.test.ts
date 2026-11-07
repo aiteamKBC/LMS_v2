@@ -60,6 +60,8 @@ describe('installSessionExpiryHandler', () => {
 
     await window.fetch('/engagement_api/feedback/public-event/');
     await window.fetch('/engagement_api/feedback/public-event/csrf/');
+    await window.fetch('/engagement_api/feedback/public-lecture/');
+    await window.fetch('/engagement_api/feedback/public-lecture/csrf/');
     await window.fetch('/engagement_api/event-check-in/');
     await window.fetch('/engagement_api/event-check-in/csrf/');
 

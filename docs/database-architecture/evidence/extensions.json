@@ -1,0 +1,9 @@
+[
+{"extname": "citext", "extversion": "1.8", "schema": "public"},
+{"extname": "pg_session_jwt", "extversion": "0.5.0", "schema": "public"},
+{"extname": "pg_stat_statements", "extversion": "1.12", "schema": "public"},
+{"extname": "pgcrypto", "extversion": "1.4", "schema": "public"},
+{"extname": "plpgsql", "extversion": "1.0", "schema": "pg_catalog"},
+{"extname": "postgres_fdw", "extversion": "1.2", "schema": "public"},
+{"extname": "vector", "extversion": "0.8.6", "schema": "public"}
+]

@@ -99,6 +99,7 @@ export interface LearnerComponentEntry {
   resourceUrl?: string | null;          // generic external/download URL
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
   teamsSessionNumber?: number | null;
+  additionalMeeting?: boolean;
   teamsLiveSessionId?: string | null;   // curriculum.live_sessions.id for attendance/artifact sync
   recordingSeriesId?: string | null;    // saved series owning a dated recorded event
   recordingSessionNumber?: number | null;

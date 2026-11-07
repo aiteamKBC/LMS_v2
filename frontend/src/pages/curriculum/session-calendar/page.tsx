@@ -1,4 +1,5 @@
-import { formatDate } from './page.helpers';
+import { formatDate, matchesSessionGroup, sessionGroups } from './page.helpers';
+import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
@@ -93,7 +94,9 @@ function normalizeApiSession(session: CurriculumSession): CalSession {
     moduleId: session.moduleId,
     moduleCatalogueId: session.moduleCatalogueId,
     weekId: session.weekId,
-    title: session.title || 'Untitled session',
+    title: session.type === 'Live Session'
+      ? sessionDisplayTitle(session.title || 'Untitled session', session.weekTitle, 'Live Teams Session')
+      : session.title || 'Untitled session',
     type: validSessionTypes.has(session.type as CalSession['type']) ? session.type as CalSession['type'] : 'Live Session',
     date: session.date,
     day: session.day,
@@ -284,7 +287,7 @@ export default function SessionCalendarPage() {
 
   const filteredSessions = sessions.filter(session => {
     if (filters.cohort !== 'all' && session.cohort !== filters.cohort) return false;
-    if (filters.group !== 'all' && !session.group.includes(filters.group)) return false;
+    if (!matchesSessionGroup(session.group, filters.group)) return false;
     if (filters.type !== 'all' && session.type !== filters.type) return false;
     if (filters.tutor !== 'all' && session.tutor !== filters.tutor) return false;
     return true;
@@ -301,7 +304,7 @@ export default function SessionCalendarPage() {
   };
 
   const uniqueCohorts = useMemo(() => [...new Set(sessions.map(s => s.cohort))], [sessions]);
-  const uniqueGroups = useMemo(() => [...new Set(sessions.flatMap(s => s.group.split(', ').map(g => g.trim())))], [sessions]);
+  const uniqueGroups = useMemo(() => [...new Set(sessions.flatMap(s => sessionGroups(s.group)))], [sessions]);
   const uniqueTypes = useMemo(() => [...new Set(sessions.map(s => s.type))], [sessions]);
   const uniqueTutors = useMemo(() => [...new Set(sessions.map(s => s.tutor))], [sessions]);
 

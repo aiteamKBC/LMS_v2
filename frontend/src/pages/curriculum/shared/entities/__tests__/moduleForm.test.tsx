@@ -19,6 +19,14 @@ import {
 } from '@/lib/curriculumApi';
 import { createNewModule } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { ModuleFormDrawer } from '../moduleForm';
+import { fetchModuleHoursTarget, saveModuleHoursTarget } from '@/api/moduleHours';
+
+vi.mock('@/api/moduleHours', async original => ({ ...(await original<typeof import('@/api/moduleHours')>()), fetchModuleHoursTarget: vi.fn(), saveModuleHoursTarget: vi.fn() }));
+beforeEach(() => {
+  vi.mocked(fetchModuleHoursTarget).mockImplementation(async moduleId => ({ moduleId, targetMinutes: null, revision: 0, canMatch: false }));
+  vi.mocked(saveModuleHoursTarget).mockReset();
+  vi.mocked(saveModuleHoursTarget).mockImplementation(async (moduleId, targetMinutes, revision) => ({ moduleId, targetMinutes, revision: revision + 1, canMatch: true }));
+});
 
 /**
  * The one form that creates and places a module, in place of the six-step
@@ -334,6 +342,81 @@ describe('ModuleFormDrawer', () => {
     total: 1, emailed: 1, lastSentAt: '2026-10-01T09:30:00Z',
     deliveries: [{ moduleId: 'MOD-1', emailed: true, lastSent: { status: 'sent', at: '2026-10-01T09:30:00Z' } }],
   };
+
+  it('saves only the fixed hours target without rescheduling or emailing the tutor', async () => {
+    vi.mocked(fetchModuleHoursTarget).mockResolvedValue({ moduleId: 'MOD-1', targetMinutes: null, revision: 0, canMatch: true });
+    const { onClose } = renderDrawer({ module: assignedModule() });
+    await userEvent.click(await screen.findByRole('button', { name: /Fixed planned hours/ }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Set a fixed hours target/ }));
+    await userEvent.type(screen.getByRole('spinbutton', { name: 'Target hours' }), '500');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(saveModuleHoursTarget).toHaveBeenCalledWith('MOD-1', 30000, 0);
+    expect(updateCurriculumModuleMock).not.toHaveBeenCalled();
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves an explicitly requested tutor notification when saving the hours target', async () => {
+    vi.mocked(fetchModuleHoursTarget).mockResolvedValue({ moduleId: 'MOD-1', targetMinutes: null, revision: 0, canMatch: true });
+    renderDrawer({ module: assignedModule() });
+    await userEvent.click(await screen.findByRole('button', { name: /Fixed planned hours/ }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Set a fixed hours target/ }));
+    await userEvent.type(screen.getByRole('spinbutton', { name: 'Target hours' }), '500');
+    await userEvent.click(screen.getByRole('checkbox', { name: /Email Tutor One about this module/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(sendTutorAssignmentEmailMock).toHaveBeenCalledWith(['MOD-1']));
+    expect(saveModuleHoursTarget).toHaveBeenCalledWith('MOD-1', 30000, 0);
+  });
+
+  it('keeps a failed hours draft and reports partial success when module details saved first', async () => {
+    vi.mocked(fetchModuleHoursTarget).mockResolvedValue({ moduleId: 'MOD-1', targetMinutes: null, revision: 0, canMatch: true });
+    vi.mocked(saveModuleHoursTarget).mockRejectedValueOnce(new Error('Hours target unavailable'));
+    const { onClose, onSaved } = renderDrawer({ module: assignedModule() });
+    await userEvent.click(await screen.findByRole('button', { name: /Fixed planned hours/ }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Set a fixed hours target/ }));
+    await userEvent.type(screen.getByRole('spinbutton', { name: 'Target hours' }), '500');
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), ' updated');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await screen.findByText('Module details were saved, but the hours target was not saved. Hours target unavailable');
+    expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('spinbutton', { name: 'Target hours' })).toHaveValue(500);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('uploads the cover through Edit module without replacing content or creating a module', async () => {
+    const { onSaved } = renderDrawer({ module: assignedModule() });
+    await userEvent.upload(screen.getByLabelText('Upload image'), new File(['cover'], 'cover.png', { type: 'image/png' }));
+    const image = await screen.findByAltText('Data Foundations cover');
+    const cover = image.getAttribute('src');
+    expect(cover).toMatch(/^data:image\/png;base64,/);
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1));
+    const [id, payload] = updateCurriculumModuleMock.mock.calls[0];
+    expect(id).toBe('MOD-1');
+    expect(payload).toMatchObject({ coverImage: cover });
+    expect(payload).not.toHaveProperty('weekStructure');
+    expect(payload).not.toHaveProperty('teamsEventId');
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(createNewModuleMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-1' })));
+  });
+
+  it('keeps the uploaded cover and drawer open when the module save fails', async () => {
+    updateCurriculumModuleMock.mockRejectedValueOnce(new Error('Could not save the module image.'));
+    const { onSaved, onClose } = renderDrawer({ module: assignedModule() });
+    await userEvent.upload(screen.getByLabelText('Upload image'), new File(['cover'], 'cover.png', { type: 'image/png' }));
+    const image = await screen.findByAltText('Data Foundations cover');
+    const cover = image.getAttribute('src');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    expect(await screen.findByText('Could not save the module image.')).toBeInTheDocument();
+    expect(screen.getByAltText('Data Foundations cover')).toHaveAttribute('src', cover);
+    expect(screen.getByRole('button', { name: 'Save module' })).toBeEnabled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
 
   it('renames the same module without submitting inherited delivery fields or emailing its tutor', async () => {
     renderDrawer({ module: assignedModule() });

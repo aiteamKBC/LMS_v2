@@ -92,7 +92,7 @@ export function buildProgressRows(data: CurriculumScopeLearnerKsbImpactResponse,
 }
 
 export function ratioPercent(value: number, total: number): number | null {
-  return total > 0 ? Math.round(value / total * 100) : null;
+  return total > 0 ? Math.round(value / total * 10000) / 100 : null;
 }
 
 export function recordedHours(rows: ProgressRow[]): number | null {
@@ -106,7 +106,8 @@ export function recordedHours(rows: ProgressRow[]): number | null {
 }
 
 export function overallPercent(oth: number | null, ksb: number | null, activities: number | null): number | null {
-  return oth == null || ksb == null || activities == null ? null : Math.round((oth + ksb + activities) / 3);
+  return oth == null || ksb == null || activities == null ? null
+    : Math.round((Math.min(100, oth) + Math.min(100, ksb) + Math.min(100, activities)) / 3);
 }
 
 export function plannedPoints(rows: ProgressRow[]): number | null {

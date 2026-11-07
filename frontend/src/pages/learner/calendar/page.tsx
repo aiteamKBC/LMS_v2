@@ -11,6 +11,7 @@ import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { buildSourceFilters, countBySource, filterBySource, learnerEventSource, learnerSourceMeta, type LearnerSourceFilter } from './reviewTypeFilters';
+import { buildReviewTypeLookup } from '@/lib/reviewTypeFilters';
 import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -28,6 +29,7 @@ import {
   type PersonalCalendarProvider, type CalendarBusySlot, type BookingCalendarRules,
 } from '@/api/learnerCalendar';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
+import { BookingOnlyNotice } from '@/components/feature/BookingOnlyNotice';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { CalendarColorPreferencesDrawer } from '@/pages/coach/timetable/components/CalendarColorPreferencesDrawer';
 import {
@@ -44,8 +46,27 @@ import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm'
 import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
 import { bookingInstant, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
+import { BUSINESS_TIME_ZONE } from '@/lib/timeZones';
 
-type CalendarEvent = SharedCalendarEvent & { needsInitialReviewBooking?: boolean };
+type CalendarEvent = SharedCalendarEvent & Pick<ICSEvent, 'timeZone' | 'startsAt' | 'endsAt'> & { needsInitialReviewBooking?: boolean; isTimeEstimated?: boolean; bookingOnly?: boolean };
+
+function hasCalendarExportTime(event: CalendarEvent): boolean {
+  return !event.timeToBeConfirmed && (!event.isTimeEstimated || Boolean(event.startsAt && event.endsAt));
+}
+
+function calendarICSEvent(event: CalendarEvent): ICSEvent {
+  if (!event.isoDate) throw new Error('The full event date is unavailable. Refresh the calendar and try again.');
+  if (!hasCalendarExportTime(event)) throw new Error('This event time is still to be confirmed.');
+  if (!(event.startsAt && event.endsAt) && !event.timeZone) {
+    throw new Error('The event time zone is unavailable. Refresh the calendar and try again.');
+  }
+  return {
+    title: event.title, description: event.description, date: event.date,
+    time: event.time, location: event.location, isoDate: event.isoDate,
+    timeZone: event.timeZone, startsAt: event.startsAt, endsAt: event.endsAt,
+    durationMinutes: event.durationMinutes,
+  };
+}
 
 /** The header's secondary-actions menu — everything that isn't booking a
  * coach session (the primary action) moves in here so the toolbar stays a
@@ -221,6 +242,10 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       ? `${ev.module || ev.title} live session${ev.group ? ` for ${ev.group}` : ''}.`
       : `${ev.title} session with your coach.`),
     isoDate: iso,
+    timeZone: ev.timeZone || (isLiveSession ? undefined : BUSINESS_TIME_ZONE),
+    startsAt: ev.startsAt,
+    endsAt: ev.endsAt,
+    isTimeEstimated: ev.isTimeEstimated,
     meetingLink: ev.meetingLink || undefined,
     eventKey: ev.calendarEventKey || ev.eventKey || ev.id,
     source: ev.source,
@@ -235,7 +260,8 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       && ev.bookingStatus === 'scheduled' && ['not-scheduled', 'scheduled'].includes(ev.status) ? 'scheduled' : ev.status,
     meetingOutcome: ev.meetingOutcome ?? null,
     watchedRecording: Boolean(ev.watchedRecording),
-    bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
+    bookingOnly: ev.bookingOnly,
+    bookingSessionType: !ev.bookingOnly && BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
     timeToBeConfirmed: !scheduledTime,
@@ -275,6 +301,8 @@ function mapBusySlot(slot: CalendarBusySlot): CalendarEvent | null {
     status: 'confirmed',
     description: 'Busy time from your connected personal calendar. Event details stay private.',
     isoDate,
+    startsAt: slot.start,
+    endsAt: slot.end,
   };
 }
 
@@ -440,9 +468,9 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'ended' | 'completed';
+type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'awaiting-signature' | 'ended' | 'completed';
 
-const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'ended', 'completed'];
+const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'awaiting-signature', 'ended', 'completed'];
 
 const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string; badge: string }> = {
   all: { label: 'All', dot: 'bg-foreground-400', badge: 'bg-background-200 text-foreground-700 ring-background-300' },
@@ -450,6 +478,7 @@ const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: str
   scheduled: { label: 'Scheduled', dot: 'bg-primary-500', badge: 'bg-primary-100 text-primary-800 ring-primary-200' },
   pending: { label: 'Pending', dot: 'bg-amber-500', badge: 'bg-amber-100 text-amber-800 ring-amber-200' },
   'in-progress': { label: 'In Progress', dot: 'bg-secondary-500', badge: 'bg-secondary-100 text-secondary-800 ring-secondary-200' },
+  'awaiting-signature': { label: 'Awaiting Signature', dot: 'bg-orange-500', badge: 'bg-orange-100 text-orange-800 ring-orange-200' },
   ended: { label: 'Ended', dot: 'bg-rose-500', badge: 'bg-rose-100 text-rose-800 ring-rose-200' },
   completed: { label: 'Completed', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
 };
@@ -460,6 +489,7 @@ const LEARNER_STATUS_COLOR_KEYS: Record<LearnerStatusFilter, CalendarStatusKey> 
   scheduled: 'scheduled',
   pending: 'pending-due-soon',
   'in-progress': 'in-progress',
+  'awaiting-signature': 'awaiting-signature',
   ended: 'missed-overdue',
   completed: 'completed',
 };
@@ -513,10 +543,11 @@ function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
   // An elapsed meeting shows Ended, or Completed once Teams shows the learner attended.
   if (event.meetingOutcome === 'completed') return 'completed';
   if (event.meetingOutcome === 'ended') return 'ended';
+  if (event.bookingStatus === 'awaiting-signature') return 'awaiting-signature';
+  if (event.bookingStatus === 'completed') return 'completed';
+  if (event.bookingStatus === 'in-progress') return 'in-progress';
   if (event.timeToBeConfirmed || event.bookingStatus === 'not-scheduled') return 'needs-schedule';
   if (event.status === 'pending') return 'pending';
-  if (event.bookingStatus === 'in-progress') return 'in-progress';
-  if (event.bookingStatus === 'completed') return 'completed';
   if (event.bookingStatus === 'scheduled') return 'scheduled';
   return 'scheduled';
 }
@@ -531,6 +562,7 @@ function learnerEventStatusColor(event: CalendarEvent, colors: CalendarColorPref
 }
 
 function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
+  if (event.bookingOnly) return false;
   return Boolean(
     event.eventKey
     && event.meetingLink
@@ -598,7 +630,7 @@ function LearnerCalendarBody() {
   const [cancelError, setCancelError] = useState('');
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const selectedReview = useLearnerReviewInstance(myLearner.kind, myLearner.id,
-    showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
+    !showEventDetails?.bookingOnly && showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
       ? showEventDetails.eventKey || showEventDetails.id
       : '');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -710,6 +742,7 @@ function LearnerCalendarBody() {
     const params = new URLSearchParams(location.search);
     if (!['schedule', 'reschedule'].includes(params.get('action') || '') && !params.get('reviewId')) setShowEventDetails(focusEvent);
   }, [displayedEvents, focusedEventKey, viewYear, location.search]);
+  const reviewTypeLookup = useMemo(() => buildReviewTypeLookup(displayedEvents), [displayedEvents]);
   const visibleRangeEvents = useMemo(() => (
     displayedEvents.filter((event) => {
       const eventDate = parseEventDate(event);
@@ -737,6 +770,7 @@ function LearnerCalendarBody() {
     if (!term) return visibleRangeEvents;
     return visibleRangeEvents.filter((event) => [
       event.title,
+      learnerSourceMeta(event, reviewTypeLookup).label,
       event.description,
       event.club,
       event.host,
@@ -744,10 +778,10 @@ function LearnerCalendarBody() {
       event.format,
       sessionTypeLabel(event.bookingSessionType),
     ].some((value) => value.toLowerCase().includes(term)));
-  }, [searchTerm, visibleRangeEvents]);
+  }, [searchTerm, visibleRangeEvents, reviewTypeLookup]);
   const sourceFilters = useMemo(() => buildSourceFilters(displayedEvents), [displayedEvents]);
-  const sourceFilterCounts = useMemo(() => countBySource(searchedVisibleRangeEvents, sourceFilters), [searchedVisibleRangeEvents, sourceFilters]);
-  const sourceFilteredVisibleRangeEvents = useMemo(() => filterBySource(searchedVisibleRangeEvents, filterSource), [filterSource, searchedVisibleRangeEvents]);
+  const sourceFilterCounts = useMemo(() => countBySource(searchedVisibleRangeEvents, sourceFilters, reviewTypeLookup), [searchedVisibleRangeEvents, sourceFilters, reviewTypeLookup]);
+  const sourceFilteredVisibleRangeEvents = useMemo(() => filterBySource(searchedVisibleRangeEvents, filterSource, reviewTypeLookup), [filterSource, searchedVisibleRangeEvents, reviewTypeLookup]);
   useEffect(() => {
     if (!sourceFilters.some(option => option.key === filterSource)) setFilterSource('all');
   }, [sourceFilters, filterSource]);
@@ -783,7 +817,7 @@ function LearnerCalendarBody() {
         if (!eventDate) return false;
         const eventDay = new Date(eventDate.year ?? viewYear, eventDate.month, eventDate.day);
         if (eventDay < todayDate || eventDay > sevenDaysFromToday) return false;
-        if (filterSource !== 'all' && learnerEventSource(event) !== filterSource) return false;
+        if (filterSource !== 'all' && learnerEventSource(event, reviewTypeLookup) !== filterSource) return false;
         if (filterStatus !== 'all' && learnerEventStatus(event) !== filterStatus) return false;
         if (!term) return true;
         return [
@@ -803,7 +837,7 @@ function LearnerCalendarBody() {
         const timeB = dateB ? new Date(dateB.year ?? viewYear, dateB.month, dateB.day).getTime() + getEventTimeRange(b.time).start * 60_000 : 0;
         return timeA - timeB;
       });
-  }, [displayedEvents, filterSource, filterStatus, searchTerm, todayDay, todayMonth, todayYear, viewYear]);
+  }, [displayedEvents, filterSource, filterStatus, searchTerm, todayDay, todayMonth, todayYear, viewYear, reviewTypeLookup]);
 
   const getEventsForDay = useCallback((day: number, month: number, year = viewYear): CalendarEvent[] => {
     return filteredEvents.filter((ev) => {
@@ -999,10 +1033,8 @@ function LearnerCalendarBody() {
       return;
     }
     const nextDay = new Date(Date.parse(`${bookDate}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-    const start = aptemBooking ? new Date(bookingInstant(bookDate, '00:00')).toISOString()
-      : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
-    const end = aptemBooking ? new Date(bookingInstant(nextDay, '00:00')).toISOString()
-      : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
+    const start = new Date(bookingInstant(bookDate, '00:00')).toISOString();
+    const end = new Date(bookingInstant(nextDay, '00:00')).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     setAvailabilityUnconfirmed(false);
@@ -1076,12 +1108,10 @@ function LearnerCalendarBody() {
 
   const selectedSlotConflicts = useMemo(() => {
     if (!bookDate || !bookTime) return false;
-    const start = aptemBooking || reviewSlotBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const start = bookingInstant(bookDate, bookTime);
     const end = start + parseInt(bookDuration || '60') * 60_000;
     const rescheduledStart = rescheduleEvent?.isoDate && !rescheduleEvent.timeToBeConfirmed
-      ? aptemBooking || reviewSlotBooking
-        ? bookingInstant(rescheduleEvent.isoDate, rescheduleEvent.time.split('\u2013')[0].trim())
-        : new Date(`${rescheduleEvent.isoDate}T${rescheduleEvent.time.split('\u2013')[0].trim()}:00`).getTime()
+      ? bookingInstant(rescheduleEvent.isoDate, rescheduleEvent.time.split('\u2013')[0].trim())
       : null;
     const rescheduledEnd = rescheduledStart === null
       ? null
@@ -1092,7 +1122,7 @@ function LearnerCalendarBody() {
       if (slotStart === rescheduledStart && slotEnd === rescheduledEnd) return false;
       return start < slotEnd && end > slotStart;
     });
-  }, [bookDate, bookTime, bookDuration, busySlots, rescheduleEvent, aptemBooking, reviewSlotBooking]);
+  }, [bookDate, bookTime, bookDuration, busySlots, rescheduleEvent]);
 
   const availableReviewTimes = useMemo(() => reviewCoachSlots.filter(slot => {
     const start = bookingInstant(bookDate, slot);
@@ -1120,18 +1150,16 @@ function LearnerCalendarBody() {
 
   const selectedLmsConflict = useMemo(() => {
     if (!bookDate || !bookTime) return null;
-    const requestedStart = reviewSlotBooking ? bookingInstant(bookDate, bookTime) : new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const requestedStart = bookingInstant(bookDate, bookTime);
     const requestedEnd = requestedStart + parseInt(bookDuration || '60') * 60_000;
     return myEvents.find((event) => {
       if (!event.isoDate || event.timeToBeConfirmed || event.needsInitialReviewBooking || event.id === rescheduleEvent?.id || event.id === bookingSourceEvent?.id) return false;
       const range = getEventTimeRange(event.time);
-      const existingStart = reviewSlotBooking
-        ? bookingInstant(event.isoDate, `${String(Math.floor(range.start / 60)).padStart(2, '0')}:${String(range.start % 60).padStart(2, '0')}`)
-        : new Date(`${event.isoDate}T00:00:00`).getTime() + range.start * 60_000;
+      const existingStart = bookingInstant(event.isoDate, `${String(Math.floor(range.start / 60)).padStart(2, '0')}:${String(range.start % 60).padStart(2, '0')}`);
       const existingEnd = existingStart + (event.durationMinutes || Math.max(range.end - range.start, 60)) * 60_000;
       return requestedStart < existingEnd && requestedEnd > existingStart;
     }) || null;
-  }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id, reviewSlotBooking]);
+  }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
 
   const sameWeekSession = useMemo(() => {
     if (rescheduleEvent?.reviewTemplateId || bookingSourceEvent?.reviewTemplateId) return null;
@@ -1241,7 +1269,7 @@ function LearnerCalendarBody() {
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            timezoneOffsetMinutes: aptemBooking || reviewSlotBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            timezoneOffsetMinutes: ukOffsetForDate(bookDate),
             ...(rescheduleEvent.bookingSnapshot ? {
               expectedBooking: rescheduleEvent.bookingSnapshot,
               notes: bookNotes.trim(),
@@ -1258,7 +1286,7 @@ function LearnerCalendarBody() {
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
             notes: requestNotes || undefined,
-            timezoneOffsetMinutes: aptemBooking || reviewSlotBooking ? ukOffsetForDate(bookDate) : new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
+            timezoneOffsetMinutes: ukOffsetForDate(bookDate),
           });
       // A read started before this save must not restore the old appointment.
       calendarWriteVersionRef.current += 1;
@@ -1362,29 +1390,35 @@ function LearnerCalendarBody() {
   };
 
   const handleExportICS = (ev: CalendarEvent) => {
-    const icsEvent: ICSEvent = { title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location };
-    downloadICS(icsEvent);
-    setAddToCalendarToast(`"${ev.title}" exported!`);
+    try {
+      downloadICS(calendarICSEvent(ev));
+      setAddToCalendarToast(`"${ev.title}" exported!`);
+    } catch (error) {
+      setAddToCalendarToast(`Could not export event: ${error instanceof Error ? error.message : 'Please try again.'}`);
+    }
     setTimeout(() => setAddToCalendarToast(null), 2500);
   };
 
   const handleExportAllICS = () => {
-    const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed');
+    const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed' && hasCalendarExportTime(ev));
     if (confirmedEvents.length === 0) { setAddToCalendarToast('No confirmed events to export'); setTimeout(() => setAddToCalendarToast(null), 2500); return; }
-    const icsEvents: ICSEvent[] = confirmedEvents.map((ev) => ({ title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location }));
-    downloadAllICS(icsEvents);
-    setAddToCalendarToast(`${confirmedEvents.length} events exported!`);
+    try {
+      downloadAllICS(confirmedEvents.map(calendarICSEvent));
+      setAddToCalendarToast(`${confirmedEvents.length} events exported!`);
+    } catch (error) {
+      setAddToCalendarToast(`Could not export calendar: ${error instanceof Error ? error.message : 'Please try again.'}`);
+    }
     setTimeout(() => setAddToCalendarToast(null), 2500);
   };
 
   const handleCreateCustomEvent = () => {
     if (!customTitle.trim()) return;
-    const dateObj = new Date(customDate);
+    const dateObj = new Date(`${customDate}T12:00:00`);
     const day = dateObj.getDate();
     const monthName = MONTH_NAMES[dateObj.getMonth()].substring(0, 3);
     const dayName = DAYS_OF_WEEK[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
     const reminderMinutes = parseInt(customReminder);
-    const newEvent: CalendarEvent = { id: `custom-${Date.now()}`, title: customTitle, date: `${day} ${monthName}`, dayName, time: `${customStartTime}\u2013${customEndTime}`, club: 'Personal', clubId: '', type: 'Personal', format: customLocation || 'Personal', location: customLocation || 'Personal Calendar', host: p.fullName, points: 0, status: 'confirmed', description: customDescription || `Reminder: ${customReminder} minutes before`, color: customColor, reminderMinutes, isoDate: customDate };
+    const newEvent: CalendarEvent = { id: `custom-${Date.now()}`, title: customTitle, date: `${day} ${monthName}`, dayName, time: `${customStartTime}\u2013${customEndTime}`, club: 'Personal', clubId: '', type: 'Personal', format: customLocation || 'Personal', location: customLocation || 'Personal Calendar', host: p.fullName, points: 0, status: 'confirmed', description: customDescription || `Reminder: ${customReminder} minutes before`, color: customColor, reminderMinutes, isoDate: customDate, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
     const conflict = hasConflict(myEvents, newEvent);
     if (conflict) { setConflictEvent(conflict); return; }
     setMyEvents((prev) => [newEvent, ...prev]);
@@ -1417,7 +1451,15 @@ function LearnerCalendarBody() {
   };
 
   const handleEnableNotifications = async () => { const result = await requestNotificationPermission(); setNotificationPermission(result); if (result === 'granted') { setAddToCalendarToast('Push notifications enabled!'); setTimeout(() => setAddToCalendarToast(null), 2500); } };
-  const handleGeneratePublicFeed = () => { const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed'); const icsEvents: ICSEvent[] = confirmedEvents.map((ev) => ({ title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location })); const url = createPublicFeedBlob(icsEvents); setPublicFeedUrl(url); };
+  const handleGeneratePublicFeed = () => {
+    try {
+      const confirmedEvents = myEvents.filter(ev => ev.status === 'confirmed' && hasCalendarExportTime(ev));
+      setPublicFeedUrl(createPublicFeedBlob(confirmedEvents.map(calendarICSEvent)));
+    } catch (error) {
+      setAddToCalendarToast(`Could not generate feed: ${error instanceof Error ? error.message : 'Please try again.'}`);
+      setTimeout(() => setAddToCalendarToast(null), 4000);
+    }
+  };
   const handleCopyFeedUrl = () => { if (publicFeedUrl) { navigator.clipboard.writeText(publicFeedUrl); setFeedCopied(true); setTimeout(() => setFeedCopied(false), 2000); } };
 
   const statusConfig: Record<string, { label: string; cls: string }> = { confirmed: { label: 'Confirmed', cls: 'bg-emerald-100 text-emerald-700' }, pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' } };
@@ -1679,7 +1721,7 @@ function LearnerCalendarBody() {
           title={showEventDetails.title}
           onClose={() => { setShowEventDetails(null); setCancelError(''); }}
           badges={<>
-            <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{learnerSourceMeta(showEventDetails).label}</span>
+            <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{learnerSourceMeta(showEventDetails, reviewTypeLookup).label}</span>
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ring-1 ring-inset ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].badge}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].dot}`}></span>
               {LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}
@@ -1715,7 +1757,7 @@ function LearnerCalendarBody() {
               {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.source === 'catch-up' && (
                 <button type="button" disabled={showEventDetails.changeClosed || cancelBusy} title={showEventDetails.changeClosed ? 'Catch-ups can be cancelled up to 12 hours before they start.' : undefined} onClick={() => void cancelCatchup(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 transition-smooth hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0" /><span>{cancelBusy ? 'Cancelling…' : 'Cancel catch-up'}</span></button>
               )}
-              {!showEventDetails.timeToBeConfirmed && <button onClick={() => handleExportICS(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line h-4 w-4 shrink-0"></AppIcon><span>Export .ics</span></button>}
+              {hasCalendarExportTime(showEventDetails) && <button onClick={() => handleExportICS(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line h-4 w-4 shrink-0"></AppIcon><span>Export .ics</span></button>}
               {showEventDetails.id.startsWith('custom-') && (
                 <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0"></AppIcon><span>Remove</span></button>
               )}
@@ -1723,6 +1765,7 @@ function LearnerCalendarBody() {
           </>}
         >
           {addToCalendarToast && <p role="status" className="mb-4 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-sm text-primary-800">{addToCalendarToast}</p>}
+          {showEventDetails.bookingOnly && <BookingOnlyNotice />}
           {cancelError && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">{cancelError}</p>}
           {showEventDetails.source === 'catch-up' && showEventDetails.bookingStatus === 'scheduled' && showEventDetails.changeClosed && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">This catch-up starts in less than 12 hours, so it can no longer be changed or cancelled here. Please contact your coach.</p>}
           <dl className="mb-5 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
@@ -1951,7 +1994,7 @@ function LearnerCalendarBody() {
                   {sourceFilters.map((option) => {
                     const source = option.key;
                     const isActive = filterSource === source;
-                    const matchingEvent = displayedEvents.find(event => learnerEventSource(event) === source && event.source);
+                    const matchingEvent = displayedEvents.find(event => learnerEventSource(event, reviewTypeLookup) === source && event.source);
                     const fallbackMeetingType: MeetingTypeKey = source === 'live-session' ? 'live-session'
                       : source === 'catch-up' ? 'catch-up'
                         : source === 'student-support' ? 'support'
@@ -1960,7 +2003,7 @@ function LearnerCalendarBody() {
                       ? calendarColors.statuses.all
                       : calendarColors.meetingTypes[matchingEvent ? getMeetingTypeKey(matchingEvent) : fallbackMeetingType];
                     return (
-                      <button key={source} type="button" onClick={() => setFilterSource(source)} title={`${option.longLabel} (${sourceFilterCounts[source]})`}
+                      <button key={source} type="button" onClick={() => setFilterSource(source)} title={`${option.longLabel} (${sourceFilterCounts[source]})`} aria-pressed={isActive}
                         className={`calendar-filter-pill inline-flex items-center gap-2 rounded-xl border text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20 ${isActive ? 'border-[#C9B9DD] bg-[#F7F3FB] text-[#4F2D7F] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-[#D8CCE8] hover:bg-slate-50'}`}>
                         <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />
                         <span>{option.label}</span>
@@ -2069,7 +2112,7 @@ function LearnerCalendarBody() {
                                 </div>
                               );
                             }
-                            const sourceMeta = learnerSourceMeta(ev);
+                            const sourceMeta = learnerSourceMeta(ev, reviewTypeLookup);
                             const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                             const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
                             const statusColor = learnerEventStatusColor(ev, calendarColors);
@@ -2081,7 +2124,7 @@ function LearnerCalendarBody() {
                                 onClick={(event) => { event.stopPropagation(); setShowEventDetails(ev); }}
                                 className={`w-full rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                                 style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55`, color: meetingColor.accent } : undefined}
-                                title={`${learnerSourceMeta(ev).label} · ${ev.title}`}
+                                title={`${learnerSourceMeta(ev, reviewTypeLookup).label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
@@ -2133,7 +2176,7 @@ function LearnerCalendarBody() {
                   <div className="space-y-2">
                     {selectedDaySorted.map((ev) => {
                       const eventSource = ev.source;
-                      const sourceMeta = learnerSourceMeta(ev);
+                      const sourceMeta = learnerSourceMeta(ev, reviewTypeLookup);
                       const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                       const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
                       const statusColor = learnerEventStatusColor(ev, calendarColors);
@@ -2307,7 +2350,7 @@ function LearnerCalendarBody() {
               <SectionHeader title="Next 7 days" icon="ri-calendar-todo-line" />
               <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {upcomingEvents.slice(0, 8).map((ev) => {
-                  const sourceMeta = learnerSourceMeta(ev);
+                  const sourceMeta = learnerSourceMeta(ev, reviewTypeLookup);
                   const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                   return (
                   <button type="button" aria-haspopup="dialog" key={ev.id} className="w-full text-left flex items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-2.5 transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer group" onClick={() => setShowEventDetails(ev)}>

@@ -118,10 +118,18 @@ class CalendarEvidenceTests(SimpleTestCase):
                 patch.object(recording_archive.connections['default'], 'cursor') as connection:
             cursor = connection.return_value.__enter__.return_value
             cursor.description = [(name,) for name in ('event_key', 'graph_artifact_id', 'owner_email', 'graph_organizer_email', 'graph_event_id')]
-            cursor.fetchall.return_value = [('mcr:1', 'native-file', OWNER, OWNER, 'native-event')]
+            # Fresh candidates and failed-upload retries are separate queries.
+            # This case has one fresh native recording and no failed uploads.
+            cursor.fetchall.side_effect = [[('mcr:1', 'native-file', OWNER, OWNER, 'native-event')], []]
             rows = recording_archive.pending_recordings(database='default', limit=12)
-        self.assertIn("event_key not like 'coach-calendar:%%'", cursor.execute.call_args.args[0])
-        self.assertEqual(cursor.execute.call_args.args[1], [12])
+        self.assertEqual(cursor.execute.call_count, 2)
+        fresh, retries = cursor.execute.call_args_list
+        self.assertIn("event_key not like 'coach-calendar:%%'", fresh.args[0])
+        self.assertIn("coalesce(blob_upload_error, '') = ''", fresh.args[0])
+        self.assertEqual(fresh.args[1], [12])
+        self.assertIn("coalesce(blob_upload_error, '') <> ''", retries.args[0])
+        self.assertEqual(retries.args[1], [12])
+        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['event_key'], 'mcr:1')
 
     def test_snapshot_failure_cannot_start_an_upload_or_create_a_native_booking(self):
