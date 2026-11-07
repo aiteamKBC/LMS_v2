@@ -175,6 +175,16 @@ origin. Viewing-time reporting and transcript seeking remain in the LMS;
 video bytes are served by Bunny. An unavailable Bunny player does not silently
 switch to Azure. Normal transcript and attendance storage are unchanged.
 
+The cutover also applies when a recording loses its saved Bunny metadata:
+session results and the recordings library report it as pending, and the content
+route refuses Azure playback. The reviewer queues the existing session worker
+to restore the reference. An already completed journal entry can be re-published
+with new transfers disabled; this performs no media transfer. The projection
+repairs an Azure container label only when its path is the exact saved Bunny
+library/video identity, retaining genuine historical Azure paths for rollback.
+The archive occurrence must match the recording before content is served.
+New transfers still require the Bunny configuration below on the actual worker.
+
 ### Configuration
 
 Use the backend and worker environments, including the AWS runtime secrets:

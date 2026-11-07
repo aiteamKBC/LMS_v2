@@ -83,6 +83,15 @@ class RecordingReviewerTests(unittest.TestCase):
         self.ns['review_ready_recordings'](now=self.now, full=True)
         self.assertTrue(self.cursor.execute.call_args.args[1][0])
 
+    def test_cutover_missing_bunny_reference_queues_repair_without_checking_azure(self):
+        self.cursor.fetchall.return_value = [('A', 'S', 'session-recordings', '798153/video', {},
+                                              datetime(2026, 11, 6, 9, tzinfo=timezone.utc))]
+        result = self.ns['review_ready_recordings'](now=self.now)
+        self.assertEqual(result, {'checked': 1, 'queued': 1, 'errors': 0})
+        self.client.get_blob_client.assert_not_called()
+        self.ns['queue_missing_recording'].assert_called_once_with(
+            'A', 'S', 'session-recordings', '798153/video', provider='bunny')
+
 
 class RecoveryQueueTests(unittest.TestCase):
     def setUp(self):
@@ -103,6 +112,14 @@ class RecoveryQueueTests(unittest.TestCase):
         self.cursor.fetchone.return_value = ('ready', 'private', 'saved.mp4', 'running')
         self.assertFalse(self.ns['queue_missing_recording']('A', 'S', 'private', 'saved.mp4'))
         self.assertEqual(self.cursor.execute.call_count, 2)
+
+    def test_bunny_repair_reports_a_missing_reference_instead_of_missing_azure_media(self):
+        self.cursor.fetchone.return_value = ('ready', 'session-recordings', '798153/video', 'complete')
+        self.assertTrue(self.ns['queue_missing_recording'](
+            'A', 'S', 'session-recordings', '798153/video', provider='bunny'))
+        error = self.cursor.execute.call_args_list[2].args[1][0]
+        self.assertIn('Bunny recording reference', error)
+        self.assertNotIn('Azure', error)
 
     def test_changed_or_locked_archive_is_not_overwritten(self):
         for row in (None, ('failed', 'private', 'saved.mp4', 'complete'),
