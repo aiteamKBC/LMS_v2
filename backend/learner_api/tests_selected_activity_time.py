@@ -256,7 +256,8 @@ class SelectedActivityTimeTests(SimpleTestCase):
 class QuizActivityTimeTests(SimpleTestCase):
     QUIZ_ID = 77
 
-    def submit(self, *, kind='commercial', current=1200, previous=3600, mode='add', source='input', answers=None):
+    def submit(self, *, kind='commercial', current=1200, previous=3600, mode='add', source='input', answers=None,
+               history=None, save_error=None):
         from .tests import QuizSubmitWorkingRulesTests
         now = datetime(2026, 1, 15, 12, tzinfo=timezone.utc)
         token = issue_tracking_session(activity_kind='quiz', activity_id=77, learner_kind=kind,
@@ -267,8 +268,9 @@ class QuizActivityTimeTests(SimpleTestCase):
         request = RequestFactory().post(f'/learner_api/quizzes/77/submit/?kind={kind}&learnerId=19',
             data=json.dumps(payload), content_type='application/json')
         model = Mock(); model.objects.get.return_value = SimpleNamespace(id=19)
-        history = [{'kind': 'quiz', 'quizId': '77', 'passed': True, 'claimedSeconds': previous,
-            'timeTrackingSource': 'signed:input', 'submittedAt': '2026-01-14T12:00:00Z'}]
+        if history is None:
+            history = [{'kind': 'quiz', 'quizId': '77', 'passed': True, 'claimedSeconds': previous,
+                'timeTrackingSource': 'signed:input', 'submittedAt': '2026-01-14T12:00:00Z'}]
         view = quizzes.submit_quiz_attempt
         while hasattr(view, '__wrapped__'): view = view.__wrapped__
         with ExitStack() as stack:
@@ -278,12 +280,39 @@ class QuizActivityTimeTests(SimpleTestCase):
                     'tracking_session_already_used': False}.items():
                 stack.enter_context(patch.object(quizzes, name, new=value) if name == 'SOURCE_MODELS'
                                     else patch.object(quizzes, name, return_value=value))
-            save = stack.enter_context(patch.object(quizzes, 'save_progress_record'))
+            save = stack.enter_context(patch.object(quizzes, 'save_progress_record', side_effect=save_error))
             audit = stack.enter_context(patch.object(quizzes, 'record_quiz_attempt'))
             stack.enter_context(patch.object(quizzes.timezone, 'now', return_value=now))
             stack.enter_context(patch('learner_api.working_rules.learner_holiday_details', return_value={}))
             response = view(request, 77)
         return response, save, audit
+
+    def test_failed_quiz_reading_and_retry_do_not_conflict_for_either_learner_type(self):
+        history = [{'kind': 'quiz', 'quizId': '77', 'passed': False, 'verifiedSeconds': 60},
+                   {'kind': 'quiz_reading', 'quizId': '77', 'passed': None, 'verifiedSeconds': 1800}]
+        for kind in ('commercial', 'apprenticeship'):
+            response, save, audit = self.submit(kind=kind, previous=0, mode='retry', history=history)
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertEqual(json.loads(response.content)['attempt']['countedSeconds'], 1200)
+            save.assert_called_once(); audit.assert_called_once()
+
+    def test_real_conflict_exposes_current_total_without_saving_or_auditing(self):
+        history = [{'kind': 'quiz', 'quizId': '77', 'passed': True, 'verifiedSeconds': 600}]
+        response, save, audit = self.submit(previous=300, history=history)
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.content)
+        self.assertEqual(data['code'], 'activity_time_conflict')
+        self.assertEqual(data['previousSeconds'], 600)
+        self.assertNotIn('Reload', data['error'])
+        save.assert_not_called(); audit.assert_not_called()
+
+    def test_conflict_detected_under_save_lock_uses_the_same_recovery_contract(self):
+        from .retake_timing import ActivityTimeConflict
+        response, save, audit = self.submit(save_error=ActivityTimeConflict(4200))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.content)['code'], 'activity_time_conflict')
+        self.assertEqual(json.loads(response.content)['previousSeconds'], 4200)
+        save.assert_called_once(); audit.assert_not_called()
 
     def test_decisions_use_selected_time_and_preserve_scores_and_verified_time(self):
         for kind in ('commercial', 'apprenticeship'):

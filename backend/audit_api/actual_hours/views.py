@@ -35,9 +35,9 @@ CONNECTION_ALIAS = "audit"
 
 # Timestamp semantics: enabled on the product owner's instruction (2026-08-15).
 # Evidence behind the setting, for whoever reads this next:
-#   * start_time/end_time are wall-clock `time` columns; the 09:00-17:00 bounds
-#     are identical in BST and GMT months, so they are NOT UTC and behave as
-#     Europe/London local time;
+#   * start_time/end_time are wall-clock `time` columns, interpreted as
+#     Europe/London local time in both BST and GMT months. The allowed working
+#     range is shared with learner completion through config.working_hours;
 #   * the ingest pipeline is outside this repository, so that reading is
 #     inferred from the data rather than proven from code.
 # With this true, a time-stamped row whose stored hours differ from its genuine

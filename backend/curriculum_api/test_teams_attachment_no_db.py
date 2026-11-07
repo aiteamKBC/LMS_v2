@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
+from config.time_zones import calendar_zone
 
 
 class AttachmentTests(unittest.TestCase):
@@ -29,7 +30,8 @@ class AttachmentTests(unittest.TestCase):
             'join_url': f'https://teams.microsoft.com/meet/{i}', 'status': 'scheduled'} for i in range(2)]
         self.writes = []
         self.n = dict(datetime=datetime, timezone=timezone, ZoneInfo=ZoneInfo, defaultdict=defaultdict,
-            GRAPH_WINDOWS_TO_IANA={'Egypt Standard Time': 'Africa/Cairo'}, graph_timezone_iana=lambda _: 'Europe/London',
+            os=SimpleNamespace(environ={}), calendar_zone=calendar_zone,
+            GRAPH_WINDOWS_TO_IANA={'Egypt Standard Time': 'Africa/Cairo'},
             DEFAULT_TEAMS_LOBBY_BYPASS='everyone',
             TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES={'cancelled', 'canceled', 'declined', 'deleted', 'removed'},
             AUTHORING_MODULES_TABLE='modules', GROUPS_TABLE='groups', AUTHORING_WEEKS_TABLE='weeks',
@@ -55,6 +57,7 @@ class AttachmentTests(unittest.TestCase):
             JsonResponse=lambda data: data, json_error=lambda message, **kwargs: {'error': message, **kwargs},
             LIVE_SESSION_MEETING_SCOPE_KEY='teamsMeetingScope', LIVE_SESSION_MEETING_SCOPES=('main', 'additional'))
         names = {'clean_str', 'parse_int', 'parse_graph_datetime', 'utc_iso_value',
+                 'teams_schedule_settings', 'graph_timezone_iana',
                  'live_session_row_to_component_settings', 'live_occurrence_component_settings',
                  'occurrence_local_start', 'occurrence_local_date',
                  'live_session_booked_on_module_calendar', 'module_has_booked_series', 'live_session_meeting_scope',
@@ -264,15 +267,34 @@ class AttachmentTests(unittest.TestCase):
         self.assertEqual(settings['COMP-2']['teamsOccurrenceId'], 'OCC-2')
         self.assertEqual(settings['COMP-2']['liveSessionUrl'], self.occurrences[2]['join_url'])
 
-    def test_explicit_authoring_link_override_survives_calendar_reattach(self):
+    def test_different_explicit_link_is_not_given_the_original_calendar_identity(self):
+        from curriculum_api.teams_external_calendar import manual_link_settings
         replacement = 'https://teams.microsoft.com/meet/replacement'
-        self.components[0]['settings_json']['liveSessionLinkOverride'] = replacement
-
+        stored = {**self.components[0]['settings_json'], 'liveSessionUrl': self.series['join_url'],
+                  'teamsLiveSessionId': 'LIVE-1', 'teamsOccurrenceId': 'OCC-0'}
+        self.components[0]['settings_json'] = manual_link_settings({**stored, 'liveSessionUrl': replacement}, stored)
+        self.components[1]['settings_json']['teamsMeetingScope'] = 'main'
+        before = copy.deepcopy(self.components)
+        occurrences = copy.deepcopy(self.occurrences)
         settings = self.attach()
+        # A newly typed link is not proof that it uses the source occurrence.
+        # Preserve the pending link, and continue attaching other main weeks.
+        self.assertNotIn('COMP-0', settings)
+        self.assertEqual(self.components[0]['settings_json']['liveSessionUrl'], replacement)
+        self.assertEqual(self.components[0]['settings_json']['teamsCalendarBinding'], 'unverified')
+        self.assertNotIn('teamsOccurrenceId', self.components[0]['settings_json'])
+        self.assertEqual(settings['COMP-1']['teamsOccurrenceId'], 'OCC-1')
+        self.assertEqual(self.components, before)
+        self.assertEqual(self.occurrences, occurrences)
 
-        self.assertEqual(settings['COMP-0']['liveSessionUrl'], replacement)
-        self.assertEqual(settings['COMP-0']['teamsMeetingUrl'], replacement)
+    def test_verified_main_calendar_link_retains_its_occurrence_when_reattached(self):
+        self.components[0]['settings_json'].update(
+            liveSessionLinkOverride=self.series['join_url'], teamsLiveSessionId='LIVE-1',
+            teamsOccurrenceId='OCC-0', teamsSessionNumber=1)
+        settings = self.attach()
+        self.assertEqual(settings['COMP-0']['liveSessionUrl'], self.series['join_url'])
         self.assertEqual(settings['COMP-0']['teamsOccurrenceId'], 'OCC-0')
+        self.assertEqual(settings['COMP-0']['teamsLiveSessionId'], 'LIVE-1')
 
     def test_moved_occurrence_carries_its_new_date_not_only_its_new_instant(self):
         """A rescheduled session's date follows the occurrence Microsoft holds.

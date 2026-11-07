@@ -135,7 +135,8 @@ def _download_context(request):
     return _context(request)
 
 
-def endpoint(method, *, context=None):
+def endpoint(method, *, context=None, require_mobile_enabled=True):
+    """Keep identity/security checks shared; native routes retain their release gate."""
     def decorate(view):
         @csrf_exempt
         @functools.wraps(view)
@@ -143,7 +144,7 @@ def endpoint(method, *, context=None):
             try:
                 if request.method != method:
                     return _error("Method not allowed.", 405, "method_not_allowed")
-                if not getattr(settings, "KBC_MOBILE_API_ENABLED", False):
+                if require_mobile_enabled and not getattr(settings, "KBC_MOBILE_API_ENABLED", False):
                     return _error("The mobile connection is not enabled yet.", 503, "mobile_disabled")
                 # Never enable this facade on a host whose usual auth gates are off.
                 if (not auth_gate_enabled() or

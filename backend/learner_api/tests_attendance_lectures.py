@@ -454,6 +454,49 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result['ksbs'], [])
         self.assertEqual(result['activities'], [])
 
+    def test_native_lecture_uses_its_linked_week_title_for_both_learner_types(self):
+        row = register_row(source='microsoft-teams', session_id='occ-2', module_catalogue_id='m',
+                           session_title='Scheduled session')
+        component = {'id': 'c1', 'type': 'live_session', 'module_catalogue_id': 'm', 'week_id': 'w2',
+                     'week_title': 'L2: Customer adoption', 'title': 'Live Teams Session 1',
+                     'description': '', 'completed': False, 'settings': {'teamsOccurrenceId': 'occ-2'}}
+        other_week = {**component, 'id': 'c2', 'week_id': 'w1', 'week_title': 'L1: Introduction',
+                      'settings': {'teamsOccurrenceId': 'occ-1'}}
+        other_module = {**component, 'id': 'c3', 'module_catalogue_id': 'other', 'week_title': 'Other course'}
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                baseline = build_lectures([row], {}, [], [{k: v for k, v in component.items() if k != 'week_title'}], kind, 12)[0]
+                result = build_lectures([row], {}, [], [other_week, other_module, component], kind, 12)[0]
+                self.assertEqual(result['title'], 'L2: Customer adoption')
+                self.assertEqual({**result, 'title': baseline['title']}, baseline)
+                self.assertEqual(component['title'], 'Live Teams Session 1')
+                self.assertEqual(row['session_title'], 'Scheduled session')
+
+    def test_native_lecture_keeps_existing_title_without_a_week_title(self):
+        row = register_row(source='microsoft-teams', session_id='occ-2', module_catalogue_id='m')
+        component = {'id': 'c1', 'type': 'live_session', 'module_catalogue_id': 'm', 'week_id': 'w2',
+                     'title': 'Authored lecture', 'description': '', 'completed': False,
+                     'settings': {'teamsOccurrenceId': 'occ-2'}}
+        for week_title in (None, '', '   '):
+            for title in ('Authored lecture', ''):
+                with self.subTest(week_title=week_title, title=title):
+                    linked = {**component, 'week_title': week_title, 'title': title}
+                    result = build_lectures([row], {}, [], [linked], 'commercial', 12)[0]
+                    self.assertEqual(result['title'], title or row['session_title'])
+
+    def test_native_lecture_does_not_guess_a_week_without_a_unique_link(self):
+        row = register_row(source='microsoft-teams', session_id='occ-2', module_catalogue_id='m')
+        component = {'id': 'c1', 'type': 'live_session', 'module_catalogue_id': 'm', 'week_id': 'w2',
+                     'week_title': 'Customer adoption', 'title': 'Live Teams Session 1',
+                     'description': '', 'completed': False, 'settings': {'teamsOccurrenceId': 'occ-2'}}
+        cases = ([], [{**component, 'settings': {'teamsOccurrenceId': 'occ-1'}}],
+                 [component, {**component, 'id': 'c2', 'week_id': 'w3', 'week_title': 'Another week'}])
+        for components in cases:
+            with self.subTest(components=components):
+                result = build_lectures([row], {}, [], components, 'commercial', 12)[0]
+                self.assertEqual(result['title'], row['session_title'])
+                self.assertNotIn('componentHref', result)
+
     def test_native_ksbs_fall_back_to_linked_week_then_assigned_module(self):
         row = register_row(source='microsoft-teams', session_id='occ-2', module_catalogue_id='m', live_session_id='live')
         component = {'id': 'c1', 'type': 'live_session', 'module_catalogue_id': 'm', 'week_id': 'w2',
@@ -714,6 +757,8 @@ class AttendanceLectureTests(SimpleTestCase):
              patch('learner_api.attendance_lectures._direct_progress_records', return_value=[]):
             read_native_components(SimpleNamespace(id=12), {'assigned', 'not-assigned'})
         self.assertEqual(cur.execute.call_args.args[1], [['assigned']])
+        self.assertIn('w.title AS week_title', cur.execute.call_args.args[0])
+        self.assertIn('w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id', cur.execute.call_args.args[0])
 
     def test_ambiguous_groups_skip_materials_without_choosing_another_course(self):
         conn = MagicMock()

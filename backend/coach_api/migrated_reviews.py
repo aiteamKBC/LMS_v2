@@ -26,12 +26,25 @@ FIELD_TYPES = {
 TEXT_ANSWER_LIMIT = 4000
 
 
+def text_answer_limit(definition, field):
+    """MCM's mapped Meeting Summary is unrestricted; other fields keep their limit."""
+    if ((definition.get('templateSource') or {}).get('family') == 'MCM'
+            and field.get('semanticKey') == 'meeting_summary'
+            and field.get('aptemType') in (1, 13)):
+        return None
+    return TEXT_ANSWER_LIMIT
+
+
 def meeting_summary_field(definition):
     """Resolve explicit metadata from a frozen migrated definition, never labels."""
     matches = []
 
     def visit(field, depth=0):
         if "semanticKey" in field:
+            if field['semanticKey'] == 'skills_radar':
+                if field.get('aptemType') != 11 or depth:
+                    raise ValueError('Skills Radar must be a top-level section marker.')
+                return
             if field["semanticKey"] != "meeting_summary":
                 raise ValueError("Unknown migrated field purpose.")
             if type(field.get("aptemType")) is not int or field["aptemType"] not in (1, 13):
@@ -232,6 +245,9 @@ def _render_field(field, answers, warnings, answer_audit):
         "options": field.get("options") or [],
         "respondentRoles": field.get("respondentRoles") or [],
     }
+    if field.get('skillsRadar'):
+        configuration['skillsRadar'] = {**field['skillsRadar'],
+            'history': (answer_audit.get(field['key']) or {}).get('history', [])}
     if aptem_type not in FIELD_TYPES:
         configuration["typeWarning"] = "Unverified Aptem field type; using text entry."
     if "semanticKey" in field:
@@ -297,8 +313,11 @@ def validate_answers(definition, answers, *, completing=False):
                 date.fromisoformat(value)
             except (TypeError, ValueError):
                 raise ValueError(f"{key} must be an ISO date.") from None
-        if kind in ("text", "text_multiline") and (not isinstance(value, str) or len(value) > TEXT_ANSWER_LIMIT):
-            raise ValueError(f"{key} must be text of at most {TEXT_ANSWER_LIMIT} characters.")
+        if kind in ("text", "text_multiline"):
+            limit = text_answer_limit(definition, field)
+            if not isinstance(value, str) or (limit is not None and len(value) > limit):
+                requirement = 'text' if limit is None else f'text of at most {limit} characters'
+                raise ValueError(f"{key} must be {requirement}.")
     if completing:
         missing = [key for key, field in visible.items()
                    if field.get("mandatory") and FIELD_TYPES.get(field["aptemType"]) != "title_description"

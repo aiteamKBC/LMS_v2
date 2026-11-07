@@ -1,4 +1,5 @@
 import { CollaborativeField } from '../module-builder/CollaborativeField';
+import { componentSessionTitle, type SessionTitleWeek } from '../shared/sessionDisplayTitle';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -88,6 +89,7 @@ import {
 import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
 import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
+import { PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } from '@/pages/curriculum/shared/pendingVideoFiles';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
 // load of this page and of module-builder, which imports from this module.
@@ -494,6 +496,7 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 // page and a URL parameter to ask it.
 export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
   const [template, setTemplate] = useState<WeekTemplate>(initial);
+  const videoFiles = usePendingVideoFiles(initial.id);
   const [persistedId, setPersistedId] = useState(isNew ? '' : initial.id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -626,7 +629,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
     } catch { /* snapshot stays as-is if it somehow isn't valid JSON */ }
   }, [pointsByType]);
 
-  const dirty = JSON.stringify(template) !== savedSnapshot.current;
+  const dirty = JSON.stringify(template) !== savedSnapshot.current || videoFiles.hasPending;
 
   /**
    * Somebody else's save landing on the template this editor is holding.
@@ -735,9 +738,16 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
       let result: WeekTemplate | null = null;
       for (let rebases = 0; ; rebases += 1) {
         try {
-          const input = toWeekTemplateInput(working);
+          const selectedVideo = working.components.find(component => component.id === selectedId && component.type === 'video');
+          const videoImport = selectedVideo ? { importVideoComponentIds: [selectedVideo.id] } : {};
+          const input = { ...toWeekTemplateInput(working), ...videoImport };
           result = persistedId
-            ? await updateWeekTemplate(persistedId, working.revision ? { ...input, expectedRevision: working.revision } : input)
+            ? await updateWeekTemplate(persistedId, {
+              // An unchanged Save may retry the selected video. It must not
+              // replace every template component just to request that copy.
+              ...(dirty ? input : videoImport),
+              ...(working.revision ? { expectedRevision: working.revision } : {}),
+            })
             : await createWeekTemplate(input);
           break;
         } catch (err) {
@@ -759,6 +769,14 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
       savedSnapshot.current = JSON.stringify(result);
       setSelectedId(prev => (prev && result.components.some(c => c.id === prev) ? prev : null));
       savedChanges.current = true;
+      await videoFiles.uploadSaved('template', result.id, result.components, (id, settings, originalSource) => {
+        const apply = (value: WeekTemplate): WeekTemplate => ({ ...value,
+          components: value.components.map(component => withUploadedVideo(component, id, settings, originalSource)),
+        });
+        result = apply(result!);
+        savedSnapshot.current = JSON.stringify(apply(JSON.parse(savedSnapshot.current) as WeekTemplate));
+        setTemplate(current => apply(current));
+      });
       showCurriculumAlert({ title: 'Week template saved', icon: 'success', timer: 1400 });
     } catch (err) {
       showCurriculumAlert({ title: 'Save failed', text: err instanceof Error ? err.message : undefined, icon: 'error' });
@@ -768,6 +786,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
   };
 
   const discard = () => {
+    videoFiles.clear();
     const restored = JSON.parse(savedSnapshot.current) as WeekTemplate;
     setTemplate(restored);
     setSelectedId(prev => (prev && restored.components.some(c => c.id === prev) ? prev : restored.components[0]?.id ?? null));
@@ -834,6 +853,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
   }
 
   return (
+    <PendingVideoFilesContext.Provider value={videoFiles}>
     <div className="px-5 lg:px-8 py-6 space-y-6">
       {/* The receipt for a merge that has already happened: their components
           are in the rail by the time this renders, and the ones the reader had
@@ -869,7 +889,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
                 <SaveStatus dirty={dirty} saving={saving} isNew={!persistedId} />
               </div>
               <input value={template.title} onChange={e => update(prev => ({ ...prev, title: e.target.value }))} placeholder="Untitled week" className="mt-1 w-full max-w-[600px] bg-transparent font-heading text-[24px] font-black text-foreground-950 outline-none placeholder:text-foreground-300 border-b-2 border-transparent focus:border-primary-300 transition-colors" />
-              <FlowStrip components={template.components} selectedId={selectedId} onJump={jumpTo} />
+              <FlowStrip components={template.components} selectedId={selectedId} onJump={jumpTo} displayWeek={template} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <input
@@ -884,7 +904,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
                   if (file) void importKsbSheet(file);
                 }}
               />
-              <button onClick={save} disabled={saving || !dirty} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
+              <button onClick={save} disabled={saving || (!dirty && selected?.type !== 'video')} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
                 {saving ? <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Saving</> : <><AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save' : 'Create'}</>}
               </button>
             </div>
@@ -910,6 +930,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         <div className="space-y-4">
           <WeekComponentRail
             weekId={template.id}
+            displayWeek={template}
             components={template.components}
             selectedId={selectedId}
             onSelectId={setSelectedId}
@@ -927,7 +948,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         {/* Inspector — the wide working canvas */}
         <div>
           {selected ? (
-            <ComponentEditor key={selected.id} component={selected} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} videoTemplateId={template.id} />
+            <ComponentEditor key={selected.id} component={selected} displayWeek={template} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} videoTemplateId={template.id} />
           ) : (
             <WeekOverviewPanel
               components={template.components}
@@ -956,6 +977,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
 
       <style>{`@keyframes wbRise{from{opacity:0;transform:translate(-50%,14px)}to{opacity:1;transform:translate(-50%,0)}}.wb-savebar{transform:translate(-50%,0);animation:wbRise .2s ease-out}@media (prefers-reduced-motion:reduce){.wb-savebar{animation:none}}`}</style>
     </div>
+    </PendingVideoFilesContext.Provider>
   );
 }
 
@@ -983,7 +1005,7 @@ function Meter({ icon, value, label }: { icon: string; value: string; label: str
 }
 
 // At-a-glance sequence — click a dot to jump to that part.
-function FlowStrip({ components, selectedId, onJump }: { components: ModuleComponent[]; selectedId: string | null; onJump: (id: string) => void }) {
+function FlowStrip({ components, selectedId, onJump, displayWeek }: { components: ModuleComponent[]; selectedId: string | null; onJump: (id: string) => void; displayWeek?: SessionTitleWeek }) {
   if (components.length === 0) return null;
   return (
     <div className="mt-3 flex items-center gap-1 flex-wrap">
@@ -994,7 +1016,7 @@ function FlowStrip({ components, selectedId, onJump }: { components: ModuleCompo
           <button
             key={component.id}
             onClick={() => onJump(component.id)}
-            title={`${index + 1}. ${component.title || weekTypeLabel(component.type)}`}
+            title={`${index + 1}. ${componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type))}`}
             className={`h-2 rounded-full transition-all ${tone.marker} ${active ? 'w-7 ring-2 ring-offset-1 ring-foreground-300' : 'w-4 opacity-70 hover:opacity-100 hover:w-6'}`}
           />
         );
@@ -1035,6 +1057,7 @@ function SpineGutter({ connectTop = true, connectBottom = true, children }: { co
 
 interface RailNodeProps {
   component: ModuleComponent;
+  displayWeek?: SessionTitleWeek;
   index: number;
   selected: boolean;
   focused?: boolean;
@@ -1091,7 +1114,8 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, displayWeek, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+  const displayTitle = componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type));
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
@@ -1147,7 +1171,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, nes
           <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
           <span className="flex-1 min-w-0">
           <span className={`flex min-w-0 gap-2 ${nested ? 'items-start' : 'items-center'}`}>
-            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold ${nested ? 'break-words [overflow-wrap:anywhere]' : 'truncate'} ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
+            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold ${nested ? 'break-words [overflow-wrap:anywhere]' : 'truncate'} ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{displayTitle}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
           {nested && scheduledDate && (
@@ -1516,6 +1540,7 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
 // on top of it), via a single `onChange(nextComponents)` callback.
 export interface WeekComponentRailProps {
   weekId: string;
+  displayWeek?: SessionTitleWeek;
   components: ModuleComponent[];
   selectedId: string | null;
   focusedId?: string;
@@ -1561,7 +1586,7 @@ export interface WeekComponentRailProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1654,7 +1679,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
   const activeComponent = components.find(c => c.id === activeDragId) || null;
   const searchTerm = componentSearch.trim().toLocaleLowerCase();
   const visibleComponents = searchTerm
-    ? components.filter(component => [component.title, component.description, component.type, weekTypeLabel(component.type)]
+    ? components.filter(component => [componentSessionTitle(component, displayWeek), component.title, component.description, component.type, weekTypeLabel(component.type)]
       .some(value => value.toLocaleLowerCase().includes(searchTerm)))
     : components;
 
@@ -1720,6 +1745,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                 <Fragment key={component.id}>
                   <SortableRailNode
                     component={component}
+                    displayWeek={displayWeek}
                     nested={nested}
                     index={index}
                     selected={component.id === selectedId}
@@ -1744,7 +1770,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} nested={nested} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} displayWeek={displayWeek} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} nested={nested} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
           </DragOverlay>
         </DndContext>
       )}
@@ -2002,7 +2028,7 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string }) {
+export function ComponentEditor({ component, displayWeek, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2027,7 +2053,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
         <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><AppIcon className={`${definition.icon} text-xl`}></AppIcon></span>
         <div className="flex-1 min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${tone.text}`}>{definition.group}</p>
-          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{component.title || weekTypeLabel(component.type)}</p>
+          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type))}</p>
         </div>
         <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${issues.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
           <AppIcon className={issues.length ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'}></AppIcon>{issues.length ? `${issues.length} to fix` : 'Valid'}
@@ -2494,8 +2520,9 @@ function VideoBody({ component, onChange, setSetting, rulePoints, moduleId, vide
   return (
     <>
       <Section title="Video details">
-        <CurriculumVideoUpload targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
-          source={s('videoUrl') || s('embedCode')} />
+        <CurriculumVideoUpload key={`${moduleId || videoTemplateId}:${component.id}`} targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
+          source={s('videoUrl') || s('embedCode')}
+          onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />
         <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this video is about…" className={`${inputClass} resize-none`} /></Field>
 

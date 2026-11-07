@@ -1,0 +1,114 @@
+{
+  "command": "python \"$env:TEMP\\lms_architecture_validate.py\"",
+  "results": [
+    {
+      "check": "ten requested reports",
+      "status": "PASS",
+      "detail": "10"
+    },
+    {
+      "check": "local document links",
+      "status": "PASS",
+      "detail": []
+    },
+    {
+      "check": "catalog table/schema coverage",
+      "status": "PASS",
+      "detail": "595 local tables; 25 table-bearing schemas; 30 non-system schemas"
+    },
+    {
+      "check": "table sizes complete",
+      "status": "PASS",
+      "detail": "595/595"
+    },
+    {
+      "check": "inventory and dependency row coverage",
+      "status": "PASS",
+      "detail": "595 rows in each"
+    },
+    {
+      "check": "constraint/PK/FK totals",
+      "status": "PASS",
+      "detail": "6143 constraints,545 PK,287 FK"
+    },
+    {
+      "check": "missing PK / invalid index counts",
+      "status": "PASS",
+      "detail": "50 missing PK;1 invalid index"
+    },
+    {
+      "check": "exact profiling counts",
+      "status": "PASS",
+      "detail": "541 tables / 7091 columns"
+    },
+    {
+      "check": "profile aggregate consistency",
+      "status": "PASS",
+      "detail": "Non-NULL + NULL = total; nonnegative"
+    },
+    {
+      "check": "all unvalidated FK checks complete",
+      "status": "PASS",
+      "detail": "11/11"
+    },
+    {
+      "check": "all unvalidated CHECK probes complete",
+      "status": "PASS",
+      "detail": "11/11"
+    },
+    {
+      "check": "violation counts",
+      "status": "PASS",
+      "detail": "4 catalog-FK orphans and5830 CHECK violations; legacy candidate excluded"
+    },
+    {
+      "check": "read-only target final identity",
+      "status": "PASS",
+      "detail": "Verified final server-side branch and read-only transaction"
+    },
+    {
+      "check": "Mermaid structural coverage",
+      "status": "PASS",
+      "detail": {
+        "parts_each": 52,
+        "fk_edges": {
+          "current": 287,
+          "proposed": 287
+        },
+        "errors": []
+      }
+    },
+    {
+      "check": "Mermaid rendering",
+      "status": "NOT RUN",
+      "detail": "No installed Mermaid renderer identified; no dependency installation. Structural syntax/edge checks performed, not visual rendering."
+    },
+    {
+      "check": "JSON parse / CSV row agreement",
+      "status": "PASS",
+      "detail": []
+    },
+    {
+      "check": "sensitive-output scan",
+      "status": "PASS",
+      "detail": {
+        "matched_files": [],
+        "scope": "Known env secret values, connection URIs, private-key/token patterns and actual email literals; no raw application rows selected"
+      }
+    },
+    {
+      "check": "three non-executed plans",
+      "status": "PASS",
+      "detail": "3/3 plain EXPLAIN; no ANALYZE"
+    },
+    {
+      "check": "roadmap task count",
+      "status": "PASS",
+      "detail": "12 independently scoped proposals, not approved"
+    }
+  ],
+  "scope": "Documentation and evidence validation; no application/backend/Teams tests",
+  "passed": 18,
+  "failed": 0,
+  "not_run": 1
+}

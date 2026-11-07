@@ -1,0 +1,77 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Learner__learner_skills_radar_overrides {
+        bigint learner_id PK
+        text characteristic_name PK
+    }
+    Learner__learner_source_course_memberships {
+        bigint id PK
+        bigint learner_id FK
+        bigint source_course_id FK
+    }
+    Learner__learner_target_hours_daily {
+        bigint learner_id PK
+        date as_of_date PK
+    }
+    Learner__learner_training_plan_components {
+        bigint id PK
+        bigint plan_week_id FK
+        character_varying curriculum_component_id FK
+    }
+    Learner__learner_training_plan_modules {
+        bigint id PK
+        bigint learner_id FK
+        character_varying curriculum_module_id FK
+    }
+    Learner__learner_training_plan_weeks {
+        bigint id PK
+        bigint plan_module_id FK
+        character_varying curriculum_week_id FK
+    }
+    Learner__learners {
+        bigint id PK
+    }
+    Learner__learning_reflection_submissions {
+        uuid id PK
+    }
+    Learner__manual_activity_documents {
+        bigint id PK
+    }
+    Learner__manual_activity_hours_revision {
+        bigint revision_id PK
+    }
+    Learner__manual_month_finalization_events {
+        bigint id PK
+    }
+    Learner__manual_month_restore_events {
+        bigint id PK
+    }
+    Learner__manual_month_restore_points {
+        bigint id PK
+    }
+    Learner__monthly_log_provisional_rows {
+        bigint id PK
+    }
+    Learner__monthly_log_reconciliation_audit {
+        bigint audit_id PK
+    }
+    curriculum__components {
+        character_varying_128_ id PK
+    }
+    curriculum__modules {
+        character_varying_128_ module_catalogue_id PK
+    }
+    curriculum__source_courses {
+        bigint id PK
+    }
+    curriculum__weeks {
+        character_varying_128_ id PK
+    }
+    Learner__learners ||..o{ Learner__learner_source_course_memberships : "learner_source_course_memberships_learner_id_fkey"
+    curriculum__source_courses ||..o{ Learner__learner_source_course_memberships : "learner_source_course_memberships_source_course_id_fkey"
+    curriculum__components |o..o{ Learner__learner_training_plan_components : "learner_training_plan_components_curriculum_component_fkey"
+    Learner__learner_training_plan_weeks ||..o{ Learner__learner_training_plan_components : "learner_training_plan_components_plan_week_id_fkey"
+    curriculum__modules |o..o{ Learner__learner_training_plan_modules : "learner_training_plan_modules_curriculum_module_fkey"
+    Learner__learners ||..o{ Learner__learner_training_plan_modules : "learner_training_plan_modules_learner_id_fkey"
+    curriculum__weeks |o..o{ Learner__learner_training_plan_weeks : "learner_training_plan_weeks_curriculum_week_fkey"
+    Learner__learner_training_plan_modules ||..o{ Learner__learner_training_plan_weeks : "learner_training_plan_weeks_plan_module_id_fkey"

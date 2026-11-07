@@ -1,5 +1,6 @@
 import { ExtraActivities } from '../monthly-submission/ExtraActivities';
-import { useExtraActivities } from '@/api/extraActivities';
+import { fetchExtraActivities, useExtraActivities } from '@/api/extraActivities';
+import { monthlyActivities as completedMonthlyActivities } from './monthlyActivities';
 import { slideIssue, fillEmptyPresentationSlides } from './monthlyPresentation';
 import { standardMonthlyPresentation, STANDARD_PRESENTATION_FORMAT } from './standardMonthlyPresentation';
 import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
@@ -158,13 +159,12 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   const [library, setLibrary] = useState<EvidenceRecord[]>([]);
   const [activityDetails, setActivityDetails] = useState<{ title: string; date: string; text: string } | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
-  const [detail, setDetail] = useState<LearnerDetail | null>(null);
+  const [loadedDetail, setDetail] = useState<{ context: string; data: LearnerDetail } | null>(null);
+  const detail = loadedDetail?.context === presentationContext ? loadedDetail.data : null;
   const extra = useExtraActivities(kind, learnerId, data.month, [3, 4, 5].includes(step));
-  const monthlyActivities = (detail?.activityFeed || []).filter(a => a.at.slice(0, 7) === data.month).map(a => {
-    const records = a.kind === 'quiz' ? detail?.quizAttempts || [] : a.kind === 'video' ? detail?.videoProgress || [] : detail?.componentProgress || [];
-    const progress = records.find(p => p.submittedAt === a.at && (a.componentId ? p.componentId === a.componentId : a.kind === 'quiz' && 'quizId' in p && p.quizId === a.quizId));
-    return { title: a.title, date: a.at.slice(0, 10), reflection: progress?.feedback || '', ksbs: progress?.ksbs || [] };
-  }).concat(extra.activities.filter(activity => activity.status !== 'draft').map(activity => ({ title: activity.title, date: activity.submittedAt || '', reflection: activity.reflection || activity.answer, ksbs: activity.ksbs })));
+  const completedActivities = completedMonthlyActivities(detail, data.month);
+  const monthlyActivities = completedActivities.map(({ title, date, reflection, ksbs }) => ({ title, date, reflection, ksbs }))
+    .concat(extra.activities.filter(activity => activity.status !== 'draft').map(activity => ({ title: activity.title, date: activity.submittedAt || '', reflection: activity.reflection || activity.answer, ksbs: activity.ksbs })));
   const impactGeneration = useImpactStatements(step === 4 && !disabled && !historical && Boolean(detail) && !extra.loading && !extra.error, learnerId, activityId, question,
     answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value), 'impact', monthlyActivities);
   const actionGeneration = useImpactStatements(step === 5 && !disabled && !historical && Boolean(detail) && !extra.loading && !extra.error, learnerId, activityId, question,
@@ -187,7 +187,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   const programmeKsbs = [...new Map([...(detail?.ksbs || []), ...mappings].map(k => [k.code, k])).values()];
   const loadProgrammeKsbs = async () => {
     setKsbLoading(true); setKsbLoadError('');
-    try { setDetail(await fetchLearnerDetail(kind, learnerId, { force: true })); }
+    try { setDetail({ context: presentationContext, data: await fetchLearnerDetail(kind, learnerId, { force: true }) }); }
     catch { setKsbLoadError('Could not load your programme KSBs. Please try again.'); }
     finally { setKsbLoading(false); }
   };
@@ -197,9 +197,10 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   useEffect(() => {
     let active = true;
     if (historical) return;
-    if ([2, 3, 4, 5].includes(step)) fetchLearnerDetail(kind, learnerId).then(result => { if (active) setDetail(result); }).catch(e => { if (active) setError(e.message); });
+    setDetail(null);
+    if ([2, 3, 4, 5].includes(step)) fetchLearnerDetail(kind, learnerId, { revalidate: true }).then(result => { if (active) setDetail({ context: presentationContext, data: result }); }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
-  }, [step, kind, learnerId, historical]);
+  }, [step, kind, learnerId, presentationContext, historical]);
   const addFile = (file: EvidenceRecord) => {
     if (!data.evidence.some(e => e.id === file.id)) patch({ evidence: [...data.evidence, { id: file.id, name: file.filename, points: '' }] });
   };
@@ -212,13 +213,16 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   const generate = async () => {
     setBusy(true); setError('');
     try {
-      const fresh = await fetchLearnerDetail(kind, learnerId, { force: true });
+      const [fresh, extraActivities] = await Promise.all([
+        fetchLearnerDetail(kind, learnerId, { force: true }),
+        personal ? Promise.resolve([]) : fetchExtraActivities(kind, learnerId, data.month),
+      ]);
       if (presentationContextRef.current !== presentationContext) return;
-      setDetail(fresh);
+      setDetail({ context: presentationContext, data: fresh });
       const element = document.createElement('div'); element.innerHTML = question;
-      const slides = standardMonthlyPresentation(title, answers.assignmentAnswer, answers.whatYouLearned, answers.businessImpact, data, fresh, element.textContent || '');
+      const slides = standardMonthlyPresentation(title, answers.assignmentAnswer, answers.whatYouLearned, answers.businessImpact, data, fresh, element.textContent || '', extraActivities);
       patch({ slides, presentationFormat: STANDARD_PRESENTATION_FORMAT, presentationReviewed: false, presentationToken: '' });
-      setNotice(`Your ${slides.length}-slide presentation is ready to review. Full source detail is in speaker notes. ${data.uploadedPresentation ? 'Your uploaded PowerPoint is still selected for submission; choose Use generated slides for submission below to submit these slides.' : 'Your selected reference or the approved MCM template will be applied when you export.'}`);
+      setNotice(`Your ${slides.length}-slide presentation is ready to review. Full text is spread across continuation slides, with original detail also in speaker notes. ${data.uploadedPresentation ? 'Your uploaded PowerPoint is still selected for submission; choose Use generated slides for submission below to submit these slides.' : 'Your selected reference or the approved MCM template will be applied when you export.'}`);
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not load monthly activities. Your existing slides are preserved.'); }
     finally { setBusy(false); }
   };
@@ -382,23 +386,19 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       <div className="overflow-x-auto rounded-xl border border-slate-200">
         <table className="w-full text-left text-xs">
           <thead className="bg-blue-50"><tr><th className="p-3">Activity</th><th className="p-3">Date</th><th className="p-3">Result</th><th className="p-3">KSBs</th><th className="p-3">Time / source</th><th className="p-3">Learning and impact</th></tr></thead>
-          <tbody>{(detail?.activityFeed || []).filter(a => a.at.slice(0, 7) === data.month).map((a, i) => {
-            const records = a.kind === 'quiz' ? detail?.quizAttempts || [] : a.kind === 'video' ? detail?.videoProgress || [] : detail?.componentProgress || [];
-            const progress = records.find(p => p.submittedAt === a.at && (a.componentId ? p.componentId === a.componentId : a.kind === 'quiz' && 'quizId' in p && p.quizId === a.quizId));
-            return <tr key={i} className="border-t">
-              <td className="p-3">{a.title}</td><td className="p-3">{a.at.slice(0, 10)}</td><td className="p-3">{a.detail || a.action}</td>
-              <td className="p-3">{progress?.ksbs?.join(', ') || 'Not recorded'}</td>
-              <td className="p-3">{progress?.reportedTime || progress?.timeTaken || 'Not recorded'}<span className="block text-slate-500">{progress?.timeTrackingSource || ''}</span></td>
-              <td className="w-72 max-w-xs p-3 text-left align-top">
-                {progress?.feedback?.trim() ? <div className="space-y-2">
-                  <p className="line-clamp-3 break-words text-sm leading-6 text-slate-700">{progress.feedback.replace(/\s+/g, ' ').trim().slice(0, 160)}{progress.feedback.replace(/\s+/g, ' ').trim().length > 160 ? '…' : ''}</p>
-                  <button type="button" className="min-h-10 rounded-lg px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" aria-label={`Read more about ${a.title}`} onClick={() => setActivityDetails({ title: a.title, date: a.at.slice(0, 10), text: progress.feedback })}>Read more</button>
-                </div> : <span className="text-slate-500">Not recorded</span>}
-              </td>
-            </tr>;
-          })}</tbody>
+          <tbody>{completedActivities.map((activity, i) => <tr key={i} className="border-t">
+            <td className="p-3">{activity.title}</td><td className="p-3">{activity.date}</td><td className="p-3">{activity.result}</td>
+            <td className="p-3">{activity.ksbs.join(', ') || 'Not recorded'}</td>
+            <td className="p-3">{activity.time}<span className="block text-slate-500">{activity.source}</span></td>
+            <td className="w-72 max-w-xs p-3 text-left align-top">
+              {activity.reflection.trim() ? <div className="space-y-2">
+                <p className="line-clamp-3 break-words text-sm leading-6 text-slate-700">{activity.reflection}</p>
+                <button type="button" className="min-h-10 rounded-lg px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" aria-label={`Read more about ${activity.title}`} onClick={() => setActivityDetails({ title: activity.title, date: activity.date, text: activity.reflection })}>Read more</button>
+              </div> : <span className="text-slate-500">Not recorded</span>}
+            </td>
+          </tr>)}</tbody>
         </table>
-        {detail && !(detail.activityFeed || []).some(a => a.at.slice(0, 7) === data.month) && <p className="p-3 text-sm">No recorded activities for this month.</p>}
+        {detail && !completedActivities.length && <p className="p-3 text-sm">No completed activities recorded for this month.</p>}
         {!detail && <p className="p-3 text-sm">Loading your recorded activities…</p>}
       </div>
       {activityDetails && <Modal title="Learning and impact" onClose={() => setActivityDetails(null)} size="max-w-2xl">
@@ -453,7 +453,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         <AssignmentCoachingBooking assignmentId={activityId} topicId={payload().assignmentTopicId} kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
       </>}
       <section data-quality-target="presentation" tabIndex={-1} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate 8-10 slides in the approved MCM template (up to 12 for a large month). Review the short highlights and full speaker notes, then export. You can also upload your own MCM PowerPoint below.</p></div></div>
+        <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate your presentation in the approved MCM template. Full text continues across as many slides as needed. Review the content, then export. You can also upload your own MCM PowerPoint below.</p></div></div>
       <section className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
         <div>
           <p className="text-sm font-semibold">PowerPoint design reference (optional)</p>
@@ -475,12 +475,12 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />
         <div>
           <p className="font-semibold">Keep your slides up to date</p>
-          <p className="mt-1">Empty sections in older generated presentations are filled from your saved answers when you open this step. New compact slides and slides that already contain text are preserved. Complete the matching answers in the earlier steps. To rebuild an 8-10 slide presentation (up to 12 for a large month) from your latest answers, click Generate full-month presentation. Full source details are retained in editable PowerPoint speaker notes. You can add or remove slides after generating.</p>
+          <p className="mt-1">Empty sections in older generated presentations are filled from your saved answers when you open this step. New compact slides and slides that already contain text are preserved. Complete the matching answers in the earlier steps. To rebuild your presentation from your latest answers and completed monthly activities, click Generate full-month presentation. Full text appears on continuation slides and is also retained in editable PowerPoint speaker notes. You can add or remove slides after generating.</p>
           <p className="mt-2 font-medium">Generating again replaces all current slides, including your manual slide edits. Review the updated slides before exporting.</p>
         </div>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap"><button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => { if (!data.slides.length || window.confirm('Replace your edited slides with a fresh draft from your answers?')) generate(); }}>Generate full-month presentation</button><button type="button" className={buttonClass} disabled={disabled || busy || data.slides.length >= 200} onClick={() => patch({ slides: [...data.slides, { title: '', body: '' }], presentationReviewed: false, presentationToken: '' })}>Add slide</button></div>
-      {Boolean(data.presentationFormat) && data.slides.length > 0 && <p className="text-sm font-medium text-primary-700">{data.slides.length} slides in this presentation / Short highlights on slides / Full detail in speaker notes</p>}
+      {Boolean(data.presentationFormat) && data.slides.length > 0 && <p className="text-sm font-medium text-primary-700">{data.slides.length} slides in this presentation / Full text continues across slides / Original detail also in speaker notes</p>}
       {!data.slides.length && <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">No slides yet. Generate a presentation from your answers and monthly activities, or add your first slide.</p>}
       <div className="space-y-4">
       {data.slides.map((slide, i) => <fieldset id={`assignment-slide-${i}`} disabled={disabled || busy} key={i} className={`rounded-xl border p-4 sm:p-5 ${slideIssue(slide, data.presentationFormat) ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-slate-50'}`}><legend className="px-2 text-sm">Slide {i + 1}</legend>{slideIssue(slide, data.presentationFormat) && <p className="mb-3 text-sm font-medium text-amber-900">{slideIssue(slide, data.presentationFormat)}</p>}<label className="block text-xs">Title<input className={inputClass} value={slide.title} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, title: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><label className="block text-xs">Content<textarea className={inputClass} rows={5} value={slide.body} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, body: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label>{Boolean(data.presentationFormat) && <details className="my-3"><summary className="cursor-pointer text-sm font-medium text-primary-700">Speaker notes - full detail</summary><label className="mt-2 block text-xs">Speaker notes for slide {i + 1}<textarea className={inputClass} rows={7} value={slide.notes || ''} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, notes: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label></details>}<button type="button" className={buttonClass} onClick={() => { if (window.confirm(`Remove slide ${i + 1}${slide.title.trim() ? `: "${slide.title.trim()}"` : ''}? Its content will be deleted from this presentation.`)) patch({ slides: data.slides.filter((_, index) => index !== i), presentationReviewed: false, presentationToken: '' }); }}>Remove slide</button></fieldset>)}

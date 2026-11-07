@@ -7,12 +7,14 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.http import JsonResponse
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
 from . import video_imports as imports
 from .bunny_stream import VideoImportError, playback_url
 from .models import CurriculumVideoImport
+from .video_uploads import stored_video_path
 
 VIDEO_ID = 'c1c2c3c4-1234-5678-abcd-123456789abc'
 SCOPE = {'programme_id': 'PROG-PCP-L6', 'programme_name': 'Project Controls Professional Level 6',
@@ -159,7 +161,11 @@ class VideoImportTests(TestCase):
 
     def test_newer_file_choice_does_not_report_previous_copy_as_current(self):
         asset = self.asset()
-        imports.enqueue('module', 'MOD1', self.component, SCOPE, file_hash='new-file')
+        newer = imports.enqueue('module', 'MOD1', self.component, SCOPE, file_hash='new-file')
+        # This case requires a later request; rapid Windows clock readings can
+        # give two fixtures the same timestamp.
+        newer.requested_at = asset.requested_at + timedelta(seconds=1)
+        newer.save(update_fields=['requested_at'])
         with patch.object(imports, 'target', return_value=('components', [self.component], SCOPE)):
             self.assertFalse(imports._matches_current_source(asset))
 
@@ -182,6 +188,65 @@ class VideoImportTests(TestCase):
             response = imports.tracked_save(save, 'module')(request, module_catalogue_id='MOD1')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(CurriculumVideoImport.objects.count(), 0)
+
+    def save_video_request(self, *, kind='module', status=200, ids=None):
+        request = RequestFactory().patch('/save/', json.dumps({
+            'importVideoComponentIds': ids if ids is not None else ['COMP1'],
+        }), content_type='application/json')
+        sibling = {**self.component, 'id': 'OLD'}
+        result = JsonResponse({'saved': status == 200}, status=status)
+        with patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', return_value=('components', [self.component, sibling], SCOPE)), \
+             patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+            response = imports.tracked_save(lambda *a, **k: result, kind)(request, **(
+                {'identifier': 'W1'} if kind == 'template' else {'module_catalogue_id': 'MOD1'}))
+        self.assertIs(response, result)
+        return response
+
+    def test_save_queues_the_selected_unchanged_video_only_and_wakes_after_commit(self):
+        with patch.object(imports, 'wake_worker') as wake, self.captureOnCommitCallbacks(execute=True):
+            self.save_video_request(ids=['COMP1', 'COMP-IN-OTHER-MODULE'])
+            self.assertEqual(list(CurriculumVideoImport.objects.values_list('component_id', flat=True)), ['COMP1'])
+            wake.assert_not_called()
+        wake.assert_called_once()
+
+    def test_save_retries_failed_copy_and_reuses_ready_copy(self):
+        asset = self.asset()
+        asset.status, asset.error = 'failed', 'Download failed'
+        asset.save()
+        self.save_video_request()
+        asset.refresh_from_db()
+        self.assertEqual((asset.status, asset.error), ('queued', ''))
+        asset.status, asset.video_id = 'ready', VIDEO_ID
+        asset.save()
+        self.save_video_request()
+        asset.refresh_from_db()
+        self.assertEqual((asset.status, asset.video_id), ('ready', VIDEO_ID))
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+
+    def test_template_save_queues_its_selected_video(self):
+        self.save_video_request(kind='template')
+        asset = CurriculumVideoImport.objects.get()
+        self.assertEqual((asset.target_kind, asset.target_id, asset.component_id), ('template', 'W1', 'COMP1'))
+
+    def test_failed_save_never_requests_an_import(self):
+        with patch.object(imports, 'wake_worker') as wake, self.captureOnCommitCallbacks(execute=True):
+            self.save_video_request(status=409)
+        wake.assert_not_called()
+        self.assertFalse(CurriculumVideoImport.objects.exists())
+
+    def test_missing_or_out_of_scope_selection_does_not_backfill_old_sources(self):
+        self.save_video_request(ids=['COMP-IN-OTHER-MODULE'])
+        self.assertFalse(CurriculumVideoImport.objects.exists())
+
+    def test_save_does_not_interrupt_an_active_transfer(self):
+        asset = self.asset()
+        asset.status = 'uploading'
+        asset.lease_until = timezone.now() + timedelta(minutes=10)
+        asset.save()
+        self.save_video_request()
+        refreshed = CurriculumVideoImport.objects.get(pk=asset.pk)
+        self.assertEqual((refreshed.status, refreshed.lease_until), (asset.status, asset.lease_until))
 
     def test_changed_video_is_queued_but_failed_save_is_not(self):
         request = RequestFactory().patch('/module/', '{}', content_type='application/json')
@@ -280,6 +345,16 @@ class VideoImportAccessTests(TestCase):
                 response = imports.component_video(self.request(), 'module', 'MOD1', 'COMP1')
             self.assertEqual(response.status_code, 200)
 
+    def test_unsaved_video_status_is_informational_but_import_is_refused(self):
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+             patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', return_value=('components', [], SCOPE)):
+            response = imports.component_video(self.request(), 'module', 'MOD1', 'NEW')
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(json.loads(response.content)['saved'])
+            response = imports.component_video(self.request('post'), 'module', 'MOD1', 'NEW')
+            self.assertEqual(response.status_code, 400)
+
     def test_post_requires_csrf(self):
         request = RequestFactory().post('/video/')
         with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), patch.object(imports, 'target') as target:
@@ -293,3 +368,67 @@ class VideoImportAccessTests(TestCase):
             response = imports.component_video(self.request('post', data={'programme_id': 'OTHER'}), 'module', 'MOD1', 'COMP1')
         self.assertEqual(response.status_code, 400)
         enqueue.assert_not_called()
+
+    def test_device_upload_returns_the_saved_lms_source_without_waiting_for_bunny(self):
+        component = {'id': 'COMP1', 'settings_json': {}}
+        url = '/curriculum_api/curriculum/uploads/videos/module/MOD1/COMP1/hash.mp4'
+        asset = imports.enqueue('module', 'MOD1', {**component, 'settings_json': {'videoUrl': url}}, SCOPE)
+        saved = {'videoUrl': url, 'sourceType': 'HTML (MP4)', 'provider': 'Upload file', 'embedCode': ''}
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+             patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', return_value=('components', [component], SCOPE)), \
+             patch.object(imports, 'save_mp4', return_value=(asset, saved)), \
+             patch.object(imports, 'BunnyStream') as bunny:
+            response = imports.component_video(self.request('post', data={
+                'file': SimpleUploadedFile('lesson.mp4', MP4, content_type='video/mp4'),
+            }), 'module', 'MOD1', 'COMP1')
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(json.loads(response.content)['savedSettings'], saved)
+        bunny.assert_not_called()
+
+    def test_invalid_file_does_not_persist_a_source(self):
+        for name, content in [('video.html', MP4), ('video.mp4', b'<html>not a video</html>')]:
+            with self.subTest(name=name), \
+                 patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+                 patch.object(imports, 'enabled', return_value=True), \
+                 patch.object(imports, 'target', return_value=('components', [{'id': 'COMP1'}], SCOPE)), \
+                 patch.object(imports, 'save_mp4') as save:
+                response = imports.component_video(self.request('post', data={
+                    'file': SimpleUploadedFile(name, content),
+                }), 'module', 'MOD1', 'COMP1')
+                self.assertEqual(response.status_code, 400)
+                save.assert_not_called()
+
+    def test_local_video_resolver_rejects_arbitrary_files_and_remote_addresses(self):
+        prefix = '/curriculum_api/curriculum/uploads/'
+        for source in (prefix + '../private.mp4', prefix + 'videos/module/M/C/../../secret.mp4',
+                       prefix + 'videos/module/M/C/test.mp4?token=x', prefix + 'slides/document.mp4',
+                       'https://example.com' + prefix + 'videos/module/M/C/test.mp4',
+                       'file:///private.mp4', prefix + 'videos/module/M/C/%2e%2e.mp4'):
+            self.assertIsNone(stored_video_path(source))
+        self.assertEqual(stored_video_path(prefix + 'videos/module/M/C/hash.mp4'),
+                         'curriculum_component_uploads/videos/module/M/C/hash.mp4')
+
+    def test_saved_mp4_survives_authoring_validation_and_learner_source_mapping(self):
+        from .views import validate_component_authoring_payload
+        from learner_api.learner_detail import _video_url_from_settings
+        url = '/curriculum_api/curriculum/uploads/videos/module/M1/C1/hash.mp4'
+        component = {'type': 'video', 'title': 'Lesson', 'settings': {
+            'sourceType': 'HTML (MP4)', 'provider': 'Upload file', 'videoUrl': url,
+            'requiredProgressPercentage': 80, 'lessonContent': 'Keep this',
+        }}
+        for status in ('Draft', 'Ready for QA', 'Approved'):
+            component['settings']['contentStatus'] = status
+            self.assertEqual(validate_component_authoring_payload(component, 'component'), [])
+            self.assertEqual(_video_url_from_settings(component['settings']), url)
+            self.assertEqual(component['settings']['requiredProgressPercentage'], 80)
+
+    def test_other_video_sources_keep_their_existing_validation(self):
+        from .views import validate_component_authoring_payload
+        for source_type, url in [('HTML (MP4)', '/private/file.mp4'), ('HTML (MP4)', 'file:///secret.mp4'),
+                                 ('External Link', '/curriculum_api/curriculum/uploads/videos/module/M/C/hash.mp4'),
+                                 ('YouTube', '/curriculum_api/curriculum/uploads/videos/module/M/C/hash.mp4')]:
+            errors = validate_component_authoring_payload({'title': 'Lesson', 'type': 'video', 'settings': {
+                'sourceType': source_type, 'videoUrl': url,
+            }}, 'component')
+            self.assertTrue(any(error['path'] == 'component.settings.videoUrl' for error in errors))

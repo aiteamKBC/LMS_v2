@@ -958,7 +958,9 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             component = _component_for(row, module_activities)
             linked = []
             if component:
-                lecture['title'] = component['title'] or lecture['title']
+                # Weekly Learning names the lecture's authored week. Reuse that
+                # label only after resolving the exact occurrence and module.
+                lecture['title'] = _text(component.get('week_title')) or component['title'] or lecture['title']
                 lecture['contentSummary'] = component['description'] or component['settings'].get('sessionPurpose') or ''
                 lecture['componentHref'] = f"/learner/component/{kind}/{learner_id}/{component['id']}"
                 lecture['ksbs'] = _component_ksbs(component)

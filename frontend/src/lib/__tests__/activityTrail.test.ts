@@ -123,6 +123,15 @@ describe('LMS activity recorder', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('does not send authenticated audit requests from the public lecture QR', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401 });
+    recordPageView('/lecture-feedback');
+    recordAction('tab', { tab: 'Live Sessions Feedback' });
+    await vi.advanceTimersByTimeAsync(5000);
+    flushActivity();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('continues recording coach directory administration', async () => {
     recordPageView('/admin/coach_directory');
     await vi.advanceTimersByTimeAsync(2500);

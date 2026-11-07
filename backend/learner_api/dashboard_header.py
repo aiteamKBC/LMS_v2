@@ -12,6 +12,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
+from .response_cache import cached_learner_read
 from . import canonical_learning, journal_sources
 from .apprenticeship_agreement import _group_dates
 from .learner_detail import (SOURCE_MODELS, _first_session_unlocked, _iso_date,
@@ -256,6 +257,7 @@ def build_dashboard_bootstrap(source, pk, *, include_pending_delivery=False):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
+@cached_learner_read('dashboard-bootstrap')
 def dashboard_bootstrap(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
@@ -453,6 +455,7 @@ def _log_header_database_failure(exc, *, kind, pk, minimal, presentation):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
+@cached_learner_read('dashboard-header')
 def dashboard_header(request, kind, pk, presentation=False, minimal=False):
     model = SOURCE_MODELS.get(kind)
     if model is None:

@@ -7,6 +7,7 @@ import { readLearnerJson } from './learnerRead';
 
 import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
+import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
 
 const BASE = '/learner_api/quizzes';
 
@@ -168,6 +169,10 @@ async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
     const message = (data && data.error) || `Request failed (${res.status})`;
+    if (data?.code === 'activity_time_conflict' && typeof data.previousSeconds === 'number'
+      && Number.isFinite(data.previousSeconds) && data.previousSeconds >= 0) {
+      throw new ActivityTimeConflictError(message, data.previousSeconds);
+    }
     // 409 + validation is the working-rules refusal: the attempt was neither
     // graded nor stored, so the caller opens the completion date/time dialog
     // and re-posts. Any other 409 (a reused timing session) stays an error.

@@ -1,6 +1,7 @@
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { featuredSession, meetingJoinUrl, meetingStatus } from '../reviews/featuredSession';
+import { reviewAttendanceResult } from '@/lib/reviewAttendance';
 
 export type ReviewFilter = 'all' | 'upcoming' | 'past';
 export type ReviewDefinitions = Readonly<Record<string, LearnerReviewDefinition | null>>;
@@ -109,8 +110,13 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
     if (status === 'awaiting-signature' && !definition) return result('Check review signatures', 'Open the review to see which signatures are still needed.', 'view', true, true);
     return result(status === 'completed' ? 'Completed' : 'Review available', 'You can read your review and the agreed next steps.', 'view', true);
   }
-  if (attendance?.attendanceConfirmed) return result('Attendance recorded', 'Your attendance is saved. Open the review to check the latest notes.', 'view', Boolean(date && date < today));
-  if (attendance?.missed || attendance?.absenceReported) return result(attendance.absenceReported ? 'Absence reported' : 'Meeting missed', 'Open the meeting options to check your next step with your coach.', 'view', Boolean(date && date < today), true);
+  const outcome = reviewAttendanceResult(session, attendance);
+  if (outcome === 'attended') return result('Attendance recorded', 'Your attendance is saved. Open the review to check the latest notes.', 'view', Boolean(date && date < today));
+  if (outcome === 'pending' || outcome === 'unavailable') return result(
+    outcome === 'pending' ? 'Awaiting attendance report' : 'Attendance unavailable',
+    outcome === 'pending' ? 'The meeting has ended. Waiting for its attendance report.' : 'Attendance could not be checked. Please try again later.',
+    'view', Boolean(date && date < today));
+  if (outcome === 'missed') return result(attendance?.absenceReported ? 'Absence reported' : 'Meeting missed', 'Open the meeting options to check your next step with your coach.', 'view', Boolean(date && date < today), true);
   if (booked && date && date < today) return result('Awaiting update', 'Open this review to check its attendance and next steps.', 'view', true, true);
   if (booked) return result(isToday ? 'Today' : status === 'in-progress' ? 'In progress' : 'Scheduled',
     'Have your learning updates and questions ready for your coach.', isToday && joinUrl ? 'join' : 'view');

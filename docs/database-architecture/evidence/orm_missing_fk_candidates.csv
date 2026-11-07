@@ -1,0 +1,2 @@
+app,model,schema,table_name,column_name,file,line,parent_schema,parent_table,parent_columns,on_delete,classification
+learner_api,LearnerKsb,Learner,learner_ksbs,learner_id,backend/learner_api/models.py,894,Learner,learners,"[""id""]",models.CASCADE,ORM-declared missing FK candidate; business meaning and data require review

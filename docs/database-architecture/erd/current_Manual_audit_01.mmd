@@ -1,0 +1,56 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Manual_audit__activities {
+        bigint activity_id PK
+    }
+    Manual_audit__activity_actual_hours {
+        bigint learner_id PK
+        text kind PK
+        text ref PK
+    }
+    Manual_audit__activity_annotations {
+        text component_id PK
+    }
+    Manual_audit__activity_overrides {
+        bigint aptem_id PK
+        text activity_id PK
+    }
+    Manual_audit__activity_planned_hours {
+        bigint learner_id PK
+        text kind PK
+        text ref PK
+    }
+    Manual_audit__activity_results {
+        bigint group_id PK
+        bigint learner_id PK
+        bigint activity_id PK
+    }
+    Manual_audit__contract_document_archive {
+        bigint contract_id PK
+    }
+    Manual_audit__contract_signature_cache {
+        text azure_path PK
+    }
+    Manual_audit__contract_uploads {
+        bigint id PK
+    }
+    Manual_audit__group_learners {
+        bigint group_id PK
+        bigint learner_id PK
+    }
+    Manual_audit__groups {
+        bigint group_id PK
+    }
+    Manual_audit__learner_attendance {
+        text source_key PK
+    }
+    Manual_audit__learner_evidence_overrides {
+        text evidence_id PK
+    }
+    Manual_audit__learner_hours_overrides {
+        bigint aptem_id PK
+        text period PK
+    }
+    Manual_audit__learner_profile_date_overrides {
+        bigint aptem_id PK
+    }

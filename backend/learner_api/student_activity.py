@@ -5,6 +5,7 @@ import re
 import time
 from uuid import UUID
 
+from .response_cache import cached_learner_read
 from .journal_sources import learner_journal_view
 from django.db import DatabaseError, connections
 from django.http import JsonResponse, HttpResponseRedirect
@@ -230,6 +231,7 @@ def _activity_source_issues(enrolment_id, group_ids):
 @require_GET
 @learner_self_or_staff(kwarg="pk")
 @learner_journal_view
+@cached_learner_read('student-activity')
 def student_activity(request, kind, pk):
     """Return LMS activities for the requested learner, never for a client id.
 
@@ -594,7 +596,7 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
             from .subject_content import quiz_definition
             from .subject_quiz import imported_quiz
             aptem_id, stored = _owned_quiz(kind, pk, group_id, activity_id)
-            if stored['completed']:
+            if stored['completed'] and not stored.get('can_retake'):
                 return _error('This quiz is already complete. You can review its saved results.', 409)
             with _connection().cursor() as cursor:
                 original = imported_quiz(cursor, group_id, activity_id)
@@ -602,6 +604,8 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
                 return _error('The original quiz is not available for grading yet.', 409)
             definition = {'title': stored['title'], 'quiz': quiz_definition(original),
                 'catalogue_kind': 'quiz', 'has_reading': False, 'available': True, 'media': [], 'reading_html': ''}
+            if stored['completed']:
+                definition['retakeRequired'] = True
         elif catalogue_kind == 'material':
             aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
             definition = _definition_for(stored, group_id)
@@ -626,7 +630,7 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
                                 attempt_id=attempt_id, timing_session=timing)
         else:
             attempt_id = subject_store.start(pk, aptem_id, group_id, activity_id, definition)
-        public = _local_pdf_urls(definition, kind, pk, group_id, activity_id)
+        public = _local_pdf_urls({key: value for key, value in definition.items() if key != 'retakeRequired'}, kind, pk, group_id, activity_id)
         return _private({'attempt_id': attempt_id, 'definition': {**public, 'quiz': public_quiz(definition['quiz'])},
                          **({'timing': timing} if timing else {})}, 201)
     except canonical_learning.ServiceError as error:

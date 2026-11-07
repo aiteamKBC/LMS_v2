@@ -55,6 +55,7 @@ import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog'
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
+import { ActivityPlanDetails } from './ActivityPlanDetails';
 import { AudioYouTubeAlternative } from './AudioYouTubeAlternative';
 import { isNavigableComponent, placeActivity, weekDisplayLabel, type ActivityPlacement } from './weekPreview';
 import { componentRoute } from './componentRoute';
@@ -785,9 +786,7 @@ export default function ComponentViewPage() {
         ) : component.durationMinutes != null && (
           <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
         )}
-        {component.expectedOtjh != null && component.expectedOtjh > 0 && (
-          <span className="inline-flex items-center gap-1"><AppIcon className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
-        )}
+        <ActivityPlanDetails hours={component.expectedOtjh} />
         {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
       </div>
     </div>

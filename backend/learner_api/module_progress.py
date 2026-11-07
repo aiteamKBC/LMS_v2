@@ -16,7 +16,7 @@ from .progress_rules import progress_counts_as_achieved
 from old_otjh.service import ServiceError
 
 
-def read_native_progress(source, profile):
+def read_native_progress(source, profile, *, as_of=None):
     # Do not call build_learner_detail: its activation/plan/hour repairs write.
     # Reuse its authored component and retained-quiz projections directly.
     from .learner_detail import (_resolve_from_master, _append_week_quizzes,
@@ -38,6 +38,9 @@ def read_native_progress(source, profile):
     progress = list(profile.progress_entries.using('enrolment').filter(deleted_at__isnull=True)
                     .exclude(kind='activity_event')
                     .values('kind', 'passed', 'component_ref', 'quiz_ref', 'submitted_at'))
+    if as_of is not None:
+        from .progress_cutoff import records_as_of
+        progress = records_as_of(progress, as_of)
     detail = {'components': components, 'quizAttempts': [
         {'quizId': row['quiz_ref'], 'componentId': row['component_ref'], 'passed': row['passed']}
         for row in progress if row['kind'] == 'quiz']}
@@ -50,8 +53,8 @@ def read_native_progress(source, profile):
     return detail, current, progress, titles
 
 
-def aggregate_module_progress(activity, detail, current, progress, titles=None):
-    """Roll up Student's catalogue/native cards using verified identities only."""
+def _module_progress_facts(activity, detail, current, progress, titles=None):
+    """Keep counts and their exact deduplicated target population together."""
     activity = activity or {}
     titles = titles or {}
     historical = {f"legacy:{row['id']}": {'id': f"legacy:{row['id']}",
@@ -92,6 +95,8 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
     for row in subjects.values():
         row['title'] = titles.get(row['id'], {}).get('title') or row['title']
     seen = set()
+    native_components, retained_components = [], []
+    retired = {id(item) for item in detail.get('retiredQuizComponents', [])}
     for subject in sorted(subjects.values(), key=lambda row: (row['title'].casefold(), row['id'])):
         for item in cards.get(subject['id'], {}).values():
             component_id = item.get('componentId')
@@ -101,6 +106,7 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
                 continue
             if identity:
                 seen.add(identity)
+            (retained_components if id(item) in retired else native_components).append(item)
             if item.get('isQuiz'):
                 done = bool(item.get('quizMeta')) and any(
                     attempt.get('passed') is True and (
@@ -113,9 +119,12 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
                 done = item.get('attendanceCompleted') is True or (bool(component_id) and str(component_id) in completed)
             subject['total'] += 1
             subject['completed'] += bool(done)
-    return [{**row, 'percent': min(100, floor(row['completed'] / row['total'] * 10000 + 0.5) / 100)
+    modules = [{**row, 'percent': min(100, floor(row['completed'] / row['total'] * 10000 + 0.5) / 100)
              if row['total'] else None}
             for row in sorted(subjects.values(), key=lambda row: (row['title'].casefold(), row['id']))]
+    return {'modules': modules, 'nativeComponents': native_components,
+            'historicalComponents': sum(row['total'] for row in modules if row['id'].startswith('legacy:')),
+            'retainedComponents': len(retained_components)}
 
 
 def _reusable_register(source, components, register, register_module_ids):
@@ -165,12 +174,20 @@ def canonical_module_progress(source, profile, *, read_projection=None, register
             # than hydrating learner content a second time for its percentage.
             activity, detail, current, progress, titles = read_projection()
         else:
-            activity = canonical_learning.source_subjects(source.pk, summarize_activities, owner=owner) \
-                if student_activity_available(source.aptem_id) else None
+            records = None
+            if as_of is not None:
+                from .progress_cutoff import records_as_of
+                records = records_as_of(canonical_learning.entries_for(owner, lineage_only=True), as_of)
+            activity = canonical_learning.source_subjects(
+                source.pk, summarize_activities, owner=owner,
+                **({'records': records} if as_of is not None else {}),
+            ) if student_activity_available(source.aptem_id) else None
     finally:
         journal_sources._current.reset(token)
     if read_projection is None:
-        detail, current, progress, titles = read_native_progress(source, profile)
+        detail, current, progress, titles = read_native_progress(
+            source, profile, **({'as_of': as_of} if as_of is not None else {}),
+        )
     from .live_session_progress import read_live_credits
     reusable = _reusable_register(source, detail['components'], register, register_module_ids)
     from .projection_performance import projection_operation
@@ -182,7 +199,12 @@ def canonical_module_progress(source, profile, *, read_projection=None, register
     progress = [*progress, *({'kind': 'component', 'passed': None,
                             'component_ref': row['componentId'], 'submitted_at': row['submittedAt']}
                            for row in credits)]
-    return aggregate_module_progress(activity, detail, current, progress, titles)
+    return _module_progress_facts(activity, detail, current, progress, titles)
+
+
+def canonical_module_progress(source, profile, *, read_projection=None):
+    """Keep the existing Dashboard/Coach response and counting rule unchanged."""
+    return canonical_module_facts(source, profile, read_projection=read_projection)['modules']
 
 
 def compact_module_progress(rows):

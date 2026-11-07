@@ -1,0 +1,35 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Audit__learner_match_market_research_l4
+    Audit__learner_profile_overrides {
+        bigint learner_id PK
+    }
+    Audit__learner_skills_radar_overrides {
+        bigint learner_id PK
+        text characteristic_name PK
+    }
+    Audit__learner_transition_events {
+        bigint id PK
+        bigint transition_id FK
+    }
+    Audit__learner_transitions {
+        bigint id PK
+    }
+    Audit__lms_progress_repair_events {
+        bigint id PK
+    }
+    Audit__monthly_audit_signoffs {
+        bigint id PK
+    }
+    Audit__monthly_log_locks {
+        character_varying_128_ learner_id PK
+        character_varying_7_ report_month PK
+    }
+    Audit__mre {
+        text plan_id PK
+    }
+    Audit__progress_review_signature_cache {
+        bigint id PK
+    }
+    Audit__learner_transitions ||..o{ Audit__learner_transition_events : "learner_transition_events_transition_id_fkey"

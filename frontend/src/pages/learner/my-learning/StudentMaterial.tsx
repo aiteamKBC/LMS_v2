@@ -168,8 +168,10 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   // Follow the rendered video, including protected source-file URLs and
   // videos with companion text. Older drafts may still say visible_page.
   const videoActivity = !!data && !data.quiz && data.media.some(isVideoMaterial);
-  const study = useLegacyStudySession(timerKey, !!data?.can_attempt && !!data?.available && !readOnly && !reviewQuiz
-    && !((catalogueQuiz || !data?.quiz) && (completed || data?.completed || savedResult?.completed)), busy || !!correction || !!timeConfirmation, activityElement, videoActivity);
+  const retakeGranted = !!data?.can_retake && !!data.can_attempt && !savedResult;
+  const reviewLocked = reviewQuiz && !retakeGranted;
+  const study = useLegacyStudySession(timerKey, !!data?.can_attempt && !!data?.available && !readOnly && !reviewLocked
+    && !((catalogueQuiz || !data?.quiz) && (completed || data?.completed || savedResult?.completed) && !retakeGranted), busy || !!correction || !!timeConfirmation, activityElement, videoActivity);
   const attemptId = study.draft?.attemptId || null;
   const answers = study.draft?.answers || {};
   const confirmed = study.draft?.confirmed || false;
@@ -193,7 +195,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
     void beginAttempt();
   };
   const beginAttempt = async (retakeTimeChoice?: RetakeTimeChoice) => {
-    if (readOnly || reviewQuiz || !data || busy || requestPending.current || attemptId || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
+    if (readOnly || reviewLocked || !data || busy || requestPending.current || attemptId || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
     requestPending.current = true;
     setBusy(true); setError(''); setResult('');
     const startUrl = `${attempts}${quizQuery}`;
@@ -240,7 +242,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
     return () => { observer.disconnect(); document.removeEventListener('visibilitychange', startVisible); };
   }, [data, attemptId, completed, readOnly, reviewQuiz, savedResult]);
   const submit = async (declaredCompletedAt?: string) => {
-    if (readOnly || reviewQuiz || !data || busy || requestPending.current || !data.can_attempt || !data.persistence_ready || !data.available) return;
+    if (readOnly || reviewLocked || !data || busy || requestPending.current || !data.can_attempt || !data.persistence_ready || !data.available) return;
     requestPending.current = true;
     setBusy(true); setError('');
     try {
@@ -277,7 +279,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   const displayedAnswers = attemptId ? answers : previousSelections(data);
   const reviewing = !attemptId && (data.history.length > 0 || data.historical.answers.length > 0);
   const isComplete = completed || data.completed || savedResult?.completed || data.history.some((attempt) => attempt.completed);
-  const reviewOnly = readOnly || reviewQuiz || ((catalogueQuiz || !quiz) && isComplete);
+  const reviewOnly = readOnly || reviewLocked || ((catalogueQuiz || !quiz) && isComplete && !retakeGranted);
   const answered = quiz?.questions.every((question) => (answers[question.id]?.length || 0) > 0) ?? true;
   const needsConfirmation = !!quiz && data.has_reading;
   const blockedReason = !data.persistence_ready
@@ -292,6 +294,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   const hasPreviousAttempt = !!(isComplete || data.history.length || data.historical.attempt_number || savedResult);
   const actionClass = 'shrink-0 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50';
   return <div ref={activityElement} className="space-y-6 rounded-2xl border border-foreground-200 bg-white p-4 sm:p-6">
+    {retakeGranted && !readOnly && <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm text-primary-800">One additional quiz attempt is available. Your completed record will be kept.</p>}
     {!data.available && <p>No material is available for this activity yet.</p>}
     {data.media.map((item, index) => <Media key={`${index}:${item.url}`} value={item.url} kind={item.kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} onPlayingChange={playing => {
       if (playing && (!videoActivity || isVideoMaterial(item))) playingMedia.current.add(index); else playingMedia.current.delete(index);
@@ -331,7 +334,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
         <button type="button" disabled={actionsDisabled} className="rounded-lg border border-primary-300 px-3 py-1 font-semibold" onClick={() => study.setPaused(!study.paused)}>{study.paused ? 'Resume timer' : 'Pause timer'}</button>
         <span>{videoActivity && (untrackedVideo || data.media.some(item => isVideoMaterial(item) && item.can_embed === false))
           ? 'This video cannot report playback time. Enter your study time manually.'
-          : study.paused ? 'Timer paused.' : videoActivity || study.draft?.timing.countingMode === 'active_playback' ? 'Time counts during audible playback while this page is visible.' : 'Time counts while this page is visible.'}</span>
+          : study.paused ? 'Timer paused.' : !videoActivity && study.draft?.timing.countingMode === 'active_playback' ? 'Time counts during audible playback, including in another tab.' : videoActivity ? 'Time counts during audible playback while this page is visible.' : 'Time counts while this page is visible.'}</span>
         <span>{manualSeconds == null ? 'Only enter a time if you need to correct it.' : 'Your manual time will be saved. Clear both fields to use the timer.'}</span>
       </div>}
       {study.storageError && <p role="alert" className="text-sm text-amber-800">{study.storageError}</p>}

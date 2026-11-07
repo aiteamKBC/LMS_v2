@@ -4862,6 +4862,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         metadata = dict(artifact)
         metadata.pop('lmsHiddenFromLearners', None)
         metadata.pop('lmsTranscriptTimeline', None)
+        metadata.pop('lmsBunnyRecording', None)
         same_recording = None if existing else _same_artifact_under_new_graph_id(cursor, lock, payload)
         if same_recording:
             # Teams re-issued the id of an artifact already saved (same call and
@@ -4872,6 +4873,8 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
                 metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            if 'lmsBunnyRecording' in saved_metadata:
+                metadata['lmsBunnyRecording'] = saved_metadata['lmsBunnyRecording']
             cursor.execute(
                 f'UPDATE {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} SET graph_artifact_id=%s, content_url=%s, '
                 'content_correlation_id=%s, metadata=%s, updated_at=%s WHERE id=%s',
@@ -4884,6 +4887,8 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
                 metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            if 'lmsBunnyRecording' in saved_metadata:
+                metadata['lmsBunnyRecording'] = saved_metadata['lmsBunnyRecording']
         payload['metadata'] = json_db_value(metadata)
         authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], payload)
     return True
@@ -11069,6 +11074,8 @@ def authoring_session_links_by_catalogue(
                     'weekId': week_id,
                     'componentId': clean_str(component.get('id')),
                     'title': component.get('title') or week_row.get('title') or '',
+                    'weekTitle': (clean_str(week_row.get('title'))
+                                  if clean_str(component.get('module_catalogue_id')) == catalogue_id else ''),
                     # Delivered by its own additional meeting rather than by the
                     # module's calendar. Flagged, never dropped: the week still runs
                     # a live session and every screen that lists sessions must still
@@ -11657,6 +11664,7 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 # the row the author is looking at.
                 'weekId': clean_str(link.get('weekId')),
                 'componentId': clean_str(link.get('componentId')),
+                'weekTitle': clean_str(link.get('weekTitle')),
                 # The live session's own name, as its author typed it on the
                 # component. The module's name and a number are what is left
                 # when a component carries no title of its own.
@@ -17311,7 +17319,9 @@ def validate_component_authoring_payload(component, path):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid YouTube URL.'})
         if video_url and source_type == 'Vimeo' and not host_matches(video_url, {'vimeo.com'}):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid Vimeo URL.'})
-        if video_url and source_type in {'External Link', 'HTML (MP4)'} and not http_url(video_url):
+        from .video_uploads import stored_video_path
+        saved_mp4 = source_type == 'HTML (MP4)' and bool(stored_video_path(video_url))
+        if video_url and source_type in {'External Link', 'HTML (MP4)'} and not (http_url(video_url) or saved_mp4):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid URL.'})
         if status != 'Draft' and source_type == 'Embed' and not clean_str(settings.get('embedCode')):
             errors.append({'path': f'{path}.settings.embedCode', 'message': 'Embed content is required before QA or approval.'})

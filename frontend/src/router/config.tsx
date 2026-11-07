@@ -31,6 +31,7 @@ const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notificati
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
+const AdminAnnouncementsPage = lazyRoute(() => import("../pages/admin/announcements/page"));
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
@@ -50,6 +51,7 @@ const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPor
 const EmployerFeedbackPage = lazyRoute(() => import("../pages/employer/EmployerFeedbackPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
+const PublicLectureFeedbackPage = lazyRoute(() => import("../pages/lecture-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
@@ -336,6 +338,10 @@ const routes: RouteObject[] = [
   {
     path: "/event-feedback",
     element: <EventFeedbackPage />,
+  },
+  {
+    path: "/lecture-feedback",
+    element: <PublicLectureFeedbackPage />,
   },
   {
     path: "/event-rsvp",
@@ -1097,6 +1103,10 @@ const routes: RouteObject[] = [
   {
     path: "/admin/system",
     element: <AdminSystemSettingsPage />,
+  },
+  {
+    path: "/admin/announcements",
+    element: <AdminAnnouncementsPage />,
   },
   {
     path: "/admin/platform-report",
@@ -1890,6 +1900,7 @@ const PUBLIC_PATHS = new Set([
   "/",
   "/login",
   "/event-feedback",
+  "/lecture-feedback",
   "/event-rsvp",
   "/event-check-in",
   "/access-required",

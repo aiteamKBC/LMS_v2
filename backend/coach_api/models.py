@@ -145,6 +145,28 @@ class CoachCalendarEvent(models.Model):
         return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
 
 
+class ReviewBookingReschedule(models.Model):
+    """Immutable context of a coach-rescheduled, unoccupied Review meeting."""
+
+    calendar_event_id = models.BigIntegerField(db_index=True)
+    learner_id = models.IntegerField()
+    event_key = models.CharField(max_length=255)
+    graph_event_id = models.CharField(max_length=255)
+    owner_email = models.EmailField(max_length=255)
+    booking_fingerprint = models.CharField(max_length=64)
+    scheduled_date = models.DateField()
+    scheduled_time = models.TimeField()
+    duration_minutes = models.PositiveIntegerField()
+    session_claim = models.JSONField(default=dict, blank=True)
+    evidence_manifest = models.JSONField(default=dict, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_review_reschedules', 'Coach"."coach_review_reschedule')
+        constraints = [models.UniqueConstraint(
+            fields=['calendar_event_id', 'booking_fingerprint'], name='coach_review_reschedule_once')]
+
+
 class MigratedReviewTemplate(models.Model):
     """Approved Aptem continuation form, separate from Curriculum templates."""
 

@@ -159,6 +159,8 @@ export interface WeekTemplate {
 
 /** Body accepted by create/update. Components reuse ModuleComponent verbatim. */
 export interface WeekTemplateInput {
+  /** The selected video is copied/retried as part of a successful Save. */
+  importVideoComponentIds?: string[];
   /**
    * The version the editor read, sent back so the server can refuse a save
    * built on a template somebody else has already replaced. Omitted means "do

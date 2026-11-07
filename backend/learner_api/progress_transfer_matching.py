@@ -135,14 +135,16 @@ def module_review(item, context):
             'retainedCompletedIds': retained_ids}, matches, components
 
 
-def component_counts(module, matched_ids):
-    """Count unique destinations and retained native quiz completions."""
+def component_counts(module, matched_ids, retained_without_match=0):
+    """Count unique destinations, retained native quiz completions, and
+    explicitly retained (unmatched) transfer components."""
     target_ids = {target['componentId'] for target in module['targets']}
     matched = target_ids.intersection(matched_ids)
     retained = set(module.get('retainedCompletedIds', [])) - target_ids
     completed = target_ids.intersection(module['completedTargetIds']) | matched | retained
     all_ids = target_ids | retained
-    return {'total': len(all_ids), 'matched': len(matched), 'completed': len(completed),
+    return {'total': len(all_ids) + retained_without_match, 'matched': len(matched),
+            'completed': len(completed) + retained_without_match,
             'remaining': len(all_ids - completed)}
 
 
@@ -152,11 +154,17 @@ def build_review(request_id, items, context):
 
 
 def validate_decisions(review, decisions):
-    """Require explicit unique choices; type exceptions are request-local pairs."""
-    needed = {(module['moduleId'], source['sourceActivityRef']): (module, source)
-              for module in review['modules'] for source in module['sources'] if not source['automaticTargetId']}
+    """Allow multiple destinations per source, reserving each destination once.
+
+    A source may instead be explicitly retained: kept as its own historical
+    record without a destination, when no new-module component corresponds to
+    it (for example a live session that no longer exists as a component).
+    """
+    sources = {(module['moduleId'], source['sourceActivityRef']): (module, source)
+               for module in review['modules'] for source in module['sources']}
+    needed = {key for key, (_, source) in sources.items() if not source['automaticTargetId']}
     if decisions is None and not needed:
-        return {}
+        return {}, {}
     if not isinstance(decisions, dict) or decisions.get('reviewToken') != review['reviewToken']:
         raise ServiceError('Component matches changed or have not been reviewed. Reload component matches before confirming.',
                            'transfer_review_changed', 409)
@@ -165,25 +173,37 @@ def validate_decisions(review, decisions):
         raise ServiceError('Review every unmatched component before confirming.', 'transfer_matches_required', 400)
     used = {(module['moduleId'], source['automaticTargetId']) for module in review['modules']
             for source in module['sources'] if source['automaticTargetId']}
-    result = {}
+    result, retained = {}, {}
     for row in rows:
-        if (not isinstance(row, dict) or set(row) != {'moduleId', 'sourceActivityRef', 'targetComponentId'}
+        if not isinstance(row, dict):
+            raise ServiceError('Choose a destination for every unmatched component.', 'invalid_transfer_match', 400)
+        if row.get('retain') is True:
+            if (set(row) != {'moduleId', 'sourceActivityRef', 'retain'}
+                    or not isinstance(row.get('moduleId'), str) or not row['moduleId']
+                    or not isinstance(row.get('sourceActivityRef'), str) or not row['sourceActivityRef']):
+                raise ServiceError('Choose a destination for every unmatched component.', 'invalid_transfer_match', 400)
+            key = (row['moduleId'], row['sourceActivityRef'])
+            if key not in sources or key in result:
+                raise ServiceError('A source component is invalid.', 'invalid_transfer_match', 400)
+            retained[key] = sources[key][1]
+            continue
+        if (set(row) != {'moduleId', 'sourceActivityRef', 'targetComponentId'}
                 or any(not isinstance(value, str) or not value for value in row.values())):
             raise ServiceError('Choose a destination for every unmatched component.', 'invalid_transfer_match', 400)
         key = (row['moduleId'], row['sourceActivityRef'])
-        if key not in needed or key in result:
-            raise ServiceError('A source component is invalid or selected more than once.', 'invalid_transfer_match', 400)
-        module, source = needed[key]
+        if key not in sources or key in retained:
+            raise ServiceError('A source component is invalid.', 'invalid_transfer_match', 400)
+        module, source = sources[key]
         target = next((target for target in module['targets'] if target['componentId'] == row['targetComponentId']), None)
         if (target is None or source['type'] == 'unknown'
                 or (source['type'] != target['type'] and source.get('recommendedTargetId') != row['targetComponentId'])
                 or (row['moduleId'], row['targetComponentId']) in used):
             raise ServiceError('Choose a unique component of the same type in the destination module.', 'invalid_transfer_match', 400)
         used.add((row['moduleId'], row['targetComponentId']))
-        result[key] = target
-    if result.keys() != needed.keys():
+        result.setdefault(key, []).append(target)
+    if not needed.issubset(set(result) | set(retained)):
         raise ServiceError('Every completed old component must have a match before approval.', 'transfer_matches_required', 409)
-    return result
+    return result, retained
 
 
 def manual_completion(item, source_ref, target):
@@ -191,3 +211,21 @@ def manual_completion(item, source_ref, target):
     return {'courseRef': item['courseRef'], 'activityId': f"catalogue:{item['courseRef'][7:]}:{source_ref}",
             'sourceActivityId': int(ident), 'catalogueKind': kind, 'completed': True,
             'manualMatch': True, 'targetFingerprint': target['fingerprint']}
+
+
+def retained_component(item, source):
+    """Virtual record for a completed old component kept without a destination match.
+
+    Counted toward this module's completion like a retired quiz slot (see
+    retained_quiz_progress.py); creates no destination catalogue component and
+    implies no future binding, unlike a manual match's target fingerprint.
+    """
+    kind, ident = source['sourceActivityRef'].split(':')
+    return {'module': item['newTitle'], 'moduleId': item['moduleId'], 'weekId': None,
+            'week': source.get('week') or '', 'component': source.get('title') or source['sourceActivityRef'],
+            'componentId': f"transfer-retained:{item['moduleId']}:{source['sourceActivityRef']}",
+            'type': source.get('type'), 'isQuiz': source.get('type') == 'quiz', 'expectedOtjh': None,
+            'retired': True, 'transferRetained': True,
+            'previousLearning': {'courseRef': item['courseRef'],
+                'activityId': f"catalogue:{item['courseRef'][7:]}:{source['sourceActivityRef']}",
+                'sourceActivityId': int(ident), 'catalogueKind': kind, 'completed': True, 'retainedWithoutMatch': True}}

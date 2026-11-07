@@ -1,4 +1,5 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { componentSessionTitle } from '../shared/sessionDisplayTitle';
 import { ModuleLearnerCount } from './ModuleLearnerCount';
 import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
 import type { ModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
@@ -10,6 +11,7 @@ import { CollaborationContext } from './collaborationContext';
 import { useModuleCollaboration } from './useModuleCollaboration';
 import { dirtyFields, projectAvailable } from './collaborationProtocol';
 import { ModuleEditReservedError } from './moduleAuthoringData';
+import { confirmModuleSave, sameAuthoredModule } from './confirmModuleSave';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -64,6 +66,7 @@ import {
 } from '../shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 import { CurriculumVideoUpload } from '../shared/CurriculumVideoUpload';
+import { PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } from '../shared/pendingVideoFiles';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
@@ -143,6 +146,7 @@ import {
   recalculateModule,
   restoreModuleTeamsMeeting,
   ModuleStructureConflictError,
+  CurriculumRequestTimeout,
   loadModuleStructureChanges,
   saveModuleStructure,
   serverCopyOf,
@@ -251,7 +255,7 @@ const MODULE_CATALOGUE_ID_PATTERN = /^MOD-[A-Z0-9][A-Z0-9_-]*$/i;
  * "Unsaved changes" after a save was turned down says nothing about why, and
  * "Saved" must never appear for a write the backend has not confirmed.
  */
-type WorkspaceSaveStatus = 'saved' | 'pending' | 'manual' | 'saving' | 'saving-more' | 'failed' | 'conflict' | 'locked';
+type WorkspaceSaveStatus = 'saved' | 'pending' | 'manual' | 'saving' | 'saving-more' | 'checking' | 'unconfirmed' | 'failed' | 'conflict' | 'locked';
 
 const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: string; icon: string }> = {
   saved: { text: 'All changes saved', tone: 'text-emerald-700', icon: 'ri-checkbox-circle-line' },
@@ -265,6 +269,8 @@ const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: s
   // claim they were.
   'saving-more': { text: 'Saving... later edits still pending', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
   failed: { text: 'Save failed - your changes are still here', tone: 'text-rose-700', icon: 'ri-error-warning-line' },
+  checking: { text: 'Checking saved changes...', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
+  unconfirmed: { text: 'Save not confirmed - your changes are still here', tone: 'text-amber-700', icon: 'ri-time-line' },
   // Reached only when a refused save could not be merged because the stored
   // version would not read. An ordinary conflict never gets this far: it is
   // merged and re-sent, and the footer goes back to saying "Saving...".
@@ -273,7 +279,7 @@ const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: s
 };
 
 /** A save the backend turned down. `conflict` is never worth retrying as-is. */
-type WorkspaceSaveFailure = { kind: 'error' | 'conflict'; message: string };
+type WorkspaceSaveFailure = { kind: 'error' | 'conflict' | 'unconfirmed'; message: string };
 
 /**
  * The floor between two live reads of the open module's structure.
@@ -502,7 +508,6 @@ type DuplicateDestination = {
 };
 
 type DuplicateDialogResult = DuplicateDestination & {
-  teamsCopyMode: 'shared' | 'independent';
   startDate: string;
 };
 
@@ -637,14 +642,11 @@ async function showDuplicateModuleSwal(
   });
   if (!destination.isConfirmed || !destination.value) return null;
   const selected = destination.value as DuplicateDestination;
-  // Independent is the default: a copy usually runs for another group, and a
-  // shared join link would put that group in the original's sessions. Sharing
-  // stays a deliberate choice for groups that really attend together -- it is
-  // the only path that credits both groups' attendance and shows both the
-  // recording.
+  // A standalone duplicate is new teaching content with an empty class and
+  // calendar. Meeting sharing belongs to the explicit shared-delivery flow.
   const teams = await Swal.fire({
-    title: 'Teams meeting and dates',
-    html: '<p style="margin:0 0 12px;text-align:left">By default the new module has no Teams meeting link; create its own meeting from the new module once it is set up. Share the original meeting only when both groups attend the same sessions together.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent" checked> Independent: no meeting link, create its own meeting later</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared"> Share the same Teams meeting (both groups attend together)</label><div id="duplicate-start-date-wrap" style="text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
+    title: 'New module start date',
+    html: '<p style="margin:0 0 12px;text-align:left">Copy the module and its learning materials without learners, meeting participants or Teams meeting links. Assign learners and create new meetings on the copied module when it is ready.</p><div style="text-align:left;margin-top:12px"><label for="duplicate-start-date" style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
     icon: 'question',
     width: 560,
     showCancelButton: true,
@@ -654,39 +656,18 @@ async function showDuplicateModuleSwal(
     focusCancel: true,
     buttonsStyling: false,
     customClass: { popup: 'kbc-standard-swal-popup', title: 'kbc-standard-swal-title', htmlContainer: 'kbc-standard-swal-text', actions: 'kbc-standard-swal-actions', confirmButton: 'kbc-standard-swal-confirm', cancelButton: 'kbc-standard-swal-cancel', validationMessage: 'kbc-standard-swal-validation' },
-    didOpen: () => {
-      const popup = Swal.getPopup();
-      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent');
-      const shared = popup?.querySelector<HTMLInputElement>('#duplicate-teams-shared');
-      const wrap = popup?.querySelector<HTMLElement>('#duplicate-start-date-wrap');
-      const sync = () => { if (wrap) wrap.style.display = independent?.checked ? 'block' : 'none'; };
-      independent?.addEventListener('change', sync);
-      shared?.addEventListener('change', sync);
-    },
     preConfirm: () => {
       const popup = Swal.getPopup();
-      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent')?.checked;
       const startDate = popup?.querySelector<HTMLInputElement>('#duplicate-start-date')?.value || '';
-      if (independent && !startDate) {
+      if (!startDate) {
         Swal.showValidationMessage('Choose the Start Date for the new module.');
         return false;
       }
-      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate: independent ? startDate : '' };
+      return { startDate };
     },
   });
   if (!teams.isConfirmed || !teams.value) return null;
-  const teamsValue = teams.value as { teamsCopyMode: 'shared' | 'independent'; startDate: string };
-  if (teamsValue.teamsCopyMode === 'shared') {
-    const accepted = await showCurriculumConfirm({
-      title: 'Share the Teams meeting?',
-      text: 'Both groups will join the same meeting on the original dates. Links, attendees, invitations, attendance, recordings and later meeting changes affect both modules. Choose this only when the two groups attend together.',
-      icon: 'warning',
-      confirmButtonText: 'Yes, share the meeting',
-      cancelButtonText: 'Go back',
-      onConfirm: async () => {},
-    });
-    if (!accepted) return null;
-  }
+  const teamsValue = teams.value as { startDate: string };
   return { ...selected, ...teamsValue };
 }
 
@@ -723,6 +704,8 @@ function ModuleBuilderContent() {
   // Both run the same clash check and the same assignment notification, so the
   // catalogue no longer carries a third change-tutor drawer of its own.
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
+  const videoFiles = usePendingVideoFiles(workingModule?.catalogueId || '');
+  const { uploadSaved: uploadPendingVideos, clear: clearPendingVideos } = videoFiles;
   /**
    * The module as it is *right now*, readable from inside a callback that has
    * already started.
@@ -800,6 +783,7 @@ function ModuleBuilderContent() {
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveFailure, setSaveFailure] = useState<WorkspaceSaveFailure | null>(null);
+  const [confirmingSave, setConfirmingSave] = useState(false);
   /**
    * Somebody else's save landed on the module this workspace is holding.
    *
@@ -1617,13 +1601,15 @@ function ModuleBuilderContent() {
   const workingModuleSnapshot = useMemo(() => moduleSnapshot(workingModule), [workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
     workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
-  );
+  ) || videoFiles.hasPending;
   const workspaceSaveStatus: WorkspaceSaveStatus = workingModuleProgrammeArchived
     ? 'locked'
     : saving
-      ? (savingSnapshot && workingModuleSnapshot !== savingSnapshot ? 'saving-more' : 'saving')
+      ? (confirmingSave ? 'checking' : savingSnapshot && workingModuleSnapshot !== savingSnapshot ? 'saving-more' : 'saving')
       : saveFailure?.kind === 'conflict'
         ? 'conflict'
+        : saveFailure?.kind === 'unconfirmed'
+          ? 'unconfirmed'
         : saveFailure
           ? 'failed'
           : !hasUnsavedWorkingModuleChanges
@@ -2403,6 +2389,7 @@ function ModuleBuilderContent() {
     setSaving(true);
     setSaveStartedAt(Date.now());
     setActionMessage(null);
+    setSaveFailure(null);
     const normalisedModule = normaliseComponentTitles(scopedWorkingModule);
     const selectedKsbSourceId = cleanKsbSourceId(workingModuleScopeLock?.locked ? workingModuleScopeLock.ksbSourceId : normalisedModule.ksbProfileSourceId);
     let moduleToSave = recalculateModule({
@@ -2466,15 +2453,24 @@ function ModuleBuilderContent() {
       // changed since is sent and written. Without one -- a module never saved
       // -- the whole structure goes, as it always did.
 
-      const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
+      let saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
         expectedRevision: serverRevisionRef.current,
         collaboration: ownership,
         source,
+        importVideoComponentIds: source === 'manual' && !pendingFields && selectedComponent?.type === 'video'
+          ? [selectedComponent.id] : undefined,
         base,
         // Lets the server merge this save with one that landed first, item by
         // item, instead of refusing it outright.
         serverCopy: serverCopyRef.current,
         restoreIds: [...new Set([...ownDeletedIdsRef.current, ...explicitRestoreIdsRef.current])],
+      }).catch(async (error: unknown) => {
+        if (!(error instanceof CurriculumRequestTimeout)) throw error;
+        setConfirmingSave(true);
+        const confirmed = await confirmModuleSave(moduleToSave, () => loadModuleStructure(moduleToSave.catalogueId, { skipCache: true }));
+        setConfirmingSave(false);
+        if (!confirmed) throw error;
+        return confirmed;
       });
       if (saveRequestRef.current !== requestId) return null;
       // The write landed, so this is the version the next save is measured
@@ -2511,6 +2507,17 @@ function ModuleBuilderContent() {
         return unchangedSinceSent ? saved : current;
       });
       await collaboration.saved(moduleToSave, workingModuleRef.current || draftBeforeSave);
+      if (!pendingFields) await uploadPendingVideos('module', saved.catalogueId, saved.weekStructure.flatMap(week => week.components), (id, settings, originalSource) => {
+        const apply = (module: ModuleCatalogueItem): ModuleCatalogueItem => ({ ...module,
+          weekStructure: module.weekStructure.map(week => ({ ...week,
+            components: week.components.map(component => withUploadedVideo(component, id, settings, originalSource)),
+          })),
+        });
+        saved = apply(saved);
+        serverCopyRef.current = serverCopyOf(saved);
+        if (savedModuleSnapshotRef.current) savedModuleSnapshotRef.current = moduleSnapshot(apply(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem));
+        setWorkingModule(current => current?.catalogueId === saved.catalogueId ? apply(current) : current);
+      });
       setStorageVersion(version => version + 1);
       setActionMessage(pendingFields ? 'Available changes saved. Reserved fields and unresolved choices remain in your draft.' : null);
       setSaveFailure(null);
@@ -2546,7 +2553,6 @@ function ModuleBuilderContent() {
           // button still works and still rebases.
           autoSaveArmedRef.current = false;
           setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_BUSY_NOTICE });
-          setActionMessage(MODULE_CONFLICT_BUSY_NOTICE);
           // Carries a sentence rather than an empty list, because the banner
           // reads the list to decide what it is: a list makes it the amber
           // "here is what you have to decide", which is what this is, and it is
@@ -2564,14 +2570,16 @@ function ModuleBuilderContent() {
         // archived-programme refusal among them -- from the "Curriculum API
         // returned 400 for /path:" diagnostic CurriculumApiError carries.
         const message = curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to save module structure.');
-        setSaveFailure({ kind: 'error', message });
-        setActionMessage(message);
+        setSaveFailure(err instanceof CurriculumRequestTimeout
+          ? { kind: 'unconfirmed', message: 'The save response was delayed and the saved changes could not be confirmed yet. Your draft is retained. Bunny copy progress is shown separately below.' }
+          : { kind: 'error', message });
         return null;
       }
     } finally {
       if (saveRequestRef.current === requestId) {
         savingRef.current = false;
         setSaving(false);
+        setConfirmingSave(false);
         setSaveStartedAt(null);
         setSavingSnapshot('');
         // A colleague's save heard while this one was in the air. A retry below
@@ -2596,7 +2604,6 @@ function ModuleBuilderContent() {
         // author's, and nothing goes until the author chooses.
         autoSaveArmedRef.current = false;
         setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_CHOICE_NOTICE });
-        setActionMessage(MODULE_CONFLICT_CHOICE_NOTICE);
         return null;
       }
       if (merged) return persistRef.current(source, rebasesLeft - 1);
@@ -2604,10 +2611,9 @@ function ModuleBuilderContent() {
       // reader is told, exactly as it was before there was a merge to try.
       autoSaveArmedRef.current = false;
       setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_UNREADABLE_NOTICE });
-      setActionMessage(MODULE_CONFLICT_UNREADABLE_NOTICE);
     }
     return null;
-  }, [collaboration, curriculumProgrammes, ksbSets, reload, setModuleConflicts, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+  }, [collaboration, curriculumProgrammes, ksbSets, reload, selectedComponent?.id, selectedComponent?.type, setModuleConflicts, standards, uploadPendingVideos, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
   /**
    * `persistWorkingModule` and the live merge, readable from inside each other.
    *
@@ -2770,12 +2776,6 @@ function ModuleBuilderContent() {
       const targetProgrammeId = normaliseDeepLinkValue(curriculumProgrammeId(dialog.programme));
       const sameProgramme = sourceProgrammeId === targetProgrammeId
         || sourceProgrammeId === normaliseDeepLinkValue(dialog.programme.name);
-      if (dialog.teamsCopyMode === 'shared' && source.startDate && dialog.cohort.startDate && source.startDate < dialog.cohort.startDate) {
-        throw new Error('The original dates start before the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
-      }
-      if (dialog.teamsCopyMode === 'shared' && source.endDate && dialog.cohort.endDate && source.endDate > dialog.cohort.endDate) {
-        throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
-      }
       let ksbSource: DuplicateKsbSource | undefined;
       if (!sameProgramme) {
         const [allKsbSets, allStandards] = await Promise.all([
@@ -2791,8 +2791,8 @@ function ModuleBuilderContent() {
       // manual roster holds only learners someone assigns to the copy later.
       const duplicate = await duplicateModuleStructure(source, {
         learnerRosterMode: 'manual',
-        teamsCopyMode: dialog.teamsCopyMode,
-        keepDates: dialog.teamsCopyMode === 'shared',
+        teamsCopyMode: 'independent',
+        keepDates: false,
         startDate: dialog.startDate,
         programmeId: curriculumProgrammeId(dialog.programme),
         programmeName: dialog.programme.name,
@@ -2801,8 +2801,7 @@ function ModuleBuilderContent() {
         groupId: dialog.group.id,
         groupName: dialog.group.name,
         ksbSource,
-        deliveryMetadata: dialog.teamsCopyMode === 'independent'
-          ? {
+        deliveryMetadata: {
               ...(source.deliveryMetadata || {}),
               cohortId: dialog.cohort.id,
               cohort: dialog.cohort.name,
@@ -2811,8 +2810,7 @@ function ModuleBuilderContent() {
               weekDays: dialog.group.weekDays || source.deliveryMetadata?.weekDays || '',
               startTime: dialog.group.startTime || source.deliveryMetadata?.startTime || '',
               endTime: dialog.group.endTime || source.deliveryMetadata?.endTime || '',
-            }
-          : undefined,
+            },
       });
       const report = duplicate.ksbRemapReport as KsbRemapReport | null | undefined;
       const ksbMessage = report && report.unmatched?.length
@@ -2820,7 +2818,7 @@ function ModuleBuilderContent() {
         : '';
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners. Use Assign learners on the new module to add them.${ksbMessage}`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners or Teams meeting links. Assign learners and create new meetings on the new module when it is ready.${ksbMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
@@ -2946,6 +2944,7 @@ function ModuleBuilderContent() {
 
   const restoreSavedWorkingModule = useCallback(() => {
     collaboration.cancel();
+    clearPendingVideos();
     if (!savedModuleSnapshotRef.current) return workingModule;
     try {
       const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
@@ -2958,7 +2957,7 @@ function ModuleBuilderContent() {
     } catch {
       return workingModule;
     }
-  }, [collaboration, workingModule]);
+  }, [clearPendingVideos, collaboration, workingModule]);
 
   const applySelectionSafely = useCallback((nextSelection: Selection, moduleOverride?: ModuleCatalogueItem | null) => {
     const source = moduleOverride || workingModule;
@@ -3132,7 +3131,12 @@ function ModuleBuilderContent() {
     const base = savedModuleSnapshotRef.current
       ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
       : null;
-    const { module: merged, adopted, collisions } = mergeModuleStructures(base, current, stored, { ownWrite: options.ownWrite });
+    const result = mergeModuleStructures(base, current, stored, { ownWrite: options.ownWrite });
+    const { adopted, collisions } = result;
+    // A delayed response can leave only old derived metadata in the draft.
+    // Once all authored values match, use the confirmed snapshot so the footer
+    // and banner both stop reporting a save that has already completed.
+    const merged = !collisions.length && sameAuthoredModule(result.module, stored) ? stored : result.module;
     // What the server holds is the stored copy, so that is what "saved" means
     // from here: the difference between it and the merged copy is exactly the
     // reader's outstanding work, which is what keeps the footer honest.
@@ -3522,6 +3526,7 @@ function ModuleBuilderContent() {
 
   if (workingModule) {
     return (
+      <PendingVideoFilesContext.Provider value={videoFiles}>
       <CollaborationContext.Provider value={collaboration}>
       <EditScope kind="module" id={workingModule.catalogueId}>
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${workingModule.title} - authoring workspace`} userName="Rachel Myers" userRole="Curriculum Designer">
@@ -3581,11 +3586,13 @@ function ModuleBuilderContent() {
               </button>
             </div>
           )}
-          {(saving || (actionMessage && !deletingModuleId)) && (
+          {(saving || saveFailure || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
+              confirming={confirmingSave}
+              unconfirmed={saveFailure?.kind === 'unconfirmed'}
               elapsedSeconds={saveElapsedSeconds}
-              error={actionMessage && !deletingModuleId ? actionMessage : null}
+              error={(actionMessage && !deletingModuleId ? actionMessage : null) || saveFailure?.message || null}
               module={workingModule}
             />
           )}
@@ -3752,6 +3759,7 @@ function ModuleBuilderContent() {
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
+                    displayWeek={selectedWeek}
                     onChange={updates => updateWorkingModule(module =>
                       applyModuleComponentUpdate(module, selectedComponent.id, updates),
                     )}
@@ -4010,6 +4018,7 @@ function ModuleBuilderContent() {
       </WorkspaceShell>
       </EditScope>
       </CollaborationContext.Provider>
+      </PendingVideoFilesContext.Provider>
     );
   }
 
@@ -4397,17 +4406,20 @@ function ModuleBuilderContent() {
 
 // Only the two states worth taking space for: a save in flight, and one that
 // failed. A finished save says so in the footer and nowhere else.
-function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
+function SaveStatusPanel({ saving, confirming, unconfirmed, elapsedSeconds, error, module }: {
   saving: boolean;
+  confirming: boolean;
+  unconfirmed: boolean;
   elapsedSeconds: number;
   error: string | null;
   module: ModuleCatalogueItem;
 }) {
   const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
-  const tone = error ? 'red' : 'amber';
+  const tone = error && !unconfirmed ? 'red' : 'amber';
   const icon = error ? 'ri-error-warning-line' : 'ri-loader-4-line animate-spin';
-  const title = error ? 'Save failed' : elapsedSeconds > 8 ? 'Still saving module structure' : 'Saving module structure';
-  const message = error
+  const title = confirming ? 'Checking saved changes' : unconfirmed ? 'Save not confirmed'
+    : error ? 'Save failed' : elapsedSeconds > 8 ? 'Still saving module structure' : 'Saving module structure';
+  const message = (confirming ? 'Checking whether your changes reached the LMS. Video copying continues separately.' : error)
     || `${module.weekStructure.length} weeks and ${componentCount} components are being written to the curriculum database. ${elapsedSeconds ? `${elapsedSeconds}s elapsed.` : ''}`;
   const classes = {
     amber: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -5236,6 +5248,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       week and its Teams meeting. */}
                   <WeekComponentRail
                     weekId={week.id}
+                    displayWeek={week}
                     components={shownComponents}
                     selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
                     focusedId={focusedComponentId}
@@ -5849,7 +5862,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             </span>
             <div className="min-w-0 flex-1">
               <span className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-bold ${tone.soft} ${tone.text}`}>{meta?.label || 'Component'}</span>
-              <h3 className="mt-2 text-lg font-heading font-bold text-foreground-950 truncate">{readableComponentTitle(component.title) || 'Untitled component'}</h3>
+              <h3 className="mt-2 text-lg font-heading font-bold text-foreground-950 truncate">{componentSessionTitle(component, week, readableComponentTitle(component.title) || 'Untitled component')}</h3>
               <p className="mt-1 text-[12px] text-foreground-500">Content, completion rules, OTJH, points and apprenticeship mappings.</p>
             </div>
           </div>
@@ -6193,8 +6206,9 @@ function TypeSpecificFields({
 
     return (
       <EditorBlock title="Video component">
-        <CurriculumVideoUpload targetId={module.catalogueId} componentId={component.id} title={component.title}
-          source={getString('videoUrl') || getString('embedCode')} />
+        <CurriculumVideoUpload key={`${module.catalogueId}:${component.id}`} targetId={module.catalogueId} componentId={component.id} title={component.title}
+          source={getString('videoUrl') || getString('embedCode')}
+          onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />
         {(getString('legacySourceType') === 'Shortcode' || getString('sourceType') === 'Shortcode' || getBool('legacyUnsupportedSource')) && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
             This component uses a legacy Shortcode source. Shortcode playback is not supported in the new Module Builder, so the original value is preserved until you choose a supported source.
@@ -6853,7 +6867,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Component readiness</p>
-            <h3 onMouseEnter={showFullTextWhenTruncated} className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{readableComponentTitle(component.title) || 'Selected component'}</h3>
+            <h3 onMouseEnter={showFullTextWhenTruncated} className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{componentSessionTitle(component, week, readableComponentTitle(component.title) || 'Selected component')}</h3>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${componentReadyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
             {componentReadyPercent}%
@@ -7116,7 +7130,7 @@ function ReviewKsbComponentRow({ week, component, sourceLabels }: { week: Module
             <AppIcon className={`${meta?.icon || 'ri-file-line'} text-sm`}></AppIcon>
           </span>
           <div className="min-w-0">
-            <p className="truncate text-[12px] font-bold text-foreground-950">{readableComponentTitle(component.title)}</p>
+            <p className="truncate text-[12px] font-bold text-foreground-950">{componentSessionTitle(component, week, readableComponentTitle(component.title))}</p>
             <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">Week {week.weekNumber} - {meta?.label || component.type}</p>
           </div>
         </div>

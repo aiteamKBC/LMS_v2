@@ -1,0 +1,90 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Learner__activity_sync_runs {
+        bigint id PK
+    }
+    Learner__certificate_templates {
+        bigint id PK
+    }
+    Learner__learner_activity_sources {
+        bigint id PK
+        bigint learner_id FK
+        bigint sync_run_id FK
+        bigint canonical_progress_id FK
+        bigint source_catalog_activity_id FK
+    }
+    Learner__learner_attendance_details {
+        bigint id PK
+    }
+    Learner__learner_certificates {
+        bigint id PK
+        bigint template_id FK
+    }
+    Learner__learner_end_dates {
+        bigint learner_id PK
+    }
+    Learner__learner_evidence {
+        bigint id PK
+    }
+    Learner__learner_evidence_overrides {
+        text evidence_id PK
+    }
+    Learner__learner_external_identities {
+        bigint id PK
+        bigint learner_id FK
+    }
+    Learner__learner_free_course_progress {
+        bigint id PK
+    }
+    Learner__learner_free_courses {
+        bigint id PK
+        bigint learner_id FK
+    }
+    Learner__learner_hours_monthly {
+        bigint learner_id PK
+    }
+    Learner__learner_journal_row_ksbs {
+        bigint row_id PK
+    }
+    Learner__learner_journal_rows {
+        bigint id PK
+        bigint canonical_learner_id FK
+        bigint source_id FK
+        bigint progress_id FK
+    }
+    Learner__learner_justification_documents {
+        bigint id PK
+    }
+    Learner__learner_ksb_assignments {
+        bigint learner_id PK
+        bigint profile_version_id FK
+    }
+    Learner__learner_ksbs {
+        bigint learner_id PK
+        text category PK
+        text code PK
+    }
+    Learner__learner_progress_entries {
+        bigint id PK
+    }
+    Learner__learners {
+        bigint id PK
+    }
+    curriculum__ksb_profile_versions {
+        bigint id PK
+    }
+    curriculum__source_activities {
+        bigint id PK
+    }
+    Learner__learner_progress_entries |o..o{ Learner__learner_activity_sources : "learner_activity_sources_canonical_progress_id_fkey"
+    curriculum__source_activities |o..o{ Learner__learner_activity_sources : "learner_activity_sources_catalog_fkey UNVALIDATED"
+    Learner__learners ||..o{ Learner__learner_activity_sources : "learner_activity_sources_learner_id_fkey"
+    Learner__activity_sync_runs |o..o{ Learner__learner_activity_sources : "learner_activity_sources_sync_run_id_fkey"
+    Learner__certificate_templates ||..o{ Learner__learner_certificates : "learner_certificates_template_id_fkey"
+    Learner__learners ||..o{ Learner__learner_external_identities : "learner_external_identities_learner_id_fkey"
+    Learner__learners ||..o{ Learner__learner_free_courses : "learner_free_courses_learner_id_fkey"
+    Learner__learners |o..o{ Learner__learner_journal_rows : "learner_journal_rows_canonical_learner_id_fkey"
+    Learner__learner_progress_entries |o..o{ Learner__learner_journal_rows : "learner_journal_rows_progress_id_fkey"
+    Learner__learner_activity_sources |o..o{ Learner__learner_journal_rows : "learner_journal_rows_source_id_fkey"
+    Learner__learners ||..o| Learner__learner_ksb_assignments : "learner_ksb_assignments_learner_id_fkey"
+    curriculum__ksb_profile_versions ||..o{ Learner__learner_ksb_assignments : "learner_ksb_assignments_profile_version_id_fkey"

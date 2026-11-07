@@ -4,6 +4,7 @@ import type { JourneyComponent } from '@/utils/learnerJourney';
 import type { Subject, SubjectEntry } from './learningSummary';
 import { continuingLearningWeek, currentLearningWeek, learningDate, learningHref, nativeHref, resolveSubjectWeek, type LearningWeek } from './subjectLearning';
 import { combinedActivities } from './combinedActivities';
+import { subjectActivityHours } from '@/utils/activityPlan';
 
 /** The same activity/week navigation as the native player, backed by the
  * original catalogue identities. Material and attempt handling stay with the
@@ -61,7 +62,7 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
   // Completion comes from the unified catalogue, including historical quiz
   // results. Do not fabricate native quiz attempts to paint a completion tick.
   const component = (entry: SubjectEntry): JourneyComponent => ({
-    componentId: entry.id, title: entry.title, type: entry.category, expectedOtjh: null,
+    componentId: entry.id, title: entry.title, type: entry.category, expectedOtjh: subjectActivityHours(entry),
     pointNumber: entry.native?.pointNumber, moduleId: entry.native?.moduleId, weekId: entry.native?.weekId,
   });
   const weekTitle = (item: LearningWeek) => item.title.toLocaleLowerCase().startsWith(item.label.toLocaleLowerCase())

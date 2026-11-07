@@ -1,0 +1,76 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    curriculum__quiz_component_links {
+        bigint id PK
+        bigint quiz_id FK
+    }
+    curriculum__quiz_course_links {
+        bigint id PK
+        bigint quiz_id FK
+    }
+    curriculum__quiz_questions {
+        bigint id PK
+        bigint quiz_id FK
+    }
+    curriculum__quizzes {
+        bigint id PK
+    }
+    curriculum__record_revisions {
+        bigint id PK
+    }
+    curriculum__record_versions {
+        bigint id PK
+        bigint revision_id FK
+    }
+    curriculum__review_clash_resolutions {
+        character_varying_128_ id PK
+    }
+    curriculum__review_fields {
+        character_varying_128_ id PK
+        character_varying_128_ review_id FK
+        character_varying_128_ section_id FK
+    }
+    curriculum__review_instance_answers {
+        character_varying_128_ id PK
+        character_varying_128_ review_instance_id FK
+    }
+    curriculum__review_instance_manual_overrides {
+        character_varying_128_ id PK
+        character_varying_128_ review_instance_id FK
+    }
+    curriculum__review_instance_reopens {
+        character_varying_128_ id PK
+        character_varying_128_ review_instance_id FK
+    }
+    curriculum__review_instance_signatures {
+        character_varying_128_ id PK
+        character_varying_128_ review_instance_id FK
+    }
+    curriculum__review_instances {
+        character_varying_128_ id PK
+        character_varying_128_ review_template_id FK
+    }
+    curriculum__review_occurrence_overrides {
+        character_varying_128_ id PK
+        character_varying_128_ review_id FK
+    }
+    curriculum__review_sections {
+        character_varying_128_ id PK
+        character_varying_128_ review_id FK
+    }
+    curriculum__review_templates {
+        character_varying_128_ id PK
+    }
+    curriculum__quizzes ||..o{ curriculum__quiz_component_links : "quiz_component_links_quiz_id_fkey"
+    curriculum__quizzes ||..o{ curriculum__quiz_course_links : "quiz_course_links_quiz_id_fkey"
+    curriculum__quizzes ||..o{ curriculum__quiz_questions : "quiz_questions_quiz_id_fkey"
+    curriculum__record_revisions ||..o{ curriculum__record_versions : "record_versions_revision_id_fkey"
+    curriculum__review_templates ||..o{ curriculum__review_fields : "review_fields_review_fk"
+    curriculum__review_sections ||..o{ curriculum__review_fields : "review_fields_section_fk"
+    curriculum__review_instances ||..o{ curriculum__review_instance_answers : "review_instance_answers_instance_fk"
+    curriculum__review_instances ||..o{ curriculum__review_instance_manual_overrides : "review_instance_manual_overrides_instance_fk"
+    curriculum__review_instances ||..o{ curriculum__review_instance_reopens : "review_instance_reopens_instance_fk"
+    curriculum__review_instances ||..o{ curriculum__review_instance_signatures : "review_instance_signatures_instance_fk"
+    curriculum__review_templates ||..o{ curriculum__review_instances : "review_instances_template_fk"
+    curriculum__review_templates ||..o{ curriculum__review_occurrence_overrides : "review_occurrence_overrides_review_fk"
+    curriculum__review_templates ||..o{ curriculum__review_sections : "review_sections_review_fk"

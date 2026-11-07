@@ -1,0 +1,36 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    ksb_migration_archive__components_after {
+        text id PK
+    }
+    ksb_migration_archive__components_after_a1
+    ksb_migration_archive__components_before {
+        text id PK
+    }
+    ksb_migration_archive__components_before_a1
+    ksb_migration_archive__description_remap_log {
+        bigint id PK
+    }
+    ksb_migration_archive__manual_profile_archive {
+        bigint id PK
+    }
+    ksb_migration_archive__manual_profile_deletions {
+        bigint id PK
+    }
+    ksb_migration_archive__mappings_before {
+        character_varying_128_ id PK
+    }
+    ksb_migration_archive__mappings_before_a1
+    ksb_migration_archive__modules_before {
+        text module_catalogue_id PK
+    }
+    ksb_migration_archive__modules_before_a1
+    ksb_migration_archive__pin_fix_before {
+        bigint learner_id PK
+    }
+    ksb_migration_archive__pins_before {
+        bigint learner_id PK
+    }
+    ksb_migration_archive__pins_before_a1
+    ksb_migration_archive__plan_mapping

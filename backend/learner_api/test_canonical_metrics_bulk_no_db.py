@@ -1,12 +1,13 @@
 from unittest import TestCase
 from unittest.mock import patch
+from datetime import datetime, timezone
 
 from learner_api import canonical_learning, current_learning
 
 
 class CanonicalMetricsBulkTests(TestCase):
     def run_bulk(self, enrolment_ids, source_payload=None, *, learner_workspace=False,
-                 programme_plan=576, source_completed=False, include_ksb_points=False):
+                 programme_plan=576, source_completed=False, include_ksb_points=False, as_of=None):
         owners = [
             {"id": 700 + index, "enrolment_id": enrolment_id, "aptem_id": 4000 + index,
              "learner_type": "apprenticeship", "email": f"learner-{index}@example.test",
@@ -50,7 +51,8 @@ class CanonicalMetricsBulkTests(TestCase):
 
         with patch.object(canonical_learning, "query", side_effect=load) as query, \
              patch.object(current_learning, "query", query):
-            result = canonical_learning.metrics_bulk(enrolment_ids, learner_workspace=learner_workspace, include_ksb_points=include_ksb_points)
+            result = canonical_learning.metrics_bulk(enrolment_ids, learner_workspace=learner_workspace,
+                                                     include_ksb_points=include_ksb_points, as_of=as_of)
         return result, query.call_count
 
     def test_bulk_contract_matches_single_dashboard_calculator(self):
@@ -110,6 +112,22 @@ class CanonicalMetricsBulkTests(TestCase):
         for payload in result.values():
             self.assertEqual(payload['otjh']['actual'], 1)
             self.assertEqual(payload['ksb']['completed'], 1)
+
+    def test_review_cutoff_excludes_future_actuals_and_ksb_points_without_changing_dashboard(self):
+        def project(owners, records):
+            return {owner['enrolment_id']: [*records[owner['id']], {
+                'id': 'future', 'submitted_at': '2026-11-05T12:00:00Z',
+                'accepted': True, 'completed': True, 'actual_seconds': 7200, 'ksbs': ['K9'],
+                'actual_basis': 'legacy_activity_verified_timer',
+            }] for owner in owners}
+        with patch.object(canonical_learning, 'current_records_bulk', side_effect=project):
+            current, _ = self.run_bulk([10], learner_workspace=True)
+            frozen, _ = self.run_bulk([10], learner_workspace=True,
+                                      as_of=datetime(2026, 11, 4, 12, tzinfo=timezone.utc))
+        self.assertEqual(current[10]['otjh']['actual'], 3)
+        self.assertEqual(frozen[10]['otjh']['actual'], 1)
+        self.assertEqual(current[10]['ksb']['completed'], 2)
+        self.assertEqual(frozen[10]['ksb']['completed'], 1)
 
 
 class CanonicalKsbPointTests(TestCase):

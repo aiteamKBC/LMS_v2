@@ -113,6 +113,15 @@ def validate_managed_definition(definition, *, family=None):
         for field in section["fields"]:
             field_check(field)
     meeting_summary_field(definition)
+    radar = [field for section in sections for field in section['fields']
+             if field.get('semanticKey') == 'skills_radar']
+    if radar and (family != 'PR_SKILLS_RADAR' or len(radar) != 1):
+        raise ValueError('Use one Skills Radar section in PR + Skills Radar templates only.')
+    if radar:
+        from .migrated_skills_radar import SECTION_KEY
+        owner = next(s for s in sections if radar[0] in s['fields'])
+        if owner['key'] != SECTION_KEY or len(owner['fields']) != 1:
+            raise ValueError('Skills Radar requires its own dedicated section marker.')
     render_sections(definition, {})
     return definition
 
@@ -144,6 +153,8 @@ def snapshot_for(template):
     snapshot = {**deepcopy(template.definition_json), "name": template.name,
             "templateSource": {"id": template.pk, "scope": template.scope,
                                "programmeKey": template.programme_key, "family": template.review_family}}
+    from .migrated_skills_radar import include_radar_section
+    snapshot = include_radar_section(snapshot)
     from .migrated_template_sync import snapshot_fingerprint
     from django.utils import timezone
     snapshot["templateSync"] = {"fingerprint": snapshot_fingerprint(snapshot),
