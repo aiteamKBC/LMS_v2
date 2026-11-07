@@ -12,7 +12,7 @@ from learner_api.alternative_recovery import completed_alternatives_by_occurrenc
 from learner_api.attendance_assignments import assigned_module_ids
 from learner_api.models import EnrolmentUser, LearnerProfile
 
-from .models import LiveSessionLearnerAttendance, LiveSessionOccurrence
+from .models import LiveSessionAttendance, LiveSessionLearnerAttendance, LiveSessionOccurrence
 from .session_results_policy import instant
 
 
@@ -51,13 +51,34 @@ def resolve_parallel_links(originals, alternatives, targets, assignments, dates)
     return covered, guest_details
 
 
+def merge_target_presence(targets, raw_targets, profile_by_email):
+    """Merge final-register and raw Teams evidence for guest occurrences."""
+    target_status = {
+        (row['learner_profile_id'], str(row['occurrence_id'])): row['attendance_status']
+        for row in targets
+    }
+    for row in raw_targets:
+        if int(row.get('total_attendance_seconds') or 0) <= 0:
+            continue
+        profile_id = profile_by_email.get(str(row.get('email') or '').strip().lower())
+        key = (profile_id, str(row['occurrence_id']))
+        if profile_id is not None and key not in target_status:
+            target_status[key] = 'present'
+    return [
+        {'learner_profile_id': profile_id, 'occurrence_id': occurrence_id,
+         'attendance_status': status}
+        for (profile_id, occurrence_id), status in target_status.items()
+    ]
+
+
 def parallel_recovery_links(register_rows, *, complete=False, database=None):
     """Return (covered originals, guest targets) keyed by profile and occurrence.
 
     Match through the curriculum's existing same-cohort, same-session-number
     alternative rule.  Only an unambiguous guest occurrence, outside the
-    learner's assigned plan, can cover one original.  Saved presence is the
-    evidence; a report or matching title alone does not grant credit.
+    learner's assigned plan, can cover one original.  Presence may come from
+    the final learner register or from the immutable Teams attendance rows
+    when a guest was never materialized in that register.
     """
     profile_ids = {row['learner_profile_id'] for row in register_rows}
     if not profile_ids:
@@ -71,7 +92,7 @@ def parallel_recovery_links(register_rows, *, complete=False, database=None):
     if not originals:
         return {}, {}
     original_ids = {str(row['occurrence_id']) for row in originals}
-    alternatives = completed_alternatives_by_occurrence(original_ids)
+    alternatives = completed_alternatives_by_occurrence(original_ids, database=database)
     options = {
         str(item['id'])
         for original in original_ids for item in alternatives.get(original, [])
@@ -83,6 +104,34 @@ def parallel_recovery_links(register_rows, *, complete=False, database=None):
         .filter(learner_profile_id__in=profile_ids, occurrence_id__in=options)
         .values('learner_profile_id', 'occurrence_id', 'attendance_status')
     )
+    # Guest deliveries are intentionally not assigned to the learner's own
+    # module, so the register builder may never create a learner row for them.
+    # The Teams participant row is still authoritative evidence that the
+    # learner attended the alternative occurrence.  Use only positive seconds
+    # and let an existing final register row win when both sources exist.
+    target_keys = {(row['learner_profile_id'], str(row['occurrence_id'])) for row in targets}
+    candidate_profile_ids = {
+        profile_id for profile_id in profile_ids
+        if any((profile_id, str(item['id'])) not in target_keys
+               for original in originals
+               if original['learner_profile_id'] == profile_id
+               for item in alternatives.get(str(original['occurrence_id']), []))
+    }
+    profile_database = router.db_for_read(LearnerProfile) or 'default'
+    profiles = list(LearnerProfile.objects.using(profile_database)
+                    .filter(id__in=candidate_profile_ids)
+                    .only('id', 'enrolment_id', 'email'))
+    emails = {str(profile.email or '').strip().lower() for profile in profiles if profile.email}
+    profile_by_email = {
+        str(profile.email).strip().lower(): profile.id
+        for profile in profiles if profile.email
+    }
+    raw_targets = list(
+        LiveSessionAttendance.objects.using(database)
+        .filter(occurrence_id__in=options, email__in=emails)
+        .values('occurrence_id', 'email', 'total_attendance_seconds')
+    ) if emails and candidate_profile_ids else []
+    targets = merge_target_presence(targets, raw_targets, profile_by_email)
     target_ids_by_profile = defaultdict(set)
     for row in targets:
         target_ids_by_profile[row['learner_profile_id']].add(str(row['occurrence_id']))
@@ -93,9 +142,7 @@ def parallel_recovery_links(register_rows, *, complete=False, database=None):
     }
     if not possible_profiles:
         return {}, {}
-    profile_database = router.db_for_read(LearnerProfile) or 'default'
-    profiles = list(LearnerProfile.objects.using(profile_database)
-                    .filter(id__in=possible_profiles).only('id', 'enrolment_id'))
+    profiles = [profile for profile in profiles if profile.id in possible_profiles]
     enrolment_ids = {profile.enrolment_id for profile in profiles if profile.enrolment_id is not None}
     sources = {source.pk: source for source in EnrolmentUser.all_learners
                .filter(pk__in=enrolment_ids)

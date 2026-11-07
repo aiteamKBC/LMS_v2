@@ -1,7 +1,7 @@
 """Offline checks for projecting a guest delivery in the Bulk register."""
 from django.test import SimpleTestCase
 
-from .bulk_attendance_live_recovery import resolve_parallel_links
+from .bulk_attendance_live_recovery import merge_target_presence, resolve_parallel_links
 
 
 class BulkParallelRecoveryTests(SimpleTestCase):
@@ -63,3 +63,24 @@ class BulkParallelRecoveryTests(SimpleTestCase):
                         'six-again': [{'id': 'nine', 'moduleCatalogueId': 'other-group'}]}
         covered, guests = self.project(originals=absences, alternatives=alternatives)
         self.assertEqual((covered, guests), ({}, {}))
+
+    def test_raw_teams_presence_materializes_a_guest_target(self):
+        targets = merge_target_presence(
+            [],
+            [{'occurrence_id': 'nine', 'email': 'guest@example.invalid',
+              'total_attendance_seconds': 120}],
+            {'guest@example.invalid': 10},
+        )
+        self.assertEqual(targets, [{
+            'learner_profile_id': 10,
+            'occurrence_id': 'nine',
+            'attendance_status': 'present',
+        }])
+
+    def test_zero_second_raw_teams_row_does_not_materialize_presence(self):
+        self.assertEqual(merge_target_presence(
+            [],
+            [{'occurrence_id': 'nine', 'email': 'guest@example.invalid',
+              'total_attendance_seconds': 0}],
+            {'guest@example.invalid': 10},
+        ), [])

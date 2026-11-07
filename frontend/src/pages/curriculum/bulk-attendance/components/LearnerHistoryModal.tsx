@@ -41,6 +41,8 @@ interface LearnerHistoryModalProps {
   pendingCount?: number;
   pendingStatus?: (source: "kbc" | "live", recordKey: string) => AttendanceStatus | undefined;
   onToggleRecord?: (record: EditableRecord) => void;
+  onDeleteRecord?: (record: EditableRecord) => void;
+  pendingDelete?: (source: "kbc" | "live", recordKey: string) => boolean;
   onSave?: () => void;
   onDiscard?: () => void;
   onClose: () => void;
@@ -76,6 +78,8 @@ export default function LearnerHistoryModal({
   pendingCount = 0,
   pendingStatus,
   onToggleRecord,
+  onDeleteRecord,
+  pendingDelete,
   onSave,
   onDiscard,
   onClose,
@@ -214,6 +218,7 @@ export default function LearnerHistoryModal({
                 const current = statusOf(entry);
                 const status = statusStyle(current);
                 const record = editableRecord(entry);
+                const deletionPending = Boolean(record && pendingDelete?.(record.source, record.recordKey));
                 const pending = entry.source && entry.recordKey && pendingStatus?.(entry.source, entry.recordKey);
                 const changed = Boolean(pending && pending !== entry.attendance);
                 const recovered = entry.effectiveAttendance === "present" && current === "present"
@@ -239,10 +244,14 @@ export default function LearnerHistoryModal({
                         <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`} title="Original absence covered by a parallel group session">
                           <i className={status.icon} />{status.label}
                         </span>
-                        {record && onToggleRecord && <button type="button" disabled={saving} onClick={() => onToggleRecord(record)} className="text-xs text-foreground-500 underline disabled:opacity-60">Mark original present</button>}
+                        {record && onToggleRecord && <span className="flex items-center gap-2">
+                          <button type="button" disabled={saving} onClick={() => onToggleRecord(record)} className="text-xs text-foreground-500 underline disabled:opacity-60">Mark original present</button>
+                          {onDeleteRecord && <button type="button" disabled={saving} onClick={() => onDeleteRecord(record)} aria-label={`${deletionPending ? "Undo delete" : "Delete attendance record"} for ${entry.lectureName}`} title={deletionPending ? "Undo delete" : "Delete attendance record"} className="flex h-7 w-7 items-center justify-center rounded text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60"><i className={deletionPending ? "ri-arrow-go-back-line" : "ri-delete-bin-line"} /></button>}
+                        </span>}
                       </span>
                     ) : record && onToggleRecord ? (
-                      <button
+                      <span className="flex shrink-0 items-center gap-2">
+                        <button
                         type="button"
                         onClick={() => onToggleRecord(record)}
                         disabled={saving}
@@ -252,7 +261,9 @@ export default function LearnerHistoryModal({
                       >
                         <i className={status.icon} />
                         {status.label}
-                      </button>
+                        </button>
+                        {onDeleteRecord && <button type="button" onClick={() => onDeleteRecord(record)} disabled={saving} aria-label={`${deletionPending ? "Undo delete" : "Delete attendance record"} for ${entry.lectureName}`} title={deletionPending ? "Undo delete" : "Delete attendance record"} className="flex h-7 w-7 items-center justify-center rounded text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60"><i className={deletionPending ? "ri-arrow-go-back-line" : "ri-delete-bin-line"} /></button>}
+                      </span>
                     ) : (
                       <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`}>
                         <i className={status.icon} />

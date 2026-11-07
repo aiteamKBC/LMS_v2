@@ -18,10 +18,10 @@ const history: LearnerHistoryRecord[] = [
   },
 ];
 
-function show(pendingStatus?: (source: "live" | "kbc", recordKey: string) => "present" | "absent" | undefined) {
+function show(pendingStatus?: (source: "live" | "kbc", recordKey: string) => "present" | "absent" | undefined, onDeleteRecord = vi.fn()) {
   render(<LearnerHistoryModal learner={learner} index={0} moduleLabel="Marketing" cohortName="Example"
     history={history} loading={false} error={null} pendingStatus={pendingStatus}
-    onToggleRecord={vi.fn()} onClose={vi.fn()} />);
+    onToggleRecord={vi.fn()} onDeleteRecord={onDeleteRecord} onClose={vi.fn()} />);
 }
 
 it("shows the original date attended and counts a parallel-group make-up once", () => {
@@ -34,7 +34,6 @@ it("shows the original date attended and counts a parallel-group make-up once", 
   expect(within(dialog).getByText(/Make-up evidence for/)).toBeVisible();
   expect(within(dialog).getByText("Attended through a parallel group session")).toBeVisible();
 });
-
 it("removes the projected credit while the guest attendance is changed to absent", () => {
   show((_source, key) => key === "live:2" ? "absent" : undefined);
   const dialog = screen.getByRole("dialog");
@@ -42,4 +41,10 @@ it("removes the projected credit while the guest attendance is changed to absent
   expect(within(dialog).getByText("Absent", { selector: "p" }).parentElement).toHaveTextContent("1");
   expect(within(dialog).getByText("Rate").parentElement).toHaveTextContent("0%");
   expect(within(dialog).getByText(/Parallel-group record for/)).toBeVisible();
+});
+it("deletes an editable attendance record", () => {
+  const onDelete = vi.fn();
+  show(undefined, onDelete);
+  screen.getAllByRole("button", { name: "Delete attendance record for Session 1" })[0].click();
+  expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ recordKey: "live:1" }));
 });

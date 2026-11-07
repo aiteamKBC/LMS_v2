@@ -190,6 +190,18 @@ export async function saveBulkAttendanceChanges(changes: BulkAttendanceChange[])
   return payload.updated;
 }
 
+export async function deleteBulkAttendanceRecord(record: Pick<BulkAttendanceChange, 'source' | 'recordKey'>): Promise<string> {
+  const response = await coachFetch('/curriculum_api/curriculum/bulk-attendance/attendance/delete/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(record),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Attendance could not be deleted. Please try again.');
+  if (typeof payload.deleted !== 'string') throw new Error('Deleting attendance returned an invalid response.');
+  return payload.deleted;
+}
+
 /** Add or correct an outcome for an existing LMS live-session occurrence. */
 export async function createBulkAttendanceLiveDay(
   input: BulkAttendanceLiveDayInput,
