@@ -17,7 +17,7 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import type { PageTabItem } from '@/components/ui/PageTabs';
 import { RowAction } from '@/components/ui/ActionRow';
 import {
-  confirmAttendance, fetchAttendanceWorkspace, peekAttendanceWorkspace, updateAttendanceMode,
+  confirmAttendance, fetchAttendanceWorkspace, peekAttendanceWorkspace,
   type AttendanceLecture,
 } from '@/api/attendanceLectures';
 import AbsenceReportForm from './components/AbsenceReportForm';
@@ -66,9 +66,6 @@ export default function AttendancePage() {
   const [report, setReport] = useState<AttendanceLecture | 'choose' | null>(null);
   const [showRecoveryPlans, setShowRecoveryPlans] = useState(false);
   const [showAllActivity, setShowAllActivity] = useState(false);
-  const [modeBusy, setModeBusy] = useState(false);
-  const [modeError, setModeError] = useState('');
-  const [modeNotice, setModeNotice] = useState('');
   const [catchup, setCatchup] = useState<AttendanceLecture | null>(null);
   const [catchupBooking, setCatchupBooking] = useState<LearnerCalendarEvent | null>(null);
   const [bookingBusy, setBookingBusy] = useState(false);
@@ -124,17 +121,6 @@ export default function AttendancePage() {
     { value: 'covered', label: 'Covered', count: counts.covered, tone: 'positive' },
     { value: 'upcoming', label: 'Upcoming', count: counts.upcoming },
   ];
-  const changeMode = async (mode: 'live' | 'lazy') => {
-    setModeBusy(true); setModeError(''); setModeNotice('');
-    try {
-      const result = await updateAttendanceMode(learner.kind, learner.id, mode);
-      setModeNotice(mode === 'live' ? 'Live Sessions is active. Absence reminders are enabled.' :
-        result.emailSent ? 'Your request has been emailed to your manager for approval.' :
-          'Your request was saved, but the approval email could not be sent. Please retry.');
-      read.refresh();
-    } catch (error) { setModeError(error instanceof Error ? error.message : 'Could not update attendance mode.'); }
-    finally { setModeBusy(false); }
-  };
   const openActivities = (row: AttendanceLecture) => {
     if (row.status === 'upcoming') {
       const activityHref = row.componentHref ?? row.activities.find(activity => activity.href)?.href;
@@ -241,7 +227,7 @@ export default function AttendancePage() {
             <p className={styles.learningNote}><AppIcon className="ri-information-line" />An approved excuse remains an absence until your coach confirms the linked catch-up session is complete. Watching a recording does not change live attendance.</p>
           </div>
           <aside className={styles.sidebar}>
-            <AttendanceModePanel mode={data.mode} busy={modeBusy} error={modeError} notice={modeNotice} onChange={changeMode} />
+            <AttendanceModePanel mode={data.mode} />
             <Panel className={styles.supportPanel}>
               <div className={styles.sidebarHeading}>
                 <span className={styles.sectionIcon}><AppIcon className="ri-group-line" /></span>

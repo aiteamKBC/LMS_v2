@@ -45,7 +45,7 @@ def source_label(value):
     source = str(value or '').strip().lower()
     if source == 'mba-legacy':
         return 'old_lms'
-    if source in {'module_authoring', 'authoring', 'training_plan'}:
+    if source in {'module_authoring', 'authoring', 'training_plan', 'free_course'}:
         return 'new_lms'
     return 'unknown'
 

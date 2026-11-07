@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { isSelfStudyComponent } from './freeCoursePolicy';
 import { fetchComponentLibrary, fetchComponentLibraryDetail, type LibraryComponent, type LibraryComponentOrigin } from '@/lib/curriculumApi';
 import { componentTypes } from './componentAuthoringModel';
 import { formatHoursMinutes } from '@/lib/format';
@@ -29,8 +30,9 @@ const ORIGIN_BADGE: Record<LibraryComponentOrigin, string> = {
 
 const SEARCH_DEBOUNCE_MS = 250;
 
-export function ComponentLibraryModal({ weekLabel, onClose, onAddMany }: {
+export function ComponentLibraryModal({ weekLabel, onClose, onAddMany, selfStudyOnly = false }: {
   weekLabel: string;
+  selfStudyOnly?: boolean;
   onClose: () => void;
   onAddMany: (components: LibraryComponent[]) => void | Promise<void>;
 }) {
@@ -63,7 +65,7 @@ export function ComponentLibraryModal({ weekLabel, onClose, onAddMany }: {
       pageSize: 200,
     }, controller.signal)
       .then(results => {
-        setRows(results);
+        setRows(results.filter(row => !selfStudyOnly || isSelfStudyComponent(row.componentType)));
         setLoading(false);
       })
       .catch(err => {
@@ -72,7 +74,7 @@ export function ComponentLibraryModal({ weekLabel, onClose, onAddMany }: {
         setLoading(false);
       });
     return () => controller.abort();
-  }, [debouncedSearch, typeFilter, origins]);
+  }, [debouncedSearch, typeFilter, origins, selfStudyOnly]);
 
   const toggleOrigin = useCallback((value: LibraryComponentOrigin) => {
     setOrigins(current => {
@@ -102,8 +104,8 @@ export function ComponentLibraryModal({ weekLabel, onClose, onAddMany }: {
   }, []);
 
   const typeOptions = useMemo(
-    () => [...componentTypes].sort((a, b) => a.label.localeCompare(b.label)),
-    [],
+    () => componentTypes.filter(item => !selfStudyOnly || isSelfStudyComponent(item.type)).sort((a, b) => a.label.localeCompare(b.label)),
+    [selfStudyOnly],
   );
 
   // The list rows carry no `settings` or `ksbMappings` — those are fetched here,

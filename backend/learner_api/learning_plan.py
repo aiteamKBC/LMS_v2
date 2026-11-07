@@ -863,6 +863,11 @@ def learning_plan(request, pk):
     has_free_courses = "freeCourses" in payload
     if has_free_courses and not isinstance(payload.get("freeCourses"), list):
         return _error("freeCourses must be a list.", 400)
+    if has_free_courses:
+        from curriculum_api.legacy_free_course_adoption import adopted_courses
+        adopted = adopted_courses()
+        if any(item.get('freeCourseId') in adopted for item in payload['freeCourses'] if isinstance(item, dict)):
+            return _error('These free courses are now modules. Reload the plan and assign them from the module list.', 409)
 
     programme = _s(learner.programme)
     try:

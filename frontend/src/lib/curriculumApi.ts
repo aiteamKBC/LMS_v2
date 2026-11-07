@@ -351,6 +351,8 @@ export interface CurriculumWeeklySession {
 }
 
 export interface CurriculumModule {
+  /** Standalone self-study course, assigned directly to learners. */
+  isFreeCourse?: boolean;
   id: string;
   // Temporary compatibility: moduleId may be a canonical ID or legacy delivery ID.
   // Prefer moduleCatalogueId for canonical authoring identity and deliveryRowId for allocation identity.

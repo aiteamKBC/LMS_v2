@@ -169,6 +169,7 @@ function isSelectableProgramme(programme: CurriculumProgramme): boolean {
 export function ModuleFormDrawer({
   open,
   module,
+  freeCourse = false,
   defaults,
   programmes,
   cohorts,
@@ -185,6 +186,7 @@ export function ModuleFormDrawer({
   open: boolean;
   /** Present when editing; absent when creating. */
   module?: ModuleFormTarget | null;
+  freeCourse?: boolean;
   defaults?: ModuleFormDefaults;
   programmes: CurriculumProgramme[];
   cohorts: CurriculumCohort[];
@@ -206,6 +208,7 @@ export function ModuleFormDrawer({
    */
   storedStructure?: () => StoredWeekStructure | null;
 }) {
+  const isFreeCourse = freeCourse || module?.isFreeCourse === true;
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
   const [cohortId, setCohortId] = useState('');
@@ -460,6 +463,18 @@ export function ModuleFormDrawer({
       color: record?.color || parentGroup?.color || '#2563eb',
       coverImage: cleanText(record?.coverImage),
     };
+    if (isFreeCourse) {
+      initial.programmeId = '';
+      initial.cohortId = '';
+      initial.groupIds = [];
+      initial.startDate = '';
+      initial.targetEndDate = '';
+      initial.tutor = '';
+      initial.weekDays = '';
+      initial.weeklyTimes = {};
+      initial.groupStartTime = '';
+      initial.groupEndTime = '';
+    }
     const storedPattern = {
       sessionsPerWeek: initial.sessionsPerWeek,
       weekDays: initial.weekDays,
@@ -514,7 +529,7 @@ export function ModuleFormDrawer({
     setColor(coEdit.take(verdict, 'color', initial.color));
     setCoverImage(coEdit.take(verdict, 'coverImage', initial.coverImage));
     coEdit.publish();
-  }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, guard.stored, module, open, selectableProgrammes]);
+  }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, guard.stored, isFreeCourse, module, open, selectableProgrammes]);
 
   const programmeOptions = useMemo(
     () => selectableProgrammes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -1004,7 +1019,7 @@ export function ModuleFormDrawer({
   // way and have not assigned it in this visit either. Once a module carries a
   // stored placement, editing it always requires the full set again: this only
   // relaxes the *first* placement, never removes one that already exists.
-  const placementOptional = !lockGroup && (
+  const placementOptional = isFreeCourse || !lockGroup && (
     (!module && assignMode === 'later')
     || (Boolean(module) && !initiallyAssigned.current)
   );
@@ -1013,11 +1028,11 @@ export function ModuleFormDrawer({
   // field still reads as something to fill in. `revealPlacement` is the one
   // escape hatch: the toggle flips it for a fresh create, and a plain link
   // flips it when editing an already-unassigned module (see the render below).
-  const showPlacement = !lockGroup && (!placementOptional || revealPlacement);
+  const showPlacement = !isFreeCourse && !lockGroup && (!placementOptional || revealPlacement);
   // The Weeks/dates/tutor block is a delivery's fields, not the module's -- it
   // stays hidden for exactly as long as the placement picker above does, since
   // there is nothing to schedule until a group can even be ticked.
-  const showSchedule = lockGroup || showPlacement;
+  const showSchedule = !isFreeCourse && (lockGroup || showPlacement);
 
   const submit = async () => {
     const hoursError = moduleHours.validate();
@@ -1378,6 +1393,7 @@ export function ModuleFormDrawer({
       // cohort when one was chosen) so it is findable, and it can be placed in a
       // group from this same drawer later.
       const created = await createNewModule({
+        ...(isFreeCourse ? { isFreeCourse: true, learnerRosterMode: 'manual' as const } : {}),
         title: trimmed,
         description,
         programme: programme?.name || programmeId || 'Unassigned programme',
@@ -1437,15 +1453,15 @@ export function ModuleFormDrawer({
   return (
     <EntityDrawer
       open={open}
-      title={module ? 'Edit module' : 'Add module'}
-      subtitle={module
+      title={isFreeCourse ? (module ? 'Edit free course' : 'Free course') : module ? 'Edit module' : 'Add module'}
+      subtitle={isFreeCourse ? 'Independent self-study content. Assign it directly to commercial or apprenticeship learners; hours follow the normal module rules.' : module
         ? 'Placement, module dates and tutor. Delivery days and times are read from the selected Group.'
         : 'Where the module lives. Set its dates here; delivery days and times come from the selected Group.'}
       banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
       closeConfirm={chain?.closeConfirm}
-      submitLabel={chain?.submitLabel || (module ? 'Save module' : 'Create module')}
+      submitLabel={chain?.submitLabel || (isFreeCourse ? (module ? 'Save free course' : 'Create free course') : module ? 'Save module' : 'Create module')}
       cancelLabel={chain?.cancelLabel}
       extraAction={chain?.extraAction}
       backAction={chain?.backAction}
@@ -1455,7 +1471,7 @@ export function ModuleFormDrawer({
       dirty={dirty || moduleHours.dirty}
     >
       <CoEditNotice notices={coEdit.notices} onDismiss={coEdit.dismiss} />
-      {!module && !lockGroup && !chained && (
+      {!isFreeCourse && !module && !lockGroup && !chained && (
         <FormField as="group" label="When to assign" hint={
           assignMode === 'later'
             ? 'Creates the module on its own, with its weeks and dates but no programme, cohort or group. Assign it later, from Edit.'
@@ -1480,7 +1496,7 @@ export function ModuleFormDrawer({
           </div>
         </FormField>
       )}
-      {!lockGroup && placementOptional && !showPlacement && (
+      {!isFreeCourse && !lockGroup && placementOptional && !showPlacement && (
         <p className="-mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] leading-5 text-foreground-500">
           <span>
             <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
@@ -1556,7 +1572,7 @@ export function ModuleFormDrawer({
           )}
         </>
       )}
-      <FormField label="Module name" required>
+      <FormField label={isFreeCourse ? 'Course name' : 'Module name'} required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Modelling" />
       </FormField>
       {/* Weeks describe the authored module structure. The selected Group owns
@@ -1565,17 +1581,17 @@ export function ModuleFormDrawer({
         label="Weeks"
         required={Boolean(selectedGroups.length)}
         hint={
-          selectedGroups.length
+          isFreeCourse ? 'How many authored weeks the free course contains.' : selectedGroups.length
             ? 'How many authored weeks the module contains. Its sessions use the selected Group delivery pattern.'
             : 'How many authored weeks the module contains. Delivery dates are set when it is assigned to a Group.'
         }
       >
         <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={changeWeeks} />
       </FormField>
-      <p className="-mt-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] leading-5 text-primary-800">
+      {!isFreeCourse && <p className="-mt-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] leading-5 text-primary-800">
         <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
         The selected Group supplies the delivery days and session times. The module start and end dates belong to this module.
-      </p>
+      </p>}
       {showSchedule && selectedGroup && (
         <div className="space-y-4 rounded-lg border border-background-200 bg-background-50 p-4">
           {showInheritedScheduleControls && <>

@@ -179,6 +179,34 @@ describe('ModuleFormDrawer', () => {
     tutorEmailStatusMock.mockClear();
   });
 
+  it('creates a standalone free course without inheriting placement or scheduling defaults', async () => {
+    const { onSaved } = renderDrawer({ freeCourse: true, defaults: {
+      programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1',
+    } });
+    expect(screen.getByRole('heading', { name: 'Free course' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /programme|cohort|tutor/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Assign later|Group A/i })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: /Course name/i }), 'Independent study');
+    await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(createNewModuleMock).toHaveBeenCalledWith(expect.objectContaining({
+      isFreeCourse: true, learnerRosterMode: 'manual', title: 'Independent study',
+      programmeId: '', cohortId: '', startDate: '', endDate: '',
+    }));
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(previewModuleSessionPlanMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('reopens a free course as self-study even without the creation prop', () => {
+    renderDrawer({ module: { id: 'MOD-FREE', name: 'Independent study', isFreeCourse: true, weeks: 3 } });
+    expect(screen.getByRole('heading', { name: 'Edit free course' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /Course name/i })).toHaveValue('Independent study');
+    expect(screen.getByRole('spinbutton', { name: /weeks/i })).toHaveValue(3);
+    expect(screen.queryByRole('combobox', { name: /programme|cohort|tutor/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save free course' })).toBeInTheDocument();
+  });
+
   it('reopens imported session rows as eight teaching weeks and keeps the module closure in its preview', async () => {
     const closure = { id: 'saudi', label: 'Saudi National Day', startDate: '2026-09-23', endDate: '2026-09-23' };
     renderDrawer({ module: {

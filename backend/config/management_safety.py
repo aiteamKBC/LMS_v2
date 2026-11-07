@@ -8,6 +8,7 @@ def reconciliation_command():
         "reconcile_review_booking", "auto_reconcile_legacy_aptem_reviews",
         "reconcile_shared_session_attendance",
         "waive_legacy_mcm_signatures",
+        "adopt_legacy_free_courses",
     }
 
 

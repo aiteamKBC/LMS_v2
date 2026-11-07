@@ -7,6 +7,7 @@ import { type StudentActivityItem, type StudentActivityResponse, type SubjectAtt
 import { fetchLearnerCertificateTemplate, issueLearnerModuleCertificate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
+import { CombinedStudentMaterial } from './CombinedStudentMaterial';
 import styles from './SubjectWorkspace.module.css';
 import { useSubjectMetadata } from './useSubjectLearningData';
 import { LearningCatalogue } from './LearningCatalogue';
@@ -257,7 +258,7 @@ export function SubjectCardsSkeleton() {
 }
 
 
-function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, readOnly = false, direct = false }: { defaultOpen?: boolean; readOnly?: boolean; direct?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
+function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, readOnly = false, direct = false }: { defaultOpen?: boolean; readOnly?: boolean; direct?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult, activityId?: string) => void }) {
   const [open, setOpen] = useState(defaultOpen);
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
   const contentId = useId();
@@ -286,7 +287,9 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, 
   </div>
     <PreviousLearningNotice learning={entry.native?.previousLearning} kind={kind} learnerId={learnerId} />
     {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'}</p>}
-    <div id={contentId}>{(direct || open) && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly} reviewQuiz={canReviewQuiz} catalogueQuiz={legacy.catalogue_kind === 'quiz'} onProgress={readOnly ? undefined : onProgress} /></div>}</div>
+    <div id={contentId}>{(direct || open) && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0">{entry.pairedQuiz
+      ? <CombinedStudentMaterial key={`${kind}:${learnerId}:${entry.id}:${entry.pairedQuiz.id}`} entry={entry} kind={kind} learnerId={learnerId} readOnly={readOnly} onProgress={readOnly ? undefined : onProgress} />
+      : <StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly} reviewQuiz={canReviewQuiz} catalogueQuiz={legacy.catalogue_kind === 'quiz'} onProgress={readOnly ? undefined : onProgress} />}</div>}</div>
   </div>;
 }
 
@@ -453,7 +456,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
         progress={<>{active.demoProgress && <p className="mb-2 text-sm">Demo progress for a transfer rehearsal. No study hours or completed activities are claimed.</p>}<Progress done={active.activities.filter(entry => entry.completed).length} total={active.activities.length} showFormula={!active.demoProgress} aggregate={active.aggregateProgress} transferred={active.transferredProgress} /></>}
         renderWeekProgress={week => <><HolidayNoteHint note={week.weekId ? holidayNotes.get(week.weekId) : undefined} className="mb-2" /><Progress done={week.activities.filter(entry => entry.completed).length} total={week.activities.length} label="Week progress" /></>}
         renderActivity={entry => <ActivityRow entry={entry} kind={kind} learnerId={learnerId} direct
-          onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />} />
+          onProgress={(result, activityId) => { if (entry.legacy) recordProgress(activityId || entry.legacy.activity_id, result); }} />} />
     </> : activeWeek ? <>
       <button onClick={() => select(active!.id)} className={styles.textLink}><ChevronLeft size={17} />{view === 'map' ? 'Back to timeline' : 'Back to subject'}</button>
       <section className={styles.weekMaterial} aria-label={`${activeWeek.label} materials`}><header><p className={styles.eyebrow}>{activeWeek.label}</p><h3>{activeWeek.title}</h3><HolidayNoteHint note={activeWeek.weekId ? holidayNotes.get(activeWeek.weekId) : undefined} className="mb-2" /><Progress done={activeWeek.activities.filter(a => a.completed).length} total={activeWeek.activities.length} label="Week progress" /></header>

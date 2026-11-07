@@ -33,6 +33,7 @@ export interface ModuleFormDeliveryRef {
  * and both call sites must end up patching the same canonical id.
  */
 export interface ModuleFormTarget {
+  isFreeCourse?: boolean;
   /** Canonical module catalogue id: what PATCH /curriculum/modules/<id>/ takes. */
   id: string;
   name: string;
@@ -75,6 +76,7 @@ export function moduleFormTarget(module: CurriculumModule | undefined | null): M
   return {
     id,
     name: module.name || '',
+    isFreeCourse: module.isFreeCourse,
     programmeId: module.programmeId,
     programme: module.programme,
     cohortId: module.cohortId,

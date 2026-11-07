@@ -86,6 +86,7 @@ import { moduleCountForGroup, moduleMatchesGroup } from '../shared/entities/grou
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { mergeModuleStructures } from '../shared/entities/mergeModuleStructure';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
+import { isSelfStudyComponent, requireSelfStudyContent } from './freeCoursePolicy';
 import { PlaceWeekDrawer } from './PlaceWeekDrawer';
 import { ModuleConflictPanel } from './ModuleConflictPanel';
 import { applyTheirs, conflictsFromCollisions, conflictsFromServer, mergeConflictLists, type ModuleConflict } from './moduleConflicts';
@@ -689,7 +690,12 @@ function ModuleBuilderContent() {
   // Kept in the address with the filters (as `q`), so Back from a learner's
   // progress page returns to the catalogue exactly as it was left.
   const [search, setSearch] = useState(() => searchParams.get('q') || '');
-  const [allModules, setAllModules] = useState(() => searchParams.get('catalogue') === 'all');
+  const [catalogueMode, setCatalogueMode] = useState<'active' | 'all' | 'free'>(() => {
+    const requested = searchParams.get('catalogue');
+    return requested === 'all' || requested === 'free' ? requested : 'active';
+  });
+  const allModules = catalogueMode === 'all';
+  const freeCoursesOnly = catalogueMode === 'free';
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
@@ -736,6 +742,7 @@ function ModuleBuilderContent() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
   const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
+  const [createFreeCourse, setCreateFreeCourse] = useState(false);
   // Programme -> cohort -> group tree plus the holiday list: read only by the
   // module form, so it is fetched the first time that drawer opens rather than
   // on every Module Builder load.
@@ -1289,6 +1296,7 @@ function ModuleBuilderContent() {
 
   const closeCreateDrawer = useCallback(() => {
     setCreateOpen(false);
+    setCreateFreeCourse(false);
     setSearchParams(previous => {
       const next = new URLSearchParams(previous);
       next.delete('create');
@@ -1530,10 +1538,10 @@ function ModuleBuilderContent() {
       ['group', groupFilter],
       ['tutor', tutorFilter],
       ['q', search],
-      ['catalogue', allModules ? 'all' : ''],
+      ['catalogue', catalogueMode === 'active' ? '' : catalogueMode],
     ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [allModules, cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
+  }, [catalogueMode, cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
 
   const changeFilter = useCallback((apply: () => void) => {
     filtersTouchedRef.current = true;
@@ -1551,9 +1559,11 @@ function ModuleBuilderContent() {
 
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
-  const matchingModules = catalogueModules.filter(module => {
+  const searchMatchingModules = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
-    if (search && !text.includes(search.toLowerCase())) return false;
+    return !search || text.includes(search.toLowerCase());
+  });
+  const matchingModules = searchMatchingModules.filter(module => {
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
     // A delivery filter is a question about deliveries, so a module qualifies
     // only when one single delivery answers all of them at once -- never one
@@ -1566,7 +1576,11 @@ function ModuleBuilderContent() {
     ));
   });
   const activeModules = matchingModules.filter(module => catalogueModuleActive(catalogueActivity.data?.[module.catalogueId], catalogueActivity.today));
-  const filtered = allModules ? matchingModules : activeModules;
+  // Standalone courses have no delivery scope or live-teaching requirement.
+  // Keep delivery filters for returning to the module catalogue, but don't
+  // apply them to this view of independent courses.
+  const freeCourses = searchMatchingModules.filter(module => module.isFreeCourse);
+  const filtered = freeCoursesOnly ? freeCourses : allModules ? matchingModules : activeModules;
 
   const deliveryStats = useMemo(() => ({
     deliveries: deliveryUsages.length,
@@ -2115,19 +2129,21 @@ function ModuleBuilderContent() {
 
   // One state update appends the requested number of independent template copies.
   const importWeekTemplateAsNewWeek = useCallback(async (template: WeekTemplate, count: number) => {
+    if (workingModule?.isFreeCourse) requireSelfStudyContent((template.components || []).map(component => component.type));
     // Every copy is the same week, so they all raise the same question: ask it
     // once, about the week the template describes.
     const liveSessions = (template.components || []).filter(component => component.type === 'live-session').length;
     if (!(await confirmLiveSessionSlotOverflow(newWeekSlotOverflow(liveSessions)))) return;
     updateWorkingModule(module => appendWeekTemplateCopies(module, template, count));
     setWeekTemplateImportOpen(false);
-  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, newWeekSlotOverflow]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, newWeekSlotOverflow, workingModule?.isFreeCourse]);
 
   // Copy components chosen from the reuse library into an existing week. The
   // copies land in client state and are persisted by the normal module save -
   // a per-component write would be undone by it, because saving re-upserts the
   // module's whole week structure.
   const addLibraryComponentsToWeek = useCallback(async (weekId: string, picked: LibraryComponent[]) => {
+    if (workingModule?.isFreeCourse) requireSelfStudyContent(picked.map(component => component.componentType));
     // `componentType` is the authoring type; `type` carries a human label that
     // several activity types share (see LibraryComponent).
     const liveSessions = picked.filter(source => source.componentType === 'live-session').length;
@@ -2144,7 +2160,7 @@ function ModuleBuilderContent() {
     }));
     if (lastComponentId) setSelection({ kind: 'component', weekId, componentId: lastComponentId });
     setReusePickerWeekId(null);
-  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, weekSlotOverflow]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, weekSlotOverflow, workingModule?.isFreeCourse]);
 
   // Clone a week in place: the twin lands directly beneath its source, carrying
   // every component in full except the live session (`duplicateWeekInModule`
@@ -2832,6 +2848,27 @@ function ModuleBuilderContent() {
 
   const confirmDuplicateModule = async (module: ModuleCatalogueItem) => {
     if (duplicatingModule) return;
+    if (module.isFreeCourse) {
+      await showCurriculumConfirm({
+        title: 'Duplicate free course?',
+        text: 'Create an independent copy of this course and its content. Learner assignments and progress stay with the original.',
+        confirmButtonText: 'Duplicate free course',
+        onConfirm: async () => {
+          setDuplicatingModule(module);
+          try {
+            const source = await loadModuleStructure(moduleStructureIdentifier(module));
+            if (!source) throw new Error('The course could not be loaded. Please try again.');
+            await duplicateModuleStructure(source);
+            await reload({ silent: true });
+          } catch (error) {
+            setActionMessage(error instanceof Error ? error.message : 'Unable to duplicate free course.');
+          } finally {
+            setDuplicatingModule(null);
+          }
+        },
+      });
+      return;
+    }
     const dialog = await showDuplicateModuleSwal(module, {
       programmes: curriculumProgrammes,
       cohorts: scopeCohorts,
@@ -3759,6 +3796,7 @@ function ModuleBuilderContent() {
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
+                    selfStudyOnly={workingModule.isFreeCourse}
                     displayWeek={selectedWeek}
                     onChange={updates => updateWorkingModule(module =>
                       applyModuleComponentUpdate(module, selectedComponent.id, updates),
@@ -3890,9 +3928,11 @@ function ModuleBuilderContent() {
         )}
         {lessonPickerWeekId && (
           <ComponentTypeModal
+            selfStudyOnly={workingModule.isFreeCourse}
             description="Select one or more component types — use Select all for a blank set of everything. Each becomes an empty component to fill in; nothing is copied from a saved template."
             onClose={() => setLessonPickerWeekId(null)}
             onAdd={async types => {
+              if (workingModule.isFreeCourse) requireSelfStudyContent(types);
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
               if (!week) return;
               // Each live session arrives with its session recording right after it, linked.
@@ -3916,7 +3956,7 @@ function ModuleBuilderContent() {
             onImport={importWeekTemplateAsNewWeek}
           />
         )}
-        {moduleTeamsMeetingOpen && workingModule && (
+        {moduleTeamsMeetingOpen && workingModule && !workingModule.isFreeCourse && (
           /* The same create form the Teams Meetings page shows, opened over the
              builder rather than instead of it. No component: the calendar is
              the module's, so every live session it holds takes its own day's
@@ -3973,6 +4013,7 @@ function ModuleBuilderContent() {
         )}
         {reusePickerWeekId && (
           <ComponentLibraryModal
+            selfStudyOnly={workingModule.isFreeCourse}
             weekLabel={(() => {
               const week = workingModule.weekStructure.find(item => item.id === reusePickerWeekId);
               return week ? `Week ${week.weekNumber}${week.title ? ` — ${week.title}` : ''}` : 'this week';
@@ -4039,6 +4080,10 @@ function ModuleBuilderContent() {
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <button onClick={() => { setCreateFreeCourse(true); setCreateOpen(true); }} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-4 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-wait disabled:opacity-70">
+                <AppIcon className="ri-add-line"></AppIcon>
+                Free course
+              </button>
               <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
                 <AppIcon className="ri-add-line"></AppIcon>
                 New module
@@ -4093,7 +4138,7 @@ function ModuleBuilderContent() {
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
                 <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
-                <span className={`text-[10px] font-semibold ${allModules ? 'text-foreground-500' : 'text-emerald-700'}`}>{allModules ? 'All modules' : 'Active modules'}</span>
+                <span className={`text-[10px] font-semibold ${catalogueMode === 'active' ? 'text-emerald-700' : 'text-foreground-500'}`}>{freeCoursesOnly ? 'Free courses' : allModules ? 'All modules' : 'Active modules'}</span>
               </div>
               <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
             </div>
@@ -4102,6 +4147,7 @@ function ModuleBuilderContent() {
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                 <input type="text" value={search} onChange={event => { const value = event.target.value; changeFilter(() => setSearch(value)); }} placeholder="Search modules, tutors, cohorts..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
               </div>
+              {!freeCoursesOnly && <>
               <SelectMenu
                 ariaLabel="Programme"
                 value={programmeFilter}
@@ -4153,11 +4199,12 @@ function ModuleBuilderContent() {
                 size="sm"
                 className="min-w-64"
               />
+              </>}
               <button
                 type="button"
-                aria-pressed={!allModules}
-                onClick={() => changeFilter(() => setAllModules(false))}
-                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${!allModules ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+                aria-pressed={catalogueMode === 'active'}
+                onClick={() => changeFilter(() => setCatalogueMode('active'))}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${catalogueMode === 'active' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
               >
                 <AppIcon className="ri-checkbox-circle-line text-sm" />
                 Active
@@ -4166,7 +4213,7 @@ function ModuleBuilderContent() {
               <button
                 type="button"
                 aria-pressed={allModules}
-                onClick={() => changeFilter(() => setAllModules(true))}
+                onClick={() => changeFilter(() => setCatalogueMode('all'))}
                 className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${allModules ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
               >
                 <AppIcon className="ri-stack-line text-sm" />
@@ -4175,9 +4222,19 @@ function ModuleBuilderContent() {
               </button>
               <button
                 type="button"
-                disabled={!allModules && !search && programmeFilter === 'All' && !deliveryFiltersActive}
+                aria-pressed={freeCoursesOnly}
+                onClick={() => changeFilter(() => setCatalogueMode('free'))}
+                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${freeCoursesOnly ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+              >
+                <AppIcon className="ri-book-open-line text-sm" />
+                Free courses
+                <span className="text-[10px]" aria-hidden="true">{loading && !modules.length ? '—' : freeCourses.length}</span>
+              </button>
+              <button
+                type="button"
+                disabled={catalogueMode === 'active' && !search && programmeFilter === 'All' && !deliveryFiltersActive}
                 onClick={() => changeFilter(() => {
-                  setAllModules(false);
+                  setCatalogueMode('active');
                   setSearch('');
                   setProgrammeFilter('All');
                   setCohortFilter('');
@@ -4191,7 +4248,7 @@ function ModuleBuilderContent() {
               </button>
             </div>
           </div>
-          {catalogueActivity.error && <div role="status" className="flex flex-wrap items-center gap-2 px-4 py-2 text-[12px] text-amber-800">
+          {catalogueActivity.error && !freeCoursesOnly && <div role="status" className="flex flex-wrap items-center gap-2 px-4 py-2 text-[12px] text-amber-800">
             <span>{catalogueActivity.error}</span>
             <button type="button" onClick={catalogueActivity.reload} className="font-semibold underline">Retry activity check</button>
           </div>}
@@ -4202,7 +4259,7 @@ function ModuleBuilderContent() {
                 through their own work, and replacing what they are reading with
                 grey bars loses their scroll position and their place for no
                 reason. The subtitle already says a read is in flight. */}
-            {(loading && !modules.length) || (!allModules && !catalogueActivity.data && !catalogueActivity.error) ? (
+            {(loading && !modules.length) || (catalogueMode === 'active' && !catalogueActivity.data && !catalogueActivity.error) ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
               <div className="space-y-3">
@@ -4232,13 +4289,13 @@ function ModuleBuilderContent() {
                   <AppIcon className="ri-search-eye-line text-2xl"></AppIcon>
                 </span>
                 <div>
-                  <p className="text-[13px] font-semibold text-foreground-700">{allModules ? 'No modules match the current filters.' : 'No active modules match the current filters.'}</p>
-                  <p className="mt-1 text-[12px] text-foreground-400">{allModules ? 'Try changing the search, or the programme, cohort, group or tutor filter.' : 'Choose All modules to see other modules, or adjust the current filters.'}</p>
+                  <p className="text-[13px] font-semibold text-foreground-700">{freeCoursesOnly ? 'No free courses match the current search.' : allModules ? 'No modules match the current filters.' : 'No active modules match the current filters.'}</p>
+                  <p className="mt-1 text-[12px] text-foreground-400">{freeCoursesOnly ? 'Try another search or create a free course.' : allModules ? 'Try changing the search, or the programme, cohort, group or tutor filter.' : 'Choose All modules to see other modules, or adjust the current filters.'}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => changeFilter(() => {
-                    setAllModules(false);
+                    setCatalogueMode('active');
                     setSearch('');
                     setProgrammeFilter('All');
                     setCohortFilter('');
@@ -4275,6 +4332,7 @@ function ModuleBuilderContent() {
         </div>
         <ModuleFormDrawer
           open={createOpen}
+          freeCourse={createFreeCourse}
           defaults={{
             programmeId: programmeFilter === 'All' ? '' : resolveProgrammeIdentity(programmeFilter).programmeId,
             cohortId: cohortFilter,
@@ -4286,7 +4344,17 @@ function ModuleBuilderContent() {
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
           onClose={closeCreateDrawer}
-          onSaved={openSavedModule}
+          onSaved={saved => {
+            if (createFreeCourse) changeFilter(() => {
+              setCatalogueMode('free');
+              setProgrammeFilter('All');
+              setCohortFilter('');
+              setGroupFilter('');
+              setTutorFilter('');
+              setSearch('');
+            });
+            return openSavedModule(saved);
+          }}
         />
         <ModuleFormDrawer
           open={Boolean(placementModule)}
@@ -4972,7 +5040,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
         {/* Teams actions stay over the structure the author is reading. The
             calendar dialog owns Microsoft updates; restoration is a local,
             explicit write-back into this module's saved components. */}
-        {module.catalogueId && (
+        {module.catalogueId && !module.isFreeCourse && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <button
               type="button"
@@ -5247,6 +5315,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       warns and stops there -- the session keeps its date, its
                       week and its Teams meeting. */}
                   <WeekComponentRail
+                    selfStudyOnly={module.isFreeCourse}
                     weekId={week.id}
                     displayWeek={week}
                     components={shownComponents}
@@ -5444,10 +5513,12 @@ function toggleComponentType(selectedTypes: Set<ModuleComponentType>, type: Modu
   return next;
 }
 
-function ComponentTypeChecklist({ selectedTypes, onToggle }: {
+function ComponentTypeChecklist({ selectedTypes, onToggle, selfStudyOnly = false }: {
   selectedTypes: Set<ModuleComponentType>;
   onToggle: (type: ModuleComponentType) => void;
+  selfStudyOnly?: boolean;
 }) {
+  const availableTypes = componentTypes.filter(item => !selfStudyOnly || isSelfStudyComponent(item.type));
   return (
     <div className="space-y-4">
       {componentTypeGroups.map(group => (
@@ -5455,11 +5526,11 @@ function ComponentTypeChecklist({ selectedTypes, onToggle }: {
           <div className="mb-2 flex items-center justify-between gap-2">
             <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">{group}</p>
             <span className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-bold text-foreground-400">
-              {componentTypes.filter(item => item.group === group).length}
+              {availableTypes.filter(item => item.group === group).length}
             </span>
           </div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {componentTypes.filter(item => item.group === group).map(item => {
+            {availableTypes.filter(item => item.group === group).map(item => {
               const tone = componentToneClasses(item.tone);
               const checked = selectedTypes.has(item.type);
               return (
@@ -5491,14 +5562,16 @@ function ComponentTypeChecklist({ selectedTypes, onToggle }: {
   );
 }
 
-function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?', description = 'Select one or more component types. You can edit the details after.', submitLabel = 'Add', initialSelectedTypes = [] }: {
+function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?', description = 'Select one or more component types. You can edit the details after.', submitLabel = 'Add', initialSelectedTypes = [], selfStudyOnly = false }: {
   onClose: () => void;
   onAdd: (types: ModuleComponentType[]) => void | Promise<void>;
   title?: string;
   description?: string;
   submitLabel?: string;
   initialSelectedTypes?: ModuleComponentType[];
+  selfStudyOnly?: boolean;
 }) {
+  const availableTypes = componentTypes.filter(item => !selfStudyOnly || isSelfStudyComponent(item.type));
   const [selectedTypes, setSelectedTypes] = useState<Set<ModuleComponentType>>(() => new Set(initialSelectedTypes));
   const selected = selectedComponentTypes(selectedTypes);
   return (
@@ -5521,18 +5594,19 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="rounded-lg border border-primary-100 bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-700">{selected.length} selected</span>
-            <span className="rounded-lg border border-background-200 bg-background-100 px-2.5 py-1 text-[11px] font-bold text-foreground-500">{componentTypes.length} available</span>
+            <span className="rounded-lg border border-background-200 bg-background-100 px-2.5 py-1 text-[11px] font-bold text-foreground-500">{availableTypes.length} available</span>
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto bg-background-100/45 p-4">
           <ComponentTypeChecklist
+            selfStudyOnly={selfStudyOnly}
             selectedTypes={selectedTypes}
             onToggle={type => setSelectedTypes(current => toggleComponentType(current, type))}
           />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-background-200 bg-background-50 px-5 py-3">
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setSelectedTypes(new Set(componentTypes.map(item => item.type)))} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700">
+            <button type="button" onClick={() => setSelectedTypes(new Set(availableTypes.map(item => item.type)))} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700">
               Select all
             </button>
             <button type="button" onClick={() => setSelectedTypes(new Set())} disabled={!selected.length} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40">
@@ -8479,6 +8553,7 @@ function ModuleCatalogueCard({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                {module.isFreeCourse && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 ring-1 ring-emerald-200">Free course</span>}
                 <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${source === 'old_lms' ? 'bg-blue-50 text-blue-800 ring-blue-200' : source === 'new_lms' ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white ring-violet-400/30 shadow-sm shadow-violet-600/20' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
                   {source !== 'unknown' && <AppIcon className={`${source === 'new_lms' ? 'ri-stack-line' : 'ri-archive-line'} text-[10px]`} />}
                   {source === 'old_lms' ? 'Old LMS' : source === 'new_lms' ? 'New LMS' : 'Source not set'}
@@ -8498,8 +8573,8 @@ function ModuleCatalogueCard({
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <ModuleFactPill
                   icon="ri-graduation-cap-line"
-                  label="Programme"
-                  value={cleanModuleMeta(module.programmeName) || 'Not set'}
+                  label={module.isFreeCourse ? 'Course' : 'Programme'}
+                  value={module.isFreeCourse ? 'Independent' : cleanModuleMeta(module.programmeName) || 'Not set'}
                   tone={cleanModuleMeta(module.programmeName) ? 'accent' : 'muted'}
                 />
                 <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} ${weekCount === 1 ? 'week' : 'weeks'}`} />
@@ -8536,8 +8611,8 @@ function ModuleCatalogueCard({
             Edit components
           </button>
           <span className="mx-0.5 hidden h-6 w-px shrink-0 bg-background-200 xl:block" aria-hidden="true"></span>
-          <ModuleCardActionButton label="Edit module" icon="ri-edit-line" onClick={onSettings} />
-          <ModuleCardActionButton label="Duplicate module" icon="ri-file-copy-line" onClick={onDuplicate} />
+          <ModuleCardActionButton label={module.isFreeCourse ? 'Edit course' : 'Edit module'} icon="ri-edit-line" onClick={onSettings} />
+          <ModuleCardActionButton label={module.isFreeCourse ? 'Duplicate free course' : 'Duplicate module'} icon="ri-file-copy-line" onClick={onDuplicate} />
           <ModuleCardActionButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
         </div>
       </div>
@@ -9230,6 +9305,7 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
   /** The module's own calendar session count. A delivery only earns a chip when its count disagrees. */
   expectedSessions: number;
 }) {
+  if (module.isFreeCourse) return <p className="mt-3 text-[11px] font-semibold text-foreground-500">Independent course. Assign learners directly; their existing programme and group stay unchanged.</p>;
   const usages = module.deliveryUsages || [];
   if (!usages.length) {
     return (
@@ -9628,6 +9704,7 @@ function moduleOptionKey(module: ModuleCatalogueItem) {
 /** A catalogue item as the shared module form's target. */
 function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: ModuleDeliveryUsage | null): ModuleFormTarget {
   return {
+    isFreeCourse: module.isFreeCourse,
     id: moduleStructureIdentifier(module) || module.catalogueId,
     name: module.title,
     programmeId: usage?.programmeId || module.programmeId,
