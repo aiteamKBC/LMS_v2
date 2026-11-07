@@ -64,6 +64,7 @@ class CoachErrorSecurityTests(SimpleTestCase):
 
     @patch("config.batch.logger.exception")
     @patch("config.batch.resolve")
+    @patch.dict("os.environ", {"API_REQUIRE_AUTH": "1"})
     def test_batch_wrapper_does_not_reintroduce_exception_leakage(self, resolve, log_exception):
         def explode(_request):
             raise RuntimeError(SECRET_ERROR)
@@ -71,6 +72,9 @@ class CoachErrorSecurityTests(SimpleTestCase):
         resolve.return_value = SimpleNamespace(func=explode, args=(), kwargs={})
         request = self.factory.get("/api/batch/")
         request.COOKIES = {}
+        # Middleware has already resolved this identity on a real batch request.
+        # Exercise exception handling after the real role gate admits staff.
+        request.login_account = SimpleNamespace(role="staff")
 
         result = _execute_get(
             request,
@@ -83,3 +87,17 @@ class CoachErrorSecurityTests(SimpleTestCase):
         self.assertNotIn("super-secret", body)
         self.assertEqual(json.loads(body)["error"], "internal_error")
         log_exception.assert_called_once()
+
+    @patch("config.batch.resolve")
+    @patch.dict("os.environ", {"API_REQUIRE_AUTH": "1"})
+    def test_batch_rejects_unsigned_or_learner_callers_before_dispatch(self, resolve):
+        for account, status in ((None, 401), (SimpleNamespace(role="learner"), 403)):
+            with self.subTest(status=status):
+                request = self.factory.get("/api/batch/")
+                request.COOKIES = {}
+                request.login_account = account
+                result = _execute_get(request, {
+                    "id": "coach-dashboard", "url": "/coach_api/coach/dashboard", "headers": {},
+                })
+                self.assertEqual(result["status"], status)
+                resolve.assert_not_called()

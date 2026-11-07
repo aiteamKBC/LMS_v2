@@ -1,4 +1,5 @@
 """Attendance-only baselines are scoped to an owned, uniquely credited card."""
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +9,22 @@ from .activity_time_history import attendance_baseline
 
 
 class AttendanceTimeHistoryTests(SimpleTestCase):
+    def test_first_live_reflection_submits_for_both_learner_types(self):
+        # Keep the reported endpoint failure in the automatically discovered
+        # *_no_db CI modules, even when database suites are unavailable.
+        from .tests_selected_activity_time import SelectedActivityTimeTests
+
+        endpoint = SelectedActivityTimeTests()
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind), patch(
+                'learner_api.activity_time_history.attendance_baseline', return_value=7200
+            ):
+                response, save, _ = endpoint.submit(kind=kind, component_type='live_session',
+                    selected=1800, decision='add', previous=7200)
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(json.loads(response.content)['record']['countedSeconds'], 9000)
+                save.assert_called_once()
+
     def baseline(self, *, history=(), credits=None, record=None, source=None, learner=None):
         record = record or {'kind': 'component', 'componentType': 'live_session',
                             'componentId': 'C1', 'retakeTimeChoice': 'add'}
