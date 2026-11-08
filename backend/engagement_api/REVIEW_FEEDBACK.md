@@ -1,5 +1,9 @@
 # Imported Review feedback
 
+EPA learner feedback is documented in [EPA_FEEDBACK.md](EPA_FEEDBACK.md).
+It selects `review_name = Gateway Review` and adds migration
+`0012_epa_review_feedback` and matching manual SQL.
+
 Employer Progress Review feedback is documented in
 [EMPLOYER_REVIEW_FEEDBACK.md](EMPLOYER_REVIEW_FEEDBACK.md). It adds migration
 `0010_employer_review_feedback`; the learner-only schema notes below predate it.
@@ -17,6 +21,11 @@ The previous implementation read only `"Learner".reviews`, required exact
   completion rules remain separate. Standalone Skills Radar and other Reviews
   do not qualify. Classification trims surrounding whitespace and case-folds;
   it never matches substrings.
+- EPA Feedback is learner-only and matches the full `review_name` Gateway Review
+  (trimmed, case-insensitive), independently of `review_type`. It requires an
+  explicit Completed source status or a verified completed local overlay, plus
+  the existing completion-date/launch checks. A Gateway name selects EPA rather
+  than PR/MCM and never creates an employer assignment.
 - Aptem completion uses the existing status normalizer (including Complete and
   Finished), source metadata fallback, or a valid completion date. Local LMS
   completion uses the linked ImportedReviewInstance's completed status.
@@ -69,8 +78,9 @@ For an import pipeline or recovery run, after verifying the target environment:
 The command prints counts only (`created`, `existing`, `incomplete`,
 `historical`, `undated`, `future`, `unlinked`, `identityConflicts`). It requires
 explicit learner IDs and never sends notifications, invitations or mail.
-For learner-only review feedback no new SQL migration is required; the existing reviewed Feedback Review schema
-and its unique source_review_id constraint must already be installed. Do not
+MCM/PR use the existing reviewed Feedback Review schema and its unique
+source_review_id constraint. EPA additionally requires migration
+`0012_epa_review_feedback` to permit its form type. Do not
 rerun older form-type constraint migrations over newer schema releases.
 
 ## Local checks

@@ -65,6 +65,8 @@ from .evidence_documents import ensure_evidence_override_table
 from .learner_exclusions import is_excluded_learner
 from .profile_overrides import apply_break_overrides, apply_profile_overrides, get_profile_overrides
 
+from config import blob_storage
+
 try:
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 except ImportError:  # pragma: no cover - exercised only when optional Azure SDK is absent.
@@ -994,12 +996,19 @@ def _contract_preview_url(azure_path, document_name):
         return ""
     account_name = getattr(settings, "AZURE_STORAGE_ACCOUNT", "")
     account_key = getattr(settings, "AZURE_STORAGE_KEY", "")
-    if not account_name or not account_key or generate_blob_sas is None or BlobSasPermissions is None:
+    s3_mode = blob_storage.s3_enabled()
+    if not blob_storage.storage_configured(account_name, account_key) or (
+            not s3_mode and (generate_blob_sas is None or BlobSasPermissions is None)):
         return ""
 
     container, blob_name = location
     filename = _safe_contract_filename(document_name, blob_name)
     content_type = mimetypes.guess_type(filename)[0] or mimetypes.guess_type(blob_name)[0] or "application/octet-stream"
+    if s3_mode:
+        return blob_storage.presigned_read_url(
+            account_name, container, blob_name, ttl_minutes=30,
+            content_type=content_type, content_disposition=f'inline; filename="{filename}"',
+        )
     token = generate_blob_sas(
         account_name=account_name,
         container_name=container,

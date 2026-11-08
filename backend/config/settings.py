@@ -998,6 +998,19 @@ AZURE_MATERIALS_STORAGE_KEY = os.environ.get("AZURE_MATERIALS_STORAGE_KEY", "")
 AZURE_MATERIALS_CONTAINER = os.environ.get("AZURE_MATERIALS_CONTAINER") or "activity-media-backups"
 AZURE_MATERIALS_SAS_TTL_MINUTES = int(os.environ.get("AZURE_MATERIALS_SAS_TTL_MINUTES", "15"))
 
+# Object storage backend — see config/blob_storage.py. "azure" (default) keeps
+# every file in Azure Blob Storage. "s3" serves the same containers from one S3
+# bucket, keyed "<azure account>/<container>/<blob>", so stored Azure URLs stay
+# valid; the AZURE_*_ACCOUNT names above are still required as key prefixes.
+# S3 credentials come from the AWS default chain (the ECS task role), never
+# from settings.
+STORAGE_BACKEND = (os.environ.get("STORAGE_BACKEND") or "azure").strip().lower()
+if STORAGE_BACKEND not in ("azure", "s3"):
+    raise ImproperlyConfigured("STORAGE_BACKEND must be 'azure' or 's3'.")
+AWS_S3_STORAGE_BUCKET = os.environ.get("AWS_S3_STORAGE_BUCKET", "")
+AWS_S3_STORAGE_REGION = os.environ.get("AWS_S3_STORAGE_REGION") or "eu-west-2"
+AWS_S3_STORAGE_ENDPOINT_URL = os.environ.get("AWS_S3_STORAGE_ENDPOINT_URL", "")
+
 # Generated/signed enrolment paperwork (ILR and the other compliance documents)
 # — see enrolment_api/documents.py. Separate from the evidence containers: these
 # are produced by the platform, not uploaded by learners, so they need no
