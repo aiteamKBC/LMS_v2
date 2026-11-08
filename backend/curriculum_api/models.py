@@ -73,6 +73,9 @@ class CurriculumVideoChange(models.Model):
 
 class ModuleAuthoringModule(models.Model):
     module_catalogue_id = models.CharField(max_length=128, primary_key=True)
+    is_for_sale = models.BooleanField(default=False)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=3, default='GBP')
     programme_id = models.CharField(max_length=255, blank=True, default='')
     programme_name = models.CharField(max_length=255, blank=True, default='')
     is_programme_deleted = models.BooleanField(default=False)
