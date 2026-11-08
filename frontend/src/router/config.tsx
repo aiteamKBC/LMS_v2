@@ -110,6 +110,7 @@ const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/en
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
 const CurriculumRecordings = lazyRoute(() => import("../pages/curriculum/recordings/page"));
+const CurriculumRecordingsHub = lazyRoute(() => import("../pages/curriculum/recordings/RecordingsHub"));
 const CoachingRecordings = lazyRoute(() => import("../pages/coaching-recordings/page"));
 const CurriculumProgrammes = lazyRoute(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazyRoute(() => import("../pages/curriculum/published/page"));
@@ -1275,7 +1276,11 @@ const routes: RouteObject[] = [
     element: <CurriculumTeamsMeetings />,
   },
   {
-    // Every saved live-session recording, by module, group and week. Read only.
+    path: "/curriculum/recordings-hub",
+    element: <CurriculumRecordingsHub />,
+  },
+  {
+    // Existing lecture links continue to open the same recording library.
     path: "/curriculum/recordings",
     element: <CurriculumRecordings />,
   },
