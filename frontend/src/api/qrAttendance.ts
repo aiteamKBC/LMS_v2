@@ -3,7 +3,7 @@ export interface QRLecture {
   id: string; moduleId: string; title: string; startsAt: string; endsAt: string | null;
   group: string; cohort: string; current: boolean;
 }
-export interface QRConfiguration { csrfToken: string; url: string; timeZone: string }
+export interface QRConfiguration { csrfToken: string; url: string; timeZone: string; serverNow: string }
 export interface QRConfirmation { recorded: boolean; alreadyRecorded: boolean; confirmedAt: string; message: string }
 export interface QRLookup {
   modules: QRModule[];
