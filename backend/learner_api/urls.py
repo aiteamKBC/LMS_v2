@@ -31,6 +31,7 @@ from .review_sessions import learner_review_sessions
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
+from . import monthly_submission
 from . import mobile_absence
 from .dashboard_header import dashboard_header, dashboard_bootstrap
 from .dashboard_weekly import dashboard_weekly
@@ -251,6 +252,11 @@ urlpatterns = [
         name="employer-enrolment-review",
     ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
+    path("monthly-submission/<str:kind>/<int:pk>/", monthly_submission.monthly_submission, name="monthly-submission"),
+    path("monthly-submission/<str:kind>/<int:pk>/dates/", monthly_submission.monthly_submission_dates,
+         name="monthly-submission-dates"),
+    path("monthly-submission/<str:kind>/<int:pk>/assignments/<str:component_id>/",
+         monthly_submission.monthly_submission_assignment, name="monthly-submission-assignment"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
     path("weekly-learning/<str:kind>/<int:pk>/", dashboard_weekly, name="learner-weekly-learning"),

@@ -10,8 +10,14 @@ SOURCE = 'live_session_learner_attendance'
 
 
 def instant(value):
-    value = datetime.fromisoformat(value.replace('Z', '+00:00')) if isinstance(value, str) else value
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError:
+            return None
     if value is None:
+        return None
+    if not isinstance(value, datetime):
         return None
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
@@ -78,12 +84,14 @@ def read_rows(owner, *, now):
                     and item.get('reporting_month') == month):
                 result.append(dict(item))
 
-    lectures = query('''SELECT r.occurrence_id,r.module_catalogue_id,r.session_date,
+    lectures = query('''SELECT r.occurrence_id,r.module_catalogue_id,
+        (o.scheduled_start AT TIME ZONE 'Europe/London')::date AS session_date,
         o.live_session_id,o.session_number,o.scheduled_start,o.scheduled_end,
-        s.module_title
+        m.title AS module_title
         FROM curriculum.live_session_learner_attendance r
         JOIN curriculum.live_session_occurrences o ON o.id=r.occurrence_id AND o.live_session_id=r.live_session_id
         JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+        JOIN curriculum.modules m ON m.module_catalogue_id=r.module_catalogue_id
         WHERE r.learner_profile_id=%s AND r.attendance_status='present'
           AND lower(coalesce(o.status,'')) NOT IN ('cancelled','canceled','deleted','failed','superseded')
           AND lower(coalesce(s.status,'')) NOT IN ('cancelled','canceled','deleted','failed','superseded')

@@ -28,7 +28,7 @@ vi.mock('@/api/employers', async importOriginal => ({
 }));
 vi.mock('@/api/curriculum', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/curriculum')>(),
-  fetchProgrammes: vi.fn(async () => []), fetchCohorts: vi.fn(async () => []), fetchGroups: vi.fn(async () => []),
+  fetchProgrammeOptions: vi.fn(async () => []), fetchCohortOptions: vi.fn(async () => []), fetchGroupOptions: vi.fn(async () => []),
 }));
 
 const learner = (id: string, name: string): UserListRow => ({
@@ -51,12 +51,12 @@ const cellFor = async (name: string) => {
   return within(row).getAllByRole('cell')[column];
 };
 
-it('shows each learner’s saved attendance mode, with no mode for staff', async () => {
+it('shows saved attendance modes for Created_users without adding independent staff rows', async () => {
   vi.mocked(fetchAttendanceModes).mockResolvedValue({ available: true, modes: { 11: { mode: 'lazy', requestedMode: null } } });
   view();
   expect(await within(await cellFor('Recorded learner')).findByText('Recorded')).toBeInTheDocument();
   expect(within(await cellFor('Live learner')).getByText('Live Sessions')).toBeInTheDocument();
-  expect(await cellFor('Staff member')).toHaveTextContent('—');
+  expect(screen.queryByText('Staff member')).not.toBeInTheDocument();
 });
 
 const applyAttendanceFilter = (value: 'live' | 'lazy') => {

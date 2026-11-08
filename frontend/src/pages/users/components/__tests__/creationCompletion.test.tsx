@@ -6,7 +6,7 @@ import { CreateEmployerModal } from '../CreateEmployerModal';
 
 const mocks = vi.hoisted(() => ({ createLearner: vi.fn(), createEmployer: vi.fn(), success: vi.fn(), error: vi.fn() }));
 vi.mock('@/api/enrolmentUsers', async () => ({ ...await vi.importActual('@/api/enrolmentUsers'), createEnrolmentUser: mocks.createLearner }));
-vi.mock('@/api/curriculum', () => ({ fetchProgrammes: async () => [], fetchCohorts: async () => [], fetchGroups: async () => [] }));
+vi.mock('@/api/curriculum', () => ({ fetchProgrammeOptions: async () => [{ id: 'P1', title: 'Programme' }], fetchCohortOptions: async () => [], fetchGroupOptions: async () => [] }));
 vi.mock('@/api/staffUsers', () => ({ fetchCaseOwners: async () => ['Test Coach'] }));
 vi.mock('@/api/employers', () => ({ createEmployer: mocks.createEmployer, listEmployers: async () => ({ results: [] }),
   listOrganisations: async () => ({ results: [{ id: 'org-1', name: 'Test organisation' }], count: 1 }) }));
@@ -34,11 +34,17 @@ describe('successful creation awaiting a manual invitation', () => {
       // The first session is no longer arranged here: the learner books it
       // themselves after signing in. A case owner is still required, because
       // that is who they will book with.
+      await screen.findByRole('option', { name: 'Programme' });
+      fireEvent.change(screen.getByLabelText(/^Programme/), { target: { value: 'P1' } });
       fireEvent.change(await screen.findByLabelText(/^Case owner/), { target: { value: 'Test Coach' } });
     }
     fireEvent.click(screen.getByRole('button', { name: /^Create/ }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(row));
     expect(onClose).toHaveBeenCalledOnce();
+    if (kind === 'learner') {
+      expect(mocks.createLearner).toHaveBeenCalledWith(expect.objectContaining({ programmeId: 'P1', cohortId: null, groupId: null }));
+      expect(mocks.createLearner.mock.calls[0][0]).not.toHaveProperty('programme');
+    }
     expect(mocks.error).not.toHaveBeenCalled();
     expect(mocks.success).toHaveBeenCalledWith(expect.stringContaining(kind === 'learner' ? 'learner' : 'Employer'), expect.stringContaining('Send their invitation from Accounts'));
   });

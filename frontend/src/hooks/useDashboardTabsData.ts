@@ -24,6 +24,6 @@ export function useDashboardTabsData(kind: LearnerKind | null, id: string | unde
     subjects: undefined, loading: read.loading, error: read.error, refresh: read.refresh, retryContract: read.refresh,
     week: { ...read, data: null }, schedule: { ...read, data: null },
   };
-  return { overview: { plan, payload: read.data, loading: read.loading, error: read.error, refresh: read.refresh } };
+  return { overview: { plan, payload: read.data, loading: read.loading, isFetching: read.isFetching, error: read.error, refresh: read.refresh } };
 }
 export type DashboardTabSnapshots = ReturnType<typeof useDashboardTabsData>;

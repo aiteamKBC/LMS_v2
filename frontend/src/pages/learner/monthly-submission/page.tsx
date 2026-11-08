@@ -4,11 +4,11 @@ import { ArrowUpRight, CalendarDays, CheckCircle2, FileText } from 'lucide-react
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useExtraActivities } from '@/api/extraActivities';
 import { AssignmentDetailsCard } from './AssignmentDetailsCard';
 import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment, monthName, statusLabels } from './model';
 import { useMonthlyAssignmentPlan } from './useMonthlyAssignmentPlan';
+import { useMonthlySubmission } from './useMonthlySubmission';
 import styles from './monthlySubmission.module.css';
 import { ExtraActivityInfo } from '@/components/feature/ExtraActivityInfo';
 
@@ -18,8 +18,10 @@ const extraStatusLabels = { ...statusLabels, rejected: 'Rejected', escalated: 'E
 export default function MonthlySubmissionPage() {
   const { kind: routeKind, id: routeId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(routeKind, routeId);
-  const { real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, true);
-  const plan = useMonthlyAssignmentPlan(kind, id);
+  // Assignment rows only; staff case-file previews keep session.detail().
+  const { real, loading, loadError, refresh, includesDetails } = useMonthlySubmission(kind, id);
+  // Only this page scopes dates to its assignments; staff case-file sessions keep their read.
+  const plan = useMonthlyAssignmentPlan(kind, id, { scopedDates: true });
   const extras = useExtraActivities(kind, id);
   const [params, setParams] = useSearchParams();
   const nav = roleNavMap.learner;
@@ -129,7 +131,7 @@ export default function MonthlySubmissionPage() {
             </section>
             <div className={styles.assignmentWorkspace}>
             <div className={styles.assignmentDetail}>
-            {assignment && assignmentGroup && <AssignmentDetailsCard assignment={assignment} group={assignmentGroup} kind={kind} learnerId={id} />}
+            {assignment && assignmentGroup && <AssignmentDetailsCard assignment={assignment} group={assignmentGroup} kind={kind} learnerId={id} loadDetails={!includesDetails} />}
             {selectedExtra && <section className={`${styles.hero} ${styles.extraDetails}`} aria-label="Extra activity details">
               <header className={styles.heroHeader}>
                 <div className={styles.heroHeading}><span className={styles.heroIcon}><FileText size={24} aria-hidden="true" /></span>

@@ -36,6 +36,17 @@ async function request<T>(url: string): Promise<T> {
 const qs = (params: Record<string, string>) =>
   new URLSearchParams(params).toString();
 
+/** Canonical placement choices: values are stable IDs, titles are display-only. */
+export async function fetchProgrammeOptions(): Promise<CurriculumItem[]> {
+  return (await request<{ results: CurriculumItem[] }>(`${BASE}/programmes/?format=options`)).results;
+}
+export async function fetchCohortOptions(programmeId: string): Promise<CurriculumItem[]> {
+  return (await request<{ results: CurriculumItem[] }>(`${BASE}/cohorts/?${qs({ format: 'options', programme_id: programmeId })}`)).results;
+}
+export async function fetchGroupOptions(programmeId: string, cohortId: string): Promise<CurriculumItem[]> {
+  return (await request<{ results: CurriculumItem[] }>(`${BASE}/groups/?${qs({ format: 'options', programme_id: programmeId, cohort_id: cohortId })}`)).results;
+}
+
 /** Distinct programmes. */
 export async function fetchProgrammes(): Promise<string[]> {
   return (await request<{ results: string[] }>(`${BASE}/programmes/`)).results;

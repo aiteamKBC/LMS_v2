@@ -115,14 +115,15 @@ class ReadRelationTests(SimpleTestCase):
             self.assertIn(f'as "{column}"', relation)
         self.assertTrue(relation.endswith(') as "modules"'))
 
-    def test_names_are_never_joined_into_the_relation(self):
-        # Names are put on rows after the read (curriculum_names.attach): the
-        # relation joins no programme / cohort / group / tutor / coach table.
+    def test_placement_names_are_derived_for_sql_filters(self):
         with PostgresVendor():
             relation = sc.read_relation('modules', NORMALISED_MODULES)
-        for column in ('programme_name', 'cohort_name', 'group_name', 'tutor_name', 'tutor_email', 'coach_name'):
+        for column in ('programme_name', 'cohort_name', 'group_name'):
+            self.assertIn(f'as "{column}"', relation)
+        for column in ('tutor_name', 'tutor_email', 'coach_name'):
             self.assertNotIn(f'"{column}"', relation)
-        self.assertNotIn(' join ', relation)
+        for key in ('programme_id', 'cohort_id', 'group_id'):
+            self.assertIn(f't.{key}', relation)
 
     def test_legacy_shape_has_no_relation(self):
         with PostgresVendor():

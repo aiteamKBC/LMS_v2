@@ -97,7 +97,7 @@ class WeeklyLearningTests(SimpleTestCase):
         self.assertEqual(report['newTopLevel'], ['modules', 'weeks', 'selectedWeek'])
         self.assertGreater(report['reductionPercent'], 90)
 
-    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False, fallback_ksbs=None, live_evidence=None,
+    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False, canonical_ksbs=None, live_evidence=None,
                    display_policy=None, cohort_id='COHORT1', detail_week=None, empty_future=False):
         context = MagicMock()
         context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind, cohort_id=cohort_id)
@@ -147,9 +147,8 @@ class WeeklyLearningTests(SimpleTestCase):
             datasets[-1][0].update(start_datetime=start, scheduled_start=start,
                                   scheduled_end=start + timedelta(hours=2), status='completed', attended=False)
         # Both roles now use the unified optimized projection.
-        if fallback_ksbs is not None:
-            datasets[4][0]['ksb_mappings'] = []
-            datasets[4][0]['fallback_ksb_mappings'] = fallback_ksbs
+        if canonical_ksbs is not None:
+            datasets[4][0]['ksb_mappings'] = canonical_ksbs
         sessions = datasets.pop()
         if sessions:
             session = sessions[0]
@@ -274,13 +273,27 @@ class WeeklyLearningTests(SimpleTestCase):
         coach_sql = next(call.args[0] for call in coach.execute.call_args_list if 'AS has_content' in call.args[0])
         self.assertNotIn('c.week_id=%s OR', coach_sql)
 
-    def test_student_inline_fallback_ksbs_keep_achievement_and_codes(self):
+    def test_canonical_ksbs_keep_achievement_and_codes(self):
         for value in ([{'code': 'K2'}, {'code': 'K3'}], '[{"code":"K2"},{"code":"K3"}]'):
-            payload, cursor, _ = self.projection(reader_options={'include_actions': True}, fallback_ksbs=value)
+            payload, cursor, _ = self.projection(reader_options={'include_actions': True}, canonical_ksbs=value)
             self.assertEqual(payload['selectedWeek']['activities'][0]['ksbCodes'], ['K2', 'K3'])
             self.assertEqual(payload['selectedWeek']['summary']['ksbCount'], 2)
             self.assertEqual(payload['selectedWeek']['summary']['achievedKsbCount'], 2)
             self.assertFalse(any('SELECT component_id,ksb_code' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_component_ksbs_use_normalised_mapping_relationships(self):
+        _, cursor, _ = self.projection(reader_options={'include_actions': True})
+        sql = next(call.args[0] for call in cursor.execute.call_args_list
+                   if 'AS ksb_mappings' in call.args[0])
+        self.assertIn('mapping.component_id=c.id', sql)
+        self.assertIn('standard_ksb.id = mapping.standard_ksb_id', sql)
+        self.assertIn("lower(btrim(coalesce(mapping.status, ''))) <> 'inactive'", sql)
+        self.assertIn("'code',standard_ksb.ksb_code", sql)
+        self.assertNotIn('description', sql)
+        for removed in ('c.ksb_mappings', 'mapping.ksb_code', 'mapping.ksb_description',
+                        'mapping.module_catalogue_id', 'mapping.week_id',
+                        'mapping.deleted_at', 'mapping.is_programme_deleted'):
+            self.assertNotIn(removed, sql)
 
     def test_actions_projection_reuses_attendance_and_preserves_selected_calculations(self):
         for selection in ('M1:1', 'M1:2'):

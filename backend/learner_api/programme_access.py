@@ -25,45 +25,35 @@ def _month_cohort_key(value):
     return None
 
 
+def cohort_programme_filter(programme_id, programme):
+    """``(sql, params)`` limiting curriculum.cohorts to one learner's programme.
+
+    ``programme_id`` is the canonical programme reference. A record carrying
+    only the programme's label is resolved to its id through
+    curriculum.programmes; the cohorts table no longer holds programme names.
+    """
+    if programme_id:
+        return 'programme_id = %s', [programme_id]
+    return 'programme_id IN (SELECT programme_id FROM curriculum.programmes WHERE name = %s)', [programme]
+
+
 def learning_access(source):
-    programme = str(getattr(source, 'programme', '') or '').strip()
-    cohort = str(getattr(source, 'cohort', '') or '').strip()
-    # The enrolment and active profile have different primary keys; the profile
-    # is reached through enrolment_id, never by names. A renamed cohort keeps its
-    # id, so the enrolment's old label must not decide which cohort this is.
+    """Whether the learner's cohort has started, in UK business time.
+
+    The canonical curriculum.cohorts schema has no deletion marker, so every
+    cohort row is live; ``status`` (planned/active/inactive) is not an access
+    rule. A cohort is found only by its canonical learner FK.
+    Database errors propagate, so a failed check can never open learning.
+    """
     cohort_id = placement_ids(source)['cohort_id']
-    if cohort_id or (programme and cohort):
-        # A copied individual date must not open teaching before the cohort.
+    if cohort_id:
         with connections['default'].cursor() as cursor:
-            if cohort_id:
-                cursor.execute(
-                    '''SELECT start_date FROM curriculum.cohorts
-                       WHERE cohort_id = %s AND deleted_at IS NULL''', [cohort_id],
-                )
-            else:
-                cursor.execute(
-                    '''SELECT start_date FROM curriculum.cohorts
-                       WHERE programme_name = %s AND cohort_name = %s AND deleted_at IS NULL
-                       ORDER BY updated_at DESC NULLS LAST LIMIT 1''',
-                    [programme, cohort],
-                )
+            cursor.execute('SELECT start_date FROM curriculum.cohorts WHERE cohort_id = %s', [cohort_id])
             row = cursor.fetchone()
-            # Imported enrolments use full month names while authoring may use
-            # abbreviations. Resolve only a unique active cohort in this exact
-            # programme; a missing date or ambiguous alias must remain blocked.
-            key = _month_cohort_key(cohort)
-            if not cohort_id and row is None and key is not None:
-                cursor.execute(
-                    '''SELECT cohort_name, start_date FROM curriculum.cohorts
-                       WHERE programme_name = %s AND deleted_at IS NULL''',
-                    [programme],
-                )
-                matches = [candidate for candidate in cursor.fetchall()
-                           if _month_cohort_key(candidate[0]) == key]
-                if len(matches) == 1:
-                    row = (matches[0][1],)
         start = _to_date(row[0]) if row else None
     else:
+        # Preserve the individual-date rule when there is no assigned cohort;
+        # never borrow the date of an unrelated namesake.
         start = _to_date(getattr(source, 'start_date', None))
     today = timezone.localdate(timezone=ZoneInfo('Europe/London'))
     return {'blocked': start is None or start > today, 'startDate': start.isoformat() if start else ''}
@@ -108,7 +98,8 @@ def requires_started_programme(path, method='GET'):
 def _start_refusal(account, *, submitting=False):
     """403 while this learner's cohort has not started; None once it has."""
     try:
-        source = EnrolmentUser.all_learners.only('programme', 'cohort', 'start_date').get(pk=account.subject_id)
+        # programme/cohort are placement properties (not columns); load their id columns.
+        source = EnrolmentUser.all_learners.only('programme_id', 'cohort_id', 'start_date').get(pk=account.subject_id)
         access = learning_access(source)
     except EnrolmentUser.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)

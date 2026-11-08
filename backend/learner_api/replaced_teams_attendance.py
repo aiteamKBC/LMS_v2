@@ -9,6 +9,8 @@ exactly one candidate. An explicitly booked additional meeting uses its saved
 series ID and session 1 instead. Ambiguity leaves the destination on its own evidence.
 """
 
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+
 
 REPLACED_ATTENDANCE_LATERAL_SQL = r'''
 LEFT JOIN LATERAL (
@@ -39,10 +41,8 @@ LEFT JOIN LATERAL (
         JOIN curriculum.live_sessions source_s
           ON source_s.id=source_o.live_session_id
         WHERE target_c.module_catalogue_id=s.module_catalogue_id
-          AND target_c.deleted_at IS NULL
-          AND NOT coalesce(target_c.is_programme_deleted,false)
-          AND (target_w.id IS NULL OR
-               (target_w.deleted_at IS NULL AND NOT coalesce(target_w.is_programme_deleted,false)))
+          AND ''' + visible_child_sql('target_c') + r'''
+          AND (target_w.id IS NULL OR ''' + visible_week_sql('target_w') + r''')
           AND lower(replace(coalesce(target_c.type,''),'-','_'))='live_session'
           AND (
               coalesce(target_c.settings_json->>'teamsOccurrenceId',

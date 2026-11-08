@@ -25,7 +25,12 @@ class MyLearningTeachingActivityTests(SimpleTestCase):
                                 'legacy:2':{'startDate':'2026-10-01','lastLiveDate':'2026-12-01'}})
         self.assertEqual(read.call_args_list[0].args[1],[['M1','M2']])
         self.assertEqual(read.call_args_list[1].args[1],[['M1','M2','OWNER']])
-        self.assertIn('NOT m.module_catalogue_id=ANY(delivery.path)',read.call_args_list[0].args[0])
+        module_sql=read.call_args_list[0].args[0]
+        self.assertIn('NOT m.module_catalogue_id=ANY(delivery.path)',module_sql)
+        self.assertNotIn('deleted_at',module_sql)
+        self.assertNotIn('is_programme_deleted',module_sql)
+        self.assertNotIn('library_state',module_sql)
+        self.assertEqual(module_sql.count("lower(btrim(coalesce(m.status, ''))) <> 'inactive'"),2)
         self.assertIn("lower(trim(coalesce(s.provider,'')))='microsoft teams'",read.call_args_list[1].args[0])
         self.assertNotIn('OWNER',result)
 

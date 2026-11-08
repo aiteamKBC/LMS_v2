@@ -51,7 +51,8 @@ function stateFromAccount(account: AuthUser): AuthState {
   // that just signed in — otherwise a learner is shown whichever record was
   // last in localStorage, or the hardcoded demo learner on a fresh browser.
   // Single funnel: every sign-in, session restore and refresh lands here.
-  rememberSignedInLearner(account.subjectType, account.subjectId, account.learnerType);
+  rememberSignedInLearner(account.subjectType, account.subjectId, account.learnerType,
+    account.role === 'admin' || account.role === 'staff' ? identity : undefined);
   syncPersonalLearningAccount(account);
 
   // Same reasoning for the coach workspace: an admin's "view as coach" choice

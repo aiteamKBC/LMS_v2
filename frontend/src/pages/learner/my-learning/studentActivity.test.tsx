@@ -204,7 +204,7 @@ describe('learner subject cards', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByText('Anna Rundell')).toBeInTheDocument();
-    expect(within(screen.getByText('Planned OTJH').parentElement!).getByText('Unavailable')).toBeInTheDocument();
+    expect(within(screen.getByText('Activity Planned Hours').parentElement!).getByText('Unavailable')).toBeInTheDocument();
     expect(within(screen.getByText('Recorded OTJH').parentElement!).queryByText('Unavailable')).not.toBeInTheDocument();
     const module = screen.getByRole('button', { name: /Leadership/ });
     fireEvent.click(module);
@@ -535,7 +535,7 @@ describe('subjects shared with Module Builder', () => {
   it('shows recorded time across all displayed subjects, including later direct time', () => {
     render(<StudentActivityPanel data={{ ...data, actual_total: 1, recorded_otjh_total: 3.5, planned_total: 2 }} loading={false} error={null} onRetry={vi.fn()} />);
     expect(within(screen.getByText('Recorded OTJH').parentElement!).getByText('3h 30m')).toBeInTheDocument();
-    expect(within(screen.getByText('Planned OTJH').parentElement!).getByText('2h')).toBeInTheDocument();
+    expect(within(screen.getByText('Activity Planned Hours').parentElement!).getByText('2h')).toBeInTheDocument();
   });
 
   it('uses comparable whole-programme OTJH totals when the audit supplies them', () => {
@@ -1017,5 +1017,19 @@ describe('subject months, weeks and completion', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
     await screen.findByText(/Attempt saved: 0%/);
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+  });
+});
+
+
+describe('activity planned hours provenance', () => {
+  it('labels the activity sum without changing its value', () => {
+    render(<StudentActivityPanel data={{ ...data, planned_total: 400 }} loading={false} error={null} onRetry={vi.fn()} />);
+    expect(screen.getByText('Activity Planned Hours')).toBeVisible();
+    expect(screen.getByText('Activity Planned Hours').parentElement).toHaveTextContent('400h');
+  });
+  it('does not label an audit programme total as an activity sum', () => {
+    render(<StudentActivityPanel data={{ ...data, planned_total: 400, audit_tp_planned: 288 }} loading={false} error={null} onRetry={vi.fn()} />);
+    expect(screen.getByText('Planned OTJH')).toBeVisible();
+    expect(screen.queryByText('Activity Planned Hours')).not.toBeInTheDocument();
   });
 });

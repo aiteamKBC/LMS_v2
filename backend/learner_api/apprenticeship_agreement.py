@@ -157,7 +157,7 @@ def _group_dates(learner):
         except DatabaseError:
             logger.warning("Could not read the placement ids for learner %s", getattr(learner, "pk", "?"))
             cohort_id = ""
-        cohort_start, cohort_end = cohort_dates(programme, cohort, cohort_id)
+        cohort_start, cohort_end = cohort_dates("", "", cohort_id) if cohort_id else (None, None)
         if (start is None and cohort_start) or (end is None and cohort_end):
             origin = "cohort" if start is None and end is None else "learner/cohort"
             return start or cohort_start, end or cohort_end, origin

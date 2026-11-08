@@ -4,6 +4,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import { readLearnerJson } from '@/api/learnerRead';
 import { subjectRequest } from '@/api/studentActivity';
 import { fetchTrainingPlanContract, type TrainingPlanContract } from '@/api/trainingPlanDashboard';
+import { fetchMonthlySubmissionDates } from '@/api/monthlySubmission';
 import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
 
 type PlanState = {
@@ -12,7 +13,11 @@ type PlanState = {
   submissionCounts: Record<string, number>;
 };
 
-export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
+/** `scopedDates` (learner Monthly Submission only) reads its assignments' five
+ * date fields instead of the whole subject-covers metadata. Case-file sessions
+ * and the coach Assignments tab keep their existing reads. */
+export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string, options: { scopedDates?: boolean } = {}) {
+  const scopedDates = Boolean(options.scopedDates);
   const session = useCaseFileSession();
   const identity = `${kind}:${id}`;
   const [attempt, setAttempt] = useState(0);
@@ -25,7 +30,8 @@ export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
     setState({ identity, metadata: null, contract: null, statuses: null, submissionCounts: {}, loading: true, errors: [] });
     const query = new URLSearchParams({ learnerKind: kind, learnerId: id });
     void Promise.allSettled([
-      session ? session.read<CoverMetadata>('assignments', { resource: 'covers' }, { signal: controller.signal, refresh: attempt > 0 }) : subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(id)}/?refs=`, { signal: controller.signal, revalidate: attempt > 0 }),
+      session ? session.read<CoverMetadata>('assignments', { resource: 'covers' }, { signal: controller.signal, refresh: attempt > 0 }) : scopedDates ? fetchMonthlySubmissionDates(kind, id, { signal: controller.signal, revalidate: attempt > 0 })
+        : subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(id)}/?refs=`, { signal: controller.signal, revalidate: attempt > 0 }),
       session ? session.read<TrainingPlanContract>('assignments', { resource: 'contract' }, { signal: controller.signal, refresh: attempt > 0 }) : fetchTrainingPlanContract(kind, id, controller.signal),
       session ? session.read<{ statuses: { activityType: string; activityId: string; status: string; submissionCount?: number }[] }>('assignments', { resource: 'statuses' }, { signal: controller.signal, refresh: attempt > 0 }) : readLearnerJson<{ statuses: { activityType: string; activityId: string; status: string; submissionCount?: number }[] }>(
         `/learner_api/reflection/submissions/?${query}`, { signal: controller.signal, revalidate: true }),
@@ -49,7 +55,7 @@ export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
       });
     }).finally(() => window.clearTimeout(timer));
     return () => { active = false; controller.abort(); window.clearTimeout(timer); };
-  }, [kind, id, identity, attempt, session]);
+  }, [kind, id, identity, attempt, session, scopedDates]);
   const current = state?.identity === identity ? state : null;
   return { metadata: current?.metadata || null, contract: current?.contract || null,
     statuses: current?.statuses || null, loading: current?.loading ?? Boolean(kind && id),

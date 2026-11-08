@@ -26,7 +26,10 @@ from .learning_plan import effective_training_plan, request_preset_cache
 from .progress_rules import progress_counts_as_achieved
 from .projection_performance import projection_stage, local_catalogue_trace
 
-SOURCE_FIELDS = ('id', 'aptem_id', 'email', 'programme', 'cohort', 'group',
+# Created_users stores placement ids only. The programme/cohort/group names are
+# EnrolmentUser properties resolved from the pk (_learner_placement_names), so
+# they cannot be listed in .only(); load the concrete ids that placement_ids reads.
+SOURCE_FIELDS = ('id', 'aptem_id', 'email', 'programme_id', 'cohort_id', 'group_id',
                  'learning_plan', 'training_plan', 'modules', 'weeks', 'components', 'learner_type', 'username')
 UK = ZoneInfo('Europe/London')
 
@@ -45,13 +48,15 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .training_plan_dashboard import rows, plan_module, is_educational_live_session_week
     from .student_activity import _builder_cover_url
     from .subject_origins import imported_course_links
-    cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
-        m.start_date,m.end_date,m.tutor_name,m.programme_id,m.programme_name,
-        m.cohort_name,m.group_name,m.total_otjh,m.sessions_number,m.source_type,m.source_id,
+    from .module_placement_sql import module_placement_names_sql, module_tutor_name_sql
+    # curriculum.modules no longer stores placement names or a deletion
+    # marker: names come through the ids, and every requested module resolves.
+    cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
+        m.start_date,m.end_date,{module_tutor_name_sql('m')} AS tutor_name,m.programme_id,{module_placement_names_sql('m')},
+        m.total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
         to_jsonb(m)->'session_overrides' AS session_overrides
         FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
-          AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
         ORDER BY m.title''',[ids])
     found = rows(cur)
     modules = {r['id']:plan_module({**r,'weeks_number':None}) for r in found}
@@ -461,8 +466,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             builder = {f'current:{mid}': {'id':mid, 'title':modules[mid]['title']} for mid in resolved['module_titles']}
         elif purpose == 'search':
             cur.execute('''SELECT m.module_catalogue_id,m.title FROM curriculum.modules m
-                WHERE (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
-                  AND m.module_catalogue_id=ANY(%s)''',[ids])
+                WHERE m.module_catalogue_id=ANY(%s)''',[ids])
             from .subject_content import clean_text
             covers, builder = {}, {f'current:{mid}':{'id':mid,'title':clean_text(title)} for mid,title in cur.fetchall()}
         else:

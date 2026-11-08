@@ -30,8 +30,8 @@ MAX_ROWS = 500
 MAX_SHEET_ROWS = 2000
 COLUMNS = (
     ("First name", "firstName"), ("Surname", "surname"), ("Email", "email"),
-    ("Mobile", "phone"), ("Date of birth", "dob"), ("Programme", "programme"),
-    ("Cohort", "cohort"), ("Group", "group"), ("Employer ID", "employerId"),
+    ("Mobile", "phone"), ("Date of birth", "dob"), ("Programme ID", "programmeId"),
+    ("Cohort ID", "cohortId"), ("Group ID", "groupId"), ("Employer ID", "employerId"),
     ("Case owner", "caseOwner"), ("Preferred name", "preferredName"),
     ("Title", "title"), ("Gender", "gender"), ("National Insurance number", "niNumber"),
     ("Postcode", "postcode"), ("Address 1", "addressLine1"), ("Address 2", "addressLine2"),
@@ -56,7 +56,7 @@ COLUMNS = (
 #: that row records the start date and leaves the session to be booked from the
 #: learner's calendar, rather than inventing an hour nobody chose.
 REQUIRED = {
-    "firstName", "surname", "email", "caseOwner", "firstSessionDate",
+    "firstName", "surname", "email", "caseOwner", "firstSessionDate", "programmeId",
 }
 LABELS = {key: label for label, key in COLUMNS}
 
@@ -206,7 +206,7 @@ def _matches_parent(row, parent, kind):
     row_id = _text(row.get(f"{kind}_id"))
     if row_id and parent_id:
         return row_id == parent_id
-    return _key(row.get(f"{kind}_name")) == _key(parent.get("name") or parent.get(f"{kind}_name"))
+    return False
 
 
 def _resolve_placement(payload, references, row_number):
@@ -214,14 +214,14 @@ def _resolve_placement(payload, references, row_number):
     for kind, table, parent in (("programme", "programmes", None),
                                  ("cohort", "cohorts", "programme"),
                                  ("group", "groups", "cohort")):
-        value = payload.get(kind)
+        value = payload.get(kind + "Id")
         if not value:
             continue
-        if parent and not payload.get(parent):
+        if parent and not payload.get(parent + "Id"):
             errors.append(_issue(row_number, f"Select a {parent} before a {kind}.", kind))
             continue
         matches = [row for row in references[table]
-                   if _key(row.get("name") if kind == "programme" else row.get(f"{kind}_name")) == _key(value)]
+                   if _text(row.get(f"{kind}_id")) == _text(value)]
         if parent:
             parent_row = programme if parent == "programme" else cohort
             matches = [row for row in matches if parent_row and _matches_parent(row, parent_row, parent)]
@@ -230,10 +230,11 @@ def _resolve_placement(payload, references, row_number):
         if len(matches) != 1:
             message = f"Unknown {kind} or incorrect parent selection. Use the Placements sheet."
             if len(matches) > 1:
-                message = f"This {kind} name is ambiguous. Ask an administrator to make its name unique."
+                message = f"This {kind} ID is ambiguous. Ask an administrator to review its identity."
             errors.append(_issue(row_number, message, kind))
             continue
         selected = matches[0]
+        payload[kind + "Id"] = _text(selected.get(f"{kind}_id"))
         payload[kind] = _text(selected.get("name") if kind == "programme" else selected.get(f"{kind}_name"))
         if kind == "programme":
             programme = selected
@@ -378,7 +379,7 @@ def template_workbook(references):
         ("2", "First name, Surname and Email are required. All other columns are optional. Delete unused blank rows if desired."),
         ("3", "Maximum 500 students and 5 MB per .xlsx file. Do not enter formulas. Phone, postcode, NI and reference values must be text."),
         ("4", "Dates of birth must use YYYY-MM-DD (for example 2000-04-25). Keep mobile numbers as text to preserve leading zeros."),
-        ("5", "Copy Programme, Cohort and Group names from Placements. Cohort requires Programme; Group requires both."),
+        ("5", "Copy Programme ID, Cohort ID and Group ID from Placements; names are shown for reference. Cohort requires Programme; Group requires both."),
         ("6", "Optional Employer ID and Case owner must match the Employers and Case owners sheets. Organisation follows the employer."),
         ("7", "Upload for preview, correct any listed errors, then import. If any row is invalid, no students are saved."),
         ("8", "Existing learner or platform-account emails and repeated emails are rejected. Existing records are never updated."),
@@ -389,15 +390,15 @@ def template_workbook(references):
     placements = []
     for programme in references["programmes"]:
         name = _text(programme.get("name"))
-        placements.append((name, "", ""))
+        placements.append((_text(programme.get("programme_id")), name, "", "", "", ""))
         for cohort in references["cohorts"]:
             if not _matches_parent(cohort, programme, "programme"):
                 continue
-            placements.append((name, _text(cohort.get("cohort_name")), ""))
+            placements.append((_text(programme.get("programme_id")), name, _text(cohort.get("cohort_id")), _text(cohort.get("cohort_name")), "", ""))
             for group in references["groups"]:
                 if _matches_parent(group, cohort, "cohort") and _matches_parent(group, programme, "programme"):
-                    placements.append((name, _text(cohort.get("cohort_name")), _text(group.get("group_name"))))
-    _sheet(workbook, "Placements", ["Programme", "Cohort", "Group"], sorted(set(placements)))
+                    placements.append((_text(programme.get("programme_id")), name, _text(cohort.get("cohort_id")), _text(cohort.get("cohort_name")), _text(group.get("group_id")), _text(group.get("group_name"))))
+    _sheet(workbook, "Placements", ["Programme ID", "Programme", "Cohort ID", "Cohort", "Group ID", "Group"], sorted(set(placements)))
     _sheet(workbook, "Employers", ["Employer ID", "Employer", "Organisation"], [
         (row["id"], f'{_text(row["first_name"])} {_text(row["surname"])}'.strip(),
          ", ".join(map(str, row["employer_group_names"])) if isinstance(row["employer_group_names"], list) else "")

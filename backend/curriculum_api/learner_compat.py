@@ -141,55 +141,11 @@ def enrolment_placement_by_id(alias='enrolment'):
 
 
 def roster_sources(alias='enrolment'):
-    """``attendance_assignments.roster_sources`` for the normalised table."""
-    from types import SimpleNamespace
-    projections = []
-    for column in ('Training_plan', 'Learning_plan'):
-        projections.append(f'''CASE WHEN jsonb_typeof("{column}"::jsonb)='array'
-            THEN (SELECT coalesce(jsonb_agg(jsonb_build_object(
-                'moduleId',entry->'moduleId','assignmentMode',entry->'assignmentMode')), '[]'::jsonb)
-                FROM jsonb_array_elements("{column}"::jsonb) entry
-                WHERE jsonb_typeof(entry)='object')
-            ELSE "{column}"::jsonb END''')
-    with connections[alias].cursor() as cursor:
-        cursor.execute(
-            '''SELECT id,"Username","Email",coalesce(programme_id::text,''),coalesce(cohort_id::text,''),'''
-            '''coalesce(group_id::text,''),''' + ','.join(projections) + ' FROM enrolment."Created_users"'
-        )
-        rows = cursor.fetchall()
-    lookups = curriculum_names.lookups()
-    sources = []
-    for pk, username, email, programme_id, cohort_id, group_id, training_plan, learning_plan in rows:
-        sources.append(SimpleNamespace(
-            pk=pk, username=username, email=email,
-            programme=(lookups['programmes'].get(programme_id) or {}).get('name', ''),
-            group=(lookups['groups'].get(group_id) or {}).get('name', ''),
-            programme_id=programme_id, cohort_id=cohort_id, group_id=group_id,
-            training_plan=training_plan, learning_plan=learning_plan,
-        ))
-    return sources
+    """Kept for callers; educational placement comes from the canonical reader."""
+    from learner_api.attendance_assignments import roster_sources as canonical_sources
+    return canonical_sources(alias=alias)
 
 
 def module_roster(module_id):
-    """``attendance_assignments.module_roster`` on either schema (same result shape)."""
-    from learner_api import attendance_assignments
-    if not module_id or not enrolment_placement_by_id():
-        return attendance_assignments.module_roster(module_id)
-    from learner_api.learning_plan import _effective_plan_ids
-    from learner_api.models import LearnerProfile
-    from .learner_assignment_counts_sql import seed_preset_cache
-    sources = roster_sources()
-    # One round trip of group presets, keyed exactly as _effective_plan_ids asks
-    # (by group id when the learner has one, else by programme/group name).
-    presets = seed_preset_cache([
-        {'programme': source.programme, 'grp': source.group, 'group_id': source.group_id} for source in sources
-    ])
-    members = {source.pk: source for source in sources if module_id in _effective_plan_ids(source, presets)}
-    if not members:
-        return []
-    profiles = LearnerProfile.objects.filter(enrolment_id__in=members).values('id', 'enrolment_id', 'email', 'full_name')
-    return [{
-        'learner_profile_id': profile['id'],
-        'learner_email': str(members[profile['enrolment_id']].email or profile['email'] or '').strip().casefold(),
-        'learner_name': members[profile['enrolment_id']].username or profile['full_name'] or '',
-    } for profile in profiles]
+    from learner_api.attendance_assignments import module_roster as canonical_roster
+    return canonical_roster(module_id)

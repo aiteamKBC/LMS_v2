@@ -1,160 +1,83 @@
-/**
- * One row per person in the user directory.
- *
- * Somebody who is both staff and a learner — an administrator or coach who also
- * studies a programme — has a row in `Staff_users` AND a row in
- * `Created_users`, on the same address. The directory loads those two lists
- * separately and used to concatenate them, so that person appeared twice: the
- * same human listed as two users, each carrying half the truth.
- *
- * The learner record wins the merged row, because it is the one with the
- * programme, the learning plan and the enrolment actions the directory exists
- * to offer.
- */
+/** Owner-approved directory identity is Created_users.id, not shared email. */
 import { describe, expect, it } from 'vitest';
-import { matches, mergeDirectoryRows } from "../page.helpers";
-import type { UserListRow } from '../types';
+import { directoryCategory, matches, mergeDirectoryRows } from '../page.helpers';
+import type { UserListRow, UsersFilter } from '../types';
 
-function row(over: Partial<UserListRow>): UserListRow {
+function row(over: Partial<UserListRow> = {}): UserListRow {
   return {
-    id: '1',
-    uuid: null,
-    name: 'Someone',
-    type: 'User',
-    email: 'someone@kbc.test',
-    group: '',
-    subscriptionStatus: '',
-    subscriptionVerified: false,
-    learningPlan: false,
-    programmeStatus: '',
-    ...over,
-  } as UserListRow;
+    id: '1', uuid: null, name: 'Example User', type: 'User', source: 'commercial',
+    email: 'shared@example.test', group: 'Group A', programme: 'Programme A', cohort: 'Cohort A',
+    subscriptionStatus: 'FullUser', subscriptionVerified: true, learningPlan: true,
+    programmeStatus: 'Delivery', ...over,
+  };
 }
 
-const staff = row({
-  id: '43', name: 'Mahmoud Fouda', type: 'Admin', source: 'staff',
-  email: 'Mahmoud.Fouda@kentbusinesscollege.com',
-});
-const learner = row({
-  id: '510', name: 'Mahmoud Fouda', type: 'User', source: 'commercial',
-  email: 'mahmoud.fouda@kentbusinesscollege.com',
-  programmeStatus: 'Delivery', learningPlan: true, group: 'G1',
-});
-
-describe('mergeDirectoryRows', () => {
-  it('lists a person who is both staff and a learner once', () => {
-    expect(mergeDirectoryRows([learner, staff])).toHaveLength(1);
+describe('Created_users directory identity', () => {
+  it('retains different IDs sharing an email, regardless of email case', () => {
+    const users = [row(), row({ id: '2', email: 'SHARED@example.test' })];
+    expect(mergeDirectoryRows(users)).toEqual(users);
   });
 
-  it('matches the two records regardless of address casing', () => {
-    // The staff row spells it Mahmoud.Fouda@…, the learner row mahmoud.fouda@…
-    // — the same person, and the same match the backend makes.
-    expect(mergeDirectoryRows([staff, learner])).toHaveLength(1);
+  it('deduplicates only the same Created_users ID, even if the kind changed', () => {
+    const first = row();
+    expect(mergeDirectoryRows([first, row({ source: 'apprenticeship' })])).toEqual([first]);
   });
 
-  it('keeps the learner record as the row, whichever order they arrive in', () => {
-    for (const rows of [[learner, staff], [staff, learner]]) {
-      const [merged] = mergeDirectoryRows(rows);
-      expect(merged.id).toBe('510');
-      expect(merged.source).toBe('commercial');
-      expect(merged.programmeStatus).toBe('Delivery');
-      expect(merged.learningPlan).toBe(true);
-    }
+  it('does not add independent staff or employer records or merge their fields', () => {
+    const user = row({ name: '', group: '', programme: '', cohort: '', programmeStatus: '' });
+    const staff = row({ id: '50', source: 'staff', type: 'Admin' });
+    const employer = row({ id: '51', source: 'employer', type: 'Employer' });
+    expect(mergeDirectoryRows([staff, user, employer])).toEqual([user]);
+    expect(mergeDirectoryRows([staff, employer])).toEqual([]);
   });
 
-  it('shows both roles in the Type column', () => {
-    // The person really is both; showing one made the merged row look as
-    // though the other record had been lost.
-    const [merged] = mergeDirectoryRows([staff, learner]);
-
-    expect(merged.type).toBe('Admin · User');
+  it('keeps blank emails and does not conflate UUIDs or names with physical IDs', () => {
+    const users = [row({ email: '' }), row({ id: '2', email: '' })];
+    expect(mergeDirectoryRows(users)).toEqual(users);
   });
 
-  it('does not repeat a role the two records agree on', () => {
-    const [merged] = mergeDirectoryRows([
-      row({ id: '1', email: 'x@kbc.test', source: 'staff', type: 'User' }),
-      row({ id: '2', email: 'x@kbc.test', source: 'commercial', type: 'User' }),
-    ]);
-
-    expect(merged.type).toBe('User');
+  it('preserves server order and all API/export fields without mutating a row', () => {
+    const users = [row({ id: '9' }), row({ id: '2' })];
+    const snapshot = structuredClone(users);
+    const result = mergeDirectoryRows(users);
+    expect(result).toEqual(snapshot);
+    expect(result[0]).toBe(users[0]);
+    expect(result.map(user => user.id)).toEqual(['9', '2']);
   });
 
-  it('leaves a single-record row’s type untouched', () => {
-    const [merged] = mergeDirectoryRows([staff]);
-
-    expect(merged.type).toBe('Admin');
+  it('lets an imported replacement win for its ID without dropping another shared-email user', () => {
+    const updated = row({ name: 'Updated User' });
+    const other = row({ id: '2' });
+    expect(mergeDirectoryRows([updated, row(), other])).toEqual([updated, other]);
   });
 
-  it('keeps the staff position where the learner record has none', () => {
-    // Nothing is lost by merging: the staff row fills in underneath.
-    const [merged] = mergeDirectoryRows([
-      staff, row({ ...learner, type: '' }),
-    ]);
+  it.each(['User', 'Employer', 'Referrer', 'Admin', 'Caseowner'] as const)(
+    'preserves Created_users Type %s without adding another source role', type => {
+      const user = row({ type });
+      expect(mergeDirectoryRows([user])[0].type).toBe(type);
+      expect(matches(user, { type, page: 1, pageSize: 8 })).toBe(true);
+    },
+  );
 
-    expect(merged.type).toBe('Admin');
-  });
-
-  it('leaves everybody else alone', () => {
-    const others = [
-      row({ id: '2', email: 'a@kbc.test', source: 'staff' }),
-      row({ id: '3', email: 'b@kbc.test', source: 'commercial' }),
-      row({ id: '4', email: 'c@kbc.test', source: 'employer' }),
-    ];
-
-    expect(mergeDirectoryRows(others)).toHaveLength(3);
-  });
-
-  it('never merges rows that have no address', () => {
-    // Two blank addresses are not evidence of the same person.
-    const blanks = [
-      row({ id: '5', email: '', source: 'staff' }),
-      row({ id: '6', email: '', source: 'commercial' }),
-    ];
-
-    expect(mergeDirectoryRows(blanks)).toHaveLength(2);
-  });
-
-  it('preserves the order the rows arrived in', () => {
-    const first = row({ id: '9', email: 'first@kbc.test', source: 'commercial' });
-    const merged = mergeDirectoryRows([first, learner, staff]);
-
-    expect(merged.map(r => r.id)).toEqual(['9', '510']);
-  });
-
-  it('merges a staff row with an employer row on one address', () => {
-    // Neither is a learner, so the later record simply fills the earlier one in
-    // rather than one of them being dropped.
-    const merged = mergeDirectoryRows([
-      row({ id: '7', email: 'dual@kbc.test', source: 'staff', type: 'Admin' }),
-      row({ id: '8', email: 'dual@kbc.test', source: 'employer', group: 'Acme' }),
-    ]);
-
-    expect(merged).toHaveLength(1);
-    expect(merged[0].group).toBe('Acme');
+  it.each([
+    ['User', 'learners'], ['Referrer', 'learners'], ['Caseowner', 'learners'],
+    ['Admin', 'admins'], ['Employer', 'employers'],
+  ] as const)('counts Type %s in the %s summary', (type, category) => {
+    expect(directoryCategory(row({ type }))).toBe(category);
   });
 });
 
-describe('the Type filter on a merged row', () => {
-  it('finds a merged "Admin · User" row when filtering for Admin', () => {
-    const [merged] = mergeDirectoryRows([staff, learner]);
-
-    expect(matches(merged, { type: 'Admin' } as never)).toBe(true);
-  });
-
-  it('finds the same merged row when filtering for User', () => {
-    const [merged] = mergeDirectoryRows([staff, learner]);
-
-    expect(matches(merged, { type: 'User' } as never)).toBe(true);
-  });
-
-  it('still excludes a row that holds neither role', () => {
-    const [merged] = mergeDirectoryRows([staff, learner]);
-
-    expect(matches(merged, { type: 'Employer' } as never)).toBe(false);
-  });
-
-  it('behaves exactly as before on an ordinary, unmerged row', () => {
-    expect(matches(staff, { type: 'Admin' } as never)).toBe(true);
-    expect(matches(staff, { type: 'User' } as never)).toBe(false);
+describe('directory filters preserve authoritative row values', () => {
+  it.each([
+    ['name', { userName: 'example' }, { userName: 'other' }],
+    ['email', { email: 'shared@' }, { email: 'missing@' }],
+    ['programme', { programme: ' programme a ' }, { programme: 'Programme B' }],
+    ['cohort', { cohort: 'cohort a' }, { cohort: 'Cohort B' }],
+    ['group', { groups: ['group a'] }, { groups: ['Group B'] }],
+    ['registration status', { statuses: ['FullUser'] }, { statuses: ['Invited'] }],
+    ['programme status', { programmeStatus: 'Delivery' }, { programmeStatus: 'Active' }],
+  ] as [string, Partial<UsersFilter>, Partial<UsersFilter>][])('%s filter', (_name, matching, different) => {
+    expect(matches(row(), { page: 1, pageSize: 8, ...matching })).toBe(true);
+    expect(matches(row(), { page: 1, pageSize: 8, ...different })).toBe(false);
   });
 });

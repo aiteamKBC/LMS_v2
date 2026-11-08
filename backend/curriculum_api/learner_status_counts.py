@@ -23,7 +23,7 @@ def plan_membership(value, wanted):
 
 
 def learner_facts(module_ids):
-    """One small row per permanent learner; no names, emails or plan bodies.
+    """One small row per learner, with placement labels but no personal names.
 
     Module membership is reduced inside Postgres. Only the rare JSON-string
     plans take the roster's Python parsing path, and only for those learners.
@@ -32,12 +32,23 @@ def learner_facts(module_ids):
     if views.connection.vendor != 'postgresql' or not views.learner_schema_table_exists('learners'):
         raise DatabaseError('Learner counts are unavailable.')
     columns = views.learner_schema_columns('learners')
-    # The normalised database keeps only the placement ids, not the names; the
-    # ids decide placement anyway, so either is enough and a missing name reads as NULL.
-    if not {'id', 'lifecycle_status'} <= columns or not {'programme', 'programme_id'} & columns:
+    if not {'id', 'lifecycle_status'} <= columns:
         raise DatabaseError('Learner count columns are unavailable.')
-    names = ', '.join(f"p.{column} AS {column}" if column in columns
-                      else f"NULL::text AS {column}" for column in ('programme', 'cohort', 'group_name'))
+    # "Learner".learners no longer stores placement names. Read them as
+    # LearnerProfile.programme/.cohort/.group_name do: through the profile's own
+    # placement ids and the curriculum tables. A missing id reads as no name.
+    # Each target ID is a verified primary key: these LEFT JOINs preserve one
+    # row per learner, including learners with absent placement relationships.
+    name_selects, name_joins = [], []
+    for alias, id_column, table, name, label in (
+            ('placement_programme', 'programme_id', 'curriculum.programmes', 'name', 'programme'),
+            ('placement_cohort', 'cohort_id', 'curriculum.cohorts', 'cohort_name', 'cohort'),
+            ('placement_group', 'group_id', 'curriculum.groups', 'group_name', 'group_name')):
+        if id_column in columns:
+            name_selects.append(f'{alias}.{name} AS {label}')
+            name_joins.append(f'LEFT JOIN {table} {alias} ON {alias}.{id_column} = p.{id_column}')
+        else:
+            name_selects.append(f'NULL AS {label}')
     identity = ', '.join(f"coalesce(p.{column}, '') AS {column}" if column in columns
                          else f"'' AS {column}" for column in ('programme_id', 'cohort_id', 'group_id'))
     plan_select = 'false AS explicit, ARRAY[]::text[] AS module_ids, false AS ambiguous'
@@ -60,10 +71,10 @@ def learner_facts(module_ids):
     programme_status = "nullif(btrim(p.programme_status), '')," if 'programme_status' in columns else ''
     with views.connection.cursor() as cursor:
         cursor.execute(f"""
-            SELECT p.id, {names}, {identity},
+            SELECT p.id, {', '.join(name_selects)}, {identity},
                    coalesce(nullif(btrim(p.lifecycle_status), ''), {programme_status} 'unknown') AS status,
                    {plan_select}
-            FROM "Learner"."learners" p {plan_join}
+            FROM "Learner"."learners" p {' '.join(name_joins)} {plan_join}
         """, params)
         names = [column[0] for column in cursor.description]
         rows = [dict(zip(names, row)) for row in cursor.fetchall()]
@@ -150,16 +161,10 @@ def counts_for_lineages(lineages, facts, programme_candidates):
             placed = set()
             for index, fact in enumerate(facts):
                 linked_programme = str(fact.get('programme_id') or '').strip()
-                if not (programme_id and candidates and (
-                    linked_programme == programme_id if linked_programme else views.normalise(fact.get('programme')) in candidates
-                )):
+                if not programme_id or linked_programme != programme_id:
                     continue
-                row = {'cohortId': fact.get('cohort_id'), 'cohort': fact.get('cohort'),
-                       'groupId': fact.get('group_id'), 'group': fact.get('group_name')}
-                if all(views.narrow_learners_to_placement(
-                    [row], id_key, lineage.get(id_key) or '', name_key, lineage.get(lineage_name) or '')
-                    for id_key, name_key, lineage_name in (
-                        ('cohortId', 'cohort', 'cohortName'), ('groupId', 'group', 'groupName'))):
+                if all(not lineage.get(scope_key) or str(fact.get(fact_key) or '') == str(lineage[scope_key])
+                       for scope_key, fact_key in (('cohortId', 'cohort_id'), ('groupId', 'group_id'))):
                     placed.add(index)
             placements[placement_key] = placed
         placed = placements[placement_key]

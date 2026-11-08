@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from login.permissions import staff_only
 from learner_api import learning_plan as plans
 
-from . import learner_compat
+from learner_api.placement_links import with_placements, placement_ids, RELATIONS, CACHE
 from learner_api.active_users import hydrate_training_plan
 from learner_api.mappers import get_training_plan, stored_training_plan, training_plan_field
 from learner_api.models import EnrolmentUser, LearnerProfile
@@ -40,7 +40,7 @@ def _target(scope, identifier):
             'programmeName': views.clean_str(row.get('programme_name')),
             'programmeId': views.clean_str(row.get('programme_id')),
             'moduleIds': list(dict.fromkeys(views.clean_str(m.get('module_catalogue_id')) for m in modules)),
-            'groupNames': {views.clean_str(group.get('group_name')) for group in groups},
+            'groupIds': group_ids,
         }
     # Assignment requests normally carry the stored MOD-* id. Resolve that
     # form with the indexed existence check first; legacy aliases still fall
@@ -58,8 +58,8 @@ def _target(scope, identifier):
 
 
 def _same_cohort(learner, target):
-    return (plans._s(learner.cohort) == target['name']
-            and plans._s(learner.programme) in {target['programmeName'], target['programmeId']})
+    ids = placement_ids(learner)
+    return ids['cohort_id'] == target['id'] and ids['programme_id'] == target['programmeId']
 
 
 def _assigned(learner, target, cache):
@@ -136,21 +136,17 @@ def _assign(learner, target, catalogue, cache):
     setattr(learner, field, plan)
     fields = [field]
     if target['scope'] == 'cohort':
-        keep_group = _same_cohort(learner, target) and plans._s(learner.group) in target['groupNames']
-        learner.programme = target['programmeName'] or target['programmeId']
-        learner.cohort = target['name']
-        if not keep_group:
-            learner.group = ''
-        fields += ['programme', 'cohort', 'group']
-        # Update an existing profile without changing activation, company,
-        # review schedules or the learner's dates as a side effect of assignment.
-        profile_updates = {
-            'programme': learner.programme, 'programme_id': target['programmeId'] or None,
-            'cohort': learner.cohort, 'cohort_id': target['id'], 'group_name': learner.group,
-        }
+        keep_group = _same_cohort(learner, target) and placement_ids(learner)['group_id'] in target['groupIds']
+        # Only an explicit assignment changes placement; enrolment remains registration data.
+        profile_updates = {'programme_id': target['programmeId'] or None, 'cohort_id': target['id']}
         if not keep_group:
             profile_updates['group_id'] = None
-        LearnerProfile.objects.filter(enrolment_id=learner.pk).update(**profile_updates)
+        updated = (LearnerProfile.objects.using(learner._state.db or 'default')
+                   .filter(enrolment_id=learner.pk).update(**profile_updates))
+        if updated != 1:
+            raise ValueError('Exactly one linked learner is required for cohort assignment.')
+        learner.__dict__.pop(CACHE, None)
+        learner.__dict__.pop('_placement_names', None)
     learner.save(update_fields=fields)
     # Strict here: all selected learners and their delivery plans commit together.
     plans.sync_learning_plan_mirror(learner, strict=True)
@@ -185,14 +181,10 @@ def _handle(request, scope, identifier):
         if target is None:
             return JsonResponse({'error': f'Active {scope} not found.'}, status=404)
         if request.method == 'GET':
-            # learner_compat: on the normalised schema the placement names are
-            # read from the curriculum by id (learner_api's model still maps the
-            # dropped name columns).
-            learners = learner_compat.fill(learner_compat.only(
-                EnrolmentUser.all_learners,
-                'id', 'username', 'email', 'programme', 'cohort', 'group',
+            learners = with_placements(EnrolmentUser.all_learners.only(
+                'id', 'username', 'email', 'programme_id', 'cohort_id', 'group_id',
                 'employer', 'organization', 'programme_status', 'learner_type',
-            ).order_by('username', 'id'), EnrolmentUser)
+            ).order_by('username', 'id'))
             return JsonResponse(_payload(target, learners))
         try:
             body = json.loads(request.body)
@@ -274,12 +266,11 @@ def module_learner_assignments(request, identifier):
 def module_assignment_roster(module_id, placement_learners, lifecycle_status=''):
     """Include direct module membership without broadening programme/cohort rosters."""
     placed = {str(row['id']): row for row in placement_learners}
-    profiles = learner_compat.defer_missing(LearnerProfile.objects.filter(
+    profiles = LearnerProfile.objects.select_related(*RELATIONS).filter(
         Q(pk__in=list(placed)) | Q(learning_plan__contains=[{'moduleId': module_id}])
-    ))
+    )
     if lifecycle_status:
         profiles = profiles.filter(lifecycle_status__iexact=lifecycle_status)
-    profiles = learner_compat.fill(profiles, LearnerProfile)
     result = dict(placed)
     for profile in profiles:
         plan = profile.learning_plan
@@ -332,8 +323,7 @@ def bulk_assigned_learner_counts(module_ids):
         return {}
     counts = {module_id: 0 for module_id in wanted}
     cache = {}
-    learners = learner_compat.fill(learner_compat.only(
-        EnrolmentUser.all_learners, 'id', 'programme', 'group', 'learning_plan', 'training_plan'), EnrolmentUser)
+    learners = with_placements(EnrolmentUser.all_learners.only('id', 'learning_plan', 'training_plan'))
     for learner in learners:
         for module_id in set(plans._effective_plan_ids(learner, cache)):
             if module_id in wanted:

@@ -43,101 +43,24 @@ export function isLearnerRow(row: Pick<UserListRow, 'source'>): boolean {
 }
 
 
-/**
- * An employer contact, shaped like a UserListRow so the directory can list them
- * alongside learners and staff.
- *
- * Employers aren't learners or staff: they have no subscription, learning plan or
- * programme, so those columns stay blank rather than being filled with something
- * that isn't true. Their organisations stand in for the Group column, which is
- * the closest real equivalent — a learner's group is their cohort, an employer's
- * is the company they belong to.
+/** Keep Created_users records by their physical identity, never by email.
+ * The first occurrence wins so an imported replacement can precede old state.
+ * Staff/employer sources are not independent records in this directory.
  */
-/**
- * One row per person, not one row per record.
- *
- * A staff member or administrator who also studies a programme has BOTH a
- * `Staff_users` row and a `Created_users` row on the same address (see
- * login/learner_enrolment.py). Concatenating the three sources listed them
- * twice — the same human appearing as two users, each with half the truth.
- *
- * The learner record wins the row, because it is the one that carries the
- * programme, the learning plan and the enrolment actions the directory exists
- * to offer. The staff fields are merged in underneath, so nothing is lost and
- * the row still opens the person's staff record where that is what was clicked.
- *
- * Matched on the normalised email. That is what makes the two records the same
- * person in every other part of the platform — `existing_learner_record` looks
- * a learner up by address for exactly this reason — and a row with no address
- * cannot be matched to anything, so it is always kept as its own row.
- */
-/** The Type column for a person holding two records, e.g. "Admin · User".
- *
- * Distinct labels only, in the order the records were loaded, so somebody who
- * is both staff and a learner reads as both rather than as whichever record
- * happened to win the merge. */
-export function combinedType(a: DirectoryRow, b: DirectoryRow): string {
-  const labels: string[] = [];
-  for (const value of [a.type, b.type]) {
-    const label = (value || '').trim();
-    if (label && !labels.includes(label)) labels.push(label);
-  }
-  return labels.join(' · ');
-}
-
-
-/** `over` wins, except where it has nothing to say.
- *
- * Merging two records of the same person must not let one record's empty
- * fields erase the other's real ones: a learner record has no position or
- * access, and a staff row has no programme or learning plan. Each fills the
- * other's gaps. */
-export function fillBlanks(over: DirectoryRow, under: DirectoryRow): DirectoryRow {
-  const out: DirectoryRow = { ...under };
-  for (const [key, value] of Object.entries(over)) {
-    const empty = value === undefined || value === null || value === '';
-    const existing = Reflect.get(out, key);
-    if (!empty || !(key in out) || existing === undefined || existing === null || existing === '') {
-      Reflect.set(out, key, value);
-    }
-  }
-  return out;
-}
-
-
 export function mergeDirectoryRows(rows: DirectoryRow[]): DirectoryRow[] {
-  const byEmail = new Map<string, number>();
-  const merged: DirectoryRow[] = [];
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (!isLearnerRow(row) || seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+}
 
-  for (const row of rows) {
-    const key = (row.email || '').trim().toLowerCase();
-    if (!key) {
-      merged.push(row);
-      continue;
-    }
-    const seen = byEmail.get(key);
-    if (seen === undefined) {
-      byEmail.set(key, merged.length);
-      merged.push(row);
-      continue;
-    }
-    const existing = merged[seen];
-    // Whichever of the two is the learner keeps the row's identity; the other
-    // contributes only the fields the learner record does not have.
-    const learner = isLearnerRow(row) ? row : isLearnerRow(existing) ? existing : null;
-    const other = learner === row ? existing : row;
-    // The learner record wins, but only where it actually says something. A
-    // plain spread let its empty strings overwrite real values from the staff
-    // row -- a learner record carries no position, so merging one in blanked
-    // the Type column for somebody who is an Admin.
-    const combined = learner ? fillBlanks(learner, other) : fillBlanks(row, existing);
-    // Both roles in the Type column. This person really is an Admin AND a
-    // learner, and showing one of them made the merged row look like the other
-    // record had simply been lost.
-    merged[seen] = { ...combined, type: combinedType(existing, row) };
-  }
-
-  return merged;
+/** Summary categories use Created_users.Type, never another table's role. */
+export function directoryCategory(row: DirectoryRow): 'admins' | 'employers' | 'learners' {
+  if (!differs(row.type, 'Admin')) return 'admins';
+  if (!differs(row.type, 'Employer')) return 'employers';
+  return 'learners';
 }
 
 

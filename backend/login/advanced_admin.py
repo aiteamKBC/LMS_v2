@@ -64,8 +64,8 @@ def _coaching_connection_string():
 def _profile_in_scope(profile_id):
     profile = (LearnerProfile.objects
                .only('id', 'aptem_id', 'enrolment_id', 'uuid', 'full_name', 'email',
-                     'programme', 'programme_status', 'learner_type', 'cohort',
-                     'group_name', 'coach_name')
+                     'programme_id', 'programme_status', 'learner_type', 'cohort_id',
+                     'group_id', 'coach_name')
                .filter(pk=profile_id)
                .first())
     if profile is None or profile.aptem_id is None:
@@ -117,8 +117,8 @@ def learners(request):
             (scope[aptem_id][1], aptem_id))[:10])
         ids = [int(value) for value in scope]
         profiles = LearnerProfile.objects.filter(aptem_id__in=ids).only(
-            'id', 'aptem_id', 'enrolment_id', 'full_name', 'programme',
-            'programme_status', 'cohort', 'group_name', 'coach_name')
+            'id', 'aptem_id', 'enrolment_id', 'full_name', 'programme_id',
+            'programme_status', 'cohort_id', 'group_id', 'coach_name')
         profiles = sorted(profiles, key=lambda profile: _learner_list_sort_key(
             profile, scope[str(profile.aptem_id)][0], initial_ids))
         rows = [_learner_row(profile, scope[str(profile.aptem_id)][0]) for profile in profiles]

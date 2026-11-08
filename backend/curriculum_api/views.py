@@ -15843,6 +15843,69 @@ def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensur
     return curriculum_names.attach(table, rows, requested=columns, excluded=exclude_columns)
 
 
+# Tables whose copied programme_name column the canonical schema removed; the
+# name now comes from programme_id -> curriculum.programmes.name.
+PROGRAMME_NAME_DERIVED_TABLES = frozenset({'groups', 'cohorts', 'modules'})
+
+
+def derived_programme_name_sql(table):
+    """``<expr> AS programme_name`` when ``table`` no longer stores the name, else ''.
+
+    Keeps every ``row['programme_name']`` reader and every bare
+    ``order by programme_name`` working: Postgres resolves a bare ORDER BY name
+    to this output column. Correlated on the table's own reference, so callers'
+    where/order clauses are unchanged. A blank, unknown or duplicated programme
+    id gives '' (the old column's default) rather than an arbitrary name. A
+    database that still has the physical copy also reads the authoritative name.
+    """
+    if table not in PROGRAMME_NAME_DERIVED_TABLES or not has_column(table, 'programme_id'):
+        return ''
+    row = authoring_table_name(table)
+    return (f"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(programme_name_source.name) END "
+            f"FROM curriculum.programmes programme_name_source "
+            f"WHERE programme_name_source.programme_id = {row}.programme_id "
+            f"AND btrim(coalesce({row}.programme_id, '')) <> ''), '') AS programme_name")
+
+
+# The other copied placement names the canonical schema removed, beside
+# programme_name above: curriculum.groups lost cohort_name, and
+# curriculum.modules lost cohort_name and group_name. {table: ((output name,
+# source table, id column, source name column), ...)}.
+PLACEMENT_NAME_DERIVED_COLUMNS = {
+    'groups': (('cohort_name', 'cohorts', 'cohort_id', 'cohort_name'),),
+    'modules': (('cohort_name', 'cohorts', 'cohort_id', 'cohort_name'),
+                ('group_name', 'groups', 'group_id', 'group_name')),
+}
+
+
+def derived_placement_names_sql(table):
+    """``{output: '<expr> AS output'}`` for every placement name ``table`` no longer stores.
+
+    ``programme_name`` comes from derived_programme_name_sql(); cohort and
+    group names are read the same way through their ids. Each is a scalar
+    subquery correlated on the table's own reference, so no outer row is ever
+    duplicated, and a blank, unknown or duplicated id gives '' (the removed
+    column's default). Physical copies are replaced, never used as a fallback.
+    Writers are unaffected: authoring_upsert()
+    and update_authoring_rows() write only physical columns, so a derived key
+    in a payload is dropped.
+    """
+    derived = {}
+    programme = derived_programme_name_sql(table)
+    if programme:
+        derived['programme_name'] = programme
+    row = authoring_table_name(table)
+    for output, source, key, source_column in PLACEMENT_NAME_DERIVED_COLUMNS.get(table, ()):
+        if not has_column(table, key):
+            continue
+        derived[output] = (
+            f"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(placement_source.{source_column}) END "
+            f"FROM curriculum.{source} placement_source "
+            f"WHERE placement_source.{key} = {row}.{key} "
+            f"AND btrim(coalesce({row}.{key}, '')) <> ''), '') AS {output}")
+    return derived
+
+
 def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=True, columns=None, exclude_columns=None):
     """The statement authoring_fetch_all() runs; shared so a prefetch sends the same SQL."""
     if ensure_tables:
@@ -15854,8 +15917,27 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
     shape = schema_compat.columns_of(CURRICULUM_SCHEMA, table)
     relation = schema_compat.read_relation(table, shape)
     legacy_columns = set(schema_compat.legacy_read_columns(table, shape)) if relation else set()
-    if columns or exclude_columns:
-        available = set(column_names(table)) | legacy_columns
+    available = set(column_names(table)) | legacy_columns
+    # The compatibility relation already resolves missing placement columns.
+    # Other shapes (including legacy physical copies) still need canonical
+    # names. Put these expressions in FROM so WHERE and ORDER BY can use them,
+    # even when the caller does not include the label in its SELECT list.
+    placement_names = {'cohorts': {'programme_name'},
+                       'groups': {'programme_name', 'cohort_name'},
+                       'modules': {'programme_name', 'cohort_name', 'group_name'}}.get(table, set())
+    derived = ({} if relation and placement_names <= legacy_columns else
+               {key: value for key, value in derived_placement_names_sql(table).items()
+                if key not in legacy_columns})
+    if derived:
+        base = relation or authoring_table_name(table)
+        expressions = list(derived.values())
+        if relation:
+            expressions = [value.replace(authoring_table_name(table), quote_ident(table))
+                           for value in expressions]
+        source_columns = [quote_ident(key) for key in sorted(available - set(derived))]
+        projection = ', '.join([*source_columns, *expressions])
+        relation = f'(select {projection} from {base}) as {quote_ident(table)}'
+        available.update(derived)
     if columns:
         wanted = [column for column in columns if column in available]
         if (archive_state.uses_status(table) and 'status' not in wanted
@@ -29334,97 +29416,38 @@ def programme_identity_candidates(programme_id):
 
 @scoped_curriculum_read
 def assigned_learners_for_programme(programme_id, lifecycle_status='', *, strict=False):
-    # Read once: both the placement query and the name filter below need the
-    # same candidates, and resolving them reads the programme's module rows.
-    candidates = programme_identity_candidates(programme_id)
+    """Canonical profile membership, with names joined only for display."""
     if connection.vendor != 'postgresql' or not learner_schema_table_exists('learners'):
         if strict:
             raise DatabaseError('The learner directory is unavailable.')
         canonical_rows = []
     else:
-        canonical_rows = []
-        if not candidates:
-            return []
-        candidate_keys = [normalise(value) for value in candidates if normalise(value)]
-        if not candidate_keys:
-            return []
         try:
-            # Both column probes below read the same list, and on a remote
-            # database each read is a round trip. One is enough.
-            learner_columns = learner_schema_columns('learners')
+            params = [clean_str(programme_id)]
+            status_sql = ''
+            if lifecycle_status:
+                status_sql = 'AND lower(l.lifecycle_status) = %s'
+                params.append(clean_str(lifecycle_status).lower())
             with connection.cursor() as cursor:
-                status_filter = clean_str(lifecycle_status).lower()
-                status_sql = "and lower(lifecycle_status) = %s" if status_filter else ''
-                # A learner carrying an explicit programme_id belongs to that
-                # exact programme and to no other. Only rows without one fall
-                # back to matching the programme's name, which is what let two
-                # programmes sharing a name both claim the same learner.
-                if 'programme_id' in learner_columns:
-                    scope_sql = '''
-                    (
-                        btrim(coalesce(programme_id, '')) = %s
-                        or (
-                            btrim(coalesce(programme_id, '')) = ''
-                            and regexp_replace(
-                                lower(btrim(coalesce(programme, ''))),
-                                '[^a-z0-9]+',
-                                '',
-                                'g'
-                            ) = any(%s)
-                        )
-                    )
-                    '''
-                    params = [clean_str(programme_id), candidate_keys]
-                else:
-                    scope_sql = '''
-                    regexp_replace(
-                        lower(btrim(coalesce(programme, ''))),
-                        '[^a-z0-9]+',
-                        '',
-                        'g'
-                    ) = any(%s)
-                    '''
-                    params = [candidate_keys]
-                if status_filter:
-                    params.append(status_filter)
-                # The placement ids come back only where the columns exist;
-                # everything downstream treats a missing one as "not resolved"
-                # and matches on the name instead.
-                placement_sql = (
-                    ', cohort_id, group_id'
-                    if {'cohort_id', 'group_id'} <= learner_columns
-                    else ''
-                )
-                # The curriculum roster is read from Learner.learners, whose
-                # primary key is a LearnerProfile id.  Assignment writes go
-                # through EnrolmentUser and therefore need the bridge id when
-                # one is available; profile ids and enrolment ids are separate
-                # sequences and can also collide with an unrelated learner.
-                enrolment_sql = ', enrolment_id' if 'enrolment_id' in learner_columns else ''
-                cursor.execute(
-                    f'''
-                    select id, full_name, email, programme, programme_status, cohort,
-                           group_name, lifecycle_status, coach_name, coach_email,
-                           completed_hours, planned_hours, target_hours, progress_hours,
-                           progress_variance, otjh_status{placement_sql}{enrolment_sql}
-                    from "Learner"."learners"
-                    where {scope_sql}
-                      {status_sql}
-                    order by lower(full_name), id
-                    ''',
-                    params,
-                )
+                cursor.execute(f"""
+                    SELECT l.id, l.enrolment_id, l.full_name, l.email,
+                           p.name AS programme, l.programme_status, c.cohort_name AS cohort,
+                           g.group_name, l.cohort_id, l.group_id, l.lifecycle_status,
+                           l.coach_name, l.coach_email, l.completed_hours, l.planned_hours,
+                           l.target_hours, l.progress_hours, l.progress_variance, l.otjh_status
+                    FROM "Learner".learners l
+                    LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
+                    LEFT JOIN curriculum.cohorts c ON c.cohort_id = l.cohort_id
+                    LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
+                    WHERE l.programme_id = %s {status_sql}
+                    ORDER BY lower(l.full_name), l.id
+                """, params)
                 canonical_rows = rows_as_dicts(cursor)
         except Exception as exc:
             if strict:
                 raise
             logger.warning('Could not load assigned learners for programme %s: %s', programme_id, exc)
             canonical_rows = []
-    if not candidates:
-        return []
-    candidate_keys = [normalise(value) for value in candidates if normalise(value)]
-    if not candidate_keys:
-        return []
     learners = [
         {
             'id': row.get('id'),
@@ -29598,33 +29621,11 @@ def scope_programme_identifier(lineage):
 
 
 def narrow_learners_to_placement(learners, id_key, scope_id, name_key, scope_name):
-    """Keep the learners placed in one cohort/group, by id where there is one.
-
-    Three cases, and they are deliberately not the same:
-
-    * both sides carry an id -- the id decides, and a learner whose id points at
-      another record is dropped even when the names happen to agree. That is the
-      whole reason the column exists.
-    * the learner has no id (the name never resolved to exactly one record, or
-      the backfill has not run here) -- fall back to comparing names, which is
-      what this did for every row before the ids existed.
-    * neither side has anything to compare -- nothing to narrow by, so the row
-      stays. A scope with no name and no id must not silently empty the roster.
-    """
+    """Narrow educational membership by FK, never by a duplicated label."""
     scope_id = clean_str(scope_id)
-    name_key_normalised = normalise(scope_name)
-    if not scope_id and not name_key_normalised:
-        return learners
-    kept = []
-    for row in learners:
-        row_id = clean_str(row.get(id_key))
-        if scope_id and row_id:
-            if row_id == scope_id:
-                kept.append(row)
-            continue
-        if not name_key_normalised or normalise(row.get(name_key)) == name_key_normalised:
-            kept.append(row)
-    return kept
+    if not scope_id:
+        return [] if clean_str(scope_name) else learners
+    return [row for row in learners if clean_str(row.get(id_key)) == scope_id]
 
 
 def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=None, *, strict=False):

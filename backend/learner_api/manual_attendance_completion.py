@@ -134,9 +134,12 @@ def _read_manual_context(candidates, profile):
         if source is None:
             return {}, [], []
         module_ids = sorted(set(module_ids) | set(assigned_module_ids(source)))
+    # The canonical curriculum.modules table has no deletion marker (deleted_at
+    # and is_programme_deleted were removed), so every requested module row is
+    # live; status is not a visibility rule. values_list selects only these two
+    # columns, so no removed column is ever read.
     modules = dict(ModuleAuthoringModule.objects.using('enrolment').filter(
-        module_catalogue_id__in=module_ids, deleted_at__isnull=True,
-        is_programme_deleted=False).values_list('module_catalogue_id', 'title'))
+        module_catalogue_id__in=module_ids).values_list('module_catalogue_id', 'title'))
     components = list(ModuleAuthoringComponent.objects.using('enrolment').filter(
         module_catalogue_id__in=modules, type__in=['live_session', 'live-session'],
         deleted_at__isnull=True, is_programme_deleted=False,

@@ -2,6 +2,11 @@ import { useId, useRef, useState, type CSSProperties, type PointerEvent as React
 import { monthlyHours, type MonthlyHours, type MonthlyHoursSource } from './monthlyHours';
 import styles from './ProgressCharts.module.css';
 
+// Explicit opt-in for Backend-derived targets; omitted mode retains monthly planning behavior.
+export type OfficialTarget = { value: unknown; request: 'ready' | 'loading' | 'error' };
+
+export type OfficialProgramme = { actual: unknown; planned: unknown; target: unknown; request: OfficialTarget['request'] };
+
 const hourNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 
 function ratio(value: number | null, target: number | null) {
@@ -44,13 +49,15 @@ function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
   </div>;
 }
 
-export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth, programmeEndMonth, targetAsOfToday }: {
+export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth, programmeEndMonth, targetAsOfToday, officialTarget }: {
   data?: MonthlyHoursSource;
   points?: MonthlyHours[];
   plannedHours?: number | null;
   programmeStartMonth?: string;
   programmeEndMonth?: string;
   targetAsOfToday?: number | null;
+  officialTarget?: OfficialTarget;
+  officialProgramme?: OfficialProgramme;
 }) {
   const chartId = useId();
   const tooltipId = `${chartId}-monthly-tooltip`;
@@ -67,12 +74,14 @@ export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth,
     ? targetToDate.reduce((sum, row) => sum + (row.target ?? 0), 0) : null;
   const totalSubmitted = months.every(row => row.submitted != null) ? months.reduce((sum, row) => sum + row.submitted!, 0) : null;
   const totalCompleted = months.every(row => row.completed != null) ? months.reduce((sum, row) => sum + row.completed!, 0) : null;
-  const progressTarget = targetAsOfToday != null && Number.isFinite(targetAsOfToday) && targetAsOfToday > 0
+  const officialValue = officialTarget?.value;
+  const officialAvailable = officialTarget?.request === 'ready' && typeof officialValue === 'number' && Number.isFinite(officialValue) && officialValue >= 0;
+  const progressTarget = officialTarget ? (officialAvailable ? officialValue as number : null) : targetAsOfToday != null && Number.isFinite(targetAsOfToday) && targetAsOfToday > 0
     ? targetAsOfToday : expectedTarget;
   const monthlyPlanned = months.length ? months.reduce((sum, row) => sum + (row.target ?? 0), 0) : null;
   const requiredOtjh = plannedHours ?? data?.requiredOtjh;
   const plannedTarget = requiredOtjh != null && Number.isFinite(requiredOtjh) && requiredOtjh > 0
-    ? requiredOtjh : monthlyPlanned && monthlyPlanned > 0 ? monthlyPlanned : progressTarget;
+    ? requiredOtjh : monthlyPlanned && monthlyPlanned > 0 ? monthlyPlanned : officialTarget ? null : progressTarget;
   const overallPercent = ratio(totalCompleted, plannedTarget);
   const targetPosition = ratio(progressTarget, plannedTarget);
   const overallVariance = progressTarget == null || totalCompleted == null ? null : totalCompleted - progressTarget;
@@ -138,14 +147,19 @@ export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth,
         })}</div>
       </div>
     </div> : <p className={styles.empty}>Monthly hour targets will appear here once the training plan is available.</p>}
+    {officialTarget && <p aria-live="polite">
+      Target to date: {officialTarget.request === 'loading' ? 'Loading' : officialTarget.request === 'error'
+        ? 'Unavailable (could not refresh)' : officialValue === undefined ? 'Unavailable (required target was not returned)'
+          : progressTarget == null ? 'Unavailable' : `${hourNumber.format(progressTarget)}h`}
+    </p>}
     {months.length > 0 && <div className={styles.overall}>
-      <div><strong>Overall progress</strong><span>{totalCompleted == null ? 'Recorded hours unavailable' : `${hourNumber.format(totalCompleted)}h completed${totalSubmitted != null && totalSubmitted > 0 ? ` · ${hourNumber.format(totalSubmitted)}h submitted` : ''}`}</span></div>
-      <div className={styles.overallTrack} role="progressbar" aria-label="Overall off-the-job hours progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent == null ? undefined : completedWidth}>
-        {totalSubmitted != null && progressTarget != null && <i className={styles.submittedOverall} style={{ left: `${completedWidth}%`, width: `${submittedWidth}%` }} />}
+      <div><strong>{officialTarget ? 'Training plan progress' : 'Overall progress'}</strong><span>{totalCompleted == null ? 'Recorded hours unavailable' : `${hourNumber.format(totalCompleted)}h completed${totalSubmitted != null && totalSubmitted > 0 ? ` · ${hourNumber.format(totalSubmitted)}h submitted` : ''}`}</span></div>
+      <div className={styles.overallTrack} role="progressbar" aria-label={officialTarget ? 'Training plan off-the-job hours progress' : 'Overall off-the-job hours progress'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent == null ? undefined : completedWidth}>
+        {totalSubmitted != null && (officialTarget ? plannedTarget != null : progressTarget != null) && <i className={styles.submittedOverall} style={{ left: `${completedWidth}%`, width: `${submittedWidth}%` }} />}
         <i className={styles.completedOverall} style={{ width: `${completedWidth}%` }} />
         {targetPosition != null && <b style={{ left: `${Math.min(100, targetPosition)}%` }} />}
       </div>
-      <strong className={overallVariance != null && overallVariance < 0 ? styles.behind : styles.ahead}>
+      <strong className={officialTarget && (overallVariance == null || variancePercent == null) ? undefined : overallVariance != null && overallVariance < 0 ? styles.behind : styles.ahead}>
         {variancePercent == null || overallVariance == null ? 'N/A' : `${variancePercent > 0 ? '+' : ''}${variancePercent}% (${signed(overallVariance)}h)`}
       </strong>
     </div>}

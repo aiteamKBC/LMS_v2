@@ -13,6 +13,7 @@ import re
 
 from .student_activity_access import student_activity_available
 from .aptem_status import programme_status
+from .placement_links import placement_input, placement_payload
 from .constants import (
     ACCESS_CHOICES,
     ACCESS_SUPER_ADMIN,
@@ -82,6 +83,7 @@ def to_list_row(u):
         # reads supply the boolean without fetching either deferred JSON field.
         has_plan = bool(u.learning_plan) or bool(u.training_plan)
     return {
+        **placement_payload(u),
         "id": str(u.id),
         # Permanent identifier, stable across the enrolment/active phases.
         # "id" stays the integer the existing routes are built on.
@@ -138,6 +140,7 @@ def to_edit_fields(u):
     handed straight back to PATCH without a translation layer in between.
     """
     return {
+        **placement_payload(u),
         "id": str(u.id),
         "username": _s(u.username),
         "email": _s(u.email),
@@ -270,6 +273,7 @@ def to_board(u):
     saved_signature_value, saved_signature_date = saved_signature(u.id)
     employer_name, employer_id = _employer_label(u)
     board = {
+        **placement_payload(u),
         "user": {
             "id": str(u.id),
             # The learner's permanent identifier, the same value before and after
@@ -424,9 +428,6 @@ WRITABLE_FIELDS = {
     "learnerStartDate": "learner_start_date",
     "learnerEndDate": "learner_end_date",
     "programmeStatus": "programme_status",
-    "programme": "programme",
-    "cohort": "cohort",
-    "group": "group",
     "employer": "employer",
     "organization": "organization",
     "reference": "organization",
@@ -713,7 +714,7 @@ def write_fields(payload, *, require_create=False):
             raise ValidationError("username is required.")
         if not _s(payload.get("email")):
             raise ValidationError("email is required.")
-    fields = {}
+    fields = placement_input(payload)
     if require_create and not _s(payload.get("learnerType")):
         # Never leave a new row untagged: an untyped learner would be invisible
         # to the commercial manager and only reachable via all_learners.
@@ -749,9 +750,6 @@ COMMERCIAL_WRITABLE_FIELDS = {
     "lineManager": "line_manager",
     "organization": "organization",
     "programmeStatus": "programme_status",
-    "programme": "programme",
-    "cohort": "cohort",
-    "group": "group",
     "modules": "modules",
     "weeks": "weeks",
     "components": "components",
@@ -767,6 +765,7 @@ COMMERCIAL_WRITABLE_FIELDS = {
 
 def to_commercial_row(u):
     return {
+        **placement_payload(u),
         "id": str(u.id),
         "uuid": str(u.uuid) if getattr(u, "uuid", None) else None,
         "username": _s(u.username),
@@ -813,7 +812,7 @@ def write_commercial_fields(payload, *, require_create=False):
     # This table now holds Type/Status too, so it validates the same three lists
     # as the apprenticeship table rather than programmeStatus alone.
     validate_choices(payload)
-    fields = {}
+    fields = placement_input(payload)
     for key, attr in COMMERCIAL_WRITABLE_FIELDS.items():
         if key in payload:
             val = payload[key]

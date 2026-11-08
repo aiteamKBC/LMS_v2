@@ -324,7 +324,9 @@ class LearnerOverviewMetricsEndpointTests(SimpleTestCase):
         self.assertNotIn('_ksb_evidence_sources', json.loads(response.content))
         self.assertEqual(response['Cache-Control'], 'private, no-store')
 
-    def test_overview_target_uses_the_learning_plan_without_an_ssot_plan(self):
+    def test_overview_target_never_uses_the_learning_plan_without_an_ssot_plan(self):
+        # Slice 03b-2B (T1): the target paces the official total only. U1 keeps
+        # the learning-plan total in otjh.planned for the Coach case file.
         source = SimpleNamespace(pk=125)
         model = MagicMock()
         model.DoesNotExist = type('Missing', (Exception,), {})
@@ -338,7 +340,7 @@ class LearnerOverviewMetricsEndpointTests(SimpleTestCase):
             response = learner_metrics.__wrapped__.__wrapped__(
                 RequestFactory().get('/', {'view': 'learner-overview'}), 'commercial', 125)
         plan.assert_called_once_with(source, {'id': 7})
-        target_to_date.assert_called_once_with(ANY, {'actual': 6.59, 'planned': 576.13, 'targetToDate': 39.25})
+        target_to_date.assert_called_once_with(ANY, {'actual': 6.59, 'planned': None})
         self.assertEqual(json.loads(response.content)['otjh']['planned'], 576.13)
         self.assertEqual(json.loads(response.content)['otjh']['targetToDate'], 39.25)
 

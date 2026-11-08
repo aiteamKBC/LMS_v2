@@ -1,3 +1,4 @@
+import type { OfficialTarget } from '@/pages/learner/training-plan-timeline/OtjHoursChart';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import type { DashboardOverviewPayload } from '@/api/dashboardTabs';
@@ -8,9 +9,11 @@ import styles from '@/pages/learner/training-plan-timeline/trainingPlan.module.c
 import layout from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 import { overviewMeasures, overviewModulesForDisplay, overviewRatio } from './overviewFacts';
 
-export function OverviewCharts({ payload, programmeStartDate, programmeEndDate, targetAsOfToday }: {
+export function OverviewCharts({ payload, programmeStartDate, programmeEndDate, targetAsOfToday, officialTarget, officialRequest }: {
   payload: DashboardOverviewPayload; programmeStartDate?: string | null; programmeEndDate?: string | null;
   targetAsOfToday?: number | null;
+  officialTarget?: OfficialTarget;
+  officialRequest?: OfficialTarget['request'];
 }) {
   const [params] = useSearchParams();
   const { hash } = useLocation();
@@ -52,7 +55,8 @@ export function OverviewCharts({ payload, programmeStartDate, programmeEndDate, 
     <div className={`${layout.topRow} ${layout.activityOverviewTopRow} ${layout.overviewSingle}`} data-layout="split">
       <div className={layout.activityOverviewMain}><ProgressCharts displayModules={displayed} selectedDisplayId={selected?.id}
         onDisplaySelect={setSelection} programmeRows={programmeRows} hourPoints={points} plannedHours={payload.hours.planned}
-        targetAsOfToday={targetAsOfToday} /></div>
+        targetAsOfToday={targetAsOfToday} officialTarget={officialTarget}
+        officialProgramme={officialRequest ? { actual: payload.metrics.otjh.actual, planned: payload.metrics.otjh.officialPlannedHours, target: payload.metrics.otjh.targetToDate, request: officialRequest } : undefined} /></div>
     </div>
   </div></div>;
 }

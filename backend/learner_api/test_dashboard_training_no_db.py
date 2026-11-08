@@ -6,8 +6,8 @@ from unittest.mock import patch, MagicMock
 from django.test import SimpleTestCase, RequestFactory
 from django.db import DatabaseError
 from old_otjh.service import ServiceError
-from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from . import dashboard_training as training
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 
 class TrainingProjectionTests(SimpleTestCase):
@@ -22,6 +22,7 @@ class TrainingProjectionTests(SimpleTestCase):
         self.assertIn('coalesce(live_counts.live_session_count,0)', sql)
         self.assertIn(visible_child_sql('c'), sql)
         self.assertIn(visible_week_sql('w'), sql)
+        self.assertNotIn('deleted_via_parent', sql)
         self.assertEqual(params, [['M1', 'M2'], 'M2', ['M1', 'M2']])
 
     def test_selected_native_facts_use_global_retained_quiz_decision(self):

@@ -27,6 +27,7 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .ksb_sources import PROFILE, STANDARD, parse_source, resolve_source
@@ -58,6 +59,9 @@ def _guard(fn):
 def programmes(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    if request.GET.get("format") == "options":
+        return _guard(lambda: _rows("SELECT programme_id AS id, name AS title FROM curriculum.programmes WHERE COALESCE(is_archived, false) = false ORDER BY name, programme_id", []))
+
     return _guard(lambda: [
         r["name"]
         for r in _rows(
@@ -73,6 +77,12 @@ def programmes(request):
 def cohorts(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    if request.GET.get("format") == "options":
+        programme_id = (request.GET.get("programme_id") or "").strip()
+        if not programme_id:
+            return _error("Choose the parent placement IDs.", 400)
+        return _guard(lambda: _rows("SELECT cohort_id AS id, cohort_name AS title FROM curriculum.cohorts WHERE programme_id = %s ORDER BY cohort_name, cohort_id", [programme_id]))
+
     programme = (request.GET.get("programme") or "").strip()
     if not programme:
         return _error("programme query param is required.", 400)
@@ -81,7 +91,7 @@ def cohorts(request):
         for r in _rows(
             "SELECT DISTINCT cohort_name FROM curriculum.cohorts "
             "WHERE cohort_name IS NOT NULL AND cohort_name <> '' "
-            "  AND (programme_name = %s OR programme_id = %s) "
+            "  AND (" + programme_name_sql('cohorts') + " = %s OR programme_id = %s) "
             "ORDER BY cohort_name",
             [programme, programme],
         )
@@ -91,6 +101,13 @@ def cohorts(request):
 def groups(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    if request.GET.get("format") == "options":
+        programme_id = (request.GET.get("programme_id") or "").strip()
+        cohort_id = (request.GET.get("cohort_id") or "").strip()
+        if not programme_id or not cohort_id:
+            return _error("Choose the parent placement IDs.", 400)
+        return _guard(lambda: _rows("SELECT group_id AS id, group_name AS title FROM curriculum.groups WHERE programme_id = %s AND cohort_id = %s ORDER BY group_name, group_id", [programme_id, cohort_id]))
+
     programme = (request.GET.get("programme") or "").strip()
     cohort = (request.GET.get("cohort") or "").strip()
     if not programme or not cohort:
@@ -100,8 +117,11 @@ def groups(request):
         for r in _rows(
             "SELECT DISTINCT group_name FROM curriculum.groups "
             "WHERE group_name IS NOT NULL AND group_name <> '' "
-            "  AND (programme_name = %s OR programme_id = %s) "
-            "  AND (cohort_name = %s OR cohort_id = %s) "
+            "  AND (" + programme_name_sql('"groups"') + " = %s OR programme_id = %s) "
+            # curriculum.groups no longer stores cohort_name; a named cohort is
+            # matched through curriculum.cohorts by the group's cohort_id.
+            "  AND (cohort_id IN (SELECT cohort_id FROM curriculum.cohorts WHERE cohort_name = %s) "
+            "       OR cohort_id = %s) "
             "ORDER BY group_name",
             [programme, programme, cohort, cohort],
         )
@@ -119,7 +139,8 @@ def modules(request):
         {"id": r["module_catalogue_id"], "title": r["title"] or r["module_catalogue_id"]}
         for r in _rows(
             "SELECT module_catalogue_id, title FROM curriculum.modules "
-            "WHERE programme_id = %s OR programme_name = %s OR %s LIKE programme_name || ' %%' "
+            "WHERE programme_id = %s OR " + programme_name_sql('modules') + " = %s "
+            "   OR %s LIKE " + programme_name_sql('modules') + " || ' %%' "
             "ORDER BY title",
             [programme, programme, programme],
         )

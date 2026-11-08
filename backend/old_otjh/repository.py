@@ -105,6 +105,17 @@ def student(learner_id):
     return rows[0] if rows else None
 
 
+def entry_learner(learner_id):
+    """The two facts learner entry needs: the enrolment row and its Aptem ID.
+
+    Kept separate from student(), which serves previous-record resolution, so
+    entry classification depends on no other enrolment column. None when the
+    enrolment row does not exist.
+    """
+    rows = query('SELECT id, aptem_id FROM enrolment."Created_users" WHERE id=%s', [learner_id])
+    return rows[0] if rows else None
+
+
 def linked_learners(aptem_id):
     return query('SELECT id FROM enrolment."Created_users" '
                  "WHERE ltrim(btrim(aptem_id), '0')=%s LIMIT 2", [str(aptem_id)])

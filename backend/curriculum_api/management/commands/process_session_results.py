@@ -66,8 +66,7 @@ class Command(BaseCommand):
                     SELECT DISTINCT o.live_session_id FROM curriculum.live_session_occurrences o
                     JOIN curriculum.live_sessions s ON s.id=o.live_session_id
                     JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
-                    WHERE m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
-                      AND coalesce(s.organizer_email,'')<>''
+                    WHERE coalesce(s.organizer_email,'')<>''
                       AND (coalesce(s.online_meeting_id,'')<>'' OR coalesce(s.join_url,'')<>'')
                       AND o.status NOT IN ('cancelled','deleted','superseded')
                       AND s.status NOT IN ('cancelled','deleted','superseded','failed')''' + scheduled_scope + '''

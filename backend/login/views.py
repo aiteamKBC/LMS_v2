@@ -31,6 +31,8 @@ project's JSON endpoints are written (``@csrf_exempt`` throughout learner_api).
 from __future__ import annotations
 
 import json
+import logging
+from functools import wraps
 
 from django.db import DatabaseError
 from django.http import JsonResponse
@@ -39,6 +41,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from . import email_azure, identity, microsoft_sso
+from .errors import DATABASE_ERRORS, database_unavailable
 from .invitations import (
     TokenError,
     accept_invitation,
@@ -77,10 +80,29 @@ from .sessions import (
 
 #: Returned for every bad sign-in, regardless of the underlying cause.
 GENERIC_LOGIN_ERROR = "Incorrect email or password."
+DATABASE_UNAVAILABLE_ERROR = "Unable to complete authentication. Please try again."
+logger = logging.getLogger(__name__)
 
 
 def _error(message, status=400, **extra):
     return JsonResponse({"error": message, **extra}, status=status)
+
+
+def _database_unavailable(operation, exc):
+    # Database exception messages and tracebacks can contain SQL, addresses and
+    # credentials. Keep only the operation, exception class and SQLSTATE here.
+    return database_unavailable(operation, exc, message=DATABASE_UNAVAILABLE_ERROR,
+                                logger=logger, area="Authentication")
+
+
+def _authentication_database_errors(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        try:
+            return view(*args, **kwargs)
+        except DatabaseError as exc:
+            return _database_unavailable(view.__name__, exc)
+    return wrapped
 
 
 def _body(request):
@@ -119,6 +141,7 @@ def _reject_cross_site(request):
 
 @csrf_exempt
 @require_POST
+@_authentication_database_errors
 def login(request):
     """Exchange credentials for a session cookie."""
     blocked = _reject_cross_site(request)
@@ -150,20 +173,14 @@ def login(request):
             code="throttled",
         )
 
-    try:
-        account = identity.account_for_email(email)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    account = identity.account_for_email(email)
 
     if is_default_learner_password(password) and (account is None or not account.has_password):
         # A learner who has never set a password, using the shared first-sign-in
         # password: no session, only their own set-password link (see
         # security.DEFAULT_LEARNER_PASSWORD). Anyone else falls through to the
         # ordinary failure below, indistinguishable from a wrong password.
-        try:
-            setup_path = default_password_setup(email, ip=ip, user_agent=ua)
-        except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+        setup_path = default_password_setup(email, ip=ip, user_agent=ua)
         if setup_path:
             record(EVENT_LOGIN, email=email, succeeded=False, reason="default_password_setup", ip=ip, user_agent=ua)
             response = JsonResponse({"passwordSetupRequired": True, "setPasswordPath": setup_path})
@@ -249,15 +266,13 @@ def logout(request):
 
 
 @require_GET
+@_authentication_database_errors
 def me(request):
     """The signed-in identity, or 401. The SPA calls this on every page load."""
     account = authenticate_request(request)
     if account is None:
         return _error("Not authenticated.", 401, code="unauthenticated")
-    try:
-        return JsonResponse({"user": identity.account_payload(account)})
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    return JsonResponse({"user": identity.account_payload(account)})
 
 
 @require_GET
@@ -381,8 +396,10 @@ def forgot_password(request):
             return uniform
 
         request_password_link(email, ip=ip, user_agent=ua)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        # The same body for every address: nothing about the account, and no
+        # claim that an email was sent.
+        return _database_unavailable("forgot_password", exc)
 
     return uniform
 
@@ -397,8 +414,8 @@ def reset_info(request):
         return JsonResponse(peek_reset(token))
     except TokenError as exc:
         return _error(str(exc), 400, code="invalid_token")
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("reset_info", exc)
 
 
 @csrf_exempt
@@ -428,8 +445,8 @@ def reset_password(request):
         return _error(str(exc), 400, code="invalid_token")
     except PasswordPolicyError as exc:
         return _error(str(exc), 400, code="weak_password")
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("reset_password", exc)
 
     # Deliberately does not sign the person in. Making them use the password
     # they just chose confirms they know it, and keeps a stolen reset link one
@@ -451,8 +468,8 @@ def invitation_info(request):
         return JsonResponse(peek_invitation(token))
     except TokenError as exc:
         return _error(str(exc), 400, code="invalid_token")
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("invitation_info", exc)
 
 
 @csrf_exempt
@@ -482,8 +499,8 @@ def accept_invitation_view(request):
         return _error(str(exc), 400, code="invalid_token")
     except PasswordPolicyError as exc:
         return _error(str(exc), 400, code="weak_password")
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("accept_invitation", exc)
 
     return JsonResponse({
         "ok": True,
@@ -580,8 +597,8 @@ def invitation_link_view(request):
             subject_type, subject_id, inviter=request.login_account,
             ip=client_ip(request), user_agent=user_agent(request),
         )
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _database_unavailable("invitation_link", exc)
     if outcome["forbidden"]:
         return _error(outcome["error"], 403, code="forbidden")
     if not outcome["link"]:

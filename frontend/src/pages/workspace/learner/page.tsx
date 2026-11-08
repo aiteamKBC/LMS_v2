@@ -293,7 +293,8 @@ export default function LearnerOverview() {
   // Do not use the legacy learner-detail snapshot or whole-programme total.
   const { target: otjTargetHours, percent: otjPercent } = dashboardOtjhProgress(
     otjActualHours,
-    metrics.data?.otjh.targetToDate,
+    metrics.error || metrics.loading ? null : metrics.data?.otjh.targetToDate,
+    true,
   );
   const otjTargetValue = otjTargetHours != null ? `${otjTargetHours.toFixed(2)} h`
     : metricsLoading ? 'Loading…' : 'Unavailable';

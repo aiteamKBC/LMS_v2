@@ -51,7 +51,9 @@ export default function DashboardOverviewTab(props: DashboardTabsProps) {
     {real && <DashboardActivities kind={kind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
     {read.error && <div role="alert" className={layout.error}>Your learning modules could not refresh. {read.error} <button onClick={read.refresh}>Retry learning modules</button></div>}
     {read.payload ? <OverviewCharts key={`${kind}:${learnerId}:${params.get('subject') || ''}:${params.get('month') || ''}`} payload={read.payload}
-      programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} targetAsOfToday={metrics.otjTargetHours} />
+      programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} targetAsOfToday={metrics.otjTargetHours}
+      officialRequest={read.error ? 'error' : read.isFetching || read.loading ? 'loading' : 'ready'}
+      officialTarget={{ value: read.payload.metrics.otjh.targetToDate, request: read.error ? 'error' : read.loading ? 'loading' : 'ready' }} />
       : read.loading && <div role="status" aria-label="Loading monthly learning and coaching" className={layout.loading}><div aria-hidden="true"><span /><span /><span /></div></div>}
   </div>;
 }

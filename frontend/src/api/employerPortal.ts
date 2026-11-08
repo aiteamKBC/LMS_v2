@@ -354,7 +354,10 @@ function overviewPart<T>(employerId: string, kind: string, learnerId: string, pa
 /** Existing learner projections, authorized through the employer's own routes. */
 export async function fetchEmployerLearningOverview(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
   const data = await overviewPart<DashboardOverviewPayload>(employerId, kind, learnerId, 'dashboard', signal);
-  if (!data?.metrics?.otjh || !data.metrics.ksb || !Array.isArray(data.programme)
+  if (!data?.metrics?.otjh || !['actual', 'targetToDate'].every(key => {
+    const value = data.metrics.otjh[key as keyof typeof data.metrics.otjh];
+    return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  }) || !data.metrics.ksb || !Array.isArray(data.programme)
     || !Array.isArray(data.modules) || !Array.isArray(data.hours?.months)) {
     throw new Error('Could not load learner progress. Please try again.');
   }

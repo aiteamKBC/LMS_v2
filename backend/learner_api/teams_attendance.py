@@ -4,6 +4,7 @@ from datetime import datetime, timezone as datetime_timezone
 
 from django.db import connections, DatabaseError, router, transaction
 from django.db.models import Q
+from django.db.models.expressions import RawSQL
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -18,6 +19,7 @@ from curriculum_api.models import (
 from curriculum_api.live_session_register import upsert_live_session_register
 from curriculum_api.attendance_link_policy import apply_reviewed_identities
 from curriculum_api.attendance_link_store import identity_rules
+from curriculum_api.week_visibility import visible_child_sql
 
 from .models import LearnerProfile, LearnerTrainingPlanModule
 from .projection_performance import projection_call, projection_operation
@@ -56,8 +58,7 @@ def annotate_attendance_completion(components, learner_profile):
               AND r.module_catalogue_id=c.module_catalogue_id
               AND r.learner_profile_id=%s
             {REPLACED_ATTENDANCE_LATERAL_SQL}
-            WHERE c.id=ANY(%s) AND c.deleted_at IS NULL
-              AND NOT coalesce(c.is_programme_deleted,false)
+            WHERE c.id=ANY(%s) AND {visible_child_sql('c')}
               AND lower(replace(c.type,'-','_'))='live_session'
               AND c.reflection_required IS FALSE
               AND c.tutor_validation_required IS FALSE
@@ -445,7 +446,11 @@ def fetch_verified_teams_attendance_rows(
     }
     module_rows = ModuleAuthoringModule.objects.using(database).filter(
         module_catalogue_id__in=module_refs_needed,
-    ).only("module_catalogue_id", "group_id", "group_name")
+    ).only("module_catalogue_id", "group_id").annotate(
+        _group_display_name=RawSQL(
+            '(SELECT g.group_name FROM curriculum.groups g WHERE g.group_id=modules.group_id)', [],
+        ),
+    )
     modules_by_id = {row.module_catalogue_id: row for row in module_rows} if include_group_metadata else {}
 
     occurrence_queryset = (
@@ -683,7 +688,7 @@ def fetch_verified_teams_attendance_rows(
                     "module_catalogue_id": module_ref,
                     "module_title": str(session.module_title or "").strip(),
                     "group_id": str(module.group_id or "").strip() if module else "",
-                    "group_name": str(module.group_name or "").strip() if module else "",
+                    "group_name": str(module._group_display_name or "").strip() if module else "",
                     "is_expected": email in occurrence_expected,
                     "eligibility_reason": (
                         "parallel_delivery_guest" if email in parallel_delivery_guests.get(occurrence.id, set())

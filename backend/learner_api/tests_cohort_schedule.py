@@ -27,7 +27,10 @@ ROW = (date(2026, 8, 3), date(2027, 8, 2), date(2028, 1, 2), None, 5)
 def _cursor_returning(row):
     """A stand-in for connections['default'].cursor() as a context manager."""
     cursor = MagicMock()
+    # By cohort id the reader takes one row; by name it reads up to two
+    # matches so an ambiguous name is never guessed.
     cursor.fetchone.return_value = row
+    cursor.fetchall.return_value = [row] if row else []
     context = MagicMock()
     context.__enter__.return_value = cursor
     connections = {'default': MagicMock()}

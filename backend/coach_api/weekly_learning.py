@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from django.db import connections
 from .weekly_contract import compact_weekly
 from learner_api.progress_rules import progress_counts_as_achieved
+from curriculum_api.canonical_read_sql import component_ksb_codes_sql
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from learner_api.weekly_display import display_policies, display_weeks, default_week
 from .weekly_live_attendance import (read_weekly_live_evidence, credit_in_week,
@@ -220,7 +221,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id
             JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
-            AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''
+            AND coalesce(btrim(cm.title),'') <> ''
             {detail_filter}
             ORDER BY c.week_id,c.display_order,c.id''', detail_params)
         components = [row for row in rows(cur) if row['has_content'] or row['is_quiz']]
@@ -318,24 +319,18 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             return compact_weekly(weeks=navigation_weeks if include_weeks else ())
         selected_components = by_week[(selected['moduleId'], selected['weekId'])] if selected['kind'] != 'reading-week' else []
         component_ids = [row['id'] for row in selected_components]
-        fallback_columns = f''', (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code) ORDER BY k.ksb_code)
-            FROM curriculum.ksb_mappings k WHERE k.component_id=c.id AND {visible_child_sql('k')})
-            AS fallback_ksb_mappings'''
-        cur.execute(f'''SELECT c.id,c.title,c.type,c.ksb_mappings,
+        ksb_mappings = component_ksb_codes_sql('c')
+        cur.execute(f'''SELECT c.id,c.title,c.type,{ksb_mappings} AS ksb_mappings,
             CASE WHEN jsonb_typeof(c.settings_json->'durationMinutes')='number'
                 THEN c.settings_json->>'durationMinutes' END AS duration_minutes,
             q.title AS quiz_title,q.duration AS quiz_duration,q.time_unit AS quiz_time_unit,
-            l.quiz_id AS linked_quiz_id,q.id AS resolved_quiz_id,q.questions AS quiz_questions{fallback_columns}
+            l.quiz_id AS linked_quiz_id,q.id AS resolved_quiz_id,q.questions AS quiz_questions
             FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id
             LEFT JOIN curriculum.quizzes q ON q.id=coalesce(l.quiz_id,
                 CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$' THEN (c.settings_json->>'linkedQuizId')::bigint END)
             WHERE c.id=ANY(%s) ORDER BY c.display_order,c.id''', [component_ids])
         details = rows(cur)
         mappings = {row['id']: _component_ksb_items(row['ksb_mappings']) for row in details}
-        missing = {cid for cid in component_ids if not mappings.get(cid)}
-        for row in details:
-            if row['id'] in missing:
-                mappings[row['id']] = _component_ksb_items(row.get('fallback_ksb_mappings'))
         completion = {row['id']: completion_for_week(row, selected) for row in selected_components}
         selected_by_id = {row['id']: row for row in selected_components}
         # The Student routing reader needs these same module/week identities;
