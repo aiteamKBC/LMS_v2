@@ -195,6 +195,10 @@ def attach(table, rows, requested=None, excluded=None, using='default'):
     PostgreSQL (the SQLite test schema still stores these columns) nothing is
     done. Mutates and returns ``rows``.
     """
+    if table == 'cohorts' and rows and connections[using].vendor == 'postgresql':
+        # A cohort's holiday choices: cohort_calendar_holidays, by cohort id.
+        from . import calendar_holidays
+        calendar_holidays.attach_cohort_choices(rows, requested=requested, excluded=excluded)
     fields = [
         field for field in ROW_FIELDS.get(table, ())
         if (requested is None or field in requested) and field not in (excluded or ())

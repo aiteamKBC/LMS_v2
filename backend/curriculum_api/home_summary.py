@@ -48,7 +48,10 @@ def project_home_summary(overview, programmes):
     modules = overview.get('modules') or []
     cohorts = overview.get('cohorts') or []
     groups = overview.get('groups') or []
-    drafts = [module for module in modules if _key(module.get('status')) != 'published']
+    # Only a module still marked 'draft' is unfinished authoring. The current
+    # curriculum database has no draft/published state (a module is 'active'
+    # or archived), so there nothing counts as a draft.
+    drafts = [module for module in modules if _key(module.get('status')) == 'draft']
 
     def needs_source(programme):
         return _zero(programme.get('ksbTotal')) and not _clean(programme.get('ksbProfileSourceId'))

@@ -69,6 +69,10 @@ RECORDINGS_SQL = '''SELECT a.id AS artifact_id, a.created_datetime, a.end_dateti
     WHERE a.artifact_type='recording' AND s.status NOT IN ('deleted','superseded','failed')
     ORDER BY o.scheduled_start, a.created_datetime, a.id'''
 
+# Every query here reaches its weeks/components through their module
+# (module_catalogue_id): content outside a module -- a free course's weeks --
+# is never part of a module's recordings.
+#
 # A running module's live weeks; an archived module's weeks as they stood when
 # it was deleted (deleting a module soft-deletes its weeks in the same moment).
 # The learner-facing rule (week_visibility): live rows, plus the rows history
@@ -77,7 +81,7 @@ _KEPT_WITH_MODULE = visible_child_sql('x')
 
 WEEKS_SQL = '''SELECT x.id, x.module_catalogue_id, x.week_number, x.title, x.display_order
     FROM curriculum.weeks x JOIN curriculum.modules m ON m.module_catalogue_id=x.module_catalogue_id
-    WHERE x.module_catalogue_id=ANY(%s) AND COALESCE(x.library_state, '')<>'library' AND ''' + _KEPT_WITH_MODULE + '''
+    WHERE x.module_catalogue_id=ANY(%s) AND ''' + _KEPT_WITH_MODULE + '''
     ORDER BY x.display_order, x.week_number, x.id'''
 
 # Only transfer settings consumed by this read-only library. Full component settings
@@ -92,7 +96,7 @@ LIVE_COMPONENTS_SQL = '''SELECT x.id AS component_id, x.week_id, x.module_catalo
             'recordingDate', x.settings_json -> 'recordingDate'
         ) ELSE x.settings_json END AS settings_json
     FROM curriculum.components x JOIN curriculum.modules m ON m.module_catalogue_id=x.module_catalogue_id
-    WHERE x.module_catalogue_id=ANY(%s) AND COALESCE(x.library_state, '')<>'library'
+    WHERE x.module_catalogue_id=ANY(%s)
     AND (x.type IN ('live-session','live_session') OR x.settings_json->>'recordingSeriesId' IS NOT NULL)
     AND ''' + _KEPT_WITH_MODULE + '''
     ORDER BY x.display_order, x.id'''
@@ -113,7 +117,7 @@ ATTENTION_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_
     LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
     LEFT JOIN curriculum.cohorts mc ON mc.cohort_id=m.cohort_id
     LEFT JOIN curriculum.groups mg ON mg.group_id=m.group_id
-    WHERE c.type IN ('live-session','live_session') AND c.status NOT IN ('inactive','archived') AND COALESCE(c.library_state, '')<>'library'
+    WHERE c.type IN ('live-session','live_session') AND c.status NOT IN ('inactive','archived')
     AND w.status NOT IN ('inactive','archived')
     AND m.status NOT IN ('inactive','archived')
     ORDER BY w.display_order, w.week_number, c.display_order, c.id'''
@@ -145,8 +149,6 @@ CALENDAR_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_t
     LEFT JOIN curriculum.cohorts mc ON mc.cohort_id=m.cohort_id
     LEFT JOIN curriculum.groups mg ON mg.group_id=m.group_id
     WHERE c.type IN ('live-session','live_session')
-      AND COALESCE(c.library_state, '')<>'library'
-      AND COALESCE(w.library_state, '')<>'library'
       AND ''' + _KEPT_WITH_MODULE.replace('x.', 'c.') + '''
       AND ''' + _KEPT_WITH_MODULE.replace('x.', 'w.') + '''
     ORDER BY c.id'''

@@ -134,7 +134,6 @@ def enqueue_recording(series, occurrence, artifact, module):
     from .session_results import read
     components = read('''SELECT id,week_id FROM curriculum.components
         WHERE module_catalogue_id=%s AND status NOT IN ('inactive','archived')
-          AND coalesce(library_state,'')<>'library'
           AND (settings_json->>'teamsOccurrenceId'=%s OR
                (settings_json->>'teamsLiveSessionId'=%s AND settings_json->>'teamsSessionNumber'=%s))''',
         [series['module_catalogue_id'], occurrence['id'], series['id'], str(occurrence.get('session_number') or '')])

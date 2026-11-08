@@ -63,3 +63,26 @@ def where(module_ids=None, week_id=None, component_ids=None):
         clauses.append(f'component_id in ({", ".join(["%s"] * len(component_ids))})')
         params += component_ids
     return ' and '.join(clauses) or '1 = 0', params
+
+
+def relation():
+    """FROM text for a read that wants each mapping with its placement and code.
+
+    ``module_catalogue_id`` / ``week_id`` come from the component and
+    ``ksb_code`` / ``ksb_description`` from the standard KSB; the mapping's own
+    columns are unchanged. ``only``: a plain table read, never re-routed. On a
+    schema that stores those columns on the mapping, the table itself.
+    """
+    from . import views
+    table = views.authoring_table_name(views.AUTHORING_KSB_MAPPINGS_TABLE)
+    if stores_placement():
+        return table
+    components = views.authoring_table_name(views.AUTHORING_COMPONENTS_TABLE)
+    standards = views.authoring_table_name('standard_ksbs')
+    return (
+        '(select m.*, c.module_catalogue_id, c.week_id, '
+        "coalesce(s.ksb_code, '')::varchar as ksb_code, s.ksb_description "
+        f'from only {table} m '
+        f'left join only {components} c on c.id = m.component_id '
+        f'left join only {standards} s on s.id = m.standard_ksb_id) as "ksb_mappings"'
+    )

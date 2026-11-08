@@ -22,12 +22,19 @@ longer recorded, so a restore cannot tell a cascade from a standalone archive.
 Everything here is conditional on the table's actual columns: on a database
 that still has the legacy columns nothing is projected or translated, so the
 old schema keeps behaving exactly as before.
+
+What the curriculum now does natively, and so is no longer here:
+``curriculum_names`` (names, child lists and a cohort's holiday choices put on
+rows by key; the chosen tutor/coach written as its id), ``calendar_holidays``
+(the holiday calendar, the GOV.UK mirror and cohort choices) and
+``ksb_mapping_placement`` (mappings scoped and read through their component).
+What remains: the lifecycle columns derived from ``status``, the KSB mapping /
+component / free-course-week read shapes, and ``adapt_sql`` -- which hand-written
+statements still need, chiefly the Learner team's code curriculum calls.
 """
 from __future__ import annotations
 
 import re
-import threading
-import time
 from datetime import datetime, timezone
 
 from django.db import connection
@@ -50,10 +57,10 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 # weeks, whose title/number/description now live on the week itself.
 DERIVED_COLUMNS = {
     'free_course_weeks': ('week_title', 'week_number', 'description', 'course_name', 'cover_image_url'),
-    # Copied names (programme_name, tutor_name ...) and child lists (module_ids,
-    # group_ids, assigned_*_ids ...) are not here: curriculum_names puts them on
-    # the rows natively, by key (curriculum_names.ROW_FIELDS).
-    'cohorts': ('holiday_ids', 'excluded_holiday_ids'),
+    # Copied names (programme_name, tutor_name ...), child lists (module_ids,
+    # group_ids, assigned_*_ids ...) and a cohort's holiday choices are not
+    # here: curriculum_names puts them on the rows natively, by key
+    # (curriculum_names.ROW_FIELDS, calendar_holidays.attach_cohort_choices).
     'ksb_mappings': ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description'),
     'components': ('ksb_mappings', 'library_state', 'detached_at', 'origin_module_catalogue_id',
                    'origin_week_id', 'origin_module_title', 'origin_week_label'),
@@ -391,16 +398,7 @@ def read_relation(table, columns, alias=True):
         if name not in columns:
             extra.append(f'{expression} as "{name}"')
 
-    if table == 'cohorts':
-        # Cohort holiday choices carried the holidays' original ids (text);
-        # calendar_holidays keeps exactly that id in source_record_id.
-        holiday_from = (f"from {q('cohort_calendar_holidays')} h join {q('calendar_holidays')} ch "
-                        f"on ch.id = h.calendar_holiday_id where h.cohort_id = {t}.cohort_id")
-        add('holiday_ids', f"coalesce((select jsonb_agg(ch.source_record_id order by h.id) {holiday_from} "
-                           f"and h.is_selected), '[]'::jsonb)")
-        add('excluded_holiday_ids', f"coalesce((select jsonb_agg(ch.source_record_id order by h.id) {holiday_from} "
-                                    f"and h.is_excluded), '[]'::jsonb)")
-    elif table == 'ksb_mappings':
+    if table == 'ksb_mappings':
         joins.append(f'left join {q("components")} cc on cc.id = {t}.component_id')
         joins.append(f'left join {q("standard_ksbs")} sk on sk.id = {t}.standard_ksb_id')
         add('module_catalogue_id', "coalesce(cc.module_catalogue_id, '')::varchar")
@@ -432,52 +430,9 @@ def read_relation(table, columns, alias=True):
     return f'{body} as "{table}"' if alias else body
 
 
-# --- lookups ------------------------------------------------------------------
-# One round trip for the small reference tables. Held briefly per thread: long
-# enough that one request's many reads share it, short enough that a write is
-# visible on the next request. invalidate() is called on every curriculum write.
-_LOOKUP_TTL_SECONDS = 2.0
-_LOCAL = threading.local()
-
-_HOLIDAY_LOOKUP_SQL = '''
-    select h.cohort_id::text, ch.source_record_id::text, h.is_selected, h.is_excluded
-    from {cohort_calendar_holidays} h join {calendar_holidays} ch on ch.id = h.calendar_holiday_id
-    order by h.id
-'''
-
-
 def invalidate():
     from . import curriculum_names
-    _LOCAL.lookups = None
     curriculum_names.invalidate()
-
-
-def _lookups():
-    """curriculum_names.lookups() plus each cohort's holiday choices."""
-    from . import curriculum_names
-    names_data = curriculum_names.lookups()
-    cached = getattr(_LOCAL, 'lookups', None)
-    if cached and cached['at'] + _LOOKUP_TTL_SECONDS > time.monotonic() and cached.get('names_at') == names_data['at']:
-        return cached
-    data = {key: names_data[key] for key in ('programmes', 'cohorts', 'groups', 'modules', 'tutors', 'coaches')}
-    data['names_at'] = names_data['at']
-    data['cohort_holidays'] = {}
-    names = {name: _internal(name) for name in ('cohort_calendar_holidays', 'calendar_holidays')}
-    with connection.cursor() as cursor:
-        try:
-            cursor.execute(_HOLIDAY_LOOKUP_SQL.format(**names))
-            for cohort_id, holiday_id, is_selected, is_excluded in cursor.fetchall():
-                entry = data['cohort_holidays'].setdefault(cohort_id, {'selected': [], 'excluded': []})
-                if is_selected:
-                    entry['selected'].append(holiday_id)
-                if is_excluded:
-                    entry['excluded'].append(holiday_id)
-        except Exception:
-            # No holiday table on this database: no holiday choices to project.
-            data['cohort_holidays'] = {}
-    data['at'] = time.monotonic()
-    _LOCAL.lookups = data
-    return data
 
 
 # --- read projection ----------------------------------------------------------
@@ -547,23 +502,7 @@ def project_rows(table, rows, columns, *, requested=None, excluded=None):
                     row.setdefault(key, 'library' if not row.get('module_catalogue_id') and row.get('free_course_id') else '')
                 else:
                     row.setdefault(key, None if key == 'detached_at' else '')
-    else:
-        _project_reference(table, rows, derived)
     return rows
-
-
-def _project_reference(table, rows, derived):
-    """A cohort's holiday choices (cohort_calendar_holidays), by the holidays' original ids."""
-    if table != 'cohorts':
-        return
-    lk = _lookups()
-    for row in rows:
-        holidays = lk['cohort_holidays'].get(str(row.get('cohort_id') or ''), {})
-        values = {'holiday_ids': list(holidays.get('selected', [])),
-                  'excluded_holiday_ids': list(holidays.get('excluded', []))}
-        for key in derived:
-            if key in values:
-                row.setdefault(key, values[key])
 
 
 def _chunks(values, size=2000):
@@ -731,116 +670,3 @@ def translate_write(table, payload, columns):
             if resolved is not None:
                 payload['standard_ksb_id'] = resolved
     return payload, nullable
-
-
-# --- holidays -----------------------------------------------------------------
-
-def calendar_holiday_rows():
-    """``curriculum.calendar_holidays`` in the two legacy row shapes.
-
-    The normalised schema merged ``england_holidays`` (GOV.UK mirror) and the
-    authored ``holidays`` table. Rows come back exactly as those tables gave
-    them -- the original id (``source_record_id``), ``title``/``holiday_date``/
-    ``division`` for a bank holiday, ``label``/``start_date``/``end_date``/
-    ``type`` for an authored closure -- so every reader and the cohort
-    selections (which store those ids) keep working unchanged.
-    """
-    rows = []
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f'''select id, source_kind, source_record_id, label, start_date, end_date, category, color, notes,
-                      is_archived, division, bunting, fetched_at, created_at, updated_at
-               from {_internal("calendar_holidays")} order by start_date, label'''
-        )
-        for (_id, kind, record_id, label, start, end, category, color, notes, archived, division,
-             bunting, fetched_at, created_at, updated_at) in cursor.fetchall():
-            if kind == 'england_official':
-                rows.append({'id': record_id, 'title': label, 'holiday_date': start, 'division': division or '',
-                             'notes': notes or '', 'bunting': bool(bunting), 'fetched_at': fetched_at,
-                             'created_at': created_at, 'updated_at': updated_at})
-            else:
-                rows.append({'id': record_id, 'label': label, 'start_date': start, 'end_date': end,
-                             'type': category or '', 'color': color or '', 'notes': notes or '',
-                             'is_archived': bool(archived), 'created_at': created_at, 'updated_at': updated_at})
-    return rows
-
-
-def _id_list(value):
-    if value is None:
-        return None
-    if isinstance(value, str):
-        import json
-        try:
-            value = json.loads(value or '[]')
-        except ValueError:
-            return None
-    if not isinstance(value, (list, tuple)):
-        return None
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
-def after_write(table, payload, rows):
-    """Writes the normalised schema stores outside the row itself.
-
-    Cohort holiday choices (``holiday_ids`` / ``excluded_holiday_ids``, the
-    holidays' original ids) live in ``cohort_calendar_holidays``. Without this
-    a cohort save would drop them silently. Only lists the payload actually
-    carries are replaced; runs on the caller's connection and transaction.
-    """
-    if table != 'cohorts' or not payload or connection.vendor != 'postgresql':
-        return
-    if not is_normalised(table, columns_of('curriculum', table)):
-        return
-    selected = _id_list(payload.get('holiday_ids')) if 'holiday_ids' in payload else None
-    excluded = _id_list(payload.get('excluded_holiday_ids')) if 'excluded_holiday_ids' in payload else None
-    if selected is None and excluded is None:
-        return
-    cohort_ids = {str(row.get('cohort_id')) for row in (rows or []) if row and row.get('cohort_id')}
-    if payload.get('cohort_id'):
-        cohort_ids.add(str(payload['cohort_id']))
-    table_ref, holidays_ref = _qualified('cohort_calendar_holidays'), _qualified('calendar_holidays')
-    with connection.cursor() as cursor:
-        for cohort_id in sorted(cohort_ids):
-            cursor.execute(
-                f'select ch.source_record_id, h.is_selected, h.is_excluded from {table_ref} h '
-                f'join {holidays_ref} ch on ch.id = h.calendar_holiday_id where h.cohort_id = %s',
-                [cohort_id],
-            )
-            current = cursor.fetchall()
-            want_selected = selected if selected is not None else [r[0] for r in current if r[1]]
-            want_excluded = excluded if excluded is not None else [r[0] for r in current if r[2]]
-            wanted = list(dict.fromkeys([*want_selected, *want_excluded]))
-            cursor.execute(f'delete from {table_ref} where cohort_id = %s', [cohort_id])
-            if not wanted:
-                continue
-            cursor.execute(f'select source_record_id, id from {holidays_ref} where source_record_id = any(%s)', [wanted])
-            calendar_ids = dict(cursor.fetchall())
-            for record_id in wanted:
-                calendar_id = calendar_ids.get(record_id)
-                if not calendar_id:
-                    continue  # an id no calendar row carries cannot be stored
-                is_excluded = record_id in want_excluded
-                cursor.execute(
-                    f'insert into {table_ref} (cohort_id, calendar_holiday_id, is_selected, is_excluded) '
-                    f'values (%s, %s, %s, %s)',
-                    [cohort_id, calendar_id, record_id in want_selected and not is_excluded, is_excluded],
-                )
-    invalidate()
-
-
-def before_delete(table, where_sql, params):
-    """Remove rows the normalised schema keys to ``table`` with RESTRICT, first.
-
-    A cohort's holiday choices reference it (ON DELETE RESTRICT); a hard
-    delete of the cohort removes them with it, as the old JSON column did.
-    """
-    if table != 'cohorts' or connection.vendor != 'postgresql':
-        return
-    if not is_normalised(table, columns_of('curriculum', table)):
-        return
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f'delete from {_qualified("cohort_calendar_holidays")} where cohort_id in '
-            f'(select cohort_id from {_qualified("cohorts")} where {where_sql})',
-            list(params or []),
-        )

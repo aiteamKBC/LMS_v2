@@ -2,6 +2,12 @@
 
 Only explicit account grants permit changing targets or delegating access.
 Super-admin/workspace grants deliberately confer neither of these powers.
+
+The current curriculum database has no module-hours tables (targets, access
+grants and their audit were not carried over). There, every read answers the
+empty state -- no target, no grant -- so the module form and the account
+console load normally and offer no edit; a write is refused with
+``module_hours_not_available`` and nothing is created.
 """
 import json
 
@@ -25,12 +31,35 @@ def response(payload, status=200):
     return result
 
 
+_PRESENT = {}
+
+
+def available():
+    """True when this database keeps the module-hours tables (cached per process)."""
+    key = connection.settings_dict.get('NAME'), connection.vendor
+    if key not in _PRESENT:
+        if connection.vendor != 'postgresql':
+            _PRESENT[key] = True  # the SQLite test schema provisions them
+        else:
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT to_regclass(%s) IS NOT NULL', ['curriculum.module_hours_access'])
+                _PRESENT[key] = bool(cursor.fetchone()[0])
+    return _PRESENT[key]
+
+
+def not_available():
+    return response({'error': 'Module hour targets are not available on the current curriculum database.',
+                     'code': 'module_hours_not_available'}, 409)
+
+
 def unavailable():
     return response({'error': 'Module hours are temporarily unavailable. Please try again.',
                      'code': 'module_hours_unavailable'}, 503)
 
 
 def read_target(module_id):
+    if not available():
+        return {'targetMinutes': None, 'revision': 0}
     with connection.cursor() as cursor:
         cursor.execute(f'SELECT target_minutes, revision FROM {table_name(connection, "module_hours_targets")} WHERE module_id = %s', [module_id])
         row = cursor.fetchone()
@@ -38,6 +67,8 @@ def read_target(module_id):
 
 
 def read_access(account_id):
+    if not available():
+        return {'canMatch': False, 'canManage': False, 'revision': 0}
     with connection.cursor() as cursor:
         cursor.execute(f'SELECT can_match, can_manage, revision FROM {table_name(connection, "module_hours_access")} WHERE account_id = %s', [account_id])
         row = cursor.fetchone()
@@ -135,6 +166,8 @@ def module_target(request, module_id):
         access = read_access(request.login_account.id)
         if request.method == 'GET':
             return response({'moduleId': identifier, **read_target(identifier), 'canMatch': access['canMatch']})
+        if not available():
+            return not_available()
         if not access['canMatch']:
             return response({'error': 'Match Module Hours permission is required.', 'code': 'forbidden'}, 403)
         payload = body(request, {'targetMinutes', 'expectedRevision'})
@@ -183,6 +216,8 @@ def own_access(request):
 def account_access(request, account_id):
     try:
         actor_id = request.login_account.id
+        if not available():
+            return not_available()
         if not read_access(actor_id)['canManage']:
             return response({'error': 'Module hours access management permission is required.', 'code': 'forbidden'}, 403)
         from login.models import LoginAccount

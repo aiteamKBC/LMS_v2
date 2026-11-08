@@ -207,8 +207,7 @@ class ProjectionTests(SimpleTestCase):
     def test_lifecycle_keys_are_derived_from_status(self):
         rows = [{'module_catalogue_id': 'A', 'status': 'inactive', 'updated_at': 'then'},
                 {'module_catalogue_id': 'B', 'status': 'active', 'updated_at': 'now'}]
-        with mock.patch.object(sc, '_project_reference'):
-            sc.project_rows('modules', rows, NORMALISED_MODULES)
+        sc.project_rows('modules', rows, NORMALISED_MODULES)
         self.assertTrue(rows[0]['is_programme_deleted'])
         self.assertEqual(rows[0]['deleted_at'], 'then')
         self.assertFalse(rows[1]['is_programme_deleted'])
@@ -218,9 +217,12 @@ class ProjectionTests(SimpleTestCase):
         rows = [{'module_catalogue_id': 'A', 'status': 'active', 'deleted_at': None, 'is_programme_deleted': False,
                  'deleted_by': None, 'deleted_via_parent': None, 'programme_name': 'From SQL', 'cohort_name': '',
                  'group_name': '', 'tutor_name': '', 'tutor_email': '', 'coach_name': ''}]
-        with mock.patch.object(sc, '_lookups') as lookups:
+        # Nothing is read: a module row's derived keys are all lifecycle ones,
+        # and names are curriculum_names' (not this projection's).
+        with mock.patch.object(sc, 'connection') as db:
+            db.vendor = 'postgresql'
             sc.project_rows('modules', rows, NORMALISED_MODULES)
-        lookups.assert_not_called()
+        db.cursor.assert_not_called()
         self.assertEqual(rows[0]['programme_name'], 'From SQL')
 
     def test_legacy_rows_are_untouched(self):

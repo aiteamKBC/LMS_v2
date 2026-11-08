@@ -40,7 +40,7 @@ from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from . import archive_state
 from . import curriculum_names
-from . import schema_compat
+from . import calendar_holidays, ksb_mapping_placement, schema_compat
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
@@ -8702,8 +8702,11 @@ def safe_module_index_rows():
 # the read scope instead of once per reader.
 # Programme and cohort names are read from their own rows (the group and cohort
 # keep only the ids), so the list order sorts by those rows' names.
-_PROGRAMMES_REF = '"curriculum"."programmes"' if connection.vendor == 'postgresql' else '"programmes"'
-_COHORTS_REF = '"curriculum"."cohorts"' if connection.vendor == 'postgresql' else '"cohorts"'
+# ``only``: a plain read of the real table (real columns only), never re-routed
+# by the request's SQL adapter as it would be once the statement names a column
+# the relation it sorts carries.
+_PROGRAMMES_REF = 'only "curriculum"."programmes"' if connection.vendor == 'postgresql' else '"programmes"'
+_COHORTS_REF = 'only "curriculum"."cohorts"' if connection.vendor == 'postgresql' else '"cohorts"'
 GROUP_ROWS_ORDER = (
     f'{curriculum_names.programme_name_sql("groups", _PROGRAMMES_REF)}, '
     f'{curriculum_names.cohort_name_sql("groups", _COHORTS_REF)}, group_name'
@@ -9153,12 +9156,10 @@ def _scoped_holiday_rows(include_archived=False):
     how a closure period stops shifting future session dates.
     """
     rows = []
-    authored_table = authored_holiday_table_name()
-    if (not table_exists(ENGLAND_HOLIDAYS_TABLE) and not authored_table
-            and connection.vendor == 'postgresql' and table_exists('calendar_holidays')):
-        # Normalised schema: both sources live in calendar_holidays, returned in
-        # the two legacy shapes with their original ids (see schema_compat).
-        rows = schema_compat.calendar_holiday_rows()
+    if calendar_holidays.in_use():
+        # The current curriculum database: both halves live in calendar_holidays,
+        # returned in the two shapes with their own ids (see calendar_holidays).
+        rows = calendar_holidays.rows()
         if not include_archived:
             rows = [row for row in rows if not holiday_row_archived(row)]
         return sorted(rows, key=holiday_row_sort_key)
@@ -9168,6 +9169,7 @@ def _scoped_holiday_rows(include_archived=False):
             from {table_name(ENGLAND_HOLIDAYS_TABLE)}
             order by holiday_date, title
         '''))
+    authored_table = authored_holiday_table_name()
     if authored_table:
         authored = fetch_all(f'''
             select *
@@ -9287,6 +9289,9 @@ def holiday_table_name():
     """
     if table_exists(ENGLAND_HOLIDAYS_TABLE):
         return ENGLAND_HOLIDAYS_TABLE
+    if calendar_holidays.in_use():
+        # The current curriculum database keeps the calendar in one table.
+        return calendar_holidays.TABLE
     return ''
 
 
@@ -16137,7 +16142,9 @@ def authoring_delete(table, where_sql='1 = 1', params=None):
     """
     ensure_module_authoring_tables()
     where_sql = schema_compat.write_where(table, where_sql, column_names(table))
-    schema_compat.before_delete(table, where_sql, params)
+    if table == COHORT_AUTHORING_DETAILS_TABLE:
+        # A cohort's holiday choices reference it (RESTRICT): they go with it.
+        calendar_holidays.release_cohorts(where_sql, params)
     versioned = table in versioning.VERSIONED_TABLES
     if not versioned:
         with connection.cursor() as cursor:
@@ -16209,8 +16216,9 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
         cursor.execute(query, [values[column] for column in columns])
         if connection.vendor == 'postgresql':
             row = written_rows(table, rows_as_dicts(cursor))[0]
-            # Normalised schema: cohort holiday choices live in their own table.
-            schema_compat.after_write(table, payload, [row])
+            if table == COHORT_AUTHORING_DETAILS_TABLE:
+                # A cohort's holiday choices live in cohort_calendar_holidays.
+                calendar_holidays.store_cohort_choices(payload, [row])
             log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
             # The row the write returned is the snapshot, so history costs no
             # extra read of the record.
@@ -16457,7 +16465,8 @@ def update_authoring_rows(table, where_sql, where_params, payload):
     columns = [column for column in payload if column in real_columns]
     if not columns:
         rows = authoring_fetch_all(table, where_sql, where_params)
-        schema_compat.after_write(table, payload, rows)
+        if table == COHORT_AUTHORING_DETAILS_TABLE:
+            calendar_holidays.store_cohort_choices(payload, rows)
         return rows
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in columns)
     params = [payload[column] for column in columns] + list(where_params)
@@ -16469,7 +16478,8 @@ def update_authoring_rows(table, where_sql, where_params, payload):
                 params,
             )
             rows = written_rows(table, rows_as_dicts(cursor))
-            schema_compat.after_write(table, payload, rows)
+            if table == COHORT_AUTHORING_DETAILS_TABLE:
+                calendar_holidays.store_cohort_choices(payload, rows)
             log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
             versioning.record_rows(table, rows)
             note_live_rows(table, rows)
@@ -16686,8 +16696,11 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
         authoring_delete(AUTHORING_WEEKS_TABLE, library_sweep_guard(AUTHORING_WEEKS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")"))
         authoring_delete(AUTHORING_COMPONENTS_TABLE, library_sweep_guard(AUTHORING_COMPONENTS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")"))
         authoring_delete(AUTHORING_COMPONENTS_TABLE, library_sweep_guard(AUTHORING_COMPONENTS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")"))
-        authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
-        authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
+        if ksb_mapping_placement.stores_placement():
+            # Only where the mapping stores its own placement: otherwise it is
+            # its component's (component_id is a RESTRICT foreign key).
+            authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
+            authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(component_id, '') <> '' and component_id not in (select id from " + authoring_table_name(AUTHORING_COMPONENTS_TABLE) + ")")
     except (Exception, AssertionError):
         logger.warning('Could not repair curriculum parent links.', exc_info=True)
@@ -22072,7 +22085,7 @@ def authoring_module_content_counts():
     )
     query = (
         f'select {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")} '
-        f'from {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}'
+        f'from {ksb_mapping_placement.relation()}'
         + (f' where {where_sql}' if where_sql else '')
         + f' group by {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")}'
     )
@@ -23147,6 +23160,20 @@ def normalise_component_ksb_mappings(module_catalogue_id, mappings, week_id=None
     return json_items, projection_payloads
 
 
+def store_component_ksb_mappings(component, items, deleted_by):
+    """Make ``items`` (JSON mapping items) the component's KSB mappings.
+
+    The list is handed to the projection directly. Re-reading the component
+    for it would answer the mappings stored before this write: the normalised
+    schema keeps no JSON copy on the component, so the copy written first is
+    not there to read back.
+    """
+    component_id = clean_str((component or {}).get('id'))
+    return sync_component_ksb_projection(
+        component_id, component_row={**(component or {}), 'ksb_mappings': list(items or [])}, deleted_by=deleted_by,
+    )
+
+
 def sync_component_ksb_projection(component_id, component_row=None, module_row=None, week_id=None, deleted_by='component-ksb-sync'):
     component_id = clean_str(component_id)
     if not component_id:
@@ -23167,7 +23194,10 @@ def sync_component_ksb_projection(component_id, component_row=None, module_row=N
         module_row=module_row,
         enforce_unique=False,
     )
-    update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})
+    if has_column(AUTHORING_COMPONENTS_TABLE, 'ksb_mappings'):
+        # The component's JSON copy, where the schema still keeps one; the
+        # ksb_mappings rows below are the record.
+        update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})
     authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], deleted_by=deleted_by)
     authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], projection_payloads)
     sync_progress_ksbs({component_id: json_items}, actor=deleted_by)
@@ -23664,7 +23694,7 @@ def save_module_authoring_structure(
         if not write_changed_only:
             authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
             authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
-            authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
+            authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id), deleted_by='module-save')
 
         mapping_source_cache = {}
         week_payloads = []
@@ -24484,7 +24514,7 @@ def delete_module_authoring_structure(module_catalogue_id):
     existing = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     with transaction.atomic():
         archive_module_child_quizzes(module_catalogue_id)
-        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')
+        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id), via_parent=module_catalogue_id, deleted_by='module-delete')
         authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')
         authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')
         authoring_soft_delete(AUTHORING_COMPLETION_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')
@@ -24586,7 +24616,7 @@ def delete_programme_authoring_structure(identifier, programme=None, config=None
         if module_ids:
             module_id_list = list(module_ids)
             placeholders = ', '.join(['%s'] * len(module_id_list))
-            authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, f'{quote_ident("module_catalogue_id")} in ({placeholders})', module_id_list)
+            authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_id_list))
             authoring_delete(AUTHORING_COMPONENTS_TABLE, f'{quote_ident("module_catalogue_id")} in ({placeholders})', module_id_list)
             authoring_delete(AUTHORING_WEEKS_TABLE, f'{quote_ident("module_catalogue_id")} in ({placeholders})', module_id_list)
             authoring_delete(AUTHORING_COMPLETION_TABLE, f'{quote_ident("module_catalogue_id")} in ({placeholders})', module_id_list)
@@ -32121,8 +32151,7 @@ def _curriculum_component_ksb_mappings(request, component_id):
                 module_row=module_rows[0] if module_rows else {},
                 enforce_unique=False,
             )
-            update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})
-            sync_component_ksb_projection(component_id, deleted_by='component-ksb-post')
+            store_component_ksb_mappings(component, json_items, deleted_by='component-ksb-post')
     except (IntegrityError, ValueError):
         return json_error('This KSB is already mapped to this component.', status=409)
     invalidate_curriculum_cache()
@@ -32164,8 +32193,7 @@ def _curriculum_ksb_mapping_detail(request, mapping_id):
                 )
                 next_mappings = [mapping for mapping in current_mappings if clean_str(mapping.get('id')) != mapping_id]
                 with transaction.atomic():
-                    update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(next_mappings)})
-                    sync_component_ksb_projection(component_id, deleted_by='ksb-mapping-delete')
+                    store_component_ksb_mappings(component, next_mappings, deleted_by='ksb-mapping-delete')
             else:
                 authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'id = %s', [mapping_id], deleted_by='ksb-mapping-delete')
         else:
@@ -32233,8 +32261,7 @@ def _curriculum_ksb_mapping_detail(request, mapping_id):
                 enforce_unique=False,
             )
             with transaction.atomic():
-                update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})
-                sync_component_ksb_projection(component_id, deleted_by='ksb-mapping-patch')
+                store_component_ksb_mappings(component, json_items, deleted_by='ksb-mapping-patch')
             updated = (authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'id = %s', [mapping_id]) or [{}])[0]
         else:
             updated = authoring_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], {
@@ -32350,7 +32377,7 @@ def curriculum_module_component_detail(request, module_catalogue_id, component_i
         refused = check_removal(request, module_catalogue_id, 'component', component_id, payload or {})
         if refused is not None:
             return refused
-        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s and component_id = %s', [module_catalogue_id, component_id], via_parent=component_id, deleted_by='component-delete')
+        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id, component_ids=[component_id]), via_parent=component_id, deleted_by='component-delete')
         authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and id = %s', [module_catalogue_id, component_id], deleted_by='component-delete')
     invalidate_curriculum_cache()
     return JsonResponse({'deleted': True, 'permanent': False, 'moduleCatalogueId': module_catalogue_id, 'componentId': component_id})
@@ -32377,8 +32404,8 @@ def curriculum_module_week_detail(request, module_catalogue_id, week_id):
         component_ids = [str(row.get('id')) for row in component_rows]
         if component_ids:
             placeholders = ', '.join(['%s'] * len(component_ids))
-            authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, f'module_catalogue_id = %s and component_id in ({placeholders})', [module_catalogue_id, *component_ids], via_parent=week_id, deleted_by='week-delete')
-        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id], via_parent=week_id, deleted_by='week-delete')
+            authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id, component_ids=component_ids), via_parent=week_id, deleted_by='week-delete')
+        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, *ksb_mapping_placement.where(module_catalogue_id, week_id=week_id), via_parent=week_id, deleted_by='week-delete')
         authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id], via_parent=week_id, deleted_by='week-delete')
         authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s and id = %s', [module_catalogue_id, week_id], deleted_by='week-delete')
     log_curriculum_decision(
@@ -32692,8 +32719,9 @@ def curriculum_ksb_framework_collection(request):
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
     if _ksb_profiles_removed():
-        return json_error('KSB frameworks cannot be created: this curriculum database has no KSB profile table.',
-                          status=503)
+        return json_error('KSB frameworks cannot be created: the current curriculum database keeps no KSB frameworks. '
+                          'A programme takes its KSBs from its apprenticeship standard.',
+                          status=409, code='ksb_frameworks_not_available')
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
@@ -32745,8 +32773,9 @@ def curriculum_ksb_framework_detail(request, identifier):
         # all inactive). Reads find nothing, as an empty table would; a change
         # is refused plainly instead of failing on the missing table.
         if request.method != 'GET':
-            return json_error('KSB frameworks cannot be changed: this curriculum database has no KSB profile table.',
-                              status=503)
+            return json_error('KSB frameworks cannot be changed: the current curriculum database keeps no KSB frameworks. '
+                              'A programme takes its KSBs from its apprenticeship standard.',
+                              status=409, code='ksb_frameworks_not_available')
         return json_error('KSB framework not found.', status=404)
     ensure_ksb_profile_identity_columns()
     ident = clean_str(identifier).replace('ksb-', '', 1)
@@ -35570,7 +35599,8 @@ def curriculum_holiday_collection(request):
         return json_error('Method not allowed.', status=405)
 
     source_table = authored_holiday_table_name()
-    if not source_table:
+    on_calendar = not source_table and calendar_holidays.in_use()
+    if not source_table and not on_calendar:
         return json_error(
             'The holidays table is not provisioned. Apply '
             'sql/2026-09-14_curriculum_authored_holidays.sql first.',
@@ -35587,6 +35617,18 @@ def curriculum_holiday_collection(request):
     dates = holiday_date_payload(payload)
     if isinstance(dates, JsonResponse):
         return dates
+
+    if on_calendar:
+        row = calendar_holidays.create_local({
+            'label': clean_str(payload.get('label')),
+            'start_date': dates['start'],
+            'end_date': dates['end'],
+            'type': clean_str(payload.get('type')),
+            'color': clean_str(payload.get('color')) or AUTHORED_HOLIDAY_COLOR,
+            'notes': clean_str(payload.get('notes')),
+        })
+        invalidate_curriculum_cache()
+        return JsonResponse({'created': True, 'holiday': serialize_holiday_row(row)}, status=201)
 
     row = insert_row(source_table, {
         'label': clean_str(payload.get('label')),
@@ -35624,10 +35666,15 @@ def curriculum_holiday_detail(request, identifier):
         return json_error('Method not allowed.', status=405)
 
     source_table = authored_holiday_table_name()
-    if not source_table:
+    on_calendar = not source_table and calendar_holidays.in_use()
+    if not source_table and not on_calendar:
         return json_error('The holidays table is not provisioned.', status=404)
 
-    rows = fetch_all(f'select * from {table_name(source_table)} where id = %s', [identifier])
+    if on_calendar:
+        found = calendar_holidays.local_row(identifier)
+        rows = [found] if found else []
+    else:
+        rows = fetch_all(f'select * from {table_name(source_table)} where id = %s', [identifier])
     if not rows:
         # A GOV.UK id reaching a write is a client that has not noticed the two
         # kinds apart, so say which it is rather than "not found".
@@ -35636,6 +35683,10 @@ def curriculum_holiday_detail(request, identifier):
         return json_error('Holiday not found.', status=404)
 
     if request.method == 'DELETE':
+        if on_calendar:
+            calendar_holidays.archive_local(identifier)
+            invalidate_curriculum_cache()
+            return JsonResponse({'archived': True, 'id': identifier})
         payload = archive_payload(source_table, rows[0].get('notes'))
         if payload:
             update_rows(source_table, 'id = %s', [identifier], payload)
@@ -35667,6 +35718,10 @@ def curriculum_holiday_detail(request, identifier):
         updates['start_date'] = dates['start']
         updates['end_date'] = dates['end']
 
+    if on_calendar:
+        calendar_holidays.update_local(identifier, updates)
+        invalidate_curriculum_cache()
+        return JsonResponse({'updated': True, 'id': identifier})
     update_rows(source_table, 'id = %s', [identifier], updates)
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': identifier})
@@ -35696,7 +35751,7 @@ def holiday_date_payload(payload, existing=None):
 
 def england_holiday_exists(identifier):
     if not table_exists(ENGLAND_HOLIDAYS_TABLE):
-        return False
+        return calendar_holidays.in_use() and calendar_holidays.official_exists(identifier)
     rows = fetch_all(
         f'select 1 from {table_name(ENGLAND_HOLIDAYS_TABLE)} where id = %s limit 1',
         [clean_str(identifier)],
@@ -35729,13 +35784,11 @@ def curriculum_england_holidays(request):
             from {table_name(ENGLAND_HOLIDAYS_TABLE)}
             order by holiday_date
         ''')
-    elif connection.vendor == 'postgresql' and table_exists('calendar_holidays'):
-        # Normalised schema: the GOV.UK mirror lives in calendar_holidays
-        # (source_kind england_official), read back in its original shape.
-        rows = sorted(
-            (row for row in schema_compat.calendar_holiday_rows() if 'holiday_date' in row),
-            key=lambda row: format_date(row.get('holiday_date')) or '',
-        )
+    elif calendar_holidays.in_use():
+        # The GOV.UK mirror lives in calendar_holidays (source_kind
+        # england_official), read back in its own shape.
+        rows = sorted(calendar_holidays.rows(calendar_holidays.OFFICIAL),
+                      key=lambda row: format_date(row.get('holiday_date')) or '')
     results = [serialize_england_holiday_row(row) for row in rows]
     # The sync state rides along with the list rather than costing the page a
     # second request: "these are the dates" and "this is when they were last

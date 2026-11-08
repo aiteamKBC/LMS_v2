@@ -24,6 +24,11 @@ the answer to "which holidays changed on the website?" -- the question the page
 puts in front of a curriculum designer, who otherwise has no way to know that a
 date under their cohorts moved.
 
+On the current curriculum database the mirror is ``calendar_holidays``
+(``source_kind = 'england_official'``, see ``calendar_holidays``) and there is
+no check ledger: the history list is empty, and "last checked" is the newest
+``fetched_at`` on the mirrored dates.
+
 What counts as a change
 -----------------------
 The feed is keyed by date within a division, and so is the table. So:
@@ -146,6 +151,8 @@ def read_feed(url=BANK_HOLIDAYS_URL, timeout=FEED_TIMEOUT_SECONDS):
 
 def stored_holidays():
     """What the mirror currently holds, keyed by date like the feed."""
+    if views.calendar_holidays.in_use():
+        return views.calendar_holidays.stored_official()
     rows = views.fetch_all(
         f'select * from {views.table_name(HOLIDAYS_TABLE)} where division = %s',
         [DIVISION],
@@ -245,6 +252,11 @@ def apply_changes(incoming, added, changed, removed, now=None):
     key. Leaving the old one behind would close a delivery day twice over.
     """
     now = now or datetime.utcnow()
+    if views.calendar_holidays.in_use():
+        # The current curriculum database: the mirror is calendar_holidays'
+        # england_official rows (see calendar_holidays.apply_official).
+        views.calendar_holidays.apply_official(incoming, added, changed, removed, DIVISION, now=now)
+        return
     table = views.table_name(HOLIDAYS_TABLE)
     with transaction.atomic():
         with connection.cursor() as cursor:
@@ -318,7 +330,7 @@ def run_sync(source='auto', apply=True, url=BANK_HOLIDAYS_URL):
         'message': '',
     }
 
-    if not views.table_exists(HOLIDAYS_TABLE):
+    if not views.table_exists(HOLIDAYS_TABLE) and not views.calendar_holidays.in_use():
         summary['status'] = 'error'
         summary['message'] = (
             f'The {HOLIDAYS_TABLE} table does not exist. Apply '
@@ -496,6 +508,8 @@ def last_successful_check():
         stamp = as_datetime(rows[0].get('checked_at') if rows else None)
         if stamp:
             return stamp
+    if views.calendar_holidays.in_use():
+        return as_datetime(views.calendar_holidays.last_fetched())
     if not views.table_exists(HOLIDAYS_TABLE):
         return None
     rows = views.fetch_all(

@@ -763,13 +763,11 @@ def linked_session_items(series_ids):
         JOIN curriculum.components c ON c.module_catalogue_id=s.module_catalogue_id
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
           AND c.status NOT IN ('inactive','archived')
-          AND coalesce(c.library_state,'')<>'library'
           AND (c.settings_json->>'teamsOccurrenceId'=o.id::text
                OR (c.settings_json->>'teamsLiveSessionId'=o.live_session_id::text
                    AND c.settings_json->>'teamsSessionNumber'=o.session_number::text))
         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
           AND w.status NOT IN ('inactive','archived')
-          AND coalesce(w.library_state,'')<>'library'
         WHERE o.live_session_id=ANY(%s)''', [sorted(set(series_ids))])
     titles, weeks, components = defaultdict(set), defaultdict(dict), defaultdict(set)
     for row in rows:
