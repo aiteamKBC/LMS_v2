@@ -1292,7 +1292,10 @@ def _form_recipient_rows(form):
     learner_ids.update(str(item.learner_id) for item in event_recipients if item.learner_id)
     learner_ids.update(str(item.learner_id) for item in review_deliveries)
     all_assignment = next((item for item in manual_assignments if item.target_type == 'all_learners'), None)
-    learners_query = EnrolmentUser.all_learners.all()
+    # Created_users contains many large JSON/document columns.  The recipient
+    # report only needs these four scalar fields; selecting the full model for
+    # a busy lecture form can exceed the database statement timeout.
+    learners_query = EnrolmentUser.all_learners.only('id', 'username', 'email', 'programme')
     if all_assignment is None:
         learners_query = learners_query.filter(id__in=learner_ids)
     learners = {str(item.id): item for item in learners_query}
@@ -1336,6 +1339,13 @@ def _form_recipient_rows(form):
             'sourceTitle': delivery.session_title,
             'sourceSubtitle': delivery.module_name,
             'sourceStartsAt': _iso(recipient.available_at if is_module else delivery.starts_at),
+            'programmeId': delivery.programme_id,
+            'programmeName': delivery.programme_name,
+            'cohortId': delivery.cohort_id,
+            'cohortName': delivery.cohort_name,
+            'groupId': delivery.group_id,
+            'groupName': delivery.group_name,
+            'moduleCatalogueId': delivery.module_catalogue_id,
             'sessionTitle': delivery.session_title,
             'sessionStartsAt': _iso(recipient.available_at if is_module else delivery.starts_at),
             'moduleName': delivery.module_name,
@@ -1452,6 +1462,16 @@ def _recipient_source_summaries(rows):
             'assignedCount': 0,
             'responseCount': 0,
         })
+        if source['type'] == 'lecture':
+            source.update({
+                'programmeId': row.get('programmeId') or '',
+                'programmeName': row.get('programmeName') or '',
+                'cohortId': row.get('cohortId') or '',
+                'cohortName': row.get('cohortName') or '',
+                'groupId': row.get('groupId') or '',
+                'groupName': row.get('groupName') or '',
+                'moduleCatalogueId': row.get('moduleCatalogueId') or '',
+            })
         source['assignedCount'] += 1
         if row.get('responseStatus') == 'completed':
             source['responseCount'] += 1

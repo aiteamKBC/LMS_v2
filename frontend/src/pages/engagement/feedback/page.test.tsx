@@ -61,8 +61,10 @@ describe('feedback form version history', () => {
     vi.mocked(feedbackApi.recipients).mockResolvedValue({
       recipients: [], total: 0, page: 1, pageSize: 50,
       sources: [
-        { key: 'lecture:32', type: 'lecture', label: 'Lecture attendance', title: 'Martech - Thur - Session 2', subtitle: 'Martech - Thur', startsAt: '2026-09-24T09:30:00Z', assignedCount: 10, responseCount: 3 },
-        { key: 'lecture:31', type: 'lecture', label: 'Lecture attendance', title: 'Martech - Thur - Session 1', subtitle: 'Martech - Thur', startsAt: '2026-09-17T09:30:00Z', assignedCount: 12, responseCount: 1 },
+        { key: 'lecture:32', type: 'lecture', label: 'Lecture attendance', title: 'Martech - Thur - Session 2', subtitle: 'Martech - Thur', startsAt: '2026-09-24T09:30:00Z', assignedCount: 10, responseCount: 3, programmeId: 'p1', programmeName: 'Marketing Level 6', cohortId: 'c1', cohortName: 'October 2026', groupId: 'g1', groupName: 'Group A', moduleCatalogueId: 'm1' },
+        { key: 'lecture:31', type: 'lecture', label: 'Lecture attendance', title: 'Martech - Thur - Session 1', subtitle: 'Martech - Thur', startsAt: '2026-09-17T09:30:00Z', assignedCount: 12, responseCount: 1, programmeId: 'p1', programmeName: 'Marketing Level 6', cohortId: 'c1', cohortName: 'October 2026', groupId: 'g1', groupName: 'Group A', moduleCatalogueId: 'm1' },
+        { key: 'lecture:41', type: 'lecture', label: 'Lecture attendance', title: 'AI In Marketing - Session 1', subtitle: 'AI In Marketing', startsAt: '2026-09-16T09:30:00Z', assignedCount: 8, responseCount: 0, programmeId: 'p1', programmeName: 'Marketing Level 6', cohortId: 'c1', cohortName: 'October 2026', groupId: 'g2', groupName: 'Group B', moduleCatalogueId: 'm2' },
+        { key: 'lecture:42', type: 'lecture', label: 'Lecture attendance', title: 'AI In Marketing - Session 1', subtitle: 'AI In Marketing', startsAt: '2026-09-15T09:30:00Z', assignedCount: 6, responseCount: 0, programmeId: 'p1', programmeName: 'Marketing Level 6', cohortId: 'c2', cohortName: 'June 2026', groupId: 'g3', groupName: 'Group C', moduleCatalogueId: 'm3' },
       ],
       lectures: [
         { deliveryId: 32, occurrenceKey: 'session-2', sessionTitle: 'Martech - Thur - Session 2', moduleName: 'Martech - Thur', startsAt: '2026-09-24T09:30:00Z', assignedCount: 10, responseCount: 3 },
@@ -308,7 +310,7 @@ describe('feedback form version history', () => {
     expect(within(missing).getAllByRole('cell')[5]).toHaveTextContent('Not recorded');
   });
 
-  it('opens assigned learners on the latest lecture and can select another lecture', async () => {
+  it('groups assigned-learner lectures by module and can select another lecture', async () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: 'Forms' }));
@@ -316,10 +318,15 @@ describe('feedback form version history', () => {
 
     const lectureFilter = await screen.findByRole('combobox', { name: 'Filter by lecture' });
     await waitFor(() => expect(feedbackApi.recipients).toHaveBeenCalledWith(20, '', 1, 50, 'lecture:32'));
-    expect(lectureFilter).toHaveValue('lecture:32');
-    expect(screen.getByRole('option', { name: /Session 1.*12 assigned, 1 responses/ })).toBeInTheDocument();
+    expect(lectureFilter).toHaveTextContent('Martech - Thur - Session 2');
 
-    await user.selectOptions(lectureFilter, 'lecture:31');
+    await user.click(lectureFilter);
+    expect(screen.getByRole('button', { name: /Martech - Thur.*2 sessions/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /AI In Marketing.*October 2026.*Group B.*1 session/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: /AI In Marketing.*June 2026.*Group C.*1 session/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('option', { name: /Session 1.*12 assigned.*1 responses/ })).toBeVisible();
+
+    await user.click(screen.getByRole('option', { name: /Martech - Thur - Session 1.*12 assigned.*1 responses/ }));
     await waitFor(() => expect(feedbackApi.recipients).toHaveBeenCalledWith(20, '', 1, 50, 'lecture:31'));
   });
 

@@ -233,6 +233,8 @@ export interface FeedbackAssignmentSource {
   key: string; type: 'manual' | 'lecture' | 'event' | string; label: string;
   title: string; subtitle: string; startsAt: string | null;
   assignedCount: number; responseCount: number;
+  programmeId?: string; programmeName?: string; cohortId?: string; cohortName?: string;
+  groupId?: string; groupName?: string; moduleCatalogueId?: string;
 }
 export interface FeedbackLectureOption {
   deliveryId: number; occurrenceKey: string; sessionTitle: string; moduleName: string;

@@ -305,7 +305,7 @@ class EmployerAuthorizationTests(SimpleTestCase):
               mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related') as lectures,
               mock.patch.object(feedback.FeedbackAssignment.objects, 'filter') as manual,
               mock.patch.object(FeedbackEmployerReviewDelivery.objects, 'select_related') as employers,
-              mock.patch.object(feedback.EnrolmentUser.all_learners, 'all') as learners,
+              mock.patch.object(feedback.EnrolmentUser.all_learners, 'only') as learners,
               mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[])):
             forms.return_value.values_list.return_value = [83]
             lectures.return_value.filter.return_value.order_by.return_value = []

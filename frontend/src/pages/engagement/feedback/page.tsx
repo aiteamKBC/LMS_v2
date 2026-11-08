@@ -336,12 +336,88 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
   const recipientHeading = isEmployer ? 'Employer / Learner' : isEvent ? 'Attendee' : 'Learner';
   return <Modal title={`${isEmployer ? 'Assigned employers' : isEvent ? 'Assigned attendees' : 'Assigned learners'} — ${form.title}`} onClose={onClose}>
     {isEmployer && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Each employer answers separately from the learner. Pending link means the employer profile or account needs to be linked before the request appears in their portal. The related learner is shown with each review.</p>}
-    {sources.length > 0 && sources.some(source => source.type !== 'manual') && <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3"><label htmlFor="feedback-source-filter" className="mb-1.5 block text-xs font-semibold text-foreground-700">{contextHeading}</label><select id="feedback-source-filter" aria-label={`Filter by ${contextHeading.toLowerCase()}`} value={sourceKey} onChange={event => { setSourceKey(event.target.value); setPage(1); }} className="w-full rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-xs text-foreground-800"><option value="">All {contextHeading.toLowerCase()}s ({sources.reduce((count, source) => count + source.assignedCount, 0)} assignments)</option>{sources.map(source => <option key={source.key} value={source.key}>{sourceOptionLabel(source)}</option>)}</select></div>}
+    {sources.length > 0 && sources.some(source => source.type !== 'manual') && <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3"><label htmlFor="feedback-source-filter" className="mb-1.5 block text-xs font-semibold text-foreground-700">{contextHeading}</label>{contextHeading === 'Lecture'
+      ? <GroupedLectureFilter sources={sources.filter(source => source.type === 'lecture')} value={sourceKey} onChange={value => { setSourceKey(value); setPage(1); }} />
+      : <select id="feedback-source-filter" aria-label={`Filter by ${contextHeading.toLowerCase()}`} value={sourceKey} onChange={event => { setSourceKey(event.target.value); setPage(1); }} className="w-full rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-xs text-foreground-800"><option value="">All {contextHeading.toLowerCase()}s ({sources.reduce((count, source) => count + source.assignedCount, 0)} assignments)</option>{sources.map(source => <option key={source.key} value={source.key}>{sourceOptionLabel(source)}</option>)}</select>}</div>}
     <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-foreground-500">{total} assignment{total === 1 ? '' : 's'}{sourceKey ? ` for this ${contextHeading.toLowerCase()}` : ''}. Each recipient keeps the source that assigned this form.</p><input aria-label="Search assigned learners" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder={`Search name, email, programme or ${contextHeading.toLowerCase()}…`} className="min-w-64 rounded-lg border px-3 py-2 text-xs" /></div>
     {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
     {loading ? <p className="py-10 text-center text-sm text-foreground-400">Loading assignments…</p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{[recipientHeading, 'Programme', 'Assigned From', contextHeading, 'Assigned', 'Response'].map(label => <th key={label} className="px-3 py-2.5 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y">{recipients.map(recipient => <tr key={recipient.key}><td className="px-3 py-3"><span className="block font-semibold text-foreground-900">{recipient.learnerName}</span><span className="text-[10px] text-foreground-400">{recipient.email || `Learner ${recipient.learnerId}`}</span>{recipient.recipientType === 'guest' && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Guest</span>}</td><td className="px-3 py-3">{recipient.programme || '—'}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${recipient.sourceType === 'lecture' ? 'bg-blue-100 text-blue-700' : recipient.sourceType === 'event' ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>{recipient.sourceLabel}</span></td><td className="px-3 py-3"><span className="block">{recipient.sourceTitle || '—'}</span>{recipient.sourceSubtitle && <span className="text-[10px] text-foreground-400">{recipient.sourceSubtitle}{recipient.sourceType === 'lecture' ? ` · v${recipient.formVersion}` : ''}</span>}{recipient.sourceStartsAt && <span className="block text-[10px] text-foreground-400">{formatSourceDate(recipient.sourceStartsAt)}</span>}</td><td className="px-3 py-3 text-foreground-500">{formatDate(recipient.assignedAt)}</td><td className="px-3 py-3"><Status status={recipient.responseStatus} /></td></tr>)}{!recipients.length && !error && <tr><td colSpan={6} className="p-10 text-center text-foreground-400">No assigned recipients found.</td></tr>}</tbody></table></div>}
     {total > pageSize && <div className="mt-4 flex items-center justify-between"><button type="button" disabled={page === 1} onClick={() => setPage(value => value - 1)} className={`${button} border disabled:opacity-40`}>Previous</button><span className="text-xs text-foreground-500">Page {page} of {pages}</span><button type="button" disabled={page >= pages} onClick={() => setPage(value => value + 1)} className={`${button} border disabled:opacity-40`}>Next</button></div>}
   </Modal>;
+}
+
+function GroupedLectureFilter({ sources, value, onChange }: { sources: FeedbackAssignmentSource[]; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const selected = sources.find(source => source.key === value);
+  const totalAssignments = sources.reduce((count, source) => count + source.assignedCount, 0);
+  const groups = useMemo(() => {
+    const normalised = query.trim().toLowerCase();
+    const grouped = new Map<string, { name: string; context: string; items: FeedbackAssignmentSource[] }>();
+    for (const source of sources) {
+      const key = lectureSourceGroupKey(source);
+      const name = source.subtitle.trim() || 'Other lectures';
+      const context = lectureSourceContext(source);
+      const groupMatches = `${name} ${context}`.toLowerCase().includes(normalised);
+      if (normalised && !groupMatches && !sourceOptionLabel(source).toLowerCase().includes(normalised)) continue;
+      const group = grouped.get(key) || { name, context, items: [] };
+      group.items.push(source);
+      grouped.set(key, group);
+    }
+    return [...grouped.entries()].map(([key, group]) => ({
+      key, ...group, items: group.items.sort((left, right) => (right.startsAt || '').localeCompare(left.startsAt || '')),
+    })).sort((left, right) => left.name.localeCompare(right.name) || left.context.localeCompare(right.context));
+  }, [query, sources]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const key = lectureSourceGroupKey(selected);
+    setExpanded(current => current.has(key) ? current : new Set([...current, key]));
+  }, [selected]);
+
+  const choose = (nextValue: string) => {
+    onChange(nextValue);
+    setOpen(false);
+    setQuery('');
+  };
+  const toggleGroup = (name: string) => setExpanded(current => {
+    const next = new Set(current);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
+
+  return <div className="relative">
+    <button id="feedback-source-filter" type="button" role="combobox" aria-label="Filter by lecture" aria-controls="feedback-lecture-options" aria-expanded={open} onClick={() => setOpen(current => !current)} className="flex w-full items-center justify-between gap-3 rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-left text-xs text-foreground-800 shadow-sm">
+      <span className="min-w-0"><span className="block truncate font-semibold">{selected ? selected.title : `All lectures (${totalAssignments} assignments)`}</span>{selected && <span className="mt-0.5 block truncate text-[10px] text-foreground-400">{selected.subtitle}{selected.startsAt ? ` · ${formatSourceDate(selected.startsAt)}` : ''} · {selected.assignedCount} assigned · {selected.responseCount} responses</span>}</span>
+      <i className={`ri-arrow-down-s-line shrink-0 text-base text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+    </button>
+    {open && <div id="feedback-lecture-options" className="absolute inset-x-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-foreground-200 bg-white shadow-xl">
+      <div className="border-b border-foreground-100 p-2"><div className="flex items-center gap-2 rounded-lg border border-foreground-200 px-3 py-2"><i className="ri-search-line text-foreground-400" aria-hidden="true" /><input autoFocus type="search" aria-label="Search lectures" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setOpen(false); }} placeholder="Search module, lecture or date" className="min-w-0 flex-1 bg-transparent text-xs outline-none" /></div></div>
+      <div role="listbox" aria-label="Lectures grouped by module" className="max-h-80 overflow-y-auto p-2">
+        <button type="button" role="option" aria-selected={!value} onClick={() => choose('')} className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs ${!value ? 'bg-primary-50 font-semibold text-primary-700' : 'text-foreground-700 hover:bg-background-100'}`}><span>All lectures</span><span className="text-[10px] text-foreground-400">{totalAssignments} assignments</span></button>
+        {groups.map(group => {
+          const isExpanded = Boolean(query) || expanded.has(group.key);
+          const assigned = group.items.reduce((count, item) => count + item.assignedCount, 0);
+          return <div key={group.key} className="border-t border-foreground-100 pt-1 first:border-0">
+            <button type="button" aria-expanded={isExpanded} onClick={() => toggleGroup(group.key)} className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left hover:bg-background-100"><span className="min-w-0"><span className="block truncate text-xs font-bold text-foreground-800">{group.name}</span>{group.context && <span className="mt-0.5 block truncate text-[10px] text-foreground-400">{group.context}</span>}</span><span className="flex shrink-0 items-center gap-2 text-[10px] text-foreground-400">{group.items.length} session{group.items.length === 1 ? '' : 's'} · {assigned} assigned<i className={`ri-arrow-down-s-line text-sm transition-transform ${isExpanded ? 'rotate-180' : ''}`} aria-hidden="true" /></span></button>
+            {isExpanded && <div role="group" aria-label={`${group.name}${group.context ? ` — ${group.context}` : ''} lectures`} className="mb-1 ml-3 border-l-2 border-primary-100 pl-2">{group.items.map(source => <button key={source.key} type="button" role="option" aria-selected={source.key === value} onClick={() => choose(source.key)} className={`mb-1 w-full rounded-lg px-3 py-2 text-left ${source.key === value ? 'bg-primary-50 text-primary-700' : 'text-foreground-700 hover:bg-background-100'}`}><span className="block truncate text-xs font-semibold">{source.title}</span><span className="mt-0.5 block text-[10px] text-foreground-400">{source.startsAt ? formatSourceDate(source.startsAt) : 'Date not recorded'} · {source.assignedCount} assigned · {source.responseCount} responses</span></button>)}</div>}
+          </div>;
+        })}
+        {!groups.length && <p role="status" className="px-3 py-8 text-center text-xs text-foreground-400">No lectures match your search.</p>}
+      </div>
+    </div>}
+  </div>;
+}
+
+function lectureSourceGroupKey(source: FeedbackAssignmentSource) {
+  return source.moduleCatalogueId && source.groupId
+    ? `${source.moduleCatalogueId}::${source.groupId}`
+    : source.moduleCatalogueId || source.groupId || source.subtitle.trim() || source.key;
+}
+
+function lectureSourceContext(source: FeedbackAssignmentSource) {
+  return [source.programmeName, source.cohortName, source.groupName].filter(Boolean).join(' · ');
 }
 
 function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onClose: () => void }) {
