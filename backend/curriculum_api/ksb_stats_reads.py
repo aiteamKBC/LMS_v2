@@ -1,5 +1,5 @@
 """Narrow PostgreSQL inputs for programme KSB summary statistics."""
-from . import views
+from . import archive_state, ksb_mapping_placement, views
 
 
 # Match Python str.strip(), including tabs/newlines and Unicode whitespace.
@@ -19,7 +19,12 @@ def grouped_scope_rows(module_ids):
     ids = sorted(set(module_ids))
     results = []
     for table, fields, active in specs:
-        fields = [views.quote_ident(field) for field in fields if views.has_column(table, field)]
+        # Mappings are read with their component's module and their standard's
+        # code (ksb_mapping_placement); 'status' is the archive flag the
+        # deletion columns stood for, so the active_* filters below see it.
+        if archive_state.uses_status(table):
+            fields = (*fields, 'status')
+        fields = [views.quote_ident(field) for field in fields if ksb_mapping_placement.can_select(table, field)]
         selections, groups, params = list(fields), list(fields), []
         if table == views.AUTHORING_KSB_MAPPINGS_TABLE:
             # Stats only test whether a mapping is component-owned; they never
@@ -30,7 +35,7 @@ def grouped_scope_rows(module_ids):
             params.append(_STRIP_CHARS)
         results.append(active(views.fetch_all(
             f'select {", ".join(selections)}, count(*) as _stats_count '
-            f'from {views.authoring_table_name(table)} '
+            f'from {ksb_mapping_placement.read_source(table)} '
             f'where module_catalogue_id in ({", ".join(["%s"] * len(ids))}) '
             f'group by {", ".join(groups)}',
             [*params, *ids],

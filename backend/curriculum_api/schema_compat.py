@@ -225,6 +225,13 @@ _ADAPTED = {}
 def adapt_sql(sql):
     """Point hand-written curriculum reads at the legacy-shaped read relation.
 
+    Kept for the Learner team's code that curriculum calls (learner_api reads
+    ``curriculum.*`` naming columns the current schema dropped: programme_name,
+    deleted_at, module_ids ...). Curriculum's own statements no longer need it
+    (agreed 2026-11-08); a curriculum read that is rewritten here is a defect
+    to fix at its source, not a feature. Remove once learner_api reads the
+    current schema.
+
     Only ``FROM``/``JOIN`` references to a normalised lifecycle table, and only
     when the statement names one of that table's legacy columns, are replaced;
     ``DELETE FROM`` targets, row-locking statements and every statement on the
@@ -360,6 +367,9 @@ class adapted_reads:
 
 class CurriculumSchemaCompatMiddleware:
     """Route hand-written reads of ``/curriculum_api/`` requests through ``adapt_sql``.
+
+    Temporary, for the Learner team's code called inside a curriculum request
+    (see ``adapt_sql``).
 
     Scoped to curriculum requests and to the two aliases curriculum reads
     (``default``, ``enrolment``). A no-op on the legacy schema, where no table

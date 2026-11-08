@@ -60,3 +60,27 @@ class StoreComponentMappingsTests(SimpleTestCase):
         with mock.patch.object(views, 'sync_component_ksb_projection') as sync:
             views.store_component_ksb_mappings({'id': 'COMP-1'}, [], deleted_by='ksb-mapping-delete')
         self.assertEqual(sync.call_args.kwargs['component_row']['ksb_mappings'], [])
+
+
+class StatsReadTests(SimpleTestCase):
+    def test_programme_stats_read_mappings_with_placement_and_status(self):
+        # Before: only the mapping's own columns were selected, so a mapping had
+        # no module (counted under '') and archived rows were counted.
+        from curriculum_api import ksb_stats_reads
+        real = {
+            views.AUTHORING_WEEKS_TABLE: {'module_catalogue_id', 'status'},
+            views.AUTHORING_COMPONENTS_TABLE: {'module_catalogue_id', 'type', 'status'},
+            views.AUTHORING_KSB_MAPPINGS_TABLE: {'component_id', 'source_type', 'source_id', 'weight', 'status'},
+        }
+        statements = []
+        with mock.patch.object(views, 'has_column', side_effect=lambda table, column: column in real[table]), \
+                mock.patch.object(placement, 'relation', return_value='(mapping relation) as "ksb_mappings"'), \
+                mock.patch.object(views, 'authoring_table_name', side_effect=lambda table: table), \
+                mock.patch.object(views, 'fetch_all', side_effect=lambda sql, params: statements.append(sql) or []):
+            ksb_stats_reads.grouped_scope_rows(['MOD-1'])
+        weeks, components, mappings = statements
+        self.assertIn('from (mapping relation) as "ksb_mappings"', mappings)
+        for column in ('"module_catalogue_id"', '"ksb_code"', '"status"'):
+            self.assertIn(column, mappings.split(' from ')[0])
+        self.assertIn('"status"', components.split(' from ')[0])
+        self.assertIn('from weeks', weeks)

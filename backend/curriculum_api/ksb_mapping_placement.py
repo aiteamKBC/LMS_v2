@@ -86,3 +86,33 @@ def relation():
         f'left join only {components} c on c.id = m.component_id '
         f'left join only {standards} s on s.id = m.standard_ksb_id) as "ksb_mappings"'
     )
+
+
+#: What a mapping read through ``relation()`` carries beyond its own columns.
+READ_FIELDS = ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description')
+
+
+def read_source(table):
+    """FROM text for a hand-written read of ``table``: mappings through
+    ``relation()`` (placement and code by key), any other table as itself."""
+    from . import views
+    if table == views.AUTHORING_KSB_MAPPINGS_TABLE and not stores_placement():
+        return relation()
+    return views.authoring_table_name(table)
+
+
+def read_columns(table):
+    """The columns a read through ``read_source(table)`` can select."""
+    from . import views
+    columns = set(views.column_names(table))
+    if table == views.AUTHORING_KSB_MAPPINGS_TABLE and not stores_placement():
+        columns |= set(READ_FIELDS)
+    return columns
+
+
+def can_select(table, column):
+    """Whether a read through ``read_source(table)`` can select ``column``."""
+    from . import views
+    if views.has_column(table, column):
+        return True
+    return column in READ_FIELDS and table == views.AUTHORING_KSB_MAPPINGS_TABLE and not stores_placement()

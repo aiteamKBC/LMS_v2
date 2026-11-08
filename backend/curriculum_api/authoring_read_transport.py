@@ -13,7 +13,10 @@ def compact_authoring_rows(table, where_sql, params, order_sql, *, columns=None,
     if views.connection.vendor != 'postgresql':
         return views.authoring_fetch_all(table, where_sql, params, order_sql, columns=columns)
     views.ensure_module_authoring_tables()
-    available = views.column_names(table)
+    from .ksb_mapping_placement import read_columns
+    # A mapping is read with its component's module/week and its standard's
+    # code (ksb_mapping_placement.read_source), so those can be selected too.
+    available = read_columns(table)
     selected = [c for c in columns if c in available] if columns else sorted(available)
     if reuse_unchanged and 'id' in selected:
         from .authoring_row_cache import read_verified_rows
@@ -23,6 +26,7 @@ def compact_authoring_rows(table, where_sql, params, order_sql, *, columns=None,
 
 def _compact_rows(table, where_sql, params, order_sql, selected, *, fingerprint_sql=None):
     from . import views
+    from .ksb_mapping_placement import read_source
 
     shared = [c for c in ('description', views.REFLECTION_QUESTION_COLUMN, 'ksb_description', 'settings_json', 'ksb_mappings') if c in selected]
     if not shared and not fingerprint_sql:
@@ -45,7 +49,7 @@ def _compact_rows(table, where_sql, params, order_sql, selected, *, fingerprint_
     extras = [value for value in (rank_sql, fingerprint_sql) if value]
     query = (
         f'select {result_fields}{", " + ", ".join(extras) if extras else ""} '
-        f'from {views.authoring_table_name(table)} where {where_sql} order by {order_sql}'
+        f'from {read_source(table)} where {where_sql} order by {order_sql}'
     )
     with views.connection.cursor() as cursor:
         cursor.execute(query, params)
