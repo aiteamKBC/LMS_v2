@@ -26711,8 +26711,11 @@ def curriculum_modules(request):
                 return compact_module_list_rows(enriched)
 
             payload = {'schema': CURRICULUM_SCHEMA}
+            # v2 entries can predate the free-course/pricing projection. They
+            # survive a deploy in the shared cache and otherwise make existing
+            # standalone courses look like ordinary modules until expiry.
             modules = cached_curriculum_value(
-                f'modules:{visibility}:list-v2', build_list, force=bypass_cache,
+                f'modules:{visibility}:list-v3', build_list, force=bypass_cache,
             )
         elif bypass_cache:
             payload = build_curriculum_payload(visibility, compact=True, force=True)

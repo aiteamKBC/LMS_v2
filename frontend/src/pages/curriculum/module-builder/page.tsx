@@ -4137,8 +4137,8 @@ function ModuleBuilderContent() {
 
         <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
           <div className="space-y-3 border-b border-background-200 px-4 py-4">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 flex-[1_1_22rem]">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
                   <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
@@ -4203,8 +4203,8 @@ function ModuleBuilderContent() {
                 </button>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-12">
-              <div className="relative min-w-0 sm:col-span-2 xl:col-span-4">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 2xl:grid-cols-12">
+              <div className="relative min-w-0 sm:col-span-2 2xl:col-span-4">
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                 <input type="text" aria-label="Search modules" value={search} onChange={event => { const value = event.target.value; changeFilter(() => setSearch(value)); }} placeholder="Search modules, tutors, cohorts..." className="h-11 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
               </div>
@@ -4220,7 +4220,7 @@ function ModuleBuilderContent() {
                 })}
                 options={programmeOptions.map(option => ({ value: option, label: option === 'All' ? 'All programmes' : option }))}
                 size="sm"
-                className="min-w-0 w-full xl:col-span-2"
+                className="min-w-0 w-full 2xl:col-span-2"
               />
               {/* Empty here now means the records genuinely do not exist, not
                   that no module reaches them, so the labels can say so plainly. */}
@@ -4235,7 +4235,7 @@ function ModuleBuilderContent() {
                   : programmeFilter === 'All' ? 'Choose programme first' : 'No cohorts in this programme'}
                 clearable
                 size="sm"
-                className="min-w-0 w-full xl:col-span-2"
+                className="min-w-0 w-full 2xl:col-span-2"
               />
               <SelectMenu
                 ariaLabel="Group"
@@ -4248,7 +4248,7 @@ function ModuleBuilderContent() {
                   : !cohortFilter ? 'Choose cohort first' : 'No groups in this cohort'}
                 clearable
                 size="sm"
-                className="min-w-0 w-full xl:col-span-2"
+                className="min-w-0 w-full 2xl:col-span-2"
               />
               <SelectMenu
                 ariaLabel="Tutor"
@@ -4258,7 +4258,7 @@ function ModuleBuilderContent() {
                 placeholder="All tutors"
                 clearable
                 size="sm"
-                className="min-w-0 w-full xl:col-span-2"
+                className="min-w-0 w-full 2xl:col-span-2"
               />
               </>}
             </div>
@@ -8587,16 +8587,16 @@ function ModuleCatalogueCard({
   return (
     <article className={`group relative overflow-hidden rounded-2xl border bg-background-50 shadow-sm transition-smooth hover:shadow-md ${hasContent ? 'border-foreground-200/70 hover:border-primary-200/80' : 'border-amber-200/70 hover:border-amber-300'}`}>
       <span className={`absolute inset-y-0 left-0 w-1 ${hasContent ? 'bg-primary-400' : 'bg-amber-400'}`} aria-hidden="true"></span>
-      <div className="grid gap-4 p-4 pl-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-start gap-3">
-            <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
+      <div className="flex flex-wrap items-start gap-4 p-4 pl-5">
+        <div className="min-w-0 flex-[1_1_28rem]">
+          <div className="flex items-start gap-3">
+            <span className={`hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl sm:flex ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
               <AppIcon className={hasContent ? 'ri-layout-4-line text-lg' : 'ri-draft-line text-lg'}></AppIcon>
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <h3 className="truncate text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
-                {module.isFreeCourse && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 ring-1 ring-emerald-200">Free course</span>}
+                <h3 className="max-w-full break-words text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                {module.isFreeCourse && <span className="shrink-0 whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 ring-1 ring-emerald-200">Free course</span>}
                 {module.isForSale && module.price && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900 ring-1 ring-amber-200">
                   For sale · {new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(module.price))}
                 </span>}
@@ -8615,7 +8615,7 @@ function ModuleCatalogueCard({
                   </span>
                 )}
               </div>
-              {subLabel && <p className="mt-1 text-[11px] font-medium text-foreground-500">{subLabel}</p>}
+              {subLabel && <p className="mt-1 break-words text-[11px] font-medium text-foreground-500">{subLabel}</p>}
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <ModuleFactPill
                   icon="ri-graduation-cap-line"
@@ -8632,7 +8632,7 @@ function ModuleCatalogueCard({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
+        <div className="flex min-w-0 flex-[1_1_30rem] flex-wrap items-center gap-1.5 [&>button]:shrink-0 [&>button]:whitespace-nowrap [&>a]:shrink-0 [&>a]:whitespace-nowrap xl:justify-end">
           <ModuleLearnerCount moduleId={moduleLearnerIdentifier(module)} moduleName={module.title} onOpen={onLearners} refreshKey={module.sourceModule} />
           {primaryDeliveryHref && (
             <Link
