@@ -63,9 +63,10 @@ export default function PublicLectureFeedbackPage() {
   }
 
   return <main
-    className={`min-h-screen px-4 py-8 ${data ? 'bg-background-100' : 'flex items-center justify-center bg-[#f4efe9] bg-cover bg-center'}`}
-    style={data ? undefined : { backgroundImage: "linear-gradient(#f7f3ed59, #f7f3ed59), url('/assets/student-home/canterbury-background.png')" }}
-  ><section className={`mx-auto w-full border border-foreground-200/60 bg-white ${data ? 'max-w-4xl rounded-2xl p-5 shadow-sm sm:p-8' : 'max-w-[420px] rounded-xl p-6 shadow-[0_22px_65px_rgba(36,9,72,0.28)] sm:p-8'}`}>
+    className={`relative min-h-screen px-4 py-8 ${data ? 'bg-background-100' : 'isolate flex items-center justify-center overflow-hidden bg-[#f4efe9]'}`}
+  >{!data && <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-cover bg-center blur-[1px] scale-[1.02]"
+    style={{ backgroundImage: "linear-gradient(#f7f3ed59, #f7f3ed59), url('/assets/student-home/canterbury-background.png')" }} />}
+  <section className={`relative z-10 mx-auto w-full border border-foreground-200/60 bg-white ${data ? 'max-w-4xl rounded-2xl p-5 shadow-sm sm:p-8' : 'max-w-[420px] rounded-xl p-6 shadow-[0_22px_65px_rgba(36,9,72,0.28)] sm:p-8'}`}>
     {!data ? <>
       <header className="flex items-start justify-between gap-3">
         <h1 className="max-w-[220px] pt-1 text-xl font-bold leading-tight text-foreground-900">Live Sessions Feedback</h1>

@@ -71,6 +71,23 @@ describe('feedback form version history', () => {
     });
   });
 
+  it('keeps active and inactive tab colours readable when switching from Responses to Analytics', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    const responsesTab = await screen.findByRole('button', { name: 'Responses' });
+    const analyticsTab = screen.getByRole('button', { name: 'Analytics' });
+    await user.click(responsesTab);
+    expect(responsesTab).toHaveAttribute('aria-pressed', 'true');
+    expect(responsesTab).toHaveClass('!bg-[#541EA0]', '!text-white');
+
+    await user.click(analyticsTab);
+    expect(analyticsTab).toHaveAttribute('aria-pressed', 'true');
+    expect(analyticsTab).toHaveClass('!bg-[#541EA0]', '!text-white');
+    expect(responsesTab).toHaveAttribute('aria-pressed', 'false');
+    expect(responsesTab).toHaveClass('!bg-transparent', '!text-foreground-600');
+  });
+
   it('shows the current version and opens historical versions read-only', async () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
