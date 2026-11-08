@@ -15,6 +15,7 @@ but never deleted. Secrets and signed URLs are never printed.
     python manage.py copy_azure_blobs_to_s3 --workers 8
     python manage.py copy_azure_blobs_to_s3 --account <name> --container <name>
 """
+import io
 import logging
 import os
 import threading
@@ -82,10 +83,18 @@ def copy_blob(service, s3, bucket, account, container, blob):
     key = blob_storage.object_key(account, container, blob.name)
     extra = blob_storage._put_args(blob.content_settings, blob.metadata)
     downloader = service.get_blob_client(container, blob.name).download_blob(max_concurrency=1)
-    reader = blob_storage._IterReader(downloader.chunks())
-    s3.upload_fileobj(reader, bucket, key, ExtraArgs=extra, Config=TransferConfig(
+    # s3transfer reads a non-seekable stream with single read(n) calls and
+    # treats a short read as the end of the first part: a raw reader that
+    # returns one 4 MB Azure chunk makes it pick a single PutObject and then
+    # read the whole blob into memory, which exhausts memory on recordings.
+    # BufferedReader.read(n) returns n bytes unless the stream has ended.
+    reader = io.BufferedReader(blob_storage._IterReader(downloader.chunks()))
+    config = TransferConfig(
         multipart_threshold=PART_BYTES, multipart_chunksize=PART_BYTES, max_concurrency=2, use_threads=True,
-    ))
+    )
+    # Parts held in memory per transfer (default 10); bounds memory per worker.
+    config.max_in_memory_upload_chunks = 4
+    s3.upload_fileobj(reader, bucket, key, ExtraArgs=extra, Config=config)
     stored = int(s3.head_object(Bucket=bucket, Key=key)['ContentLength'])
     if stored != int(blob.size or 0):
         raise ValueError(f'size mismatch after copy (azure {blob.size}, s3 {stored})')
