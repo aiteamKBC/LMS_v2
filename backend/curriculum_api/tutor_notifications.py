@@ -253,10 +253,7 @@ def current_assignments():
     live_modules = []
     for module_row in module_rows:
         module_id = views.clean_str(module_row.get('module_catalogue_id'))
-        deleted = (
-            views.truthy(module_row.get('is_programme_deleted'))
-            or views.row_has_deleted_at(module_row)
-        )
+        deleted = views.row_has_deleted_at(module_row)
         if not module_id or deleted:
             continue
         live_modules.append((
@@ -544,7 +541,7 @@ def _module_tutor(module_id):
     module_row = next((
         row for row in views.safe_authoring_module_rows() or []
         if views.clean_str(row.get('module_catalogue_id')) == module_id
-        and not views.truthy(row.get('is_programme_deleted')) and not views.row_has_deleted_at(row)
+        and not views.row_has_deleted_at(row)
     ), None)
     if module_row is None:
         return None, None, ''

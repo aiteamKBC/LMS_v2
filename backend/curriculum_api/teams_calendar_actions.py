@@ -397,7 +397,7 @@ def persist_move(series, rows, module, command, snapshot):
     # same settings and drop whatever else it held.
     matched = v.authoring_fetch_all(
         v.AUTHORING_COMPONENTS_TABLE,
-        '''module_catalogue_id = %s AND deleted_at IS NULL
+        '''module_catalogue_id = %s AND status NOT IN ('inactive','archived')
            AND type IN ('live-session', 'live_session') AND
            (settings_json->>'teamsOccurrenceId' = %s OR
            (settings_json->>'teamsLiveSessionId' = %s AND settings_json->>'teamsSessionNumber' = %s))''',

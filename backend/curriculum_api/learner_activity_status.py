@@ -19,7 +19,7 @@ from login.permissions import require_access, _accesses_of
 from old_otjh.service import ServiceError
 from learner_api.canonical_learning import counts_as_completed, input_activity_date
 from learner_api.current_learning import source_payload_metadata
-from . import schema_gate
+from . import curriculum_names, schema_gate
 from . import learner_activity_attendance as attendance
 from .module_progress_metrics import completion_records, apply_ksb_metrics
 
@@ -228,7 +228,8 @@ def enrich(payload, account):
         else:
             earlier_hour_rows[str(record['learner_id'])].append(record)
     from . import views
-    modules = query(f'SELECT * FROM {table("modules", "curriculum")} WHERE module_catalogue_id=%s', [payload['identifier']])
+    # The tutor's name/email are the tutor record's (the module keeps tutor_id).
+    modules = curriculum_names.attach('modules', query(f'SELECT * FROM {table("modules", "curriculum")} WHERE module_catalogue_id=%s', [payload['identifier']]))
     module = modules[0] if modules else {}
     attendance_components = {}
     occurrence_rows = []
@@ -309,7 +310,8 @@ def resolve(account, module_id, learner_id, component_id):
     if not any(str(row['id']) == str(learner_id) for row in learners):
         raise ServiceError('Learner is not assigned to this module.', 'not_found', 404)
     owners = query(f'SELECT * FROM {table("learners")} WHERE id=%s', [learner_id])
-    modules = query(f'SELECT * FROM {table("modules", "curriculum")} WHERE module_catalogue_id=%s', [module_id])
+    # allowed() matches a tutor by the module's tutor email, read from the tutor record.
+    modules = curriculum_names.attach('modules', query(f'SELECT * FROM {table("modules", "curriculum")} WHERE module_catalogue_id=%s', [module_id]))
     components = query(f'SELECT * FROM {table("components", "curriculum")} WHERE id=%s AND module_catalogue_id=%s', [component_id, module_id])
     if not owners or not modules or not components or any(views.curriculum_row_effectively_deleted(row) for row in [modules[0], components[0]]):
         raise ServiceError('Activity not found.', 'not_found', 404)

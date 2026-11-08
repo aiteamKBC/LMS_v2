@@ -147,32 +147,3 @@ def record_graph_failure(operation, error_text, **context):
     )
     return {**record, 'stored': stored}
 
-
-def recent_failures(live_session_id, limit=20):
-    """The newest refusals kept for one series, newest first. Empty until the table exists."""
-
-    if not table_available():
-        return []
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f'SELECT occurred_at, operation, online_meeting_id, organizer_object_id, option_groups, http_status, '
-                f'graph_code, graph_message, graph_request_id FROM {TABLE} WHERE live_session_id = %s '
-                'ORDER BY occurred_at DESC LIMIT %s',
-                [_text(live_session_id, 128), max(1, min(int(limit), 100))],
-            )
-            columns = ['occurredAt', 'operation', 'onlineMeetingId', 'organizerObjectId', 'groups', 'httpStatus',
-                       'graphCode', 'graphMessage', 'graphRequestId']
-            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    except Exception:  # noqa: BLE001
-        logger.warning('Could not read Teams Graph failures.', exc_info=True)
-        return []
-    for row in rows:
-        if isinstance(row['occurredAt'], datetime):
-            row['occurredAt'] = row['occurredAt'].isoformat()
-        if isinstance(row['groups'], str):
-            try:
-                row['groups'] = json.loads(row['groups'])
-            except ValueError:
-                row['groups'] = []
-    return rows

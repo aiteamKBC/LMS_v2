@@ -241,16 +241,16 @@ linked(id) as (
     where coalesce(ref.id, '') <> ''
 ),
 module_rows as (
-    select programme_id, programme_name, group_id, cohort_id from {modules}
+    select programme_id, group_id, cohort_id from {modules}
     where module_catalogue_id in (select id from linked)
 ),
 group_rows as (
-    select programme_id, programme_name, cohort_id from {groups}
+    select programme_id, cohort_id from {groups}
     where group_id = any(%(g)s) or cohort_id = any(%(c)s)
         or group_id in (select group_id from module_rows)
 ),
 cohort_rows as (
-    select programme_id, programme_name from {cohorts}
+    select programme_id from {cohorts}
     where cohort_id = any(%(c)s)
         or cohort_id in (select cohort_id from module_rows)
         or cohort_id in (select cohort_id from group_rows)
@@ -260,11 +260,12 @@ select
     (select count(*) from {groups} where group_id = any(%(g)s)) as found_groups,
     (select count(*) from {cohorts} where cohort_id = any(%(c)s)) as found_cohorts,
     (select count(*) from linked) as linked_modules,
-    coalesce((select jsonb_agg(jsonb_build_array(programme_id, programme_name)) from (
-        select programme_id, programme_name from module_rows
-        union select programme_id, programme_name from group_rows
-        union select programme_id, programme_name from cohort_rows
-    ) refs), '[]'::jsonb) as refs,
+    -- Each row names its programme by id (the name is the programme's own row's).
+    coalesce((select jsonb_agg(jsonb_build_array(refs.programme_id, p.name)) from (
+        select programme_id from module_rows
+        union select programme_id from group_rows
+        union select programme_id from cohort_rows
+    ) refs left join {programmes} p on p.programme_id = refs.programme_id), '[]'::jsonb) as refs,
     coalesce((select jsonb_agg(jsonb_build_array(programme_id, name)) from {programmes}), '[]'::jsonb) as programmes
 '''
 

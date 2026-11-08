@@ -308,9 +308,12 @@ export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendance
       // active rows. Attendance itself is still scoped by the selected date
       // and the live-session register; visibility here only controls the
       // entities available in the cascading selectors.
-      fetchCurriculumOverview(controller.signal, { compact: true, visibility: "all" }).catch(() =>
-        fetchCurriculumOverview(controller.signal, { visibility: "all" }),
-      ),
+      // A cancelled read is not a failure: falling back on an abort (StrictMode
+      // remount, leaving the page) started the full ~25 MB overview for nobody.
+      fetchCurriculumOverview(controller.signal, { compact: true, visibility: "all" }).catch((reason: unknown) => {
+        if (controller.signal.aborted) throw reason;
+        return fetchCurriculumOverview(controller.signal, { visibility: "all" });
+      }),
       fetchBulkAttendanceLearners(controller.signal),
       fetchCurriculumSessions(controller.signal, { visibility: "all" }),
     ])

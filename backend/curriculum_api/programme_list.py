@@ -73,12 +73,23 @@ def programme_list_learner_counts(source):
     # id when present, otherwise normalized name. That existing rule does not
     # filter lifecycle_status. Group in SQL instead of transferring every row;
     # JSON key lookup supports installations without the optional programme_id.
-    rows = views.fetch_all('''
-        select programme, coalesce(to_jsonb(learner)->>'programme_id', '') as programme_id,
-               count(*) as learner_count
+    # The normalised Learner.learners has no programme name, only programme_id:
+    # there a learner counts by id (the old rule, named learners only, still
+    # applies wherever the name column exists).
+    # Plain column reads chosen from the table's columns: to_jsonb(learner)
+    # serialised every row and took seconds on a slow link.
+    from . import schema_compat
+    columns = schema_compat.columns_of('Learner', 'learners')
+    # Unknown shape (not PostgreSQL): the legacy columns.
+    has_name, has_id = ('programme' in columns, 'programme_id' in columns) if columns else (True, True)
+    name_sql = "coalesce(programme::text, '')" if has_name else "''::text"
+    id_sql = "coalesce(programme_id::text, '')" if has_id else "''::text"
+    present = name_sql if has_name or not has_id else id_sql
+    rows = views.fetch_all(f'''
+        select {name_sql} as programme, {id_sql} as programme_id, count(*) as learner_count
         from "Learner"."learners" learner
-        where coalesce(btrim(programme), '') <> ''
-        group by programme, coalesce(to_jsonb(learner)->>'programme_id', '')
+        where btrim({present}) <> ''
+        group by 1, 2
     ''')
     by_id, by_name = Counter(), Counter()
     for row in rows:

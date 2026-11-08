@@ -65,7 +65,10 @@ def existing_learner_record(email):
     email = normalize_email(email)
     if not email:
         return None
-    return EnrolmentUser.all_learners.filter(email__iexact=email).first()
+    # Callers read only the id and learner type. Selecting just those keeps
+    # sign-in working on the normalised database, where Created_users no
+    # longer has the placement-name and capitalised date columns.
+    return EnrolmentUser.all_learners.filter(email__iexact=email).only("email", "learner_type").first()
 
 
 def can_add_learner_record(account):

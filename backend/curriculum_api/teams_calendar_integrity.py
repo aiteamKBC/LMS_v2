@@ -327,16 +327,6 @@ def read_events(live_session_ids, limit=500):
 
 # ------------------------------------------------- missing occurrences on save
 
-def missing_entry(target, reason='not_in_recurring_series'):
-    """How a planned session absent from the recurring series is reported by a save."""
-    return {
-        'sessionNumber': int(target['session_number']),
-        'startDateTimeUtc': iso(target['start']),
-        'endDateTimeUtc': iso(target['end']),
-        'reason': reason,
-    }
-
-
 def missing_numbers(missing):
     return {int(item.get('sessionNumber') or 0) for item in (missing or []) if int(item.get('sessionNumber') or 0) > 0}
 
@@ -375,17 +365,6 @@ def record_reconcile(live_session_id, missing, *, module_catalogue_id='', source
             continue
         record_event(live_session_id, EVENT_MISSING, session_number=number, module_catalogue_id=module_catalogue_id,
                      correlation_id=correlation_id, trigger=source, outcome='attention', detail=item)
-
-
-def missing_warning_sentence(missing):
-    numbers = sorted(missing_numbers(missing))
-    if not numbers:
-        return ''
-    label = ', '.join(str(number) for number in numbers)
-    return (f'Session {label} is missing from the Teams recurring series. No separate meeting was created and '
-            'nothing was cancelled. Open Calendar health to review it.') if len(numbers) == 1 else (
-            f'Sessions {label} are missing from the Teams recurring series. No separate meetings were created and '
-            'nothing was cancelled. Open Calendar health to review them.')
 
 
 # ---------------------------------------------------------------- lifecycle

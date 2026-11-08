@@ -177,7 +177,8 @@ class ComponentSummaryTests(SimpleTestCase):
         for statement in statements:
             self.assertNotIn('select *', statement)
             self.assertNotIn('description', statement)
-            self.assertIn('deleted_at', statement)
+            # Archived rows are excluded by their status (normalised schema).
+            self.assertIn('"status" not in', statement)
 
     def test_no_ids_reads_nothing(self):
         with patch.object(views, 'fetch_all') as fetch_all, patch.object(views, 'authoring_fetch_all') as fetch:

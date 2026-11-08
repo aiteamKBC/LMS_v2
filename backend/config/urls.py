@@ -20,6 +20,7 @@ from django.contrib import admin
 from django.urls import include, path
 
 from .batch import api_get_batch
+from curriculum_api.openapi_docs import curriculum_openapi_json, curriculum_swagger_ui
 from system_audit import performance as system_performance
 
 urlpatterns = [
@@ -34,6 +35,9 @@ urlpatterns = [
     path('curriculum_api/performance/record/', system_performance.performance_record, name='performance-record'),
     path('curriculum_api/performance/report/', system_performance.performance_report, name='performance-report'),
     path('curriculum_api/knowledge-base/', include('knowledge_base.urls')),
+    # Swagger UI for the curriculum endpoints; both return 404 unless DEBUG.
+    path('curriculum_api/docs/', curriculum_swagger_ui, name='curriculum-swagger-ui'),
+    path('curriculum_api/docs/openapi.json', curriculum_openapi_json, name='curriculum-openapi-json'),
     # Teams Calendar health (read-only views plus the confirmed resolution).
     path('curriculum_api/', include('curriculum_api.integrity_urls')),
     path('curriculum_api/qr-attendance/', include('curriculum_api.qr_attendance_urls')),

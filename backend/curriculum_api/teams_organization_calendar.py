@@ -124,8 +124,10 @@ def group_calendar(series):
 
 def status(cfg):
     if not schema_ready():
+        # The current curriculum database keeps no organization connections
+        # (the table was not carried over); the state name is the screen's.
         return {'connected': False, 'state': 'migration_required', 'available': False,
-                'message': 'An LMS administrator must apply the organization calendar database migration.'}
+                'message': 'Organization calendar connections are not available on the current curriculum database.'}
     row = _load(cfg)
     state = row['status'] if row else 'disconnected'
     connected = state == 'active' and bool(row.get('credential_ciphertext'))
@@ -140,7 +142,7 @@ def begin(request, cfg):
     require_admin(request)
     current = status(cfg)
     if not current['available']:
-        raise error(current['message'], 'organization_calendar_migration_required', 503)
+        raise error(current['message'], 'organization_calendar_migration_required', 409)
     return current['revision']
 
 
@@ -161,7 +163,7 @@ def save(request, cfg, access, expected_revision):
 def disconnect(request, cfg, expected_revision):
     actor = require_admin(request)
     if not schema_ready():
-        raise error('The organization calendar database migration is required.', status=503)
+        raise error('Organization calendar connections are not available on the current curriculum database.')
     with _locked(cfg):
         current = _load(cfg)
         if not current or current['revision'] != expected_revision:

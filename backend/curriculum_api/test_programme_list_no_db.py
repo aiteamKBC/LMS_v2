@@ -152,7 +152,9 @@ class ProgrammeListTests(SimpleTestCase):
             actual = programme_list.programme_list_learner_counts({'has_learner_table': True})
         self.assertEqual(actual, ({'PROG-1': 7, 'PROG-OLD': 5}, {'alpha': 3}))
         sql = fetch.call_args.args[0]
-        self.assertIn("to_jsonb(learner)->>'programme_id'", sql)
+        # Plain column reads: to_jsonb(learner) serialised every row.
+        self.assertIn("coalesce(programme_id::text, '')", sql)
+        self.assertNotIn('to_jsonb', sql)
         self.assertIn('count(*)', sql)
         self.assertNotIn('lifecycle_status', sql)
 

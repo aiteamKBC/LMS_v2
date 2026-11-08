@@ -401,7 +401,11 @@ def overview(request):
         """
     )
 
-    curriculum_counts = _optional_scalars(
+    # The normalised curriculum schema has no programmes.is_archived; adapt_sql
+    # reads it through the legacy-shaped relation there (a no-op otherwise).
+    from curriculum_api.schema_compat import adapt_sql
+
+    curriculum_counts = _optional_scalars(adapt_sql(
         """
         SELECT
           (SELECT count(DISTINCT name) FROM curriculum.programmes
@@ -410,7 +414,7 @@ def overview(request):
              WHERE cohort_name IS NOT NULL AND cohort_name <> '')                             AS cohorts,
           (SELECT count(*) FROM curriculum.modules)                                           AS modules
         """
-    )
+    ))
 
     delivery = _optional_scalars(
         """
@@ -1379,7 +1383,11 @@ def curriculum(request):
     facts and the console should show both — an authored programme with no
     learners is exactly the thing worth noticing.
     """
-    error, programmes = _optional_rows(
+    # adapt_sql: see overview(). Learners link to a programme by programme_id
+    # where Created_users no longer carries the "Programme" name column.
+    from curriculum_api.schema_compat import adapt_sql
+
+    error, programmes = _optional_rows(adapt_sql(
         '''SELECT p.name AS name,
                   (SELECT count(*) FROM curriculum.cohorts c
                      WHERE c.programme_name = p.name OR c.programme_id = p.programme_id)
@@ -1387,20 +1395,22 @@ def curriculum(request):
                   (SELECT count(*) FROM curriculum.modules m
                      WHERE m.programme_id = p.programme_id)         AS module_count,
                   (SELECT count(*) FROM enrolment."Created_users" u
-                     WHERE u."Programme" = p.name)                  AS learner_count
+                     WHERE to_jsonb(u)->>'Programme' = p.name
+                        OR to_jsonb(u)->>'programme_id' = p.programme_id)  AS learner_count
            FROM (SELECT DISTINCT COALESCE(NULLIF(name,''), programme_id) AS name, programme_id
                  FROM curriculum.programmes
                  WHERE COALESCE(is_archived, false) = false) p
            WHERE p.name IS NOT NULL
            ORDER BY p.name'''
-    )
+    ))
 
     programme_filter = (request.GET.get("programme") or "").strip()
     cohort_sql = '''
         SELECT c.cohort_name AS name,
                COALESCE(NULLIF(c.programme_name,''), c.programme_id) AS programme,
                (SELECT count(*) FROM enrolment."Created_users" u
-                  WHERE u."Cohort" = c.cohort_name)                  AS learner_count,
+                  WHERE to_jsonb(u)->>'Cohort' = c.cohort_name
+                     OR to_jsonb(u)->>'cohort_id' = c.cohort_id)     AS learner_count,
                min(c.start_date) AS start_date, max(c.end_date) AS end_date
         FROM curriculum.cohorts c
         WHERE c.cohort_name IS NOT NULL AND c.cohort_name <> ''
@@ -1409,10 +1419,10 @@ def curriculum(request):
     if programme_filter:
         cohort_sql += " AND (c.programme_name = %s OR c.programme_id = %s)"
         params += [programme_filter, programme_filter]
-    cohort_sql += " GROUP BY c.cohort_name, c.programme_name, c.programme_id ORDER BY c.cohort_name"
+    cohort_sql += " GROUP BY c.cohort_name, c.cohort_id, c.programme_name, c.programme_id ORDER BY c.cohort_name"
     # Cohort dates are optional columns on some deployments; the programme list
     # is still worth returning without them.
-    _, cohorts = _optional_rows(cohort_sql, params)
+    _, cohorts = _optional_rows(adapt_sql(cohort_sql), params)
 
     return JsonResponse({
         "available": error is None,

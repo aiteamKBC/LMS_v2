@@ -87,6 +87,14 @@ def archive_records():
         module_rows = views.safe_authoring_module_rows()
 
         is_archived = views.curriculum_row_is_archived
+        # When, why and with which parent each was archived: history's record
+        # (normalised schema), read on copies once for the three lists.
+        annotate = views.archive_state.annotate
+        cohort_rows = annotate('cohorts', [dict(row) for row in cohort_rows if is_archived(row)], key_column='cohort_id')
+        group_rows = annotate('groups', [dict(row) for row in group_rows if is_archived(row)], key_column='group_id')
+        module_rows = annotate('modules', [
+            dict(row) for row in module_rows if views.curriculum_row_effectively_deleted(row)
+        ], key_column='module_catalogue_id')
         archived_cohorts = sorted(
             (row for row in cohort_rows if is_archived(row) and views.clean_str(row.get('cohort_id'))),
             key=lambda row: views.format_created_at(row.get('deleted_at')), reverse=True,

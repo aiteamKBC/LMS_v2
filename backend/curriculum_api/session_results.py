@@ -29,7 +29,7 @@ def effective_module_register_rows(module_catalogue_id, occurrences):
     """Project current plan membership; saved evidence is merged separately."""
     if not module_catalogue_id or not occurrences:
         return []
-    from learner_api.attendance_assignments import module_roster
+    from .learner_compat import module_roster  # learner_api roster, or its by-id read on the normalised schema
     members = module_roster(module_catalogue_id)
     return [{
         **member, 'occurrence_id': occurrence['id'],
@@ -128,8 +128,10 @@ def module_tutor_emails(module_catalogue_id):
     """Tutor emails assigned to the module; absent column or table reads as none."""
 
     try:
-        rows = read('''SELECT DISTINCT lower(btrim(tutor_email)) AS email FROM curriculum.modules
-            WHERE module_catalogue_id=%s AND deleted_at IS NULL AND coalesce(tutor_email,'')<>'' ''',
+        rows = read('''SELECT DISTINCT lower(btrim(t.email)) AS email FROM curriculum.modules m
+            JOIN curriculum.tutors t ON t.id=m.tutor_id
+            WHERE m.module_catalogue_id=%s AND m.status NOT IN ('inactive','archived')
+              AND coalesce(t.email,'')<>'' ''',
             [module_catalogue_id or ''])
     except DatabaseError as error:
         cause = error.__cause__ or error
@@ -764,14 +766,12 @@ def linked_session_items(series_ids):
         JOIN curriculum.live_sessions s ON s.id=o.live_session_id
         JOIN curriculum.components c ON c.module_catalogue_id=s.module_catalogue_id
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
-          AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
-          AND coalesce(c.library_state,'')<>'library'
+          AND c.status NOT IN ('inactive','archived')
           AND (c.settings_json->>'teamsOccurrenceId'=o.id::text
                OR (c.settings_json->>'teamsLiveSessionId'=o.live_session_id::text
                    AND c.settings_json->>'teamsSessionNumber'=o.session_number::text))
         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-          AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
-          AND coalesce(w.library_state,'')<>'library'
+          AND w.status NOT IN ('inactive','archived')
         WHERE o.live_session_id=ANY(%s)''', [sorted(set(series_ids))])
     titles, weeks, components = defaultdict(set), defaultdict(dict), defaultdict(set)
     for row in rows:
@@ -814,7 +814,7 @@ def module_results(request, module_id):
     try:
         series = read('''SELECT s.* FROM curriculum.live_sessions s
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
-            WHERE s.module_catalogue_id=%s AND m.deleted_at IS NULL
+            WHERE s.module_catalogue_id=%s AND m.status NOT IN ('inactive','archived')
             AND s.status NOT IN ('deleted','superseded','failed') ORDER BY s.created_at DESC''', [module_id])
         ids = [row['id'] for row in series]
         # Only a small index is returned on opening the tab. Rosters and transcript
@@ -905,7 +905,7 @@ def learner_series(kind, learner_id, series_id, linked_recordings=False):
     modules = {str(item['id']) for item in read_assigned_modules(learner)}
     rows = read('''SELECT s.* FROM curriculum.live_sessions s JOIN curriculum.modules m
         ON m.module_catalogue_id=s.module_catalogue_id
-        WHERE s.id=%s AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+        WHERE s.id=%s AND m.status NOT IN ('inactive','archived')
         AND lower(btrim(s.status)) NOT IN ('deleted','superseded','failed')''', [series_id])
     if not rows:
         return None, None
@@ -995,8 +995,8 @@ def join_url_for(series, occurrence):
                 c.settings_json->>'liveSessionUrl' AS live_session_url
             FROM curriculum.components c
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
-              AND (w.id IS NULL OR (w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)))
+            WHERE c.module_catalogue_id=ANY(%s) AND c.status NOT IN ('inactive','archived')
+              AND (w.id IS NULL OR (w.status NOT IN ('inactive','archived')))
               AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
             ORDER BY w.display_order,w.week_number,w.id,c.display_order,c.id''', [[owner, *shared]])
     except DatabaseError:

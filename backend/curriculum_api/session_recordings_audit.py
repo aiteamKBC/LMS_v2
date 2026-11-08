@@ -73,7 +73,7 @@ def audit_recordings(series_ids=()):
                               s.online_meeting_id,s.timezone,s.status
                          FROM curriculum.live_sessions s
                          JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
-                         WHERE m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+                         WHERE m.status NOT IN ('inactive','archived')
                            AND s.status NOT IN ('cancelled','deleted','superseded','failed')''' + scope +
                        ' ORDER BY s.id', [requested] if requested else [])
     issues = []
