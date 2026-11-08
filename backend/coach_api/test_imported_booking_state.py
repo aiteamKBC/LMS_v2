@@ -25,6 +25,7 @@ from . import views
 from .migrated_initialization import initialize_imported_review
 from .models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewTemplate
 from .test_migrated_reviews import SOURCE, candidate_definition
+from .tests_support.persisted_fixtures import review_source
 
 
 OWNER = "coach@example.invalid"
@@ -177,6 +178,7 @@ class ImportedInitializationBookingTests(TestCase):
         )
 
     def definition(self, key, source_id, *, source_status="not-scheduled"):
+        review_source(source_id, learner_id=21, aptem_review_id=str(source_id))
         return {
             "readOnly": True, "canInitialize": True, "sourceStatus": source_status,
             "migratedProgrammeKey": "id:P-42",
@@ -253,6 +255,7 @@ class CoachBookingPlaceholderRecoveryTests(TestCase):
         self.enterContext(patch("learner_api.coach_availability.free_slots",
                                 return_value=["10:00", "11:00"]))
         self.key = "imported-review:5101"
+        review_source(5101, learner_id=21, aptem_review_id="5101")
         self.template = MigratedReviewTemplate.objects.create(
             scope="GLOBAL", programme_key="", review_family="MCM", name="Approved Global",
             definition_json=candidate_definition(SOURCE), is_active=True,

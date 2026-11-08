@@ -19,6 +19,7 @@ from django.test import RequestFactory, SimpleTestCase, TestCase
 
 from coach_api import views
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
+from coach_api.tests_support.persisted_fixtures import review_source
 
 from . import calendar, imported_booking
 
@@ -130,6 +131,7 @@ class LearnerBookingEndpointOverlayTests(TestCase):
     """The booking endpoint wires the promotion in, and rolls back failures."""
 
     def setUp(self):
+        review_source(401, learner_id=101, aptem_review_id=KEY.removeprefix("imported-review:"))
         self.overlay = ImportedReviewInstance.objects.create(
             event_key=KEY, owner_email=OWNER, learner_id=101, source_review_id=401,
             status=ImportedReviewInstance.STATUS_NOT_SCHEDULED,

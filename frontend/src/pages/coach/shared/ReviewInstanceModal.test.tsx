@@ -2271,12 +2271,14 @@ describe('Monthly Coaching Meeting completion without a booking', () => {
     expect(startMigratedReview).not.toHaveBeenCalled();
   });
 
-  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('keeps unbooked %s submission unavailable', async family => {
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('offers explicit unbooked %s submission without submitting on open', async family => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migratedPrDefinition('not-scheduled', family));
     mount('imported-review:synthetic');
     await screen.findByDisplayValue('Review the next module');
-    expect(screen.queryByRole('button', { name: 'Submit Review' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Submit Review' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
   });
 });
 
