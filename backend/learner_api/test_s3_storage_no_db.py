@@ -539,3 +539,62 @@ class CopyCommandTests(S3TestCase):
         with override_settings(AWS_S3_STORAGE_BUCKET=''):
             _, _, error = self.run_command(MagicMock())
         self.assertIn('AWS_S3_STORAGE_BUCKET', str(error))
+
+
+class CopyBlobTransferTests(SimpleTestCase):
+    """copy_blob through the real boto3/s3transfer upload path (S3 stubbed).
+
+    s3transfer decides between one PutObject and a multipart upload from a
+    single read(threshold). A reader that returned one Azure chunk at a time
+    made it choose PutObject for every blob over a chunk and then read the whole
+    blob into memory, so large recordings exhausted memory and the copies
+    running next to them failed.
+    """
+
+    def copy(self, chunks, part_bytes=None):
+        import boto3
+        from botocore.stub import ANY, Stubber
+        from learner_api.management.commands import copy_azure_blobs_to_s3 as command
+
+        data = b''.join(chunks)
+        s3 = boto3.client('s3', region_name='eu-west-2', aws_access_key_id='test', aws_secret_access_key='test')
+        sent = []
+
+        def record(params, model, **_):
+            if model.name in ('PutObject', 'UploadPart'):
+                body = params['Body']
+                sent.append((model.name, body.read() if hasattr(body, 'read') else bytes(body)))
+        s3.meta.events.register('before-parameter-build.s3', record)
+        stubber = Stubber(s3)
+        multipart = part_bytes is not None
+        if multipart:
+            stubber.add_response('create_multipart_upload', {'UploadId': 'u1'}, None)
+            stubber.add_response('upload_part', {'ETag': '"p1"'}, None)
+            stubber.add_response('complete_multipart_upload', {}, None)
+        else:
+            stubber.add_response('put_object', {}, None)
+        stubber.add_response('head_object', {'ContentLength': len(data)}, {'Bucket': 'b', 'Key': ANY})
+
+        service = MagicMock()
+        service.get_blob_client.return_value.download_blob.return_value.chunks.return_value = iter(chunks)
+        blob = _AzureBlob(name='series/session-01_OCC-1/attendance.csv', size=len(data),
+                          content_settings=ContentSettings(content_type='application/octet-stream'), metadata={})
+        with stubber, patch.object(command, 'PART_BYTES', part_bytes or command.PART_BYTES):
+            size = command.copy_blob(service, s3, 'b', 'acct', 'session-recordings', blob)
+            stubber.assert_no_pending_responses()
+        return size, sent, data
+
+    def test_small_blob_is_one_put_with_exact_bytes(self):
+        size, sent, data = self.copy([b'learner,minutes\n' * 196 + b'xx'])
+        self.assertEqual(size, 3138)
+        self.assertEqual(sent, [('PutObject', data)])
+
+    def test_blob_larger_than_threshold_streams_as_multipart(self):
+        # 3,000 bytes in 100-byte chunks with a 1,024-byte threshold: before the
+        # fix the first read returned 100 bytes and the blob went as one
+        # PutObject read whole into memory.
+        chunks = [bytes([n]) * 100 for n in range(30)]
+        size, sent, data = self.copy(chunks, part_bytes=1024)
+        self.assertEqual(size, 3000)
+        self.assertEqual([name for name, _ in sent], ['UploadPart'])
+        self.assertEqual(b''.join(body for _, body in sent), data)
