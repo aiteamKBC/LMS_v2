@@ -81,6 +81,13 @@ class BunnyTransportTests(unittest.TestCase):
         ]})
         self.assertEqual(self.client.find_import('asset')['guid'], VIDEO_ID)
 
+    def test_recovery_ignores_retired_empty_upload_in_stale_search_results(self):
+        self.http.request.return_value = response({'items': [
+            {'guid': 'retired', 'title': 'Lesson [LMS:asset]'},
+            {'guid': VIDEO_ID, 'title': 'Lesson [LMS:asset]'},
+        ]})
+        self.assertEqual(self.client.find_import('asset', exclude_video_ids=['retired'])['guid'], VIDEO_ID)
+
     def test_create_starts_with_module_name_and_keeps_programme_collection(self):
         self.http.request.return_value = response({'guid': VIDEO_ID})
         self.client.create('asset', 'Introduction', 'PCP', scope={

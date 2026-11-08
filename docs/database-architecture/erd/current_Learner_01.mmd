@@ -1,0 +1,45 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Learner__Aptem_LMS_matching
+    Learner__Aptem_users {
+        bigint ID PK
+    }
+    Learner__Evidence {
+        integer id PK
+    }
+    Learner__active_learner_assignments
+    Learner__activity_date_generation_events {
+        bigint id PK
+    }
+    Learner__activity_overrides {
+        bigint aptem_id PK
+        text activity_id PK
+    }
+    Learner__activity_sync_locks {
+        text lock_name PK
+    }
+    Learner__activity_sync_runs {
+        bigint id PK
+    }
+    Learner__aptem_component_ksbs {
+        bigint aptem_id PK
+        bigint component_id PK
+    }
+    Learner__aptem_cv_certifications {
+        bigint id PK
+    }
+    Learner__aptem_cv_contracts_probe {
+        bigint id PK
+    }
+    Learner__aptem_plr_probe {
+        bigint id PK
+    }
+    Learner__aptem_skills_radar_probe {
+        bigint id PK
+    }
+    Learner__assessment_fetch {
+        bigint id PK
+    }
+    Learner__assignment_classification_evaluations {
+        bigint id PK
+    }

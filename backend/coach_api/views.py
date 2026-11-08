@@ -16169,11 +16169,19 @@ def coach_review_instance_adopt_booking(request, instance_id):
     if "bookingAdoptionVersion" in payload and (not isinstance(expected_version, str) or not expected_version):
         return JsonResponse({"detail": "A valid bookingAdoptionVersion is required."}, status=400)
     family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
+
+    def source_allows_adoption(review):
+        source_status = str(review.get("sourceStatus") or "").strip().casefold().replace(" ", "-")
+        # An initialized MCM can have saved work and a confirmed LMS meeting
+        # after Aptem advances to In Progress. Reuse that meeting; the stricter
+        # source gates for initialization and new bookings remain unchanged.
+        return bool(initial_local_status(source_status) or (family == "MCM" and source_status == "in-progress"))
+
     if (family not in {"MCM", "PR", "PR_SKILLS_RADAR"}
             or not definition.get("migratedForm") or definition.get("readOnly")
             or definition.get("previewOnly")
             or (definition.get("templateSync") or {}).get("status") == "conflict"
-            or not initial_local_status(definition.get("sourceStatus"))):
+            or not source_allows_adoption(definition)):
         return JsonResponse({"detail": "This review cannot adopt an existing meeting."}, status=409)
     try:
         with transaction.atomic():
@@ -16186,7 +16194,7 @@ def coach_review_instance_adopt_booking(request, instance_id):
                     or current.get("previewOnly") or (current.get("booking") or {}).get("conflict")
                     or (current.get("templateSync") or {}).get("status") == "conflict"
                     or migrated_review_family((current.get("historicalReview") or {}).get("type")) != family
-                    or not initial_local_status(current.get("sourceStatus"))):
+                    or not source_allows_adoption(current)):
                 return JsonResponse({"detail": "The review or meeting association changed. Reload the review.",
                                      "code": "BOOKING_CONFLICT"}, status=409)
             if (not overlay or overlay.completed_at
@@ -17163,13 +17171,13 @@ def coach_review_instance_complete(request, instance_id):
     )
     if not ok:
         # errors is {'status': [...]} for an invalid lifecycle transition (not
-        # yet in-progress, or already submitted/completed) or {'fields': [...]}
+        # editable, or already submitted/completed) or {'fields': [...]}
         # for unanswered required questions -- surface whichever one applies
         # as the headline message so the coach sees why, not a generic string.
         detail = (errors or {}).get("status", ["This review cannot be completed yet."])[0]
         return JsonResponse({"detail": detail, "errors": errors}, status=400)
     instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
-    _sync_calendar_record_to_review_instance_status(instance_row)
+    # Completion already mirrors the verified calendar link in its transaction.
     return JsonResponse(_coach_review_instance_definition(instance_row))
 
 

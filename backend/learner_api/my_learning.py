@@ -16,6 +16,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
@@ -54,18 +55,18 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
         ORDER BY m.title''',[ids])
     found = rows(cur)
     modules = {r['id']:plan_module({**r,'weeks_number':None}) for r in found}
-    cur.execute('''WITH live_counts AS (
+    cur.execute(f'''WITH live_counts AS (
         SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
         FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
-          AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>'')
+          AND {visible_child_sql('c')}
         GROUP BY c.module_catalogue_id,c.week_id
     ) SELECT w.id,w.module_catalogue_id,w.week_number,w.title,w.display_order,
         coalesce(live_counts.live_session_count,0) AS live_session_count
         FROM curriculum.weeks w LEFT JOIN live_counts
           ON live_counts.module_catalogue_id=w.module_catalogue_id AND live_counts.week_id=w.id
         WHERE w.module_catalogue_id=ANY(%s)
-          AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>'')
+          AND {visible_week_sql('w')}
         ORDER BY w.display_order,w.week_number,w.id''',[ids,ids])
     weeks = rows(cur)
     for week in weeks:
@@ -218,11 +219,18 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             'completed': (course, ref) in done, 'started': (course, ref) in started,
             '_course_ref': course, 'title': d['source_activity_title'], 'section_title': d.get('source_section_title'),
             'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0})
+    native_component_count = len(native.get('components', []))
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
-    from .replacement_learning import project_approved_learning
+    from .replacement_learning import project_approved_learning, approved_retained_components
     components = project_approved_learning(components, metadata['replacement_settings'], metadata.get('progress_transfers', []))
-    native['components'] = components[:len(native.get('components', []))]
-    native['retiredQuizComponents'] = components[len(native['components']):]
+    native['components'] = components[:native_component_count]
+    current_module_ids = {c.get('moduleId') for c in native['components'] if c.get('moduleId')}
+    # Explicitly retained (unmatched) old components have no destination here;
+    # they bypass project_approved_learning, which only revalidates matches
+    # against real target components, and would otherwise strip them.
+    retained_transfer = approved_retained_components(metadata.get('progress_transfers', []), current_module_ids)
+    native['retiredQuizComponents'] = [*components[native_component_count:], *retained_transfer]
+    components = [*components, *retained_transfer]
     by_id = {}
     for course in courses:
         ref = str(course['source_course_ref'])
@@ -511,6 +519,9 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
         # Reuse native completion before selecting deadlines, just as the
         # initial catalogue does. No cover or programme metric reads on expansion.
         return dict(upcoming=upcoming_links(source,kind,ids,native,metadata,{c['id'] for c in cards}))
+    from .my_learning_activity import card_teaching_activity
+    with projection_stage('teaching_activity'):
+        module_activity = card_teaching_activity(cards)
     from .student_activity import _cover_url
     with projection_stage('covers'):
         covers = {**metadata['covers'], **{ref:_cover_url(path) for ref,path in covers_for([c['id'] for c in cards if c['source']=='legacy']).items()}}
@@ -529,7 +540,7 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     with projection_stage('upcoming'):
         upcoming = upcoming_links(source, kind, ids, native, metadata, {c['id'] for c in cards}, limit=4)
     return dict(learner=dict(id=str(source.pk),kind=kind,name=owner['name'],programme=owner.get('programme') or '',cohort=str(source.cohort or ''),group=str(source.group or '')),
-        summary=summary, modules=cards, otjh=dict(actual=actual,planned=planned),
+        summary=summary, modules=cards, moduleActivity=module_activity, otjh=dict(actual=actual,planned=planned),
         upcoming=upcoming[:3], hasMoreUpcoming=len(upcoming)>3)
 
 
@@ -680,7 +691,6 @@ def read_module(source, kind, owner, subject_id):
                 candidate_ids = [ident for ident, placement in continuation_dates.items()
                                  if teaching_date(placement) > cutoff['afterDate']]
                 if candidate_ids:
-                    from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
                     cur.execute(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
                         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
                         WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
@@ -701,8 +711,11 @@ def read_module(source, kind, owner, subject_id):
                             **{k:global_by_id.get(c.get('componentId'),{}).get(k) for k in ('attendanceCompleted',) if k in global_by_id.get(c.get('componentId'),{})}}
                             for c in detail['components'] if (c.get('moduleId') in native_scope_ids if mid else c.get('module')==subject_id[9:])]
     detail['retiredQuizComponents'] = [{k:v for k,v in c.items() if k != 'previousLearning'} for c in native.get('retiredQuizComponents',[]) if c.get('moduleId') in native_scope_ids]
-    from .replacement_learning import project_approved_learning
+    from .replacement_learning import project_approved_learning, approved_retained_components
     detail['components'] = project_approved_learning(detail['components'], metadata['replacement_settings'], transfers)
+    # Explicitly retained (unmatched) old components have no destination
+    # component to attach to; add them the same way assemble_cards does.
+    detail['retiredQuizComponents'] = [*detail['retiredQuizComponents'], *approved_retained_components(transfers, native_scope_ids)]
     component_set = {c.get('componentId') for c in [*detail['components'],*detail['retiredQuizComponents']]}
     quiz_ids = {str((c.get('quizMeta') or {}).get('quizId')) for c in detail['components'] if c.get('isQuiz')}
     detail['quizAttempts'] = [a for a in native['quizAttempts'] if a.get('componentId') in component_set if a.get('componentId')] + [a for a in native['quizAttempts'] if not a.get('componentId') and str(a.get('quizId')) in quiz_ids]

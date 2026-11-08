@@ -27,6 +27,7 @@ class YouTubeDownloadTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.dict(os.environ))
         os.environ.pop('YOUTUBE_COOKIES_FILE', None)
+        os.environ.pop('YOUTUBE_COOKIES_TEXT', None)
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('External network disabled')))
 
     def make_cookies(self, content=None):
@@ -257,6 +258,18 @@ class YouTubeDownloadTests(unittest.TestCase):
                     youtube._prepare_cookies(Path(temporary))
                 self.assertNotIn(path, str(raised.exception))
 
+    def test_cookie_file_outside_container_application_is_allowed(self):
+        source = self.make_cookies()
+        original = source.read_bytes()
+        # Model /app/curriculum_api alongside a private cookie file outside /app.
+        module_file = source.parent / 'app' / 'curriculum_api' / 'youtube_download.py'
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(youtube, '__file__', str(module_file)):
+            copied = youtube._prepare_cookies(Path(temporary))
+            self.assertEqual(copied.parent, Path(temporary))
+            self.assertIn(COOKIE_VALUE, copied.read_text())
+            self.assertEqual(source.read_bytes(), original)
+
     def test_posix_cookie_file_permissions_are_enforced(self):
         self.make_cookies()
         for mode in (0o644, 0o640, 0o606, 0o600):
@@ -369,6 +382,99 @@ class YouTubeDownloadTests(unittest.TestCase):
         self.assertFalse(Path(spawn.call_args.args[0][4]).exists())
         self.assertEqual(source.read_bytes(), original)
         stop.assert_called_with(child)
+
+    def test_ecs_secret_export_is_parsed_and_kept_private_per_attempt(self):
+        from yt_dlp.cookies import YoutubeDLCookieJar
+        exported = '\ufeff' + cookie_export().replace('\n', '\r\n')
+        os.environ['YOUTUBE_COOKIES_TEXT'] = exported
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            first_copy = youtube._prepare_cookies(Path(first))
+            second_copy = youtube._prepare_cookies(Path(second))
+            jar = YoutubeDLCookieJar(str(first_copy))
+            jar.load()
+            self.assertEqual([cookie.value for cookie in jar], [COOKIE_VALUE])
+            self.assertNotIn('Synthetic browser export', first_copy.read_text())
+            first_copy.write_text('changed by one downloader')
+            self.assertIn(COOKIE_VALUE, second_copy.read_text())
+            self.assertEqual(os.environ['YOUTUBE_COOKIES_TEXT'], exported)
+        self.assertFalse(first_copy.exists())
+        self.assertFalse(second_copy.exists())
+
+    def test_ecs_secret_cannot_override_configured_file_silently(self):
+        self.make_cookies()
+        os.environ['YOUTUBE_COOKIES_TEXT'] = cookie_export()
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(youtube.shutil, 'which', return_value='node'), \
+             patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
+             patch.object(youtube.subprocess, 'Popen') as spawn:
+            with self.assertRaisesRegex(VideoImportError, 'only one YouTube session source') as raised:
+                youtube._run_download(URL, Path(temporary), 1000)
+            self.assertNotIn(COOKIE_VALUE, str(raised.exception))
+            self.assertFalse(list(Path(temporary).iterdir()))
+            spawn.assert_not_called()
+
+    def test_invalid_ecs_secret_fails_safely_before_starting_downloader(self):
+        for exported in (json.dumps(cookie_export()), '   ',
+                         cookie_export(domain='.google.com'),
+                         cookie_export(int(time.time()) - 60),
+                         cookie_export().replace('\t', '\\t'),
+                         'x' * (youtube.MAX_COOKIE_BYTES + 1),
+                         '\u00e9' * (youtube.MAX_COOKIE_BYTES // 2 + 1)):
+            with self.subTest(length=len(exported)), tempfile.TemporaryDirectory() as temporary, \
+                 patch.object(youtube.os, 'environ', {'YOUTUBE_COOKIES_TEXT': exported}), \
+                 patch.object(youtube.shutil, 'which', return_value='node'), \
+                 patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
+                 patch.object(youtube.subprocess, 'Popen') as spawn:
+                with self.assertRaises(VideoImportError) as raised:
+                    youtube._run_download(URL, Path(temporary), 1000)
+                self.assertNotIn(COOKIE_VALUE, str(raised.exception))
+                self.assertFalse(list(Path(temporary).iterdir()))
+                spawn.assert_not_called()
+
+    def test_ecs_secret_not_forwarded_or_printed_when_youtube_rejects_session(self):
+        os.environ['YOUTUBE_COOKIES_TEXT'] = cookie_export()
+        os.environ['BUNNY_STREAM_API_KEY'] = 'synthetic-key'
+        os.environ['DATABASE_URL'] = 'synthetic-db'
+        paths = []
+        child = Mock(returncode=0)
+        child.poll.return_value = 0
+
+        def run_child(command, **kwargs):
+            directory, copied = Path(command[4]), Path(command[7])
+            paths.append(directory)
+            for key in ('YOUTUBE_COOKIES_TEXT', 'YOUTUBE_COOKIES_FILE', 'BUNNY_STREAM_API_KEY', 'DATABASE_URL'):
+                self.assertNotIn(key, kwargs['env'])
+            self.assertNotIn(COOKIE_VALUE, ' '.join(command))
+            self.assertNotIn(COOKIE_VALUE, str(kwargs['env']))
+            self.assertEqual(copied.parent, directory)
+            with patch('imageio_ffmpeg.get_ffmpeg_exe', return_value='ffmpeg'), \
+                 patch('yt_dlp.YoutubeDL') as factory:
+                factory.return_value.__enter__.return_value.extract_info.side_effect = Exception(
+                    'Sign in to confirm you are not a bot: ' + COOKIE_VALUE)
+                youtube._worker(URL, directory, 1000, 'node', copied, check_only=True)
+                self.assertEqual(factory.call_args.args[0]['cookiefile'], str(copied))
+                result = (directory / 'result.json').read_text()
+                self.assertNotIn(COOKIE_VALUE, result)
+            return child
+
+        with patch.object(youtube.shutil, 'which', return_value='node'), \
+             patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
+             patch.object(youtube.subprocess, 'Popen', side_effect=run_child), \
+             patch('sys.stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(youtube.main(['--check', URL]), 1)
+        self.assertIn('refresh the YouTube session', output.getvalue())
+        self.assertNotIn(COOKIE_VALUE, output.getvalue())
+        self.assertFalse(paths[0].exists())
+
+    def test_ecs_cookie_copy_is_removed_when_child_fails_to_start(self):
+        os.environ['YOUTUBE_COOKIES_TEXT'] = cookie_export()
+        with patch.object(youtube.shutil, 'which', return_value='node'), \
+             patch.object(youtube.importlib.util, 'find_spec', return_value=True), \
+             patch.object(youtube.subprocess, 'Popen', side_effect=OSError('synthetic process failure')) as spawn:
+            with self.assertRaises(OSError):
+                with youtube.download_youtube(URL, 1000):
+                    self.fail('No media should be returned')
+        self.assertFalse(Path(spawn.call_args.args[0][4]).exists())
 
 
 if __name__ == '__main__':

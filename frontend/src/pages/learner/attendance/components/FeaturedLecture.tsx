@@ -24,7 +24,7 @@ export default function FeaturedLecture({ lecture, now, timeZone, busy, canAtten
   const nativeTeams = lecture.source === 'microsoft-teams';
   // Timed Teams lectures share the list's join window; a date-only legacy row can be joined on its date.
   const canJoin = Boolean(joinUrl) && (nativeTeams ? isLectureJoinable(lecture, now) : today);
-  const help = nativeTeams ? 'Attendance is verified from Teams after more than 3 minutes in the session.' : attended ? `Attendance recorded${lecture.creditedMinutes != null ? ` · ${Number((lecture.creditedMinutes / 60).toFixed(2))} hours credited` : ''}.` :
+  const help = nativeTeams ? 'Attendance is verified using Teams attendance records.' : attended ? `Attendance recorded${lecture.creditedMinutes != null ? ` · ${Number((lecture.creditedMinutes / 60).toFixed(2))} hours credited` : ''}.` :
     !canAttend ? 'Attendance can be recorded by the learner or an administrator.' :
       !today ? 'Attend will be available on the lecture date.' :
         !hasDuration ? 'The lecture duration is not available yet. Please contact support.' :

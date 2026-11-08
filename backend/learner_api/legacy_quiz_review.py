@@ -7,6 +7,7 @@ from . import canonical_learning
 from .subject_content import public_quiz, quiz_definition
 from .subject_quiz import imported_quiz
 from . import subject_store
+from . import legacy_quiz_retakes as retakes
 
 
 def read_review(owner, group_id, quiz_id, *, allow_attempts=False, demo_preview=False):
@@ -66,10 +67,13 @@ def read_review(owner, group_id, quiz_id, *, allow_attempts=False, demo_preview=
         str(row['group_id']) == str(group_id) and str(row['activity_id']) == str(quiz_id)
         and row.get('catalogue_kind') == 'quiz' and row.get('completed')
         for row in saved['progress'])
+    can_retake = bool(allow_attempts and completed and saved['ready'] and quiz and quiz['ready']
+        and retakes.allowed(owner['enrolment_id'], owner['aptem_id'], group_id, quiz_id))
     return {'title': matches[0].get('activity') or '', 'reading_html': '', 'media': [],
         'has_reading': False, 'source_live': False, 'quiz': quiz,
         'available': bool(quiz or answers or historical['score'] is not None),
         'completed': completed,
-        'can_attempt': bool(allow_attempts and not completed and saved['ready'] and quiz and quiz['ready']),
+        'can_attempt': bool(allow_attempts and (not completed or can_retake) and saved['ready'] and quiz and quiz['ready']),
+        'can_retake': can_retake,
         'persistence_ready': saved['ready'],
         'csrf_token': '', 'history': saved['history'], 'historical': historical}

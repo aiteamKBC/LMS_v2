@@ -211,6 +211,10 @@ def _enabled():
 
 def rule_for(path):
     """The ``(prefix, roles)`` governing ``path``, or None if it is not gated."""
+    # Public email-only declarations. Exact endpoint; other curriculum APIs
+    # retain their session/role gates. The view owns CSRF and programme checks.
+    if path == '/curriculum_api/qr-attendance/':
+        return None
     # Email approval authenticates with an expiring, single-use signed request.
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':
@@ -220,6 +224,10 @@ def rule_for(path):
     # keeping this narrow prefix public lets guests respond without opening any
     # other Engagement endpoint.
     if path.startswith('/engagement_api/feedback/public-event/'):
+        return None
+    # The shared lecture QR still validates a secret per lecture and checks
+    # the supplied email against that lecture's assigned module on every call.
+    if path.startswith('/engagement_api/feedback/public-lecture/'):
         return None
     if path.startswith('/engagement_api/feedback/public-rsvp/'):
         return None

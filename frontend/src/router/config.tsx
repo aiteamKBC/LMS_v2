@@ -51,8 +51,10 @@ const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPor
 const EmployerFeedbackPage = lazyRoute(() => import("../pages/employer/EmployerFeedbackPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
+const PublicLectureFeedbackPage = lazyRoute(() => import("../pages/lecture-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
+const QRAttendancePage = lazyRoute(() => import("../pages/qr-attendance/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
@@ -339,12 +341,20 @@ const routes: RouteObject[] = [
     element: <EventFeedbackPage />,
   },
   {
+    path: "/lecture-feedback",
+    element: <PublicLectureFeedbackPage />,
+  },
+  {
     path: "/event-rsvp",
     element: <EventRsvpPage />,
   },
   {
     path: "/event-check-in",
     element: <EventCheckInPage />,
+  },
+  {
+    path: "/qr-attendance",
+    element: <QRAttendancePage />,
   },
   {
     // The public launcher that used to be at "/". Kept reachable: it is the
@@ -1895,8 +1905,10 @@ const PUBLIC_PATHS = new Set([
   "/",
   "/login",
   "/event-feedback",
+  "/lecture-feedback",
   "/event-rsvp",
   "/event-check-in",
+  "/qr-attendance",
   "/access-required",
   "/forgot-password",
   "/set-password",

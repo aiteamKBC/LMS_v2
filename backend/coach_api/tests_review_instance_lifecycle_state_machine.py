@@ -2,9 +2,9 @@
 
     python manage.py test coach_api.tests_review_instance_lifecycle_state_machine
 
-NOT SCHEDULED -> SCHEDULED -> (real Teams attendance) -> IN PROGRESS
-    -> (coach completes) -> AWAITING SIGNATURE -> (all required signatures)
-    -> COMPLETED
+Editable forms can be submitted without booking or attendance. Required
+signatures still gate completion, and real Teams attendance alone advances
+a scheduled meeting to in-progress.
 
 Monotonic: no test here should ever observe a backward transition. Unlike
 tests_teams_attendance_in_progress.py (which is about the attendance signal
@@ -16,24 +16,26 @@ review instance.
 from datetime import date, time
 
 from django.db import connection
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory
 
 from curriculum_api import review_instances, review_types, reviews
 from curriculum_api import views as curriculum_views
 
 from . import views as coach_views
 from .models import CoachCalendarEvent
+from .tests_support.transaction_cases import CoachTransactionTestCase
 
 COACH_EMAIL = 'coach@example.com'
 OTHER_COACH_EMAIL = 'other-coach@example.com'
 LEARNER_EMAIL = 'learner@example.com'
+NATIVE_LEARNER_ID = 900601
 
 
 def _interval(join_iso, leave_iso):
     return {'joinDateTime': join_iso, 'leaveDateTime': leave_iso}
 
 
-class ReviewLifecycleStateMachineTestCase(TestCase):
+class ReviewLifecycleStateMachineTestCase(CoachTransactionTestCase):
     databases = {'default', 'enrolment'}
 
     def setUp(self):
@@ -44,7 +46,21 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         review_types.provision_review_types_table()
         review_instances.provision_review_instance_tables()
         self._clear()
+        CoachCalendarEvent.objects.filter(owner_email=COACH_EMAIL, event_key__in=[
+            f'{kind}:{learner_id}:1:2026-10-01'
+            for kind in ('mcr', 'progress-review') for learner_id in (NATIVE_LEARNER_ID, 900602, 900603)
+        ]).delete()
         self._programme()
+        # Real source guards read through the enrolment alias; committed parents
+        # let these tests exercise that guard rather than bypass it with a mock.
+        from learner_api.models import LearnerProfile
+        from .tests_support.persisted_fixtures import fixed_identity
+        LearnerProfile.objects.using('default').filter(pk__in=(900001, NATIVE_LEARNER_ID, 900602, 900603)).delete()
+        for learner_id in (900001, NATIVE_LEARNER_ID, 900602, 900603):
+            fixed_identity(LearnerProfile, id=learner_id, full_name='Synthetic learner',
+                email=f'learner-{learner_id}@example.invalid', learner_type='commercial',
+                coach_email=COACH_EMAIL, programme_id='PROG-SM',
+                programme_status='Active', lifecycle_status='active', aptem_id=None, enrolment_id=None)
 
     def _ensure_programmes_table(self):
         with connection.cursor() as cursor:
@@ -76,11 +92,9 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         review_types.seed_system_review_types()
 
     def _programme(self):
-        curriculum_views.insert_row('programmes', {
-            'id': 'PROG-SM', 'programme_id': 'PROG-SM', 'program_id': 'PROG-SM',
-            'name': 'State Machine Programme', 'status': 'active', 'is_active': True, 'is_archived': False,
-            'created_at': curriculum_views.datetime.utcnow(), 'updated_at': curriculum_views.datetime.utcnow(),
-        })
+        # Supply the current schema's required columns as well as lightweight fixtures.
+        from .tests_support.persisted_fixtures import programme
+        programme('PROG-SM')
         curriculum_views.invalidate_curriculum_cache()
 
     def _template(self, *, type_code='mcm', signatures=None):
@@ -102,7 +116,7 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         self.assertIsNone(errors, errors)
         return review_id
 
-    def _scheduled_linked_row(self, *, learner_id=601, event_type='mcr', type_code='mcm', signatures=None, owner_email=COACH_EMAIL):
+    def _scheduled_linked_row(self, *, learner_id=NATIVE_LEARNER_ID, event_type='mcr', type_code='mcm', signatures=None, owner_email=COACH_EMAIL):
         review_id = self._template(type_code=type_code, signatures=signatures)
         record = CoachCalendarEvent.objects.create(
             event_key=f'{event_type}:{learner_id}:1:2026-10-01', event_type=event_type,
@@ -153,20 +167,34 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         request.coach_email = owner_email
         return unwrap(coach_views.coach_review_instance_signature)(request, instance_id)
 
-    # -- 1/2: reject completion before attendance ------------------------------
+    # -- 1/2: submission validates answers independently of booking ------------
 
-    def test_not_scheduled_complete_is_rejected(self):
+    def test_unscheduled_form_requires_answers_and_signatures_without_creating_a_booking(self):
         review_id = self._template()
         template = reviews.get_review_template_row(review_id)
         instance = review_instances.ensure_review_instance(
-            template, learner_id=1, learner_kind='', programme_id='PROG-SM',
+            template, learner_id=900001, learner_kind='', programme_id='PROG-SM',
             occurrence_number=1, target_date=date(2026, 10, 1), coach_email=COACH_EMAIL,
         )
         self.assertEqual(instance['status'], review_instances.STATUS_NOT_SCHEDULED)
         ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
         self.assertFalse(ok)
-        self.assertIn('status', errors)
+        self.assertIn('fields', errors)
         self.assertEqual(review_instances.get_review_instance(instance['id'])['status'], review_instances.STATUS_NOT_SCHEDULED)
+        field_id = review_instances.review_instance_form_definition(instance)['sections'][0]['fields'][0]['id']
+        review_instances.save_review_instance_answers(instance, {field_id: 'Reviewed without a meeting.'}, actor=COACH_EMAIL)
+        self.assertEqual(self._complete_via_view(instance['id'], owner_email=OTHER_COACH_EMAIL).status_code, 404)
+        response = self._complete_via_view(instance['id'])
+        self.assertEqual(response.status_code, 200, response.content)
+        submitted = review_instances.get_review_instance(instance['id'])
+        self.assertEqual(submitted['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertIsNone(submitted['calendar_event_id'])
+        self.assertIsNone(submitted['started_at'])
+        self.assertIsNone(submitted['completed_at'])
+        self.assertFalse(CoachCalendarEvent.objects.exists())
+        self.assertEqual(self._sign_via_view(instance['id'], 'advisor').status_code, 200)
+        self.assertEqual(review_instances.get_review_instance(instance['id'])['status'], review_instances.STATUS_COMPLETED)
+        self.assertFalse(CoachCalendarEvent.objects.exists())
 
     def test_scheduled_submission_requires_answers_and_mirrors_calendar(self):
         record = self._scheduled_linked_row()
@@ -184,13 +212,84 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         self.assertEqual(record.status, CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
         self.assertIsNone(self._instance(record)['started_at'])
 
-    def test_scheduled_review_without_signatures_cannot_complete(self):
-        record = self._scheduled_linked_row(signatures={'advisor': False, 'employer': False, 'participant': False, 'referrer': False})
+    def test_unscheduled_native_families_keep_configured_otjh_eligibility(self):
+        from curriculum_api.review_otjh import completed_hours
+        expected = 0
+        for type_code in ('mcm', 'progress_review'):
+            for eligible in (False, True):
+                with self.subTest(type_code=type_code, eligible=eligible):
+                    template_id = self._template(type_code=type_code, signatures={
+                        'advisor': False, 'employer': False, 'participant': False, 'referrer': False})
+                    curriculum_views.update_rows(reviews.REVIEW_TEMPLATES_TABLE, 'id = %s', [template_id], {
+                        'expected_otjh': 1.25, 'counts_towards_otjh': eligible})
+                    template = reviews.get_review_template_row(template_id)
+                    instance = review_instances.ensure_review_instance(
+                        template, learner_id=900001, learner_kind='', programme_id='PROG-SM',
+                        occurrence_number=1, target_date=date(2026, 10, 1), coach_email=COACH_EMAIL)
+                    field_id = review_instances.review_instance_form_definition(instance)['sections'][0]['fields'][0]['id']
+                    review_instances.save_review_instance_answers(instance, {field_id: 'Completed review'}, actor=COACH_EMAIL)
+                    response = self._complete_via_view(instance['id'])
+                    self.assertEqual(response.status_code, 200, response.content)
+                    completed = review_instances.get_review_instance(instance['id'])
+                    self.assertEqual(completed['status'], 'completed')
+                    self.assertIsNone(completed['started_at'])
+                    self.assertIsNone(completed['calendar_event_id'])
+                    expected += 1.25 if eligible else 0
+                    self.assertEqual(completed_hours(900001), expected)
+        self.assertFalse(CoachCalendarEvent.objects.exists())
+
+    def test_scheduled_progress_review_without_required_signatures_completes_without_attendance(self):
+        record = self._scheduled_linked_row(type_code='progress_review', event_type='progress-review',
+            signatures={'advisor': False, 'employer': False, 'participant': False, 'referrer': False})
         self._answer_required_field(record, actor=COACH_EMAIL)
         ok, errors = review_instances.complete_review_instance(self._instance(record), actor=COACH_EMAIL)
+        self.assertTrue(ok, errors)
+        self.assertIsNone(errors)
+        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_COMPLETED)
+        self.assertIsNone(self._instance(record)['started_at'])
+        record.refresh_from_db()
+        self.assertEqual(record.status, CoachCalendarEvent.STATUS_COMPLETED)
+        self.assertEqual(record.scheduled_date, date(2026, 10, 1))
+
+    def test_submission_refuses_cross_learner_coach_or_review_calendar_links(self):
+        record = self._scheduled_linked_row()
+        self._answer_required_field(record, actor=COACH_EMAIL)
+        instance = self._instance(record)
+        for field, value in [('learner_id', 900602), ('owner_email', OTHER_COACH_EMAIL),
+                             ('review_instance_id', 'unrelated-review')]:
+            with self.subTest(field=field):
+                original = getattr(record, field)
+                setattr(record, field, value)
+                record.save(update_fields=[field])
+                ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
+                self.assertFalse(ok)
+                self.assertIn('status', errors)
+                self.assertEqual(review_instances.get_review_instance(instance['id'])['status'], 'scheduled')
+                record.refresh_from_db()
+                self.assertEqual(record.status, 'scheduled')
+                setattr(record, field, original)
+                record.save(update_fields=[field])
+
+    def test_unbooked_mcm_validates_answers_then_freezes_for_signatures(self):
+        template = reviews.get_review_template_row(self._template())
+        instance = review_instances.ensure_review_instance(
+            template, learner_id=900001, learner_kind='', programme_id='PROG-SM',
+            occurrence_number=1, target_date=date(2026, 10, 1), coach_email=COACH_EMAIL,
+        )
+        definition = review_instances.review_instance_form_definition(instance)
+        field_id = definition['sections'][0]['fields'][0]['id']
+        ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
         self.assertFalse(ok)
-        self.assertIn('status', errors)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertIn('fields', errors)
+        ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL,
+            answers={field_id: 'Completed coaching discussion'})
+        self.assertTrue(ok, errors)
+        saved = review_instances.get_review_instance(instance['id'])
+        self.assertEqual(saved['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertIsNone(saved['started_at'])
+        self.assertFalse(saved.get('calendar_event_id'))
+        saved_definition = review_instances.review_instance_form_definition(saved)
+        self.assertEqual(saved_definition['sections'][0]['fields'][0]['answer'], 'Completed coaching discussion')
 
     # -- 3/4: drafting is never blocked, and never changes status -------------
 
@@ -375,7 +474,7 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         from unittest.mock import patch
         from learner_api import calendar as learner_calendar
 
-        record = self._scheduled_linked_row(learner_id=602)
+        record = self._scheduled_linked_row(learner_id=900602)
         self._confirm_attendance(record)
         self._answer_required_field(record, actor=COACH_EMAIL)
         self._complete_via_view(record.review_instance_id)
@@ -404,13 +503,17 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
 
     def test_progress_review_uses_the_same_canonical_lifecycle(self):
         record = self._scheduled_linked_row(
-            learner_id=603, event_type='progress-review', type_code='progress_review',
+            learner_id=900603, event_type='progress-review', type_code='progress_review',
             signatures={'advisor': True, 'employer': False, 'participant': False, 'referrer': False},
         )
         instance = self._instance(record)
         ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
         self.assertFalse(ok)
-        self.assertIn('status', errors)
+        # Scheduled PRs already share MCM's field-validation submission path.
+        # Refuse the unanswered required field without changing the lifecycle.
+        field_id = review_instances.review_instance_form_definition(instance)['sections'][0]['fields'][0]['id']
+        self.assertEqual(errors, {'fields': [field_id]})
+        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
 
         self._confirm_attendance(record, email=LEARNER_EMAIL, display_name='Learner')
         self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)

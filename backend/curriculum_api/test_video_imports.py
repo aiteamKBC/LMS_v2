@@ -161,7 +161,11 @@ class VideoImportTests(TestCase):
 
     def test_newer_file_choice_does_not_report_previous_copy_as_current(self):
         asset = self.asset()
-        imports.enqueue('module', 'MOD1', self.component, SCOPE, file_hash='new-file')
+        newer = imports.enqueue('module', 'MOD1', self.component, SCOPE, file_hash='new-file')
+        # This case requires a later request; rapid Windows clock readings can
+        # give two fixtures the same timestamp.
+        newer.requested_at = asset.requested_at + timedelta(seconds=1)
+        newer.save(update_fields=['requested_at'])
         with patch.object(imports, 'target', return_value=('components', [self.component], SCOPE)):
             self.assertFalse(imports._matches_current_source(asset))
 

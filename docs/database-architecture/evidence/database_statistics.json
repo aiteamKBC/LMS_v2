@@ -1,0 +1,3 @@
+[
+{"datname": "neondb", "numbackends": 1, "xact_commit": 143, "xact_rollback": 1, "blks_read": 3791, "blks_hit": 323495, "tup_returned": 773429, "tup_fetched": 424086, "temp_files": 0, "temp_bytes": 0, "deadlocks": 0, "stats_reset": null}
+]

@@ -42,6 +42,8 @@ class RescheduleFixtures:
                      "expectedBooking": {"scheduledDate": self.day.isoformat(), "scheduledTime": "10:00", "durationMinutes": 60}}
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch('learner_api.coach_availability.free_slots',
+                                      return_value=['10:00', '12:00', '14:00']))
         for name, kwargs in {
             "authenticated_coach_email": {"return_value": "coach@example.invalid"},
             "_imported_review_definition": {"side_effect": lambda *a: copy.deepcopy(self.definition)},
@@ -115,7 +117,8 @@ class ImportedRescheduleTests(RescheduleFixtures, TestCase):
             CoachCalendarEvent.objects.filter(pk=self.calendar.pk).update(status=state)
             self.assertEqual(self.reschedule().status_code, 409)
         CoachCalendarEvent.objects.filter(pk=self.calendar.pk).update(status="scheduled")
-        for state in ("pending", "syncing", "reconciliation-required", "cancelled"):
+        for state in (CoachCalendarEvent.SYNC_PENDING, CoachCalendarEvent.SYNC_SYNCING,
+                      CoachCalendarEvent.SYNC_RECONCILIATION, CoachCalendarEvent.SYNC_CANCELLED):
             CoachCalendarEvent.objects.filter(pk=self.calendar.pk).update(sync_state=state)
             self.assertEqual(self.reschedule().status_code, 409)
         self.graph.assert_not_called()

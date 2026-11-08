@@ -1,0 +1,824 @@
+schema,table_name,column_name,data_type,classification
+Audit,Aptem_LMS_matching,Learner_ID,integer,name-based triage only; no target inferred
+Audit,LMS_data,user_id,bigint,name-based triage only; no target inferred
+Audit,LMS_data,course_id,bigint,name-based triage only; no target inferred
+Audit,activity_definitions,source_component_id,text,name-based triage only; no target inferred
+Audit,activity_definitions,source_section_id,text,name-based triage only; no target inferred
+Audit,contract_document_archive,learner_id,bigint,name-based triage only; no target inferred
+Audit,contract_evidence_links,learner_id,bigint,name-based triage only; no target inferred
+Audit,contract_evidence_links,evidence_id,text,name-based triage only; no target inferred
+Audit,contract_source_link_archive,learner_id,bigint,name-based triage only; no target inferred
+Audit,ilr_learning_deliveries,epa_org_id,character varying(50),name-based triage only; no target inferred
+Audit,ilr_learning_deliveries,sw_sup_aim_id,text,name-based triage only; no target inferred
+Audit,learner_evidence_overrides,learner_id,bigint,name-based triage only; no target inferred
+Audit,learner_evidence_overrides,source_evidence_id,bigint,name-based triage only; no target inferred
+Audit,learner_evidence_overrides,source_activity_id,bigint,name-based triage only; no target inferred
+Audit,learner_evidence_overrides,source_plr_id,bigint,name-based triage only; no target inferred
+Audit,learner_justification_documents,learner_id,bigint,name-based triage only; no target inferred
+Audit,learner_match,lms_id,integer,name-based triage only; no target inferred
+Audit,learner_match_market_research_l4,aptem_id,bigint,name-based triage only; no target inferred
+Audit,learner_match_market_research_l4,lms_id,integer,name-based triage only; no target inferred
+Audit,learner_transition_events,actor_id,bigint,name-based triage only; no target inferred
+Audit,learner_transitions,learner_id,integer,name-based triage only; no target inferred
+Audit,learner_transitions,aptem_id,bigint,name-based triage only; no target inferred
+Audit,lms_progress_repair_events,aptem_id,bigint,name-based triage only; no target inferred
+Audit,lms_progress_repair_events,learner_id,bigint,name-based triage only; no target inferred
+Audit,lms_progress_repair_events,group_id,bigint,name-based triage only; no target inferred
+Audit,monthly_audit_signoffs,learner_id,text,name-based triage only; no target inferred
+Audit,monthly_audit_signoffs,signature_source_document_id,text,name-based triage only; no target inferred
+Audit,progress_review_signature_cache,learner_id,text,name-based triage only; no target inferred
+Audit,progress_review_signature_cache,source_document_id,text,name-based triage only; no target inferred
+Coach,coach_absence_report,learner_id,integer,name-based triage only; no target inferred
+Coach,coach_absence_report,attendance_id,bigint,name-based triage only; no target inferred
+Coach,coach_attendance_adjustment,learner_id,integer,name-based triage only; no target inferred
+Coach,coach_attendance_adjustment,source_id,character varying(255),name-based triage only; no target inferred
+Coach,coach_calendar_sequence,learner_id,integer,name-based triage only; no target inferred
+Coach,coach_imported_review_instance,learner_id,integer,name-based triage only; no target inferred
+Coach,coach_manual_attendance,learner_id,integer,name-based triage only; no target inferred
+Coach,coach_manual_attendance,enrolment_id,integer,name-based triage only; no target inferred
+Coach,coach_meeting_artifacts,graph_event_id,text,name-based triage only; no target inferred
+Coach,coach_meeting_artifacts,graph_artifact_id,text,name-based triage only; no target inferred
+Coach,coach_meeting_artifacts,call_id,text,name-based triage only; no target inferred
+Coach,coach_meeting_artifacts,content_correlation_id,text,name-based triage only; no target inferred
+Coach,coach_meeting_attendance,graph_event_id,text,name-based triage only; no target inferred
+Coach,coach_meeting_attendance,learner_id,bigint,name-based triage only; no target inferred
+Coach,coach_meeting_attendance_reports,graph_event_id,text,name-based triage only; no target inferred
+Coach,coach_meeting_attendance_reports,graph_report_id,text,name-based triage only; no target inferred
+Coach,coach_meeting_summaries,graph_event_id,text,name-based triage only; no target inferred
+Coach,coach_meeting_summaries,learner_id,bigint,name-based triage only; no target inferred
+Coach,coach_meeting_summaries,transcript_artifact_id,text,name-based triage only; no target inferred
+Coach,coach_migrated_review_signature,signer_account_id,bigint,name-based triage only; no target inferred
+Coach,legacy_review_calendar_backup_20260913,learner_id,integer,name-based triage only; no target inferred
+Coach,legacy_review_calendar_backup_20260913,graph_event_id,character varying(255),name-based triage only; no target inferred
+Coach,legacy_review_calendar_backup_20260913,operation_id,uuid,name-based triage only; no target inferred
+Coach,legacy_review_calendar_backup_20260913,review_template_id,character varying(128),name-based triage only; no target inferred
+Coach,legacy_review_calendar_backup_20260913,review_instance_id,character varying(128),name-based triage only; no target inferred
+Engagement,attendance_interventions,learner_id,text,name-based triage only; no target inferred
+Engagement,club_meeting_attendance,learner_id,text,name-based triage only; no target inferred
+Engagement,club_memberships,learner_id,text,name-based triage only; no target inferred
+Engagement,event_attendance,learner_id,text,name-based triage only; no target inferred
+Engagement,event_bookings,learner_id,character varying(100),name-based triage only; no target inferred
+Engagement,event_qr_attendance,learner_id,character varying(100),name-based triage only; no target inferred
+Engagement,flash_card_decks,programme_id,integer,name-based triage only; no target inferred
+Engagement,flash_card_decks,week_id,text,name-based triage only; no target inferred
+Engagement,flash_card_views,learner_id,text,name-based triage only; no target inferred
+Engagement,points_grants,learner_id,text,name-based triage only; no target inferred
+Engagement,points_grants,source_id,text,name-based triage only; no target inferred
+Engagement,recognitions,learner_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_acceptances,progress_id,bigint,name-based triage only; no target inferred
+Engagement,shared_reward_active_intervals,learner_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_bonus_verifications,learner_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_saved_progress,module_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_saved_progress,component_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_sessions,learner_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_sessions,profile_id,bigint,name-based triage only; no target inferred
+Engagement,shared_reward_sessions,component_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_sessions,week_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_sessions,activity_id,text,name-based triage only; no target inferred
+Engagement,shared_reward_voucher_requests,learner_id,text,name-based triage only; no target inferred
+Engagement,voucher_claims,learner_id,text,name-based triage only; no target inferred
+Feedback,event_rsvp_recipients,learner_id,character varying(100),name-based triage only; no target inferred
+Feedback,feedback_assignments,target_id,character varying(100),name-based triage only; no target inferred
+Feedback,feedback_deliveries,module_catalogue_id,character varying(255),name-based triage only; no target inferred
+Feedback,feedback_deliveries,programme_id,character varying(255),name-based triage only; no target inferred
+Feedback,feedback_deliveries,cohort_id,character varying(255),name-based triage only; no target inferred
+Feedback,feedback_deliveries,group_id,character varying(255),name-based triage only; no target inferred
+Feedback,feedback_delivery_recipients,learner_id,character varying(100),name-based triage only; no target inferred
+Feedback,feedback_event_recipients,learner_id,character varying(100),name-based triage only; no target inferred
+Feedback,feedback_forms,programme_id,character varying(255),name-based triage only; no target inferred
+Feedback,feedback_forms,cohort_id,character varying(255),name-based triage only; no target inferred
+Feedback,feedback_forms,group_id,character varying(255),name-based triage only; no target inferred
+Feedback,feedback_forms,module_catalogue_id,character varying(255),name-based triage only; no target inferred
+Feedback,feedback_responses,learner_id,character varying(100),name-based triage only; no target inferred
+Feedback,feedback_review_deliveries,source_review_id,bigint,name-based triage only; no target inferred
+Feedback,feedback_review_deliveries,aptem_review_id,text,name-based triage only; no target inferred
+Feedback,feedback_review_deliveries,learner_id,character varying(100),name-based triage only; no target inferred
+LMS,Aptem_users,case_owner_id,integer,name-based triage only; no target inferred
+LMS,PR,case_owner_id,integer,name-based triage only; no target inferred
+LMS,non_active_users,case_owner_id,integer,name-based triage only; no target inferred
+Last_audit,activities,quiz_id,bigint,name-based triage only; no target inferred
+Last_audit,activity_actual_hours,aptem_id,bigint,name-based triage only; no target inferred
+Last_audit,activity_actual_hours_revision,aptem_id,bigint,name-based triage only; no target inferred
+Last_audit,activity_actual_hours_validation,aptem_id,bigint,name-based triage only; no target inferred
+Last_audit,activity_planned_hours,aptem_id,bigint,name-based triage only; no target inferred
+Last_audit,assigments_check,source_record_id,text,name-based triage only; no target inferred
+Last_audit,assigments_check,source_file_id,uuid,name-based triage only; no target inferred
+Last_audit,learner_assignments,aptem_id,bigint,name-based triage only; no target inferred
+Last_audit,learner_attendance,aptem_id,bigint,name-based triage only; no target inferred
+Last_audit,learner_lms_aliases,canonical_lms_id,bigint,name-based triage only; no target inferred
+Last_audit,learners,learner_id,bigint,name-based triage only; no target inferred
+Last_audit,learners,aptem_id,bigint,name-based triage only; no target inferred
+Last_audit,learners,declared_lms_id,bigint,name-based triage only; no target inferred
+Learner,Aptem_LMS_matching,Learner_ID,integer,name-based triage only; no target inferred
+Learner,Aptem_users,case_owner_id,integer,name-based triage only; no target inferred
+Learner,Evidence,Azure_id,text,name-based triage only; no target inferred
+Learner,active_learner_assignments,evidence_id,bigint,name-based triage only; no target inferred
+Learner,active_learner_assignments,learner_record_id,bigint,name-based triage only; no target inferred
+Learner,active_learner_assignments,learner_id,bigint,name-based triage only; no target inferred
+Learner,active_learner_assignments,program_id,bigint,name-based triage only; no target inferred
+Learner,active_learner_assignments,sub_program_id,bigint,name-based triage only; no target inferred
+Learner,active_learner_assignments,component_id,bigint,name-based triage only; no target inferred
+Learner,active_learner_assignments,submitted_by_id,bigint,name-based triage only; no target inferred
+Learner,active_learner_assignments,model_response_id,text,name-based triage only; no target inferred
+Learner,activity_date_generation_events,row_id,bigint,name-based triage only; no target inferred
+Learner,activity_date_generation_events,aptem_id,bigint,name-based triage only; no target inferred
+Learner,aptem_cv_certifications,source_id,bigint,name-based triage only; no target inferred
+Learner,aptem_cv_certifications,learner_id,bigint,name-based triage only; no target inferred
+Learner,aptem_cv_certifications,openai_response_id,text,name-based triage only; no target inferred
+Learner,aptem_cv_contracts_probe,source_document_id,bigint,name-based triage only; no target inferred
+Learner,aptem_cv_contracts_probe,learner_id,bigint,name-based triage only; no target inferred
+Learner,aptem_cv_contracts_probe,program_id,bigint,name-based triage only; no target inferred
+Learner,aptem_cv_contracts_probe,apprenticeship_agreement_version_id,bigint,name-based triage only; no target inferred
+Learner,aptem_plr_probe,plr_id,bigint,name-based triage only; no target inferred
+Learner,aptem_plr_probe,learner_id,bigint,name-based triage only; no target inferred
+Learner,aptem_plr_probe,creator_id,bigint,name-based triage only; no target inferred
+Learner,aptem_plr_probe,document_id,bigint,name-based triage only; no target inferred
+Learner,aptem_skills_radar_probe,learner_id,bigint,name-based triage only; no target inferred
+Learner,aptem_skills_radar_probe,competency_id,bigint,name-based triage only; no target inferred
+Learner,aptem_skills_radar_probe,characteristic_id,bigint,name-based triage only; no target inferred
+Learner,aptem_skills_radar_probe,assessed_characteristics_level_id,bigint,name-based triage only; no target inferred
+Learner,aptem_skills_radar_probe,latest_assessment_id,bigint,name-based triage only; no target inferred
+Learner,aptem_skills_radar_probe,latest_user_competence_characteristic_id,bigint,name-based triage only; no target inferred
+Learner,aptem_skills_radar_probe,latest_assessment_level_id,bigint,name-based triage only; no target inferred
+Learner,aptem_skills_radar_probe,latest_assessor_id,bigint,name-based triage only; no target inferred
+Learner,assessment_fetch,learner_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_evaluations,run_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_evaluations,learner_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_evaluations,evidence_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_evaluations,component_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_jobs,run_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_jobs,learner_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_jobs,component_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_results,run_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_results,learner_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_results,evidence_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_results,component_id,bigint,name-based triage only; no target inferred
+Learner,assignment_classification_runs,learner_id,bigint,name-based triage only; no target inferred
+Learner,attendance_preferences,request_id,uuid,name-based triage only; no target inferred
+Learner,calendar_connections,learner_id,bigint,name-based triage only; no target inferred
+Learner,calendar_connections,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,coach_calendar_event,learner_id,integer,name-based triage only; no target inferred
+Learner,coach_calendar_event,graph_event_id,character varying(255),name-based triage only; no target inferred
+Learner,coach_calendar_event,operation_id,uuid,name-based triage only; no target inferred
+Learner,coach_calendar_event,review_template_id,character varying(128),name-based triage only; no target inferred
+Learner,coach_calendar_event,review_instance_id,character varying(128),name-based triage only; no target inferred
+Learner,contract_document_archive,learner_id,bigint,name-based triage only; no target inferred
+Learner,contract_evidence_links,learner_id,bigint,name-based triage only; no target inferred
+Learner,contract_evidence_links,evidence_id,text,name-based triage only; no target inferred
+Learner,contract_source_link_archive,learner_id,bigint,name-based triage only; no target inferred
+Learner,evidence_content_classification,aptem_id,bigint,name-based triage only; no target inferred
+Learner,evidence_files,learner_id,character varying(128),name-based triage only; no target inferred
+Learner,evidence_files,progress_entry_id,bigint,name-based triage only; no target inferred
+Learner,evidence_files,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,evidence_items,learner_record_id,bigint,name-based triage only; no target inferred
+Learner,evidence_items,learner_id,bigint,name-based triage only; no target inferred
+Learner,evidence_items,program_id,bigint,name-based triage only; no target inferred
+Learner,evidence_items,sub_program_id,bigint,name-based triage only; no target inferred
+Learner,evidence_items,component_id,bigint,name-based triage only; no target inferred
+Learner,evidence_items,submitted_by_id,bigint,name-based triage only; no target inferred
+Learner,evidence_items,model_response_id,text,name-based triage only; no target inferred
+Learner,evidence_lms_matches,aptem_id,bigint,name-based triage only; no target inferred
+Learner,evidence_lms_matches,manual_activity_id,bigint,name-based triage only; no target inferred
+Learner,evidence_lms_merges,evidence_id,bigint,name-based triage only; no target inferred
+Learner,evidence_lms_merges,aptem_id,bigint,name-based triage only; no target inferred
+Learner,evidence_lms_merges,manual_activity_id,bigint,name-based triage only; no target inferred
+Learner,evidence_overrides,aptem_id,bigint,name-based triage only; no target inferred
+Learner,evidence_replacements,evidence_id,bigint,name-based triage only; no target inferred
+Learner,evidence_replacements,aptem_id,bigint,name-based triage only; no target inferred
+Learner,evidence_report_ksbs,aptem_id,bigint,name-based triage only; no target inferred
+Learner,ilr_learning_deliveries,epa_org_id,character varying(50),name-based triage only; no target inferred
+Learner,ilr_learning_deliveries,sw_sup_aim_id,text,name-based triage only; no target inferred
+Learner,journal_ai_audit_runs,aptem_id,bigint,name-based triage only; no target inferred
+Learner,learner_activity_documents,source_document_id,text,name-based triage only; no target inferred
+Learner,learner_activity_settings_history,aptem_id,bigint,name-based triage only; no target inferred
+Learner,learner_activity_settings_history,row_id,bigint,name-based triage only; no target inferred
+Learner,learner_activity_sources,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learner_activity_sources,programme_id,text,name-based triage only; no target inferred
+Learner,learner_activity_sources,aptem_id,bigint,name-based triage only; no target inferred
+Learner,learner_activity_sources,source_activity_id,text,name-based triage only; no target inferred
+Learner,learner_activity_sources,curriculum_component_id,bigint,name-based triage only; no target inferred
+Learner,learner_attendance_details,learner_id,integer,name-based triage only; no target inferred
+Learner,learner_attendance_details,session_id,text,name-based triage only; no target inferred
+Learner,learner_attendance_details,attendance_report_id,text,name-based triage only; no target inferred
+Learner,learner_attendance_details,live_session_id,text,name-based triage only; no target inferred
+Learner,learner_attendance_details,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learner_attendance_details,learner_profile_id,bigint,name-based triage only; no target inferred
+Learner,learner_attendance_details,occurrence_id,text,name-based triage only; no target inferred
+Learner,learner_attendance_details,module_catalogue_id,text,name-based triage only; no target inferred
+Learner,learner_attendance_details,group_id,text,name-based triage only; no target inferred
+Learner,learner_attendance_details,source_record_id,text,name-based triage only; no target inferred
+Learner,learner_certificates,learner_id,bigint,name-based triage only; no target inferred
+Learner,learner_evidence,learner_id,bigint,name-based triage only; no target inferred
+Learner,learner_evidence_overrides,learner_id,bigint,name-based triage only; no target inferred
+Learner,learner_evidence_overrides,source_evidence_id,bigint,name-based triage only; no target inferred
+Learner,learner_evidence_overrides,source_activity_id,bigint,name-based triage only; no target inferred
+Learner,learner_evidence_overrides,source_plr_id,bigint,name-based triage only; no target inferred
+Learner,learner_external_identities,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learner_external_identities,source_learner_id,text,name-based triage only; no target inferred
+Learner,learner_free_course_progress,learner_id,bigint,name-based triage only; no target inferred
+Learner,learner_journal_row_ksbs,aptem_id,bigint,name-based triage only; no target inferred
+Learner,learner_journal_rows,aptem_id,bigint,name-based triage only; no target inferred
+Learner,learner_journal_rows,learner_id,bigint,name-based triage only; no target inferred
+Learner,learner_journal_rows,group_id,bigint,name-based triage only; no target inferred
+Learner,learner_journal_rows,activity_id,bigint,name-based triage only; no target inferred
+Learner,learner_journal_rows,programme_profile_id,text,name-based triage only; no target inferred
+Learner,learner_justification_documents,learner_id,bigint,name-based triage only; no target inferred
+Learner,learner_match,lms_id,integer,name-based triage only; no target inferred
+Learner,learner_monthly_reports,learner_id,character varying(128),name-based triage only; no target inferred
+Learner,learner_monthly_signatures,source_learner_id,text,name-based triage only; no target inferred
+Learner,learner_monthly_signatures,signature_source_document_id,text,name-based triage only; no target inferred
+Learner,learner_monthly_targets,programme_id,text,name-based triage only; no target inferred
+Learner,learner_monthly_targets,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learner_monthly_targets,programme_profile_id,text,name-based triage only; no target inferred
+Learner,learner_progress_entries,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learner_progress_entries,programme_id,text,name-based triage only; no target inferred
+Learner,learner_progress_entries,aptem_id,bigint,name-based triage only; no target inferred
+Learner,learner_progress_entries,curriculum_component_id,bigint,name-based triage only; no target inferred
+Learner,learner_progress_entries,source_activity_id,text,name-based triage only; no target inferred
+Learner,learner_progress_ksb_exclusions,source_id,text,name-based triage only; no target inferred
+Learner,learner_progress_ksb_exclusions,run_id,text,name-based triage only; no target inferred
+Learner,learner_progress_ksbs,source_id,text,name-based triage only; no target inferred
+Learner,learner_quiz_grade_corrections,progress_id,bigint,name-based triage only; no target inferred
+Learner,learner_source_course_memberships,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learner_source_course_memberships,source_learner_id,text,name-based triage only; no target inferred
+Learner,learner_target_hours_daily,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learner_target_hours_daily,aptem_id,bigint,name-based triage only; no target inferred
+Learner,learners,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learners,programme_id,character varying(64),name-based triage only; no target inferred
+Learner,learners,cohort_id,character varying(64),name-based triage only; no target inferred
+Learner,learners,group_id,character varying(64),name-based triage only; no target inferred
+Learner,learners,aptem_id,bigint,name-based triage only; no target inferred
+Learner,learning_reflection_submissions,learner_id,character varying(128),name-based triage only; no target inferred
+Learner,learning_reflection_submissions,activity_id,character varying(255),name-based triage only; no target inferred
+Learner,learning_reflection_submissions,progress_entry_id,bigint,name-based triage only; no target inferred
+Learner,learning_reflection_submissions,enrolment_id,bigint,name-based triage only; no target inferred
+Learner,learning_reflection_submissions,assignment_topic_id,character varying(1),name-based triage only; no target inferred
+Learner,manual_activity_documents,manual_activity_id,bigint,name-based triage only; no target inferred
+Learner,manual_activity_documents,aptem_id,bigint,name-based triage only; no target inferred
+Learner,manual_activity_hours_revision,row_id,bigint,name-based triage only; no target inferred
+Learner,manual_activity_hours_revision,aptem_id,bigint,name-based triage only; no target inferred
+Learner,manual_month_finalization_events,aptem_id,bigint,name-based triage only; no target inferred
+Learner,manual_month_restore_events,aptem_id,bigint,name-based triage only; no target inferred
+Learner,manual_month_restore_events,restore_point_id,bigint,name-based triage only; no target inferred
+Learner,manual_month_restore_events,pre_restore_point_id,bigint,name-based triage only; no target inferred
+Learner,manual_month_restore_points,aptem_id,bigint,name-based triage only; no target inferred
+Learner,manual_month_restore_points,related_point_id,bigint,name-based triage only; no target inferred
+Learner,monthly_log_provisional_rows,run_id,uuid,name-based triage only; no target inferred
+Learner,monthly_log_provisional_rows,aptem_id,bigint,name-based triage only; no target inferred
+Learner,monthly_log_reconciliation_audit,run_id,uuid,name-based triage only; no target inferred
+Learner,monthly_log_reconciliation_audit,row_id,bigint,name-based triage only; no target inferred
+Learner,monthly_log_reconciliation_audit,aptem_id,bigint,name-based triage only; no target inferred
+Learner,personal_course_certificates,template_id,bigint,name-based triage only; no target inferred
+Learner,progress_review_runs,learner_id,bigint,name-based triage only; no target inferred
+Learner,progress_review_runs,parent_run_id,text,name-based triage only; no target inferred
+Learner,progress_review_signature_cache,learner_id,text,name-based triage only; no target inferred
+Learner,progress_review_signature_cache,source_document_id,text,name-based triage only; no target inferred
+Learner,review_documents,source_evidence_id,bigint,name-based triage only; no target inferred
+Learner,review_documents,aptem_learner_id,bigint,name-based triage only; no target inferred
+Learner,reviews,learner_id,bigint,name-based triage only; no target inferred
+Learner,reviews,aptem_review_id,text,name-based triage only; no target inferred
+Learner,source_lms_actual_hours,aptem_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_actual_hours_revision,learner_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_actual_hours_revision,aptem_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_actual_hours_validation,learner_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_actual_hours_validation,aptem_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_attendance,learner_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_attendance,aptem_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_learner_aliases,canonical_lms_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_learners,learner_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_learners,aptem_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_learners,declared_lms_id,bigint,name-based triage only; no target inferred
+Learner,source_lms_planned_hours,aptem_id,bigint,name-based triage only; no target inferred
+Learner,subject_activity_attempts,aptem_id,bigint,name-based triage only; no target inferred
+Learner,subject_activity_attempts,group_id,bigint,name-based triage only; no target inferred
+Learner,subject_activity_attempts,activity_id,bigint,name-based triage only; no target inferred
+MBA,course_curriculum,tutor_id,bigint,name-based triage only; no target inferred
+MBA,course_curriculum,module_id,character varying(128),name-based triage only; no target inferred
+MBA,student_progress,module_id,character varying(128),name-based triage only; no target inferred
+Manual_audit,activities,quiz_id,bigint,name-based triage only; no target inferred
+Manual_audit,activity_actual_hours,aptem_id,bigint,name-based triage only; no target inferred
+Manual_audit,activity_planned_hours,aptem_id,bigint,name-based triage only; no target inferred
+Manual_audit,contract_document_archive,learner_id,bigint,name-based triage only; no target inferred
+Manual_audit,contract_uploads,learner_id,bigint,name-based triage only; no target inferred
+Manual_audit,learner_attendance,learner_id,bigint,name-based triage only; no target inferred
+Manual_audit,learner_attendance,aptem_id,bigint,name-based triage only; no target inferred
+Manual_audit,learner_evidence_overrides,learner_id,bigint,name-based triage only; no target inferred
+Manual_audit,learner_evidence_overrides,source_evidence_id,bigint,name-based triage only; no target inferred
+Manual_audit,learners,learner_id,bigint,name-based triage only; no target inferred
+Manual_audit,learners,aptem_id,bigint,name-based triage only; no target inferred
+Manual_audit,learners,declared_lms_id,bigint,name-based triage only; no target inferred
+Manual_audit,monthly_audit_signoffs,learner_id,text,name-based triage only; no target inferred
+Manual_audit,plan_activities,group_id,bigint,name-based triage only; no target inferred
+Manual_audit,plan_assignment_refs,component_id,bigint,name-based triage only; no target inferred
+Manual_audit,plan_events,entity_id,text,name-based triage only; no target inferred
+Manual_audit,plan_group_members,group_id,bigint,name-based triage only; no target inferred
+Manual_audit,plan_group_members,aptem_id,bigint,name-based triage only; no target inferred
+Manual_audit,plan_groups,programme_id,bigint,name-based triage only; no target inferred
+Manual_audit,plan_learner_progress,group_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,learner_id,integer,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,session_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,attendance_report_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,live_session_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,enrolment_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,learner_profile_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,occurrence_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,module_catalogue_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,group_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_learner_attendance_details,source_record_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_learner_ksb_assignments,learner_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learner_ksb_assignments,profile_version_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learner_progress_entries,learner_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learner_progress_entries,plan_component_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learner_training_plan_modules,learner_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learner_training_plan_modules,curriculum_module_id,character varying,name-based triage only; no target inferred
+backup_20260911,Learner_learners,enrolment_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_learners,programme_id,character varying(64),name-based triage only; no target inferred
+backup_20260911,Learner_learners,cohort_id,character varying(64),name-based triage only; no target inferred
+backup_20260911,Learner_learners,group_id,character varying(64),name-based triage only; no target inferred
+backup_20260911,Learner_reviews,learner_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_reviews,aptem_review_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,learner_id,integer,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,session_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,attendance_report_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,live_session_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,enrolment_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,learner_profile_id,bigint,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,occurrence_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,module_catalogue_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,group_id,text,name-based triage only; no target inferred
+backup_20260911,Learner_verified_teams_attendance,source_record_id,text,name-based triage only; no target inferred
+backup_20260911,chat_conversations,coach_id,integer,name-based triage only; no target inferred
+backup_20260911,chat_conversations,learner_id,bigint,name-based triage only; no target inferred
+backup_20260911,chat_message_receipts,message_id,bigint,name-based triage only; no target inferred
+backup_20260911,chat_message_receipts,recipient_coach_id,integer,name-based triage only; no target inferred
+backup_20260911,chat_message_receipts,recipient_learner_id,bigint,name-based triage only; no target inferred
+backup_20260911,chat_messages,conversation_id,bigint,name-based triage only; no target inferred
+backup_20260911,chat_messages,sender_coach_id,integer,name-based triage only; no target inferred
+backup_20260911,chat_messages,sender_learner_id,bigint,name-based triage only; no target inferred
+chat,message_deletions,message_id,bigint,name-based triage only; no target inferred
+chat,message_deletions,participant_id,character varying(255),name-based triage only; no target inferred
+curriculum,LMS_data,user_id,bigint,name-based triage only; no target inferred
+curriculum,LMS_data,course_id,bigint,name-based triage only; no target inferred
+curriculum,activity_events,account_id,bigint,name-based triage only; no target inferred
+curriculum,activity_events,visit_id,text,name-based triage only; no target inferred
+curriculum,activity_events,target_id,text,name-based triage only; no target inferred
+curriculum,cohorts,source_id,character varying(128),name-based triage only; no target inferred
+curriculum,components,week_id,character varying(128),name-based triage only; no target inferred
+curriculum,components,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,components,origin_module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,components,origin_week_id,character varying(128),name-based triage only; no target inferred
+curriculum,components,copied_from_id,character varying(128),name-based triage only; no target inferred
+curriculum,free_course_weeks,course_id,character varying(128),name-based triage only; no target inferred
+curriculum,free_course_weeks,week_id,character varying(128),name-based triage only; no target inferred
+curriculum,free_programme_components,free_module_id,character varying(128),name-based triage only; no target inferred
+curriculum,free_programme_components,week_id,character varying(128),name-based triage only; no target inferred
+curriculum,free_programme_components,programme_id,character varying(255),name-based triage only; no target inferred
+curriculum,free_programme_modules,programme_id,character varying(255),name-based triage only; no target inferred
+curriculum,groups,cohort_id,character varying(128),name-based triage only; no target inferred
+curriculum,historical_components,source_activity_id,text,name-based triage only; no target inferred
+curriculum,ksb_mappings,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,ksb_mappings,week_id,character varying(128),name-based triage only; no target inferred
+curriculum,ksb_mappings,component_id,character varying(128),name-based triage only; no target inferred
+curriculum,ksb_mappings,ksb_id,character varying(255),name-based triage only; no target inferred
+curriculum,ksb_mappings,source_id,character varying(255),name-based triage only; no target inferred
+curriculum,ksb_profile_versions,source_profile_id,character varying(255),name-based triage only; no target inferred
+curriculum,ksb_profiles,ksb_profile_id,character varying(128),name-based triage only; no target inferred
+curriculum,ksb_profiles,standard_source_id,character varying(128),name-based triage only; no target inferred
+curriculum,learner_activity_display_audit,learner_id,bigint,name-based triage only; no target inferred
+curriculum,learner_activity_display_audit,enrolment_id,bigint,name-based triage only; no target inferred
+curriculum,learner_activity_display_audit,module_id,character varying(128),name-based triage only; no target inferred
+curriculum,learner_activity_display_audit,component_id,character varying(128),name-based triage only; no target inferred
+curriculum,learner_activity_display_audit,actor_id,bigint,name-based triage only; no target inferred
+curriculum,learner_activity_display_overrides,enrolment_id,bigint,name-based triage only; no target inferred
+curriculum,learner_activity_display_overrides,actor_id,bigint,name-based triage only; no target inferred
+curriculum,learner_review_additions,programme_id,character varying(255),name-based triage only; no target inferred
+curriculum,learner_review_additions,learner_id,integer,name-based triage only; no target inferred
+curriculum,live_session_absences,occurrence_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_absences,learner_profile_id,bigint,name-based triage only; no target inferred
+curriculum,live_session_absences,source_learner_id,integer,name-based triage only; no target inferred
+curriculum,live_session_artifacts,graph_artifact_id,text,name-based triage only; no target inferred
+curriculum,live_session_artifacts,call_id,text,name-based triage only; no target inferred
+curriculum,live_session_artifacts,content_correlation_id,text,name-based triage only; no target inferred
+curriculum,live_session_attendance,graph_record_id,character varying(512),name-based triage only; no target inferred
+curriculum,live_session_attendance_aliases,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_attendance_aliases,learner_profile_id,bigint,name-based triage only; no target inferred
+curriculum,live_session_attendance_identity_audit,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_attendance_identity_links,occurrence_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_attendance_identity_links,attendance_row_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_attendance_identity_links,learner_profile_id,bigint,name-based triage only; no target inferred
+curriculum,live_session_attendance_identity_rules,learner_profile_id,bigint,name-based triage only; no target inferred
+curriculum,live_session_join_launches,attendance_report_id,character varying(512),name-based triage only; no target inferred
+curriculum,live_session_join_launches,viewer_id,character varying(255),name-based triage only; no target inferred
+curriculum,live_session_learner_attendance,occurrence_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_learner_attendance,live_session_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_learner_attendance,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_learner_attendance,learner_profile_id,bigint,name-based triage only; no target inferred
+curriculum,live_session_learner_attendance,attendance_report_id,text,name-based triage only; no target inferred
+curriculum,live_session_occurrences,graph_event_id,character varying(512),name-based triage only; no target inferred
+curriculum,live_session_occurrences,attendance_report_id,character varying(512),name-based triage only; no target inferred
+curriculum,live_session_occurrences,online_meeting_id,text,name-based triage only; no target inferred
+curriculum,live_session_recording_events,occurrence_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_recording_events,preview_session_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_recording_events,viewer_id,character varying(255),name-based triage only; no target inferred
+curriculum,live_session_recording_events,browser_session_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_recording_events,client_event_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_recording_views,artifact_id,character varying(128),name-based triage only; no target inferred
+curriculum,live_session_recording_views,learner_id,bigint,name-based triage only; no target inferred
+curriculum,live_sessions,module_draft_id,character varying(255),name-based triage only; no target inferred
+curriculum,live_sessions,graph_event_id,character varying(512),name-based triage only; no target inferred
+curriculum,live_sessions,online_meeting_id,text,name-based triage only; no target inferred
+curriculum,modules,cohort_id,character varying(255),name-based triage only; no target inferred
+curriculum,modules,group_id,character varying(255),name-based triage only; no target inferred
+curriculum,modules,ksb_profile_source_id,character varying(255),name-based triage only; no target inferred
+curriculum,modules,source_id,character varying(128),name-based triage only; no target inferred
+curriculum,modules,teams_shared_source_module_id,character varying(128),name-based triage only; no target inferred
+curriculum,programmes,ksb_profile_source_id,character varying(128),name-based triage only; no target inferred
+curriculum,programmes_dropped_cols_backup,programme_id,character varying(150),name-based triage only; no target inferred
+curriculum,programmes_dropped_cols_backup,legacy_numeric_id,bigint,name-based triage only; no target inferred
+curriculum,quiz_component_links,component_id,character varying(128),name-based triage only; no target inferred
+curriculum,quiz_course_links,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,quiz_course_links,week_id,character varying(128),name-based triage only; no target inferred
+curriculum,quizzes,programme_id,character varying(128),name-based triage only; no target inferred
+curriculum,quizzes,week_id,character varying(128),name-based triage only; no target inferred
+curriculum,record_revisions,entity_id,character varying(128),name-based triage only; no target inferred
+curriculum,record_revisions,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,record_revisions,parent_id,character varying(128),name-based triage only; no target inferred
+curriculum,record_versions,entity_id,character varying(128),name-based triage only; no target inferred
+curriculum,review_clash_resolutions,programme_id,character varying(255),name-based triage only; no target inferred
+curriculum,review_fields,parent_field_id,character varying(128),name-based triage only; no target inferred
+curriculum,review_instance_answers,field_id,character varying(128),name-based triage only; no target inferred
+curriculum,review_instance_manual_overrides,calendar_event_id,integer,name-based triage only; no target inferred
+curriculum,review_instance_reopens,calendar_event_id,integer,name-based triage only; no target inferred
+curriculum,review_instances,learner_id,integer,name-based triage only; no target inferred
+curriculum,review_instances,programme_id,character varying(255),name-based triage only; no target inferred
+curriculum,review_instances,calendar_event_id,integer,name-based triage only; no target inferred
+curriculum,review_occurrence_overrides,programme_id,character varying(255),name-based triage only; no target inferred
+curriculum,review_occurrence_overrides,learner_id,integer,name-based triage only; no target inferred
+curriculum,review_templates,programme_id,character varying(255),name-based triage only; no target inferred
+curriculum,session_result_jobs,lease_id,text,name-based triage only; no target inferred
+curriculum,source_activities,source_activity_id,text,name-based triage only; no target inferred
+curriculum,source_lms_activities,quiz_id,bigint,name-based triage only; no target inferred
+curriculum,source_materials,material_id,bigint,name-based triage only; no target inferred
+curriculum,source_planned_hours_bulk_items,row_id,bigint,name-based triage only; no target inferred
+curriculum,source_planned_hours_bulk_items,aptem_id,bigint,name-based triage only; no target inferred
+curriculum,source_planned_hours_default_revisions,group_id,bigint,name-based triage only; no target inferred
+curriculum,source_planned_hours_defaults,group_id,bigint,name-based triage only; no target inferred
+curriculum,source_planned_hours_defaults,activity_id,bigint,name-based triage only; no target inferred
+curriculum,source_reading_quiz_pairs,group_id,bigint,name-based triage only; no target inferred
+curriculum,source_reading_quiz_pairs,reading_activity_id,bigint,name-based triage only; no target inferred
+curriculum,source_reading_quiz_pairs,quiz_activity_id,bigint,name-based triage only; no target inferred
+curriculum,teams_calendar_create_claims,live_session_id,character varying(128),name-based triage only; no target inferred
+curriculum,teams_calendar_integrity_events,live_session_id,character varying(128),name-based triage only; no target inferred
+curriculum,teams_calendar_integrity_events,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,teams_calendar_integrity_events,job_id,character varying(128),name-based triage only; no target inferred
+curriculum,teams_calendar_integrity_events,correlation_id,character varying(64),name-based triage only; no target inferred
+curriculum,teams_graph_failures,live_session_id,character varying(128),name-based triage only; no target inferred
+curriculum,teams_graph_failures,online_meeting_id,character varying(512),name-based triage only; no target inferred
+curriculum,teams_graph_failures,organizer_object_id,character varying(64),name-based triage only; no target inferred
+curriculum,teams_graph_failures,graph_request_id,character varying(64),name-based triage only; no target inferred
+curriculum,teams_graph_failures,lms_request_id,character varying(64),name-based triage only; no target inferred
+curriculum,tutor_module_notifications,tutor_id,character varying(128),name-based triage only; no target inferred
+curriculum,tutor_module_notifications,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,week_template_components,week_template_id,character varying(128),name-based triage only; no target inferred
+curriculum,week_templates,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,week_templates,group_id,character varying(255),name-based triage only; no target inferred
+curriculum,weeks,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,weeks,origin_module_catalogue_id,character varying(128),name-based triage only; no target inferred
+curriculum,weeks,origin_week_id,character varying(128),name-based triage only; no target inferred
+curriculum,weeks,copied_from_id,character varying(128),name-based triage only; no target inferred
+enrolment,Apprenticeship_Agreements,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Created_users,Employer_id,integer,name-based triage only; no target inferred
+enrolment,Created_users,aptem_id,text,name-based triage only; no target inferred
+enrolment,Enrolment_Documents,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Enrolment_Reviews,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Enrolment_Reviews,Coach_id,bigint,name-based triage only; no target inferred
+enrolment,Enrolment_Reviews,Graph_event_id,text,name-based triage only; no target inferred
+enrolment,Extended_ILR,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,ILR_Documents,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Organisations,Apprenticeship_agreement_id,text,name-based triage only; no target inferred
+enrolment,Review_Eligibility,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Review_Health_Safety,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Review_RPL,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Review_ULN_Privacy,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Training_Plan_Documents,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Cv_Job,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Ilr_Learner_Details,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Introduction,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Ksb_Assessments,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Ksb_Assessments,Ksb_id,text,name-based triage only; no target inferred
+enrolment,Wizard_Personal_Details,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Plr,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Plr_Records,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Policy_Acks,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Policy_Acks,Policy_id,text,name-based triage only; no target inferred
+enrolment,Wizard_Skills_Radar,Learner_id,bigint,name-based triage only; no target inferred
+enrolment,Wizard_Skills_Radar,Standard_id,text,name-based triage only; no target inferred
+enrolment,Written_Agreements,Learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_evidence_items,learner_record_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_evidence_items,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_evidence_items,program_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_evidence_items,sub_program_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_evidence_items,component_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_evidence_items,submitted_by_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_evidence_items,model_response_id,text,name-based triage only; no target inferred
+fetching_evidence,active_learner_assignments,evidence_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_learner_assignments,learner_record_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_learner_assignments,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_learner_assignments,program_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_learner_assignments,sub_program_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_learner_assignments,component_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_learner_assignments,submitted_by_id,bigint,name-based triage only; no target inferred
+fetching_evidence,active_learner_assignments,model_response_id,text,name-based triage only; no target inferred
+fetching_evidence,aptem_cv_certifications,source_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_cv_certifications,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_cv_certifications,openai_response_id,text,name-based triage only; no target inferred
+fetching_evidence,aptem_cv_contracts_probe,source_document_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_cv_contracts_probe,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_cv_contracts_probe,program_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_cv_contracts_probe,apprenticeship_agreement_version_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_import_job_leases,owner_id,text,name-based triage only; no target inferred
+fetching_evidence,aptem_plr_probe,plr_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_plr_probe,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_plr_probe,creator_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_plr_probe,document_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_skills_radar_probe,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_skills_radar_probe,competency_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_skills_radar_probe,characteristic_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_skills_radar_probe,assessed_characteristics_level_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_skills_radar_probe,latest_assessment_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_skills_radar_probe,latest_user_competence_characteristic_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_skills_radar_probe,latest_assessment_level_id,bigint,name-based triage only; no target inferred
+fetching_evidence,aptem_skills_radar_probe,latest_assessor_id,bigint,name-based triage only; no target inferred
+fetching_evidence,assessment_fetch,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,assignment_classification_evaluations,evidence_id,bigint,name-based triage only; no target inferred
+fetching_evidence,assignment_classification_evaluations,component_id,bigint,name-based triage only; no target inferred
+fetching_evidence,assignment_classification_jobs,component_id,bigint,name-based triage only; no target inferred
+fetching_evidence,assignment_classification_results,evidence_id,bigint,name-based triage only; no target inferred
+fetching_evidence,assignment_classification_runs,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,audit_signoffs,learner_id,text,name-based triage only; no target inferred
+fetching_evidence,break_outcomes,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,break_periods,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,evidence_items,learner_record_id,bigint,name-based triage only; no target inferred
+fetching_evidence,evidence_items,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,evidence_items,program_id,bigint,name-based triage only; no target inferred
+fetching_evidence,evidence_items,sub_program_id,bigint,name-based triage only; no target inferred
+fetching_evidence,evidence_items,component_id,bigint,name-based triage only; no target inferred
+fetching_evidence,evidence_items,submitted_by_id,bigint,name-based triage only; no target inferred
+fetching_evidence,evidence_items,model_response_id,text,name-based triage only; no target inferred
+fetching_evidence,learner_evidence,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,learning_plan_evidences_monthly_source,learner_id,bigint,name-based triage only; no target inferred
+fetching_evidence,learning_plan_evidences_monthly_source,component_id,bigint,name-based triage only; no target inferred
+fetching_evidence,platform_performance_samples,run_id,character varying(64),name-based triage only; no target inferred
+fetching_evidence,platform_read_model_outbox,scope_id,character varying(255),name-based triage only; no target inferred
+fetching_evidence,platform_read_models,scope_id,character varying(255),name-based triage only; no target inferred
+khaled_learning_hub,activities,enrolment_id,bigint,name-based triage only; no target inferred
+khaled_learning_hub,activities,aptem_id,text,name-based triage only; no target inferred
+khaled_learning_hub,activities,legacy_lms_id,text,name-based triage only; no target inferred
+khaled_learning_hub,activities,source_learner_id,text,name-based triage only; no target inferred
+khaled_learning_hub,ingestion_issues,enrolment_id,bigint,name-based triage only; no target inferred
+khaled_learning_hub,learner_identity_map,aptem_id,text,name-based triage only; no target inferred
+khaled_learning_hub,learner_identity_map,legacy_lms_id,text,name-based triage only; no target inferred
+khaled_learning_hub,learner_match_review,enrolment_id,bigint,name-based triage only; no target inferred
+khaled_learning_hub,learner_match_review,enrolment_aptem_id,text,name-based triage only; no target inferred
+khaled_learning_hub,learner_match_review,aptem_candidate_id,text,name-based triage only; no target inferred
+khaled_learning_hub,learner_match_review,lms_candidate_id,text,name-based triage only; no target inferred
+khaled_learning_hub,raw_source_records,source_learner_id,text,name-based triage only; no target inferred
+knowledge,book_versions,active_build_id,uuid,name-based triage only; no target inferred
+knowledge,books,current_version_id,uuid,name-based triage only; no target inferred
+knowledge,curriculum_links,module_catalogue_id,text,name-based triage only; no target inferred
+knowledge,curriculum_links,week_id,text,name-based triage only; no target inferred
+knowledge,ingestion_jobs,lease_id,text,name-based triage only; no target inferred
+ksb_mig,component_json_plan,component_id,character varying(128),name-based triage only; no target inferred
+ksb_mig,component_json_plan,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+ksb_mig,component_json_plan,item_id,text,name-based triage only; no target inferred
+ksb_mig,component_json_plan,programme_id,character varying(255),name-based triage only; no target inferred
+ksb_mig,component_json_plan,profile_id,text,name-based triage only; no target inferred
+ksb_mig,item_match,profile_id,character varying(128),name-based triage only; no target inferred
+ksb_mig,learner_display,learner_id,bigint,name-based triage only; no target inferred
+ksb_mig,learner_programme,learner_id,bigint,name-based triage only; no target inferred
+ksb_mig,learner_programme,programme_id,text,name-based triage only; no target inferred
+ksb_mig,legacy_rows,progress_id,bigint,name-based triage only; no target inferred
+ksb_mig,legacy_rows,learner_id,bigint,name-based triage only; no target inferred
+ksb_mig,legacy_rows,profile_id,text,name-based triage only; no target inferred
+ksb_mig,legacy_rows,programme_id,text,name-based triage only; no target inferred
+ksb_mig,legacy_rows,source_id,text,name-based triage only; no target inferred
+ksb_mig,mapping_plan,mapping_id,character varying(128),name-based triage only; no target inferred
+ksb_mig,mapping_plan,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+ksb_mig,mapping_plan,week_id,character varying(128),name-based triage only; no target inferred
+ksb_mig,mapping_plan,component_id,character varying(128),name-based triage only; no target inferred
+ksb_mig,mapping_plan,old_ksb_id,character varying(255),name-based triage only; no target inferred
+ksb_mig,mapping_plan,old_source_id,character varying(255),name-based triage only; no target inferred
+ksb_mig,mapping_plan,programme_id,character varying(255),name-based triage only; no target inferred
+ksb_mig,mapping_plan,profile_id,text,name-based triage only; no target inferred
+ksb_mig,merge_check,progress_id,bigint,name-based triage only; no target inferred
+ksb_mig,merge_check,learner_id,bigint,name-based triage only; no target inferred
+ksb_mig,pin_plan,learner_id,bigint,name-based triage only; no target inferred
+ksb_mig,pin_plan,old_version_id,bigint,name-based triage only; no target inferred
+ksb_mig,pin_plan,learner_programme_id,text,name-based triage only; no target inferred
+ksb_mig,profile_target,profile_id,character varying(128),name-based triage only; no target inferred
+ksb_mig,programme_scope,programme_id,character varying(150),name-based triage only; no target inferred
+ksb_mig,programme_scope,profile_id,text,name-based triage only; no target inferred
+ksb_mig,progress_plan,progress_id,bigint,name-based triage only; no target inferred
+ksb_mig,progress_plan,learner_id,bigint,name-based triage only; no target inferred
+ksb_mig,progress_plan,programme_id,text,name-based triage only; no target inferred
+ksb_mig,progress_plan,old_source_id,text,name-based triage only; no target inferred
+ksb_mig,progress_plan,ksb_definition_id,bigint,name-based triage only; no target inferred
+ksb_mig,progress_plan,profile_id,text,name-based triage only; no target inferred
+ksb_mig,recon,learner_id,bigint,name-based triage only; no target inferred
+ksb_mig,std,std_row_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,description_remap_log,run_id,text,name-based triage only; no target inferred
+ksb_migration_archive,manual_profile_deletions,profile_id,text,name-based triage only; no target inferred
+ksb_migration_archive,mappings_before,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before,week_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before,component_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before,ksb_id,character varying(255),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before,source_id,character varying(255),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before_a1,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before_a1,week_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before_a1,component_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before_a1,ksb_id,character varying(255),name-based triage only; no target inferred
+ksb_migration_archive,mappings_before_a1,source_id,character varying(255),name-based triage only; no target inferred
+ksb_migration_archive,modules_before,ksb_profile_source_id,text,name-based triage only; no target inferred
+ksb_migration_archive,modules_before_a1,module_catalogue_id,text,name-based triage only; no target inferred
+ksb_migration_archive,modules_before_a1,ksb_profile_source_id,text,name-based triage only; no target inferred
+ksb_migration_archive,pin_fix_before,profile_version_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,pins_before,profile_version_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,pins_before_a1,learner_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,pins_before_a1,profile_version_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,plan_mapping,mapping_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,plan_mapping,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,plan_mapping,week_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,plan_mapping,component_id,character varying(128),name-based triage only; no target inferred
+ksb_migration_archive,plan_mapping,old_ksb_id,character varying(255),name-based triage only; no target inferred
+ksb_migration_archive,plan_mapping,old_source_id,character varying(255),name-based triage only; no target inferred
+ksb_migration_archive,plan_mapping,programme_id,character varying(255),name-based triage only; no target inferred
+ksb_migration_archive,plan_mapping,profile_id,text,name-based triage only; no target inferred
+ksb_migration_archive,plan_pin,learner_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,plan_pin,old_version_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,plan_pin,learner_programme_id,text,name-based triage only; no target inferred
+ksb_migration_archive,plan_programme,programme_id,character varying(150),name-based triage only; no target inferred
+ksb_migration_archive,plan_programme,profile_id,text,name-based triage only; no target inferred
+ksb_migration_archive,plan_progress,progress_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,plan_progress,learner_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,plan_progress,programme_id,text,name-based triage only; no target inferred
+ksb_migration_archive,plan_progress,old_source_id,text,name-based triage only; no target inferred
+ksb_migration_archive,plan_progress,ksb_definition_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,plan_progress,profile_id,text,name-based triage only; no target inferred
+ksb_migration_archive,programmes_before,ksb_profile_source_id,text,name-based triage only; no target inferred
+ksb_migration_archive,programmes_before_a1,programme_id,text,name-based triage only; no target inferred
+ksb_migration_archive,programmes_before_a1,ksb_profile_source_id,text,name-based triage only; no target inferred
+ksb_migration_archive,progress_ksbs_before,ksb_definition_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,progress_ksbs_before,source_id,text,name-based triage only; no target inferred
+ksb_migration_archive,progress_ksbs_before_a1,progress_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,progress_ksbs_before_a1,ksb_definition_id,bigint,name-based triage only; no target inferred
+ksb_migration_archive,progress_ksbs_before_a1,source_id,text,name-based triage only; no target inferred
+ksb_migration_archive,rollback_conflicts,run_id,text,name-based triage only; no target inferred
+ksb_migration_archive,versions_created,source_profile_id,text,name-based triage only; no target inferred
+ksb_migration_archive,versions_created,run_id,text,name-based triage only; no target inferred
+ksb_remap,journal_plan,aptem_id,text,name-based triage only; no target inferred
+ksb_remap,journal_plan,learner_id,bigint,name-based triage only; no target inferred
+ksb_remap,learner_effect,learner_id,bigint,name-based triage only; no target inferred
+ksb_remap,progress_plan,progress_id,bigint,name-based triage only; no target inferred
+ksb_remap,progress_plan,learner_id,bigint,name-based triage only; no target inferred
+ksb_remap,progress_plan,programme_id,text,name-based triage only; no target inferred
+ksb_remap,progress_plan,pin_version_id,bigint,name-based triage only; no target inferred
+ksb_remap,progress_plan,old_definition_id,bigint,name-based triage only; no target inferred
+ksb_remap,progress_plan,source_id,text,name-based triage only; no target inferred
+ksb_remap,progress_plan,new_definition_id,bigint,name-based triage only; no target inferred
+ksb_remap,scope,learner_id,bigint,name-based triage only; no target inferred
+ksb_remap,scope,programme_id,text,name-based triage only; no target inferred
+ksb_remap,scope,pin_version_id,bigint,name-based triage only; no target inferred
+ksb_remap,std,std_row_id,bigint,name-based triage only; no target inferred
+login,Advanced_admin_assignment_check_marks,aptem_id,text,name-based triage only; no target inferred
+login,Advanced_admin_assignment_check_marks,check_record_id,bigint,name-based triage only; no target inferred
+login,Advanced_admin_assignment_check_marks,reviewer_account_id,bigint,name-based triage only; no target inferred
+login,Advanced_admin_assignment_uploads,aptem_id,text,name-based triage only; no target inferred
+login,Advanced_admin_assignment_uploads,learner_profile_id,bigint,name-based triage only; no target inferred
+login,Advanced_admin_legacy_marks,aptem_id,text,name-based triage only; no target inferred
+login,Advanced_admin_legacy_marks,evidence_id,bigint,name-based triage only; no target inferred
+login,Advanced_admin_legacy_marks,reviewer_account_id,bigint,name-based triage only; no target inferred
+login,Login_accounts,Subject_id,bigint,name-based triage only; no target inferred
+login,Login_audit,Account_id,bigint,name-based triage only; no target inferred
+login,Mcp_oauth_clients,Client_id,text,name-based triage only; no target inferred
+login,Mcp_oauth_tokens,Family_id,uuid,name-based triage only; no target inferred
+neon_auth,project_config,endpoint_id,text,name-based triage only; no target inferred
+programme_audit,ai_in_marketing,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,ai_in_marketing,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,ai_in_marketing,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,ai_in_marketing,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,ai_in_marketing,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,commercial_intelligence,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,commercial_intelligence,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,commercial_intelligence,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,commercial_intelligence,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,commercial_intelligence,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,customer_journey,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,customer_journey,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,customer_journey,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,customer_journey,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,customer_journey,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,earned_value_management_portfolio_management,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,earned_value_management_portfolio_management,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,earned_value_management_portfolio_management,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,earned_value_management_portfolio_management,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,earned_value_management_portfolio_management,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,impact_planning,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,impact_planning,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,impact_planning,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,impact_planning,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,impact_planning,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,managing_successful_programmes_scheduling_professional,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,managing_successful_programmes_scheduling_professional,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,managing_successful_programmes_scheduling_professional,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,managing_successful_programmes_scheduling_professional,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,managing_successful_programmes_scheduling_professional,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,marketing_technology,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,marketing_technology,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,marketing_technology,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,marketing_technology,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,marketing_technology,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,project_management_professional,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,project_management_professional,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,project_management_professional,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,project_management_professional,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,project_management_professional,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,project_planning_control_project_management_office,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,project_planning_control_project_management_office,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,project_planning_control_project_management_office,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,project_planning_control_project_management_office,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,project_planning_control_project_management_office,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,risk_management,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,risk_management,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,risk_management,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,risk_management,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,risk_management,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,social_media,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,social_media,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,social_media,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,social_media,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,social_media,component_id,character varying(128),name-based triage only; no target inferred
+programme_audit,strategy_planning,programme_id,character varying(255),name-based triage only; no target inferred
+programme_audit,strategy_planning,programme_source_id,character varying(255),name-based triage only; no target inferred
+programme_audit,strategy_planning,module_catalogue_id,character varying(128),name-based triage only; no target inferred
+programme_audit,strategy_planning,week_id,character varying(128),name-based triage only; no target inferred
+programme_audit,strategy_planning,component_id,character varying(128),name-based triage only; no target inferred
+public,django_admin_log,object_id,text,name-based triage only; no target inferred
+public,mobile_comms_delivery,provider_id,character varying(200),name-based triage only; no target inferred
+public,mobile_comms_device,account_id,bigint,name-based triage only; no target inferred
+public,mobile_comms_device,session_id,character varying(100),name-based triage only; no target inferred
+public,mobile_comms_message,account_id,bigint,name-based triage only; no target inferred
+public,mobile_comms_message,client_id,uuid,name-based triage only; no target inferred
+public,mobile_comms_notification,account_id,bigint,name-based triage only; no target inferred
+public,mobile_comms_readcursor,account_id,bigint,name-based triage only; no target inferred
+public,mobile_comms_readcursor,message_id,bigint,name-based triage only; no target inferred
+public,mobile_comms_thread,cohort_id,character varying(64),name-based triage only; no target inferred
+public,mobile_comms_thread,coach_id,bigint,name-based triage only; no target inferred
+public,n8n_chat_histories,session_id,character varying(255),name-based triage only; no target inferred
+public,platform_performance_samples,run_id,character varying(64),name-based triage only; no target inferred
+public,platform_read_model_outbox,scope_id,character varying(255),name-based triage only; no target inferred
+public,platform_read_models,scope_id,character varying(255),name-based triage only; no target inferred
+public,sales_email_events,provider_event_id,text,name-based triage only; no target inferred
+public,sales_email_events,provider_message_id,text,name-based triage only; no target inferred
+public,sales_email_events,staging_lead_id,uuid,name-based triage only; no target inferred
+public,sales_followups,staging_lead_id,uuid,name-based triage only; no target inferred
+public,sales_staging_leads,source_record_id,text,name-based triage only; no target inferred
+structured_manual_activities,activity_date_generation_events,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_content_classification,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_lms_matches,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_lms_matches,manual_activity_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_lms_merges,evidence_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_lms_merges,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_lms_merges,manual_activity_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_overrides,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_replacements,evidence_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_replacements,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,evidence_report_ksbs,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,journal_ai_audit_runs,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,learner_activity_settings_history,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,learner_activity_settings_history,row_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,learner_journal_row_ksbs,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_activity_documents,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_activity_hours_revision,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_learner_activities,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_learner_activities,learner_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_learner_activities,group_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_learner_activities,activity_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_learner_activities,programme_profile_id,text,name-based triage only; no target inferred
+structured_manual_activities,manual_month_finalization_events,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_month_restore_events,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,manual_month_restore_points,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,monthly_log_provisional_rows,run_id,uuid,name-based triage only; no target inferred
+structured_manual_activities,monthly_log_provisional_rows,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,monthly_log_reconciliation_audit,run_id,uuid,name-based triage only; no target inferred
+structured_manual_activities,monthly_log_reconciliation_audit,row_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,monthly_log_reconciliation_audit,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,planned_hours_bulk_items,aptem_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,planned_hours_default_revisions,group_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,planned_hours_defaults,group_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,planned_hours_defaults,activity_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,reading_quiz_pairs,group_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,reading_quiz_pairs,reading_activity_id,bigint,name-based triage only; no target inferred
+structured_manual_activities,reading_quiz_pairs,quiz_activity_id,bigint,name-based triage only; no target inferred
+week_ghost_remediation,components_before,module_catalogue_id,character varying,name-based triage only; no target inferred
+week_ghost_remediation,components_before,week_id,character varying,name-based triage only; no target inferred
+week_ghost_remediation,weeks_before,module_catalogue_id,character varying,name-based triage only; no target inferred

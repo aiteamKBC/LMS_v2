@@ -1,0 +1,65 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    knowledge__ai_usage {
+        bigint id PK
+    }
+    knowledge__book_versions {
+        uuid id PK
+    }
+    knowledge__builds {
+        uuid id PK
+    }
+    knowledge__chunks {
+        bigint id PK
+    }
+    knowledge__generation_log {
+        uuid id PK
+        bigint usage_id FK
+    }
+    knowledge__generation_question_sources {
+        uuid generation_id PK
+        integer question_index PK
+        bigint chunk_id FK
+    }
+    knowledge__generation_sources {
+        uuid generation_id PK
+        integer block_index PK
+        integer position PK
+        bigint chunk_id FK
+        uuid build_id FK
+    }
+    knowledge__ingestion_issues {
+        bigint id PK
+        uuid build_id FK
+    }
+    knowledge__ingestion_jobs {
+        uuid id PK
+        uuid build_id FK
+    }
+    knowledge__pages {
+        uuid book_version_id PK
+        integer pdf_page PK
+        text extractor_version PK
+    }
+    knowledge__scopes {
+        text code PK
+    }
+    knowledge__sections {
+        bigint id PK
+        uuid build_id FK
+        bigint parent_id FK
+    }
+    knowledge__worker_heartbeats {
+        text worker_id PK
+    }
+    knowledge__ai_usage |o..o{ knowledge__generation_log : "generation_log_usage_id_fkey"
+    knowledge__chunks |o..o{ knowledge__generation_question_sources : "generation_question_sources_chunk_id_fkey"
+    knowledge__generation_log ||..o{ knowledge__generation_question_sources : "generation_question_sources_generation_id_fkey"
+    knowledge__builds ||..o{ knowledge__generation_sources : "generation_sources_build_id_fkey"
+    knowledge__chunks ||..o{ knowledge__generation_sources : "generation_sources_chunk_id_fkey"
+    knowledge__generation_log ||..o{ knowledge__generation_sources : "generation_sources_generation_id_fkey"
+    knowledge__builds ||..o{ knowledge__ingestion_issues : "ingestion_issues_build_id_fkey"
+    knowledge__builds ||..o| knowledge__ingestion_jobs : "ingestion_jobs_build_id_fkey"
+    knowledge__book_versions ||..o{ knowledge__pages : "pages_book_version_id_fkey"
+    knowledge__builds ||..o{ knowledge__sections : "sections_build_id_fkey"
+    knowledge__sections |o..o{ knowledge__sections : "sections_parent_id_fkey"

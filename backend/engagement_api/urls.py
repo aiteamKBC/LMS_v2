@@ -1,7 +1,7 @@
 from django.urls import path
 from . import employer_feedback
 
-from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, feedback, shared_reward_views, views, learning_policy_views
+from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, feedback, lecture_public_feedback, shared_reward_views, views, learning_policy_views
 
 urlpatterns = [
     # Reusable feedback-form engine. Staff management and learner-owned routes
@@ -45,6 +45,11 @@ urlpatterns = [
     path('feedback/email-templates/', event_emails.email_templates, name='event-email-templates'),
     path('feedback/public-event/csrf/', event_feedback_views.public_csrf, name='feedback-public-event-csrf'),
     path('feedback/public-event/', event_feedback_views.public_event_access, name='feedback-public-event'),
+    path('feedback/public-lecture/csrf/', lecture_public_feedback.public_csrf, name='feedback-public-lecture-csrf'),
+    path('feedback/public-lecture/', lecture_public_feedback.public_lecture_access, name='feedback-public-lecture'),
+    path('feedback/public-lecture/photo/', lecture_public_feedback.public_photo_upload, name='feedback-public-lecture-photo'),
+    path('feedback/public-lecture/photo/remove/', lecture_public_feedback.public_photo_remove, name='feedback-public-lecture-photo-remove'),
+    path('feedback/public-lecture/uploads/<uuid:upload_id>/', lecture_public_feedback.public_photo_content, name='feedback-public-lecture-upload'),
     path('feedback/public-rsvp/csrf/', event_rsvp_views.public_csrf, name='event-rsvp-csrf'),
     path('feedback/public-rsvp/', event_rsvp_views.public_access, name='event-rsvp-public'),
     path('feedback/public-rsvp/photo/', event_rsvp_views.public_photo_upload, name='event-rsvp-photo-upload'),

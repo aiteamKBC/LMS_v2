@@ -60,6 +60,17 @@ def project_replacement_learning(components, settings_by_id, courses, activities
     return result
 
 
+def approved_retained_components(transfers, current_module_ids):
+    """Virtual entries for old components an admin explicitly kept without a
+    destination match (see progress_transfer_matching.retained_component).
+
+    Counted toward completion like a retired quiz slot; never implies or
+    creates a destination catalogue component, and never awards hours."""
+    return [component for item in transfers if item.get('status') == 'approved'
+            and item.get('moduleId') in current_module_ids
+            for component in item.get('retainedTransferComponents') or [] if component.get('componentId')]
+
+
 def annotate_replacement_learning(components, enrolment_id):
     """Expose only the server-owned, approved and frozen component matches."""
     from django.db import connections
@@ -97,18 +108,18 @@ def project_approved_learning(components, settings_by_id, items):
     result = [c if c.get('previousLearning') == matches.get((c.get('moduleId'), c.get('componentId')))
               else {key: value for key, value in c.items() if key != 'previousLearning'} for c in projected]
     # Manual equivalence is an explicit admin decision saved on this learner's
-    # approved request. It does not rewrite shared catalogue provenance.
+    # approved request. One completed source can cover several approved targets;
+    # each target still needs its own valid fingerprint. No hours are awarded here.
+    # This does not rewrite shared catalogue provenance or infer extra matches.
     from .progress_transfer_matching import target_fingerprint
     manual = {}
     for item in approved:
-        source_uses = Counter(match.get('activityId') for match in item.get('matchedComponents', {}).values())
         for ident, match in item.get('matchedComponents', {}).items():
             ref = f"{match.get('catalogueKind')}:{match.get('sourceActivityId')}"
             if (match.get('manualMatch') is True and match.get('completed') is True
                     and match.get('courseRef') == item['courseRef']
                     and ref in item.get('completedSourceActivities', [])
-                    and match.get('activityId') == f"catalogue:{item['courseRef'][7:]}:{ref}"
-                    and source_uses[match['activityId']] == 1):
+                    and match.get('activityId') == f"catalogue:{item['courseRef'][7:]}:{ref}"):
                 manual[(item['moduleId'], ident)] = match
     for component in result:
         match = manual.get((component.get('moduleId'), component.get('componentId')))

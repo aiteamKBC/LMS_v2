@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { loadRecordingsLibrary, resolveRecordingUrl, type RecordingsLibrary } from '@/api/sessionResults';
+import { loadRecordingsLibrary, loadSessionResult, resolveRecordingUrl, type RecordingsLibrary } from '@/api/sessionResults';
 import { addDays, todayIso } from '../utils';
 import { buildCalendarLectures } from '../model';
 import CurriculumRecordingsPage from '../page';
@@ -29,7 +29,7 @@ vi.mock('@/components/feature/SessionRecordingPlayer', () => ({
 }));
 vi.mock('@/api/sessionResults', async () => {
   const actual = await vi.importActual<typeof import('@/api/sessionResults')>('@/api/sessionResults');
-  return { ...actual, loadRecordingsLibrary: vi.fn(), resolveRecordingUrl: vi.fn() };
+  return { ...actual, loadRecordingsLibrary: vi.fn(), loadSessionResult: vi.fn(), resolveRecordingUrl: vi.fn() };
 });
 
 const date = todayIso();
@@ -43,10 +43,10 @@ const library: RecordingsLibrary = {
   sessions: [
     { occurrenceId: 'O1', moduleId: 'M1', title: 'Intro to analysis', moduleTitle: 'Data Analysis',
       programme: 'Level 4', programmeActive: true, cohort: 'Sep 26', group: 'Group A',
-      weekId: 'W1', weekNumber: 1, weekTitle: 'Introduction', sessionNumber: 1, startsAt: at(9), endsAt: at(11) },
+      weekId: 'W1', weekNumber: 1, weekTitle: 'Introduction', displayWeekTitle: 'Introduction', sessionNumber: 1, startsAt: at(9), endsAt: at(11) },
     { occurrenceId: 'O2', moduleId: 'M1', title: 'Cleaning data', moduleTitle: 'Data Analysis',
       programme: 'Level 4', programmeActive: true, cohort: 'Sep 26', group: 'Group A',
-      weekId: 'W2', weekNumber: 2, weekTitle: 'Cleaning', sessionNumber: 2, startsAt: at(13), endsAt: at(15) },
+      weekId: 'W2', weekNumber: 2, weekTitle: 'Cleaning', displayWeekTitle: 'Cleaning', sessionNumber: 2, startsAt: at(13), endsAt: at(15) },
   ],
   deliveries: [{ moduleId: 'M1', title: 'Data Analysis', programme: 'Level 4', programmeActive: true,
     archived: false, cohort: 'Sep 26', group: 'Group A', recordingCount: 2, attention: [],
@@ -77,6 +77,7 @@ describe('Session recordings calendar', () => {
     window.localStorage.removeItem('lms-recordings-calendar-zone');
     vi.mocked(loadRecordingsLibrary).mockReset().mockResolvedValue(library);
     vi.mocked(resolveRecordingUrl).mockReset().mockResolvedValue('https://storage.invalid/inline-video');
+    vi.mocked(loadSessionResult).mockReset().mockResolvedValue({ sessions: [] });
   });
 
   it('converts the same UTC lecture across Cairo and London including the date boundary and daylight saving', () => {
@@ -130,7 +131,7 @@ describe('Session recordings calendar', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1000);
     try {
       await renderPage();
-      await screen.findAllByRole('button', { name: /Intro to analysis/ });
+      await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
       expect(loadRecordingsLibrary).toHaveBeenCalledTimes(1);
       clock.mockReturnValue(32000);
       fireEvent.focus(window);
@@ -143,14 +144,14 @@ describe('Session recordings calendar', () => {
   it('shows authored lecture titles and resolves the private playback URL', async () => {
     const user = userEvent.setup();
     await renderPage();
-    expect(await screen.findAllByRole('button', { name: /Intro to analysis/ })).not.toHaveLength(0);
-    expect(screen.getAllByRole('button', { name: /Cleaning data/ })).not.toHaveLength(0);
-    await user.click(screen.getAllByRole('button', { name: /Intro to analysis/ })[0]);
+    expect(await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).not.toHaveLength(0);
+    await user.click(screen.getAllByRole('button', { name: /Introduction \(Live Teams Session\)/ })[0]);
     expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('Introduction');
     expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Play' }));
     await waitFor(() => expect(resolveRecordingUrl).toHaveBeenCalledWith('S1', 'R1', false, expect.any(AbortSignal)));
-    expect(await screen.findByTestId('player')).toHaveTextContent('Intro to analysis');
+    expect(await screen.findByTestId('player')).toHaveTextContent('Introduction (Live Teams Session)');
   });
 
   it('resolves download after authentication and never navigates to a JSON 401', async () => {
@@ -160,7 +161,7 @@ describe('Session recordings calendar', () => {
       clicked.push(this.href);
     });
     await renderPage();
-    await user.click((await screen.findAllByRole('button', { name: /Intro to analysis/ }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ }))[0]);
     await user.click(screen.getByRole('button', { name: 'Download' }));
     await waitFor(() => expect(resolveRecordingUrl).toHaveBeenCalledWith('S1', 'R1', true));
     await waitFor(() => expect(clicked).toEqual(['https://storage.invalid/inline-video']));
@@ -172,7 +173,7 @@ describe('Session recordings calendar', () => {
     vi.mocked(resolveRecordingUrl).mockRejectedValue(new Error('Your session has expired. Sign in again to play or download this recording.'));
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     await renderPage();
-    await user.click((await screen.findAllByRole('button', { name: /Intro to analysis/ }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ }))[0]);
     await user.click(screen.getByRole('button', { name: 'Download' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Sign in again');
     expect(click).not.toHaveBeenCalled();
@@ -182,7 +183,7 @@ describe('Session recordings calendar', () => {
   it('never offers a download for a recording without a ready saved file', async () => {
     const user = userEvent.setup();
     await renderPage();
-    await user.click((await screen.findAllByRole('button', { name: /Cleaning data/ }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /Cleaning \(Live Teams Session\)/ }))[0]);
     expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('A saved archive copy has not been confirmed');
     expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
   });
@@ -190,10 +191,10 @@ describe('Session recordings calendar', () => {
   it('opens a lecture from the title search', async () => {
     const user = userEvent.setup();
     await renderPage();
-    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
     await user.type(screen.getByRole('textbox', { name: 'Search lectures by title' }), 'Cleaning');
-    await user.click(screen.getAllByRole('button', { name: /Cleaning data/ })[0]);
-    expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('Cleaning data');
+    await user.click(screen.getAllByRole('button', { name: /Cleaning \(Live Teams Session\)/ })[0]);
+    expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('Cleaning (Live Teams Session)');
   });
 
   it('keeps modules without booked lectures in the LMS directory', async () => {
@@ -211,12 +212,12 @@ describe('Session recordings calendar', () => {
     vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: [...(library.sessions ?? []), {
       occurrenceId: 'O3', moduleId: 'M3', title: 'Future seminar', moduleTitle: 'Planning',
       programme: 'Level 4', programmeActive: true, cohort: 'Sep 26', group: 'Group A',
-      weekId: null, weekNumber: null, weekTitle: '', sessionNumber: 3,
+      weekId: null, weekNumber: null, weekTitle: '', displayWeekTitle: '', sessionNumber: 3,
       joinUrl: 'https://teams.microsoft.com/l/meetup-join/future',
       startsAt: `${tomorrow}T09:00:00Z`, endsAt: `${tomorrow}T10:00:00Z`,
     }] });
     await renderPage();
-    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
     // Day is the default; keep this scenario explicit about day navigation.
     await user.selectOptions(screen.getByRole('combobox', { name: 'Calendar view' }), 'day');
     await user.click(screen.getAllByRole('button', { name: 'Next day' })[0]);
@@ -233,11 +234,11 @@ describe('Session recordings calendar', () => {
     vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: [...(library.sessions ?? []), {
       occurrenceId: 'O4', moduleId: 'M4', title: 'Marketing Strategy', moduleTitle: 'Marketing Strategy',
       programme: 'Level 4', programmeActive: true, cohort: 'Sep 26', group: 'Group A',
-      weekId: null, weekNumber: null, weekTitle: '', sessionNumber: 5,
+      weekId: null, weekNumber: null, weekTitle: '', displayWeekTitle: '', sessionNumber: 5,
       startsAt: `${tomorrow}T11:00:00Z`, endsAt: `${tomorrow}T13:00:00Z`,
     }] });
     await renderPage();
-    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
     // Day is the default; keep this scenario explicit about day navigation.
     await user.selectOptions(screen.getByRole('combobox', { name: 'Calendar view' }), 'day');
     await user.click(screen.getAllByRole('button', { name: 'Next day' })[0]);
@@ -275,7 +276,7 @@ describe('Session recordings calendar', () => {
     await renderPage(false);
     expect(await screen.findByRole('alert')).toHaveTextContent('Library unavailable');
     await user.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.getAllByRole('button', { name: /Intro to analysis/ }).length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Introduction \(Live Teams Session\)/ }).length).toBeGreaterThan(0));
   });
   it('keeps ended lectures inside the selected day or week, independent of saved recordings', async () => {
     const user = userEvent.setup();
@@ -283,25 +284,25 @@ describe('Session recordings calendar', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(at(12)));
     try {
       vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, deliveries: [], sessions: [
-        ...library.sessions!, { ...library.sessions![0], occurrenceId: 'OLD', title: 'Older lecture',
+        ...library.sessions!, { ...library.sessions![0], occurrenceId: 'OLD', title: 'Older lecture', weekId: 'W-OLD', weekTitle: 'Older lecture', displayWeekTitle: 'Older lecture',
           startsAt: `${addDays(date, -14)}T09:00:00Z`, endsAt: `${addDays(date, -14)}T11:00:00Z` },
       ] });
       await renderPage();
       await user.click(await screen.findByRole('button', { name: 'Ended (1)' }));
-      expect(screen.getByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /Cleaning data|Older lecture/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Cleaning \(Live Teams Session\)|Older lecture/ })).not.toBeInTheDocument();
       expect(screen.getByRole('option', { name: 'All dates' })).toBeDisabled();
       await user.selectOptions(screen.getByRole('combobox', { name: 'Calendar view' }), 'day');
-      expect(screen.getByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Next day' }));
-      expect(screen.queryByRole('button', { name: /Intro to analysis/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Introduction \(Live Teams Session\)/ })).not.toBeInTheDocument();
     } finally { clock.mockRestore(); }
   });
 
   it('searches the selected period by default and shows all matches across dates on request', async () => {
     const user = userEvent.setup();
     vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, deliveries: [], sessions: Array.from({ length: 10 }, (_, index) => ({
-      ...library.sessions![0], occurrenceId: `F${index}`, title: `Remote seminar ${index}`,
+      ...library.sessions![0], occurrenceId: `F${index}`, title: `Remote seminar ${index}`, weekId: `W-F${index}`, weekTitle: `Remote seminar ${index}`, displayWeekTitle: `Remote seminar ${index}`,
       startsAt: `${addDays(date, 14)}T09:00:00Z`, endsAt: `${addDays(date, 14)}T11:00:00Z`,
     })) });
     await renderPage();
@@ -318,11 +319,11 @@ describe('Session recordings calendar', () => {
   it('narrows dependent group and module choices and clears child filters when programme changes', async () => {
     const user = userEvent.setup();
     vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: [...library.sessions!, {
-      ...library.sessions![0], occurrenceId: 'OTHER', moduleId: 'M2', moduleTitle: 'Leadership', title: 'Other programme lecture',
+      ...library.sessions![0], occurrenceId: 'OTHER', moduleId: 'M2', moduleTitle: 'Leadership', title: 'Other programme lecture', weekId: 'W-OTHER', weekTitle: 'Other programme lecture', displayWeekTitle: 'Other programme lecture',
       programme: 'Level 5', cohort: 'Other cohort', group: 'Group B',
     }] });
     await renderPage();
-    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
     await user.click(screen.getByText('More filters (0)'));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by programme' }), 'Level 4');
     expect(screen.getByRole('combobox', { name: 'Filter by group' })).not.toHaveTextContent('Group B');
@@ -332,13 +333,13 @@ describe('Session recordings calendar', () => {
     expect(screen.getByRole('combobox', { name: 'Filter by group' })).toHaveValue('all');
     expect(screen.getByRole('combobox', { name: 'Filter by module' })).toHaveValue('all');
     expect(screen.getByRole('button', { name: /Other programme lecture/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Intro to analysis/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Introduction \(Live Teams Session\)/ })).not.toBeInTheDocument();
   });
 
   it('uses one Teams-style view selector and moves work weeks by seven calendar days', async () => {
     const user = userEvent.setup();
     await renderPage();
-    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
     const view = screen.getByRole('combobox', { name: 'Calendar view' });
     expect(view).toHaveValue('day');
     expect(screen.getByRole('complementary', { name: 'Choose lecture date' })).toBeInTheDocument();
@@ -354,7 +355,7 @@ describe('Session recordings calendar', () => {
 
   it('selecting a mini-calendar date switches Week to Day', async () => {
     const user = userEvent.setup(); await renderPage();
-    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
     await user.selectOptions(screen.getByRole('combobox', { name: 'Calendar view' }), 'week');
     expect(screen.getByRole('combobox', { name: 'Calendar view' })).toHaveValue('week');
     const sidebar = screen.getByRole('complementary', { name: 'Choose lecture date' });
@@ -380,18 +381,18 @@ describe('Session recordings calendar', () => {
     try {
       await renderPage(false);
       expect(await screen.findByRole('button', { name: 'Ready to download (1)' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /Cleaning data/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).not.toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Not ended (1)' }));
-      expect(screen.getByRole('button', { name: /Cleaning data/ })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /Intro to analysis/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Introduction \(Live Teams Session\)/ })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toHaveAttribute('aria-pressed', 'false');
       await user.click(screen.getByRole('button', { name: 'Ended (1)' }));
       expect(screen.getByRole('combobox', { name: 'Filter by recording status' })).toHaveValue('all');
-      expect(screen.getByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
       expect(screen.getByText('1 lectures in selected day')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'All lectures (2)' }));
-      expect(screen.getByRole('button', { name: /Cleaning data/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).toBeInTheDocument();
       expect(screen.getByRole('group', { name: 'Lecture status' }).querySelectorAll('[aria-pressed="true"]')).toHaveLength(1);
     } finally { clock.mockRestore(); }
   });
@@ -399,7 +400,7 @@ describe('Session recordings calendar', () => {
     const user = userEvent.setup();
     window.localStorage.setItem('lms-recordings-calendar-zone', 'UTC');
     vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: [...library.sessions!, {
-      ...library.sessions![0], occurrenceId: 'TOMORROW', title: 'Tomorrow lecture', startsAt: `${addDays(date, 1)}T09:00:00Z`, endsAt: `${addDays(date, 1)}T10:00:00Z`,
+      ...library.sessions![0], occurrenceId: 'TOMORROW', title: 'Tomorrow lecture', weekId: 'W-TOMORROW', weekTitle: 'Tomorrow lecture', displayWeekTitle: 'Tomorrow lecture', startsAt: `${addDays(date, 1)}T09:00:00Z`, endsAt: `${addDays(date, 1)}T10:00:00Z`,
     }] });
     await renderPage(false);
     await screen.findByRole('button', { name: 'Ready to download (1)' });
@@ -419,13 +420,13 @@ describe('Session recordings calendar', () => {
     try {
       await renderPage(false);
       await user.click(await screen.findByRole('button', { name: 'Ended (2)' }));
-      expect(screen.getByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /Cleaning data/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).toBeInTheDocument();
       expect(screen.getByText('2 lectures in selected day')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toHaveAttribute('aria-pressed', 'false');
       await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by recording status' }), 'ready');
       expect(screen.getByRole('button', { name: 'Ended (2)' })).toHaveAttribute('aria-pressed', 'false');
-      expect(screen.queryByRole('button', { name: /Cleaning data/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).not.toBeInTheDocument();
     } finally { clock.mockRestore(); }
   });
 
@@ -433,7 +434,7 @@ describe('Session recordings calendar', () => {
     const user = userEvent.setup();
     window.localStorage.setItem('lms-recordings-calendar-zone', 'UTC');
     vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, deliveries: [], sessions: [
-      ...library.sessions!, ...[1, 2].map(offset => ({ ...library.sessions![0], occurrenceId: `PAST${offset}`, title: `Earlier day ${offset}`,
+      ...library.sessions!, ...[1, 2].map(offset => ({ ...library.sessions![0], occurrenceId: `PAST${offset}`, title: `Earlier day ${offset}`, weekId: `W-PAST${offset}`, weekTitle: `Earlier day ${offset}`, displayWeekTitle: `Earlier day ${offset}`,
         startsAt: `${addDays(date, -offset)}T09:00:00Z`, endsAt: `${addDays(date, -offset)}T10:00:00Z` })),
     ] });
     await renderPage();
@@ -450,7 +451,7 @@ describe('Session recordings calendar', () => {
   it('selecting a date cancels an all-dates search and restores day-scoped counts and results', async () => {
     const user = userEvent.setup(); window.localStorage.setItem('lms-recordings-calendar-zone', 'UTC');
     vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, deliveries: [], sessions: [
-      ...library.sessions!, { ...library.sessions![0], occurrenceId: 'REMOTE', title: 'Intro on another day',
+      ...library.sessions!, { ...library.sessions![0], occurrenceId: 'REMOTE', title: 'Intro on another day', weekId: 'W-REMOTE', weekTitle: 'Intro on another day', displayWeekTitle: 'Intro on another day',
         startsAt: `${addDays(date, -2)}T09:00:00Z`, endsAt: `${addDays(date, -2)}T10:00:00Z` },
     ] });
     await renderPage();
@@ -465,16 +466,16 @@ describe('Session recordings calendar', () => {
 
   it('opens attendance inside the selected event details and expands the calendar without changing filters', async () => {
     const user = userEvent.setup(); await renderPage();
-    await screen.findByRole('button', { name: /Intro to analysis/ });
+    await screen.findByRole('button', { name: /Introduction \(Live Teams Session\)/ });
     expect(screen.queryByRole('button', { name: 'View attendance & saved files' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Full screen' }));
     expect(screen.getByRole('button', { name: 'Exit full screen' })).toHaveAttribute('aria-pressed', 'true');
-    await user.click(screen.getByRole('button', { name: /Intro to analysis/ }));
+    await user.click(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ }));
     expect(within(screen.getByRole('complementary', { name: 'Lecture details' })).getByRole('button', { name: 'View attendance & saved files' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Close details panel' }));
     expect(screen.getByRole('button', { name: 'All lectures (2)' })).toHaveAttribute('aria-pressed', 'true');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Lecture filter' }), 'ready');
-    expect(screen.queryByRole('button', { name: /Cleaning data/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.getByRole('button', { name: 'Full screen' })).toHaveAttribute('aria-pressed', 'false');
@@ -485,12 +486,12 @@ describe('Session recordings calendar', () => {
     calendarOverride.exclude = ['O2'];
     calendarOverride.unmatched = [{ title: 'Unlinked Portfolio', date, startTime: '11:00', endTime: '13:00', cancelled: false, reason: 'This Teams meeting is not linked to an LMS module.' }];
     vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: [...library.sessions!, {
-      ...library.sessions![0], occurrenceId: 'authored:PLAN', title: 'Unbooked duplicate plan', source: 'authored', status: 'planned',
+      ...library.sessions![0], occurrenceId: 'authored:PLAN', title: 'Unbooked duplicate plan', weekId: 'W-PLAN', weekTitle: 'Unbooked duplicate plan', displayWeekTitle: 'Unbooked duplicate plan', source: 'authored', status: 'planned',
     }] });
     await renderPage();
     expect(screen.getByRole('button', { name: 'All lectures (2)' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Cleaning data/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cleaning \(Live Teams Session\)/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Unbooked duplicate plan/ })).not.toBeInTheDocument();
     await user.click(screen.getByText('Calendar events not matched to LMS (1)'));
     expect(screen.getByText('Unlinked Portfolio')).toBeInTheDocument();
@@ -500,20 +501,20 @@ describe('Session recordings calendar', () => {
   it('keeps linked LMS sessions available when the optional calendar comparison fails', async () => {
     calendarOverride.fail = true; await renderPage(false);
     expect(await screen.findByRole('alert')).toHaveTextContent('Calendar unavailable');
-    expect(await screen.findByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toBeEnabled();
     calendarOverride.fail = false;
     fireEvent.click(screen.getByRole('button', { name: 'Retry calendar comparison' }));
-    expect(await screen.findByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
   });
 
   it('shows linked LMS sessions before choosing a comparison calendar and retains Ready after choosing', async () => {
     const user = userEvent.setup(); calendarOverride.choose = true;
     await renderPage(false);
     const account = await screen.findByRole('combobox', { name: 'Teams calendar account' });
-    expect(await screen.findByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
     await user.selectOptions(account, 'calendar@example.invalid');
-    expect(await screen.findByRole('button', { name: /Intro to analysis/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Introduction \(Live Teams Session\)/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ready to download (1)' })).toHaveAttribute('aria-pressed', 'true');
     expect(window.localStorage.getItem('lms-recordings-calendar-account')).toBe('calendar@example.invalid');
   });

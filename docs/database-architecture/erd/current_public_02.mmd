@@ -1,0 +1,48 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    public__mobile_comms_device {
+        bigint id PK
+    }
+    public__mobile_comms_message {
+        bigint id PK
+        uuid thread_id FK
+    }
+    public__mobile_comms_notification {
+        bigint id PK
+    }
+    public__mobile_comms_preference {
+        bigint account_id PK
+    }
+    public__mobile_comms_readcursor {
+        bigint id PK
+        uuid thread_id FK
+    }
+    public__mobile_comms_thread {
+        uuid id PK
+    }
+    public__n8n_chat_histories {
+        integer id PK
+    }
+    public__platform_performance_samples {
+        uuid id PK
+    }
+    public__platform_read_model_outbox {
+        uuid id PK
+    }
+    public__platform_read_models {
+        bigint id PK
+    }
+    public__sales_email_events {
+        bigint id PK
+    }
+    public__sales_followups {
+        uuid id PK
+    }
+    public__sales_staging_leads {
+        uuid id PK
+    }
+    public__sales_suppressions {
+        bigint id PK
+    }
+    public__mobile_comms_thread ||..o{ public__mobile_comms_message : "mobile_comms_message_thread_id_63d88bd7_fk_mobile_co"
+    public__mobile_comms_thread ||..o{ public__mobile_comms_readcursor : "mobile_comms_readcur_thread_id_d01971ca_fk_mobile_co"

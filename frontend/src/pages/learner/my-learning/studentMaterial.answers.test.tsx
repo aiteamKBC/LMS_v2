@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { subjectRequest, type SubjectMaterial } from '@/api/studentActivity';
 import { StudentMaterial } from './StudentMaterial';
@@ -35,12 +35,12 @@ describe('previous quiz answers in the main quiz', () => {
     const data = { ...material(), completed: false, csrf_token: 'synthetic-csrf',
       historical: { score: null, maximum_score: null, passed: null, attempt_number: null, status: null, answers: [] } };
     const saved = { score_percent: 100, passed: true, completed: true };
-    vi.mocked(subjectRequest).mockResolvedValueOnce(data);
+    vi.mocked(subjectRequest).mockResolvedValueOnce(data)
+      .mockResolvedValueOnce({ attempt_id: 'new', definition: {}, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
     const onProgress = vi.fn();
     render(<StudentMaterial kind={kind} learnerId="123" groupId={50} activityId={60} catalogueQuiz onProgress={onProgress} />);
-    vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {}, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
     expect(screen.queryByRole('button', { name: 'Start quiz' })).not.toBeInTheDocument();
-    await screen.findByRole('button', { name: 'Submit answers' });
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'First answer' })).toBeEnabled());
     fireEvent.click(screen.getByRole('checkbox', { name: 'First answer' }));
     vi.mocked(subjectRequest).mockResolvedValueOnce(saved).mockResolvedValueOnce({ ...data, completed: true, can_attempt: false });
     fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
@@ -67,6 +67,49 @@ describe('previous quiz answers in the main quiz', () => {
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeEnabled();
     const started = vi.mocked(subjectRequest).mock.calls.find(([url, options]) => url.includes('/attempts/') && options?.method === 'POST');
     expect(JSON.parse(started![1]!.body as string)).toMatchObject({ retakeTimeChoice: 'new' });
+  });
+
+  it.each(['commercial', 'apprenticeship'])('opens only the granted additional completed quiz attempt (%s)', async kind => {
+    const data = { ...material(), completed: true, can_retake: true };
+    vi.mocked(subjectRequest).mockResolvedValueOnce(data);
+    const onProgress = vi.fn();
+    render(<StudentMaterial kind={kind} learnerId="123" groupId={50} activityId={60}
+      completed catalogueQuiz reviewQuiz onProgress={onProgress} />);
+    const quiz = within(await screen.findByRole('region', { name: 'Activity quiz' }));
+    expect(screen.getByText('Complete')).toBeVisible();
+    expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeDisabled();
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'extra', definition: {},
+      timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: 'active_quiz' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Try quiz again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use new attempt date and duration' }));
+    await screen.findByRole('button', { name: 'Submit answers' });
+    expect(quiz.getByRole('checkbox', { name: 'First answer' })).not.toBeChecked();
+    fireEvent.click(quiz.getByRole('checkbox', { name: 'First answer' }));
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ completed: false, passed: false, score_percent: 50 })
+      .mockResolvedValueOnce({ ...data, can_retake: false, can_attempt: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
+    await screen.findByText(/Attempt saved: 50%/);
+    expect(screen.getByText('Complete')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Try quiz again|Submit answers/ })).not.toBeInTheDocument();
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ passed: false }));
+  });
+
+  it('keeps an explicitly read-only viewer locked even when a retake grant exists', async () => {
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ ...material(), completed: true, can_retake: true });
+    render(<StudentMaterial kind="commercial" learnerId="123" groupId={50} activityId={60}
+      completed catalogueQuiz reviewQuiz readOnly />);
+    const quiz = within(await screen.findByRole('region', { name: 'Activity quiz' }));
+    expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /Try quiz again|Submit answers/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps a viewer without attempt permission in review mode', async () => {
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ ...material(), completed: true, can_retake: true, can_attempt: false });
+    render(<StudentMaterial kind="commercial" learnerId="123" groupId={50} activityId={60}
+      completed catalogueQuiz reviewQuiz />);
+    const quiz = within(await screen.findByRole('region', { name: 'Activity quiz' }));
+    expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /Try quiz again|Submit answers/ })).not.toBeInTheDocument();
   });
 
   it('keeps the timed attempt and answers when completion needs a corrected date', async () => {

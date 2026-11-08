@@ -1,0 +1,73 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Learner__learners {
+        bigint id PK
+    }
+    Learner__personal_course_certificates {
+        bigint id PK
+        bigint account_id FK
+        text module_id FK
+    }
+    Learner__personal_course_enrolments {
+        bigint account_id PK
+        text module_id PK
+    }
+    Learner__progress_review_pptx_files {
+        bigint id PK
+        text run_id FK
+    }
+    Learner__progress_review_runs {
+        text id PK
+    }
+    Learner__progress_review_signature_cache {
+        bigint id PK
+    }
+    Learner__progress_review_source_snapshots {
+        bigint id PK
+        text run_id FK
+    }
+    Learner__review_documents {
+        bigint id PK
+        bigint learner_id FK
+        bigint review_id FK
+    }
+    Learner__review_pdf_sync_lease {
+        text name PK
+    }
+    Learner__review_sections {
+        bigint id PK
+        bigint review_id FK
+    }
+    Learner__reviews {
+        bigint id PK
+    }
+    Learner__source_lms_activity_results {
+        bigint group_id PK
+        bigint learner_id PK
+        bigint activity_id PK
+    }
+    Learner__source_lms_actual_hours {
+        bigint learner_id PK
+        text kind PK
+        text ref PK
+    }
+    Learner__source_lms_actual_hours_revision {
+        bigint revision_id PK
+    }
+    Learner__source_lms_actual_hours_validation {
+        bigint validation_id PK
+    }
+    Learner__source_lms_attendance {
+        text source_key PK
+    }
+    login__Login_accounts {
+        bigint id PK
+    }
+    Learner__personal_course_enrolments ||..o{ Learner__personal_course_certificates : "personal_course_certificates_account_id_module_id_fkey"
+    login__Login_accounts ||..o{ Learner__personal_course_enrolments : "personal_course_enrolments_account_id_fkey"
+    Learner__progress_review_runs ||..o{ Learner__progress_review_pptx_files : "progress_review_pptx_files_run_id_fkey"
+    Learner__progress_review_runs ||..o{ Learner__progress_review_source_snapshots : "progress_review_source_snapshots_run_id_fkey"
+    Learner__learners |o..o{ Learner__review_documents : "review_documents_learner_id_fkey"
+    Learner__reviews |o..o{ Learner__review_documents : "review_documents_review_id_fkey"
+    Learner__reviews ||..o{ Learner__review_sections : "fk_review_sections_review"

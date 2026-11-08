@@ -216,6 +216,19 @@ describe('learner subject cards', () => {
     expect(screen.getByText(/OTJH: Unavailable/)).toBeInTheDocument();
   });
 
+  it('shows mapped planned time in the imported activity heading without confusing it with recorded hours', () => {
+    const allocated = { ...data, activities: data.activities.map(entry => ({ ...entry,
+      planned: entry.activity === 'Reflection' ? 0.5 : 0, planned_hours_mapped: true })) };
+    render(<StudentActivityPanel data={allocated} loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    selectMonthWeek('Undated activities');
+    const activity = screen.getByRole('group', { name: 'Reflection activity' });
+    expect(activity).toHaveTextContent('Required');
+    expect(activity).toHaveTextContent('Planned time: 30m');
+    expect(within(activity).getAllByText(/Planned time/)).toHaveLength(1);
+    expect(activity).toHaveTextContent('OTJH: Unavailable');
+  });
+
   it('filters activities without changing the full module completion or hours summary', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Reflection' } });
@@ -402,7 +415,13 @@ describe('subjects shared with Module Builder', () => {
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByRole('group', { name: 'Welcome activity' })).toBeVisible();
     expect(screen.getByRole('group', { name: 'First lecture activity', hidden: true })).not.toBeVisible();
-    expect(within(screen.getByRole('complementary', { name: 'Module activities' })).getByText('First lecture')).toBeVisible();
+    const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
+    const lectureWeek = sidebar.getByRole('button', { name: /Week 1.*First lecture, 1 components/ });
+    expect(lectureWeek).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(lectureWeek);
+    expect(lectureWeek).toHaveAttribute('aria-expanded', 'true');
+    expect(sidebar.getByText('First lecture')).toBeVisible();
+    expect(screen.getByRole('group', { name: 'Welcome activity' })).toBeVisible();
   });
 
   it('shows native components in every future month with their completion totals', async () => {
@@ -640,7 +659,7 @@ describe('subject months, weeks and completion', () => {
     expect(reads).toHaveLength(1);
     expect(reads[0][0]).toContain('group_id=1&activity_id=11');
     expect(reads[0][0]).not.toContain('catalogue_kind=quiz');
-    expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/') && options?.method === 'POST')).toHaveLength(1);
+    await waitFor(() => expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/') && options?.method === 'POST')).toHaveLength(1));
     expect(requests.mock.calls.some(([url]) => url.endsWith('/attempt-1/'))).toBe(false);
   });
 

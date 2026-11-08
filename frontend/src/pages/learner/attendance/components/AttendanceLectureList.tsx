@@ -74,12 +74,13 @@ export default function AttendanceLectureList({ lectures, moduleId, onModuleChan
   const [order, setOrder] = useState('newest');
   const [groupByMonth, setGroupByMonth] = useState(false);
   const [monthExpansion, setMonthExpansion] = useState<Record<string, boolean>>({});
-  const months = useMemo(() => [...new Set(lectures.map(row => monthKey(row.date)))].sort((a, b) =>
-    a === 'undated' ? 1 : b === 'undated' ? -1 : b.localeCompare(a)), [lectures]);
+  const displayLectures = useMemo(() => lectures.filter(row => row.status !== 'cancelled' && !isManuallyConfirmedLecture(row)), [lectures]);
+  const months = useMemo(() => [...new Set(displayLectures.map(row => monthKey(row.date)))].sort((a, b) =>
+    a === 'undated' ? 1 : b === 'undated' ? -1 : b.localeCompare(a)), [displayLectures]);
   const selectedMonth = months.includes(month) ? month : 'all';
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return lectures.filter(row => {
+    return displayLectures.filter(row => {
       const matches = filter === 'all' || (filter === 'attended' ? ['completed', 'late'].includes(row.status) :
         filter === 'covered' ? row.catchupStatus === 'completed' : row.status === filter);
       return matches && (selectedMonth === 'all' || monthKey(row.date) === selectedMonth) &&
@@ -92,7 +93,7 @@ export default function AttendanceLectureList({ lectures, moduleId, onModuleChan
       const byDate = `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`);
       return (order === 'newest' ? -byDate : byDate) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
     });
-  }, [lectures, filter, selectedMonth, search, order]);
+  }, [displayLectures, filter, selectedMonth, search, order]);
   const groups = useMemo(() => {
     const byMonth = new Map<string, AttendanceLecture[]>();
     for (const row of filtered) {

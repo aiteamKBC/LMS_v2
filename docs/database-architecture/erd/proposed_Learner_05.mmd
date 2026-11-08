@@ -1,0 +1,101 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Learner__activity_sync_runs {
+        bigint id PK
+    }
+    Learner__learner_activity_sources {
+        bigint id PK
+    }
+    Learner__learner_match {
+        bigint aptem_id PK
+    }
+    Learner__learner_month_restore_points {
+        bigint id PK
+        bigint learner_id FK
+    }
+    Learner__learner_monthly_locks {
+        bigint learner_id PK
+        character_varying_7_ report_month PK
+    }
+    Learner__learner_monthly_reports {
+        uuid id PK
+    }
+    Learner__learner_monthly_signatures {
+        bigint id PK
+        bigint learner_id FK
+    }
+    Learner__learner_monthly_targets {
+        bigint learner_id FK
+        bigint id PK
+    }
+    Learner__learner_profile_overrides {
+        bigint learner_id PK
+    }
+    Learner__learner_progress_entries {
+        bigint id PK
+        bigint learner_id FK
+        bigint plan_component_id FK
+        bigint sync_run_id FK
+        text kbc_attendance_key FK
+    }
+    Learner__learner_progress_historical_components {
+        bigint progress_id PK
+        character_varying_128_ historical_component_ref PK
+        bigint source_row_id PK
+    }
+    Learner__learner_progress_ksb_exclusions {
+        bigint progress_id PK
+        integer position PK
+    }
+    Learner__learner_progress_ksbs {
+        bigint progress_id PK
+        integer position PK
+        bigint ksb_definition_id FK
+    }
+    Learner__learner_quiz_answers {
+        bigint id PK
+        bigint progress_id FK
+    }
+    Learner__learner_quiz_chosen_answers {
+        bigint quiz_answer_id PK
+        integer position PK
+    }
+    Learner__learner_quiz_correct_answers {
+        bigint quiz_answer_id PK
+        integer position PK
+    }
+    Learner__learner_quiz_grade_corrections {
+        bigint id PK
+    }
+    Learner__learner_training_plan_components {
+        bigint id PK
+    }
+    Learner__learners {
+        bigint id PK
+    }
+    Learner__source_lms_attendance {
+        text source_key PK
+    }
+    curriculum__historical_components {
+        character_varying_128_ id PK
+    }
+    curriculum__ksb_definitions {
+        bigint id PK
+    }
+    Learner__learners ||..o{ Learner__learner_month_restore_points : "learner_month_restore_points_learner_id_fkey"
+    Learner__learners ||..o{ Learner__learner_monthly_locks : "learner_monthly_locks_learner_id_fkey"
+    Learner__learners ||..o{ Learner__learner_monthly_signatures : "learner_monthly_signatures_learner_id_fkey"
+    Learner__learners ||..o{ Learner__learner_monthly_targets : "learner_monthly_targets_learner_id_fkey"
+    Learner__learners ||..o{ Learner__learner_progress_entries : "learner_progress_entries_learner_id_fkey"
+    Learner__learner_training_plan_components |o..o{ Learner__learner_progress_entries : "learner_progress_entries_plan_component_fkey"
+    Learner__source_lms_attendance |o..o{ Learner__learner_progress_entries : "learner_progress_kbc_attendance_fkey"
+    Learner__activity_sync_runs |o..o{ Learner__learner_progress_entries : "learner_progress_sync_run_fkey UNVALIDATED"
+    curriculum__historical_components ||..o{ Learner__learner_progress_historical_components : "learner_progress_historical_compo_historical_component_ref_fkey"
+    Learner__learner_progress_entries ||..o{ Learner__learner_progress_historical_components : "learner_progress_historical_components_progress_id_fkey"
+    Learner__learner_activity_sources ||..o| Learner__learner_progress_historical_components : "learner_progress_historical_components_source_row_id_fkey"
+    curriculum__ksb_definitions |o..o{ Learner__learner_progress_ksbs : "learner_progress_ksbs_definition_fkey"
+    Learner__learner_progress_entries ||..o{ Learner__learner_progress_ksbs : "learner_progress_ksbs_progress_id_fkey"
+    Learner__learner_progress_entries ||..o{ Learner__learner_quiz_answers : "learner_quiz_answers_progress_id_fkey"
+    Learner__learner_quiz_answers ||..o{ Learner__learner_quiz_chosen_answers : "learner_quiz_chosen_answers_quiz_answer_id_fkey"
+    Learner__learner_quiz_answers ||..o{ Learner__learner_quiz_correct_answers : "learner_quiz_correct_answers_quiz_answer_id_fkey"

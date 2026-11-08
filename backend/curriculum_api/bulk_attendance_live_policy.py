@@ -41,6 +41,7 @@ def build_live_records(rows, occurrences, titles, kbc_id_by_profile, local_date,
         status = str(row['attendance_status'] or '').strip().lower()
         records.setdefault(learner_id, []).append({
             'recordKey': f"live:{row['id']}",
+            'occurrenceId': row['occurrence_id'],
             'learnerId': learner_id,
             'sessionDate': session_date.isoformat(),
             'moduleName': module_name,
@@ -58,13 +59,14 @@ def _day(record):
 
 def merge_live_over_kbc(kbc_records, live_records):
     """One learner's history; the live register wins on any date it covers."""
-    live_days = {_day(record) for record in live_records}
+    live_days = {_day(record) for record in live_records if record.get('countsAsSession') is not False}
     kept = [record for record in kbc_records if _day(record) not in live_days]
     return sorted(kept + list(live_records), key=lambda record: (_day(record), record['recordKey']))
 
 
 def live_days_per_learner(live):
-    return max((len({_day(record) for record in records}) for records in live.values()), default=0)
+    return max((len({_day(record) for record in records
+                     if record.get('countsAsSession') is not False}) for records in live.values()), default=0)
 
 
 def is_kbc_learner_id(value):

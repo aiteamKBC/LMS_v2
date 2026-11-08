@@ -1,0 +1,16 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Feedback__feedback_questions {
+        bigint id PK
+    }
+    Feedback__feedback_responses {
+        bigint id PK
+    }
+    Feedback__feedback_uploads {
+        uuid id PK
+        bigint response_id FK
+        bigint question_id FK
+    }
+    Feedback__feedback_questions ||..o{ Feedback__feedback_uploads : "feedback_uploads_question_id_fkey"
+    Feedback__feedback_responses ||..o{ Feedback__feedback_uploads : "feedback_uploads_response_id_fkey"

@@ -65,7 +65,7 @@ export function FormBuilder() {
   const [saving, setSaving] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const questionSettingsRef = useRef<HTMLElement>(null);
-  const lectureFeedbackUrl = `${window.location.origin}/login?lectureFeedback=1`;
+  const lectureFeedbackUrl = `${window.location.origin}/lecture-feedback`;
   const presentationSections = useMemo(() => lecturePresentationSections(model.formType, model.sections), [model.formType, model.sections]);
   const presentationStep = Math.min(previewStep, Math.max(presentationSections.length - 1, 0));
 
@@ -251,8 +251,9 @@ export function FormBuilder() {
           </>}
         </div>}
         {model.formType === 'post_lecture' && <div className="rounded-xl border border-primary-100 bg-white p-4 md:col-span-2">
-          <h3 className="text-sm font-semibold text-foreground-900">Reusable Live Sessions Feedback QR</h3>
-          <p className="mt-1 text-xs text-foreground-500">Share this same QR every week. After sign-in, each learner sees only Live Sessions Feedback unlocked by their finalized attendance.</p>
+          <h3 className="text-sm font-semibold text-foreground-900">One Live Sessions Feedback QR</h3>
+          <p className="mt-1 text-xs text-foreground-500">Use this same QR for every Live Sessions form. The learner enters their Aptem or LMS email, then sees their latest available lecture and module without signing in.</p>
+          <p className="mt-1 text-xs text-amber-700">Email is not verified. Anyone who knows a learner's email could respond as them.</p>
           <div className="mt-3 flex flex-wrap items-center gap-4"><div className="rounded-lg border border-foreground-200 bg-white p-2"><QRCodeSVG value={lectureFeedbackUrl} size={150} level="M" marginSize={1} title="Live Sessions Feedback QR" /></div><div className="min-w-0 flex-1"><p className="break-all text-xs text-foreground-600">{lectureFeedbackUrl}</p><button type="button" className="mt-3 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700" onClick={() => void navigator.clipboard.writeText(lectureFeedbackUrl).then(() => { setLinkCopied(true); window.setTimeout(() => setLinkCopied(false), 1600); }).catch(() => void Swal.fire({ icon: 'error', title: 'Could not copy link' }))}>{linkCopied ? 'Copied' : 'Copy link'}</button></div></div>
         </div>}
         </div>

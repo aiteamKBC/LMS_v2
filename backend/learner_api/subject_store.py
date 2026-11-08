@@ -104,6 +104,13 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_
         assert_legacy_writable(cur, enrolment_id, group_id)
         if not ready(cur):
             raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
+        if definition.get('retakeRequired'):
+            from . import legacy_quiz_retakes as retakes
+            grant = retakes.available(cur, enrolment_id, aptem_id, group_id, activity_id)
+            if snapshot['catalogue_kind'] != 'quiz' or grant is None:
+                from old_otjh.service import ServiceError
+                raise ServiceError('No additional attempt is available for this quiz.', 'quiz_retake_required', 409)
+            snapshot['retakeGrantId'] = grant
         cur.execute(f'''INSERT INTO {ATTEMPTS}
                         (id,enrolment_id,aptem_id,group_id,activity_id,kind,definition)
                         VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)''',
@@ -162,6 +169,10 @@ def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, r
                                completed=%s,reading_confirmed=%s,submitted_at=CURRENT_TIMESTAMP
                             WHERE id=%s''', [json.dumps(answers), result['score_percent'], result['passed'],
                                            result['completed'], reading_confirmed is True, attempt_id])
+            if definition.get('retakeGrantId'):
+                from . import legacy_quiz_retakes as retakes
+                retakes.consume(cur, definition['retakeGrantId'], enrolment_id, aptem_id,
+                                group_id, activity_id, attempt_id)
     return result
 
 

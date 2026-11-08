@@ -50,7 +50,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         self.assertNotEqual(review['reviewToken'], before_review['reviewToken'])
         mapping = {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}
         decisions = {'reviewToken': review['reviewToken'], 'mappings': [mapping]}
-        self.assertEqual(validate_decisions(review, decisions)[('M1', 'material:8')]['componentId'], 'MANUAL')
+        self.assertEqual(validate_decisions(review, decisions)[0][('M1', 'material:8')][0]['componentId'], 'MANUAL')
         for choices in [[], [{**mapping, 'targetComponentId': 'ALTERNATIVE'}], [mapping, mapping],
                         [{**mapping, 'moduleId': 'M2'}], [{**mapping, 'allowDifferentType': True}]]:
             with self.subTest(choices=choices), self.assertRaises(ServiceError):
@@ -132,9 +132,10 @@ class TransferMatchingReviewTests(SimpleTestCase):
                                                  [{**snapshot, 'status': 'pending'}]), data[3]['components'])
         with self.assertRaises(ServiceError):
             validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': []})
-        chosen = validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': [
+        chosen, retained = validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': [
             {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}]})
         self.assertIn(('M1', 'material:8'), chosen)
+        self.assertEqual(retained, {})
         self.assertEqual((snapshot, data), before)
 
     def test_saved_proposals_reject_stale_foreign_unfinished_wrong_type_and_duplicate_matches(self):
@@ -293,7 +294,7 @@ class TransferMatchingReviewTests(SimpleTestCase):
         review = build_review('R1', [item(completedSourceActivities=['material:7', 'material:8'])], context())
         mapping = {'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': 'MANUAL'}
         good = {'reviewToken': review['reviewToken'], 'mappings': [mapping]}
-        self.assertEqual(validate_decisions(review, good)[('M1', 'material:8')]['plannedHours'], 1.5)
+        self.assertEqual(validate_decisions(review, good)[0][('M1', 'material:8')][0]['plannedHours'], 1.5)
         bad = [None, {}, {**good, 'reviewToken': 'stale'}, {**good, 'mappings': []},
                {**good, 'mappings': [mapping, mapping]}]
         for field, value in [('moduleId', 'M2'), ('sourceActivityRef', 'material:9'),
@@ -309,6 +310,105 @@ class TransferMatchingReviewTests(SimpleTestCase):
         rows = [{'moduleId': 'M1', 'sourceActivityRef': ref, 'targetComponentId': 'MANUAL'} for ref in ['material:8', 'material:9']]
         with self.assertRaises(ServiceError):
             validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': rows})
+
+    def test_one_source_can_select_multiple_targets_but_every_pair_is_validated(self):
+        data = context()
+        data[3]['components'].append(component('EXTRA', week='Week 2'))
+        review = build_review('R1', [item(completedSourceActivities=['material:7', 'material:8'])], data)
+        rows = [{'moduleId': 'M1', 'sourceActivityRef': 'material:8', 'targetComponentId': ident}
+                for ident in ['MANUAL', 'EXTRA']]
+        result, retained = validate_decisions(review, {'reviewToken': review['reviewToken'], 'mappings': rows})
+        self.assertEqual([target['componentId'] for target in result[('M1', 'material:8')]], ['MANUAL', 'EXTRA'])
+        self.assertEqual(retained, {})
+        for invalid in ['MANUAL', 'AUTO', 'FOREIGN', 'RETIRED', 'QUIZ']:
+            with self.subTest(invalid=invalid), self.assertRaises(ServiceError):
+                validate_decisions(review, {'reviewToken': review['reviewToken'],
+                                           'mappings': [rows[0], {**rows[1], 'targetComponentId': invalid}]})
+
+    def test_multiple_quiz_matches_keep_type_and_module_boundaries(self):
+        data = context()
+        data[3]['components'].append(component('QUIZ2', isQuiz=True))
+        review = build_review('R1', [item(completedSourceActivities=['quiz:20'])], data)
+        rows = [{'moduleId': 'M1', 'sourceActivityRef': 'quiz:20', 'targetComponentId': ident}
+                for ident in ['QUIZ', 'QUIZ2']]
+        choices = {'reviewToken': review['reviewToken'], 'mappings': rows}
+        self.assertEqual(len(validate_decisions(review, choices)[0][('M1', 'quiz:20')]), 2)
+        for change in [{'targetComponentId': 'MANUAL'}, {'moduleId': 'M2'}, {'sourceActivityRef': 'quiz:99'}]:
+            with self.subTest(change=change), self.assertRaises(ServiceError):
+                validate_decisions(review, {**choices, 'mappings': [rows[0], {**rows[1], **change}]})
+
+    def test_multiple_match_approval_preserves_hours_history_and_native_credit_for_both_learner_types(self):
+        from .tests_my_learning_no_db import MyLearningAggregateTests
+        for kind in ['commercial', 'apprenticeship']:
+            for ref in ['material:8', 'material:7']:
+                with self.subTest(kind=kind, source=ref):
+                    data = context()
+                    # The learner catalogue supplies active components separately
+                    # from retired quizzes; the validation fixture also has a retired target.
+                    data[3]['components'] = [c for c in data[3]['components'] if not c.get('retired')]
+                    data[3]['components'].append(component('EXTRA', expectedOtjh=8, week='Week 2'))
+                    data[3]['componentProgress'] = [{'componentId': 'MANUAL', 'kind': 'component'}]
+                    pending = saved(modules=[item(completedSourceActivities=[ref])])
+                    original = deepcopy(data)
+                    request_id = pending['items'][0]['requestId']
+                    review = build_review(request_id, pending['items'], data)
+                    decisions = {'reviewToken': review['reviewToken'], 'mappings': [
+                        {'moduleId': 'M1', 'sourceActivityRef': ref, 'targetComponentId': ident}
+                        for ident in ['MANUAL', 'EXTRA']]}
+                    cursor = MagicMock(); cursor.fetchone.return_value = (7, kind)
+                    connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
+                    with patch.object(api, 'connections', {'enrolment': connection}), \
+                            patch.object(api.store, 'lock_learner', return_value=nullcontext(cursor)), \
+                            patch.object(api.store, 'read_state', return_value=pending), \
+                            patch.object(api, 'source_owner', return_value=(SimpleNamespace(pk=7), {'id': 9})), \
+                            patch('learner_api.my_learning.load_context', return_value=data):
+                        # A bad additional destination must prevent every write.
+                        with self.assertRaises(ServiceError):
+                            api.approve_request(request_id, SimpleNamespace(id=11), {**decisions, 'mappings': [
+                                decisions['mappings'][0], {**decisions['mappings'][1], 'targetComponentId': 'FOREIGN'}]})
+                        self.assertTrue(all(not call.args[0].startswith('UPDATE') for call in cursor.execute.call_args_list))
+                        api.approve_request(request_id, SimpleNamespace(id=11), decisions)
+                    write = next(call for call in cursor.execute.call_args_list if 'SET snapshot=' in call.args[0])
+                    snapshot = json.loads(write.args[1][0])
+                    expected_ids = {'MANUAL', 'EXTRA'} | ({'AUTO'} if ref == 'material:7' else set())
+                    self.assertEqual(set(snapshot['matchedComponents']), expected_ids)
+                    self.assertEqual({match['targetComponentId'] for match in snapshot['componentMatches']}, expected_ids)
+                    self.assertEqual({match['sourceActivityRef'] for match in snapshot['componentMatches']}, {ref})
+                    self.assertEqual([match['manual'] for match in snapshot['componentMatches']],
+                                     [False, True, True] if ref == 'material:7' else [True, True])
+                    self.assertEqual(snapshot['baselineCompletedIds'], ['MANUAL'])
+                    self.assertEqual((snapshot['percent'], snapshot['hours']), (40, 2))
+                    self.assertEqual(snapshot['componentCounts'], {'total': 4, 'matched': len(expected_ids),
+                                     'completed': len(expected_ids), 'remaining': 4 - len(expected_ids)})
+                    self.assertEqual(write.args[1][1:], [request_id, 7, 'M1'])
+                    approved = {**snapshot, 'status': 'approved'}
+                    projected = project_approved_learning(data[3]['components'], data[9]['replacement_settings'], [approved])
+                    self.assertEqual({c['componentId'] for c in projected if c.get('previousLearning', {}).get('completed')}, expected_ids)
+                    self.assertEqual(data[3]['componentProgress'], original[3]['componentProgress'])
+                    self.assertEqual(data[9]['replacement_settings'], original[9]['replacement_settings'])
+                    # Verify the actual learner aggregate, not just the approval preview.
+                    data[9]['progress_transfers'] = [approved]
+                    cards, _ = MyLearningAggregateTests().cards(data[3], [], [], meta=data[9])
+                    card = next(c for c in cards if c['id'] == 'current:M1')
+                    self.assertEqual((card['completedActivityCount'], card['progress']), (len(expected_ids), len(expected_ids) * 25))
+                    self.assertEqual(card['actualHours'], 2)
+
+    def test_each_manual_target_keeps_its_own_identity_checks_when_sharing_a_source(self):
+        data = context()
+        data[3]['components'].append(component('EXTRA'))
+        snapshot = item(status='approved', completedSourceActivities=['material:8'])
+        targets = module_review(snapshot, data)[0]['targets']
+        snapshot['matchedComponents'] = {target['componentId']: manual_completion(snapshot, 'material:8', target)
+                                         for target in targets if target['componentId'] in {'MANUAL', 'EXTRA'}}
+        original = deepcopy((data, snapshot))
+        for changed in [component('EXTRA', type='video'), component('EXTRA', retired=True), component('EXTRA', module='M2')]:
+            projected = project_approved_learning([component('MANUAL'), changed], {}, [snapshot])
+            self.assertTrue(projected[0]['previousLearning']['completed'])
+            self.assertNotIn('previousLearning', projected[1])
+        for change in [{'status': 'pending'}, {'completedSourceActivities': []}, {'moduleId': 'M2'}]:
+            projected = project_approved_learning([component('MANUAL'), component('EXTRA')], {}, [{**snapshot, **change}])
+            self.assertTrue(all('previousLearning' not in c for c in projected))
+        self.assertEqual((data, snapshot), original)
 
     def test_approved_manual_completion_survives_without_shared_provenance_or_double_credit(self):
         data = context()
