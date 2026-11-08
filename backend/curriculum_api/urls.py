@@ -33,6 +33,7 @@ from .bulk_attendance_kbc_history import (
     bulk_attendance_day_learners,
     bulk_attendance_kbc_month_records,
     bulk_attendance_save_attendance,
+    bulk_attendance_delete_attendance,
 )
 from .bulk_attendance_live_day import bulk_attendance_live_day
 from .bulk_attendance_live_day_records import bulk_attendance_live_day_records, bulk_attendance_live_month_records
@@ -64,6 +65,7 @@ urlpatterns = [
     path('curriculum/bulk-attendance/kbc-month-records/', bulk_attendance_kbc_month_records, name='curriculum-bulk-attendance-kbc-month-records'),
     path('curriculum/bulk-attendance/day-learners/', bulk_attendance_day_learners, name='curriculum-bulk-attendance-day-learners'),
     path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
+    path('curriculum/bulk-attendance/attendance/delete/', bulk_attendance_delete_attendance, name='curriculum-bulk-attendance-delete-attendance'),
     path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
     path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),
     path('curriculum/bulk-attendance/live-month-records/', bulk_attendance_live_month_records, name='curriculum-bulk-attendance-live-month-records'),

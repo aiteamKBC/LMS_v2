@@ -27,7 +27,7 @@ class MigratedMonthlyLogTests(TestCase):
     @contextmanager
     def transport(self, *, failure=False):
         with source_identity(), \
-             patch("coach_api.views._imported_review_definition", side_effect=lambda *args: deepcopy(self.definition)), \
+             patch("coach_api.views._imported_review_definition", side_effect=lambda *args, **kwargs: deepcopy(self.definition)), \
              patch("old_otjh.service.resolve_record", return_value={"id": 71, "aptem_id": "synthetic"}) as resolve, \
              patch("learner_api.monthly_logs.mirror_mcm_learner_signature",
                    side_effect=RuntimeError("synthetic reporting failure") if failure else None,

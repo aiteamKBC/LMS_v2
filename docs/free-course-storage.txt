@@ -86,8 +86,10 @@ Release procedure
    tables, their schema/constraints/triggers and the linked runtime records.
    Keep content exports and backups outside Git. Never copy a branch's
    django_migrations table or overwrite the application's environment file.
-3. Deploy the reviewed backend code and apply curriculum_api migration
-   0080_free_course_storage using the project's normal migration mechanism.
+3. Deploy the reviewed backend code and apply curriculum_api migrations through
+   0081_merge_free_courses_qr_attendance using the project's normal migration
+   mechanism. This joins 0080_free_course_storage with main's independent
+   0079_qr_attendance history; neither existing 0079 migration is renamed.
    The legacy-API filter change and the schema belong in the same release:
    older code does not recognize every managed_by_builder record.
 4. From backend, preview the content import:

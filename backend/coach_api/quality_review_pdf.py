@@ -32,6 +32,9 @@ def _utc(value):
 
 
 def _render(review, images, attachments=()):
+    if review.get('pdfLayoutVersion', 1) in (2, 3):
+        from .quality_review_pdf_layout import render
+        return render(review, images, attachments)
     _fonts()
     definition=definition_for(review)
     data=clean_answers(review['form'],'completed',definition)
@@ -144,7 +147,7 @@ def review_pdf(review):
         attachments=store.read_evidence(review['id'],review['form'].get('attachments',{})) if review['form'].get('attachments') else []
         return _render(review,images,attachments)
     from .recordings_saved_evidence import source_dsn
-    return recent_read('quality-review-pdf',[store.digest(source_dsn()),review['id'],review['version'],store.digest(definition_for(review)),3],load,timeout=600)
+    return recent_read('quality-review-pdf',[store.digest(source_dsn()),review['id'],review['version'],store.digest(definition_for(review)),review.get('pdfLayoutVersion',1),3],load,timeout=600)
 
 
 def stored_review_pdf(review):

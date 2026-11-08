@@ -54,6 +54,33 @@ class SessionBunnyTests(TestCase):
                 self.asset()
         self.assertEqual(CurriculumVideoImport.objects.count(), 0)
 
+    def test_disabled_transfers_can_restore_an_already_ready_recording(self):
+        saved = self.asset()
+        saved.status, saved.video_id = 'ready', VIDEO
+        saved.save()
+        with patch.dict(os.environ, BUNNY_STREAM_ENABLED='false'), \
+             patch.object(session_bunny, 'publish_outcome') as publish, \
+             patch.object(session_bunny, 'transfer_recording', side_effect=AssertionError('No new transfer')):
+            recovered = session_bunny.enqueue_recording(self.series, self.occurrence, self.artifact, self.module)
+            result = video_imports.process(recovered.pk)
+        self.assertEqual((result.pk, result.video_id, result.status), (saved.pk, VIDEO, 'ready'))
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+        publish.assert_called_once()
+
+    def test_disabled_transfers_do_not_reuse_another_occurrence_or_incomplete_import(self):
+        saved = self.asset()
+        saved.status, saved.video_id = 'ready', VIDEO
+        saved.save()
+        with patch.dict(os.environ, BUNNY_STREAM_ENABLED='false'):
+            with self.assertRaisesRegex(VideoImportError, 'no Azure fallback'):
+                session_bunny.enqueue_recording(self.series, {**self.occurrence, 'id': 'OTHER'},
+                    {**self.artifact, 'id': 'OTHER', 'occurrence_id': 'OTHER'}, self.module)
+            saved.status = 'processing'
+            saved.save()
+            with self.assertRaisesRegex(VideoImportError, 'no Azure fallback'):
+                self.asset()
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+
     def test_two_graph_ids_for_same_call_and_content_share_one_import(self):
         self.artifact.update(content_correlation_id='CONTENT', call_id='CALL')
         first = self.asset()

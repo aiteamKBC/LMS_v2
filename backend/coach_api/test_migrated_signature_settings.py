@@ -21,6 +21,7 @@ from . import migrated_completion_views as endpoints
 from .test_migrated_auto_completion import sign_request, source_identity
 from .test_migrated_pdf_parity import CONTEXT
 from .tests_migrated_completion import PNG
+from .tests_support.persisted_fixtures import review_source
 
 
 TYPES = {"MCM": "Monthly Coaching Meeting", "PR": "Progress Review", "PR_SKILLS_RADAR": "Progress Review (+ Skills Radar)"}
@@ -39,6 +40,8 @@ class MigratedSignatureSettingsTests(TestCase):
         source = {"canInitialize": True, "readOnly": True, "migratedProgrammeKey": "id:synthetic", "sourceStatus": "Scheduled",
             "historicalReview": {"id": 7000 + template.pk, "type": TYPES[family]},
             "instance": {"id": f"imported-review:settings-{template.pk}", "learnerId": 17}}
+        review_source(source["historicalReview"]["id"], learner_id=17,
+                      aptem_review_id=f"settings-{template.pk}", review_type=TYPES[family], status="Scheduled")
         with patch('learner_api.models.LearnerProfile.objects.filter') as profiles:
             profiles.return_value.values_list.return_value.first.return_value = 'coach@example.invalid'
             overlay, created = initialize_imported_review("coach@example.invalid", source)

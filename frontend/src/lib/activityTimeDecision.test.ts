@@ -5,6 +5,13 @@ const saved = (seconds: number, retakeTimeChoice?: 'correct' | 'add' | 'retry', 
   submittedAt: `2026-10-${String(index).padStart(2, '0')}T10:00:00Z`, retakeTimeChoice,
 });
 describe('Activity time decisions', () => {
+  it('retains attendance credit after the first reflection and counts later additions once', () => {
+    const first = { ...saved(1800, 'add'), retakePreviousSeconds: 7200 };
+    expect(countedActivityTime([first])).toBe(9000);
+    expect(countedActivityTime([first, { ...saved(1800, 'add', 2), retakePreviousSeconds: 9000 }])).toBe(10800);
+    expect(countedActivityTime([{ ...first, retakeTimeChoice: 'retry' }])).toBe(7200);
+    expect(countedActivityTime([{ ...first, retakeTimeChoice: 'correct' }])).toBe(1800);
+  });
   it.each([
     ['correct', 3600, 1200, 1200], ['add', 3600, 1200, 4800],
     ['retry', 3600, 1200, 3600], ['retry', 1200, 3600, 3600],

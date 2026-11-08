@@ -1,4 +1,4 @@
-"""Default UI definitions from the fourteen supplied observation forms."""
+"""Default observation forms and the existing full portfolio sampling form."""
 from copy import deepcopy
 from functools import lru_cache
 import json
@@ -7,7 +7,14 @@ from pathlib import Path
 
 @lru_cache(maxsize=1)
 def defaults():
-    return json.loads(Path(__file__).with_name('quality_feedback_defaults.json').read_text(encoding='utf8'))
+    from .quality_review_template import template
+    portfolio = template()
+    return [*json.loads(Path(__file__).with_name('quality_feedback_defaults.json').read_text(encoding='utf8')),
+        {'reviewType': 'FORM_PORTFOLIO_SAMPLING', 'title': portfolio['title'],
+         'group': 'Portfolio sampling', 'sections': portfolio['sections'],
+         'purpose': 'To review the quality of the learner experience throughout their apprenticeship journey at Kent Business College. '
+             'It checks whether learners are receiving the support, guidance, teaching, coaching, feedback and wider development '
+             'they need to make good progress, achieve well and prepare for their next steps.'}]
 
 
 def default_feedback(kind):
@@ -27,7 +34,8 @@ def feedback_definition(kind):
     row = default_feedback(kind)
     if row is None:
         return None
-    return {**new_definition(kind, row['title']), 'sections': row['sections']}
+    return {**new_definition(kind, row['title']), 'sections': row['sections'],
+        **({'purpose': row['purpose']} if row.get('purpose') else {})}
 
 
 def default_summaries():

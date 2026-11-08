@@ -83,6 +83,79 @@ describe('recording watch tracking', () => {
 });
 
 describe('recording transcript', () => {
+  function transcriptScroll(first: HTMLElement, second: HTMLElement) {
+    const panel = first.closest('ol')!.parentElement!;
+    const scrollTo = vi.fn();
+    Object.defineProperty(panel, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(panel, 'scrollTo', { configurable: true, value: scrollTo });
+    Object.defineProperty(first, 'offsetTop', { configurable: true, value: 100 });
+    Object.defineProperty(second, 'offsetTop', { configurable: true, value: 600 });
+    return scrollTo;
+  }
+
+  it('follows the latest spoken cue when transcript time ranges overlap', async () => {
+    vi.mocked(loadTranscriptCues).mockResolvedValue({ cues: [
+      { start: 0, end: 90, text: 'Long opening contribution', speaker: 'Tutor' },
+      { start: 30, end: 40, text: 'Current contribution', speaker: 'Learner' },
+    ] });
+    render(<SessionRecordingPlayer seriesId="S" file={{ ...recording, transcriptLinks: [{ id: 'T', timingReady: true, offsetSeconds: 0 }] }}
+      transcripts={[transcript]} label="Recording" />);
+    const first = await screen.findByRole('button', { name: /Long opening contribution/ });
+    const second = screen.getByRole('button', { name: /Current contribution/ });
+    const scrollTo = transcriptScroll(first, second);
+    const video = screen.getByLabelText('Recording') as HTMLVideoElement;
+    video.currentTime = 31;
+    fireEvent.timeUpdate(video);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 500, behavior: 'smooth' });
+    expect(first).toHaveAttribute('aria-current', 'true');
+    expect(second).toHaveAttribute('aria-current', 'true');
+    expect(recordRecordingWatch).not.toHaveBeenCalled();
+  });
+
+  it('follows the nearest preceding cue after seeking into a silent gap without starting playback', async () => {
+    vi.mocked(loadTranscriptCues).mockResolvedValue({ cues: [
+      { start: 0, end: 2, text: 'Opening contribution', speaker: '' },
+      { start: 30, end: 32, text: 'Nearest contribution', speaker: '' },
+    ] });
+    render(<SessionRecordingPlayer seriesId="S" file={{ ...recording, transcriptLinks: [{ id: 'T', timingReady: true, offsetSeconds: 0 }] }}
+      transcripts={[transcript]} label="Recording" />);
+    const first = await screen.findByRole('button', { name: /Opening contribution/ });
+    const second = screen.getByRole('button', { name: /Nearest contribution/ });
+    const scrollTo = transcriptScroll(first, second);
+    const video = screen.getByLabelText('Recording') as HTMLVideoElement;
+    video.currentTime = 45;
+    fireEvent.seeked(video);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 500, behavior: 'smooth' });
+    expect(second).not.toHaveAttribute('aria-current');
+    expect(video.paused).toBe(true);
+    expect(video.currentTime).toBe(45);
+    expect(recordRecordingWatch).not.toHaveBeenCalled();
+  });
+
+  it('shows whether following is enabled and resumes at the current paused video position', async () => {
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} label="Recording" />);
+    const first = await screen.findByRole('button', { name: /First phrase/ });
+    const second = screen.getByRole('button', { name: /Second phrase/ });
+    const scrollTo = transcriptScroll(first, second);
+    const follow = screen.getByRole('button', { name: 'Follow video' });
+    expect(follow).toHaveAttribute('aria-pressed', 'true');
+    expect(follow).toHaveTextContent('Following video');
+    fireEvent.click(follow);
+    expect(follow).toHaveAttribute('aria-pressed', 'false');
+    expect(follow).toHaveTextContent('Follow video');
+    const video = screen.getByLabelText('Recording') as HTMLVideoElement;
+    video.currentTime = 5.5;
+    fireEvent.seeked(video);
+    expect(scrollTo).not.toHaveBeenCalled();
+    fireEvent.click(follow);
+    expect(follow).toHaveAttribute('aria-pressed', 'true');
+    expect(follow).toHaveTextContent('Following video');
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 500, behavior: 'smooth' });
+    expect(video.currentTime).toBe(5.5);
+    expect(video.paused).toBe(true);
+    expect(recordRecordingWatch).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, { kind: 'commercial' as const, id: '7' }, { kind: 'apprenticeship' as const, id: '8' }])('downloads the saved linked text through the current viewer endpoint (%j)', async learner => {
     render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" />);
     const download = screen.getByRole('link', { name: 'Download transcript' });

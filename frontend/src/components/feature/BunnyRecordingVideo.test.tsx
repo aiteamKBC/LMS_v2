@@ -57,6 +57,30 @@ describe('Bunny live-session playback', () => {
     expect(send).toHaveBeenCalledWith(expect.stringContaining('"method":"setCurrentTime","value":25'), 'https://player.mediadelivery.net');
   });
 
+  it('follows later overlapping speech from verified Bunny time updates without seeking or recording watch time', async () => {
+    vi.mocked(loadTranscriptCues).mockResolvedValue({ cues: [
+      { start: 0, end: 90, text: 'Opening contribution', speaker: '' },
+      { start: 30, end: 40, text: 'Latest contribution', speaker: '' },
+    ] });
+    render(<SessionRecordingPlayer seriesId="S" file={{ ...file, transcriptLinks: [{ id: 'T', timingReady: true, offsetSeconds: 0 }] }}
+      transcripts={[{ id: 'T', type: 'transcript', state: 'ready' }]} label="Lecture" />);
+    const frame = await screen.findByTitle('Lecture') as HTMLIFrameElement;
+    const first = await screen.findByRole('button', { name: /Opening contribution/ });
+    const second = screen.getByRole('button', { name: /Latest contribution/ });
+    const panel = first.closest('ol')!.parentElement!;
+    const scrollTo = vi.fn();
+    Object.defineProperty(panel, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(panel, 'scrollTo', { configurable: true, value: scrollTo });
+    Object.defineProperty(first, 'offsetTop', { configurable: true, value: 100 });
+    Object.defineProperty(second, 'offsetTop', { configurable: true, value: 600 });
+    const send = vi.spyOn(frame.contentWindow!, 'postMessage');
+    message(frame, 'timeupdate', { seconds: 31, duration: 100 });
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 500, behavior: 'smooth' });
+    expect(second).toHaveAttribute('aria-current', 'true');
+    expect(send).not.toHaveBeenCalledWith(expect.stringContaining('setCurrentTime'), expect.anything());
+    expect(recordRecordingWatch).not.toHaveBeenCalled();
+  });
+
   it('shows an access error and retries without falling back to Azure', async () => {
     vi.mocked(loadRecordingPlayer).mockRejectedValueOnce(new Error('Bunny playback security key is not configured.'))
       .mockResolvedValueOnce({ url, provider: 'bunny' });

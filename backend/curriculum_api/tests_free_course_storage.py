@@ -2,15 +2,24 @@
 from copy import deepcopy
 from decimal import Decimal
 from unittest.mock import patch
+import hashlib
+import json
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from django.core.management import call_command, CommandError
 from django.db import connection, transaction, IntegrityError, DatabaseError
+from django.db.migrations.loader import MigrationLoader
+from django.conf import settings
+from django.test import override_settings
 from django.utils import timezone
 
 from . import views as v
 from .free_course_import import import_content, import_plan
 from .legacy_free_course_adoption import adopted_courses
 from .legacy_free_course_migration import adopted_id
-from .tests import CurriculumPersistenceHarness
+from .tests import CurriculumPersistenceHarness, CurriculumPersistenceTransactionHarness
 from . import tests_standalone_courses as standalone
 
 
@@ -173,6 +182,7 @@ class FreeCourseStorageTests(CurriculumPersistenceHarness):
         before = v.module_structure_source_rows(payload['catalogueId'])
         provision(connection)
         self.assertEqual(v.module_structure_source_rows(payload['catalogueId']), before)
+
         root = v.free_programme_fetch_all(v.FREE_COURSES_TABLE, 'id = %s', [course['id']])[0]
         self.assertEqual(root['module_catalogue_id'], payload['catalogueId'])
         self.assertEqual(root['price'], Decimal('17.25'))
@@ -182,6 +192,13 @@ class FreeCourseStorageTests(CurriculumPersistenceHarness):
         self.assertEqual(activity['authoring_component_id'], adopted_id('COMP', course['id'], 'SOURCE-COMP'))
         provision(connection)
         self.assertEqual(v.module_structure_source_rows(payload['catalogueId']), before)
+
+    def test_migration_graph_has_one_leaf_without_renaming_applied_migrations(self):
+        modules = {key: value for key, value in settings.MIGRATION_MODULES.items() if key != 'curriculum_api'}
+        with override_settings(MIGRATION_MODULES=modules):
+            loader = MigrationLoader(None)
+        self.assertEqual(loader.graph.leaf_nodes('curriculum_api'),
+                         [('curriculum_api', '0081_merge_free_courses_qr_attendance')])
 
     def test_duplicating_imported_content_does_not_reuse_original_component_identity(self):
         import_content(self.export())
@@ -193,3 +210,43 @@ class FreeCourseStorageTests(CurriculumPersistenceHarness):
         original = v.free_programme_fetch_all(v.FREE_PROGRAMME_COMPONENTS_TABLE, 'id = %s', ['SOURCE-COMP'])[0]
         duplicate = v.free_programme_fetch_all(v.FREE_PROGRAMME_COMPONENTS_TABLE, 'authoring_component_id = %s', ['COMP-COPY'])[0]
         self.assertNotEqual(original['id'], duplicate['id'])
+
+
+class FreeCourseImportCommandTests(CurriculumPersistenceTransactionHarness):
+    databases = {'default', 'enrolment'}
+
+    def test_preview_target_guard_backup_and_apply(self):
+        from config.management_safety import reconciliation_command
+        with patch('sys.argv', ['manage.py', 'import_free_course_content']):
+            self.assertTrue(reconciliation_command())
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.json'
+            backup = Path(directory) / 'backup.json'
+            source.write_text(json.dumps(FreeCourseStorageTests.export(self)))
+            output = StringIO()
+            call_command('import_free_course_content', export=str(source), stdout=output)
+            self.assertFalse(json.loads(output.getvalue())['applied'])
+            with self.assertRaises(CommandError):
+                call_command('import_free_course_content', export=str(source), apply=True,
+                             expected_target='wrong-target', backup=str(backup), stdout=StringIO())
+            self.assertFalse(backup.exists())
+            target = hashlib.sha256((connection.settings_dict['HOST'] + '/' + connection.settings_dict['NAME']).encode()).hexdigest()
+            call_command('import_free_course_content', export=str(source), apply=True,
+                         expected_target=target, backup=str(backup), stdout=StringIO())
+            self.assertTrue(backup.exists())
+            self.assertTrue(v.authoring_module_exists(adopted_id('MOD', 'FC-IMPORT', 'FC-IMPORT')))
+            with self.assertRaises(CommandError):
+                call_command('import_free_course_content', export=str(source), apply=True,
+                             expected_target=target, backup=str(backup), stdout=StringIO())
+
+    def test_preview_database_transaction_forbids_accidental_writes(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.json'
+            source.write_text('{}')
+            def unsafe_plan(_export):
+                with connection.cursor() as cursor:
+                    cursor.execute("INSERT INTO curriculum.free_courses (id, course_name) VALUES ('FORBIDDEN', 'No write')")
+            with patch('curriculum_api.management.commands.import_free_course_content.import_plan', side_effect=unsafe_plan), \
+                    self.assertRaises(DatabaseError):
+                call_command('import_free_course_content', export=str(source), stdout=StringIO())
+            self.assertFalse(v.free_programme_fetch_all(v.FREE_COURSES_TABLE, 'id = %s', ['FORBIDDEN']))

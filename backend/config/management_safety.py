@@ -9,6 +9,8 @@ def reconciliation_command():
         "reconcile_shared_session_attendance",
         "waive_legacy_mcm_signatures",
         "adopt_legacy_free_courses",
+        "import_free_course_content",
+        "sync_aptem_learner_details",
     }
 
 
