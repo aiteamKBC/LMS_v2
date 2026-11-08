@@ -50,7 +50,7 @@ from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
 from .mappers import _normalize_free_courses, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
-from .placement_links import placement_ids
+from .placement_links import placement_ids, placement_payload
 from .projection_performance import projection_call, projection_operation
 
 logger = logging.getLogger(__name__)
@@ -453,15 +453,14 @@ def _group_module_ids(programme, group, source=None, group_id=""):
 
 def learner_programme_modules(learner):
     """`_programme_modules` for one learner, by their placement's programme id."""
-    return _programme_modules(_s(learner.programme), placement_ids(learner)["programme_id"])
+    programme_id = placement_ids(learner)["programme_id"]
+    return _programme_modules("", programme_id) if programme_id else []
 
 
 def learner_group_module_ids(learner):
     """`_group_module_ids` for one learner, by their placement's group id."""
-    return _group_module_ids(
-        _s(learner.programme), _s(getattr(learner, "group", "")),
-        group_id=placement_ids(learner)["group_id"],
-    )
+    group_id = placement_ids(learner)["group_id"]
+    return _group_module_ids("", "", group_id=group_id) if group_id else []
 
 
 def _saved_modules(learner):
@@ -517,7 +516,6 @@ def _meetings(learner):
 
     Never fatal: a plan that cannot reach Curriculum still shows its modules.
     """
-    from coach_api.views import resolve_curriculum_programme_id
     from curriculum_api import review_otjh
 
     from coach_api.review_sources import source_for_learner, review_profile_for_source
@@ -537,7 +535,7 @@ def _meetings(learner):
             return [], "unavailable"
 
     try:
-        programme_id = resolve_curriculum_programme_id(_s(learner.programme))
+        programme_id = placement_ids(learner)["programme_id"]
     except Exception:
         logger.exception(
             "learning_plan: could not resolve the Curriculum programme for learner %s", learner.pk,
@@ -790,19 +788,13 @@ def _serialize(learner):
 
     chosen = {_s(m.get("moduleId")) for m in plan}
     everything = _all_modules()
-    learner_programme_id = next(
-        (m["programmeId"] for m in catalogue if m["programmeId"]), "",
-    )
-    # Reviews follow the learner's programme, not the plan's modules -- so this
-    # deliberately does not reuse learner_programme_id above, which is derived
-    # from the module catalogue for the picker's benefit.
     meetings, meetings_reason = _meetings(learner)
     return {
         "learner": {
             "id": str(learner.id),
             "name": _s(learner.username),
             "programme": programme,
-            "programmeId": learner_programme_id,
+            **placement_payload(learner),
             "cohort": _s(learner.cohort),
             "group": group,
             "programmeStatus": _s(learner.programme_status),
@@ -1010,7 +1002,7 @@ def _plan_entries(learner):
 
 
 def _preset_ids_for(learner, cache):
-    """The learner's group preset, cached per group id, else per (programme, group).
+    """The learner's group preset, cached by its canonical group ID.
 
     A learner with no saved plan is *shown* their group's preset — see
     ``_serialize`` — so that preset is their effective plan. Assigning one
@@ -1018,11 +1010,11 @@ def _preset_ids_for(learner, cache):
     every other module their group teaches.
     """
     group_id = projection_call('assignment_placement', placement_ids, learner)["group_id"]
-    key = ("group_id", group_id) if group_id else (_s(learner.programme), _s(learner.group))
+    if not group_id:
+        return []
+    key = ("group_id", group_id)
     if key not in cache:
-        cache[key] = (
-            _group_module_ids("", "", group_id=group_id) if group_id else _group_module_ids(*key)
-        )
+        cache[key] = _group_module_ids("", "", group_id=group_id)
     return cache[key]
 
 

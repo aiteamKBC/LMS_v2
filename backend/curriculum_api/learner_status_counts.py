@@ -23,7 +23,7 @@ def plan_membership(value, wanted):
 
 
 def learner_facts(module_ids):
-    """One small row per permanent learner; no names, emails or plan bodies.
+    """One small row per learner, with placement labels but no personal names.
 
     Module membership is reduced inside Postgres. Only the rare JSON-string
     plans take the roster's Python parsing path, and only for those learners.
@@ -37,6 +37,8 @@ def learner_facts(module_ids):
     # "Learner".learners no longer stores placement names. Read them as
     # LearnerProfile.programme/.cohort/.group_name do: through the profile's own
     # placement ids and the curriculum tables. A missing id reads as no name.
+    # Each target ID is a verified primary key: these LEFT JOINs preserve one
+    # row per learner, including learners with absent placement relationships.
     name_selects, name_joins = [], []
     for alias, id_column, table, name, label in (
             ('placement_programme', 'programme_id', 'curriculum.programmes', 'name', 'programme'),

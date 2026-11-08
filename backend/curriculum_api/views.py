@@ -15837,9 +15837,9 @@ def derived_programme_name_sql(table):
     to this output column. Correlated on the table's own reference, so callers'
     where/order clauses are unchanged. A blank, unknown or duplicated programme
     id gives '' (the old column's default) rather than an arbitrary name. A
-    database that still has the physical column keeps reading it.
+    database that still has the physical copy also reads the authoritative name.
     """
-    if table not in PROGRAMME_NAME_DERIVED_TABLES or has_column(table, 'programme_name')             or not has_column(table, 'programme_id'):
+    if table not in PROGRAMME_NAME_DERIVED_TABLES or not has_column(table, 'programme_id'):
         return ''
     row = authoring_table_name(table)
     return (f"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(programme_name_source.name) END "
@@ -15866,8 +15866,8 @@ def derived_placement_names_sql(table):
     group names are read the same way through their ids. Each is a scalar
     subquery correlated on the table's own reference, so no outer row is ever
     duplicated, and a blank, unknown or duplicated id gives '' (the removed
-    column's default). A schema that still has the physical column (the SQLite
-    test runner) reads it unchanged. Writers are unaffected: authoring_upsert()
+    column's default). Physical copies are replaced, never used as a fallback.
+    Writers are unaffected: authoring_upsert()
     and update_authoring_rows() write only physical columns, so a derived key
     in a payload is dropped.
     """
@@ -15877,7 +15877,7 @@ def derived_placement_names_sql(table):
         derived['programme_name'] = programme
     row = authoring_table_name(table)
     for output, source, key, source_column in PLACEMENT_NAME_DERIVED_COLUMNS.get(table, ()):
-        if has_column(table, output) or not has_column(table, key):
+        if not has_column(table, key):
             continue
         derived[output] = (
             f"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(placement_source.{source_column}) END "
@@ -15898,9 +15898,27 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
     shape = schema_compat.columns_of(CURRICULUM_SCHEMA, table)
     relation = schema_compat.read_relation(table, shape)
     legacy_columns = set(schema_compat.legacy_read_columns(table, shape)) if relation else set()
-    derived = {} if relation else derived_placement_names_sql(table)
-    if columns or exclude_columns:
-        available = set(column_names(table)) | legacy_columns
+    available = set(column_names(table)) | legacy_columns
+    # The compatibility relation already resolves missing placement columns.
+    # Other shapes (including legacy physical copies) still need canonical
+    # names. Put these expressions in FROM so WHERE and ORDER BY can use them,
+    # even when the caller does not include the label in its SELECT list.
+    placement_names = {'cohorts': {'programme_name'},
+                       'groups': {'programme_name', 'cohort_name'},
+                       'modules': {'programme_name', 'cohort_name', 'group_name'}}.get(table, set())
+    derived = ({} if relation and placement_names <= legacy_columns else
+               {key: value for key, value in derived_placement_names_sql(table).items()
+                if key not in legacy_columns})
+    if derived:
+        base = relation or authoring_table_name(table)
+        expressions = list(derived.values())
+        if relation:
+            expressions = [value.replace(authoring_table_name(table), quote_ident(table))
+                           for value in expressions]
+        source_columns = [quote_ident(key) for key in sorted(available - set(derived))]
+        projection = ', '.join([*source_columns, *expressions])
+        relation = f'(select {projection} from {base}) as {quote_ident(table)}'
+        available.update(derived)
     if columns:
         wanted = [column for column in columns if column in available]
         if (archive_state.uses_status(table) and 'status' not in wanted
@@ -15909,19 +15927,14 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
             # that holds it on the normalised schema.
             wanted.append('status')
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
-        extra = [sql for output, sql in derived.items() if output in columns]
     elif exclude_columns:
         # Everything but the named columns. Safer than an allow-list for a
         # caller that reads most of the row: a column added later is included
         # automatically instead of silently arriving as None.
         wanted = sorted(available - {column for column in exclude_columns})
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
-        extra = [sql for output, sql in derived.items() if output not in exclude_columns]
     else:
         select_list = '*'
-        extra = list(derived.values())
-    if extra:
-        select_list = ', '.join([select_list, *extra])
     query = f'select {select_list} from {relation or authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'

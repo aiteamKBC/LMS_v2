@@ -1516,8 +1516,8 @@ def _apply_cohort_schedule(detail, source):
     except DatabaseError as exc:
         logger.warning("Could not read the placement ids for the cohort schedule: %s", exc)
         ids = {"cohort_id": "", "programme_id": ""}
-    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", ""),
-                                   ids.get("cohort_id", ""), programme_id=ids.get("programme_id", "")))
+    if ids.get("cohort_id"):
+        detail.update(_cohort_schedule("", "", ids["cohort_id"], programme_id=ids.get("programme_id", "")))
 
 
 from .point_structure import POINT_SETTINGS_SQL, point_projection

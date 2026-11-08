@@ -28,7 +28,7 @@ vi.mock('@/api/employers', async importOriginal => ({
 }));
 vi.mock('@/api/curriculum', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/curriculum')>(),
-  fetchProgrammes: vi.fn(async () => []), fetchCohorts: vi.fn(async () => []), fetchGroups: vi.fn(async () => []),
+  fetchProgrammeOptions: vi.fn(async () => []), fetchCohortOptions: vi.fn(async () => []), fetchGroupOptions: vi.fn(async () => []),
 }));
 
 const learner = (id: string, name: string): UserListRow => ({

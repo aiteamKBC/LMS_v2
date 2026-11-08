@@ -212,26 +212,58 @@ class ApprenticeshipManager(models.Manager):
         return LearnerTypeQuerySet(self.model, using=self._db).exclude(learner_type="commercial")
 
 
-def _learner_placement_names(record, *, by_enrolment):
-    """Read display labels through the canonical learner's verified ID links.
+class PlacementForeignKey(models.ForeignKey):
+    """Map an existing *_id column without renaming the public scalar attribute.
 
-    The enrolment and learner primary keys are independent. An enrolment with
-    no linked learner has no canonical placement to project. Cache only on the
-    loaded instance (see the model properties), never across people/requests.
+    Relations use *_record so historical string display properties stay strings.
+    Django filters, values(), only() and update_fields accept the ID attname.
     """
-    if record.pk is None:
+
+    def get_attname(self):
+        return self.db_column
+
+
+class PlacementProgramme(models.Model):
+    programme_id = models.CharField(max_length=150, primary_key=True)
+    name = models.TextField()
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."programmes'
+
+
+class PlacementCohort(models.Model):
+    cohort_id = models.CharField(max_length=128, primary_key=True)
+    cohort_name = models.TextField()
+    programme_id = models.CharField(max_length=255, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."cohorts'
+
+
+class PlacementGroup(models.Model):
+    group_id = models.CharField(max_length=128, primary_key=True)
+    group_name = models.TextField()
+    programme_id = models.CharField(max_length=255)
+    cohort_id = models.CharField(max_length=128)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."groups'
+
+
+def _learner_placement_names(record, *, by_enrolment):
+    """Display labels from the canonical learner's FK relationships only."""
+    from .placement_links import placement_profile
+
+    profile = placement_profile(record) if by_enrolment else record
+    if profile is None:
         return (None, None, None)
-    key = 'enrolment_id' if by_enrolment else 'id'
-    using = record._state.db or 'enrolment'
-    with connections[using].cursor() as cursor:
-        cursor.execute(f'''SELECT p.name, c.cohort_name, g.group_name
-            FROM "Learner".learners l
-            LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
-            LEFT JOIN curriculum.cohorts c ON c.cohort_id = l.cohort_id
-            LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
-            WHERE l.{key} = %s''', [record.pk])
-        names = cursor.fetchone()
-    return names if names is not None else (None, None, None)
+    return tuple(getattr(getattr(profile, relation), label, None)
+                 for relation, label in (('programme_record', 'name'),
+                                         ('cohort_record', 'cohort_name'),
+                                         ('group_record', 'group_name')))
 
 
 class EnrolmentUser(models.Model):
@@ -282,9 +314,12 @@ class EnrolmentUser(models.Model):
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
     # These are existing enrolment links, not the canonical learner placement.
     # Display labels below are read through Learner.learners.enrolment_id.
-    programme_id = models.CharField()
-    cohort_id = models.CharField(null=True, blank=True)
-    group_id = models.CharField(max_length=128, null=True, blank=True)
+    programme_record = PlacementForeignKey(
+        PlacementProgramme, db_column='programme_id', on_delete=models.PROTECT, related_name='+')
+    cohort_record = PlacementForeignKey(
+        PlacementCohort, db_column='cohort_id', on_delete=models.PROTECT, related_name='+', null=True, blank=True)
+    group_record = PlacementForeignKey(
+        PlacementGroup, db_column='group_id', on_delete=models.PROTECT, related_name='+', null=True, blank=True)
     # Structured training plan (see mappers.TRAINING_PLAN docstring for shape).
     # This column pre-existed as unused free text; repurposed here since apprentice
     # learners previously had no way to persist a training plan at all.
@@ -407,6 +442,15 @@ class EnrolmentUser(models.Model):
     review_documents = models.JSONField(db_column=" Review_documents", null=True, blank=True)  # leading space
     documents = models.JSONField(db_column="Documents", null=True, blank=True)
     subscription_details = models.JSONField(db_column="Subscription_details", null=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        self.__dict__.pop('_placement_names', None)
+        return super().save(*args, **kwargs)
+
+    def refresh_from_db(self, *args, **kwargs):
+        super().refresh_from_db(*args, **kwargs)
+        self.__dict__.pop('_educational_placement', None)
+        self.__dict__.pop('_placement_names', None)
 
     @cached_property
     def _placement_names(self):
@@ -622,10 +666,13 @@ class LearnerProfile(models.Model):
 
     # Existing database FKs. Keep the scalar ID attributes used by callers;
     # display labels below are read-only projections through these links.
-    programme_id = models.CharField(max_length=64, blank=True, null=True)
+    programme_record = PlacementForeignKey(
+        PlacementProgramme, db_column='programme_id', on_delete=models.PROTECT, related_name='+', null=True, blank=True)
     programme_status = models.CharField(max_length=100, blank=True)
-    cohort_id = models.CharField(max_length=64, blank=True, null=True)
-    group_id = models.CharField(max_length=64, blank=True, null=True)
+    cohort_record = PlacementForeignKey(
+        PlacementCohort, db_column='cohort_id', on_delete=models.PROTECT, related_name='+', null=True, blank=True)
+    group_record = PlacementForeignKey(
+        PlacementGroup, db_column='group_id', on_delete=models.PROTECT, related_name='+', null=True, blank=True)
     completed_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     target_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     minimum_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -670,6 +717,15 @@ class LearnerProfile(models.Model):
     # Django supply the timestamps itself.
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        self.__dict__.pop('_placement_names', None)
+        return super().save(*args, **kwargs)
+
+    def refresh_from_db(self, *args, **kwargs):
+        super().refresh_from_db(*args, **kwargs)
+        self.__dict__.pop('_educational_placement', None)
+        self.__dict__.pop('_placement_names', None)
 
     @cached_property
     def _placement_names(self):

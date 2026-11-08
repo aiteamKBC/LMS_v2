@@ -259,7 +259,9 @@ def attach(table, rows, requested=None, excluded=None, using='default'):
     ]
     if not rows or not fields or connections[using].vendor != 'postgresql':
         return rows
-    data = lookups(using)
+    # SQL-resolved labels (including empty names for missing FKs) are final.
+    # Fetch the cached lookup only if a row still needs a projection.
+    data = None
     names = set(NAME_FIELDS.get(table, ()))
     lists = set(LIST_FIELDS.get(table, ()))
     for row in rows:
@@ -269,6 +271,8 @@ def attach(table, rows, requested=None, excluded=None, using='default'):
         if not missing:
             continue
         values = {}
+        if data is None and (names | lists).intersection(missing):
+            data = lookups(using)
         if names.intersection(missing):
             values.update(_names(table, row, data))
         if lists.intersection(missing):

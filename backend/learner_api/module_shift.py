@@ -64,6 +64,8 @@ from .identity import learner_profile_for_source
 from .learner_progression import advance_learner
 from .learning_plan import (
     _group_module_ids,
+    learner_group_module_ids,
+    learner_programme_modules,
     _module_payload,
     _programme_modules,
     _rows,
@@ -948,8 +950,8 @@ def _base_plan(learner):
     # By the ids the learner's placement holds; see placement_links.
     ids = placement_ids(learner)
     programme = _s(learner.programme)
-    catalogue = {m["moduleId"]: m for m in _programme_modules(programme, ids["programme_id"])}
-    preset_ids = _group_module_ids(programme, _s(learner.group), group_id=ids["group_id"])
+    catalogue = {m["moduleId"]: m for m in learner_programme_modules(learner)}
+    preset_ids = learner_group_module_ids(learner)
     return [catalogue[i] for i in preset_ids if i in catalogue]
 
 
@@ -959,9 +961,7 @@ def _shifted_plan(learner, plan, target, from_id):
         target if _s(module.get("moduleId")) == from_id else module
         for module in plan
     ]
-    preset_ids = set(_group_module_ids(
-        _s(learner.programme), _s(learner.group), group_id=placement_ids(learner)["group_id"],
-    ))
+    preset_ids = set(learner_group_module_ids(learner))
     if from_id in preset_ids:
         # The omission is deliberate: without an explicit assignment the
         # effective-plan reader immediately adds the source module back from

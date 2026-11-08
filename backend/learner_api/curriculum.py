@@ -59,6 +59,9 @@ def _guard(fn):
 def programmes(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    if request.GET.get("format") == "options":
+        return _guard(lambda: _rows("SELECT programme_id AS id, name AS title FROM curriculum.programmes WHERE COALESCE(is_archived, false) = false ORDER BY name, programme_id", []))
+
     return _guard(lambda: [
         r["name"]
         for r in _rows(
@@ -74,6 +77,12 @@ def programmes(request):
 def cohorts(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    if request.GET.get("format") == "options":
+        programme_id = (request.GET.get("programme_id") or "").strip()
+        if not programme_id:
+            return _error("Choose the parent placement IDs.", 400)
+        return _guard(lambda: _rows("SELECT cohort_id AS id, cohort_name AS title FROM curriculum.cohorts WHERE programme_id = %s ORDER BY cohort_name, cohort_id", [programme_id]))
+
     programme = (request.GET.get("programme") or "").strip()
     if not programme:
         return _error("programme query param is required.", 400)
@@ -92,6 +101,13 @@ def cohorts(request):
 def groups(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    if request.GET.get("format") == "options":
+        programme_id = (request.GET.get("programme_id") or "").strip()
+        cohort_id = (request.GET.get("cohort_id") or "").strip()
+        if not programme_id or not cohort_id:
+            return _error("Choose the parent placement IDs.", 400)
+        return _guard(lambda: _rows("SELECT group_id AS id, group_name AS title FROM curriculum.groups WHERE programme_id = %s AND cohort_id = %s ORDER BY group_name, group_id", [programme_id, cohort_id]))
+
     programme = (request.GET.get("programme") or "").strip()
     cohort = (request.GET.get("cohort") or "").strip()
     if not programme or not cohort:

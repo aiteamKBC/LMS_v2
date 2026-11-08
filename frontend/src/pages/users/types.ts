@@ -49,6 +49,9 @@ export interface UserListRow {
    * The programme the learner is on. Absent for staff, admin and employer rows,
    * which have no programme — the directory lists all four kinds in one table.
    */
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme?: string;
   /**
    * The cohort within that programme. Absent for staff, admin and employer
@@ -135,6 +138,9 @@ export interface UsersFilter {
   email?: string;
   statuses?: string[]; // FullUser, Invited, Prospect...
   type?: UserType | 'all';
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme?: string;
   /**
    * A single cohort, not a list: the curriculum group lookup takes one
@@ -186,12 +192,18 @@ export interface TrackerRow {
   id: string;
   type: string;
   status: string;
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme: string;
   description: string;
   documents: string;
 }
 export interface MilestoneRow {
   id: string;
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme: string;
   description: string;
   date: string;
@@ -241,6 +253,9 @@ export interface ReviewRow {
   action?: 'create' | 'needs-signing';
 }
 export interface ReviewGroup {
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme: string;
   reviews: ReviewRow[];
 }

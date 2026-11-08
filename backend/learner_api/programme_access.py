@@ -42,50 +42,18 @@ def learning_access(source):
 
     The canonical curriculum.cohorts schema has no deletion marker, so every
     cohort row is live; ``status`` (planned/active/inactive) is not an access
-    rule. A cohort is found by its id; without one, by programme id and cohort
-    name, and a name that matches more than one cohort is never guessed.
+    rule. A cohort is found only by its canonical learner FK.
     Database errors propagate, so a failed check can never open learning.
     """
-    programme = str(getattr(source, 'programme', '') or '').strip()
-    cohort = str(getattr(source, 'cohort', '') or '').strip()
-    # The enrolment and active profile have different primary keys; the profile
-    # is reached through enrolment_id, never by names. A renamed cohort keeps its
-    # id, so the enrolment's old label must not decide which cohort this is.
-    ids = placement_ids(source)
-    cohort_id = ids.get('cohort_id', '')
-    if cohort_id or (programme and cohort):
-        # A copied individual date must not open teaching before the cohort.
+    cohort_id = placement_ids(source)['cohort_id']
+    if cohort_id:
         with connections['default'].cursor() as cursor:
-            if cohort_id:
-                cursor.execute('SELECT start_date FROM curriculum.cohorts WHERE cohort_id = %s', [cohort_id])
-                row = cursor.fetchone()
-            else:
-                in_programme, params = cohort_programme_filter(ids.get('programme_id', ''), programme)
-                cursor.execute(
-                    f'''SELECT start_date FROM curriculum.cohorts
-                       WHERE {in_programme} AND cohort_name = %s
-                       ORDER BY cohort_id LIMIT 2''',
-                    [*params, cohort],
-                )
-                rows = cursor.fetchall()
-                row = rows[0] if len(rows) == 1 else None
-                # Imported enrolments use full month names while authoring may use
-                # abbreviations. Resolve only a unique cohort in this exact
-                # programme; a missing date or ambiguous alias must remain blocked.
-                # Two cohorts with the learner's exact name are ambiguous too:
-                # blocked, not resolved through an alias.
-                key = _month_cohort_key(cohort)
-                if not rows and key is not None:
-                    cursor.execute(
-                        f'SELECT cohort_name, start_date FROM curriculum.cohorts WHERE {in_programme}',
-                        params,
-                    )
-                    matches = [candidate for candidate in cursor.fetchall()
-                               if _month_cohort_key(candidate[0]) == key]
-                    if len(matches) == 1:
-                        row = (matches[0][1],)
+            cursor.execute('SELECT start_date FROM curriculum.cohorts WHERE cohort_id = %s', [cohort_id])
+            row = cursor.fetchone()
         start = _to_date(row[0]) if row else None
     else:
+        # Preserve the individual-date rule when there is no assigned cohort;
+        # never borrow the date of an unrelated namesake.
         start = _to_date(getattr(source, 'start_date', None))
     today = timezone.localdate(timezone=ZoneInfo('Europe/London'))
     return {'blocked': start is None or start > today, 'startDate': start.isoformat() if start else ''}

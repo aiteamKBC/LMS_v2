@@ -27,6 +27,9 @@ export interface CommercialUserRow extends AptemUserFields {
   lineManager: string;
   organization: string;
   programmeStatus: string;
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme: string;
   cohort: string;
   group: string;
@@ -51,12 +54,18 @@ export interface CreateCommercialUserInput extends AptemUserFields {
   type?: string;
   status?: string;
   dob?: string;
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme?: string;
   cohort?: string;
   group?: string;
 }
 
 export interface CommercialProgrammeInput {
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme?: string;
   cohort?: string;
   group?: string;
