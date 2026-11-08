@@ -126,6 +126,42 @@ on its next poll. A database error rolls back the whole write cycle. Empty
 source tables never imply mass withdrawal. Watch mode requires explicit apply
 scope and a polling interval of at least sixty seconds.
 
+### Scheduled execution from reviewed main
+
+The `Aptem learner synchronization` GitHub Actions workflow provides a scheduled
+alternative to installing a persistent worker. It runs approximately every
+fifteen minutes (cron minutes 7, 22, 37 and 52), and supports manual dispatch.
+GitHub schedules can be delayed. The job is restricted to this repository's
+`main` branch and uses one non-cancelling concurrency group.
+
+The existing `aws-staging` environment must supply encrypted secret
+`APTEM_SYNC_DATABASE_URL` and variables `APTEM_SYNC_EXPECTED_DATABASE` and
+`APTEM_SYNC_EXPECTED_BRANCH`. No credentials belong in source or job output.
+Before starting the management command, `.github/ci/aptem_learner_sync.py`
+verifies the actual database and Neon branch through a read-only connection.
+The command receives that same connection for both application aliases.
+No application server, Aptem activity import or other scheduler is started.
+
+The runner preserves the command's default behavior. A committed cycle whose
+only review reason is `missing_source` is labelled **source-review**, emits a
+visible warning and records the unresolved count in the job summary. This is
+operational completion with a partial data result, not a claim that every local
+record matched Aptem. Missing rows retain their local data. Database failures,
+wrong targets, missing/invalid reports, identity/status/date conflicts and other
+unexpected failures fail the job. No failure is converted into an empty report.
+
+The hosted runner cannot reach the private AWS cache, so it uses process-local
+cache. Existing application cache expiry and dashboard refresh still apply.
+No promise of immediate refresh in already-open browsers is made.
+
+Runner regression checks:
+`backend\.venv\Scripts\python.exe -m unittest discover -s .github/ci -p test_aptem_learner_sync.py -v`
+from the repository root: **8 passed**. All connections and subprocesses in
+these tests are doubles; no database or external service is called. This
+scheduling extension edits no Teams file or imported Teams API, so no new Teams
+baseline is required. Actual scheduled/manual run results must be verified
+separately after merge; schedule configuration alone does not prove execution.
+
 The command is included in `config.management_safety.reconciliation_command`,
 so management-command startup cannot begin curriculum warmers/schema writers.
 That helper is also called by a listed Teams file, which triggers the Teams
