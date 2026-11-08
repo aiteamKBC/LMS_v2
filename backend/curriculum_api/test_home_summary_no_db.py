@@ -85,6 +85,15 @@ class HomeProjectionTests(SimpleTestCase):
         self.assertEqual(result['continueModules'], [])
         self.assertEqual(result['programmeFocus'], [])
 
+    def test_live_modules_of_the_current_schema_are_not_drafts(self):
+        # The current curriculum database stores 'active' / 'inactive' only:
+        # no module there is unfinished authoring.
+        modules = [{'id': 'M1', 'status': 'active', 'lastUpdated': '2026-10-01'},
+                   {'id': 'M2', 'status': 'active', 'lastUpdated': '2026-10-03'}]
+        result = home_summary.project_home_summary({'modules': modules}, [])
+        self.assertEqual(result['attentionCounts']['draft-content'], 0)
+        self.assertEqual([item['id'] for item in result['continueModules']], ['M2', 'M1'])
+
 
 class HomeBuilderTests(SimpleTestCase):
     def test_light_payload_preserves_visible_source_data_and_skips_unused_work(self):

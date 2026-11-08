@@ -105,6 +105,22 @@ def _eligible(settings, live_link, identity, meeting):
     return any(not settings.get(key) for key in identity)
 
 
+def _live_child_sql():
+    """Live (not withdrawn, not library) component ``c`` in week ``w``.
+
+    A row-locking statement, so it is written against the real columns rather
+    than adapted: the legacy stamps where they exist, ``status`` on the
+    normalised schema (whose weeks/components have no library state).
+    """
+    from .schema_compat import active_condition, columns_of, uses_status_lifecycle
+    if uses_status_lifecycle('components', columns_of('curriculum', 'components')):
+        return f"{active_condition('c')} AND {active_condition('w')}"
+    return ("c.status NOT IN ('inactive','archived') "
+            "AND COALESCE(c.library_state,'')<>'library' "
+            "AND w.status NOT IN ('inactive','archived') "
+            "AND COALESCE(w.library_state,'')<>'library'")
+
+
 def reconcile_component_links(series_id):
     """Fill missing identity fields on unambiguous, already booked components.
 
@@ -128,7 +144,7 @@ def reconcile_component_links(series_id):
                               LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
                               WHERE s.module_catalogue_id=%s AND s.status NOT IN ('deleted','superseded','failed')
                                 AND o.status NOT IN ('cancelled','deleted','superseded')
-                                AND m.deleted_at IS NULL AND NOT COALESCE(m.is_programme_deleted,false)
+                                AND m.status NOT IN ('inactive','archived')
                                 AND LOWER(COALESCE(p.status,'')) NOT IN ('archived','deleted')''', [module_id])
             occurrence_rows = cursor.fetchall()
             identities = occurrence_fallbacks(row[:6] for row in occurrence_rows)
@@ -140,14 +156,11 @@ def reconcile_component_links(series_id):
                     'online_ids': {str(value).strip() for value in row[8:10] if value},
                     'event_ids': {str(value).strip() for value in row[10:12] if value},
                 }
-            cursor.execute('''SELECT c.id,c.settings_json,c.live_sessions_link
+            cursor.execute(f'''SELECT c.id,c.settings_json,c.live_sessions_link
                               FROM curriculum.components c
                               JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
                               WHERE c.module_catalogue_id=%s AND c.type IN ('live-session','live_session')
-                                AND c.deleted_at IS NULL AND NOT COALESCE(c.is_programme_deleted,false)
-                                AND COALESCE(c.library_state,'')<>'library'
-                                AND w.deleted_at IS NULL AND NOT COALESCE(w.is_programme_deleted,false)
-                                AND COALESCE(w.library_state,'')<>'library'
+                                AND {_live_child_sql()}
                               FOR UPDATE OF c''', [module_id])
             components = [(component_id, _settings(settings), link)
                           for component_id, settings, link in cursor.fetchall()]

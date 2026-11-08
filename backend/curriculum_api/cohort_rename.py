@@ -12,7 +12,8 @@ def propagate_cohort_name(cohort, name):
     # enrolment."Created_users" keep only the cohort id and read the name
     # through it, so no learner or enrolment row is written here.
     from . import views, versioning
-    from .placement_rename import placed_learners
+    from .placement_rename import placed_learners, curriculum_columns, rename_child_copy, _refresh
+    from .canonical_read_sql import current_status_sql
 
     cohort_id = cohort['cohort_id']
     old_name = cohort.get('cohort_name') or ''
@@ -21,13 +22,18 @@ def propagate_cohort_name(cohort, name):
         return
     if not connection.in_atomic_block:
         raise RuntimeError('Cohort name propagation requires the parent transaction.')
+    columns = curriculum_columns(views.COHORT_AUTHORING_DETAILS_TABLE, connection)
+    # Prefer canonical programme identity; support the old curriculum-only shape.
+    scope_column = 'programme_id' if 'programme_id' in columns else 'programme_name'
+    scope = (cohort.get('programme_id') or '') if scope_column == 'programme_id' else programme
+    visibility = current_status_sql('c') if 'status' in columns else 'c.deleted_at IS NULL'
     with connection.cursor() as cursor:
         cursor.execute(
-            f'''SELECT cohort_id FROM {views.authoring_table_name(views.COHORT_AUTHORING_DETAILS_TABLE)}
-               WHERE programme_name = %s AND cohort_name IN (%s, %s)
-                 AND cohort_id <> %s AND deleted_at IS NULL
+            f'''SELECT cohort_id FROM {views.authoring_table_name(views.COHORT_AUTHORING_DETAILS_TABLE)} c
+               WHERE c.{scope_column} = %s AND cohort_name IN (%s, %s)
+                 AND cohort_id <> %s AND {visibility}
                  {'FOR UPDATE' if connection.vendor == 'postgresql' else ''}''',
-            [programme, old_name, name, cohort_id],
+            [scope, old_name, name, cohort_id],
         )
         if cursor.fetchone():
             raise CohortRenameConflict('Another cohort in this programme has the old or new name. Resolve the ambiguous placement before renaming.')
@@ -40,15 +46,8 @@ def propagate_cohort_name(cohort, name):
         metadata={'recalculated_from': 'cohort_rename', 'reason_code': 'cohort_name_propagation'},
     ):
         for table in (views.GROUPS_TABLE, views.AUTHORING_MODULES_TABLE):
-            views.update_authoring_rows(
-                table, 'cohort_id = %s and coalesce(cohort_name, \'\') <> %s',
-                [cohort_id, name], {'cohort_name': name},
+            rename_child_copy(
+                views, table, 'cohort_id', cohort_id, 'cohort_name', name, connection,
             )
     # Invalidate the same learner projections as an ordinary record save.
-    from learner_api.read_model import enqueue_learner_home_refresh
-    for learner_id, kind in affected:
-        if learner_id is not None:
-            enqueue_learner_home_refresh(
-                'commercial' if str(kind or '').strip().casefold() == 'commercial' else 'apprenticeship',
-                learner_id, reason='cohort-rename', using='default',
-            )
+    _refresh(affected, 'cohort-rename', using=connection.alias)

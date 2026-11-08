@@ -8,9 +8,6 @@ predicate merely because a parent module is inactive.
 
 from .canonical_read_sql import current_status_sql
 
-ARCHIVE_EVENT_WINDOW = "interval '5 minutes'"
-
-
 def visible_child_sql(alias):
     """SQL predicate for a child row in a current learning/content read."""
     return f"({current_status_sql(alias)})"

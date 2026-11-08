@@ -29,8 +29,9 @@ class LinkedRecordingAccessTests(unittest.TestCase):
         self.assertEqual(access.linked_session_numbers(['MOD-A'], 'S'), {3, 5})
         sql, params = session_results.read.call_args.args
         self.assertIn("recording_placeholder", sql)
-        self.assertIn("r.deleted_at IS NULL", sql)
-        self.assertIn("s.deleted_at IS NULL", sql)
+        # Archived placeholders and sessions are excluded by status.
+        self.assertIn("r.status NOT IN ('inactive','archived')", sql)
+        self.assertIn("s.status NOT IN ('inactive','archived')", sql)
         self.assertEqual(params, [['MOD-A'], 'S', 'S'])
 
     def test_no_link_grants_nothing_and_reads_nothing_without_modules(self):

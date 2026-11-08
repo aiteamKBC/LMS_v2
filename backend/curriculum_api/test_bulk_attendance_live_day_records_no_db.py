@@ -122,9 +122,10 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             "require_GET": lambda function: function,
             "router": SimpleNamespace(db_for_read=lambda _model: "default"),
             "LiveSession": series,
+            # Normalised schema: lifecycle is one status column.
+            "INACTIVE_STATUSES": ("inactive", "archived"),
             "ModuleAuthoringModule": SimpleNamespace(objects=Query([{
-                "module_catalogue_id": "module-1", "group_id": "group-1",
-                "deleted_at": None, "is_programme_deleted": False,
+                "module_catalogue_id": "module-1", "group_id": "group-1", "status": "active",
             }])),
             "LiveSessionOccurrence": occurrences,
             "LiveSessionLearnerAttendance": register,

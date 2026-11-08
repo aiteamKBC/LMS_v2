@@ -65,6 +65,8 @@ def existing_learner_record(email):
     email = normalize_email(email)
     if not email:
         return None
+    # Consumers need only identity and learner type. Email remains the filter,
+    # without fetching removed placement-name or unrelated deferred columns.
     return (EnrolmentUser.all_learners.filter(email__iexact=email)
             .only("id", "learner_type").first())
 

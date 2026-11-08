@@ -61,11 +61,11 @@ def target(kind, target_id):
     else:
         raise VideoImportError('Unknown curriculum video scope.')
     parents = v.authoring_fetch_all(table, f'{key} = %s', [target_id], ensure_tables=False)
-    if not parents or parents[0].get('deleted_at') or parents[0].get('is_programme_deleted'):
+    if not parents or v.row_has_deleted_at(parents[0]):
         raise VideoImportError('Save the module or week template before uploading its video.')
     parent = parents[0]
     rows = v.authoring_fetch_all(component_table, f'{parent_key} = %s', [target_id], ensure_tables=False)
-    rows = [r for r in rows if not r.get('deleted_at') and not r.get('is_programme_deleted') and r.get('type') == 'video']
+    rows = [r for r in rows if not v.row_has_deleted_at(r) and r.get('type') == 'video']
     scope = {key: str(parent.get(key) or '') for key in (
         'programme_id', 'programme_name', 'cohort_id', 'cohort_name', 'group_id', 'group_name')}
     if kind == 'template' and scope['group_id']:

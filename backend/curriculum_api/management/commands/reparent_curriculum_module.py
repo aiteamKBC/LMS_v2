@@ -8,12 +8,11 @@ with no modules, which surfaces in the UI as an unassigned tutor and a "TBD"
 delivery window because both are derived from the child module rows.
 
 This command repairs those rows. It is dry-run by default: pass --apply to
-write. Reads and writes go through the same normalized tables the API uses, and
-the affected groups' module_ids/module_names are rebuilt from curriculum.modules
-rather than edited in place, so the cached lists cannot drift from the rows.
+write. The module keeps its cohort and group by id (their names are their own
+rows'), and a group's modules are the module rows that name it, so the move is
+one update of those two ids. Archived means ``status = 'inactive'``.
 """
 
-import json
 from datetime import datetime
 
 from django.core.management.base import BaseCommand, CommandError
@@ -21,10 +20,11 @@ from django.db import connection, transaction
 
 MODULES_RELATION = '"curriculum"."modules"'
 GROUPS_RELATION = '"curriculum"."groups"'
+INACTIVE_STATUSES = ("inactive", "archived")
 
 
 class Command(BaseCommand):
-    help = "Re-parent a curriculum module onto the given cohort/group and rebuild affected group module lists."
+    help = "Re-parent a curriculum module onto the given cohort/group."
 
     def add_arguments(self, parser):
         parser.add_argument("--module", required=True, help="module_catalogue_id to move (MOD-...).")
@@ -54,25 +54,29 @@ class Command(BaseCommand):
         with connection.cursor() as cursor:
             module = self._row(
                 cursor,
-                f"""select module_catalogue_id, title, cohort_id, cohort_name, group_id, group_name,
-                           tutor_name, start_date, end_date, deleted_at
-                      from {MODULES_RELATION} where module_catalogue_id = %s""",
+                f"""select m.module_catalogue_id, m.title, m.cohort_id, c.cohort_name, m.group_id, g.group_name,
+                           t.name as tutor_name, m.start_date, m.end_date, m.status
+                      from {MODULES_RELATION} m
+                      left join "curriculum"."cohorts" c on c.cohort_id = m.cohort_id
+                      left join {GROUPS_RELATION} g on g.group_id = m.group_id
+                      left join "curriculum"."tutors" t on t.id = m.tutor_id
+                     where m.module_catalogue_id = %s""",
                 [module_id],
             )
             if not module:
                 raise CommandError(f"Module {module_id} not found.")
-            if module["deleted_at"] is not None:
+            if (module["status"] or "").strip().lower() in INACTIVE_STATUSES:
                 raise CommandError(f"Module {module_id} is soft-deleted; restore it before re-parenting.")
 
             group = self._row(
                 cursor,
-                f"""select group_id, group_name, cohort_id, cohort_name, programme_id, deleted_at
+                f"""select group_id, group_name, cohort_id, programme_id, status
                       from {GROUPS_RELATION} where group_id = %s""",
                 [group_id],
             )
             if not group:
                 raise CommandError(f"Group {group_id} not found.")
-            if group["deleted_at"] is not None:
+            if (group["status"] or "").strip().lower() in INACTIVE_STATUSES:
                 raise CommandError(f"Group {group_id} is soft-deleted; pick a live destination group.")
 
             cohort = self._row(
@@ -110,40 +114,14 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING("Dry run: no changes written. Re-run with --apply."))
                 return
 
-            affected = [gid for gid in {source_group_id, group_id} if gid]
             with transaction.atomic():
                 cursor.execute(
                     f"""update {MODULES_RELATION}
-                           set cohort_id = %s, cohort_name = %s, group_id = %s, group_name = %s, updated_at = %s
+                           set cohort_id = %s, group_id = %s, updated_at = %s
                          where module_catalogue_id = %s""",
-                    [
-                        group["cohort_id"],
-                        cohort["cohort_name"] or "",
-                        group_id,
-                        group["group_name"] or "",
-                        datetime.utcnow(),
-                        module_id,
-                    ],
+                    [group["cohort_id"], group_id, datetime.utcnow(), module_id],
                 )
                 moved = cursor.rowcount
-                for gid in affected:
-                    cursor.execute(
-                        f"""select module_catalogue_id, title from {MODULES_RELATION}
-                             where group_id = %s and deleted_at is null
-                             order by created_at, module_catalogue_id""",
-                        [gid],
-                    )
-                    rows = cursor.fetchall()
-                    cursor.execute(
-                        f"update {GROUPS_RELATION} set module_ids = %s, module_names = %s, updated_at = %s where group_id = %s",
-                        [
-                            json.dumps([r[0] for r in rows]),
-                            json.dumps([r[1] for r in rows]),
-                            datetime.utcnow(),
-                            gid,
-                        ],
-                    )
-                    self.stdout.write(f"  rebuilt {gid}: {len(rows)} module(s)")
 
-        self.stdout.write(self.style.SUCCESS(f"Re-parented {moved} module row; rebuilt {len(affected)} group list(s)."))
+        self.stdout.write(self.style.SUCCESS(f"Re-parented {moved} module row."))
         self.stdout.write("Clear the curriculum cache (or wait for expiry) for the change to appear in the UI.")

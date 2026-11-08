@@ -13,7 +13,7 @@ from django.views.decorators.http import require_GET
 
 from learner_api.models import LearnerProfile
 
-from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
+from .models import INACTIVE_STATUSES, LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
 from .bulk_attendance_live_recovery import parallel_recovery_links
 from .session_results_policy import instant
 
@@ -155,7 +155,7 @@ def bulk_attendance_live_month_records(request):
             requested_module_ids = list(module_catalogue_ids)
             group_module_ids = list(
                 ModuleAuthoringModule.objects.using(database)
-                .filter(group_id=group_id, deleted_at__isnull=True, is_programme_deleted=False)
+                .filter(group_id=group_id).exclude(status__in=INACTIVE_STATUSES)
                 .values_list("module_catalogue_id", flat=True)
             ) if group_id else []
             # Keep the frontend's resolved memberships, but also include the

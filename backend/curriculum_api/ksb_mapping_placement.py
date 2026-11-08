@@ -1,0 +1,118 @@
+"""Where a KSB mapping sits in the curriculum: its component's module and week.
+
+``curriculum.ksb_mappings`` keeps ``component_id`` (foreign key, RESTRICT) and
+``standard_ksb_id``. It no longer stores ``module_catalogue_id`` / ``week_id``
+(the component's) or ``ksb_code`` / ``ksb_description`` (the standard KSB's).
+A write that scopes mappings by module or week therefore scopes them through
+their component, and a read that wants the placement joins it from there.
+
+The SQLite test schema still stores the placement on the mapping; there the
+plain column conditions are used, so both shapes select the same rows.
+"""
+from __future__ import annotations
+
+PLACEMENT_FIELDS = ('module_catalogue_id', 'week_id')
+
+
+def stores_placement():
+    """True when ``ksb_mappings`` still carries its own module/week columns."""
+    from . import views
+    return views.has_column(views.AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id')
+
+
+def where(module_ids=None, week_id=None, component_ids=None):
+    """``(where_sql, params)`` selecting mappings by placement.
+
+    ``module_ids`` is one id or a list; ``week_id`` narrows to one week;
+    ``component_ids`` narrows to those components (and is enough on its own).
+    Every argument given must match.
+    """
+    from . import views
+    if isinstance(module_ids, str):
+        module_ids = [module_ids]
+    module_ids = [views.clean_str(value) for value in (module_ids or []) if views.clean_str(value)]
+    component_ids = [views.clean_str(value) for value in (component_ids or []) if views.clean_str(value)]
+    week_id = views.clean_str(week_id)
+
+    if stores_placement():
+        clauses, params = [], []
+        if module_ids:
+            clauses.append(f'module_catalogue_id in ({", ".join(["%s"] * len(module_ids))})')
+            params += module_ids
+        if week_id:
+            clauses.append('week_id = %s')
+            params.append(week_id)
+        if component_ids:
+            clauses.append(f'component_id in ({", ".join(["%s"] * len(component_ids))})')
+            params += component_ids
+        return ' and '.join(clauses) or '1 = 0', params
+
+    clauses, params = [], []
+    owner, owner_params = [], []
+    if module_ids:
+        owner.append(f'c.module_catalogue_id in ({", ".join(["%s"] * len(module_ids))})')
+        owner_params += module_ids
+    if week_id:
+        owner.append('c.week_id = %s')
+        owner_params.append(week_id)
+    if owner:
+        components = views.authoring_table_name(views.AUTHORING_COMPONENTS_TABLE)
+        clauses.append(f'component_id in (select c.id from {components} c where {" and ".join(owner)})')
+        params += owner_params
+    if component_ids:
+        clauses.append(f'component_id in ({", ".join(["%s"] * len(component_ids))})')
+        params += component_ids
+    return ' and '.join(clauses) or '1 = 0', params
+
+
+def relation():
+    """FROM text for a read that wants each mapping with its placement and code.
+
+    ``module_catalogue_id`` / ``week_id`` come from the component and
+    ``ksb_code`` / ``ksb_description`` from the standard KSB; the mapping's own
+    columns are unchanged. ``only``: a plain table read, never re-routed. On a
+    schema that stores those columns on the mapping, the table itself.
+    """
+    from . import views
+    table = views.authoring_table_name(views.AUTHORING_KSB_MAPPINGS_TABLE)
+    if stores_placement():
+        return table
+    components = views.authoring_table_name(views.AUTHORING_COMPONENTS_TABLE)
+    standards = views.authoring_table_name('standard_ksbs')
+    return (
+        '(select m.*, c.module_catalogue_id, c.week_id, '
+        "coalesce(s.ksb_code, '')::varchar as ksb_code, s.ksb_description "
+        f'from only {table} m '
+        f'left join only {components} c on c.id = m.component_id '
+        f'left join only {standards} s on s.id = m.standard_ksb_id) as "ksb_mappings"'
+    )
+
+
+#: What a mapping read through ``relation()`` carries beyond its own columns.
+READ_FIELDS = ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description')
+
+
+def read_source(table):
+    """FROM text for a hand-written read of ``table``: mappings through
+    ``relation()`` (placement and code by key), any other table as itself."""
+    from . import views
+    if table == views.AUTHORING_KSB_MAPPINGS_TABLE and not stores_placement():
+        return relation()
+    return views.authoring_table_name(table)
+
+
+def read_columns(table):
+    """The columns a read through ``read_source(table)`` can select."""
+    from . import views
+    columns = set(views.column_names(table))
+    if table == views.AUTHORING_KSB_MAPPINGS_TABLE and not stores_placement():
+        columns |= set(READ_FIELDS)
+    return columns
+
+
+def can_select(table, column):
+    """Whether a read through ``read_source(table)`` can select ``column``."""
+    from . import views
+    if views.has_column(table, column):
+        return True
+    return column in READ_FIELDS and table == views.AUTHORING_KSB_MAPPINGS_TABLE and not stores_placement()

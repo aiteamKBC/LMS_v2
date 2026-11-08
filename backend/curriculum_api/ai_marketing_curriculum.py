@@ -84,8 +84,9 @@ def _programme_identity():
     """Return the real curriculum programme key (``MM`` is only a UI label)."""
     with connection.cursor() as cursor:
         cursor.execute(
-            "SELECT programme_id, programme_name FROM curriculum.modules "
-            "WHERE module_catalogue_id = %s LIMIT 1",
+            "SELECT m.programme_id, p.name FROM curriculum.modules m "
+            "LEFT JOIN curriculum.programmes p ON p.programme_id = m.programme_id "
+            "WHERE m.module_catalogue_id = %s LIMIT 1",
             ["MOD-202608223E23693425BC"],
         )
         row = cursor.fetchone()
@@ -212,10 +213,7 @@ def build_projection():
             "display_order": order,
             "settings_json": views.json_db_value(_settings(row, raw, component_type)),
             "live_sessions_link": "",
-            "is_programme_deleted": False,
-            "deleted_at": None,
-            "deleted_by": None,
-            "deleted_via_parent": None,
+            "status": "active",
         })
     return rows, components, total_otjh.quantize(Decimal("0.01"))
 
@@ -229,16 +227,12 @@ def sync_projection():
         "module_catalogue_id": MODULE_ID, "programme_id": programme_id,
         "programme_name": programme_name, "title": MODULE_TITLE,
         "description": "AI in Marketing activities synced from the LMS audit table.",
-        "total_otjh": total_otjh, "quality_score": 100,
-        "is_programme_deleted": False, "deleted_at": None,
-        "deleted_by": None, "deleted_via_parent": None,
+        "total_otjh": total_otjh, "quality_score": 100, "status": "active",
     }
     week = {
         "id": WEEK_ID, "module_catalogue_id": MODULE_ID, "week_number": 1,
         "title": "Learning content", "summary": MODULE_TITLE,
-        "learning_outcomes": views.json_db_value([]), "display_order": 1,
-        "is_programme_deleted": False, "deleted_at": None,
-        "deleted_by": None, "deleted_via_parent": None,
+        "learning_outcomes": views.json_db_value([]), "display_order": 1, "status": "active",
     }
     # A projection of the audit table, not an authored edit -- so the trail says
     # the system imported it. Without this the wholesale delete-and-rewrite below

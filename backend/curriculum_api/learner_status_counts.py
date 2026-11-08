@@ -4,6 +4,8 @@ from collections import Counter, defaultdict
 
 from django.db import DatabaseError
 
+from . import curriculum_names
+
 
 def status_key(value):
     return ' '.join(str(value or 'unknown').strip().lower().replace('_', ' ').replace('-', ' ').split()) or 'unknown'
@@ -101,7 +103,8 @@ def placement_lineages(scope, identifiers):
     columns = [id_column, 'programme_id', 'programme_name', 'cohort_id', 'cohort_name', 'group_id', 'group_name']
     if scope == 'module':
         columns.append('learner_roster_mode')
-    available = views.column_names(table)
+    # Names are not columns: they come with the read, from the rows the ids name.
+    available = set(views.column_names(table)) | set(curriculum_names.NAME_FIELDS.get(table, ()))
     columns = tuple(dict.fromkeys(column for column in columns if column in available))
     if id_column not in columns:
         raise DatabaseError('Curriculum placement is unavailable.')
@@ -156,16 +159,10 @@ def counts_for_lineages(lineages, facts, programme_candidates):
             placed = set()
             for index, fact in enumerate(facts):
                 linked_programme = str(fact.get('programme_id') or '').strip()
-                if not (programme_id and candidates and (
-                    linked_programme == programme_id if linked_programme else views.normalise(fact.get('programme')) in candidates
-                )):
+                if not programme_id or linked_programme != programme_id:
                     continue
-                row = {'cohortId': fact.get('cohort_id'), 'cohort': fact.get('cohort'),
-                       'groupId': fact.get('group_id'), 'group': fact.get('group_name')}
-                if all(views.narrow_learners_to_placement(
-                    [row], id_key, lineage.get(id_key) or '', name_key, lineage.get(lineage_name) or '')
-                    for id_key, name_key, lineage_name in (
-                        ('cohortId', 'cohort', 'cohortName'), ('groupId', 'group', 'groupName'))):
+                if all(not lineage.get(scope_key) or str(fact.get(fact_key) or '') == str(lineage[scope_key])
+                       for scope_key, fact_key in (('cohortId', 'cohort_id'), ('groupId', 'group_id'))):
                     placed.add(index)
             placements[placement_key] = placed
         placed = placements[placement_key]

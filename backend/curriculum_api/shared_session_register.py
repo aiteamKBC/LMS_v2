@@ -15,18 +15,21 @@ SHARED_SERIES_SQL = '''WITH RECURSIVE shared AS (
     SELECT m.module_catalogue_id AS module_id,m.teams_shared_source_module_id AS source_id,
            ARRAY[m.module_catalogue_id]::text[] AS path,1 AS depth
     FROM curriculum.modules m
-    WHERE coalesce(btrim(m.teams_shared_source_module_id),'')<>''
+    WHERE m.status NOT IN ('inactive')
+      AND coalesce(btrim(m.teams_shared_source_module_id),'')<>''
     UNION ALL
     SELECT shared.module_id,m.teams_shared_source_module_id,
            shared.path || m.module_catalogue_id,shared.depth+1
     FROM shared JOIN curriculum.modules m ON m.module_catalogue_id=shared.source_id
     WHERE shared.depth<5 AND NOT m.module_catalogue_id=ANY(shared.path)
+      AND m.status NOT IN ('inactive')
       AND coalesce(btrim(m.teams_shared_source_module_id),'')<>''
 )
 SELECT DISTINCT shared.module_id,s.id,s.module_catalogue_id
 FROM shared JOIN curriculum.live_sessions s ON s.module_catalogue_id=shared.source_id
 JOIN curriculum.modules owner ON owner.module_catalogue_id=s.module_catalogue_id
-WHERE lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+WHERE owner.status NOT IN ('inactive')
+  AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
 '''
 
 

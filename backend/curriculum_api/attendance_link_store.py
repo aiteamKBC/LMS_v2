@@ -38,6 +38,7 @@ def identity_rules(module_ids, database='default'):
                 JOIN curriculum.modules target ON
                     (target.module_catalogue_id=s.module_catalogue_id
                      OR target.teams_shared_source_module_id=s.module_catalogue_id)
+                    AND target.status NOT IN ('inactive')
                 JOIN "Learner".learner_training_plan_modules p
                   ON p.module_ref=target.module_catalogue_id AND p.learner_id=l.learner_profile_id
             ), scoped AS (SELECT candidates.*,count(*) OVER (PARTITION BY id) AS module_count FROM candidates)

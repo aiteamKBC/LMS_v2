@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, connections, router, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -36,6 +37,32 @@ MAX_MESSAGE_LENGTH = 500
 #: A console list is read by a human; older rows remain in the table.
 ADMIN_LIST_LIMIT = 200
 _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+#: The normalised database (``NEW_ENDPOINT_URL``) dropped login."Announcements".
+#: There nothing can be announced, so the banner read answers "none" instead of
+#: failing on every page, and the console says the feature has no table. The
+#: answer is held briefly so a table created later is picked up without a restart.
+_TABLE_CHECK_TTL_SECONDS = 300.0
+_table_check = {"at": None, "present": True}
+_NO_TABLE_MESSAGE = "Announcements are not available on this database (login.\"Announcements\" is not present)."
+
+
+def _table_present():
+    now = time.monotonic()
+    if _table_check["at"] is not None and now - _table_check["at"] < _TABLE_CHECK_TTL_SECONDS:
+        return _table_check["present"]
+    alias = router.db_for_read(Announcement) or "default"
+    connection = connections[alias]
+    if connection.vendor != "postgresql":
+        return True
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("select to_regclass(%s) is not null", ['login."Announcements"'])
+            present = bool(cursor.fetchone()[0])
+    except DatabaseError:
+        return True  # unknown: let the real query report the error
+    _table_check.update(at=now, present=present)
+    return present
 
 
 def _public_json(row):
@@ -119,6 +146,8 @@ def _audit(request, event, row):
 @never_cache
 @require_GET
 def active(request):
+    if not _table_present():
+        return JsonResponse({"announcements": []})
     now = timezone.now()
     try:
         rows = list(
@@ -137,6 +166,10 @@ def active(request):
 @require_http_methods(["GET", "POST"])
 @require_role(ROLE_ADMIN)
 def admin_list(request):
+    if not _table_present():
+        if request.method == "GET":
+            return JsonResponse({"results": [], "available": False, "detail": _NO_TABLE_MESSAGE})
+        return _error(_NO_TABLE_MESSAGE, 409)
     if request.method == "GET":
         try:
             rows = list(Announcement.objects.order_by("-starts_at", "-id")[:ADMIN_LIST_LIMIT])
@@ -168,6 +201,8 @@ def admin_detail(request, pk):
     blocked = _reject_cross_site(request)
     if blocked:
         return blocked
+    if not _table_present():
+        return _error(_NO_TABLE_MESSAGE, 409)
 
     fields = None
     if request.method == "PUT":

@@ -106,7 +106,7 @@ SNAPSHOT_COLUMNS = {
     'group': (
         'group_id', 'group_name', 'cohort_id', 'cohort_name', 'programme_id', 'programme_name',
         'module_ids', 'module_names', 'coach_name', 'color', 'session_week_day',
-        'session_start_time', 'session_end_time', 'notes', 'deleted_at', 'deleted_by',
+        'session_start_time', 'session_end_time', 'notes', 'status', 'deleted_at', 'deleted_by',
     ),
     # Carries the delivery schedule and the tutor, not only the title: "who
     # changed this module's tutor" and "who moved this module's start date" are
@@ -122,14 +122,14 @@ SNAPSHOT_COLUMNS = {
     ),
     'week': (
         'id', 'module_catalogue_id', 'week_number', 'title', 'summary', 'learning_outcomes',
-        'display_order', 'deleted_at', 'deleted_by',
+        'display_order', 'status', 'deleted_at', 'deleted_by',
     ),
     'component': (
         'id', 'module_catalogue_id', 'week_id', 'type', 'title', 'description',
         'expected_otjh', 'points', 'ksb_mappings', 'reflection_required',
         'Reflection_Question', 'workplace_evidence_required', 'tutor_validation_required',
         'coach_validation_required', 'display_order', 'settings_json', 'live_sessions_link',
-        'deleted_at', 'deleted_by',
+        'status', 'deleted_at', 'deleted_by',
     ),
     'module_details': (
         'module_catalogue_id', 'background', 'epa_requirements',
@@ -145,7 +145,7 @@ SNAPSHOT_COLUMNS = {
     'ksb_mapping': (
         'id', 'module_catalogue_id', 'week_id', 'component_id', 'ksb_id', 'ksb_code',
         'ksb_description', 'classification', 'weight', 'weight_class', 'source_type', 'source_id',
-        'deleted_at', 'deleted_by',
+        'standard_ksb_id', 'status', 'deleted_at', 'deleted_by',
     ),
     # No join_url / web_link / meeting_options_url: see the note above.
     'live_session': (
@@ -552,6 +552,9 @@ METADATA_KEYS = {
     'page_path', 'page_label', 'page_workspace', 'page_source',
     'request_path', 'request_method',
     'merged_saves', 'last_saved_at',
+    # The parent an archive went with (curriculum_api.archive_state): the
+    # normalised schema keeps no deleted_via_parent, so restore reads it here.
+    'archived_via',
 }
 
 METADATA_VALUE_LIMIT = 200
@@ -1075,10 +1078,15 @@ def resolve_ancestry(module_ids):
     if not ids:
         return {}
     placeholders = ', '.join(['%s'] * len(ids))
+    # The module keeps ids; the names are its programme's / cohort's / group's own.
     query = (
-        'select module_catalogue_id, title, programme_id, programme_name, '
-        'cohort_id, cohort_name, group_id, group_name '
-        f'from {qualified("modules")} where module_catalogue_id in ({placeholders})'
+        'select m.module_catalogue_id, m.title, m.programme_id, p.name as programme_name, '
+        'm.cohort_id, c.cohort_name, m.group_id, g.group_name '
+        f'from {qualified("modules")} m '
+        f'left join {qualified("programmes")} p on p.programme_id = m.programme_id '
+        f'left join {qualified("cohorts")} c on c.cohort_id = m.cohort_id '
+        f'left join {qualified("groups")} g on g.group_id = m.group_id '
+        f'where m.module_catalogue_id in ({placeholders})'
     )
     try:
         with connection.cursor() as cursor:
@@ -1172,6 +1180,23 @@ def file_metadata(action, snapshot, previous_snapshot):
     return safe_metadata({key: value for key, value in metadata.items() if value not in (None, '')})
 
 
+# Entity types whose lifecycle is the normalised ``status`` column alone.
+STATUS_LIFECYCLE_TYPES = frozenset({'programme', 'cohort', 'group', 'module', 'week', 'component', 'ksb_mapping'})
+
+
+def snapshot_archived(snapshot, entity_type=''):
+    """Is this snapshot of an archived row?
+
+    The normalised schema records it in ``status`` ('inactive'); snapshots taken
+    on the old schema carry ``deleted_at``, and history mixes both.
+    """
+    if snapshot.get('deleted_at'):
+        return True
+    if entity_type not in STATUS_LIFECYCLE_TYPES:
+        return False
+    return str(snapshot.get('status') or '').strip().lower() in ('inactive', 'archived')
+
+
 def resolve_action(entity_type, snapshot, previous_row, changes):
     """The action this revision records, from the row and its own diff.
 
@@ -1181,10 +1206,10 @@ def resolve_action(entity_type, snapshot, previous_row, changes):
     order column is a reorder -- said outright rather than left for a reader to
     infer from a `week_id` that went from one opaque id to another.
     """
-    archived = bool(snapshot.get('deleted_at'))
+    archived = snapshot_archived(snapshot, entity_type)
     if previous_row is None:
         return 'archived' if archived else 'created'
-    was_archived = bool((previous_row.get('snapshot') or {}).get('deleted_at'))
+    was_archived = snapshot_archived(previous_row.get('snapshot') or {}, entity_type)
     if archived and not was_archived:
         return 'archived'
     if was_archived and not archived:
