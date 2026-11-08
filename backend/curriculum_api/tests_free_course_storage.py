@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from django.core.management import call_command, CommandError
+from django.core.management import call_command, CommandError, get_commands
 from django.db import connection, transaction, IntegrityError, DatabaseError
 from django.db.migrations.loader import MigrationLoader
 from django.conf import settings
@@ -214,6 +214,14 @@ class FreeCourseStorageTests(CurriculumPersistenceHarness):
 
 class FreeCourseImportCommandTests(CurriculumPersistenceTransactionHarness):
     databases = {'default', 'enrolment'}
+
+    def setUp(self):
+        super().setUp()
+        v.ensure_free_programme_tables()
+        # The shared transaction fixture temporarily limits available apps
+        # while flushing. Do not reuse the command registry cached by that flush.
+        get_commands.cache_clear()
+        self.addCleanup(get_commands.cache_clear)
 
     def test_preview_target_guard_backup_and_apply(self):
         from config.management_safety import reconciliation_command
