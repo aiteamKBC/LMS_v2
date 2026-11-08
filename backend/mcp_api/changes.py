@@ -78,9 +78,13 @@ class Progress:
     """Sub-steps a multi-call ``apply`` has finished, for partial-failure reporting."""
 
     steps: list = field(default_factory=list)
+    uncertain_steps: list = field(default_factory=list)
 
     def done(self, label, **data):
         self.steps.append({"step": label, **data})
+
+    def uncertain(self, label):
+        self.uncertain_steps.append(label)
 
 
 @dataclass
@@ -108,6 +112,10 @@ class WriteTool:
     description = ""
     input_schema = {"type": "object"}
 
+    def propose(self, request, arguments):
+        """Prepare a preview; file tools may stage bytes before calling this."""
+        return propose(request, self, arguments)
+
     def validate(self, request, arguments):
         raise NotImplementedError
 
@@ -124,9 +132,11 @@ def register_write_tool(write_tool):
         raise ValueError("A write tool needs a name.")
 
     def propose_handler(request, arguments):
-        return propose(request, write_tool, arguments)
+        return write_tool.propose(request, arguments)
 
-    tool(write_tool.name, write_tool.description, write_tool.input_schema, writes=True, idempotent=False)(
+    tool(write_tool.name, write_tool.description, write_tool.input_schema, writes=True, idempotent=False,
+         file_params=getattr(write_tool, "file_params", ()),
+         rate_bucket=getattr(write_tool, "rate_bucket", ""))(
         propose_handler
     )
     WRITE_TOOLS[write_tool.name] = write_tool
@@ -306,6 +316,12 @@ def _run_apply(request, row, write_tool, now):
 
 
 def _failure_result(reason, progress):
+    if progress.uncertain_steps:
+        return {"status": "unknown", "message":
+                f"The save outcome could not be confirmed: {reason}\n"
+                + _bullet(progress.uncertain_steps)
+                + "\nIt may have been saved. Check its status in the LMS before preparing another upload.",
+                "completed_steps": progress.steps, "uncertain_steps": progress.uncertain_steps}
     if progress.steps:
         message = (
             f"The change only partly finished: {reason}\n"

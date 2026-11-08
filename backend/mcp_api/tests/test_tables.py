@@ -199,8 +199,11 @@ class CleanupTests(SimpleTestCase):
         stale = tuple((table, mock.Mock(return_value=qs))
                       for (table, _), qs in zip(mcp_cleanup.STALE, querysets))
         out = StringIO()
-        with mock.patch.object(mcp_cleanup, "STALE", stale):
+        with mock.patch.object(mcp_cleanup, "STALE", stale), \
+                mock.patch.object(mcp_cleanup, "cleanup_expired_video_previews", return_value=0) as stages:
             call_command("mcp_cleanup", *args, stdout=out)
+        stages.assert_called_once()
+        self.assertEqual(stages.call_args.kwargs["dry_run"], "--dry-run" in args)
         return querysets, out.getvalue()
 
     def test_dry_run_counts_and_deletes_nothing(self):

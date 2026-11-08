@@ -15,6 +15,9 @@ Not scheduled yet. Retention per table:
 
 Clients are never deleted here.
 
+Private video stages referenced by expired previews/internal staging ledgers are
+cleaned before old metadata rows are purged. --dry-run never deletes those files.
+
 Usage
 -----
     python manage.py mcp_cleanup --dry-run
@@ -29,6 +32,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from mcp_api.models import McpOAuthCode, McpOAuthToken, McpPendingChange
+from mcp_api.tools.video import cleanup_expired_video_previews
 
 CODE_RETENTION = timedelta(days=1)
 TOKEN_RETENTION = timedelta(days=90)
@@ -72,6 +76,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         now = timezone.now()
+        stages = cleanup_expired_video_previews(now, dry_run=options["dry_run"])
+        self.stdout.write(f"  Video stages: {stages} {'would be cleaned' if options['dry_run'] else 'checked for cleanup'}")
         for table, stale in STALE:
             if options["dry_run"]:
                 self.stdout.write(f"  {table}: {stale(now).count()} would be deleted")

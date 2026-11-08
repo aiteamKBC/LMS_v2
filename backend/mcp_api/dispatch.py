@@ -31,6 +31,7 @@ METHODS = frozenset({"GET", "POST", "PUT", "PATCH"})
 #: (method, full-match regex on the path). Anything not listed is refused.
 #: Step 6: read-only GETs for the read tools (``tools/read.py``).
 _SEG = r"[^/?#]+"
+VIDEO_UPLOAD_PATH = r"/curriculum_api/curriculum/videos/module/[\w-]+/[\w-]+/"
 ALLOWED_CALLS = (
     ("GET", r"/curriculum_api/curriculum/programmes/"),
     ("GET", rf"/curriculum_api/curriculum/programmes/{_SEG}/cohorts/"),
@@ -42,6 +43,7 @@ ALLOWED_CALLS = (
     ("GET", rf"/curriculum_api/curriculum/(programmes|modules)/{_SEG}/ksb-coverage/"),
     ("GET", r"/quiz_api/quizzes/\d+/preview/"),
     ("GET", r"/curriculum_api/knowledge-base/books/"),
+    ("POST", VIDEO_UPLOAD_PATH),
 )
 
 FORBIDDEN_KEYS = frozenset({"removemissing", "hydrationcomplete", "permanent"})
@@ -99,13 +101,17 @@ def _message_for(status, data):
     return f"The LMS did not accept that{f': {detail}' if detail else ''}."
 
 
-def call_api(request, method, path, *, query=None, json_body=None):
+def call_api(request, method, path, *, query=None, json_body=None, uploaded_file=None):
     """``(status, data)`` from an allowlisted LMS endpoint, as the request's account."""
     method = method.upper()
     if method not in METHODS or not path.startswith("/") or ".." in path.split("/") or "?" in path:
         raise DispatchError("That LMS action is not available to the assistant.")
     if not is_allowed(method, path):
         raise DispatchError("That LMS action is not available to the assistant.")
+    if uploaded_file is not None and (method != "POST" or not re.fullmatch(VIDEO_UPLOAD_PATH, path, re.ASCII)):
+        raise DispatchError("File uploads are only available for an existing curriculum video component.")
+    if method == "POST" and re.fullmatch(VIDEO_UPLOAD_PATH, path, re.ASCII) and uploaded_file is None:
+        raise DispatchError("Provide an MP4 file for this video upload.")
     if json_body is not None:
         found = forbidden_key(json_body)
         if found:
@@ -123,6 +129,11 @@ def call_api(request, method, path, *, query=None, json_body=None):
     url = f"{path}?{urlencode(query, doseq=True)}" if query else path
     if method == "GET":
         sub = factory.get(url)
+    elif uploaded_file is not None:
+        # Encode only the small form fields. Attaching the already-open upload
+        # avoids copying a 300 MB video into the synthetic request's body.
+        sub = factory.post(url, data=json_body or {})
+        sub.FILES["file"] = uploaded_file
     else:
         sub = getattr(factory, method.lower())(
             url, data=json.dumps(json_body if json_body is not None else {}), content_type="application/json"

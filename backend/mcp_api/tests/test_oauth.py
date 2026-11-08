@@ -144,6 +144,7 @@ class OAuthTestCase(SimpleTestCase):
             "MCP_ENABLED": "1",
             "MCP_PUBLIC_BASE_URL": BASE,
             "MCP_ALLOWED_REDIRECT_HOSTS": "claude.ai,localhost",
+            "MCP_PILOT_ACCOUNT_IDS": "",
         }, clear=False))
         self.store = FakeStore()
         for patcher in self.store.patches():
@@ -667,7 +668,31 @@ class NoSecretsInLogsTests(OAuthTestCase):
 
 
 class HasMcpAccessTests(SimpleTestCase):
-    """Pins the wrapped ``login.permissions._accesses_of`` behaviour (real, not mocked)."""
+    """Pins curriculum access and the optional pilot account restriction."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(mock.patch.dict("os.environ", {"MCP_PILOT_ACCOUNT_IDS": ""}))
+
+    def test_pilot_accounts_still_need_the_curriculum_grant(self):
+        account = SimpleNamespace(pk=5, role="staff")
+        with mock.patch.dict("os.environ", {"MCP_PILOT_ACCOUNT_IDS": "5, 6"}), \
+                mock.patch.object(auth, "_accesses_of", return_value=frozenset({"curriculum"})) as accesses:
+            self.assertTrue(auth.has_mcp_access(account))
+            accesses.return_value = frozenset()
+            self.assertFalse(auth.has_mcp_access(account))
+
+    def test_non_pilot_account_is_refused_even_with_curriculum_access(self):
+        account = SimpleNamespace(pk=5, role="staff")
+        with mock.patch.dict("os.environ", {"MCP_PILOT_ACCOUNT_IDS": "6"}), \
+                mock.patch.object(auth, "_accesses_of", return_value=frozenset({"curriculum"})):
+            self.assertFalse(auth.has_mcp_access(account))
+
+    def test_malformed_pilot_list_does_not_allow_everyone(self):
+        account = SimpleNamespace(pk=5, role="staff")
+        with mock.patch.dict("os.environ", {"MCP_PILOT_ACCOUNT_IDS": ", ,"}), \
+                mock.patch.object(auth, "_accesses_of", return_value=frozenset({"curriculum"})):
+            self.assertFalse(auth.has_mcp_access(account))
 
     def allowed(self, role, subject_type="staff", access="", access_extra="", raises=False):
         account = SimpleNamespace(role=role, subject_type=subject_type, subject_id=7)

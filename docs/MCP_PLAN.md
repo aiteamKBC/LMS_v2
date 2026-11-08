@@ -15,9 +15,10 @@ Let curriculum staff use Claude / ChatGPT (custom connector) to look up curricul
 structured KSB mappings, add lesson content and (Phase C) create programme/cohort/group/module structure —
 as THEMSELVES, through the existing views, with preview → confirm on every write.
 
-The video track reuses this identity, validation and preview framework. It is planned, not yet an
-implemented upload capability. Receiving a device-local MP4 requires an explicit transfer mechanism;
-the server-hosted MCP cannot read the manager's device by itself.
+The video track reuses this identity, validation and preview framework. Server-side video preview/apply
+and status tools are implemented behind `MCP_VIDEO_UPLOADS_ENABLED` (default off). Real file handoff
+from the manager's desktop/web sessions and live operation remain acceptance checks; the server-hosted
+MCP cannot read the manager's device by itself.
 
 ## Ground rules (apply to every step)
 

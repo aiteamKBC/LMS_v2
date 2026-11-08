@@ -96,14 +96,16 @@ class ProtocolTests(TransportTestCase):
                          {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True})
         self.assertIn("inputSchema", whoami)
 
-    def test_no_tools_registered_outside_tests(self):
-        # Step 5: change management. Step 6: read-only tools. No write tools until Step 7.
+    def test_only_expected_tools_are_registered(self):
+        # Change management, Step 6 lookups and the independently gated video track.
         self.assertEqual(set(REGISTRY), {
             "apply_change", "cancel_change", "list_my_pending_changes", "test_whoami",
             "find_programmes", "find_cohorts_groups", "find_modules", "get_module_structure",
             "list_standard_ksbs", "ksb_coverage", "get_quiz", "list_books", "search_books",
+            "save_curriculum_video", "get_video_import_status",
         })
-        self.assertEqual([name for name, t in REGISTRY.items() if t.writes], ["apply_change"])
+        self.assertEqual({name for name, t in REGISTRY.items() if t.writes},
+                         {"apply_change", "save_curriculum_video"})
 
     def test_invalid_json_unknown_method_and_batch(self):
         bad = self.post("{not json")

@@ -22,6 +22,17 @@ def mcp_enabled():
     return os.environ.get("MCP_ENABLED", "0").strip().lower() in _ENABLED_VALUES
 
 
+def video_uploads_enabled():
+    """Video writes are an independent, default-off pilot capability."""
+    return os.environ.get("MCP_VIDEO_UPLOADS_ENABLED", "0").strip().lower() in _ENABLED_VALUES
+
+
+def pilot_account_ids():
+    """Optional account restriction; a configured nonmatching list fails closed."""
+    raw = os.environ.get("MCP_PILOT_ACCOUNT_IDS", "").strip()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip()) if raw else None
+
+
 def public_base_url():
     """The public origin advertised in OAuth metadata, without a trailing slash."""
     return os.environ.get("MCP_PUBLIC_BASE_URL", "").strip().rstrip("/")

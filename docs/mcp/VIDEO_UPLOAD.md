@@ -6,15 +6,16 @@ The manager finishes a video as an MP4 on their device, chooses an existing curr
 and asks ChatGPT to save it to the LMS. The LMS validates the request, retains a stable playback
 source and queues the existing Bunny copy. Return the actual save and transfer states.
 
-This is an additional implementation track, not an existing MCP capability. The current MCP has
-lookup tools and a preview/apply framework but no business write or video upload tools registered.
-Accept the Step 6 read-only fixes before enabling video writes. Quiz/structure tools are separate
-work and are not prerequisites for this track.
+This track is implemented server-side behind `MCP_VIDEO_UPLOADS_ENABLED` (default off). It adds
+`save_curriculum_video` and `get_video_import_status`, using the existing preview/apply framework.
+The Step 6 safety fixes are included. Quiz/structure creation tools remain separate work and are not
+prerequisites for this track. Deployment and actual desktop/web file handoff have not been verified.
 
 ## 1. Verify file transfer from the existing ChatGPT session
 
 Confirmed input: an MP4 on the manager's device. The manager's existing ChatGPT session already
-has access to device files. Reuse that access; no separate watcher/helper is included in this track.
+has access to device files. The manager uses both desktop Work/Codex and web ChatGPT. Reuse that
+access; no separate watcher/helper is included in this track.
 
 A server-hosted MCP does not receive the file merely because ChatGPT can read it. Verify the
 actual ChatGPT experience and its transfer capability with one synthetic MP4:
@@ -23,12 +24,12 @@ actual ChatGPT experience and its transfer capability with one synthetic MP4:
   `_meta["openai/fileParams"]`; the server receives a downloadable file reference, not a device path.
 - If the existing device-enabled client transfers files using an authenticated upload endpoint,
   use that capability to send the bytes and obtain an account-owned upload reference.
-- Confirm which path the actual client supports before implementing the transfer adapter. Device
-  file access alone does not establish support for either transfer method.
+- The implemented tool accepts the standard file-reference object. Direct local-path arguments are
+  refused. An independent public multipart-ingest endpoint is not part of this implementation.
 
 Do not assume that a ChatGPT attachment, local path or conversation link is a downloadable video.
-Prove receipt of one synthetic MP4 through the existing session before promising automatic transfer.
-Neither transfer adapter is implemented by this document. File-input contract:
+Prove receipt of one synthetic MP4 through each intended client before promising automatic transfer.
+The live client-to-tool handoff is still unverified. File-input contract:
 [OpenAI MCP tool metadata](https://developers.openai.com/plugins/reference#_meta-fields-on-tool-descriptor).
 
 ## 2. Reuse the existing LMS contracts
@@ -37,27 +38,38 @@ Neither transfer adapter is implemented by this document. File-input contract:
   from a matching display name. Refuse ambiguous or missing destinations.
 - Use the authenticated LMS account and its current permissions. Do not accept an account id from
   the assistant as an authority to act for somebody else.
-- Stage the actual bytes through a bounded, authenticated upload. Return an opaque upload reference
-  owned by that account, not a device path or an arbitrary server path. Keep binary video out of
-  JSON tool arguments, logs and prompts.
+- The file-capable client supplies `{download_url, file_id, file_name?, mime_type?}`. The MCP tool
+  retrieves HTTPS bytes with the existing public-address/redirect guards and stages them privately.
+  File paths and download URLs are not returned in previews; download URLs are not retained in payloads.
 - Enforce the existing 300 MB limit and validate the MP4 bytes, not just its name or MIME type.
-- Decide retention and cleanup for staged uploads, including abandoned and failed transfers.
+- Staging ownership is journalled before durable storage using an internal, immediately closed
+  `Mcp_pending_changes` record (`__video_upload_stage`, one-day expiry). It cannot be applied or listed
+  as a user preview. No new database table is required. `mcp_cleanup` removes expired private stages
+  before purging old journal rows; a successful apply also attempts immediate stage cleanup.
 
-## 3. Add the video tools
+## 3. Video tools
 
 Use narrow, explicit schemas and the existing tools/dispatcher framework:
 
 1. Lookup: reuse the existing module/structure tools to find a saved video component. Creation of a
    new component requires a separate explicit requirement; do not silently create curriculum items.
-2. Prepare the video save: validate the account-owned upload reference and destination, then show a
-   preview using the branch's existing preview/confirm/apply convention.
+2. `save_curriculum_video(programme_id, module_id, component_id, file, title?)`: check the destination
+   before downloading, stage the MP4, then show a preview using the existing confirmation convention.
+   Only draft modules and existing video components are writable. Programme membership is checked by id.
 3. Apply: save through the established curriculum video upload service and return the authoritative
    result. The LMS sets fixed provider/source-type/upload fields and preserves unrelated settings.
-4. Status: report LMS save and Bunny transfer/encoding separately, including recoverable failures.
+4. `get_video_import_status(programme_id, module_id, component_id)`: read the latest import journal
+   without starting/retrying a worker. Report a changed source instead of showing an old copy as current.
+   Read status is still available if the module is published after the upload.
 
-The existing dispatcher accepts JSON only. File forwarding needs an explicit, restricted extension
-or a shared authenticated service adapter; a fake POST containing a file path is not sufficient.
-Do not add a generic SQL, arbitrary HTTP or arbitrary filesystem tool.
+The dispatcher now forwards an open file object only to the existing module-video POST route. It
+uses the same authenticated account and form scope, without buffering the video into a JSON/body field.
+It exposes no generic SQL, arbitrary HTTP or arbitrary filesystem tool.
+
+Apply rechecks programme/group/week/source state, account-owned staging, file size and SHA-256. A
+changed destination/source or modified file is refused. A repeated apply returns the stored result.
+An uncertain upload response is recorded as `unknown` and requires status verification before retrying;
+it is not reported as definitely saved or definitely unsaved. Video previews are limited to 20/hour/account.
 
 This track saves content; it does not introduce publishing. If the desired user experience removes
 the branch's confirmation step or changes visibility to learners, agree that behaviour separately.
@@ -87,7 +99,9 @@ Use a verified non-production database and mocked external transfers for regress
 ## 6. Deployment and connection
 
 1. Review and merge the scoped change to main before deployment, following AGENTS.md.
-2. Configure the HTTPS MCP/OAuth routes, authentication, feature flag and a pilot-account restriction.
+2. Configure the HTTPS MCP/OAuth routes and authentication. `MCP_ENABLED` and
+   `MCP_VIDEO_UPLOADS_ENABLED` default off. `MCP_PILOT_ACCOUNT_IDS` is implemented: when configured,
+   both consent and existing bearer-token requests refuse accounts outside the list.
 3. Configure durable upload storage, secrets and supervised worker startup. Copying code onto a host
    does not start a worker or install an automatic uploader on the manager's device.
 4. Add the custom MCP connection in the manager's supported ChatGPT account and authenticate as the
@@ -99,11 +113,13 @@ Use a verified non-production database and mocked external transfers for regress
 ## Acceptance checklist
 
 - [x] Source confirmed: local MP4; reuse existing ChatGPT device-file access without a new helper.
-- [ ] Actual client and its file-transfer mechanism verified.
+- [x] Intended clients confirmed: desktop Work/Codex and web ChatGPT.
+- [ ] Live file-reference handoff verified in each client.
 - [ ] One synthetic device MP4 received through that mechanism.
-- [ ] Account-owned upload staging and cleanup implemented.
-- [ ] Video preview/apply and status tools registered with server-side validation.
-- [ ] Existing LMS storage and Bunny worker integrated; retry/failure cases tested.
+- [x] Account-owned upload staging and cleanup implemented.
+- [x] Video preview/apply and status tools registered with server-side validation.
+- [x] Existing LMS upload endpoint integrated; retry/failure cases covered by mocked tests.
+- [ ] Actual database, durable storage and supervised Bunny worker verified in the pilot environment.
 - [ ] Pilot restrictions, operational controls and deployment configuration verified.
 - [ ] Live account connection and separately authorised video checks recorded.
 - [ ] Direct-write bypass routes reviewed for the participating accounts.

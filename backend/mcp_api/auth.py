@@ -37,6 +37,7 @@ from login.permissions import _accesses_of
 from .crypto import hash_token
 from .events import event
 from .models import McpOAuthToken
+from .settings import pilot_account_ids
 
 MCP_ACCESSES = frozenset({ACCESS_CURRICULUM, ACCESS_SUPER_ADMIN})
 STAFF_ROLES = frozenset({"staff", "admin"})
@@ -53,6 +54,9 @@ PERMANENT_REASONS = frozenset({REASON_INACTIVE, REASON_CREDENTIAL_CHANGED})
 def has_mcp_access(account):
     """Staff/admin holding the curriculum or super-admin grant, read fresh."""
     if account is None or account.role not in STAFF_ROLES:
+        return False
+    pilot = pilot_account_ids()
+    if pilot is not None and str(account.pk) not in pilot:
         return False
     return bool(_accesses_of(account) & MCP_ACCESSES)
 

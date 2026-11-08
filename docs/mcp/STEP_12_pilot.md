@@ -21,7 +21,7 @@
 
 ## 12.3 Pilot allowlist
 - Env `MCP_PILOT_ACCOUNT_IDS` (comma list). When set, consent + bearer refuse anyone not listed.
-  (Small addition to Step 3/4 code — implement here.)
+  Implemented in the shared MCP-access predicate; deployment values and live verification remain pending.
 
 ## 12.4 Connect
 - Claude: org admin adds a custom connector with URL `<base>/mcp/`; pilot user connects → LMS consent page.
