@@ -19,7 +19,7 @@ from django.conf import settings
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, IntegrityError, connection, transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -804,7 +804,86 @@ def assignment_dict(assignment):
     }
 
 
-def _response_dict(response, *, include_answers=False):
+def _response_review_coaches(responses):
+    """Read source reviewer names once for the list's pinned review deliveries."""
+    source_ids = set()
+    for response in responses:
+        if response.form.form_type not in ALL_REVIEW_FORM_TYPES:
+            continue
+        field = 'employer_review_delivery' if response.form.form_type == EMPLOYER_REVIEW_FORM_TYPE else 'review_delivery'
+        delivery = getattr(response, field, None) if getattr(response, f'{field}_id', None) else None
+        if delivery is not None:
+            source_ids.add(delivery.source_review_id)
+    if not source_ids:
+        return {}
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT id, reviewer_name FROM "Learner".reviews WHERE id = ANY(%s)', [sorted(source_ids)])
+        return {source_id: str(name or '').strip() for source_id, name in cursor.fetchall()}
+
+
+def _response_activity(response, review_coaches=None):
+    """List-only context from the response's own delivery/recipient, without syncing."""
+    kind = response.form.form_type
+    activity = {'kind': 'general', 'title': 'General feedback', 'date': None, 'tutorName': ''}
+    delivery = response.delivery if response.delivery_id else None
+    if kind == 'post_lecture':
+        activity.update(kind='lecture', title=(getattr(delivery, 'session_title', '') or 'Lecture details not recorded'),
+                        date=_iso(getattr(delivery, 'starts_at', None)), tutorName=getattr(delivery, 'tutor_name', '') or '')
+    elif kind in MODULE_FORM_TYPES:
+        activity.update(kind='module', title=getattr(delivery, 'module_name', '') or 'Module details not recorded')
+    elif kind in ALL_REVIEW_FORM_TYPES:
+        field = 'employer_review_delivery' if kind == EMPLOYER_REVIEW_FORM_TYPE else 'review_delivery'
+        review = getattr(response, field, None) if getattr(response, f'{field}_id', None) else None
+        activity.update(kind='review', title=(getattr(review, 'review_name', '')
+                                             or getattr(review, 'review_type', '') or 'Review details not recorded'),
+                        date=_iso(getattr(review, 'completed_at', None)),
+                        coachName=(review_coaches or {}).get(getattr(review, 'source_review_id', None), ''))
+        if kind == EMPLOYER_REVIEW_FORM_TYPE and not response.form.anonymous_responses:
+            activity['relatedLearnerName'] = getattr(review, 'learner_name', '') or ''
+    elif kind in {'post_event', 'event_rsvp'}:
+        event = None
+        if kind == 'post_event' and getattr(response, 'event_recipient_id', None):
+            event = response.event_recipient.event
+        elif kind == 'event_rsvp' and getattr(response, 'rsvp_recipient_id', None):
+            event = response.rsvp_recipient.campaign.event
+        activity.update(kind='event', title=getattr(event, 'title', '') or 'Event details not recorded',
+                        date=_iso(getattr(event, 'event_date', None)))
+        if activity['date'] is None and getattr(event, 'date', ''):
+            # Older events store a display date rather than a DateField. Keep
+            # that recorded label without inventing/parsing a timestamp.
+            activity['dateText'] = event.date
+    return activity
+
+
+def _response_assigned_at(response):
+    """Recorded assignment time, independent of activity/response dates."""
+    kind = response.form.form_type
+    if response.delivery_id:
+        recipients = response.delivery.response_assignment_recipients
+        return next((item.assigned_at for item in recipients
+                     if str(item.learner_id) == str(response.learner_id)), None)
+    field = 'employer_review_delivery' if kind == EMPLOYER_REVIEW_FORM_TYPE else 'review_delivery'
+    if getattr(response, f'{field}_id', None):
+        return getattr(getattr(response, field), 'assigned_at', None)
+    if kind == 'post_event' and response.event_recipient_id:
+        recipient = response.event_recipient
+        campaign = next((item for item in recipient.event.response_assignment_campaigns
+                         if item.form_id == response.form_id), None)
+        # The event roster is shared by forms. Both the recipient and this
+        # form's campaign must exist before the form is assigned to the person.
+        dates = (recipient.created_at, campaign.created_at if campaign else None)
+        return max(dates) if all(dates) else None
+    if kind == 'event_rsvp' and response.rsvp_recipient_id:
+        return response.rsvp_recipient.created_at
+    if kind == 'general':
+        dates = [item.assigned_at for item in response.form.response_assignments
+                 if item.target_type == 'all_learners' or (
+                     item.target_type == 'learner' and str(item.target_id) == str(response.learner_id))]
+        return min(dates) if dates else None
+    return None
+
+
+def _response_dict(response, *, include_answers=False, include_activity=False, review_coaches=None):
     anonymous = response.form.anonymous_responses
     anonymous_name = 'Anonymous employer' if response.form.form_type == EMPLOYER_REVIEW_FORM_TYPE else 'Anonymous learner'
     data = {
@@ -821,6 +900,9 @@ def _response_dict(response, *, include_answers=False):
         'status': response.status, 'startedAt': _iso(response.started_at),
         'updatedAt': _iso(response.updated_at), 'submittedAt': _iso(response.submitted_at),
     }
+    if include_activity:
+        data['activity'] = _response_activity(response, review_coaches)
+        data['assignedAt'] = _iso(_response_assigned_at(response))
     if include_answers:
         by_question = {a.question_id: a.answer for a in response.answers.all()}
         recipient = (FeedbackDeliveryRecipient.objects.filter(
@@ -839,14 +921,28 @@ def _response_dict(response, *, include_answers=False):
 def responses_collection(request):
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
-    responses = FeedbackResponse.objects.select_related('form', 'delivery').order_by('-updated_at')
+    responses = FeedbackResponse.objects.select_related(
+        'form', 'delivery', 'review_delivery', 'employer_review_delivery',
+        'event_recipient__event', 'rsvp_recipient__campaign__event',
+    ).prefetch_related(
+        Prefetch('delivery__recipients', queryset=FeedbackDeliveryRecipient.objects.only(
+            'delivery_id', 'learner_id', 'assigned_at'), to_attr='response_assignment_recipients'),
+        Prefetch('form__assignments', queryset=FeedbackAssignment.objects.only(
+            'form_id', 'target_type', 'target_id', 'assigned_at'), to_attr='response_assignments'),
+        Prefetch('event_recipient__event__feedback_campaigns', queryset=FeedbackEventCampaign.objects.only(
+            'event_id', 'form_id', 'created_at'), to_attr='response_assignment_campaigns'),
+    ).order_by('-updated_at')
     if request.GET.get('formId'):
         responses = responses.filter(form_id=request.GET['formId'])
     if request.GET.get('status'):
         responses = responses.filter(status=request.GET['status'])
     if request.GET.get('learner'):
         responses = responses.filter(learner_name__icontains=request.GET['learner'])
-    return JsonResponse({'responses': [_response_dict(r) for r in responses]})
+    responses = list(responses)
+    review_coaches = _response_review_coaches(responses)
+    return JsonResponse({'responses': [
+        _response_dict(r, include_activity=True, review_coaches=review_coaches) for r in responses
+    ]})
 
 
 @require_staff
@@ -1196,7 +1292,10 @@ def _form_recipient_rows(form):
     learner_ids.update(str(item.learner_id) for item in event_recipients if item.learner_id)
     learner_ids.update(str(item.learner_id) for item in review_deliveries)
     all_assignment = next((item for item in manual_assignments if item.target_type == 'all_learners'), None)
-    learners_query = EnrolmentUser.all_learners.all()
+    # Created_users contains many large JSON/document columns.  The recipient
+    # report only needs these four scalar fields; selecting the full model for
+    # a busy lecture form can exceed the database statement timeout.
+    learners_query = EnrolmentUser.all_learners.only('id', 'username', 'email', 'programme')
     if all_assignment is None:
         learners_query = learners_query.filter(id__in=learner_ids)
     learners = {str(item.id): item for item in learners_query}
@@ -1240,6 +1339,13 @@ def _form_recipient_rows(form):
             'sourceTitle': delivery.session_title,
             'sourceSubtitle': delivery.module_name,
             'sourceStartsAt': _iso(recipient.available_at if is_module else delivery.starts_at),
+            'programmeId': delivery.programme_id,
+            'programmeName': delivery.programme_name,
+            'cohortId': delivery.cohort_id,
+            'cohortName': delivery.cohort_name,
+            'groupId': delivery.group_id,
+            'groupName': delivery.group_name,
+            'moduleCatalogueId': delivery.module_catalogue_id,
             'sessionTitle': delivery.session_title,
             'sessionStartsAt': _iso(recipient.available_at if is_module else delivery.starts_at),
             'moduleName': delivery.module_name,
@@ -1356,6 +1462,16 @@ def _recipient_source_summaries(rows):
             'assignedCount': 0,
             'responseCount': 0,
         })
+        if source['type'] == 'lecture':
+            source.update({
+                'programmeId': row.get('programmeId') or '',
+                'programmeName': row.get('programmeName') or '',
+                'cohortId': row.get('cohortId') or '',
+                'cohortName': row.get('cohortName') or '',
+                'groupId': row.get('groupId') or '',
+                'groupName': row.get('groupName') or '',
+                'moduleCatalogueId': row.get('moduleCatalogueId') or '',
+            })
         source['assignedCount'] += 1
         if row.get('responseStatus') == 'completed':
             source['responseCount'] += 1
