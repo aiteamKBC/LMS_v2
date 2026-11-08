@@ -1,5 +1,4 @@
 """The programme modules section's read path: shared forced builds, read-after-write, prefetch, warm."""
-from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from django.core.cache.backends.locmem import LocMemCache
@@ -75,32 +74,40 @@ class ReadAfterWriteTests(SimpleTestCase):
 
 class PrefetchTests(SimpleTestCase):
     def setUp(self):
-        patcher = patch.object(views, 'CURRICULUM_PIPELINED_READS', True)
+        patcher = patch.object(views, 'CURRICULUM_BATCHED_READS', True)
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def fake_connection(self, rows_by_sql, *, in_atomic_block=False):
+    def fake_connection(self, rows_by_sql, *, in_atomic_block=False, fail=False):
         sent = []
 
         class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
             def execute(self, sql, params):
                 sent.append((sql, list(params)))
+                if fail:
+                    raise RuntimeError('relation does not exist')
+                # One multi-statement query: one result set per statement.
+                self._sets = [rows_by_sql[statement] for statement in sql.split('; ')]
+                self.nextset()
+
+            def nextset(self):
+                if not self._sets:
+                    return None
                 self.description = [('id',)]
-                self._rows = rows_by_sql[sql]
+                self._rows = self._sets.pop(0)
+                return True
 
             def fetchall(self):
                 return self._rows
 
-            def close(self):
-                pass
-
-        @contextmanager
-        def pipeline():
-            yield
-
         connection = MagicMock(vendor='postgresql', in_atomic_block=in_atomic_block)
         connection.cursor.side_effect = Cursor
-        connection.connection.pipeline = pipeline
         return connection, sent
 
     def test_results_land_under_the_keys_the_real_calls_use(self):
@@ -111,13 +118,22 @@ class PrefetchTests(SimpleTestCase):
             rows[views.authoring_select_sql('weeks', 'module_catalogue_id in (%s)', 'display_order, id', ensure_tables=False)] = [('W1',)]
             views.prefetch_authoring_reads([
                 (('modules', 'module_catalogue_id in (%s)', ['M1']), {'ensure_tables': False}),
-                (('weeks', 'module_catalogue_id in (%s)', ['M1'], 'display_order, id'), {'ensure_tables': False}),
+                (('weeks', 'module_catalogue_id in (%s)', ['M2'], 'display_order, id'), {'ensure_tables': False}),
             ])
-            self.assertEqual(len(sent), 2)
+            # Both reads in one round trip, their parameters in statement order.
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(sent[0][1], ['M1', 'M2'])
             # Spelled differently (keyword arguments), still the same memo key.
             self.assertEqual(views.authoring_fetch_all('modules', where_sql='module_catalogue_id in (%s)', params=['M1'], ensure_tables=False), [{'id': 'M1'}])
-            self.assertEqual(views.authoring_fetch_all('weeks', 'module_catalogue_id in (%s)', ['M1'], 'display_order, id', ensure_tables=False), [{'id': 'W1'}])
-            self.assertEqual(len(sent), 2)
+            self.assertEqual(views.authoring_fetch_all('weeks', 'module_catalogue_id in (%s)', ['M2'], 'display_order, id', ensure_tables=False), [{'id': 'W1'}])
+            self.assertEqual(len(sent), 1)
+
+    def test_a_failed_batch_leaves_every_read_to_its_call(self):
+        connection, sent = self.fake_connection({}, fail=True)
+        with patch.object(views, 'connection', connection), views.curriculum_read_scope():
+            views.prefetch_authoring_reads([(('modules',), {'ensure_tables': False}), (('weeks',), {'ensure_tables': False})])
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(views._CURRICULUM_READ_SCOPE.memo, {})
 
     def test_nothing_is_sent_inside_a_transaction_or_outside_a_read_scope(self):
         calls = [(('modules',), {'ensure_tables': False}), (('weeks',), {'ensure_tables': False})]
@@ -131,9 +147,32 @@ class PrefetchTests(SimpleTestCase):
 
     def test_nothing_is_sent_while_switched_off(self):
         connection, sent = self.fake_connection({})
-        with patch.object(views, 'CURRICULUM_PIPELINED_READS', False),                 patch.object(views, 'connection', connection), views.curriculum_read_scope():
+        with patch.object(views, 'CURRICULUM_BATCHED_READS', False),                 patch.object(views, 'connection', connection), views.curriculum_read_scope():
             views.prefetch_authoring_reads([(('modules',), {'ensure_tables': False}), (('weeks',), {'ensure_tables': False})])
         self.assertEqual(sent, [])
+
+
+class PrefetchMatchesTheReadsTests(SimpleTestCase):
+    """A prefetch only helps when it is keyed as the call that follows it."""
+
+    def keys(self, calls):
+        return {views.authoring_fetch_all.memo_key(*args, **kwargs) for args, kwargs in calls}
+
+    def test_training_rows_prefetch_the_three_reads_they_make(self):
+        real = views.authoring_fetch_all
+        made, prefetched = [], []
+        recorder = MagicMock(side_effect=lambda *args, **kwargs: made.append((args, kwargs)) or [])
+        with patch.object(views, 'authoring_fetch_all', recorder),                 patch.object(views, 'prefetch_authoring_reads', side_effect=prefetched.extend):
+            recorder.memo_key = real.memo_key
+            views.authoring_modules_as_training_rows()
+        self.assertEqual(len(made), 3)
+        self.assertEqual(self.keys(prefetched), self.keys(made))
+
+    def test_rows_already_supplied_are_not_prefetched(self):
+        prefetched = []
+        with patch.object(views, 'authoring_fetch_all', return_value=[]),                 patch.object(views, 'prefetch_authoring_reads', side_effect=prefetched.extend):
+            views.authoring_modules_as_training_rows(module_rows=[], cohort_rows=[])
+        self.assertEqual([args[0] for args, _ in prefetched], [views.GROUPS_TABLE])
 
 
 class WarmTargetTests(SimpleTestCase):

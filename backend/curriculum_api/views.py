@@ -8702,11 +8702,17 @@ MODULE_INDEX_EXCLUDED_COLUMNS = ('ksb_remap_report',)
 MODULE_INDEX_ORDER = 'programme_id, title'
 
 
+def module_index_read(*, ensure_tables=True):
+    """module_index_rows()'s authoring_fetch_all() call, as ``(args, kwargs)`` for a prefetch."""
+    return ((AUTHORING_MODULES_TABLE,), {
+        'order_sql': MODULE_INDEX_ORDER, 'ensure_tables': ensure_tables,
+        'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS,
+    })
+
+
 def module_index_rows(*, ensure_tables=True):
-    return authoring_fetch_all(
-        AUTHORING_MODULES_TABLE, order_sql=MODULE_INDEX_ORDER, ensure_tables=ensure_tables,
-        exclude_columns=MODULE_INDEX_EXCLUDED_COLUMNS,
-    )
+    args, kwargs = module_index_read(ensure_tables=ensure_tables)
+    return authoring_fetch_all(*args, **kwargs)
 
 
 def safe_module_index_rows():
@@ -8759,8 +8765,24 @@ def authoring_rows_by_id(table, id_column, ids, order_sql, *, ensure_tables=True
     return authoring_fetch_all(table, clause, params, ensure_tables=ensure_tables)
 
 
+def training_index_reads(*, ensure_tables=True, modules=True, groups=True, cohorts=True):
+    """The module, group and cohort reads the training rows are built from, as
+    ``(args, kwargs)`` calls for prefetch_authoring_reads()."""
+    return [
+        *([module_index_read(ensure_tables=ensure_tables)] if modules else []),
+        *([((GROUPS_TABLE,), {'order_sql': GROUP_ROWS_ORDER, 'ensure_tables': ensure_tables})] if groups else []),
+        *([((COHORT_AUTHORING_DETAILS_TABLE,), {'order_sql': COHORT_ROWS_ORDER, 'ensure_tables': ensure_tables})]
+          if cohorts else []),
+    ]
+
+
 def authoring_modules_as_training_rows(*, ensure_tables=True, module_rows=None, group_rows=None, cohort_rows=None):
     try:
+        # The three reads below in one round trip; each still runs as written.
+        prefetch_authoring_reads(training_index_reads(
+            ensure_tables=ensure_tables, modules=module_rows is None,
+            groups=group_rows is None, cohorts=cohort_rows is None,
+        ))
         if module_rows is None:
             module_rows = module_index_rows(ensure_tables=ensure_tables)
         if group_rows is None:
@@ -9781,10 +9803,7 @@ def get_curriculum_rows(compact=False):
     # The authoring reads the readers below make, in one round trip rather than
     # five; each reader still makes its own call and finds its rows memoised.
     prefetch_authoring_reads([
-        ((AUTHORING_MODULES_TABLE,), {'order_sql': MODULE_INDEX_ORDER, 'ensure_tables': True,
-                                      'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS}),
-        ((GROUPS_TABLE,), {'order_sql': GROUP_ROWS_ORDER, 'ensure_tables': True}),
-        ((COHORT_AUTHORING_DETAILS_TABLE,), {'order_sql': COHORT_ROWS_ORDER, 'ensure_tables': True}),
+        *training_index_reads(),
         *([] if table_exists('Modules') else [((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS})]),
     ])
     rows = {
@@ -15861,11 +15880,14 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
     return query
 
 
-# Off unless set: measured 2026-10-21 against a Neon branch through the pooler,
-# it cut ~9 round trips from a PROG-PCP-L6 rebuild but showed no wall-clock gain
-# beyond Neon's run-to-run noise, and three of eighteen page bursts with it on
-# stalled (19-48s) where none did without. Enable only with fresh evidence.
-CURRICULUM_PIPELINED_READS = os.environ.get('CURRICULUM_PIPELINED_READS', 'false').lower() in {'true', '1', 'yes'}
+# On unless set to false. The reads go out as one multi-statement query: the
+# connection's cursors bind parameters client-side (Django's default with
+# psycopg 3), so the statements travel as a single simple-protocol message and
+# each comes back as its own result set, with the same types a separate read
+# returns. This replaced psycopg's pipeline mode, which in 2026-10-21 bursts
+# through the Neon pooler stalled three of eighteen pages (19-48s). Measured
+# 2026-11-08 on NEW_ENDPOINT_URL: five reads 1294 ms one by one, 284 ms batched.
+CURRICULUM_BATCHED_READS = os.environ.get('CURRICULUM_BATCHED_READS', 'true').lower() not in {'false', '0', 'no'}
 
 
 def prefetch_authoring_reads(calls):
@@ -15875,18 +15897,18 @@ def prefetch_authoring_reads(calls):
     make them. Each result goes into the read scope under the key that call is
     memoised with, so the call itself then costs nothing. A builder's reads go
     out one round trip at a time, and from a remote database each round trip,
-    not the rows, is most of what a programme build waits on; psycopg's
-    pipeline mode sends them all and waits once.
+    not the rows, is most of what a programme build waits on; one
+    multi-statement query sends them all and waits once.
 
     Only ever an optimisation: the SQL is authoring_select_sql()'s own, and a
     call whose key does not match what was prefetched -- arguments spelled
-    differently, a pipeline that failed -- just reads as it always did. Outside
+    differently, a batch that failed -- just reads as it always did. Outside
     a read scope, inside an atomic block (a failed statement there would poison
     the caller's transaction) or off PostgreSQL, nothing is sent.
     """
     memo = getattr(_CURRICULUM_READ_SCOPE, 'memo', None)
     if (
-        memo is None or not CURRICULUM_PIPELINED_READS
+        memo is None or not CURRICULUM_BATCHED_READS
         or connection.vendor != 'postgresql' or connection.in_atomic_block
     ):
         return
@@ -15913,26 +15935,26 @@ def prefetch_authoring_reads(calls):
             continue
         pending[key] = (query, options['params'] or [], options['table'], options['columns'], options['exclude_columns'])
     if len(pending) < 2:
-        # One read gains nothing from a pipeline; let the call make it.
+        # One read gains nothing from a batch; let the call make it.
         return
-    cursors = []
+    results = []
     try:
-        connection.ensure_connection()
-        with connection.connection.pipeline():
-            for query, params, *_ in pending.values():
-                cursor = connection.cursor()
-                cursors.append(cursor)
-                cursor.execute(query, params)
-        results = [rows_as_dicts(cursor) for cursor in cursors]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '; '.join(query for query, *_ in pending.values()),
+                [value for _query, params, *_ in pending.values() for value in params],
+            )
+            while True:
+                results.append(rows_as_dicts(cursor))
+                if not cursor.nextset():
+                    break
     except Exception:
-        logger.warning('Pipelined curriculum reads failed; they will be read one by one.', exc_info=True)
+        logger.warning('Batched curriculum reads failed; they will be read one by one.', exc_info=True)
         return
-    finally:
-        for cursor in cursors:
-            try:
-                cursor.close()
-            except Exception:
-                pass
+    if len(results) != len(pending):
+        logger.warning('Batched curriculum reads returned %s results for %s reads; they will be read one by one.',
+                       len(results), len(pending))
+        return
     for (key, (_query, _params, table, columns, exclude_columns)), rows in zip(pending.items(), results):
         # Same projection authoring_fetch_all() applies, so a prefetched read and
         # a direct one hand callers identical rows.
@@ -22171,6 +22193,14 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
     """
     content_counts = None
     try:
+        # The module, week and group reads in one round trip; each still runs as
+        # written (the group read is the one authoring_rows_by_id() makes below
+        # inside a read scope, shared with the training rows).
+        prefetch_authoring_reads([
+            ((AUTHORING_MODULES_TABLE,), {'order_sql': 'updated_at desc, title'}),
+            ((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS}),
+            ((GROUPS_TABLE,), {'order_sql': GROUP_ROWS_ORDER}),
+        ])
         module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, order_sql='updated_at desc, title')
         week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, columns=WEEK_INDEX_COLUMNS))
         if include_content and list_only and connection.vendor == 'postgresql':
@@ -28748,6 +28778,10 @@ def authoring_scope_module_rows(scope='', identifier=''):
     ensure_module_authoring_tables()
     # The shared module index (no ksb_remap_report, which nothing reading a
     # scope's modules looks at): one read per request with the other readers.
+    if scope == 'programme':
+        # The programme branch builds the training rows below; their group and
+        # cohort reads go out with this module read in one round trip.
+        prefetch_authoring_reads(training_index_reads())
     module_rows = module_index_rows()
     ident = clean_str(identifier)
     if scope == 'module':
