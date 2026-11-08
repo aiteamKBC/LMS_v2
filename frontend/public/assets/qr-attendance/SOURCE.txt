@@ -1,0 +1,31 @@
+QR Attendance decorative building asset
+
+File: campus-illustration.webp
+Created: 2026-11-07 using the built-in OpenAI image_gen tool, under the
+user's explicit instruction to create a building image for this page.
+This is an AI-generated fictional educational building, not a photograph
+of Kent Business College or a claim about its physical campus.
+No third-party photograph, logo, or reference image was supplied to generation.
+No stock-photo licence or third-party attribution is attached; use of the
+generated output is subject to the applicable OpenAI service terms.
+This provenance record does not claim exclusive copyright or legal clearance.
+
+Optimisation: original 1536 x 1024 PNG converted to 1200 x 800 WebP,
+quality 82, preserving aspect ratio. Final size: 131848 bytes.
+Display: decorative CSS background, hidden below 1100px; gradient masks
+and a lavender overlay are applied in attendance.css, not baked into the file.
+
+Generation prompt:
+Create a website background asset, landscape 3:2. Photorealistic architectural
+visualization of a fictional modern educational building with elegant
+glass-fronted facade and pale stone, three storeys, viewed from a slight low
+three-quarter angle. Building fills left and middle of frame, clean uncluttered
+forecourt with a little planting. Soft overcast morning light, muted lavender
+grey and warm ivory palette, subtle reflections, premium calm institutional
+mood. Soft pale lavender sky and gentle atmospheric edges appropriate for
+blending into a lavender website background. No people, no signage, no words,
+no letters, no logos, no watermark. This is a generic fictional campus, not a
+depiction of a real college. Deliver only the building visual, not a webpage mockup.
+
+Branding: the page separately uses the unchanged project asset
+/assets/kbc-logo.png (438 x 201). The logo was not generated or altered.

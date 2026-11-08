@@ -20,7 +20,8 @@ class ScheduledSignatureSubmissionTests(SimpleTestCase):
              patch.object(reviews, '_save_review_instance_answers_locked', side_effect=lambda row, *a, **kw: row) as save, \
              patch.object(reviews, 'get_review_instance_answers', return_value={}), \
              patch.object(reviews, '_visible_required_unanswered_fields', return_value=missing or []), \
-             patch.object(reviews.curriculum_views, 'update_rows', return_value=[{}] if updated else []) as update:
+             patch.object(reviews.curriculum_views, 'update_rows',
+                          side_effect=lambda table, where, params, values: [{**locked, **values}] if updated else []) as update:
             result = unwrap(reviews.complete_review_instance)(row, actor='coach@example.invalid', answers={})
             return result, update, save
 
@@ -38,12 +39,12 @@ class ScheduledSignatureSubmissionTests(SimpleTestCase):
         self.assertEqual(errors, {'fields': ['required']})
         update.assert_not_called()
 
-    def test_scheduled_without_signatures_is_rejected_before_saving_answers(self):
+    def test_scheduled_without_signatures_completes_without_attendance(self):
         (ok, errors), update, save = self.run_submission(signatures={})
-        self.assertFalse(ok)
-        self.assertIn('status', errors)
-        update.assert_not_called()
-        save.assert_not_called()
+        self.assertTrue(ok, errors)
+        self.assertEqual(update.call_args.args[3]['status'], 'completed')
+        self.assertNotIn('started_at', update.call_args.args[3])
+        save.assert_called_once()
 
     def test_status_change_under_lock_is_rejected(self):
         (ok, errors), update, _ = self.run_submission(locked_status='completed')
@@ -86,20 +87,25 @@ class ScheduledSignatureSubmissionTests(SimpleTestCase):
                 update.assert_not_called()
                 save.assert_not_called()
 
-    def test_unbooked_other_review_types_remain_blocked(self):
-        for type_code in ('progress_review', '', None):
-            with self.subTest(type_code=type_code):
-                (ok, errors), update, save = self.run_submission(status='not-scheduled', type_code=type_code)
-                self.assertFalse(ok)
-                self.assertIn('status', errors)
-                update.assert_not_called()
-                save.assert_not_called()
+    def test_unbooked_progress_review_also_requires_fields_and_signatures(self):
+        for signatures, expected in (({'advisor': True}, 'awaiting-signature'), ({}, 'completed')):
+            with self.subTest(signatures=signatures):
+                (ok, errors), update, save = self.run_submission(
+                    status='not-scheduled', type_code='progress_review', signatures=signatures)
+                self.assertTrue(ok, errors)
+                self.assertEqual(update.call_args.args[3]['status'], expected)
+                self.assertNotIn('started_at', update.call_args.args[3])
+                save.assert_called_once()
+        (ok, errors), update, _ = self.run_submission(status='not-scheduled', missing=['required'])
+        self.assertFalse(ok)
+        self.assertEqual(errors, {'fields': ['required']})
+        update.assert_not_called()
 
-    def test_rejected_unbooked_progress_review_does_not_persist_a_template_refresh(self):
+    def test_submitted_progress_review_does_not_persist_a_template_refresh(self):
         row = {'id': 'synthetic', 'status': 'not-scheduled',
                'definition_snapshot': {'reviewTypeCode': 'progress_review', 'sections': []}}
         with patch.object(reviews.transaction, 'atomic', return_value=nullcontext()), \
-             patch.object(reviews, 'get_review_instance', return_value=row), \
+             patch.object(reviews, 'get_review_instance', return_value={**row, 'status': 'awaiting-signature'}), \
              patch.object(reviews, '_refresh_locked_editable_definition_snapshot',
                           side_effect=AssertionError('Rejected submission must not write a new snapshot')):
             ok, errors = unwrap(reviews.complete_review_instance)(row, answers={})
