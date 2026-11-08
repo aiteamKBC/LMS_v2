@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from .migrated_reviews import EDITABLE_STATUSES, all_fields, validate_answers, _visible_fields
 from .migrated_templates import FAMILIES, fingerprint, resolve_template, snapshot_for, validate_managed_definition
-from .migrated_signature_rules import requirements_for_definition
+from .migrated_signature_rules import requirements_for_overlay
 
 
 class TemplateSyncConflict(ValueError):
@@ -142,7 +142,7 @@ def synchronize_locked(overlay, family, programme_key):
     if "signatures" in latest or "signatures" in overlay.template_snapshot:
         # Unrelated edits to legacy templates must not reset stored rules.
         # Removing explicit settings restores the family defaults.
-        overlay.signature_requirements = requirements_for_definition(latest, family)
+        overlay.signature_requirements = requirements_for_overlay(overlay, family, definition=latest)
         update_fields.append("signature_requirements")
     overlay.template_snapshot = latest
     overlay.migrated_template = template

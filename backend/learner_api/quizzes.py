@@ -101,6 +101,14 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
+def _activity_time_conflict(error, status):
+    return JsonResponse({
+        "error": "The saved quiz time changed. Review the updated time and choose again. Your answers and reflection are kept.",
+        "code": "activity_time_conflict",
+        "previousSeconds": error.previous_seconds,
+    }, status=status)
+
+
 def _format_clock(seconds):
     """Seconds -> "MM:SS" (e.g. 26 -> "00:26", 90 -> "01:30")."""
     try:
@@ -624,10 +632,12 @@ def submit_quiz_attempt(request, quiz_id):
         **{key: payload[key] for key in ('retakeTimeReason', 'retakePreviousSeconds') if key in payload},
     }
 
-    from .retake_timing import validate_activity_time
+    from .retake_timing import ActivityTimeConflict, validate_activity_time
     from .active_users import _progress_record_minutes
     try:
         validate_activity_time(attempt, history, seconds_for=lambda row: _progress_record_minutes(row) * 60)
+    except ActivityTimeConflict as exc:
+        return _activity_time_conflict(exc, 400)
     except ValueError as exc:
         return _error(str(exc), 400)
 
@@ -647,6 +657,8 @@ def submit_quiz_attempt(request, quiz_id):
             save_progress_record(active, attempt, activity)
         except ComponentReferenceError as exc:
             return _error(str(exc), 400)
+        except ActivityTimeConflict as exc:
+            return _activity_time_conflict(exc, 409)
         except ValueError as exc:
             return _error(str(exc), 409)
         except IntegrityError as exc:

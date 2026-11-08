@@ -1,0 +1,4 @@
+app,model,schema,table_name,column_name,file,line,classification
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,event_key,backend/coach_api/models.py,48,ORM uniqueness without direct valid unconditional unique index; expression indexes need review
+coach_api,CoachCalendarEvent,Coach,coach_calendar_event,operation_id,backend/coach_api/models.py,49,ORM uniqueness without direct valid unconditional unique index; expression indexes need review
+learner_api,LearnerProfile,Learner,learners,email,backend/learner_api/models.py,545,ORM uniqueness without direct valid unconditional unique index; expression indexes need review

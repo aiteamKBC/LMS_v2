@@ -94,14 +94,9 @@ def validate_form(value, status):
             raise InvalidReview('An action plan row is invalid.')
         item = {key: _text(row.get(key, ''), 3000 if key in ('action', 'outcome') else 300)
                 for key in ('action', 'outcome', 'supportedBy', 'dueDate')}
-        if item['dueDate']:
-            try:
-                date.fromisoformat(item['dueDate'])
-            except ValueError:
-                raise InvalidReview('An action deadline is invalid.')
         if any(item.values()):
-            if status == 'completed' and not all(item.values()):
-                raise InvalidReview('Complete all four fields for each SMART action.')
+            if status == 'completed' and not all(item[key] for key in ('action', 'outcome', 'supportedBy')):
+                raise InvalidReview('Complete the target, planned outcome and supported by fields for each SMART action.')
             plan.append(item)
     images = value.get('images', {})
     if not isinstance(images, dict) or set(images) - set(IMAGE_SECTIONS):

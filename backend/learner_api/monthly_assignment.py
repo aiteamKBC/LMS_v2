@@ -169,10 +169,7 @@ def coaching_meeting_booked(kind, learner_id, meeting_key):
     if record is not None:
         return bool(record.event_type == "mcr" and record.scheduled_date and record.status in booked_statuses)
 
-    # Aptem can own a scheduled appointment without an LMS calendar row. The
-    # read-only calendar adapter already verifies its source/learner identity.
-    # Do not create a local booking just to satisfy assignment validation.
-    if not meeting_key.startswith("imported-review:"):
+    if not meeting_key.startswith(("imported-review:", "review:")):
         return False
     model = SOURCE_MODELS.get(kind)
     learner = model.all_learners.filter(pk=learner_id).first() if model else None
@@ -181,6 +178,24 @@ def coaching_meeting_booked(kind, learner_id, meeting_key):
     profile = review_profile_for_source(learner)
     if profile is None or source_for_learner(learner, profile).kind != "aptem":
         return False
+    if not meeting_key.startswith("imported-review:"):
+        # The calendar can retain a confirmed legacy appointment after Aptem
+        # becomes the Review source. Its booking-only projection verifies the
+        # owner, saved Native association, sync proof and reconciliation links.
+        # Count that appointment without manufacturing or replacing a Review.
+        events = coaching_events_for_learner(learner, profile, only_sources={"mcr"},
+                                             dates_only=True, include_unlinked_bookings=True)
+        matches = [event for event in events if event.get("eventKey") == meeting_key]
+        return bool(len(matches) == 1
+                    and matches[0].get("bookingOnly") is True
+                    and matches[0].get("reviewSource") == "unlinked-booking"
+                    and matches[0].get("calendarEventKey") == meeting_key
+                    and matches[0].get("source") == "mcr"
+                    and matches[0].get("scheduledDate") and matches[0].get("scheduledTime")
+                    and matches[0].get("status") in booked_statuses)
+    # Aptem can own a scheduled appointment without an LMS calendar row. The
+    # read-only calendar adapter already verifies its source/learner identity.
+    # Do not create a local booking just to satisfy assignment validation.
     events = coaching_events_for_learner(learner, profile, only_sources={"mcr"}, dates_only=True)
     matches = [event for event in events if event.get("eventKey") == meeting_key]
     if len(matches) != 1:

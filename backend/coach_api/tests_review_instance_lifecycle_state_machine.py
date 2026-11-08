@@ -16,14 +16,14 @@ review instance.
 from datetime import date, time
 
 from django.db import connection
-from django.test import RequestFactory, TestCase
-from learner_api.models import LearnerProfile
+from django.test import RequestFactory
 
 from curriculum_api import review_instances, review_types, reviews
 from curriculum_api import views as curriculum_views
 
 from . import views as coach_views
 from .models import CoachCalendarEvent
+from .tests_support.transaction_cases import CoachTransactionTestCase
 
 COACH_EMAIL = 'coach@example.com'
 OTHER_COACH_EMAIL = 'other-coach@example.com'
@@ -35,7 +35,7 @@ def _interval(join_iso, leave_iso):
     return {'joinDateTime': join_iso, 'leaveDateTime': leave_iso}
 
 
-class ReviewLifecycleStateMachineTestCase(TestCase):
+class ReviewLifecycleStateMachineTestCase(CoachTransactionTestCase):
     databases = {'default', 'enrolment'}
 
     def setUp(self):
@@ -46,16 +46,21 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         review_types.provision_review_types_table()
         review_instances.provision_review_instance_tables()
         self._clear()
+        CoachCalendarEvent.objects.filter(owner_email=COACH_EMAIL, event_key__in=[
+            f'{kind}:{learner_id}:1:2026-10-01'
+            for kind in ('mcr', 'progress-review') for learner_id in (NATIVE_LEARNER_ID, 900602, 900603)
+        ]).delete()
         self._programme()
-        # Use explicit Native identities, never incidental Aptem learners from
-        # a PostgreSQL clone. Keep the real source-ownership gate enabled.
+        # Real source guards read through the enrolment alias; committed parents
+        # let these tests exercise that guard rather than bypass it with a mock.
+        from learner_api.models import LearnerProfile
+        from .tests_support.persisted_fixtures import fixed_identity
+        LearnerProfile.objects.using('default').filter(pk__in=(900001, NATIVE_LEARNER_ID, 900602, 900603)).delete()
         for learner_id in (900001, NATIVE_LEARNER_ID, 900602, 900603):
-            LearnerProfile.objects.create(
-                id=learner_id, full_name='Synthetic Native learner',
-                email=f'native-{learner_id}@example.invalid',
-                lifecycle_status='active', learner_type='commercial',
-                coach_email=COACH_EMAIL, aptem_id=None, enrolment_id=None,
-            )
+            fixed_identity(LearnerProfile, id=learner_id, full_name='Synthetic learner',
+                email=f'learner-{learner_id}@example.invalid', learner_type='commercial',
+                coach_email=COACH_EMAIL, programme_id='PROG-SM',
+                programme_status='Active', lifecycle_status='active', aptem_id=None, enrolment_id=None)
 
     def _ensure_programmes_table(self):
         with connection.cursor() as cursor:
@@ -87,12 +92,9 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
         review_types.seed_system_review_types()
 
     def _programme(self):
-        curriculum_views.insert_row('programmes', {
-            'id': 'PROG-SM', 'programme_id': 'PROG-SM', 'program_id': 'PROG-SM',
-            'name': 'State Machine Programme', 'color': '#123456',
-            'status': 'active', 'is_active': True, 'is_archived': False,
-            'created_at': curriculum_views.datetime.utcnow(), 'updated_at': curriculum_views.datetime.utcnow(),
-        })
+        # Supply the current schema's required columns as well as lightweight fixtures.
+        from .tests_support.persisted_fixtures import programme
+        programme('PROG-SM')
         curriculum_views.invalidate_curriculum_cache()
 
     def _template(self, *, type_code='mcm', signatures=None):
@@ -236,8 +238,9 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
                     self.assertEqual(completed_hours(900001), expected)
         self.assertFalse(CoachCalendarEvent.objects.exists())
 
-    def test_scheduled_review_without_required_signatures_completes_without_attendance(self):
-        record = self._scheduled_linked_row(signatures={'advisor': False, 'employer': False, 'participant': False, 'referrer': False})
+    def test_scheduled_progress_review_without_required_signatures_completes_without_attendance(self):
+        record = self._scheduled_linked_row(type_code='progress_review', event_type='progress-review',
+            signatures={'advisor': False, 'employer': False, 'participant': False, 'referrer': False})
         self._answer_required_field(record, actor=COACH_EMAIL)
         ok, errors = review_instances.complete_review_instance(self._instance(record), actor=COACH_EMAIL)
         self.assertTrue(ok, errors)
@@ -266,6 +269,27 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
                 self.assertEqual(record.status, 'scheduled')
                 setattr(record, field, original)
                 record.save(update_fields=[field])
+
+    def test_unbooked_mcm_validates_answers_then_freezes_for_signatures(self):
+        template = reviews.get_review_template_row(self._template())
+        instance = review_instances.ensure_review_instance(
+            template, learner_id=900001, learner_kind='', programme_id='PROG-SM',
+            occurrence_number=1, target_date=date(2026, 10, 1), coach_email=COACH_EMAIL,
+        )
+        definition = review_instances.review_instance_form_definition(instance)
+        field_id = definition['sections'][0]['fields'][0]['id']
+        ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
+        self.assertFalse(ok)
+        self.assertIn('fields', errors)
+        ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL,
+            answers={field_id: 'Completed coaching discussion'})
+        self.assertTrue(ok, errors)
+        saved = review_instances.get_review_instance(instance['id'])
+        self.assertEqual(saved['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertIsNone(saved['started_at'])
+        self.assertFalse(saved.get('calendar_event_id'))
+        saved_definition = review_instances.review_instance_form_definition(saved)
+        self.assertEqual(saved_definition['sections'][0]['fields'][0]['answer'], 'Completed coaching discussion')
 
     # -- 3/4: drafting is never blocked, and never changes status -------------
 

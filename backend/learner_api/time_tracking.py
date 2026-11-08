@@ -8,7 +8,6 @@ saved by video and component completions; manual time can exceed this session.
 import json
 import math
 import uuid
-from zoneinfo import ZoneInfo
 
 from django.core import signing
 from django.http import JsonResponse
@@ -18,7 +17,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import learner_self_or_admin
 from .working_hours_holidays import is_working_hours_holiday
-from .working_rules import WORKING_DAY_START, WORKING_DAY_END
+from config.working_hours import UK, WORKING_DAY_START, WORKING_DAY_END, WORKING_WEEKDAYS
 
 
 TRACKING_SALT = "learner-api.activity-time.v1"
@@ -57,9 +56,9 @@ def outside_uk_working_hours(at=None):
     """
     instant = at or timezone.now()
     if timezone.is_naive(instant):
-        instant = timezone.make_aware(instant, ZoneInfo("Europe/London"))
-    local = instant.astimezone(ZoneInfo("Europe/London"))
-    return (local.weekday() >= 5 or not (WORKING_DAY_START <= local.time() < WORKING_DAY_END)
+        instant = timezone.make_aware(instant, UK)
+    local = instant.astimezone(UK)
+    return (local.weekday() not in WORKING_WEEKDAYS or not (WORKING_DAY_START <= local.time() < WORKING_DAY_END)
             or is_working_hours_holiday(local.date()))
 
 

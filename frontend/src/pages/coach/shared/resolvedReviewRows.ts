@@ -63,6 +63,8 @@ export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatri
     (event.reviewSource === 'aptem' || event.aptemReviewId) && status !== 'completed',
   );
   const imported = Boolean(event.reviewSource === 'aptem' || event.aptemReviewId);
+  const bookedNativeMcm = !imported && event.source === 'mcr' && Boolean(event.eventKey)
+    && (status === 'scheduled' || status === 'in-progress');
   const importedSchedulable = imported && (['progress-review', 'mcr'].includes(reviewCategory(event)) || isImportedPersonalSupportPlan(event))
     && (status === 'not-scheduled' || status === 'scheduled');
   // The server rechecks attendance and ownership before changing any booking.
@@ -76,7 +78,7 @@ export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatri
     view: true,
     // Imported reviews remain reachable through local progress and signature
     // stages even when the Aptem source still has summary metadata only.
-    viewForm: formAvailable || importedActiveReview,
+    viewForm: formAvailable || importedActiveReview || bookedNativeMcm,
     presentation: Boolean(event.enrolmentId),
     join: canJoinMeeting({ ...event, status }),
   };

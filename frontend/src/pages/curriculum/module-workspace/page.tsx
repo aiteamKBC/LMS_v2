@@ -1,4 +1,5 @@
 import { LearnerPreview } from '../module-builder/LearnerPreview';
+import { componentSessionTitle } from '../shared/sessionDisplayTitle';
 import { ModuleSessions } from './ModuleSessions';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -1084,7 +1085,7 @@ export default function ModuleWorkspacePage() {
                                       </span>
                                       <div className="min-w-0 flex-1">
                                         <p className="truncate text-[13px] font-semibold text-foreground-900">
-                                          {component.title || 'Untitled component'}
+                                          {componentSessionTitle(component, week, component.title || 'Untitled component')}
                                         </p>
                                         <button type="button" onClick={() => setPreviewId(component.id)} className="mt-1 text-xs font-semibold text-primary-700 underline">View as learner</button>
                                         <span className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.chip}`}>
@@ -1437,7 +1438,7 @@ function allStructureKsbMappings(module: ModuleCatalogueItem): Array<{ mapping: 
     const weekLabel = weekPlacementLabel(week);
     (week.ksbMappings || []).forEach(mapping => rows.push({ mapping, placement: weekLabel }));
     (week.components || []).forEach(component => {
-      const componentLabel = component.title || 'Untitled component';
+      const componentLabel = componentSessionTitle(component, week, component.title || 'Untitled component');
       (component.ksbMappings || []).forEach(mapping => rows.push({ mapping, placement: `${weekLabel} / ${componentLabel}` }));
     });
   });

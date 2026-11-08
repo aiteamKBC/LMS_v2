@@ -111,15 +111,11 @@ describe('Attendance lecture workspace', () => {
       rawStatus: 'absent', effectiveStatus: 'made_up', effectiveAttendance: 1, catchupStatus: 'completed',
       recovery: { method: 'alternative', date: '2026-09-02' } })];
     mount();
-    const manual = await screen.findByRole('article', { name: 'Manually confirmed lecture' });
-    expect(within(manual).getByText('Attended')).toBeInTheDocument();
-    expect(within(manual).getByText('Attendance confirmed manually')).toBeInTheDocument();
-    expect(within(manual).queryByText(/Made up|Catch-up|Make-up needed/)).not.toBeInTheDocument();
-    expect(within(manual).queryByRole('button', { name: /Report Absence|Book Catchup/ })).not.toBeInTheDocument();
-    const verified = screen.getByRole('article', { name: 'Verified lecture' });
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Manually confirmed lecture' })).not.toBeInTheDocument());
+    const verified = await screen.findByRole('article', { name: 'Verified lecture' });
     expect(within(verified).getByText('Attended')).toBeInTheDocument();
     expect(within(verified).queryByText('Attendance confirmed manually')).not.toBeInTheDocument();
-    const recovered = screen.getByRole('article', { name: 'Recovered lecture' });
+    const recovered = await screen.findByRole('article', { name: 'Recovered lecture' });
     expect(within(recovered).getByText('Made up')).toBeInTheDocument();
     expect(within(recovered).getByText('Made up via alternative')).toBeInTheDocument();
     expect(lectureCounts(peekAttendanceWorkspace(kind as 'commercial' | 'apprenticeship', '12')!.lectures))
@@ -304,14 +300,11 @@ describe('Attendance lecture workspace', () => {
     expect(await screen.findByText('Unmarked')).toBeInTheDocument();
   });
 
-  it('shows cancelled lectures as cancelled without absence or catch-up actions', async () => {
+  it('removes cancelled lectures from the learner UI', async () => {
     payload.lectures = [lecture({ id: 'cancelled', title: 'Cancelled lecture', status: 'cancelled', canReportAbsence: false })];
     payload.totals = { total: 0, attended: 0, absent: 0, covered: 0, upcoming: 0, attendanceRate: null };
     mount();
-    const row = await screen.findByRole('article', { name: 'Cancelled lecture' });
-    expect(within(row).getByText('Cancelled')).toBeInTheDocument();
-    expect(within(row).queryByText(/Missed|Make-up needed/)).not.toBeInTheDocument();
-    expect(within(row).queryByRole('button', { name: /Catchup|Report Absence|Open Activities/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Cancelled lecture' })).not.toBeInTheDocument());
   });
 
   it('features today ahead of future lectures and credits its full hours once', async () => {
@@ -331,7 +324,7 @@ describe('Attendance lecture workspace', () => {
     expect(posts).toHaveLength(1);
     expect(JSON.parse(String(posts[0].body))).toEqual({ lectureId: 'today' });
     expect(within(card).getByRole('status')).toHaveTextContent('2 hours credited');
-    expect(within(screen.getByRole('article', { name: 'Today lecture' })).getByText('Attended')).toBeInTheDocument();
+    expect(within(await screen.findByRole('article', { name: 'Today lecture' })).getByText('Attended')).toBeInTheDocument();
     expect(within(card).getByRole('button', { name: 'Report Absence' })).toBeDisabled();
   });
 

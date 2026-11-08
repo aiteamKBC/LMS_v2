@@ -4,6 +4,7 @@ import { SessionResults } from '@/components/feature/SessionResults';
 import { SessionSyncStatus } from '@/components/feature/SessionSyncStatus';
 import { formatSystemTimestamp } from '@/lib/format';
 import { useSavedSessionData } from '@/hooks/useSavedSessionData';
+import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
 
 export function SessionResultsDialog({ moduleId, onClose }: { moduleId: string; onClose: () => void }) {
   const dialog = useRef<HTMLDivElement>(null);
@@ -29,6 +30,10 @@ export function SessionResultsDialog({ moduleId, onClose }: { moduleId: string; 
   </div>;
 }
 
+function sessionTitle(session: SessionResult) {
+  return sessionDisplayTitle(session.itemTitle || `Session ${session.sessionNumber}`, session.itemWeekTitle, 'Live Teams Session');
+}
+
 export function ModuleSessions({ moduleId }: { moduleId: string }) {
   const [selected, setSelected] = useState<SessionResult>();
   const [error, setError] = useState('');
@@ -50,9 +55,9 @@ export function ModuleSessions({ moduleId }: { moduleId: string }) {
     {otherSaved.length > 0 && <aside className="rounded-xl border bg-primary-50/40 p-3 text-sm" aria-label="Other sessions with saved files">
       <p className="font-semibold">Other sessions with saved files</p><div className="mt-2 flex flex-wrap gap-2">{otherSaved.map(session =>
         <button key={session.id} type="button" onClick={() => setSelected(session)} className="rounded-lg border bg-white px-3 py-2 text-primary-700">
-          {session.itemTitle || `Session ${session.sessionNumber}`} · {formatSystemTimestamp(session.startsAt)} · {session.fileCount} files
+          {sessionTitle(session)} · {formatSystemTimestamp(session.startsAt)} · {session.fileCount} files
         </button>)}</div></aside>}
-    <SessionResults seriesId={selected.seriesId} sessionNumber={selected.sessionNumber} moduleId={moduleId} /></div>;
+    <SessionResults seriesId={selected.seriesId} sessionNumber={selected.sessionNumber} moduleId={moduleId} displayTitle={sessionTitle(selected)} /></div>;
   return <section className="space-y-4" aria-label="Sessions and recordings">
     <header className="flex items-center justify-between gap-4"><div><h2 className="text-lg font-bold">Sessions & Recordings</h2><p className="mt-1 text-sm text-foreground-500">Open a session to review its recording, transcript and attendance.</p></div>
       <button disabled={loading || saved.refreshing} aria-busy={saved.refreshing} onClick={saved.refresh} className="rounded-lg border bg-white px-3 py-2 text-sm disabled:opacity-60">{saved.refreshing && !loading ? 'Refreshing…' : 'Refresh'}</button></header>
@@ -62,7 +67,7 @@ export function ModuleSessions({ moduleId }: { moduleId: string }) {
     {loading ? <p role="status">Loading saved sessions…</p> : !data?.series.length ? !error && !saved.error && <p className="rounded-xl border bg-white p-6 text-sm">No Teams sessions are linked to this module yet.</p> : data.series.map(series => <div key={series.id} className="overflow-hidden rounded-xl border bg-white">
       <div className="flex items-center justify-between gap-3 border-b bg-primary-50/40 p-4"><strong>{series.title}</strong><button disabled={Boolean(busy) || data.syncAvailable === false} onClick={() => void sync(series.id)} className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy === series.id ? 'Requesting…' : 'Sync attendance & files'}</button></div>
       {data.jobs.filter(job => job.live_session_id === series.id).map(job => <SessionSyncStatus key={job.live_session_id} job={job} />)}
-      <ul className="divide-y">{series.sessions.map(session => <li key={session.id}><button onClick={() => setSelected(session)} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-background-50"><span><strong className="block text-sm">{session.itemTitle || `Session ${session.sessionNumber}`}</strong><span className="text-xs text-foreground-500">{session.itemTitle ? `Session ${session.sessionNumber} · ` : ''}{formatSystemTimestamp(session.startsAt)}</span></span><span className="text-right text-xs"><span className="block font-semibold">{session.reportReady ? 'Attendance report saved' : 'Awaiting attendance report'}</span><span className="text-foreground-500">{session.fileCount || 0} files · Open session →</span></span></button></li>)}</ul>
+      <ul className="divide-y">{series.sessions.map(session => <li key={session.id}><button onClick={() => setSelected(session)} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-background-50"><span><strong className="block text-sm">{sessionTitle(session)}</strong><span className="text-xs text-foreground-500">{session.itemTitle || session.itemWeekTitle ? `Session ${session.sessionNumber} · ` : ''}{formatSystemTimestamp(session.startsAt)}</span></span><span className="text-right text-xs"><span className="block font-semibold">{session.reportReady ? 'Attendance report saved' : 'Awaiting attendance report'}</span><span className="text-foreground-500">{session.fileCount || 0} files · Open session →</span></span></button></li>)}</ul>
     </div>)}
   </section>;
 }

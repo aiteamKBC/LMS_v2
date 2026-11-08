@@ -4,6 +4,7 @@ export interface ActivityTimeRecord {
   submittedAt?: string; passed?: boolean | null; claimedSeconds?: number | null; verifiedSeconds?: number | null;
   reportedTime?: string | null; timeTaken?: string | null; timeTrackingSource?: string | null;
   retakeTimeChoice?: ActivityTimeChoice | 'keep' | 'new';
+  retakePreviousSeconds?: number;
 }
 export function activityTimeSeconds(row: ActivityTimeRecord): number {
   const claimed = row.claimedSeconds, verified = row.verifiedSeconds;
@@ -42,6 +43,7 @@ export function countedActivityTime(rows: ActivityTimeRecord[]): number {
   for (const row of ordered) {
     if (row.retakeTimeChoice === 'keep' && selected) continue;
     if (['correct', 'add', 'retry'].includes(row.retakeTimeChoice || '')) fallback = 'retry';
+    if (!selected) seconds = row.retakePreviousSeconds ?? 0;
     seconds = applyActivityTime(seconds, activityTimeSeconds(row), (row.retakeTimeChoice || fallback) as ActivityTimeChoice);
     selected = true;
   }

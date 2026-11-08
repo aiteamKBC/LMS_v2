@@ -1,0 +1,76 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Last_audit__activities {
+        bigint activity_id PK
+    }
+    Last_audit__activity_actual_hours {
+        bigint learner_id PK
+        text kind PK
+        text ref PK
+    }
+    Last_audit__activity_actual_hours_revision {
+        bigint revision_id PK
+        bigint learner_id FK
+        text kind FK
+        text ref FK
+    }
+    Last_audit__activity_actual_hours_validation {
+        bigint validation_id PK
+        bigint learner_id FK
+        text kind FK
+        text ref FK
+    }
+    Last_audit__activity_overrides {
+        text workspace PK
+        bigint aptem_id PK
+        text activity_id PK
+    }
+    Last_audit__activity_planned_hours {
+        bigint learner_id PK
+        text kind PK
+        text ref PK
+    }
+    Last_audit__activity_results {
+        bigint group_id PK
+        bigint learner_id PK
+        bigint activity_id PK
+    }
+    Last_audit__assigments_check {
+        bigint id PK
+        bigint learner_record_id FK
+        bigint learner_id FK
+        bigint aptem_id FK
+    }
+    Last_audit__attendance_module_exclusions {
+        text module PK
+    }
+    Last_audit__bank_holidays_england_wales {
+        date holiday_date PK
+    }
+    Last_audit__group_activities {
+        bigint group_id PK
+        bigint activity_id PK
+    }
+    Last_audit__group_activity_overrides {
+        bigint group_id PK
+        bigint activity_id PK
+    }
+    Last_audit__group_learners {
+        bigint group_id PK
+        bigint learner_id PK
+    }
+    Last_audit__groups {
+        bigint group_id PK
+    }
+    Last_audit__learner_assignments {
+        bigint learner_id PK
+        bigint component_id PK
+    }
+    Last_audit__learners {
+        bigint record_id PK
+    }
+    Last_audit__activity_actual_hours ||..o{ Last_audit__activity_actual_hours_revision : "activity_actual_hours_revision_base_fk"
+    Last_audit__activity_actual_hours ||..o{ Last_audit__activity_actual_hours_validation : "activity_actual_hours_validation_base_fk"
+    Last_audit__learners |o..o{ Last_audit__assigments_check : "assigments_check_aptem_id_fkey"
+    Last_audit__learners |o..o{ Last_audit__assigments_check : "assigments_check_learner_id_fkey"
+    Last_audit__learners ||..o{ Last_audit__assigments_check : "assigments_check_learner_record_id_fkey"

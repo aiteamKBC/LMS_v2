@@ -95,7 +95,7 @@ def audit_recordings(series_ids=()):
                       FROM curriculum.live_session_join_launches l
                       JOIN curriculum.live_session_occurrences o ON o.id=l.occurrence_id
                       WHERE o.live_session_id=ANY(%s)''', [ids])
-    saved = read('''SELECT a.id,a.occurrence_id,a.graph_artifact_id,o.live_session_id,
+    saved = read('''SELECT a.id,a.occurrence_id,a.graph_artifact_id,a.metadata,o.live_session_id,
                            r.status AS archive_status,r.container,r.blob_name
                     FROM curriculum.live_session_artifacts a
                     JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
@@ -111,14 +111,26 @@ def audit_recordings(series_ids=()):
     for row in launches:
         launches_by_series[row['live_session_id']].append(row)
 
-    # A ready database row is not proof that Azure still holds the blob.
+    # A ready database row is not proof that its selected provider has media.
     client = None
     for row in saved:
+        from .session_bunny_policy import bunny_recording
+        bunny = bunny_recording(row.get('metadata'))
+        if bunny:
+            row['archive_status'] = bunny.get('state') or 'pending'
         if row.get('archive_status') != 'ready':
             issues.append(_issue('archive_not_ready', row['live_session_id'],
                                  artifact_id=row['id'], occurrence_id=row['occurrence_id']))
             continue
         try:
+            if bunny:
+                from .bunny_stream import BunnyStream
+                video = BunnyStream(bunny['libraryId']).video(bunny['videoId'])
+                if video.get('status') != 4:
+                    row['archive_status'] = 'pending'
+                    issues.append(_issue('archive_not_ready', row['live_session_id'],
+                                         artifact_id=row['id'], occurrence_id=row['occurrence_id']))
+                continue
             client = client or storage_client()
             if not row.get('container') or not row.get('blob_name'):
                 issues.append(_issue('blob_missing', row['live_session_id'],

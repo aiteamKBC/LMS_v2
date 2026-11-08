@@ -1,0 +1,2 @@
+query_number,error_type,sqlstate
+1,QueryCanceled,57014

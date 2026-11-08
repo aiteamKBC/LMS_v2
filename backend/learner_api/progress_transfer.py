@@ -15,7 +15,7 @@ from . import canonical_learning as canonical
 from . import progress_transfer_store as store
 from .journal_sources import learner_journal_reads
 from .progress_transfer_policy import eligible_pairs, public_item, record_courses, is_old_record
-from .progress_transfer_matching import build_review, module_review, validate_decisions, manual_completion, component_counts
+from .progress_transfer_matching import build_review, module_review, validate_decisions, manual_completion, component_counts, retained_component
 
 
 def endpoint(role):
@@ -254,26 +254,34 @@ def approve_request(request_id, account, decisions=None):
         context = with_source_weeks(context, items)
         context = verified_source_types(with_planned_hours(context, items), items)
         review = build_review(request_id, items, context)
-        manual = validate_decisions(review, decisions)
+        manual, retained = validate_decisions(review, decisions)
         for item in items:
             module, matches, components = module_review(item, context)
             item['completedSourceActivities'] = [source['sourceActivityRef'] for source in module['sources']]
             item['baselineCompletedIds'] = [c['componentId'] for c in components if c.get('componentId') and native_done(c, native)]
             item['baselinePercent'] = 100 * len(set(item['baselineCompletedIds'])) / len(components) if components else 0
             item['componentMatches'] = []
+            item['retainedTransferComponents'] = []
             for source_component in module['sources']:
                 ref = source_component['sourceActivityRef']
-                target = manual.get((item['moduleId'], ref))
-                if target:
-                    matches[target['componentId']] = manual_completion(item, ref, target)
-                else:
-                    target = next(t for t in module['targets'] if t['componentId'] == source_component['automaticTargetId'])
-                item['componentMatches'].append({'sourceActivityRef': ref, 'sourceTitle': source_component['title'],
-                    'targetComponentId': target['componentId'], 'targetTitle': target['title'],
-                    'manual': not bool(source_component['automaticTargetId']),
-                    **({'plannedHours': target['plannedHours']} if not source_component['automaticTargetId'] else {})})
+                if (item['moduleId'], ref) in retained:
+                    item['retainedTransferComponents'].append(retained_component(item, source_component))
+                    item['componentMatches'].append({'sourceActivityRef': ref, 'sourceTitle': source_component['title'],
+                        'targetComponentId': None, 'targetTitle': None, 'manual': True, 'retained': True})
+                    continue
+                targets = [(target, True) for target in manual.get((item['moduleId'], ref), [])]
+                if source_component['automaticTargetId']:
+                    automatic = next(t for t in module['targets'] if t['componentId'] == source_component['automaticTargetId'])
+                    targets.insert(0, (automatic, False))
+                for target, is_manual in targets:
+                    if is_manual:
+                        matches[target['componentId']] = manual_completion(item, ref, target)
+                    item['componentMatches'].append({'sourceActivityRef': ref, 'sourceTitle': source_component['title'],
+                        'targetComponentId': target['componentId'], 'targetTitle': target['title'],
+                        'manual': is_manual,
+                        **({'plannedHours': target['plannedHours']} if is_manual else {})})
             item['matchedComponents'] = matches
-            item['componentCounts'] = component_counts(module, matches)
+            item['componentCounts'] = component_counts(module, matches, len(item['retainedTransferComponents']))
             counts = item['componentCounts']
             item['mergedPercent'] = round(100 * counts['completed'] / counts['total'], 2) if counts['total'] else 0
             cursor.execute(f'UPDATE {store.ITEMS} SET snapshot=%s::jsonb WHERE request_id=%s AND enrolment_id=%s AND module_id=%s',

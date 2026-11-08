@@ -21,6 +21,7 @@ class CanonicalHoursTests(SimpleTestCase):
         self.db.row_factory = sqlite3.Row
         self.db.execute("ATTACH DATABASE ':memory:' AS Learner")
         self.db.create_function('GREATEST', 2, max)
+        self.db.create_function('to_regclass', 1, lambda name: None)
         self.db.create_function('uk_month', 1, lambda value:
             datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(ZoneInfo('Europe/London')).strftime('%Y-%m')
             if value else None)
@@ -120,7 +121,9 @@ class CanonicalHoursTests(SimpleTestCase):
                            self.entry(2, component_ref='same', claimed_seconds=1200, time_tracking_source='signed:input',
                                       source_payload={'retakeTimeChoice': mode})]
                 before = self.db.total_changes
-                with patch.object(canonical, 'query', side_effect=self.read):
+                reconciled = canonical.progress_records_with_completion(records, project_current(records, {}))
+                with patch.object(canonical, 'query', side_effect=self.read), \
+                     patch.object(canonical, 'entries_for', return_value=reconciled):
                     months = read_hour_totals(self.owner)
                 self.assertAlmostEqual(sum(row['completed'] for row in months), expected / 3600)
                 learner = canonical.progress_records_with_completion(records, project_current(records, {}))
@@ -131,11 +134,13 @@ class CanonicalHoursTests(SimpleTestCase):
         for mode, expected in (('correct', 1200), ('add', 4800)):
             with self.subTest(mode=mode):
                 self.db.execute('DELETE FROM Learner.learner_progress_entries')
-                self.entry(1, component_ref='same', claimed_seconds=3600, time_tracking_source='signed:input')
+                records = [self.entry(1, component_ref='same', claimed_seconds=3600, time_tracking_source='signed:input'),
                 self.entry(2, component_ref='same', claimed_seconds=1200, time_tracking_source='signed:input',
                     submitted_at='2026-11-01T10:00:00Z', declared_completed_at='2026-10-31T13:00:00Z',
-                    started_at='2026-10-31T12:00:00Z', source_payload={'retakeTimeChoice': mode})
-                with patch.object(canonical, 'query', side_effect=self.read):
+                    started_at='2026-10-31T12:00:00Z', source_payload={'retakeTimeChoice': mode})]
+                reconciled = canonical.progress_records_with_completion(records, project_current(records, {}))
+                with patch.object(canonical, 'query', side_effect=self.read), \
+                     patch.object(canonical, 'entries_for', return_value=reconciled):
                     months = read_hour_totals(self.owner)
                 self.assertEqual([row['month'] for row in months], ['2026-10'])
                 self.assertAlmostEqual(months[0]['completed'], expected / 3600)
@@ -275,6 +280,7 @@ class CanonicalHoursTests(SimpleTestCase):
         learner = {'id': 201, 'name': 'Synthetic learner', 'programme': 'Programme', '_canonical_profile': self.owner}
         with patch.object(canonical, 'query', side_effect=self.read), \
              patch.object(monthly_logs, 'query', side_effect=[[], []]), \
+             patch.object(monthly_logs.logs, 'attendance_rows', return_value=[]), \
              patch.object(canonical, 'targets_for', return_value={'2026-10': 2}), \
              patch.object(monthly_logs.timezone, 'localdate', return_value=date(2026, 10, 26)):
             result = monthly_logs.project_year(learner, 2026)

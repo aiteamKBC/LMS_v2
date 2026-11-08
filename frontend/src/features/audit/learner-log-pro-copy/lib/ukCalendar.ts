@@ -5,6 +5,8 @@
 // blocked. The ledger closes at August 2026 (see the backend's
 // LEDGER_END_MONTH) so the holiday table only needs to cover these years.
 
+import { WORKING_DAY_START_HOUR, WORKING_DAY_END_HOUR } from '@/lib/completionValidation';
+
 export const LEDGER_END_MONTH = "2026-08";
 
 // England & Wales bank holidays, 2024–2027 (gov.uk, incl. substitute days).
@@ -28,14 +30,14 @@ export function isUkBankHoliday(dateStr: string): boolean {
 }
 
 export function isUkWeekend(dateStr: string): boolean {
-  const day = new Date(`${dateStr}T12:00:00`).getDay();
+  const day = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
   return day === 0 || day === 6;
 }
 
 /** First/last day of a "YYYY-MM" month, for date-input min/max. */
 export function monthBounds(month: string): { min: string; max: string } {
   const [year, monthNumber] = month.split("-").map(Number);
-  const lastDay = new Date(year, monthNumber, 0).getDate();
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
   return { min: `${month}-01`, max: `${month}-${String(lastDay).padStart(2, "0")}` };
 }
 
@@ -53,8 +55,9 @@ export function dateRestriction(dateStr: string, month?: string): string | null 
   return null;
 }
 
-export const WORK_DAY_START = "09:00:00";
-export const WORK_DAY_END = "17:00:00";
+export const WORK_DAY_START = `${String(WORKING_DAY_START_HOUR).padStart(2, '0')}:00:00`;
+export const WORK_DAY_END = `${String(WORKING_DAY_END_HOUR).padStart(2, '0')}:00:00`;
+export const WORK_DAY_LABEL = `${WORK_DAY_START.slice(0, 5)}–${WORK_DAY_END.slice(0, 5)} UK time`;
 
 function toSeconds(time: string): number {
   const [hours = 0, minutes = 0, seconds = 0] = time.split(":").map(Number);
@@ -71,7 +74,7 @@ function toHhmmss(totalSeconds: number): string {
 
 /**
  * System-generated timestamp for claimed hours inside legal job hours
- * (09:00–17:00). Returns "HH:MM–HH:MM", or an error string when the claimed
+ * (08:00–17:00 UK time). Returns "HH:MM–HH:MM", or an error string when the claimed
  * hours cannot fit before 17:00.
  */
 export function workingTimeRange(startTime: string, actualHours: number): { label: string } | { error: string } {
@@ -79,10 +82,10 @@ export function workingTimeRange(startTime: string, actualHours: number): { labe
     return { error: "Enter the actual (claimed) hours first — the timestamp is generated from them." };
   }
   const start = toSeconds(startTime || WORK_DAY_START);
-  if (start < toSeconds(WORK_DAY_START)) return { error: "The start time cannot be before 09:00:00." };
+  if (start < toSeconds(WORK_DAY_START)) return { error: `The start time cannot be before ${WORK_DAY_START} UK time.` };
   const end = start + Math.round(actualHours * 3600);
   if (end > toSeconds(WORK_DAY_END)) {
-    return { error: "The end time must not pass 17:00 — reduce the hours or start earlier." };
+    return { error: `The end time must not pass ${WORK_DAY_END.slice(0, 5)} UK time — reduce the hours or start earlier.` };
   }
   return { label: `${toHhmmss(start)}–${toHhmmss(end)}` };
 }

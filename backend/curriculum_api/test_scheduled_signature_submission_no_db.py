@@ -9,8 +9,9 @@ from . import review_instances as reviews
 
 
 class ScheduledSignatureSubmissionTests(SimpleTestCase):
-    def run_submission(self, *, status='scheduled', signatures=None, missing=None, updated=True, locked_status=None):
+    def run_submission(self, *, status='scheduled', signatures=None, missing=None, updated=True, locked_status=None, type_code='progress_review'):
         row = {'id': 'synthetic', 'status': status, 'definition_snapshot': {
+            'reviewTypeCode': type_code,
             'signatures': signatures if signatures is not None else {'advisor': True}, 'sections': []}}
         locked = {**row, 'status': locked_status or status}
         with patch.object(reviews.transaction, 'atomic', return_value=nullcontext()), \
@@ -52,6 +53,56 @@ class ScheduledSignatureSubmissionTests(SimpleTestCase):
 
     def test_failed_conditional_update_is_reported(self):
         (ok, errors), _, _ = self.run_submission(updated=False)
+        self.assertFalse(ok)
+        self.assertIn('status', errors)
+
+    def test_mcm_submission_does_not_require_a_booking_or_attendance(self):
+        for status in ('not-scheduled', 'scheduled', 'in-progress'):
+            with self.subTest(status=status):
+                (ok, errors), update, _ = self.run_submission(status=status, type_code='mcm')
+                self.assertTrue(ok, errors)
+                self.assertEqual(update.call_args.args[2], ['synthetic', status])
+                self.assertEqual(update.call_args.args[3]['status'], 'awaiting-signature')
+                self.assertNotIn('started_at', update.call_args.args[3])
+
+    def test_mcm_without_required_signatures_completes_without_booking(self):
+        (ok, errors), update, _ = self.run_submission(status='not-scheduled', type_code='mcm', signatures={})
+        self.assertTrue(ok, errors)
+        self.assertEqual(update.call_args.args[2], ['synthetic', 'not-scheduled'])
+        self.assertEqual(update.call_args.args[3]['status'], 'completed')
+        self.assertIsNotNone(update.call_args.args[3]['completed_at'])
+
+    def test_unbooked_mcm_still_requires_answers_and_rechecks_locked_status(self):
+        (ok, errors), update, _ = self.run_submission(status='not-scheduled', type_code='mcm', missing=['required'])
+        self.assertFalse(ok)
+        self.assertEqual(errors, {'fields': ['required']})
+        update.assert_not_called()
+        for locked_status in ('awaiting-signature', 'completed'):
+            with self.subTest(locked_status=locked_status):
+                (ok, errors), update, save = self.run_submission(
+                    status='not-scheduled', type_code='mcm', locked_status=locked_status)
+                self.assertFalse(ok)
+                self.assertIn('status', errors)
+                update.assert_not_called()
+                save.assert_not_called()
+
+    def test_unbooked_other_review_types_remain_blocked(self):
+        for type_code in ('progress_review', '', None):
+            with self.subTest(type_code=type_code):
+                (ok, errors), update, save = self.run_submission(status='not-scheduled', type_code=type_code)
+                self.assertFalse(ok)
+                self.assertIn('status', errors)
+                update.assert_not_called()
+                save.assert_not_called()
+
+    def test_rejected_unbooked_progress_review_does_not_persist_a_template_refresh(self):
+        row = {'id': 'synthetic', 'status': 'not-scheduled',
+               'definition_snapshot': {'reviewTypeCode': 'progress_review', 'sections': []}}
+        with patch.object(reviews.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(reviews, 'get_review_instance', return_value=row), \
+             patch.object(reviews, '_refresh_locked_editable_definition_snapshot',
+                          side_effect=AssertionError('Rejected submission must not write a new snapshot')):
+            ok, errors = unwrap(reviews.complete_review_instance)(row, answers={})
         self.assertFalse(ok)
         self.assertIn('status', errors)
 

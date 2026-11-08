@@ -1,0 +1,85 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    knowledge__ai_budget_periods {
+        text period_type PK
+        date period_start PK
+    }
+    knowledge__ai_reservations {
+        uuid id PK
+    }
+    knowledge__ai_usage {
+        bigint id PK
+        uuid reservation_id FK
+    }
+    knowledge__asset_occurrences {
+        bigint id PK
+        bigint asset_id FK
+        uuid build_id FK
+        bigint section_id FK
+    }
+    knowledge__assets {
+        bigint id PK
+    }
+    knowledge__book_scopes {
+        uuid book_id PK
+        text scope_code PK
+    }
+    knowledge__book_versions {
+        uuid id PK
+        uuid book_id FK
+    }
+    knowledge__books {
+        uuid id PK
+    }
+    knowledge__builds {
+        uuid id PK
+        uuid book_version_id FK
+        integer embedding_space_id FK
+    }
+    knowledge__chunk_assets {
+        bigint chunk_id PK
+        bigint occurrence_id PK
+    }
+    knowledge__chunk_vectors {
+        bigint chunk_id PK
+        integer embedding_space_id PK
+    }
+    knowledge__chunks {
+        bigint id PK
+        uuid build_id FK
+        bigint section_id FK
+    }
+    knowledge__curriculum_links {
+        bigint id PK
+        bigint section_id FK
+    }
+    knowledge__embedding_spaces {
+        integer id PK
+    }
+    knowledge__embeddings {
+        character_64_ content_sha256 PK
+        integer embedding_space_id PK
+    }
+    knowledge__scopes {
+        text code PK
+    }
+    knowledge__sections {
+        bigint id PK
+    }
+    knowledge__ai_reservations |o..o{ knowledge__ai_usage : "ai_usage_reservation_id_fkey"
+    knowledge__assets ||..o{ knowledge__asset_occurrences : "asset_occurrences_asset_id_fkey"
+    knowledge__builds ||..o{ knowledge__asset_occurrences : "asset_occurrences_build_id_fkey"
+    knowledge__sections |o..o{ knowledge__asset_occurrences : "asset_occurrences_section_id_fkey"
+    knowledge__books ||..o{ knowledge__book_scopes : "book_scopes_book_id_fkey"
+    knowledge__scopes ||..o{ knowledge__book_scopes : "book_scopes_scope_code_fkey"
+    knowledge__books ||..o{ knowledge__book_versions : "book_versions_book_id_fkey"
+    knowledge__book_versions ||..o{ knowledge__builds : "builds_book_version_id_fkey"
+    knowledge__embedding_spaces |o..o{ knowledge__builds : "builds_embedding_space_id_fkey"
+    knowledge__chunks ||..o{ knowledge__chunk_assets : "chunk_assets_chunk_id_fkey"
+    knowledge__asset_occurrences ||..o{ knowledge__chunk_assets : "chunk_assets_occurrence_id_fkey"
+    knowledge__chunks ||..o{ knowledge__chunk_vectors : "chunk_vectors_chunk_id_fkey"
+    knowledge__embedding_spaces ||..o{ knowledge__chunk_vectors : "chunk_vectors_embedding_space_id_fkey"
+    knowledge__builds ||..o{ knowledge__chunks : "chunks_build_id_fkey"
+    knowledge__sections |o..o{ knowledge__chunks : "chunks_section_id_fkey"
+    knowledge__sections ||..o{ knowledge__curriculum_links : "curriculum_links_section_id_fkey"
+    knowledge__embedding_spaces ||..o{ knowledge__embeddings : "embeddings_embedding_space_id_fkey"

@@ -247,9 +247,10 @@ export function downloadLearnerAttendancePdf({
   doc.text(`Cohort: ${clean(cohortName)}`, 108, 43);
   doc.text(`Module: ${clean(moduleLabel || "All modules")}`, 108, 48);
 
-  const present = history.filter((entry) => entry.attendance === "present").length;
-  const absent = history.filter((entry) => entry.attendance === "absent").length;
-  const unmarked = history.length - present - absent;
+  const countedHistory = history.filter((entry) => entry.countsAsSession !== false);
+  const present = countedHistory.filter((entry) => entry.attendance === "present").length;
+  const absent = countedHistory.filter((entry) => entry.attendance === "absent").length;
+  const unmarked = countedHistory.length - present - absent;
   const marked = present + absent;
   statCards(doc, [
     { label: "Present", value: String(present), color: colors.green },
@@ -261,14 +262,16 @@ export function downloadLearnerAttendancePdf({
   font(doc, 11, true);
   doc.text("Attendance records", margin, 87);
   font(doc, 7.5, false, colors.muted);
-  doc.text(`${history.length} saved ${history.length === 1 ? "session" : "sessions"}`, margin, 92);
+  doc.text(`${countedHistory.length} ${countedHistory.length === 1 ? "session" : "sessions"}`, margin, 92);
   autoTable(doc, {
     startY: 97,
     margin: { left: margin, right: margin, top: 38, bottom: 20 },
     theme: "plain",
     showHead: "everyPage",
     head: [["Date", "Module", "Lecture", "Source", "Status"]],
-    body: history.map((entry) => [formatDateLabel(entry.sessionDate), entry.moduleName, entry.lectureName, entry.source === "live" ? "Live register" : "KBC", statusLabel(entry.attendance)]),
+    body: history.map((entry) => [formatDateLabel(entry.sessionDate), entry.moduleName,
+      entry.makeupForDate ? `${entry.lectureName} (${entry.attendance === "present" ? "make-up" : "parallel group"} for ${formatDateLabel(entry.makeupForDate)})` : entry.lectureName,
+      entry.source === "live" ? "Live register" : "KBC", statusLabel(entry.attendance)]),
     styles: { font: "helvetica", fontSize: 7.4, minCellHeight: 9, cellPadding: 2.2, lineWidth: 0, textColor: colors.ink, overflow: "linebreak", valign: "middle" },
     headStyles: { fillColor: colors.ink, textColor: colors.white, fontStyle: "bold", fontSize: 7.1 },
     alternateRowStyles: { fillColor: colors.soft },

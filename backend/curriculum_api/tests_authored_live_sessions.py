@@ -112,6 +112,13 @@ class AuthoredLiveSessionSourceTests(SimpleTestCase):
         self.assertEqual([link['startTime'] for link in links], ['09:00', '14:00', '09:00'])
         self.assertEqual([link['durationMinutes'] for link in links], [120, 90, 120])
 
+    def test_week_title_is_exposed_without_renaming_authored_components(self):
+        before = [dict(row) for row in self.components]
+        links = self.links()
+        self.assertEqual([link['weekTitle'] for link in links], ['W1', 'W1', 'W2'])
+        self.assertEqual([link['title'] for link in links], [row['title'] for row in self.components])
+        self.assertEqual(self.components, before)
+
     def test_a_component_that_is_not_a_live_session_is_never_a_session(self):
         self.components.append(component('COMP-READ', 'WEEK-3', 1, {'sessionDate': '2026-10-01'}, 'reading'))
         self.assertEqual([link['componentId'] for link in self.links()], ['COMP-1', 'COMP-2', 'COMP-3'])

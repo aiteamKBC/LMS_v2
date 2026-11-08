@@ -1,4 +1,4 @@
-"""Copy a verified Teams recording from the organizer's OneDrive into private Azure.
+"""Verify SharePoint recording sources and retain the historical Azure copy path.
 
 OneDrive is an optional fast path. A missing drive, permission, or unique match
 leaves the caller's Graph byte-range transfer available as the fallback.
@@ -109,12 +109,12 @@ def verify_existing_recording(blob, graph_url, token):
         return True
 
 
-def copy_matched_recording(artifact, organizer, graph_url, token, blob, *, graph_get,
-                           graph_base, progress=None, drive_cache=None):
-    """Return True only after a unique source and the Azure bytes are verified.
+def matched_recording_download(artifact, organizer, graph_url, token, *, graph_get,
+                               graph_base, drive_cache=None):
+    """Resolve one SharePoint source by size plus matching first/last bytes.
 
-    The caller catches discovery/copy errors and uses its Graph transfer. The
-    short-lived OneDrive URL is never persisted or included in an error.
+    No Azure operation is performed. The short-lived URL is returned only to
+    the transfer caller and must never be persisted or logged.
     """
     created = _instant(artifact.get('created_datetime'))
     if not created or not organizer:
@@ -155,21 +155,32 @@ def copy_matched_recording(artifact, organizer, graph_url, token, blob, *, graph
         source_size, source_first, source_last = _edges(transport, source_url)
         if (source_size, source_first, source_last) != (graph_size, graph_first, graph_last):
             return False
-        if progress:
-            progress.update('uploading', 0, graph_size, force=True)
-        if not blob.exists():
-            try:
-                blob.upload_blob_from_url(source_url, overwrite=False,
-                                          content_settings=ContentSettings(content_type='video/mp4'),
-                                          connection_timeout=30, read_timeout=600, timeout=600,
-                                          retry_total=0, logging_enable=False)
-            except ResourceExistsError:
-                pass  # another worker may have finished the same immutable blob
-        if blob.get_blob_properties().size != graph_size:
-            raise ValueError('The archived recording size differs from Microsoft Teams.')
-        if (blob.download_blob(offset=0, length=EDGE_BYTES).readall() != graph_first or
-                blob.download_blob(offset=graph_size - EDGE_BYTES, length=EDGE_BYTES).readall() != graph_last):
-            raise ValueError('The archived recording bytes differ from Microsoft Teams.')
-        if progress:
-            progress.update('uploading', graph_size, graph_size, force=True)
-        return True
+        return source_url, graph_size, graph_first, graph_last
+
+
+def copy_matched_recording(artifact, organizer, graph_url, token, blob, *, graph_get,
+                           graph_base, progress=None, drive_cache=None):
+    """Historical Azure path, retaining the same verified Microsoft selection."""
+    matched = matched_recording_download(artifact, organizer, graph_url, token,
+        graph_get=graph_get, graph_base=graph_base, drive_cache=drive_cache)
+    if not matched:
+        return False
+    source_url, graph_size, graph_first, graph_last = matched
+    if progress:
+        progress.update('uploading', 0, graph_size, force=True)
+    if not blob.exists():
+        try:
+            blob.upload_blob_from_url(source_url, overwrite=False,
+                                      content_settings=ContentSettings(content_type='video/mp4'),
+                                      connection_timeout=30, read_timeout=600, timeout=600,
+                                      retry_total=0, logging_enable=False)
+        except ResourceExistsError:
+            pass  # another worker may have finished the same immutable blob
+    if blob.get_blob_properties().size != graph_size:
+        raise ValueError('The archived recording size differs from Microsoft Teams.')
+    if (blob.download_blob(offset=0, length=EDGE_BYTES).readall() != graph_first or
+            blob.download_blob(offset=graph_size - EDGE_BYTES, length=EDGE_BYTES).readall() != graph_last):
+        raise ValueError('The archived recording bytes differ from Microsoft Teams.')
+    if progress:
+        progress.update('uploading', graph_size, graph_size, force=True)
+    return True

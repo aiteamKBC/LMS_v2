@@ -113,6 +113,15 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it.each(['commercial', 'apprenticeship'])('shows allocated study time in the %s activity heading separately from session duration', async kind => {
+  mount('C1', kind);
+  const heading = await screen.findByRole('heading', { name: 'Live Teams Session 1' });
+  expect(heading.parentElement).toHaveTextContent('Required');
+  expect(heading.parentElement).toHaveTextContent('Planned time: 2h 30m');
+  expect(heading.parentElement).toHaveTextContent('60 min');
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
 it.each(['commercial', 'apprenticeship'])('opens the %s assignment when an ancillary summary request times out', async kind => {
   programmeRead.loadError = 'Loading is taking longer than expected. Please try again.';
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [

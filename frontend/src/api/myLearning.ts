@@ -8,6 +8,7 @@ import type { LearningSchedule } from './learnerOverview';
 import type { PlanModule, PlanSession } from './trainingPlanDashboard';
 import { readLearnerJson, peekLearnerJson } from './learnerRead';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import type { TeachingActivities } from '@/pages/learner/my-learning/teachingActivity';
 
 export type MyLearningCard = Pick<Subject, 'id' | 'title' | 'source' | 'moduleId' | 'previousLearningFor' | 'importedCourseRef' | 'replacementCourseRef' | 'legacyProgressReference'> & SubjectCardSummary & {
   cover?: string | null; planModule?: Omit<PlanModule, 'id' | 'title' | 'description' | 'coach_name'> | null; actualHours?: number | null;
@@ -18,6 +19,7 @@ export type MyLearningCatalogue = {
   learner: { id: string; kind: LearnerKind; name: string; programme: string; cohort: string; group: string };
   summary: { current: Count; previous: Count; subjectCount: number };
   modules: MyLearningCard[];
+  moduleActivity?: TeachingActivities;
   otjh: { actual: number | null; planned: number | null };
   upcoming: UpcomingLearningLink[]; hasMoreUpcoming: boolean;
 };

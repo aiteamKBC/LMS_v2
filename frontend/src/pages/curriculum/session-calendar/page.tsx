@@ -1,4 +1,5 @@
 import { formatDate, matchesSessionGroup, sessionGroups } from './page.helpers';
+import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
@@ -93,7 +94,9 @@ function normalizeApiSession(session: CurriculumSession): CalSession {
     moduleId: session.moduleId,
     moduleCatalogueId: session.moduleCatalogueId,
     weekId: session.weekId,
-    title: session.title || 'Untitled session',
+    title: session.type === 'Live Session'
+      ? sessionDisplayTitle(session.title || 'Untitled session', session.weekTitle, 'Live Teams Session')
+      : session.title || 'Untitled session',
     type: validSessionTypes.has(session.type as CalSession['type']) ? session.type as CalSession['type'] : 'Live Session',
     date: session.date,
     day: session.day,

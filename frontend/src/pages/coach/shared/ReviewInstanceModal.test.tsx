@@ -2233,6 +2233,53 @@ describe('migrated signed PDF lifecycle', () => {
   });
 });
 
+describe('Monthly Coaching Meeting completion without a booking', () => {
+  it.each(['mcm', 'aptem_mcm'].flatMap(typeCode => ['not-scheduled', 'scheduled', 'in-progress'].map(status => [typeCode, status])))(
+    'keeps %s completion beside the steps when %s and validates before requesting signatures', async (typeCode, status) => {
+    const review = mcmDefinition(status);
+    review.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };
+    review.template.reviewTypeCode = typeCode;
+    if (typeCode === 'aptem_mcm') {
+      Object.assign(review, { source: 'aptem', migratedForm: true, localStatus: status, readOnly: false });
+      review.instance.id = 'imported-review:synthetic';
+      review.meetingSummarySource = undefined;
+    }
+    review.sections[1].fields[0].answer = null;
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(review);
+    const pending = structuredClone(review);
+    pending.instance.status = 'awaiting-signature';
+    pending.localStatus = 'awaiting-signature';
+    vi.mocked(submitMigratedReview).mockResolvedValue(pending);
+    vi.mocked(completeReviewInstance).mockResolvedValue(pending);
+    render(<MemoryRouter><ReviewInstanceModal instanceId={review.instance.id} presentation="page" onClose={vi.fn()} /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Next steps' });
+    const completeButton = await screen.findByRole('button', { name: 'Complete review' });
+    expect(completeButton.closest('section')).toHaveAttribute('id', 'review-section-section-1');
+    fireEvent.click(completeButton);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please complete every required field');
+    expect(completeReviewInstance).not.toHaveBeenCalled();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Meeting Summary' })).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: typeCode === 'mcm' ? 'Meeting Summary' : 'Summary' }), { target: { value: 'Coach-approved summary' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+    const submit = typeCode === 'mcm' ? completeReviewInstance : submitMigratedReview;
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(review.instance.id,
+      { 'field-1': 'Review the next module', 'summary-field': 'Coach-approved summary' }));
+    expect(await screen.findByRole('heading', { name: 'Coach signature required' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(startMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('keeps unbooked %s submission unavailable', async family => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migratedPrDefinition('not-scheduled', family));
+    mount('imported-review:synthetic');
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.queryByRole('button', { name: 'Submit Review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+  });
+});
+
 describe('Monthly Coaching Meeting signature summary + signed PDF', () => {
   it('does not offer migrated generation when a historical original PDF is unavailable', async () => {
     const imported = mcmDefinition('completed');

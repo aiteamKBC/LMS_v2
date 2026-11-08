@@ -1,0 +1,5 @@
+[
+{"app": "coach_api", "model": "CoachCalendarEvent", "schema": "Coach", "table_name": "coach_calendar_event", "column_name": "event_key", "file": "backend/coach_api/models.py", "line": 48, "classification": "ORM uniqueness without direct valid unconditional unique index; expression indexes need review"},
+{"app": "coach_api", "model": "CoachCalendarEvent", "schema": "Coach", "table_name": "coach_calendar_event", "column_name": "operation_id", "file": "backend/coach_api/models.py", "line": 49, "classification": "ORM uniqueness without direct valid unconditional unique index; expression indexes need review"},
+{"app": "learner_api", "model": "LearnerProfile", "schema": "Learner", "table_name": "learners", "column_name": "email", "file": "backend/learner_api/models.py", "line": 545, "classification": "ORM uniqueness without direct valid unconditional unique index; expression indexes need review"}
+]

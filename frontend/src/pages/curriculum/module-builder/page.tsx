@@ -1,4 +1,5 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { componentSessionTitle } from '../shared/sessionDisplayTitle';
 import { ModuleLearnerCount } from './ModuleLearnerCount';
 import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
 import type { ModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
@@ -507,7 +508,6 @@ type DuplicateDestination = {
 };
 
 type DuplicateDialogResult = DuplicateDestination & {
-  teamsCopyMode: 'shared' | 'independent';
   startDate: string;
 };
 
@@ -642,14 +642,11 @@ async function showDuplicateModuleSwal(
   });
   if (!destination.isConfirmed || !destination.value) return null;
   const selected = destination.value as DuplicateDestination;
-  // Independent is the default: a copy usually runs for another group, and a
-  // shared join link would put that group in the original's sessions. Sharing
-  // stays a deliberate choice for groups that really attend together -- it is
-  // the only path that credits both groups' attendance and shows both the
-  // recording.
+  // A standalone duplicate is new teaching content with an empty class and
+  // calendar. Meeting sharing belongs to the explicit shared-delivery flow.
   const teams = await Swal.fire({
-    title: 'Teams meeting and dates',
-    html: '<p style="margin:0 0 12px;text-align:left">By default the new module has no Teams meeting link; create its own meeting from the new module once it is set up. Share the original meeting only when both groups attend the same sessions together.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent" checked> Independent: no meeting link, create its own meeting later</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared"> Share the same Teams meeting (both groups attend together)</label><div id="duplicate-start-date-wrap" style="text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
+    title: 'New module start date',
+    html: '<p style="margin:0 0 12px;text-align:left">Copy the module and its learning materials without learners, meeting participants or Teams meeting links. Assign learners and create new meetings on the copied module when it is ready.</p><div style="text-align:left;margin-top:12px"><label for="duplicate-start-date" style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
     icon: 'question',
     width: 560,
     showCancelButton: true,
@@ -659,39 +656,18 @@ async function showDuplicateModuleSwal(
     focusCancel: true,
     buttonsStyling: false,
     customClass: { popup: 'kbc-standard-swal-popup', title: 'kbc-standard-swal-title', htmlContainer: 'kbc-standard-swal-text', actions: 'kbc-standard-swal-actions', confirmButton: 'kbc-standard-swal-confirm', cancelButton: 'kbc-standard-swal-cancel', validationMessage: 'kbc-standard-swal-validation' },
-    didOpen: () => {
-      const popup = Swal.getPopup();
-      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent');
-      const shared = popup?.querySelector<HTMLInputElement>('#duplicate-teams-shared');
-      const wrap = popup?.querySelector<HTMLElement>('#duplicate-start-date-wrap');
-      const sync = () => { if (wrap) wrap.style.display = independent?.checked ? 'block' : 'none'; };
-      independent?.addEventListener('change', sync);
-      shared?.addEventListener('change', sync);
-    },
     preConfirm: () => {
       const popup = Swal.getPopup();
-      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent')?.checked;
       const startDate = popup?.querySelector<HTMLInputElement>('#duplicate-start-date')?.value || '';
-      if (independent && !startDate) {
+      if (!startDate) {
         Swal.showValidationMessage('Choose the Start Date for the new module.');
         return false;
       }
-      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate: independent ? startDate : '' };
+      return { startDate };
     },
   });
   if (!teams.isConfirmed || !teams.value) return null;
-  const teamsValue = teams.value as { teamsCopyMode: 'shared' | 'independent'; startDate: string };
-  if (teamsValue.teamsCopyMode === 'shared') {
-    const accepted = await showCurriculumConfirm({
-      title: 'Share the Teams meeting?',
-      text: 'Both groups will join the same meeting on the original dates. Links, attendees, invitations, attendance, recordings and later meeting changes affect both modules. Choose this only when the two groups attend together.',
-      icon: 'warning',
-      confirmButtonText: 'Yes, share the meeting',
-      cancelButtonText: 'Go back',
-      onConfirm: async () => {},
-    });
-    if (!accepted) return null;
-  }
+  const teamsValue = teams.value as { startDate: string };
   return { ...selected, ...teamsValue };
 }
 
@@ -2800,12 +2776,6 @@ function ModuleBuilderContent() {
       const targetProgrammeId = normaliseDeepLinkValue(curriculumProgrammeId(dialog.programme));
       const sameProgramme = sourceProgrammeId === targetProgrammeId
         || sourceProgrammeId === normaliseDeepLinkValue(dialog.programme.name);
-      if (dialog.teamsCopyMode === 'shared' && source.startDate && dialog.cohort.startDate && source.startDate < dialog.cohort.startDate) {
-        throw new Error('The original dates start before the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
-      }
-      if (dialog.teamsCopyMode === 'shared' && source.endDate && dialog.cohort.endDate && source.endDate > dialog.cohort.endDate) {
-        throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
-      }
       let ksbSource: DuplicateKsbSource | undefined;
       if (!sameProgramme) {
         const [allKsbSets, allStandards] = await Promise.all([
@@ -2821,8 +2791,8 @@ function ModuleBuilderContent() {
       // manual roster holds only learners someone assigns to the copy later.
       const duplicate = await duplicateModuleStructure(source, {
         learnerRosterMode: 'manual',
-        teamsCopyMode: dialog.teamsCopyMode,
-        keepDates: dialog.teamsCopyMode === 'shared',
+        teamsCopyMode: 'independent',
+        keepDates: false,
         startDate: dialog.startDate,
         programmeId: curriculumProgrammeId(dialog.programme),
         programmeName: dialog.programme.name,
@@ -2831,8 +2801,7 @@ function ModuleBuilderContent() {
         groupId: dialog.group.id,
         groupName: dialog.group.name,
         ksbSource,
-        deliveryMetadata: dialog.teamsCopyMode === 'independent'
-          ? {
+        deliveryMetadata: {
               ...(source.deliveryMetadata || {}),
               cohortId: dialog.cohort.id,
               cohort: dialog.cohort.name,
@@ -2841,8 +2810,7 @@ function ModuleBuilderContent() {
               weekDays: dialog.group.weekDays || source.deliveryMetadata?.weekDays || '',
               startTime: dialog.group.startTime || source.deliveryMetadata?.startTime || '',
               endTime: dialog.group.endTime || source.deliveryMetadata?.endTime || '',
-            }
-          : undefined,
+            },
       });
       const report = duplicate.ksbRemapReport as KsbRemapReport | null | undefined;
       const ksbMessage = report && report.unmatched?.length
@@ -2850,7 +2818,7 @@ function ModuleBuilderContent() {
         : '';
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners. Use Assign learners on the new module to add them.${ksbMessage}`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners or Teams meeting links. Assign learners and create new meetings on the new module when it is ready.${ksbMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
@@ -3791,6 +3759,7 @@ function ModuleBuilderContent() {
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
+                    displayWeek={selectedWeek}
                     onChange={updates => updateWorkingModule(module =>
                       applyModuleComponentUpdate(module, selectedComponent.id, updates),
                     )}
@@ -5279,6 +5248,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       week and its Teams meeting. */}
                   <WeekComponentRail
                     weekId={week.id}
+                    displayWeek={week}
                     components={shownComponents}
                     selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
                     focusedId={focusedComponentId}
@@ -5892,7 +5862,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             </span>
             <div className="min-w-0 flex-1">
               <span className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-bold ${tone.soft} ${tone.text}`}>{meta?.label || 'Component'}</span>
-              <h3 className="mt-2 text-lg font-heading font-bold text-foreground-950 truncate">{readableComponentTitle(component.title) || 'Untitled component'}</h3>
+              <h3 className="mt-2 text-lg font-heading font-bold text-foreground-950 truncate">{componentSessionTitle(component, week, readableComponentTitle(component.title) || 'Untitled component')}</h3>
               <p className="mt-1 text-[12px] text-foreground-500">Content, completion rules, OTJH, points and apprenticeship mappings.</p>
             </div>
           </div>
@@ -6897,7 +6867,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Component readiness</p>
-            <h3 onMouseEnter={showFullTextWhenTruncated} className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{readableComponentTitle(component.title) || 'Selected component'}</h3>
+            <h3 onMouseEnter={showFullTextWhenTruncated} className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{componentSessionTitle(component, week, readableComponentTitle(component.title) || 'Selected component')}</h3>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${componentReadyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
             {componentReadyPercent}%
@@ -7160,7 +7130,7 @@ function ReviewKsbComponentRow({ week, component, sourceLabels }: { week: Module
             <AppIcon className={`${meta?.icon || 'ri-file-line'} text-sm`}></AppIcon>
           </span>
           <div className="min-w-0">
-            <p className="truncate text-[12px] font-bold text-foreground-950">{readableComponentTitle(component.title)}</p>
+            <p className="truncate text-[12px] font-bold text-foreground-950">{componentSessionTitle(component, week, readableComponentTitle(component.title))}</p>
             <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">Week {week.weekNumber} - {meta?.label || component.type}</p>
           </div>
         </div>

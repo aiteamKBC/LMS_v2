@@ -24,22 +24,13 @@ against somebody else's programme therefore cannot close this learner's day,
 and there is no second holiday store to keep in step.
 """
 import os
-from datetime import time
-from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-
-UK = ZoneInfo("Europe/London")
-
-# The official working window. Monday-Friday, 08:00-17:00 UK time; 17:00 itself
-# is already outside. GMT/BST is handled by the zone, not by arithmetic.
-WORKING_DAY_START = time(8, 0)
-WORKING_DAY_END = time(17, 0)
-WORKING_WEEKDAYS = frozenset({0, 1, 2, 3, 4})
+from config.working_hours import UK, WORKING_DAY_START, WORKING_DAY_END, WORKING_WEEKDAYS
 
 REASON_WEEKEND = "weekend"
 REASON_OUTSIDE_HOURS = "outside_working_hours"
@@ -214,7 +205,8 @@ def working_rule_failure(instant, *, component_id=None, quiz_id=None, holiday_de
             "holidayName": "",
             "message": (
                 "This completion time is outside official working hours. "
-                "Allowed working hours are Monday to Friday, from 08:00 to before 17:00 UK time."
+                f"Allowed working hours are Monday to Friday, from {WORKING_DAY_START:%H:%M} "
+                f"to before {WORKING_DAY_END:%H:%M} UK time."
             ),
         }
 

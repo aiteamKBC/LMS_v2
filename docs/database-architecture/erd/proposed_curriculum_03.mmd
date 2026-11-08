@@ -1,0 +1,77 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    curriculum__live_session_artifacts {
+        character_varying_128_ id PK
+    }
+    curriculum__live_session_attendance_identity_rules {
+        character_varying_128_ module_catalogue_id PK
+        character_varying_16_ identity_kind PK
+        text identity_value PK
+    }
+    curriculum__live_session_join_launches {
+        character_varying_128_ id PK
+        character_varying_128_ live_session_id FK
+        character_varying_128_ occurrence_id FK
+    }
+    curriculum__live_session_learner_attendance {
+        bigint id PK
+    }
+    curriculum__live_session_occurrences {
+        character_varying_128_ id PK
+        character_varying_128_ live_session_id FK
+    }
+    curriculum__live_session_recording_events {
+        character_varying_128_ id PK
+        character_varying_128_ live_session_id FK
+        character_varying_128_ artifact_id FK
+    }
+    curriculum__live_session_recording_views {
+        character_varying_128_ id PK
+        character_varying_128_ live_session_id FK
+        character_varying_128_ occurrence_id FK
+    }
+    curriculum__live_sessions {
+        character_varying_128_ id PK
+        character_varying_128_ module_catalogue_id FK
+    }
+    curriculum__module_completion_criteria {
+        character_varying_128_ module_catalogue_id PK
+    }
+    curriculum__module_details {
+        character_varying_128_ module_catalogue_id PK
+    }
+    curriculum__module_teams_shares {
+        character_varying_128_ module_catalogue_id PK
+        character_varying_128_ source_module_catalogue_id FK
+    }
+    curriculum__modules {
+        character_varying_128_ module_catalogue_id PK
+        character_varying_255_ programme_id FK
+    }
+    curriculum__mre {
+        text plan_id PK
+    }
+    curriculum__programmes {
+        character_varying_150_ programme_id PK
+    }
+    curriculum__programmes_dropped_cols_backup
+    curriculum__quiz_answers {
+        bigint id PK
+        bigint question_id FK
+    }
+    curriculum__quiz_questions {
+        bigint id PK
+    }
+    curriculum__live_sessions ||..o{ curriculum__live_session_join_launches : "live_session_join_launches_live_session_id_fkey"
+    curriculum__live_session_occurrences ||..o{ curriculum__live_session_join_launches : "live_session_join_launches_occurrence_id_fkey"
+    curriculum__live_sessions ||..o{ curriculum__live_session_occurrences : "live_session_occurrences_live_session_id_fkey"
+    curriculum__live_session_artifacts ||..o{ curriculum__live_session_recording_events : "live_session_recording_events_artifact_id_fkey"
+    curriculum__live_sessions ||..o{ curriculum__live_session_recording_events : "live_session_recording_events_live_session_id_fkey"
+    curriculum__live_sessions ||..o{ curriculum__live_session_recording_views : "live_session_recording_views_live_session_id_fkey"
+    curriculum__live_session_occurrences ||..o{ curriculum__live_session_recording_views : "live_session_recording_views_occurrence_id_fkey"
+    curriculum__modules |o..o{ curriculum__live_sessions : "live_sessions_module_catalogue_id_fkey"
+    curriculum__modules ||..o| curriculum__module_teams_shares : "module_teams_shares_module_catalogue_id_fkey"
+    curriculum__modules ||..o{ curriculum__module_teams_shares : "module_teams_shares_source_module_catalogue_id_fkey"
+    curriculum__programmes |o..o{ curriculum__modules : "modules_programme_id_fkey"
+    curriculum__quiz_questions ||..o{ curriculum__quiz_answers : "quiz_answers_question_id_fkey"

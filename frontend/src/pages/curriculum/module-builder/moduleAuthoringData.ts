@@ -1,4 +1,5 @@
 import { requestSessionSync } from '@/api/sessionResults';
+import { coachFetch } from '@/lib/coachFetch';
 import { localClockToUtcIso, zoneOffsetMs } from '@/lib/timeZones';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
@@ -887,14 +888,14 @@ export interface ExistingTeamsSeriesReview {
 export async function previewExistingTeamsSeries(moduleId: string, input: { link: string; weekIds: string[]; calendarMailbox: string }) {
   return apiJson<ExistingTeamsSeriesReview>(`/curriculum/modules/${encodeURIComponent(moduleId)}/teams-existing-series/`, {
     method: 'POST', body: JSON.stringify({ action: 'preview', ...input }), timeoutMs: 120000,
-  });
+  }, coachFetch);
 }
 
 export async function linkExistingTeamsSeries(moduleId: string, previewToken: string) {
   const result = await apiJson<{ module: ModuleCatalogueItem; matched: number; unmatched: number; alreadyLinked: boolean }>(
     `/curriculum/modules/${encodeURIComponent(moduleId)}/teams-existing-series/`, {
       method: 'POST', body: JSON.stringify({ action: 'apply', previewToken }), timeoutMs: 120000,
-    },
+    }, coachFetch,
   );
   invalidateCurriculumCacheByEntity('module');
   return { ...result, module: recalculateModule(result.module) };
@@ -1706,6 +1707,15 @@ export async function duplicateModuleStructure(
   const { keepDates = false, renameCopy = true } = options;
   const learnerRosterMode = options.learnerRosterMode || (keepDates ? 'inherited' : 'manual');
   const teamsCopyMode = options.teamsCopyMode || 'independent';
+  const copyDeliverySettings = (settings: ComponentSettings) => {
+    const next = independentCopySettings(structuredClone(settings), { keepDates });
+    if (learnerRosterMode === 'manual') {
+      // These are people on the source delivery, not reusable teaching content.
+      // Leaving them here preselects the old class when a new meeting is made.
+      for (const key of ['teamsAttendees', 'teamsPresenters', 'teamsCoOrganizers']) delete next[key];
+    }
+    return next;
+  };
   const copyId = `copy-${Date.now().toString(36)}`;
   const cloneMappings = (mappings: KsbMapping[] = [], scope: string) => mappings.map((mapping, index) => ({
     ...mapping,
@@ -1717,6 +1727,7 @@ export async function duplicateModuleStructure(
     catalogueId: makeAuthoringId('MOD'),
     title: renameCopy ? `${source.title} copy` : source.title,
     status: 'draft',
+    assignedLearnerCount: 0,
     sourceModule: undefined,
     // The copy is an authored module in its own right, never a second claim on
     // whatever the original was made from. `source_id` is how a training-plan
@@ -1742,7 +1753,7 @@ export async function duplicateModuleStructure(
     // attendance, recordings, the sync) followed the meeting to the copy.
     // Stripped the same way the components are, and for the same reason.
     deliveryMetadata: (options.deliveryMetadata || source.deliveryMetadata)
-      ? independentCopySettings(structuredClone(options.deliveryMetadata || source.deliveryMetadata), { keepDates })
+      ? copyDeliverySettings(options.deliveryMetadata || source.deliveryMetadata)
       : source.deliveryMetadata,
     // The run the source is on is the source's, not the copy's. `createNewModule`
     // below already withholds these, but the structure save right after it sends
@@ -1804,7 +1815,7 @@ export async function duplicateModuleStructure(
           // lists. The source here is the object `loadModuleStructure` cached,
           // so an edit through the copy would reach both the original on screen
           // and everything else reading that cache entry.
-          settings: independentCopySettings(structuredClone(component.settings || {}), { keepDates }),
+          settings: copyDeliverySettings(component.settings || {}),
         }))),
       };
     }),
@@ -4172,13 +4183,13 @@ export class ApiError extends Error {
   }
 }
 
-async function apiJson<T>(path: string, init?: { method?: string; body?: string; headers?: Record<string, string>; timeoutMs?: number }): Promise<T> {
+async function apiJson<T>(path: string, init?: { method?: string; body?: string; headers?: Record<string, string>; timeoutMs?: number }, request: typeof fetch = fetch): Promise<T> {
   const controller = init?.timeoutMs ? new AbortController() : undefined;
   const timeout = controller && init?.timeoutMs
     ? window.setTimeout(() => controller.abort(), init.timeoutMs)
     : undefined;
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await request(`${API_BASE_URL}${path}`, {
       ...init,
       signal: controller?.signal,
       headers: {

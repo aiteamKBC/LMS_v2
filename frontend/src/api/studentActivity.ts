@@ -142,6 +142,7 @@ export interface SubjectMaterial {
   unavailable_attachments?: string[];
   persistence_ready: boolean;
   can_attempt: boolean;
+  can_retake?: boolean;
   completed?: boolean;
   csrf_token: string;
   history: { id: string; score_percent: number | null; passed: boolean | null; completed: boolean;

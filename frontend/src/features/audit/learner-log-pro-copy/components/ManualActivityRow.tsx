@@ -5,7 +5,7 @@ import { ledgerRef, LMS_INCOMPLETE, COMPLETED_BY_HOURS, completionNoteForHours, 
 // Dates stay working-day only, but may leave the report month: editing a date
 // onto another month re-files the row under that month on save. Timestamps
 // mirror the add flow (attendance fixed; others "input" or a generated
-// 09:00–17:00 range from the claimed actual hours).
+// 08:00–17:00 UK range from the claimed actual hours).
 import { useRef, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import {  } from '@tanstack/react-router';
@@ -23,6 +23,7 @@ import {
   isUkWeekend,
   monthBounds,
   WORK_DAY_START,
+  WORK_DAY_END,
   workingTimeRange,
 } from "@/features/audit/learner-log-pro-copy/lib/ukCalendar";
 
@@ -406,7 +407,7 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
             </select>
             {draft.tsMode === "time" ? (
               <>
-                <RowInput type="time" min="09:00:00" max="17:00:00" step="1" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value || WORK_DAY_START })} className="w-full text-center" aria-label="Start time including seconds" />
+                <RowInput type="time" min={WORK_DAY_START} max={WORK_DAY_END} step="1" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value || WORK_DAY_START })} className="w-full text-center" aria-label="Start time including seconds" title="UK time (GMT/BST)" />
                 {editGeneratedTime && "label" in editGeneratedTime ? (
                   <span className="block font-mono text-[10px] text-[#182d48]">{editGeneratedTime.label}</span>
                 ) : editGeneratedTime && "error" in editGeneratedTime ? (

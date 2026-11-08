@@ -4862,6 +4862,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         metadata = dict(artifact)
         metadata.pop('lmsHiddenFromLearners', None)
         metadata.pop('lmsTranscriptTimeline', None)
+        metadata.pop('lmsBunnyRecording', None)
         same_recording = None if existing else _same_artifact_under_new_graph_id(cursor, lock, payload)
         if same_recording:
             # Teams re-issued the id of an artifact already saved (same call and
@@ -4872,6 +4873,8 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
                 metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            if 'lmsBunnyRecording' in saved_metadata:
+                metadata['lmsBunnyRecording'] = saved_metadata['lmsBunnyRecording']
             cursor.execute(
                 f'UPDATE {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} SET graph_artifact_id=%s, content_url=%s, '
                 'content_correlation_id=%s, metadata=%s, updated_at=%s WHERE id=%s',
@@ -4884,6 +4887,8 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
                 metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            if 'lmsBunnyRecording' in saved_metadata:
+                metadata['lmsBunnyRecording'] = saved_metadata['lmsBunnyRecording']
         payload['metadata'] = json_db_value(metadata)
         authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], payload)
     return True
@@ -5407,7 +5412,26 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     if not endpoint:
         return json_error('Unsupported meeting artifact.', status=400)
 
+    occurrence = next(
+        (row for row in occurrences if clean_str(row.get('id')) == clean_str(artifact.get('occurrence_id'))),
+        {},
+    )
     if artifact_type == 'recording':
+        from .session_bunny_policy import bunny_recording, recording_uses_bunny
+        if bunny_recording(artifact.get('metadata')) or recording_uses_bunny(occurrence, artifact):
+            from .bunny_stream import VideoImportError
+            from .session_bunny import recording_player
+            if bunny_recording(artifact.get('metadata')).get('state') != 'ready':
+                return json_error('This Bunny recording is still being prepared. Please try again later.', status=409)
+            try:
+                # Legacy callers expect an MP4, including native video previews.
+                # Serve Bunny's protected rendition without reverting to Microsoft/Azure.
+                url = recording_player(artifact, download=True, referrer=request.build_absolute_uri('/'))
+            except VideoImportError as failure:
+                return json_error(str(failure), status=503)
+            response = HttpResponseRedirect(url)
+            response['Cache-Control'] = 'private, no-store'
+            return response
         # Prefer the archived copy. Graph is an availability risk and deletes
         # recordings on its own retention schedule; once a recording is in the
         # container that is the copy worth serving, and redirecting hands the
@@ -5424,10 +5448,6 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     # A recreated session's transcript and recording live under its own meeting,
     # so the identifiers come from the occurrence the artifact belongs to and fall
     # back to the series only for the sessions that share the series' meeting.
-    occurrence = next(
-        (row for row in occurrences if clean_str(row.get('id')) == clean_str(artifact.get('occurrence_id'))),
-        {},
-    )
     occurrence_meeting_id = clean_str(occurrence.get('online_meeting_id'))
     organizer = clean_str(series.get('organizer_email'))
     meeting_id = occurrence_meeting_id or clean_str(series.get('online_meeting_id'))
@@ -11069,6 +11089,8 @@ def authoring_session_links_by_catalogue(
                     'weekId': week_id,
                     'componentId': clean_str(component.get('id')),
                     'title': component.get('title') or week_row.get('title') or '',
+                    'weekTitle': (clean_str(week_row.get('title'))
+                                  if clean_str(component.get('module_catalogue_id')) == catalogue_id else ''),
                     # Delivered by its own additional meeting rather than by the
                     # module's calendar. Flagged, never dropped: the week still runs
                     # a live session and every screen that lists sessions must still
@@ -11657,6 +11679,7 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 # the row the author is looking at.
                 'weekId': clean_str(link.get('weekId')),
                 'componentId': clean_str(link.get('componentId')),
+                'weekTitle': clean_str(link.get('weekTitle')),
                 # The live session's own name, as its author typed it on the
                 # component. The module's name and a number are what is left
                 # when a component carries no title of its own.
