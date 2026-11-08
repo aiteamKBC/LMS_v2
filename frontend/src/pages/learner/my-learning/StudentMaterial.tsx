@@ -9,7 +9,7 @@ import { subjectRequest, type SubjectMaterial, type SubjectAttemptResult } from 
 import { RetakeTimeDialog, type RetakeTimeChoice } from '@/components/feature/RetakeTimeDialog';
 import type { TimeTrackingSession } from '@/api/timeTracking';
 import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
-import type { WorkingRuleReason } from '@/lib/completionValidation';
+import { declaredCompletedAt as completionInstant, ukDateKey, workingRuleFailure, type WorkingRuleReason } from '@/lib/completionValidation';
 import { useLegacyStudySession } from './useLegacyStudySession';
 import { ActivityElapsedTimer } from '../video-watch/ActivityElapsedTimer';
 import { ActivityTimeSpentInput } from '../video-watch/ActivityTimeSpentInput';
@@ -131,17 +131,18 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded, 
 type StudentMaterialProps = {
   kind: string; learnerId: string; groupId: number; activityId: number; completed?: boolean;
   onProgress?: (result: SubjectAttemptResult) => void; readOnly?: boolean; baseUrl?: string; reviewQuiz?: boolean; catalogueQuiz?: boolean;
+  readingOnly?: boolean; active?: boolean; allowCompletionDate?: boolean;
 };
 
 export function StudentMaterial(props: StudentMaterialProps) {
   // Switching learner/placement must also close pending confirmation dialogs
   // and invalidate async work belonging to the previous activity.
   const identity = JSON.stringify([props.kind, props.learnerId, props.groupId, props.activityId,
-    props.baseUrl, !!props.catalogueQuiz, !!props.reviewQuiz, !!props.readOnly]);
+    props.baseUrl, !!props.catalogueQuiz, !!props.reviewQuiz, !!props.readOnly, !!props.readingOnly]);
   return <StudentMaterialContent key={identity} {...props} />;
 }
 
-function StudentMaterialContent({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl, reviewQuiz = false, catalogueQuiz = false }: StudentMaterialProps) {
+function StudentMaterialContent({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl, reviewQuiz = false, catalogueQuiz = false, readingOnly = false, active = true, allowCompletionDate = false }: StudentMaterialProps) {
   const [data, setData] = useState<SubjectMaterial | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -160,9 +161,9 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   const completionHintId = useId();
   const base = baseUrl || `/learner_api/student-activity/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}`;
   const attempts = `${base}/${groupId}/${activityId}/attempts/`;
-  const quizQuery = catalogueQuiz || reviewQuiz ? '?catalogue_kind=quiz' : '';
-  const materialUrl = `${base}/?group_id=${groupId}&activity_id=${activityId}${catalogueQuiz || reviewQuiz ? '&catalogue_kind=quiz' : ''}`;
-  const timerKey = `legacy-study:v1:${encodeURIComponent(kind)}:${encodeURIComponent(learnerId)}:${groupId}:${catalogueQuiz || reviewQuiz ? 'quiz' : 'material'}:${activityId}`;
+  const quizQuery = catalogueQuiz || reviewQuiz ? '?catalogue_kind=quiz' : readingOnly ? '?activity_part=reading' : '';
+  const materialUrl = `${base}/?group_id=${groupId}&activity_id=${activityId}${quizQuery.replace('?', '&')}`;
+  const timerKey = `legacy-study:v1:${encodeURIComponent(kind)}:${encodeURIComponent(learnerId)}:${groupId}:${catalogueQuiz || reviewQuiz ? 'quiz' : 'material'}:${activityId}${readingOnly ? ':reading' : ''}`;
   const currentIdentity = useRef(timerKey);
   currentIdentity.current = timerKey;
   // Follow the rendered video, including protected source-file URLs and
@@ -170,12 +171,13 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   const videoActivity = !!data && !data.quiz && data.media.some(isVideoMaterial);
   const retakeGranted = !!data?.can_retake && !!data.can_attempt && !savedResult;
   const reviewLocked = reviewQuiz && !retakeGranted;
-  const study = useLegacyStudySession(timerKey, !!data?.can_attempt && !!data?.available && !readOnly && !reviewLocked
+  const study = useLegacyStudySession(timerKey, active && !!data?.can_attempt && !!data?.available && !readOnly && !reviewLocked
     && !((catalogueQuiz || !data?.quiz) && (completed || data?.completed || savedResult?.completed) && !retakeGranted), busy || !!correction || !!timeConfirmation, activityElement, videoActivity);
   const attemptId = study.draft?.attemptId || null;
   const answers = study.draft?.answers || {};
   const confirmed = study.draft?.confirmed || false;
   const manualSeconds = study.draft?.manualSeconds ?? null;
+  const declaredCompletion = allowCompletionDate ? study.draft?.declaredCompletion : undefined;
   const { setAnswers, setConfirmed } = study;
   useEffect(() => {
     const controller = new AbortController();
@@ -195,7 +197,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
     void beginAttempt();
   };
   const beginAttempt = async (retakeTimeChoice?: RetakeTimeChoice) => {
-    if (readOnly || reviewLocked || !data || busy || requestPending.current || attemptId || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
+    if (!active || readOnly || reviewLocked || !data || busy || requestPending.current || attemptId || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
     requestPending.current = true;
     setBusy(true); setError(''); setResult('');
     const startUrl = `${attempts}${quizQuery}`;
@@ -220,7 +222,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   useEffect(() => {
     // Only the first attempt starts on opening. Results and retakes remain an
     // explicit choice; a failed request offers retry instead of a POST loop.
-    if (autoStarted.current || attemptId || readOnly || reviewQuiz || completed || savedResult || !data
+    if (!active || autoStarted.current || attemptId || readOnly || reviewQuiz || completed || savedResult || !data
       || data.completed || data.history.length || data.historical.attempt_number
       || !data.can_attempt || !data.persistence_ready || !data.available || (data.quiz && !data.quiz.ready)) return;
     const startVisible = () => {
@@ -240,19 +242,22 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
     document.addEventListener('visibilitychange', startVisible);
     startVisible();
     return () => { observer.disconnect(); document.removeEventListener('visibilitychange', startVisible); };
-  }, [data, attemptId, completed, readOnly, reviewQuiz, savedResult]);
+  }, [data, attemptId, completed, readOnly, reviewQuiz, savedResult, active]);
   const submit = async (declaredCompletedAt?: string) => {
-    if (readOnly || reviewLocked || !data || busy || requestPending.current || !data.can_attempt || !data.persistence_ready || !data.available) return;
+    if (!active || readOnly || reviewLocked || !data || busy || requestPending.current || !data.can_attempt || !data.persistence_ready || !data.available) return;
     requestPending.current = true;
     setBusy(true); setError('');
     try {
       if (!attemptId || !study.draft) throw new Error('Activity timing is not ready. Please retry.');
+      if (declaredCompletion && (!declaredCompletion.day || !declaredCompletion.time)) throw new Error('Select a completion date and time.');
       if (manualSeconds != null && !declaredCompletedAt && !(await confirmTime(manualSeconds))) return;
       if (!mounted.current) return;
+      const chosenCompletion = declaredCompletedAt || (declaredCompletion
+        ? completionInstant(declaredCompletion.day, declaredCompletion.time) : undefined);
       const saved = await post<SubjectAttemptResult>(`${attempts}${attemptId}/${quizQuery}`, { answers, reading_confirmed: data.quiz ? confirmed : true,
         trackingToken: study.draft.timing.trackingToken, timeTakenSeconds: Math.floor(manualSeconds ?? study.draft.elapsedSeconds),
         ...(manualSeconds != null ? { timeEntrySource: 'input' } : {}),
-        ...(declaredCompletedAt ? { declaredCompletedAt } : {}) });
+        ...(chosenCompletion ? { declaredCompletedAt: chosenCompletion } : {}) });
       if (!mounted.current || currentIdentity.current !== timerKey) return;
       setResult(saved.score_percent == null ? 'Activity completed.' : `Attempt saved: ${Number(saved.score_percent).toFixed(0)}% · ${saved.passed ? 'Passed' : 'Not passed'}. Your highest score is kept.`);
       setSavedResult(saved);
@@ -279,7 +284,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
   const displayedAnswers = attemptId ? answers : previousSelections(data);
   const reviewing = !attemptId && (data.history.length > 0 || data.historical.answers.length > 0);
   const isComplete = completed || data.completed || savedResult?.completed || data.history.some((attempt) => attempt.completed);
-  const reviewOnly = readOnly || reviewLocked || ((catalogueQuiz || !quiz) && isComplete && !retakeGranted);
+  const reviewOnly = !active || readOnly || reviewLocked || ((catalogueQuiz || !quiz) && isComplete && !retakeGranted);
   const answered = quiz?.questions.every((question) => (answers[question.id]?.length || 0) > 0) ?? true;
   const needsConfirmation = !!quiz && data.has_reading;
   const blockedReason = !data.persistence_ready
@@ -292,6 +297,10 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
     ? quiz ? 'Complete the quiz and submit your answers. Passing records this activity as complete.' : isComplete ? 'This activity is complete and included in your progress.' : 'When finished, select Finish to save your study time and completion.'
     : '');
   const hasPreviousAttempt = !!(isComplete || data.history.length || data.historical.attempt_number || savedResult);
+  const dateReady = !declaredCompletion || (!!declaredCompletion.day && !!declaredCompletion.time);
+  const dateWarning = declaredCompletion?.day && declaredCompletion.time
+    ? workingRuleFailure(declaredCompletion.day, declaredCompletion.time)?.message : null;
+  const formatCompletion = (value: string) => new Date(value).toLocaleString('en-GB', { timeZone: 'Europe/London' });
   const actionClass = 'shrink-0 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50';
   return <div ref={activityElement} className="space-y-6 rounded-2xl border border-foreground-200 bg-white p-4 sm:p-6">
     {retakeGranted && !readOnly && <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm text-primary-800">One additional quiz attempt is available. Your completed record will be kept.</p>}
@@ -328,8 +337,23 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
         </fieldset>
         {!attemptId && error && !hasPreviousAttempt
           ? <button type="button" onClick={() => void beginAttempt()} disabled={actionsDisabled} className={actionClass}>Retry activity</button>
-          : <button type="button" onClick={() => void submit()} disabled={!attemptId || actionsDisabled || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? attemptId ? 'Saving…' : 'Preparing activity…' : quiz ? 'Submit answers' : 'Finish'}</button>}
+          : <button type="button" onClick={() => void submit()} disabled={!attemptId || actionsDisabled || !answered || !dateReady || (needsConfirmation && !confirmed)} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? attemptId ? 'Saving…' : 'Preparing activity…' : quiz ? 'Submit answers' : 'Finish'}</button>}
       </div>}
+      {allowCompletionDate && !reviewOnly && !!attemptId && <fieldset disabled={actionsDisabled} className="space-y-3 text-sm">
+        <legend className="sr-only">Completion date and time</legend>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={!!declaredCompletion}
+          onChange={event => study.setDeclaredCompletion(event.target.checked ? { day: '', time: '' } : undefined)} />Use an earlier completion date</label>
+        {declaredCompletion && <div className="flex flex-wrap gap-3">
+          <label>Completion date<input type="date" value={declaredCompletion.day} max={ukDateKey(new Date())}
+            onChange={event => study.setDeclaredCompletion({ ...declaredCompletion, day: event.target.value })}
+            className="mt-1 block rounded-lg border border-foreground-300 px-3 py-2" /></label>
+          <label>Completion time (UK)<input type="time" value={declaredCompletion.time}
+            onChange={event => study.setDeclaredCompletion({ ...declaredCompletion, time: event.target.value })}
+            className="mt-1 block rounded-lg border border-foreground-300 px-3 py-2" /></label>
+        </div>}
+        <p className="text-xs text-foreground-500">{declaredCompletion ? 'Choose when you completed this part, in UK time. Your submission time is also saved.' : 'The completion date and time will be recorded when you submit.'}</p>
+        {dateWarning && <p role="status" className="text-xs text-amber-800">{dateWarning} You can still record when you did this work.</p>}
+      </fieldset>}
       {!reviewOnly && !!attemptId && <div className="flex flex-wrap items-center gap-3 text-xs text-foreground-600">
         <button type="button" disabled={actionsDisabled} className="rounded-lg border border-primary-300 px-3 py-1 font-semibold" onClick={() => study.setPaused(!study.paused)}>{study.paused ? 'Resume timer' : 'Pause timer'}</button>
         <span>{videoActivity && (untrackedVideo || data.media.some(item => isVideoMaterial(item) && item.can_embed === false))
@@ -339,20 +363,21 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
       </div>}
       {study.storageError && <p role="alert" className="text-sm text-amber-800">{study.storageError}</p>}
       {savedResult?.study_time && <p className="text-sm text-emerald-700">Study time saved: {studyClock(savedResult.study_time.selectedSeconds ?? savedResult.study_time.verifiedSeconds)}</p>}
+      {allowCompletionDate && savedResult?.completed && savedResult.study_time && <p className="text-sm text-emerald-700">Completed on {formatCompletion(savedResult.study_time.declaredCompletedAt || savedResult.study_time.submittedAt)} (UK)</p>}
       {!readOnly && !reviewQuiz && completionHint && <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>{completionHint}</p>}
       {!reviewOnly && needsConfirmation && !!attemptId && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={actionsDisabled} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
     </section>
-    {reviewQuiz && data.historical.attempt_number == null && data.historical.score == null && !data.historical.answers.length && <p className="text-sm text-foreground-500">No saved attempt is available for this quiz.</p>}
+    {reviewQuiz && data.historical.attempt_number == null && data.historical.score == null && !data.historical.answers.length && !data.history.length && <p className="text-sm text-foreground-500">No saved attempt is available for this quiz.</p>}
     {(data.historical.answers.length > 0 || data.historical.score != null || data.history.length > 0) && <section className="space-y-3 border-t pt-4" aria-label="Attempt history">
       <h4 className="font-bold">Your attempt history</h4>
       {reviewQuiz && <p className="text-sm text-foreground-600">{[data.historical.attempt_number != null ? `Attempt ${data.historical.attempt_number}` : '', data.historical.passed === true ? 'Passed' : data.historical.passed === false ? 'Not passed' : ''].filter(Boolean).join(' · ')}</p>}
       {(data.historical.answers.length > 0 || data.historical.score != null) && <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold">Previous learning{data.historical.score != null ? ` · ${data.historical.score}${data.historical.maximum_score ? ` / ${data.historical.maximum_score}` : ''}` : ''}</summary>
         <div className="mt-3 space-y-4">{data.historical.answers.map((answer, index) => <div key={`${answer.question_id}:${index}`}><Html value={answer.question_body || `Question ${index + 1}`} /><p className="mt-1 text-sm text-foreground-600">Your answer: {Array.isArray(answer.learner_answer) ? answer.learner_answer.map(String).join(', ') : String(answer.learner_answer ?? 'Not recorded')}</p></div>)}</div>
       </details>}
-      {data.history.map((attempt) => <details key={attempt.id} className="rounded-xl border p-3"><summary className="cursor-pointer text-sm">{new Date(attempt.submitted_at).toLocaleString('en-GB')} · {attempt.score_percent == null ? 'Activity completed' : `${Number(attempt.score_percent).toFixed(0)}% · ${attempt.passed ? 'Passed' : 'Not passed'}`}</summary>
-        <div className="mt-3 space-y-3">{attempt.study_time && <p className="text-sm">{attempt.study_time.timeEntrySource === 'input' ? 'Manual study time' : 'Measured study time'}: {studyClock(attempt.study_time.selectedSeconds ?? attempt.study_time.verifiedSeconds)}</p>}{attempt.answer_review?.map((answer, index) => <div key={index}><Html value={answer.question} /><p className="text-sm">Your answer: {answer.selected.join(', ')} · {answer.correct ? 'Correct' : 'Incorrect'}</p></div>)}</div>
+      {data.history.map((attempt) => <details key={attempt.id} className="rounded-xl border p-3"><summary className="cursor-pointer text-sm">{allowCompletionDate ? `${formatCompletion(attempt.study_time?.declaredCompletedAt || attempt.submitted_at)} (UK)` : new Date(attempt.submitted_at).toLocaleString('en-GB')} · {attempt.score_percent == null ? 'Activity completed' : `${Number(attempt.score_percent).toFixed(0)}% · ${attempt.passed ? 'Passed' : 'Not passed'}`}</summary>
+        <div className="mt-3 space-y-3">{attempt.study_time && <p className="text-sm">{attempt.study_time.timeEntrySource === 'input' ? 'Manual study time' : 'Measured study time'}: {studyClock(attempt.study_time.selectedSeconds ?? attempt.study_time.verifiedSeconds)}</p>}{allowCompletionDate && attempt.study_time && <p className="text-sm">{attempt.completed ? 'Completed' : 'Attempted'} on {formatCompletion(attempt.study_time.declaredCompletedAt || attempt.study_time.submittedAt)} (UK). Submitted {formatCompletion(attempt.study_time.submittedAt)} (UK).</p>}{attempt.answer_review?.map((answer, index) => <div key={index}><Html value={answer.question} /><p className="text-sm">Your answer: {answer.selected.join(', ')} · {answer.correct ? 'Correct' : 'Incorrect'}</p></div>)}</div>
       </details>)}
     </section>}
     {timeConfirmation}

@@ -4,7 +4,7 @@ import type { TimeTrackingSession } from '@/api/timeTracking';
 
 type Answers = Record<string, string[]>;
 type Draft = { key: string; attemptId: string; timing: TimeTrackingSession; elapsedSeconds: number;
-  answers: Answers; confirmed: boolean; manualSeconds?: number | null };
+  answers: Answers; confirmed: boolean; manualSeconds?: number | null; declaredCompletion?: { day: string; time: string } };
 
 function restore(key: string): Draft | null {
   try {
@@ -102,5 +102,7 @@ export function useLegacyStudySession(key: string, enabled: boolean, suspended: 
   const setConfirmed = (confirmed: boolean) => setDraft(value => value?.key === key ? { ...value, confirmed } : value);
   const setManualSeconds = (manualSeconds: number | null) => setDraft(value => value?.key === key
     ? { ...value, manualSeconds } : value);
-  return { draft: current, begin, clear, setAnswers, setConfirmed, setManualSeconds, paused, setPaused, setPlaying, running, storageError };
+  const setDeclaredCompletion = (declaredCompletion?: Draft['declaredCompletion']) => setDraft(value => value?.key === key
+    ? { ...value, declaredCompletion } : value);
+  return { draft: current, begin, clear, setAnswers, setConfirmed, setManualSeconds, setDeclaredCompletion, paused, setPaused, setPlaying, running, storageError };
 }

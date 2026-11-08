@@ -1430,16 +1430,17 @@ const COMPONENT_PICKER_DESCRIPTIONS: Partial<Record<ModuleComponentType, string>
   assignment: 'Set a task for learners to submit.',
 };
 
-function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse }: {
+function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse, selfStudyOnly = false }: {
   atIndex: number;
   componentCount: number;
   onPick: (type: ModuleComponentType) => void;
   onClose: () => void;
   onReuse?: () => void;
+  selfStudyOnly?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
-  const visibleTypes = weekPaletteTypes.filter(type => (
+  const visibleTypes = weekPaletteTypes.filter(type => (!selfStudyOnly || type.type !== 'live-session') && (
     !query
     || type.label.toLowerCase().includes(query)
     || type.group.toLowerCase().includes(query)
@@ -1542,6 +1543,7 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
 // list (and whatever persistence — save-to-template vs save-to-module — sits
 // on top of it), via a single `onChange(nextComponents)` callback.
 export interface WeekComponentRailProps {
+  selfStudyOnly?: boolean;
   weekId: string;
   displayWeek?: SessionTitleWeek;
   components: ModuleComponent[];
@@ -1589,7 +1591,7 @@ export interface WeekComponentRailProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1779,6 +1781,7 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
       )}
       {pickerIndex !== null && (
         <ComponentTypePickerDialog
+          selfStudyOnly={selfStudyOnly}
           atIndex={pickerIndex}
           componentCount={components.length}
           onPick={type => addComponentAt(type, pickerIndex)}
@@ -2004,6 +2007,7 @@ function SaveStatus({ dirty, saving, isNew }: { dirty: boolean; saving: boolean;
 // importable quizzes and stamp newly-created ones.
 export interface ComponentBodyProps {
   component: ModuleComponent;
+  selfStudyOnly?: boolean;
   onChange: (patch: Partial<ModuleComponent>) => void;
   setSetting: (key: string, value: ComponentSettingValue) => void;
   groupOptions: GroupOption[];
@@ -2031,7 +2035,7 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, displayWeek, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string }) {
+export function ComponentEditor({ component, displayWeek, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly = false }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string; selfStudyOnly?: boolean }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2047,7 +2051,7 @@ export function ComponentEditor({ component, displayWeek, onChange, onBack, grou
       ? manualLiveSessionLinkSettings(component.settings, String(value))
       : { ...component.settings, [key]: value },
   });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly };
 
   return (
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -2440,7 +2444,7 @@ function LinkedRecordingsSection({ component, recordingLinks }: Pick<ComponentBo
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId, recordingLinks }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId, recordingLinks, selfStudyOnly }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   // An explicit edit always wins; otherwise default to the date/time the week is
   // actually scheduled on (the group-creation clock), so the fields read
@@ -2456,7 +2460,12 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
         <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
 
-        {hasMeeting ? (
+        {selfStudyOnly ? (
+          <div className="mt-4">
+            <Field label="Existing Microsoft Teams link"><input value={s('liveSessionUrl') || s('teamsMeetingUrl')} readOnly className={inputClass} /></Field>
+            <p className="mt-2 text-xs text-foreground-500">This existing live activity is retained. Meeting changes are unavailable in a free course.</p>
+          </div>
+        ) : hasMeeting ? (
           // Meeting created: the join link is read-only (copy/open only).
           <LiveSessionScheduleEditor
             component={component}

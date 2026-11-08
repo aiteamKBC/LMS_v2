@@ -627,8 +627,10 @@ const completeResult: SubjectAttemptResult = { score_percent: null, passed: null
 function mockMaterialRequests(material = activityMaterial, save: () => Promise<SubjectAttemptResult> = async () => completeResult) {
   return vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string, options?: Parameters<typeof fetch>[1]): Promise<T> => {
     if (url.includes('/subject-covers/')) return { covers: {} } as T;
-    if (options?.method !== 'POST') return material as T;
-    if (url.endsWith('/attempts/')) return { attempt_id: 'attempt-1', definition: { quiz: material.quiz }, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: material.quiz ? 'active_quiz' : 'visible_page' } } as T;
+    const content = url.includes('activity_part=reading') ? { ...material, quiz: null }
+      : url.includes('catalogue_kind=quiz') && material.quiz ? { ...material, reading_html: '', media: [], has_reading: false } : material;
+    if (options?.method !== 'POST') return content as T;
+    if (url.split('?')[0].endsWith('/attempts/')) return { attempt_id: 'attempt-1', definition: { quiz: content.quiz }, timing: { trackingToken: 'synthetic-token', startedAt: new Date().toISOString(), countingMode: content.quiz ? 'active_quiz' : 'visible_page' } } as T;
     return await save() as T;
   });
 }
@@ -636,7 +638,7 @@ function mockMaterialRequests(material = activityMaterial, save: () => Promise<S
 describe('subject months, weeks and completion', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
-  it.each(['commercial', 'apprenticeship'])('opens linked Reading + Quiz together once without changing saved totals (%s)', async kind => {
+  it.each(['commercial', 'apprenticeship'])('opens linked Reading + Quiz together with separate controls without changing saved totals (%s)', async kind => {
     const requests = mockMaterialRequests({ ...activityMaterial, reading_html: '<p>Chapter text</p>', quiz: {
       id: '20', body: '', ready: true, message: '', passing_percent: 70,
       questions: [{ id: '1', type: 'single_choice', text: 'Chapter question', options: [{ id: 'a', text: 'Chapter answer' }] }],
@@ -656,11 +658,40 @@ describe('subject months, weeks and completion', () => {
     expect(screen.getByText('Chapter answer')).toBeVisible();
     expect(screen.getAllByText('0 of 2 completed')).toHaveLength(2);
     const reads = requests.mock.calls.filter(([url, options]) => url.includes('/student-activity/') && options?.method !== 'POST');
-    expect(reads).toHaveLength(1);
-    expect(reads[0][0]).toContain('group_id=1&activity_id=11');
-    expect(reads[0][0]).not.toContain('catalogue_kind=quiz');
-    await waitFor(() => expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/') && options?.method === 'POST')).toHaveLength(1));
+    expect(reads).toHaveLength(2);
+    expect(reads.some(([url]) => url.includes('group_id=1&activity_id=11&activity_part=reading'))).toBe(true);
+    expect(reads.some(([url]) => url.includes('group_id=1&activity_id=20&catalogue_kind=quiz'))).toBe(true);
+    await waitFor(() => expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/?activity_part=reading') && options?.method === 'POST')).toHaveLength(1));
+    expect(requests.mock.calls.some(([url, options]) => url.endsWith('/attempts/?catalogue_kind=quiz') && options?.method === 'POST')).toBe(false);
     expect(requests.mock.calls.some(([url]) => url.endsWith('/attempt-1/'))).toBe(false);
+  });
+
+  it.each(['reading', 'quiz'])('updates course and week progress for only the unfinished paired %s', async missing => {
+    mockMaterialRequests({ ...activityMaterial, reading_html: '<p>Chapter text</p>', quiz: {
+      id: '20', body: '', ready: true, message: '', passing_percent: 70,
+      questions: [{ id: '1', type: 'single_choice', text: 'Chapter question', options: [{ id: 'a', text: 'Chapter answer' }] }],
+    } }, async () => ({ ...completeResult, passed: missing === 'quiz' ? true : null }));
+    const paired = { ...data, activities: [
+      { ...data.activities[1], activity_id: 'catalogue:1:material:11', catalogue_kind: 'material', category: 'Reading+Quiz', completed: missing !== 'reading' },
+      { ...data.activities[1], activity_id: 'catalogue:1:quiz:20', source_activity_id: 20, catalogue_kind: 'quiz', category: 'quiz',
+        completed: missing !== 'quiz', activity: 'Companion quiz', source_material_activity_id: 'catalogue:1:material:11' },
+    ] };
+    const onProgress = vi.fn();
+    render(<StudentActivityPanel data={paired} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} onProgress={onProgress} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    const action = missing === 'reading' ? 'Finish' : 'Submit answers';
+    if (missing === 'quiz') {
+      await waitFor(() => expect(screen.getByRole('radio', { name: 'Chapter answer' })).toBeEnabled());
+      fireEvent.click(screen.getByRole('radio', { name: 'Chapter answer' }));
+    }
+    await waitFor(() => expect(screen.getByRole('button', { name: action })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: action }));
+    await waitFor(() => expect(onProgress).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ total: 2, completed: 2 }),
+    ])));
+    expect(screen.getAllByText('2 of 2 completed')).toHaveLength(2);
+    expect(screen.getByText('Reading · Complete')).toBeVisible();
+    expect(screen.getByText('Quiz · Complete')).toBeVisible();
   });
 
   it.each(['commercial', 'apprenticeship'])('opens the dated current-week component before unfinished introduction content (%s)', async kind => {

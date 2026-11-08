@@ -435,6 +435,19 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
     row = stored['_source']
     definition = _local_pdf_urls(_definition_for(stored, group_id, attachment_resolver=attachment_resolver),
                                  kind, pk, group_id, row['activity_id'])
+    part = request.GET.get('activity_part')
+    reading_completed = None
+    if part is not None:
+        if part != 'reading':
+            return _error('Invalid activity part.', 400)
+        from .combined_activity import reading_part
+        from . import canonical_learning
+        try:
+            definition, reading_completed = reading_part(pk, aptem_id, group_id, row['activity_id'], definition)
+        except canonical_learning.ServiceError as error:
+            return _error(str(error), error.status)
+        except DatabaseError:
+            return _error('Could not load reading progress. Please retry.', 503)
     try:
         saved = subject_store.state(pk, aptem_id, row['activity_id'], group_id=group_id)
     except DatabaseError:
@@ -463,6 +476,13 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                    or staff_owns_learner(account, pk)
                )),
                'csrf_token': get_token(request)}
+    if part == 'reading':
+        # Retained combined quiz answers stay on the quiz. A reading-only save
+        # must neither reset them nor appear as another quiz attempt.
+        payload.update(completed=reading_completed,
+            history=[attempt for attempt in saved['history'] if attempt.get('kind') == 'activity'],
+            historical={'score': None, 'maximum_score': None, 'passed': None,
+                'attempt_number': None, 'answers': [], 'status': 'completed' if reading_completed else None})
     return _private(payload)
 
 
@@ -582,6 +602,9 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
     from . import canonical_learning
     try:
         catalogue_kind = request.GET.get('catalogue_kind', 'material')
+        part = request.GET.get('activity_part')
+        if part is not None and (part != 'reading' or catalogue_kind != 'material'):
+            return _error('Invalid activity part.', 400)
         if catalogue_kind == 'quiz':
             from .subject_content import quiz_definition
             from .subject_quiz import imported_quiz
@@ -599,6 +622,11 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
         elif catalogue_kind == 'material':
             aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
             definition = _definition_for(stored, group_id)
+            if part == 'reading':
+                from .combined_activity import reading_part
+                definition, completed = reading_part(pk, aptem_id, group_id, activity_id, definition)
+                if completed:
+                    return _error('This reading is already complete. You can review it.', 409)
         else:
             return _error('Invalid activity kind.', 400)
         if definition.get('quiz') and not definition['quiz']['ready']:
@@ -650,11 +678,15 @@ def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id)
         catalogue_kind = request.GET.get('catalogue_kind', 'material')
         if catalogue_kind not in {'material', 'quiz'}:
             return _error('Invalid activity kind.', 400)
+        part = request.GET.get('activity_part')
+        if part is not None and (part != 'reading' or catalogue_kind != 'material'):
+            return _error('Invalid activity part.', 400)
         reader = _owned_quiz if catalogue_kind == 'quiz' else _owned_material
         aptem_id, _stored = reader(kind, pk, group_id, activity_id)
         result = subject_store.finish(pk, aptem_id, group_id, activity_id, str(attempt_id),
                                       payload.get('answers', {}), payload.get('reading_confirmed') is True,
-                                      catalogue_kind=catalogue_kind, learner_kind=kind, timing_payload=payload)
+                                      catalogue_kind=catalogue_kind, learner_kind=kind, timing_payload=payload,
+                                      **({'activity_part': part} if part else {}))
         return _private(result)
     except canonical_learning.ServiceError as error:
         return _error(str(error), error.status)
