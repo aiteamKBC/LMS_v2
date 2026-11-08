@@ -99,11 +99,10 @@ def progress(request):
                 return JsonResponse({'error': 'A learner is no longer in this scope. Reload the list.'}, status=409)
             with views.curriculum_read_scope(targeted_child_reads=True):
                 module_ids = {str(row['module_catalogue_id']) for row in views.authoring_scope_module_rows(scope, identifier)}
-            from . import learner_compat
-            sources = {str(source.pk): source for source in learner_compat.fill(
-                learner_compat.only(EnrolmentUser.all_learners, *SOURCE_FIELDS).filter(
-                    pk__in=[by_id[value]['enrolmentId'] for value in ids if by_id[value].get('enrolmentId')]),
-                EnrolmentUser)}
+            from learner_api.placement_links import with_placements
+            sources = {str(source.pk): source for source in with_placements(
+                EnrolmentUser.all_learners.only(*SOURCE_FIELDS).filter(
+                    pk__in=[by_id[value]['enrolmentId'] for value in ids if by_id[value].get('enrolmentId')]))}
             today = timezone.now().astimezone(UK).date().isoformat()
             result = {}
             for value in ids:

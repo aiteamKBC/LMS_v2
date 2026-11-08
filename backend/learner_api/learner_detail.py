@@ -26,6 +26,7 @@ from django.http import JsonResponse
 from .projection_performance import measure_projection
 from django.utils import timezone
 
+from login.errors import DATABASE_ERRORS, database_unavailable
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
@@ -36,12 +37,14 @@ from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
 from .learning_plan import effective_training_plan
-from .programme_access import learning_access
+from .programme_access import cohort_programme_filter, learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 from .retained_quiz_progress import retain_quiz_progress
 from .student_activity_access import student_activity_available
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, standard_ksb_join_sql
+from .module_placement_sql import current_module_sql
 
 logger = logging.getLogger(__name__)
 
@@ -667,10 +670,13 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
             elif module_order:
                 cur.execute(
                     """
-                    SELECT m.module_catalogue_id, m.title, COALESCE(m.programme_id, ''), COALESCE(m.programme_name, '')
+                    SELECT m.module_catalogue_id, m.title, COALESCE(m.programme_id, ''),
+                           COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(p.name) END
+                                       FROM curriculum.programmes p
+                                      WHERE p.programme_id = m.programme_id
+                                        AND btrim(coalesce(m.programme_id, '')) <> ''), '')
                     FROM curriculum.modules m
                     WHERE m.module_catalogue_id = ANY(%s)
-                      AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
                     """,
                     [module_order],
                 )
@@ -1236,8 +1242,12 @@ def persist_live_otjh_snapshot(learner_profile, snapshot):
     if learner_profile is None:
         return []
 
+    # planned_hours is the owner-managed official programme total, never a
+    # cache of this snapshot: the derived figure (components plus reviews) is
+    # returned to the caller in snapshot["plannedHours"] but is not stored, so a
+    # page load cannot overwrite the official value, zero-fill a NULL or replace
+    # a real zero.
     calculated = {
-        "planned_hours": snapshot["planned_hours"],
         "completed_hours": snapshot["completed_hours"],
         "target_hours": snapshot["target_hours"],
         "progress_hours": snapshot["progress_hours"],
@@ -1435,7 +1445,7 @@ def _component_files(settings, resource_url, file_name):
     return [{"fileName": file_name, "url": resource_url, "size": 0, "contentType": None}] if resource_url else []
 
 
-def _cohort_schedule(cohort_name, programme_name, cohort_id=""):
+def _cohort_schedule(cohort_name, programme_name, cohort_id="", programme_id=""):
     """The dates the learner's cohort runs to, or an empty dict.
 
     Gateway is not something a learner reaches by finishing their modules early:
@@ -1445,9 +1455,14 @@ def _cohort_schedule(cohort_name, programme_name, cohort_id=""):
     than declaring someone Gateway-ready a year ahead of their cohort.
 
     The cohort is found by ``cohort_id`` when the learner's placement holds one,
-    so renaming the cohort does not take its dates off the learner page.
+    so renaming the cohort does not take its dates off the learner page. Without
+    one it is found by name within the learner's programme (by programme id, or
+    the programme's label resolved through curriculum.programmes); a name that
+    matches more than one cohort shows no dates rather than guessing. The
+    canonical cohorts schema has no deletion marker, so every row is live.
     """
     cohort_name, cohort_id = _s(cohort_name), _s(cohort_id)
+    programme_name, programme_id = _s(programme_name), _s(programme_id)
     if not cohort_name and not cohort_id:
         return {}
     columns = """
@@ -1458,19 +1473,16 @@ def _cohort_schedule(cohort_name, programme_name, cohort_id=""):
     try:
         with connections["default"].cursor() as cur:
             if cohort_id:
-                cur.execute(columns + " WHERE cohort_id = %s AND deleted_at IS NULL", [cohort_id])
+                cur.execute(columns + " WHERE cohort_id = %s", [cohort_id])
+                row = cur.fetchone()
             else:
-                cur.execute(
-                    columns + """
-                    WHERE cohort_name = %s
-                      AND (%s = '' OR programme_name = %s)
-                      AND deleted_at IS NULL
-                    ORDER BY updated_at DESC NULLS LAST
-                    LIMIT 1
-                    """,
-                    [cohort_name, _s(programme_name), _s(programme_name)],
-                )
-            row = cur.fetchone()
+                where, params = " WHERE cohort_name = %s", [cohort_name]
+                if programme_id or programme_name:
+                    in_programme, programme_params = cohort_programme_filter(programme_id, programme_name)
+                    where, params = f"{where} AND {in_programme}", [*params, *programme_params]
+                cur.execute(columns + where + " ORDER BY cohort_id LIMIT 2", params)
+                rows = cur.fetchall()
+                row = rows[0] if len(rows) == 1 else None
     except DatabaseError as exc:
         logger.warning("Could not read cohort schedule for %r: %s", cohort_name, exc)
         return {}
@@ -1500,11 +1512,12 @@ def _apply_cohort_schedule(detail, source):
     from .placement_links import placement_ids
 
     try:
-        cohort_id = placement_ids(source)["cohort_id"]
+        ids = placement_ids(source)
     except DatabaseError as exc:
         logger.warning("Could not read the placement ids for the cohort schedule: %s", exc)
-        cohort_id = ""
-    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", ""), cohort_id))
+        ids = {"cohort_id": "", "programme_id": ""}
+    if ids.get("cohort_id"):
+        detail.update(_cohort_schedule("", "", ids["cohort_id"], programme_id=ids.get("programme_id", "")))
 
 
 from .point_structure import POINT_SETTINGS_SQL, point_projection
@@ -1561,13 +1574,13 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 master_weeks = [row for row in resolved_metadata['weeks'] if row[1] in master_module_title]
             else:
                 cur.execute(
+                    # Only the learner's own assigned module ids are asked for.
+                    # The canonical curriculum.modules table has no deletion
+                    # marker and status is not a visibility rule, so every
+                    # assigned module row resolves; a module with no row stays
+                    # out of the live tree, as before.
                     "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
-                    "WHERE m.module_catalogue_id = ANY(%s) "
-                    # An assignment is a learner-owned snapshot. Keep content that
-                    # was cascade-hidden with its parent programme available to an
-                    # already-assigned learner; a row deleted on its own remains
-                    # excluded. ``deleted_via_parent`` distinguishes the two cases.
-                    "AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')",
+                    "WHERE m.module_catalogue_id = ANY(%s)",
                     [module_ids],
                 )
                 master_module_title = {mid: title for mid, title in cur.fetchall()}
@@ -1663,7 +1676,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
 
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
-                              "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required")
+                              f"live_sessions_link, display_order, {component_ksb_mappings_sql('components')} AS ksb_mappings, "
+                              "reflection_required, \"Reflection_Question\", tutor_validation_required")
             schedule_column = ''
             if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
                 from .builder_activity_dates import COMPONENT_SCHEDULE_SETTINGS
@@ -1873,19 +1887,22 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # automatically (see components.py), so the UI shows what will be
             # credited rather than asking.
             if component_ids and not routing_only:
-                ksb_description = 'NULL AS ksb_description' if compact_content else 'mapping.ksb_description'
+                ksb_description = ('NULL AS ksb_description' if compact_content
+                                   else 'standard_ksb.ksb_description AS ksb_description')
                 component_scope = ('WHERE mapping.component_id=ANY(%s) '
                     if compact_content else
                     'JOIN curriculum.components component ON component.id = mapping.component_id '
                     'WHERE component.module_catalogue_id = ANY(%s) AND component.id = ANY(%s) '
                     f"AND {visible_child_sql('component')} ")
                 cur.execute(
-                    f"SELECT mapping.component_id, mapping.ksb_code, {ksb_description}, "
+                    f"SELECT mapping.component_id, standard_ksb.ksb_code AS ksb_code, {ksb_description}, "
                     "mapping.classification, mapping.weight, mapping.weight_class "
                     "FROM curriculum.ksb_mappings mapping "
+                    + standard_ksb_join_sql('mapping', 'standard_ksb') + " "
                     + component_scope +
                     f"AND {visible_child_sql('mapping')} "
-                    "ORDER BY mapping.component_id, mapping.ksb_code",
+                    "AND nullif(btrim(standard_ksb.ksb_code),'') IS NOT NULL "
+                    "ORDER BY mapping.component_id, standard_ksb.ksb_code",
                     [component_ids] if compact_content else [module_ids, component_ids],
                 )
                 for comp_id, code, description, classification, weight, weight_class in cur.fetchall():
@@ -2273,6 +2290,27 @@ def _activity_module_components(components, component_id):
             not c.get('moduleId') and c.get('module') == selected.get('module'))]
 
 
+def _linked_profile_ids(pk):
+    """Ids of the profiles already linked to this enrolment (at most two read)."""
+    return tuple(LearnerProfile.objects.filter(enrolment_id=pk).values_list("pk", flat=True)[:2])
+
+
+def _official_planned_hours(learner_profile, linked_profile_ids, pk):
+    """Learner.learners.planned_hours, only for a profile verified by enrolment_id.
+
+    Verified means exactly one profile was linked to this enrolment before the
+    request resolved it, and it is the resolved one. A profile reached by email
+    or by an equal numeric id, or linked during this request, gives None; no
+    other hours source is ever substituted.
+    """
+    if (learner_profile is None or len(linked_profile_ids) != 1
+            or str(linked_profile_ids[0]) != str(getattr(learner_profile, "pk", None))
+            or str(getattr(learner_profile, "enrolment_id", None)) != str(pk)):
+        return None
+    from .official_hours import normalise_official_planned_hours
+    return normalise_official_planned_hours(getattr(learner_profile, "planned_hours", None))[0]
+
+
 def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_view=False,
                          activity_component_id=None):
     """The learner's full workspace payload for one already-loaded source row.
@@ -2292,6 +2330,9 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     if not read_only:
         hydrate_source_training_plan(source)
     assigned_modules = effective_training_plan(source)
+    # Read before resolution: the resolver may link an email-matched profile
+    # during this request, which must not count as a verified link.
+    linked_profile_ids = _linked_profile_ids(pk)
     learner_profile = _active_profile_for_source(source, pk, **({'heal': False} if activity_component_id else {}))
 
     if learner_profile and not learner_profile.ksbs and not read_only:
@@ -2304,6 +2345,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 
     detail = to_learner_detail(source, learner_profile)
+    detail["officialPlannedHours"] = _official_planned_hours(learner_profile, linked_profile_ids, pk)
     # Created_users.Attendance_type is the staff-owned delivery classification.
     # The live-session results view uses it to avoid presenting a Teams absence
     # workflow to learners whose programme is delivered through recordings.
@@ -2426,10 +2468,21 @@ def _authored_setting(source, component_id, setting_key, response_key):
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
             WHERE c.id=%s AND c.module_catalogue_id=ANY(%s)
               AND ''' + visible_child_sql('c') + '''
-              AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
+              AND ''' + current_module_sql('m') + '''
               AND ''' + visible_week_sql('w'), [component_id, module_ids])
         row = cursor.fetchone()
     return {"componentId": row[0], response_key: _s(row[1]) or None} if row else None
+
+
+LEARNER_DETAIL_UNAVAILABLE = "Could not load learner details. Please try again."
+LEARNER_SUMMARY_UNAVAILABLE = "Could not load learner summary. Please try again."
+
+
+def _learner_database_unavailable(operation, exc, kind, pk, message):
+    # The exception text can name tables, columns and values; it is never
+    # returned or logged. The route's kind and id are enough to find the learner.
+    return database_unavailable(operation, exc, message=message, logger=logger, area="Learner",
+                                context={"kind": kind, "learner_id": pk})
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -2447,8 +2500,9 @@ def learner_detail(request, kind, pk):
         source = model.all_learners.get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _learner_database_unavailable(
+            "learner_detail.source", exc, kind, pk, LEARNER_DETAIL_UNAVAILABLE)
 
     try:
         if request.GET.get("content") == "reading":
@@ -2490,8 +2544,9 @@ def learner_detail(request, kind, pk):
                 return JsonResponse(build_learner_detail(source, pk, **options))
     except ServiceError as exc:
         return _error(str(exc), exc.status)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _learner_database_unavailable(
+            "learner_detail.build", exc, kind, pk, LEARNER_DETAIL_UNAVAILABLE)
 
 
 def _first_session_unlocked(source, status):
@@ -2521,8 +2576,8 @@ def learner_summary(request, kind, pk):
 
     try:
         source = model.all_learners.only(
-            "id", "username", "email", "phone_number", "programme",
-            "programme_status", "cohort", "group", "employer", "employer_id", "organization",
+            "id", "username", "email", "phone_number",
+            "programme_status", "employer", "employer_id", "organization",
             "learner_type", "aptem_id", "start_date", "end_date",
             "learner_start_date", "learner_end_date",
             "practical_period_end_date", "apprenticeship_end_date",
@@ -2535,46 +2590,51 @@ def learner_summary(request, kind, pk):
         resolved_status = programme_status(source) or DEFAULT_PROGRAMME_STATUS
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DATABASE_ERRORS as exc:
+        return _learner_database_unavailable(
+            "learner_summary.source", exc, kind, pk, LEARNER_SUMMARY_UNAVAILABLE)
 
-    from .apprenticeship_agreement import _group_dates
+    try:
+        from .apprenticeship_agreement import _group_dates
 
-    start, end, origin = _group_dates(source)
-    # access_gate resolves the same programme start; reuse this request's answer
-    # instead of reading the cohort again.
-    source._resolved_group_dates = (start, end, origin)
-    return JsonResponse({
-        "id": str(source.id),
-        "name": _s(source.username),
-        "email": _s(source.email),
-        "phone": _s(source.phone_number),
-        "programme": _s(source.programme),
-        "programmeStatus": resolved_status,
-        # 'Submitted' once the learner hands in their enrolment wizard,
-        # 'Completed' once staff sign it off; the learner's Reviews unlock then.
-        "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
-        # A Delivery apprentice's First Learning Session tab unlocks once they
-        # have signed all four compliance documents (the sidebar reads this).
-        "firstSessionUnlocked": _first_session_unlocked(source, resolved_status),
-        "cohort": _s(source.cohort),
-        "group": _s(source.group),
-        "employer": _s(source.employer),
-        "employerId": source.employer_id,
-        "organization": _s(getattr(source, "organization", "")),
-        "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
-        "isActive": resolved_status.casefold() == "active",
-        "programmeStartDate": _iso_date(start),
-        # See mappers.learner_detail_payload: the learner's own recorded start,
-        # unmediated by the cohort fallback that programmeStartDate applies.
-        "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
-        # Mirrors learnerStartDate: the learner's own recorded end, straight
-        # from Created_users.Learner_end_date. programmeEndDate below resolves
-        # through the programme/apprenticeship columns, which stay empty for a
-        # learner whose end date is only recorded against themselves.
-        "learnerEndDate": _s(getattr(source, "learner_end_date", None)),
-        "programmeEndDate": _iso_date(source.end_date or source.practical_period_end_date or source.apprenticeship_end_date or end),
-        "accessGate": access_gate(source),
-        "learningAccess": learning_access(source),
-        "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
-    })
+        start, end, origin = _group_dates(source)
+        # access_gate resolves the same programme start; reuse this request's answer
+        # instead of reading the cohort again.
+        source._resolved_group_dates = (start, end, origin)
+        return JsonResponse({
+            "id": str(source.id),
+            "name": _s(source.username),
+            "email": _s(source.email),
+            "phone": _s(source.phone_number),
+            "programme": _s(source.programme),
+            "programmeStatus": resolved_status,
+            # 'Submitted' once the learner hands in their enrolment wizard,
+            # 'Completed' once staff sign it off; the learner's Reviews unlock then.
+            "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
+            # A Delivery apprentice's First Learning Session tab unlocks once they
+            # have signed all four compliance documents (the sidebar reads this).
+            "firstSessionUnlocked": _first_session_unlocked(source, resolved_status),
+            "cohort": _s(source.cohort),
+            "group": _s(source.group),
+            "employer": _s(source.employer),
+            "employerId": source.employer_id,
+            "organization": _s(getattr(source, "organization", "")),
+            "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
+            "isActive": resolved_status.casefold() == "active",
+            "programmeStartDate": _iso_date(start),
+            # See mappers.learner_detail_payload: the learner's own recorded start,
+            # unmediated by the cohort fallback that programmeStartDate applies.
+            "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
+            # Mirrors learnerStartDate: the learner's own recorded end, straight
+            # from Created_users.Learner_end_date. programmeEndDate below resolves
+            # through the programme/apprenticeship columns, which stay empty for a
+            # learner whose end date is only recorded against themselves.
+            "learnerEndDate": _s(getattr(source, "learner_end_date", None)),
+            "programmeEndDate": _iso_date(source.end_date or source.practical_period_end_date or source.apprenticeship_end_date or end),
+            "accessGate": access_gate(source),
+            "learningAccess": learning_access(source),
+            "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
+        })
+    except DATABASE_ERRORS as exc:
+        return _learner_database_unavailable(
+            "learner_summary.payload", exc, kind, pk, LEARNER_SUMMARY_UNAVAILABLE)

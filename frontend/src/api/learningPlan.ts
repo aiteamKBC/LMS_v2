@@ -93,6 +93,8 @@ export interface LearningPlanResponse {
     programme: string;
     /** The learner's own programme, which the picker opens on. */
     programmeId: string;
+    cohortId?: string;
+    groupId?: string;
     cohort: string;
     group: string;
     programmeStatus: string;

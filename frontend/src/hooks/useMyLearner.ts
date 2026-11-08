@@ -18,6 +18,7 @@ const STORAGE_KEY = 'my_learner';
 // Keep session identity independent of shared browser storage: another tab or
 // an old deep link must not switch a learner onto somebody else's record.
 let signedInLearner: { kind: LearnerKind; id: string } | null = null;
+let previewAccount: string | null = null;
 
 function isKind(v: unknown): v is LearnerKind {
   return v === 'commercial' || v === 'apprenticeship';
@@ -28,6 +29,8 @@ function readOverride(): { kind: LearnerKind; id: string } | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
+    if (parsed.previewAccount !== (previewAccount ?? undefined)) return null;
+    if (previewAccount && !/^[1-9]\d*$/.test(String(parsed.id))) return null;
     if (isKind(parsed.kind) && parsed.id) {
       return { kind: parsed.kind, id: String(parsed.id) };
     }
@@ -39,7 +42,7 @@ function readOverride(): { kind: LearnerKind; id: string } | null {
 export function getRememberedLearner(): { kind: LearnerKind; id: string } | null {
   const personal = ownPersonalLearning();
   if (personal) return { kind: 'commercial', id: personal.id };
-  return signedInLearner || readOverride() || MY_LEARNER;
+  return signedInLearner || readOverride() || (previewAccount ? null : MY_LEARNER);
 }
 
 /**
@@ -54,15 +57,16 @@ export function rememberSignedInLearner(
   subjectType: string | undefined,
   subjectId: number | string | undefined,
   learnerType?: string | null,
+  staffAccountScope?: string,
 ): void {
+  previewAccount = subjectType === 'staff' && staffAccountScope ? staffAccountScope : null;
   signedInLearner = subjectType === 'learner' && subjectId != null && subjectId !== ''
     ? { kind: learnerType === 'commercial' ? 'commercial' : 'apprenticeship', id: String(subjectId) }
     : null;
   if (signedInLearner) rememberLearner(signedInLearner.kind, signedInLearner.id);
-  else {
-    // A staff/admin session has no implicit learner target.  Remove any
-    // persisted review selection so a parameterless learner route cannot
-    // silently inherit the previous user's learner.
+  else if (!previewAccount || !readOverride()) {
+    // Restore only this staff account's explicit selection. Unscoped records,
+    // other accounts and sign-out must never inherit a previous preview.
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
   }
 }
@@ -79,16 +83,16 @@ export function rememberLearner(kind: string | undefined, id: string | undefined
   const current = readOverride();
   if (current && current.kind === kind && current.id === String(id)) return; // no-op if unchanged
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ kind, id: String(id) }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ kind, id: String(id), ...(previewAccount ? { previewAccount } : {}) }));
   } catch { /* storage unavailable — fall back to default */ }
 }
 
 /** Resolve which real learner the bare /learner/* self-view pages should load. */
-export function useMyLearner(): { kind: LearnerKind; id: string } {
+export function useMyLearner(): { kind: LearnerKind | undefined; id: string | undefined } {
   const { pathname } = useLocation();
   const fromUrl = learnerIdentityFromPath(pathname);
   if (signedInLearner) return signedInLearner;
-  return fromUrl || getRememberedLearner()!;
+  return fromUrl || getRememberedLearner() || { kind: undefined, id: undefined };
 }
 
 /** Preserve an explicit learner when following a Training Plan booking link. */
@@ -129,6 +133,6 @@ export function useResolvedLearner(
   }
   // No params — fall back to the remembered/default learner. (readOverride is
   // called directly, not via the useMyLearner hook, to keep this branch-safe.)
-  const my = readOverride() || (import.meta.env.MODE === 'test' ? MY_LEARNER : null);
+  const my = readOverride() || (!previewAccount && import.meta.env.MODE === 'test' ? MY_LEARNER : null);
   return my ? { kind: my.kind, id: my.id } : { kind: undefined, id: undefined };
 }

@@ -1,4 +1,4 @@
-import { DELIVERY_STATUS, PLAN_EDITABLE_STATUSES, isLearnerRow, combinedType, fillBlanks, mergeDirectoryRows, differs, rowTypes, matches, type DirectoryRow } from './page.helpers';
+import { DELIVERY_STATUS, PLAN_EDITABLE_STATUSES, isLearnerRow, directoryCategory, mergeDirectoryRows, differs, rowTypes, matches, type DirectoryRow } from './page.helpers';
 import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -10,10 +10,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { useListQueryState } from '@/hooks/useListQueryState';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
-import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
+import type { StaffUserRow } from '@/api/staffUsers';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
-import { listEmployers, type EmployerRow } from '@/api/employers';
+import type { EmployerRow } from '@/api/employers';
 import { fetchAttendanceModes, type SavedAttendanceMode } from '@/api/attendanceLectures';
+import { exportUsersCsv } from './directoryExport';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { SendInvitationButton } from './components/SendInvitationButton';
@@ -237,33 +238,15 @@ export default function UsersListPage() {
   const [shiftFor, setShiftFor] = useState<UserListRow | null>(null);
 
   // One directory for the whole enrolment section: every learner — both
-  // apprenticeship and commercial — comes from the single Enrolment_Users table
-  // in one call, each row carrying its own `learnerType`/`source`. Staff/admin
-  // accounts come from Staff_users, employer contacts from Employers.
-  //
-  // Only the learner call is allowed to fail the page: it's the bulk of the
-  // directory. The other two are swallowed so a missing table or a 502 on either
-  // one leaves the learners listed instead of blanking the whole screen.
+  // apprenticeship and commercial — comes from Created_users in one call.
+  // Independent staff/employer records never contribute directory rows.
   // Without the skeleton the rows stay mounted, so a row's open panel (a
   // just-issued set-password link) survives the reload.
   const fetchRows = (showSkeleton: boolean) => {
     if (showSkeleton) setLoading(true);
     setError(null);
-    Promise.all([
-      fetchEnrolmentUsers(),
-      fetchStaffUsers().catch(() => [] as StaffUserRow[]),
-      listEmployers().then((r) => r.results).catch(() => [] as EmployerRow[]),
-    ])
-      .then(([learners, staff, employers]) => {
-        // Merged, not concatenated: somebody who is both staff and a learner
-        // has a record in two of these lists and would otherwise appear twice.
-        setRows(mergeDirectoryRows([
-          ...learners,
-          // Staff rows already arrive in UserListRow shape from to_staff_row.
-          ...staff.map((r) => ({ ...r, source: 'staff' as const })),
-          ...employers.map(employerToRow),
-        ]));
-      })
+    fetchEnrolmentUsers()
+      .then((users) => setRows(mergeDirectoryRows(users)))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   };
@@ -397,25 +380,28 @@ export default function UsersListPage() {
     // load, or if they fail, no learner can be shown as matching either mode.
     if (applied.attendanceMode && (!isLearnerRow(r) || attendanceModes === null || attendanceModes === 'failed'
       || rowAttendanceMode(attendanceModes, r) !== applied.attendanceMode)) return false;
-    if (summaryFilter === 'learners') return isLearnerRow(r);
-    if (summaryFilter === 'admins') return r.source === 'staff';
-    if (summaryFilter === 'employers') return r.source === 'employer';
+    if (summaryFilter === 'learners' || summaryFilter === 'admins' || summaryFilter === 'employers') {
+      return directoryCategory(r) === summaryFilter;
+    }
     if (summaryFilter === 'active') return r.programmeStatus === 'Active';
     return true;
   }), [rows, applied, summaryFilter, searchTerm, attendanceModes]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const exportUnavailable = loading || !!error || attendanceModes === null
+    || (!!applied.attendanceMode && attendanceModes === 'failed');
+  const exportMatchingUsers = () => {
+    if (exportUnavailable) return;
+    exportUsersCsv(filtered, row => attendanceModes === 'failed' ? '—'
+      : rowAttendanceMode(attendanceModes, row) === 'lazy' ? 'Recorded' : 'Live Sessions');
+  };
   const showingStart = filtered.length ? (page - 1) * PAGE_SIZE + 1 : 0;
   const showingEnd = filtered.length ? Math.min(page * PAGE_SIZE, filtered.length) : 0;
 
-  // By source, like the two counts below it: a learner whose Type has been set
-  // to Referrer or Caseowner is still a learner, and dropping them out of this
-  // count made the three tiles stop adding up to the table.
-  const learners = rows.filter(isLearnerRow).length;
-  // Counted by source, not "not a learner": employers are in the table too now,
-  // and lumping them under Admins would misreport both.
-  const admins = rows.filter((r) => r.source === 'staff').length;
-  const employerCount = rows.filter((r) => r.source === 'employer').length;
+  // Every row originates in Created_users; summary counts use its Type.
+  const learners = rows.filter((r) => directoryCategory(r) === 'learners').length;
+  const admins = rows.filter((r) => directoryCategory(r) === 'admins').length;
+  const employerCount = rows.filter((r) => directoryCategory(r) === 'employers').length;
   const active = rows.filter((r) => r.programmeStatus === 'Active').length;
 
   // Choosing a programme or cohort invalidates the levels below it, so a stale
@@ -437,8 +423,7 @@ export default function UsersListPage() {
   const updateQuickSearch = (value: string) => setQueryValues({ search: value }, { resetPage: true });
   const reset = () => { setDraft(EMPTY_FILTER); resetQuery(); };
   const selectSummary = (next: SummaryFilter) => setQueryValues({ summary: next }, { resetPage: true });
-  // Commercial and apprenticeship ids come from different tables and overlap,
-  // so every row action carries the row's source.
+  // Both kinds use Created_users IDs; keep the kind in existing action routes.
   const q = (row: UserListRow) => (row.source === 'commercial' ? '?source=commercial' : '');
   // Staff and employers live in their own tables and have no learner
   // profile/wizard, so their rows aren't links — routing one to /users/<id>
@@ -471,20 +456,11 @@ export default function UsersListPage() {
     );
   };
 
-  // Same in-place patch for a learner. `load()` follows behind, because the
-  // server derives things this row cannot: Subscription verified follows
-  // Status, and moving a learner's programme, cohort or group re-stamps their
-  // delivery window and can advance their programme status.
-  const applyLearnerUpdate = (updated: UserListRow) => {
-    setRows((prev) =>
-      prev.map((r) => (r.source === updated.source && r.id === updated.id ? { ...r, ...updated } : r)),
-    );
-    load();
-  };
+  // Write responses use shared mappers; refresh the authoritative directory
+  // projection instead of copying another workflow's placement/status values.
+  const applyLearnerUpdate = () => load();
 
-  const applyLearnerImport = (imported: UserListRow[]) => {
-    // Keep the saved rows in local state while refreshing server-derived fields.
-    setRows(previous => mergeDirectoryRows([...imported, ...previous]));
+  const applyLearnerImport = () => {
     setQueryValues({ page: 1 });
     load();
   };
@@ -653,7 +629,7 @@ export default function UsersListPage() {
             </div>
             <div className="flex items-center gap-2">
               <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><AppIcon className="ri-layout-column-line" />Columns</button>
-              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700"><AppIcon className="ri-download-line" />Export<AppIcon className="ri-arrow-down-s-line" /></button>
+              <button type="button" onClick={exportMatchingUsers} disabled={exportUnavailable} title="Download matching users as CSV" className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-download-line" />Export<AppIcon className="ri-arrow-down-s-line" /></button>
             </div>
           </div>
           <div className="overflow-x-auto">

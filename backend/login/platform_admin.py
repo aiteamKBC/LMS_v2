@@ -50,6 +50,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from curriculum_api.programme_name_sql import programme_name_sql
+
 from . import email_azure
 from .identity import permissions_for
 from .models import (
@@ -1390,13 +1392,12 @@ def curriculum(request):
     error, programmes = _optional_rows(adapt_sql(
         '''SELECT p.name AS name,
                   (SELECT count(*) FROM curriculum.cohorts c
-                     WHERE c.programme_name = p.name OR c.programme_id = p.programme_id)
+                     WHERE c.programme_id = p.programme_id)
                                                                     AS cohort_count,
                   (SELECT count(*) FROM curriculum.modules m
                      WHERE m.programme_id = p.programme_id)         AS module_count,
                   (SELECT count(*) FROM enrolment."Created_users" u
-                     WHERE to_jsonb(u)->>'Programme' = p.name
-                        OR to_jsonb(u)->>'programme_id' = p.programme_id)  AS learner_count
+                     WHERE u.programme_id = p.programme_id)         AS learner_count
            FROM (SELECT DISTINCT COALESCE(NULLIF(name,''), programme_id) AS name, programme_id
                  FROM curriculum.programmes
                  WHERE COALESCE(is_archived, false) = false) p
@@ -1407,19 +1408,19 @@ def curriculum(request):
     programme_filter = (request.GET.get("programme") or "").strip()
     cohort_sql = '''
         SELECT c.cohort_name AS name,
-               COALESCE(NULLIF(c.programme_name,''), c.programme_id) AS programme,
+               COALESCE(NULLIF(''' + programme_name_sql('c') + ''',''), c.programme_id) AS programme,
                (SELECT count(*) FROM enrolment."Created_users" u
-                  WHERE to_jsonb(u)->>'Cohort' = c.cohort_name
-                     OR to_jsonb(u)->>'cohort_id' = c.cohort_id)     AS learner_count,
+                  WHERE u.cohort_id = c.cohort_id)     AS learner_count,
                min(c.start_date) AS start_date, max(c.end_date) AS end_date
         FROM curriculum.cohorts c
         WHERE c.cohort_name IS NOT NULL AND c.cohort_name <> ''
     '''
     params = []
     if programme_filter:
-        cohort_sql += " AND (c.programme_name = %s OR c.programme_id = %s)"
+        cohort_sql += " AND (" + programme_name_sql('c') + " = %s OR c.programme_id = %s)"
         params += [programme_filter, programme_filter]
-    cohort_sql += " GROUP BY c.cohort_name, c.cohort_id, c.programme_name, c.programme_id ORDER BY c.cohort_name"
+    # Cohort IDs distinguish namesakes; programme labels come from their IDs.
+    cohort_sql += " GROUP BY c.cohort_name, c.cohort_id, c.programme_id ORDER BY c.cohort_name"
     # Cohort dates are optional columns on some deployments; the programme list
     # is still worth returning without them.
     _, cohorts = _optional_rows(adapt_sql(cohort_sql), params)

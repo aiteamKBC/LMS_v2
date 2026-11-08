@@ -30,6 +30,7 @@ from curriculum_api.session_graph import collection
 from curriculum_api.session_transfer_progress import byte_count
 from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
     recording_transcript_links, transcript_timing_ready, artifact_metadata)
+from curriculum_api.canonical_read_sql import current_status_sql
 
 
 def functions(path, names, namespace):
@@ -384,6 +385,7 @@ class RegisterTests(unittest.TestCase):
             return self
         def exclude(self, *_args, **kwargs): return self
         def only(self, *_args): return self
+        def annotate(self, **_kwargs): return self
         def order_by(self, *_args): return self
         def values(self, *fields):
             # ORM subqueries now project module/series keys before roster reads.
@@ -422,6 +424,7 @@ class RegisterTests(unittest.TestCase):
             'projection_call': lambda name, function, *args, **kwargs: function(*args, **kwargs),
             'projection_operation': lambda name: nullcontext(),
             'datetime_timezone': timezone, 'parse_datetime': instant, 'Q': self.Q,
+            'RawSQL': lambda sql, params: (sql, params),
             '_attendance_alias_rows': lambda *_args: [],
             'identity_rules': lambda *_args: [], 'apply_reviewed_identities': apply_reviewed_identities,
             '_attendance_identity_link_rows': lambda *_args: [], 'attendance_name_key': attendance_name_key,
@@ -438,7 +441,7 @@ class RegisterTests(unittest.TestCase):
              'LiveSessionAttendanceAlias': types.SimpleNamespace(objects=self.Query([])),
              'LiveSessionAttendance': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(id=f'ROW-{i}', occurrence_id='O1', graph_record_id=str(i),
                 display_name=display_name, email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
-            'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', group_name='Group')]))}
+            'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', _group_display_name='Group')]))}
         functions(ROOT.parent / 'learner_api/teams_attendance.py', {'_email', '_canonical_attendance_email', '_assigned_learner_emails_by_module',
             '_module_expected_emails', '_unique_exact_name_email', '_local_datetime', '_graph_datetime', '_attendance_interval_bounds',
             'fetch_verified_teams_attendance_rows'}, ns)
@@ -565,6 +568,7 @@ class EndpointTests(unittest.TestCase):
             'apply_reviewed_identities': apply_reviewed_identities, 'identity_key': identity_key,
             'record_key': record_key, 'link_specs': link_specs, 'unmatched_roster': unmatched_roster, 'attendance_bot': attendance_bot,
             'identity_rules': Mock(return_value=[]),
+            'current_status_sql': current_status_sql,
             'effective_module_register_rows': Mock(return_value=[]),
             'known_learner_emails': Mock(return_value=set()),
             'hidden_artifact_ids': hidden_artifact_ids, 'recording_transcript_links': recording_transcript_links,
@@ -1497,6 +1501,34 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(set(shared.call_args.args[0]), {'ALIAS', 'OTHER'})
         self.assertIn("lower(btrim(s.status)) NOT IN ('deleted','superseded','failed')", self.ns['read'].call_args.args[0])
 
+    def test_learner_series_current_join_uses_canonical_module_visibility(self):
+        series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'active'}
+        self.learner_series(['SOURCE'], {}, series)
+        sql = self.ns['read'].call_args.args[0]
+        self.assertIn(current_status_sql('m'), sql)
+        self.assertNotIn('m.deleted_at', sql)
+        self.assertNotIn('m.is_programme_deleted', sql)
+
+    def test_learner_series_saved_results_preserve_inactive_parent_history(self):
+        series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'active'}
+        learner = types.SimpleNamespace(email='a@example.invalid')
+        model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
+            filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
+        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+        lectures = types.ModuleType('learner_api.attendance_lectures')
+        lectures.read_assigned_modules = lambda source: [{'id': 'SOURCE'}]
+        lectures.shared_teams_sources = Mock(return_value={})
+        self.ns['read'].return_value = [series]
+        with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
+            found_learner, found_series = self.ns['learner_series'](
+                'commercial', 7, 'S', linked_recordings=True)
+        self.assertIs(found_learner, learner)
+        self.assertIs(found_series, series)
+        sql = self.ns['read'].call_args.args[0]
+        self.assertNotIn(current_status_sql('m'), sql)
+        self.assertNotIn('m.deleted_at', sql)
+        self.assertNotIn('m.is_programme_deleted', sql)
+
     def test_learner_series_rejects_unassigned_and_keeps_direct_assignments_unchanged(self):
         series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'active'}
         self.assertEqual(self.learner_series(['OTHER'], {'OTHER': {'ELSEWHERE'}}, series)[0], (None, None))
@@ -1807,6 +1839,14 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.transport.microsoft_graph_token.assert_not_called()
         self.storage.upload_blob.assert_not_called(); blob.exists.assert_not_called()
 
+    def test_archive_derives_group_name_through_the_canonical_group_fk(self):
+        self.archive(state='ready')
+        sql, params = self.ns['read'].call_args_list[1].args
+        self.assertIn('LEFT JOIN curriculum.groups g ON g.group_id=m.group_id', sql)
+        self.assertIn('SELECT m.group_id,g.group_name', sql)
+        self.assertNotIn('SELECT group_id,group_name FROM curriculum.modules', sql)
+        self.assertEqual(params, ['M'])
+
     def test_existing_transcript_backfills_timings_without_graph_or_any_reupload(self):
         errors, blob = self.archive(state='ready', kind='transcript')
         self.assertEqual(errors, [])
@@ -2098,7 +2138,11 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertNotIn('scheduled_end', selection)
         self.assertIn("coalesce(s.organizer_email,'')<>''", selection)
         self.assertIn("(coalesce(s.online_meeting_id,'')<>'' OR coalesce(s.join_url,'')<>'')", selection)
-        self.assertIn('m.deleted_at IS NULL', selection)
+        # Archive discovery is historical evidence: an inactive parent does not
+        # hide or prevent saving its session recordings.
+        self.assertNotIn('m.deleted_at', selection)
+        self.assertNotIn('m.is_programme_deleted', selection)
+        self.assertNotIn(current_status_sql('m'), selection)
         self.assertIn("session_result_jobs.state='complete'", query)
         self.assertIn("interval '5 minutes'", query)
         self.assertIn("interval '24 hours'", query)

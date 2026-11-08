@@ -1,0 +1,22 @@
+import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { it, expect, vi } from 'vitest';
+import type { ReactNode } from 'react';
+import Page from './page';
+const state = vi.hoisted(() => ({ data: null as unknown, loading: false, error: '', refresh: vi.fn(), detailRefresh: vi.fn(), retry: vi.fn() }));
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
+vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: (kind: string, id: string) => ({ kind, id }) }));
+vi.mock('@/hooks/usePrefetchStudentActivity', () => ({ usePrefetchStudentActivity: vi.fn() }));
+vi.mock('@/hooks/useLearnerDetailParam', () => ({ useLearnerDetailParam: () => ({ isRealMode: true, real: null, loading: false, loadError: null, refresh: state.detailRefresh }) }));
+vi.mock('@/hooks/useLearnerMetrics', () => ({ useLearnerMetrics: vi.fn(() => state) }));
+vi.mock('@/pages/learner/my-learning/useSubjectLearningData', () => ({ useUnifiedLearningSummary: () => ({ data: null, loading: false, retry: state.retry }) }));
+import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
+it.each(['commercial', 'apprenticeship'])('keeps %s staff-preview identity/default request and retry', kind => {
+  state.error = 'Could not load hours'; state.data = null;
+  render(<MemoryRouter initialEntries={[`/learner/otjh/${kind}/123`]}><Routes><Route path="/learner/otjh/:kind/:id" element={<Page />} /></Routes></MemoryRouter>);
+  expect(useLearnerMetrics).toHaveBeenCalledWith(kind, '123', true);
+  expect(screen.getByText('Official Planned Hours')).toBeVisible();
+  expect(screen.queryByText('On track')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /retry|try again/i }));
+  expect(state.refresh).toHaveBeenCalled(); expect(state.detailRefresh).toHaveBeenCalled(); expect(state.retry).toHaveBeenCalled();
+});

@@ -67,11 +67,13 @@ class LearnerCountPlacementReadTests(SimpleTestCase):
         self.assertEqual(result['M1'], {'total': 3, 'statuses': {'active': 2, 'on break': 1}})
         self.assertEqual(result['M2'], {'total': 3, 'statuses': {'active': 1, 'on break': 1, 'withdrawn': 1}})
 
-    def test_name_fallback_and_id_only_placements_do_not_share_incompatible_buckets(self):
+    def test_id_scopes_do_not_admit_missing_ids_through_matching_names(self):
         modules = {'by_id': lineage(cohortId='C1', groupId='G1', moduleCatalogueId='M1'),
                    'by_name': lineage(cohortName='Intake', groupName='Group', moduleCatalogueId='M2'),
                    'other': lineage(cohortId='C2', groupId='G2', moduleCatalogueId='M3')}
         facts = [fact(1), fact(2, cohort_id='C2', group_id='G2'),
                  fact(3, cohort_id='', group_id=''), fact(4, programme_id='P2')]
         result = counts.counts_for_lineages(modules, facts, {'P1': ['Programme']})
-        self.assertEqual([result[key]['total'] for key in modules], [2, 3, 2])
+        # Labels do not establish membership; an unqualified programme scope
+        # still includes all three learners belonging to that programme.
+        self.assertEqual([result[key]['total'] for key in modules], [1, 3, 1])

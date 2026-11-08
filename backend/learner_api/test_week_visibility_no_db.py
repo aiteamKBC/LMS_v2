@@ -1,14 +1,7 @@
-"""CI regression: deleted weeks reach learners only as an archived
-module's own history.
+"""Current Curriculum children use canonical status visibility.
 
-Regression: a module deleted and later restored kept the weeks of that earlier
-deletion stamped ``deleted_via_parent=<module id>``. Every learner/coach read
-treated any parent stamp as "archived with its module", so the stale set
-(Event MasterClass, then every title one week late) outranked the live weeks
-the Module Builder shows. The components and KSB mappings archived with those
-weeks carried the same stamp, so the same rule covers them.
-the Module Builder shows. The components and KSB mappings archived with those
-weeks carried the same stamp, so the same rule covers them.
+Only ``inactive`` is hidden. NULL, blank and future status values retain their
+existing visibility, while historical projections keep their own lineage rules.
 """
 import re
 from pathlib import Path
@@ -29,11 +22,7 @@ READER_PATHS = {
     'learner_api/training_plan_dashboard.py': 1,
     'learner_api/overview_week.py': 3,
     'learner_api/mobile.py': 2,
-    'learner_api/learner_detail.py': 5,
-    'learner_api/dashboard_header.py': 2,
-    'learner_api/dashboard_training.py': 1,
-    'learner_api/my_learning.py': 2,
-    'learner_api/live_session_progress.py': 1,
+    'learner_api/learner_detail.py': 4,
     'learner_api/builder_activity_dates.py': 1,
     'learner_api/personal_learning_reads.py': 1,
     'learner_api/training_plan_targets.py': 1,
@@ -48,25 +37,20 @@ READER_PATHS = {
 }
 
 CHILD_READER_PATHS = {
-    'learner_api/active_users.py': 1,
+    'learner_api/training_plan_dashboard.py': 2,
+    'learner_api/overview_week.py': 3,
+    'learner_api/mobile.py': 2,
+    'learner_api/learner_detail.py': 7,
     'learner_api/builder_activity_dates.py': 1,
     'learner_api/curriculum.py': 1,
-    'learner_api/dashboard_header.py': 1,
-    'learner_api/dashboard_metrics.py': 4,
-    'learner_api/dashboard_training.py': 1,
-    'learner_api/learner_detail.py': 7,
-    'learner_api/live_session_progress.py': 1,
-    'learner_api/mobile.py': 2,
     'learner_api/module_shift.py': 2,
-    'learner_api/my_learning.py': 2,
-    'learner_api/overview_week.py': 4,
-    'learner_api/student_activity_data.py': 2,
-    'learner_api/training_plan_dashboard.py': 2,
     'learner_api/training_plan_document.py': 1,
-    'coach_api/learning_plan_projection.py': 1,
-    'coach_api/monthly_focus.py': 2,
-    'coach_api/otjh_ksb.py': 1,
+    'learner_api/active_users.py': 1,
+    'learner_api/live_session_progress.py': 1,
+    'learner_api/student_activity_data.py': 2,
     'coach_api/overview_modules.py': 1,
+    'coach_api/otjh_ksb.py': 1,
+    'coach_api/learning_plan_projection.py': 1,
     'coach_api/weekly_learning.py': 2,
 }
 
@@ -82,21 +66,18 @@ class VisibleWeekSqlTests(SimpleTestCase):
     def test_week_rule_is_the_child_rule(self):
         self.assertEqual(visible_week_sql('w'), visible_child_sql('w'))
 
-    def test_every_week_column_is_qualified_by_the_callers_alias(self):
+    def test_every_status_column_is_qualified_by_the_callers_alias(self):
         sql = visible_week_sql('w')
-        # An unqualified column inside the EXISTS would bind to the module row.
-        for column in ('deleted_at', 'deleted_via_parent', 'module_catalogue_id'):
+        for column in ('status',):
             for match in re.finditer(rf'(?<![\w.]){column}\b', sql):
                 self.fail(f'unqualified {column} at {match.start()}: {sql}')
-        self.assertTrue(sql.startswith('(w.deleted_at IS NULL OR EXISTS ('))
+        self.assertEqual(sql, "(lower(btrim(coalesce(w.status, ''))) <> 'inactive')")
 
-    def test_archived_history_needs_the_modules_own_stamp_and_moment(self):
+    def test_only_inactive_is_interpreted_as_hidden(self):
         sql = visible_week_sql('weeks')
-        self.assertIn('archived_module.deleted_at IS NOT NULL', sql)
-        self.assertIn(
-            'weeks.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent)', sql)
-        self.assertIn("weeks.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' "
-                      "AND archived_module.deleted_at + interval '5 minutes'", sql)
+        self.assertEqual(sql, "(lower(btrim(coalesce(weeks.status, ''))) <> 'inactive')")
+        for removed in ('curriculum.modules', 'archived_module', 'deleted_at', 'deleted_via_parent', "interval '5 minutes'", ' OR '):
+            self.assertNotIn(removed, sql)
 
 
 class WeekReaderPathTests(SimpleTestCase):

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useToast } from "@/hooks/useToast";
 import { reviewHandoverMessage } from '@/api/reviewHandover';
-import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
+import { fetchProgrammeOptions, fetchCohortOptions, fetchGroupOptions, type CurriculumItem } from '@/api/curriculum';
 import { fetchCaseOwners } from '@/api/staffUsers';
 import {
   ATTENDANCE_TYPE_OPTIONS,
@@ -127,9 +127,9 @@ const SECTIONS: SectionDef[] = [
     // (programmes / cohorts / groups), so only real authored combinations can be
     // picked. Options are loaded at render time — see the `lookup` fields below.
     fields: [
-      { name: 'programme', label: 'Programme', type: 'select', lookup: 'programme' },
-      { name: 'cohort', label: 'Cohort', type: 'select', lookup: 'cohort' },
-      { name: 'group', label: 'Group', type: 'select', lookup: 'group' },
+      { name: 'programmeId', label: 'Programme', type: 'select', lookup: 'programme', required: true },
+      { name: 'cohortId', label: 'Cohort', type: 'select', lookup: 'cohort' },
+      { name: 'groupId', label: 'Group', type: 'select', lookup: 'group' },
     ],
   },
   {
@@ -247,9 +247,9 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
 
   // Live curriculum cascade: programmes load once, then cohorts follow the chosen
   // programme and groups follow the chosen cohort.
-  const [programmes, setProgrammes] = useState<string[]>([]);
-  const [cohorts, setCohorts] = useState<string[]>([]);
-  const [groups, setGroups] = useState<string[]>([]);
+  const [programmes, setProgrammes] = useState<CurriculumItem[]>([]);
+  const [cohorts, setCohorts] = useState<CurriculumItem[]>([]);
+  const [groups, setGroups] = useState<CurriculumItem[]>([]);
   // Case owners come from Staff_users (positions Caseowner / Admin) — independent
   // of the programme cascade, so loaded once alongside programmes.
   const [caseOwners, setCaseOwners] = useState<string[]>([]);
@@ -260,15 +260,15 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
   const [staffError, setStaffError] = useState<string | null>(null);
   const [employerError, setEmployerError] = useState<string | null>(null);
 
-  const programme = formData.programme ?? '';
-  const cohort = formData.cohort ?? '';
+  const programme = formData.programmeId ?? '';
+  const cohort = formData.cohortId ?? '';
 
   const setField = (name: string, value: string) =>
     setFormData((prev) => {
       const next = { ...prev, [name]: value };
       // Picking a new programme/cohort invalidates the levels below it.
-      if (name === 'programme') { next.cohort = ''; next.group = ''; }
-      if (name === 'cohort') { next.group = ''; }
+      if (name === 'programmeId') { next.cohortId = ''; next.groupId = ''; }
+      if (name === 'cohortId') { next.groupId = ''; }
       // The employer select carries the record's id (names repeat, ids don't),
       // so the stored employer name and the derived organisation are both looked
       // up from it. Clearing the employer clears the organisation with it, rather
@@ -309,7 +309,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
 
   useEffect(() => {
     let cancelled = false;
-    fetchProgrammes()
+    fetchProgrammeOptions()
       .then((rows) => { if (!cancelled) setProgrammes(rows); })
       .catch((e: Error) => { if (!cancelled) setLookupError(e.message); });
     // Failure here is reported separately from the programme cascade, whose error
@@ -333,7 +333,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
     setCohorts([]);
     setGroups([]);
     if (!programme) return;
-    fetchCohorts(programme)
+    fetchCohortOptions(programme)
       .then((rows) => { if (!cancelled) setCohorts(rows); })
       .catch((e: Error) => { if (!cancelled) setLookupError(e.message); });
     return () => { cancelled = true; };
@@ -343,7 +343,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
     let cancelled = false;
     setGroups([]);
     if (!programme || !cohort) return;
-    fetchGroups(programme, cohort)
+    fetchGroupOptions(programme, cohort)
       .then((rows) => { if (!cancelled) setGroups(rows); })
       .catch((e: Error) => { if (!cancelled) setLookupError(e.message); });
     return () => { cancelled = true; };
@@ -360,7 +360,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
     if (level === 'cohort') return { values: cohorts, disabled: !programme, waitingFor: 'programme', empty: 'None available' };
     if (level === 'group') return { values: groups, disabled: !cohort, waitingFor: 'cohort', empty: 'None available' };
     return {
-      values: caseOwners,
+      values: caseOwners.map((title) => ({ id: title, title })),
       disabled: false,
       waitingFor: '',
       // Case owners are staff accounts, so an empty list means none exist yet
@@ -414,9 +414,9 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
       status: editing ? (formData.status ?? '') : 'FullUser',
       ...(editing ? { programmeStatus: formData.programmeStatus ?? '' } : {}),
       // Programme / cohort / group come from the live curriculum cascade.
-      programme: formData.programme,
-      cohort: formData.cohort,
-      group: formData.group,
+      programmeId: formData.programmeId || null,
+      cohortId: formData.cohortId || null,
+      groupId: formData.groupId || null,
       employer: formData.employer,
       // The employer's record id, alongside the display name above: the name is
       // what listings show, this is what reaches the rest of that employer's
@@ -466,9 +466,12 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
           name,
           type: (shared.type || 'User') as UserListRow['type'],
           email: shared.email,
-          group: shared.group ?? '',
-          programme: shared.programme ?? '',
-          cohort: shared.cohort ?? '',
+          group: groups.find((item) => item.id === shared.groupId)?.title ?? formData.group ?? '',
+          groupId: shared.groupId ?? '',
+          programme: programmes.find((item) => item.id === shared.programmeId)?.title ?? formData.programme ?? '',
+          programmeId: shared.programmeId ?? '',
+          cohort: cohorts.find((item) => item.id === shared.cohortId)?.title ?? formData.cohort ?? '',
+          cohortId: shared.cohortId ?? '',
           subscriptionStatus: shared.status ?? '',
           subscriptionVerified: (shared.status ?? '').toLowerCase() === 'fulluser',
           programmeStatus: (formData.programmeStatus ?? '') as UserListRow['programmeStatus'],
@@ -608,7 +611,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
                   <option value="">
                     {disabled ? `Select a ${waitingFor} first…` : values.length === 0 ? empty : 'Select…'}
                   </option>
-                  {values.map((v) => <option key={v} value={v}>{v}</option>)}
+                  {values.map((v) => <option key={v.id} value={v.id}>{v.title}</option>)}
                 </select>
               );
             })()

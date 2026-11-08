@@ -87,12 +87,13 @@ def require_profile(learner_id):
 
 def profile(learner_id):
     records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+        p.name AS programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
-        u."Planned_hours" AS programme_planned_hours,
+        l.planned_hours AS programme_planned_hours,l.learner_start_date,l.learner_end_date,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
+        LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
         WHERE l.enrolment_id=%s''', [learner_id])
     if not records:
         return None
@@ -112,7 +113,7 @@ def _validated_profile(owner):
 
 
 def programme_planned_hours(learner_id, *, owner=None):
-    """The enrolment's overall plan is independent of the scheduled month totals."""
+    """The learner's official plan is independent of scheduled month totals."""
     from math import isfinite
 
     owner = profile(learner_id) if owner is None else owner
@@ -991,8 +992,12 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     result['module_count'] = max(len(subjects), len(canonical_modules))
     result['unresolved_source_routes'] = sum(len(values) != 1 for values in links.values())
     from learner_api import journal_sources
-    if journal_sources.enabled():
-        result['audit_tp_planned'] = programme_planned_hours(learner_id, owner=owner)
+    journal = journal_sources.enabled()
+    if journal:
+        # The official programme total and nothing else: review time is
+        # reported on its own below, never added to it.
+        from .official_hours import official_planned_hours
+        result['audit_tp_planned'] = official_planned_hours(owner)
     else:
         monthly_targets = targets_for(owner)
         result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
@@ -1000,7 +1005,7 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     review_planned = planned_hours_bulk([owner]).get(owner['enrolment_id'], 0)
     if review_planned:
         result['review_planned_otjh'] = review_planned
-        if result.get('audit_tp_planned') is not None:
+        if not journal and result.get('audit_tp_planned') is not None:
             result['audit_tp_planned'] += review_planned
     return result
 
@@ -1355,7 +1360,13 @@ def metrics(learner_id, *, owner=None):
         result['otjh']['planned'] = planned
         result['aptem_planned_total'] = planned
     from coach_api.migrated_otjh import planned_hours_bulk, include_planned
-    return include_planned(result, planned_hours_bulk([owner]).get(owner['enrolment_id'], 0))
+    review_hours = planned_hours_bulk([owner]).get(owner['enrolment_id'], 0)
+    if journal_sources.enabled():
+        # Preserve the descriptive contract independently of the official total.
+        if review_hours:
+            result['otjh']['review_planned'] = review_hours
+        return result
+    return include_planned(result, review_hours)
 
 
 def otjh_summary_bulk(learner_ids):
@@ -1372,7 +1383,15 @@ def otjh_summary_bulk(learner_ids):
     if not enrolment_ids:
         return {}
     candidates = {}
-    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.programme,
+    # "Learner".learners no longer stores the programme name. Derive it from the
+    # canonical programme id: a scalar subquery keeps exactly one row per profile
+    # (the identity check below rejects any other count), and a blank, unknown or
+    # duplicated programme id yields NULL rather than an arbitrary name.
+    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
+        (SELECT CASE WHEN count(*) = 1 THEN min(p.name) END
+           FROM curriculum.programmes p
+          WHERE p.programme_id = l.programme_id
+            AND btrim(coalesce(l.programme_id, '')) <> '') AS programme,
         l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
@@ -1453,12 +1472,13 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         return {}
 
     owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+        p.name AS programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
-        u."Planned_hours" AS programme_planned_hours,
+        l.planned_hours AS programme_planned_hours,l.learner_start_date,l.learner_end_date,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
+        LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids])
     owner_candidates = {}
     for owner in owners:
@@ -1587,14 +1607,18 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
             include_ksb_points=include_ksb_points,
         )
         if learner_workspace:
-            # The learner Overview uses the enrolment's programme plan, not
+            # The learner Overview uses the learner's official programme plan, not
             # the sum of monthly targets. Reuse the already-validated owner.
             planned = programme_planned_hours(enrolment_id, owner=owner)
             result[enrolment_id]['otjh']['planned'] = planned
             result[enrolment_id]['aptem_planned_total'] = planned
     from coach_api.migrated_otjh import planned_hours_bulk, include_planned
     for enrolment_id, hours in planned_hours_bulk(list(valid_owners.values())).items():
-        include_planned(result[enrolment_id], hours)
+        if learner_workspace:
+            if hours:
+                result[enrolment_id]['otjh']['review_planned'] = hours
+        else:
+            include_planned(result[enrolment_id], hours)
     return result
 
 

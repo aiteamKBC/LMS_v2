@@ -21,6 +21,7 @@ def staff(**overrides):
 class StaffOwnsLearnerTests(SimpleTestCase):
     def setUp(self):
         self.rows = self.enterContext(patch('learner_api.models.EnrolmentUser.all_learners'))
+        self.rows.filter.return_value.only.return_value = self.rows.filter.return_value
 
     def test_uses_the_same_normalised_email_link_as_the_session_for_both_kinds(self):
         for kind in ('commercial', 'apprenticeship'):
@@ -28,6 +29,7 @@ class StaffOwnsLearnerTests(SimpleTestCase):
                 self.rows.filter.return_value.first.return_value = SimpleNamespace(pk=56, learner_type=kind)
                 self.assertTrue(permissions.staff_owns_learner(staff(email=' Student.Staff@Example.TEST '), 56))
                 self.rows.filter.assert_called_with(email__iexact='student.staff@example.test')
+                self.rows.filter.return_value.only.assert_called_with('id', 'learner_type')
 
     def test_missing_or_different_link_never_matches_even_if_staff_ids_collide(self):
         for linked in (None, SimpleNamespace(pk=19)):

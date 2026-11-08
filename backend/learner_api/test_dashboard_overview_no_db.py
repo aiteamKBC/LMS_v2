@@ -386,7 +386,8 @@ class OverviewProjectionTests(SimpleTestCase):
              patch.object(overview.timezone, 'localdate', return_value=date(2026, 10, 15)):
             result = overview.read_overview(source, 'commercial', owner, profile, RequestFactory().get('/overview/'))
         self.assertEqual(set(result), {'metrics', 'attendance', 'reviews', 'modules', 'programme', 'hours', 'programmeStartDate', 'programmeEndDate'})
-        self.assertEqual(result['metrics']['otjh'], {'actual': 7, 'targetToDate': 40})
+        # Slice 03b-2C: additive official programme total (the value that paced the target).
+        self.assertEqual(result['metrics']['otjh'], {'actual': 7, 'targetToDate': 40, 'officialPlannedHours': 100.0})
         self.assertNotIn('points', result['metrics']['ksb'])
         self.assertEqual(result['attendance'], {'present': 3, 'sessions': 4, 'attendanceRate': 75})
         self.assertEqual(result['modules'][0]['attendance'], {'attended': 3, 'total': 4})

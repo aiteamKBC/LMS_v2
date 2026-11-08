@@ -142,7 +142,12 @@ def fetch_subject(subject_type, subject_id):
     still be able to sign in.
     """
     if subject_type == SUBJECT_LEARNER:
-        manager = EnrolmentUser.all_learners
+        # Identity/description needs no enrolment documents or plan snapshots.
+        # Programme display labels are projected by the corrected model through
+        # Learner.learners, never through a deleted Created_users column.
+        manager = EnrolmentUser.all_learners.only(
+            "id", "email", "username", "preferred_name", "learner_type", "aptem_id",
+        )
     else:
         manager = subject_model(subject_type).objects
     try:

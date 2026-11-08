@@ -85,7 +85,7 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
     from .views import teams_online_meeting_owner_id
     series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [series_id])[0]
     # The module keeps ids; its programme / cohort / group names are their own rows'.
-    modules = read('''SELECT m.group_id, g.group_name, m.programme_id, p.name AS programme_name,
+    modules = read('''SELECT m.group_id,g.group_name, m.programme_id, p.name AS programme_name,
         m.cohort_id, c.cohort_name, m.title FROM curriculum.modules m
         LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
         LEFT JOIN curriculum.cohorts c ON c.cohort_id=m.cohort_id

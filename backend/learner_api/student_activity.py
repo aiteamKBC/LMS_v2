@@ -20,6 +20,7 @@ from login.sessions import authenticate_request
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
 from .models import EnrolmentUser, LearnerProfile, LearnerProgressEntry
+from .module_placement_sql import current_module_sql
 from .learning_plan import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
@@ -32,7 +33,9 @@ import logging
 from .subject_content import (ContentUnavailable, build_material, public_quiz, as_list)
 from .builder_activity_dates import read_builder_activity_dates
 
-CURRENT_SUBJECTS_SQL = '''
+#: Every curriculum module assigned to the learner, current or not. Used where
+#: an inactive module's history must stay readable (exported activity lineage).
+ASSIGNED_SUBJECTS_SQL = '''
     WITH source AS (
         SELECT id, CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
             THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
@@ -50,7 +53,12 @@ CURRENT_SUBJECTS_SQL = '''
     )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
-    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
+'''
+
+#: The learner's CURRENT learning modules: the assignment above without
+#: inactive modules (Option A). curriculum.modules has no deletion marker;
+#: status replaces it. Current lists only -- never history.
+CURRENT_SUBJECTS_SQL = ASSIGNED_SUBJECTS_SQL + f'''    WHERE {current_module_sql('cm')}
 '''
 
 def _direct_progress_records(enrolment_id, *, profile=None):
@@ -205,15 +213,17 @@ def _live_subjects(source, aptem_id):
 
 
 def _activity_sources(enrolment_id, group_ids):
+    # Exported lineage matches completed historical activity, so an inactive
+    # module's components stay in scope (ASSIGNED, not CURRENT, subjects).
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
+        cursor.execute(ASSIGNED_SUBJECTS_SQL, [enrolment_id])
         module_ids = [row[0] for row in cursor.fetchall()]
         return read_activity_sources(cursor, group_ids, module_ids)
 
 
 def _activity_source_issues(enrolment_id, group_ids):
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
+        cursor.execute(ASSIGNED_SUBJECTS_SQL, [enrolment_id])
         module_ids = [row[0] for row in cursor.fetchall()]
         return read_activity_source_issues(cursor, group_ids, module_ids)
 
@@ -690,11 +700,13 @@ def _builder_subject_metadata(cursor, refs):
     native = [ref[8:] for ref in refs if ref.startswith('current:')]
     if not native:
         return {}, {}
+    # The canonical curriculum.modules table has no deletion marker (deleted_at
+    # and deleted_via_parent were removed) and status is not a visibility rule,
+    # so every requested module row resolves.
     cursor.execute('''
         SELECT m.module_catalogue_id,m.title,m.cover_image_url
         FROM curriculum.modules m
-        WHERE (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
-          AND m.module_catalogue_id=ANY(%s)
+        WHERE m.module_catalogue_id=ANY(%s)
     ''', [native])
     covers, links = {}, {}
     for module_id, title, cover in cursor.fetchall():
@@ -735,8 +747,10 @@ def _effective_current_subjects(cursor, learner_id):
     counted them.  Reuse the plan's effective-assignment rule so both screens
     agree without writing anything during a learner read.
     """
+    # programme/group are placement properties (not columns); load the id
+    # columns that placement_ids reads instead.
     learner = EnrolmentUser.all_learners.only(
-        'programme', 'group', 'learning_plan', 'training_plan',
+        'programme_id', 'group_id', 'learning_plan', 'training_plan',
     ).get(pk=learner_id)
     module_ids = _effective_plan_ids(learner, {})
     if not module_ids:
@@ -745,7 +759,6 @@ def _effective_current_subjects(cursor, learner_id):
         SELECT module_catalogue_id,title
         FROM curriculum.modules
         WHERE module_catalogue_id=ANY(%s)
-          AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
     ''', [module_ids])
     titles = {module_id: title for module_id, title in cursor.fetchall()}
     return [

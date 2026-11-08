@@ -18,7 +18,8 @@ class BootstrapTests(SimpleTestCase):
             header.dashboard_modules(object(), {}, include_coach=False)
         sql, params = cursor.execute.call_args.args
         self.assertNotIn('coach_name', sql)
-        self.assertNotIn('curriculum.groups', sql)
+        # No coach contact join; the module's group name is read through its id.
+        self.assertNotIn('JOIN curriculum.groups', sql)
         self.assertEqual(params, [['M']])
 
     def test_canonical_routes_do_not_require_or_obey_legacy_version_negotiation(self):

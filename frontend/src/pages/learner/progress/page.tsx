@@ -1,3 +1,4 @@
+import { officialHoursPresentation } from './officialHoursPresentation';
 import { useEffect, useState } from 'react';
 import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -45,6 +46,7 @@ export default function ProgressPage() {
     id,
     isRealMode && !!real?.studentActivityAvailable,
   );
+  const officialHours = isRealMode ? officialHoursPresentation(metrics.data, metrics.loading, metrics.error) : undefined;
   const combinedLoading = realLoading
     || (isRealMode && !!real?.studentActivityAvailable && combinedLearning.loading);
 
@@ -77,6 +79,7 @@ export default function ProgressPage() {
             real={real}
             realLoading={realLoading || metrics.loading}
             metrics={metrics.data}
+            officialHours={officialHours}
             recordedOtjhTotal={combinedLearning.data?.recorded_otjh_total}
             auditOtjhActual={combinedLearning.data?.audit_lms_actual}
             auditOtjhPlanned={combinedLearning.data?.audit_tp_planned}
@@ -89,10 +92,11 @@ export default function ProgressPage() {
           isRealMode
             ? <OtjhBody
                 real={real}
-                loading={combinedLoading}
+                loading={combinedLoading || metrics.loading}
                 showHero={false}
                 activityData={combinedLearning.data}
                 metrics={metrics.data}
+                officialHours={officialHours}
                 subjectCount={combinedLearning.summary?.subjectCount ?? combinedLearning.data?.module_count}
               />
             : <MockOtjhBody showHero={false} />

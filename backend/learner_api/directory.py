@@ -1,16 +1,17 @@
-"""Small, read-only learner projection for the Users directory."""
+"""Small, Created_users-owned projection for the Users directory."""
+
 from django.db.models import BooleanField, Case, Q, Value, When
 
 from .models import EnrolmentUser
-from .aptem_status import with_aptem_status
+from .mappers import to_list_row
 
 
 # Keep this projection aligned with mappers.to_list_row. Plans and wizard JSON
 # can be many megabytes; the directory needs only a boolean for its Add/Edit
 # action, not the full documents or a lifecycle sweep for every learner.
 DIRECTORY_FIELDS = (
-    "id", "uuid", "username", "type", "email", "group", "status",
-    "programme_status", "programme", "cohort", "organization", "learner_type",
+    "id", "uuid", "username", "type", "email", "status",
+    "programme_status", "programme_id", "cohort_id", "group_id", "organization", "learner_type",
     # The directory's Case owner filter offers the owners actually present in
     # these rows, so the column has to come back with them.
     "case_owner",
@@ -40,4 +41,9 @@ def learner_directory_queryset(learner_type=""):
     elif learner_type == "apprenticeship":
         # Rows predating the merge have a NULL type and are apprenticeship.
         queryset = queryset.exclude(learner_type="commercial")
-    return with_aptem_status(queryset).order_by("id")
+    return queryset.order_by("id")
+
+
+def to_directory_row(user):
+    user._aptem_programme_status = None
+    return to_list_row(user)

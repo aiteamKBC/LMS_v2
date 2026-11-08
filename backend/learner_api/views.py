@@ -45,7 +45,8 @@ from .identity import learner_profile_for_source
 from .account_deletion import delete_learner_account
 from .learner_dates import save_enrolment_fields
 from .coach_assignment import case_owner_coach, current_coach
-from .directory import learner_directory_queryset
+from .directory import learner_directory_queryset, to_directory_row
+from .placement_links import with_placements, placement_input, placement_payload, validate_placement, placement_profile
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
 
@@ -449,6 +450,7 @@ def _profile_is_apprenticeship(profile):
 def _profile_commercial_row(profile):
     training_plan = profile.training_plan
     return {
+        **placement_payload(profile),
         "id": str(profile.id),
         "username": profile.full_name or "",
         "email": profile.email or "",
@@ -471,6 +473,7 @@ def _profile_enrolment_row(profile):
     lifecycle = str(profile.lifecycle_status or "").strip()
     subscription_status = "FullUser" if lifecycle.casefold() == "active" else lifecycle or "Invited"
     return {
+        **placement_payload(profile),
         "id": str(profile.id),
         "name": profile.full_name or "",
         "type": "User",
@@ -492,6 +495,7 @@ def _profile_enrolment_row(profile):
 
 def _profile_enrolment_board(profile):
     return {
+        **placement_payload(profile),
         "user": {"id": str(profile.id), "name": profile.full_name or "", "reference": "", "owner": ""},
         "contact": {
             "email": profile.email or "",
@@ -555,11 +559,11 @@ def _update_profile_from_delivery_payload(profile, payload):
         "email": "email",
         "phone": "phone_number",
         "programmeStatus": "programme_status",
-        "programme": "programme",
-        "cohort": "cohort",
-        "group": "group_name",
     }
-    update_fields = []
+    placement = validate_placement(placement_input(payload), profile, using=profile._state.db or 'enrolment')
+    for key, value in placement.items():
+        setattr(profile, key, value)
+    update_fields = list(placement)
     for payload_key, model_field in field_map.items():
         if payload_key not in payload:
             continue
@@ -576,7 +580,7 @@ def _update_profile_from_delivery_payload(profile, payload):
         # This screen edits the profile, but the enrolment row is what enrolment
         # views, the compliance documents and progression read. A placement
         # changed here has to reach it, with the cohort's dates.
-        if any(field in update_fields for field in ("programme", "cohort", "group_name")):
+        if any(field in update_fields for field in ("programme_id", "cohort_id", "group_id")):
             learner = mirror_placement_to_enrolment(profile)
             # And the same check the enrolment screens run after a placement: a
             # learner given their dates here is otherwise fully eligible with
@@ -614,14 +618,12 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
     # are auto_now_add/auto_now — Django and the DB supply all three, so naming
     # them here would be rejected on insert.
     return LearnerProfile.objects.create(
+        **validate_placement(placement_input(payload)),
         full_name=name,
         email=email,
         phone_number=str(payload.get("phone") or "").strip(),
         lifecycle_status=lifecycle_status,
-        programme=str(payload.get("programme") or "").strip(),
         programme_status=programme_status,
-        cohort=str(payload.get("cohort") or "").strip(),
-        group_name=str(payload.get("group") or "").strip(),
     )
 
 
@@ -728,21 +730,22 @@ def enrolment_users(request):
             # Use the shared projection and its mapper annotation together.
             # A duplicate query with a different annotation name made the
             # mapper fetch the deferred plan documents again for every learner.
-            learners = list(learner_directory_queryset(wanted))
+            learners = with_placements(learner_directory_queryset(wanted))
             # Keep this collection read bounded: advancing every learner here
             # performs up to four compliance-document queries per row and can
             # exceed the database statement timeout on a directory-sized list.
             # Progression still runs on document/signature and learner updates,
             # and the scheduled ``advance_learner_statuses`` sweep handles
             # date-driven transitions between reads.
-            rows = [to_list_row(u) for u in learners]
+            rows = [to_directory_row(u) for u in learners]
             # Whether each person already has a sign-in account, so the
             # directory can offer "Send invitation" only where it applies.
             # Batched deliberately: asking per row would be one query per
             # learner across the whole directory.
             _annotate_account_state(rows, "learner")
         except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+            logger.error("Users directory database failure: type=%s", type(exc).__name__)
+            return _error("Unable to load the users directory. Please try again.", 502)
         return JsonResponse({"count": len(rows), "results": rows})
 
     if request.method == "POST":
@@ -801,6 +804,9 @@ def _create_enrolment_user(request, fields, *, require_account=False,
     ``book_first_session``.
     """
     fields = dict(fields)
+    validate_placement(fields)
+    if not fields.get("programme_id"):
+        raise ValidationError("programmeId is required.")
 
     # The login account is pinned to one Created_users primary key. Creating a
     # second source row for the same email can therefore leave the account on
@@ -840,7 +846,7 @@ def _create_enrolment_user(request, fields, *, require_account=False,
     # period on top. These columns are text on this table, so the dates are
     # written as ISO strings.
     start, practical_end, apprenticeship_end = cohort_delivery_window(
-        fields.get("programme"), fields.get("cohort")
+        "", "", fields.get("cohort_id")
     )
     if start is not None:
         fields["start_date"] = start
@@ -856,7 +862,11 @@ def _create_enrolment_user(request, fields, *, require_account=False,
     # creating through it would fight the learnerType we just set.
     if "case_owner" in fields:
         fields.update(case_owner_coach(fields["case_owner"]))
-    user = EnrolmentUser.all_learners.create(**fields)
+    with transaction.atomic(using=EnrolmentUser.all_learners.db):
+        user = EnrolmentUser.all_learners.create(**fields)
+        sync_active_user(user)
+        if placement_profile(user) is None or placement_profile(user).pk is None:
+            raise ValidationError('Unable to establish the canonical learner placement.')
 
     # Commercial learners are date-driven from the moment they are
     # created: before the start date they are Delivery, and on/after it

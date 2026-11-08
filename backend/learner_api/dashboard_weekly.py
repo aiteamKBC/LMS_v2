@@ -20,7 +20,10 @@ from .weekly_learning import _weekly_component
 from .learner_detail import _resolve_from_master, _apply_programme_assignment_template
 from .submission_visibility import VISIBLE_SUBMISSION_SQL
 
-WEEKLY_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme', 'cohort', 'group')
+# programme/cohort/group are placement properties (not columns); load their id
+# columns. The names still resolve through the model properties when read.
+WEEKLY_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email',
+                        'programme_id', 'cohort_id', 'group_id')
 
 
 def recorded_ksbs(owner, component_ids):

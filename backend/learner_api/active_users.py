@@ -18,9 +18,10 @@ from django.db.models import Max
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, current_status_sql
+from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
-from .identity import learner_profile_for_source
 from .retake_timing import attempt_order, selected_attempt
 from .mappers import get_training_plan, training_plan_field
 from .models import (
@@ -348,16 +349,14 @@ def component_reference_exists(component_id):
     return False
 
 
-# Effective soft-delete of a component, level by level, in the order a rejection
-# should name. Mirrors the ``is_deleted`` expression of the
-# curriculum.component_learning_lineage view (curriculum_api migration 0041):
-# deleted_at / is_programme_deleted at every level, and is_archived on
-# programmes, which carries no is_programme_deleted column.
-_COMPONENT_LINEAGE_DELETED_SQL = """
+# Effective inactive state of a component, level by level, in the order a
+# rejection should name. Components, weeks and modules use the normalised
+# status contract; NULL, blank and unknown values remain visible.
+_COMPONENT_LINEAGE_DELETED_SQL = f"""
     select
-        (c.deleted_at is not null or coalesce(c.is_programme_deleted, false)) as component_deleted,
-        (w.id is not null and (w.deleted_at is not null or coalesce(w.is_programme_deleted, false))) as week_deleted,
-        (m.module_catalogue_id is not null and (m.deleted_at is not null or coalesce(m.is_programme_deleted, false))) as module_deleted,
+        (not ({current_status_sql('c')})) as component_deleted,
+        (w.id is not null and not ({current_status_sql('w')})) as week_deleted,
+        (m.module_catalogue_id is not null and not ({current_status_sql('m')})) as module_deleted,
         (g.group_id is not null and (g.deleted_at is not null or coalesce(g.is_programme_deleted, false))) as group_deleted,
         (ch.cohort_id is not null and (ch.deleted_at is not null or coalesce(ch.is_programme_deleted, false))) as cohort_deleted,
         (p.programme_id is not null and (p.deleted_at is not null or coalesce(p.is_archived, false))) as programme_deleted
@@ -427,24 +426,30 @@ def _component_learning_context(component_id):
         try:
             with connections[alias].cursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     select
                         c.id,
                         c.title,
                         c.type,
                         c.expected_otjh,
                         c.points,
-                        c.ksb_mappings,
+                        {component_ksb_mappings_sql('c')},
                         w.id,
                         w.title,
                         m.module_catalogue_id,
                         m.title,
                         m.programme_id,
-                        coalesce(p.name, m.programme_name),
+                        p.name,
                         m.cohort_id,
-                        m.cohort_name,
+                        (select case when count(*) = 1 then min(cohort_label.cohort_name) end
+                           from curriculum.cohorts cohort_label
+                          where cohort_label.cohort_id = m.cohort_id
+                            and btrim(coalesce(m.cohort_id, '')) <> ''),
                         m.group_id,
-                        m.group_name
+                        (select case when count(*) = 1 then min(group_label.group_name) end
+                           from curriculum.groups group_label
+                          where group_label.group_id = m.group_id
+                            and btrim(coalesce(m.group_id, '')) <> '')
                     from curriculum.components c
                     left join curriculum.weeks w on w.id = c.week_id
                     left join curriculum.modules m on m.module_catalogue_id = c.module_catalogue_id
@@ -476,32 +481,6 @@ def _component_learning_context(component_id):
                     group_title,
                 ) = row
                 mappings = _normalise_component_ksb_mappings(canonical_mappings)
-                if not mappings:
-                    cursor.execute(
-                        """
-                        select ksb_code, ksb_description, source_type, source_id, classification, weight, weight_class
-                          from curriculum.ksb_mappings
-                         where component_id = %s
-                           and coalesce(ksb_code, '') <> ''
-                           and deleted_at is null
-                           and coalesce(is_programme_deleted, false) = false
-                         order by ksb_code, id
-                        """,
-                        [component_id],
-                    )
-                    mappings = [
-                        {
-                            "code": _s(code).upper(),
-                            "description": _s(description),
-                            "sourceType": _s(source_type),
-                            "sourceId": _s(source_id),
-                            "classification": _s(classification),
-                            "weight": _decimal(weight),
-                            "weightClass": _normalise_weight_class(weight_class, classification),
-                        }
-                        for code, description, source_type, source_id, classification, weight, weight_class in cursor.fetchall()
-                        if _s(code)
-                    ]
                 context = {
                     "componentTitle": _s(component_title),
                     "componentType": _s(component_type),
@@ -937,7 +916,7 @@ def refresh_saved_session_dates(plan):
         return plan
     with connections['default'].cursor() as cursor:
         cursor.execute('''SELECT to_jsonb(m) FROM curriculum.modules m
-            WHERE module_catalogue_id = ANY(%s) AND deleted_at IS NULL
+            WHERE module_catalogue_id = ANY(%s)
               AND COALESCE(to_jsonb(m)->'session_overrides', '{}'::jsonb) <> '{}'::jsonb''', [ids])
         modules = {str(row[0]['module_catalogue_id']): row[0] for row in cursor.fetchall()}
     if not modules:
@@ -1397,7 +1376,7 @@ def cohort_delivery_window(programme, cohort, cohort_id=""):
                     # curriculum_api migration 0004; same columns.
                     'SELECT start_date, end_date, apprenticeship_end_date '
                     'FROM curriculum."cohorts" '
-                    "WHERE lower(btrim(programme_name)) = lower(%s) "
+                    "WHERE lower(btrim(" + programme_name_sql('curriculum."cohorts"') + ")) = lower(%s) "
                     "AND lower(btrim(cohort_name)) = lower(%s) "
                     "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
                     [programme, cohort],
@@ -1672,7 +1651,7 @@ def _resolve_linkable_cohort_id(cohort="", programme_id="", programme=""):
                 " WHERE lower(btrim(coalesce(c.cohort_name, ''))) = lower(btrim(%s)) "
                 "   AND coalesce(btrim(c.cohort_id), '') <> '' "
                 "   AND ( (%s <> '' AND c.programme_id = %s) "
-                "      OR (%s =  '' AND lower(btrim(coalesce(c.programme_name, ''))) "
+                "      OR (%s =  '' AND lower(btrim(" + programme_name_sql('c') + ")) "
                 "                    = lower(btrim(%s))) ) "
                 + _LIVE_ROW_SQL.format(alias="c"),
                 [cohort, programme_id, programme_id, programme_id, programme],
@@ -1704,7 +1683,7 @@ def _resolve_linkable_group_id(group="", cohort_id="", programme_id="", programm
     else:
         scope_sql = (
             "   AND ( (%s <> '' AND g.programme_id = %s) "
-            "      OR (%s =  '' AND lower(btrim(coalesce(g.programme_name, ''))) "
+            "      OR (%s =  '' AND lower(btrim(" + programme_name_sql('g') + ")) "
             "                    = lower(btrim(%s))) ) "
         )
         scope_params = [programme_id, programme_id, programme_id, programme]
@@ -1793,8 +1772,8 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
                 "  AND ("
                 "        (%s = '' AND %s = '') "
                 "     OR module.programme_id = %s "
-                "     OR module.programme_name = %s "
-                "     OR %s LIKE module.programme_name || ' %%'"
+                "     OR " + programme_name_sql('module') + " = %s "
+                "     OR %s LIKE " + programme_name_sql('module') + " || ' %%'"
                 "  ) "
                 "ORDER BY upper(mapping.ksb_code), "
                 "         CASE mapping.classification "
@@ -1857,8 +1836,8 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
                 "  AND ("
                 "        (%s = '' AND %s = '') "
                 "     OR module.programme_id = %s "
-                "     OR module.programme_name = %s "
-                "     OR %s LIKE module.programme_name || ' %%'"
+                "     OR " + programme_name_sql('module') + " = %s "
+                "     OR %s LIKE " + programme_name_sql('module') + " || ' %%'"
                 "  ) "
                 "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1",
                 [module_ids, programme_id, programme, programme_id, programme, programme],
@@ -1967,7 +1946,7 @@ def refresh_learner_ksb_snapshot(learner, source, training_plan=None):
 #: The learner-record fields that decide where a learner sits. A change to any
 #: of them has to reach the "Learner"."learners" mirror, which the workspace,
 #: coach tools and every report read instead of the enrolment row.
-PLACEMENT_SOURCE_FIELDS = ("programme", "cohort", "group")
+PLACEMENT_SOURCE_FIELDS = ("programme_id", "cohort_id", "group_id")
 
 
 def stamp_cohort_window(source):
@@ -1984,13 +1963,12 @@ def stamp_cohort_window(source):
     stamped from a cohort or set deliberately for this learner, and neither is
     this function's to overwrite. Returns the fields written. Never raises.
     """
-    programme = _s(getattr(source, "programme", ""))
-    cohort = _s(getattr(source, "cohort", ""))
-    if not programme or not cohort:
+    from .placement_links import placement_ids
+    cohort_id = placement_ids(source)['cohort_id']
+    if not cohort_id:
         return {}
-
     try:
-        start, practical_end, apprenticeship_end = cohort_delivery_window(programme, cohort)
+        start, practical_end, apprenticeship_end = cohort_delivery_window('', '', cohort_id)
         fields = {}
         if start is not None and not source.start_date:
             fields["start_date"] = start
@@ -2018,61 +1996,23 @@ def stamp_cohort_window(source):
 
 
 def mirror_learner_placement(source):
-    """Copy a learner's programme/cohort/group onto their permanent profile.
+    """Refresh delivery dates from the existing canonical placement.
 
-    sync_active_user does this too, but only runs when a learner *becomes*
-    active. Placement is edited long before and long after that moment — a
-    learner put on a programme while still in Delivery, or moved between groups
-    once Active — and without this the mirror kept whatever it was created with,
-    so the learner's own workspace and every report read a placement the
-    enrolment record had already moved on from.
-
-    Only an existing profile is updated: a learner who has never been activated
-    has no mirror to keep, and activation will create it from the record as it
-    stands then. Returns the profile when something changed, else None. Never
-    raises — a mirror that fails must not fail the edit that triggered it.
+    Explicit placement edits have already updated Learner.learners. Registration
+    labels and IDs must never overwrite those relationships during this step.
     """
+    from .placement_links import placement_profile
+
     try:
-        profile = learner_profile_for_source(source)
+        profile = placement_profile(source)
         if profile is None:
             return None
 
-        programme = _s(getattr(source, "programme", ""))
-        cohort = _s(getattr(source, "cohort", ""))
-        updates = {
-            "programme": programme,
-            "cohort": cohort,
-            "group_name": _s(getattr(source, "group", "")),
-        }
-        # Only when the name resolves to exactly one programme; see
-        # _resolve_linkable_programme_id. An ambiguous name leaves the link as it
-        # was rather than attaching the learner to the wrong programme.
-        programme_id = _resolve_linkable_programme_id(programme)
-        if programme_id:
-            updates["programme_id"] = programme_id
-
-        # The same rule one and two levels down. Resolved from the names this
-        # placement just wrote, using whichever programme id we now hold (the
-        # freshly resolved one, else the link already on the profile), so a
-        # placement lands with its references rather than waiting for a backfill
-        # to infer them later.
-        cohort_id, group_id = _linkable_placement_ids(
-            programme_id or _s(getattr(profile, "programme_id", "")),
-            programme,
-            cohort,
-            updates["group_name"],
-        )
-        if cohort_id:
-            updates["cohort_id"] = cohort_id
-        if group_id:
-            updates["group_id"] = group_id
-
-        # The window belongs to the cohort, so it moves with the placement. Read
-        # it from the cohort id the profile is left holding: a name this record
-        # still carries from before a rename resolves to nothing, and reading the
-        # dates by it blanked the learner's start date on any later edit.
-        window_cohort_id = cohort_id or (_s(getattr(profile, "cohort_id", "")) if cohort else "")
-        start_date, end_date = cohort_dates(programme, cohort, window_cohort_id)
+        # Placement already belongs to this profile. Never copy registration
+        # labels or re-resolve an existing relationship by name during a save.
+        updates = {}
+        cohort_id = profile.cohort_id
+        start_date, end_date = cohort_dates('', '', cohort_id) if cohort_id else (None, None)
         updates["start_date"] = start_date
         updates["end_date"] = end_date
         updates["gateway_review_date"] = end_date - timedelta(days=90) if end_date else None
@@ -2098,18 +2038,7 @@ def mirror_learner_placement(source):
 
 
 def mirror_placement_to_enrolment(profile):
-    """Copy a profile's placement back onto the enrolment row it belongs to.
-
-    The commercial delivery screens edit the profile directly, so a learner moved
-    to another programme or cohort there left "Created_users" — the record every
-    enrolment view, document and progression check reads — saying where they used
-    to be, and with no delivery window for where they are now.
-
-    The window is stamped in the same breath (see stamp_cohort_window), because a
-    placement that reaches the enrolment row without its dates is the state that
-    leaves a learner waiting in Delivery for ever. Returns the row when something
-    changed, else None. Never raises.
-    """
+    """Refresh missing enrolment dates without duplicating placement names."""
     enrolment_id = getattr(profile, "enrolment_id", None)
     if not enrolment_id:
         # A profile created straight from a delivery payload has no enrolment
@@ -2120,21 +2049,12 @@ def mirror_placement_to_enrolment(profile):
         if user is None:
             return None
 
-        updates = {
-            "programme": _s(getattr(profile, "programme", "")),
-            "cohort": _s(getattr(profile, "cohort", "")),
-            "group": _s(getattr(profile, "group_name", "")),
-        }
-        changed = [
-            field for field, value in updates.items()
-            if _s(getattr(user, field, "")) != value
-        ]
-        if changed:
-            for field in changed:
-                setattr(user, field, updates[field])
-            user.save(update_fields=changed)
+        # Display labels are read through the learner FK; only missing dates
+        # still need the existing enrolment-window workflow.
+        from .placement_links import CACHE
+        user.__dict__[CACHE] = profile
         stamped = stamp_cohort_window(user)
-        return user if changed or stamped else None
+        return user if stamped else None
     except DatabaseError:
         logger.warning(
             "Could not mirror placement back onto the enrolment row for profile %s",
@@ -2150,6 +2070,13 @@ def sync_active_user(source):
     from .learner_dates import learner_date_values
     from .coach_assignment import source_coach
 
+    from .placement_links import placement_profile, CACHE, FIELDS
+    learner = placement_profile(source)
+    if learner is None:
+        # Initial registration supplies IDs once. Later syncs preserve the
+        # learner's authoritative placement, even when registration differs.
+        source.__dict__[CACHE] = LearnerProfile(**{key: getattr(source, key, None) for key in FIELDS})
+        source.__dict__.pop('_placement_names', None)
     status = _s(getattr(source, "programme_status", ""))
     start_date, end_date, _ = _group_dates(source)
     defaults = {
@@ -2160,10 +2087,7 @@ def sync_active_user(source):
         "email": _s(getattr(source, "email", "")) or f"learner-{source.id}@invalid.local",
         "phone_number": _s(getattr(source, "phone_number", "")),
         "lifecycle_status": "active" if status.lower() == ACTIVE_STATUS else status.lower() or "inactive",
-        "programme": _s(getattr(source, "programme", "")),
         "programme_status": status,
-        "cohort": _s(getattr(source, "cohort", "")),
-        "group_name": _s(getattr(source, "group", "")),
         # The assigned plan, mirrored on every upsert so a profile created here
         # arrives with it rather than staying blank until the plan is next
         # edited. Same resolver the learner's own "My learning" page uses; None
@@ -2179,9 +2103,7 @@ def sync_active_user(source):
             # Preserve legacy profile-only assignments, but copy an explicit
             # assignment (including an unassignment) on activation and rebuild.
             defaults.update(source_coach(source) or {})
-            # Prefer the explicit link; fall back to email for profiles created
-            # before enrolment_id existed (see identity.learner_profile_for_source).
-            learner = learner_profile_for_source(source, source.id)
+            # The profile was resolved by its explicit enrolment link above.
             # Whether found or about to be created, it belongs to this source row.
             defaults["enrolment_id"] = source.id
             # Carried across on every upsert so the profile never has to guess
@@ -2197,37 +2119,14 @@ def sync_active_user(source):
             source_uuid = getattr(source, "uuid", None)
             if source_uuid is not None:
                 defaults["uuid"] = source_uuid
-            # Keep the explicit programme link fresh, so curriculum can scope
-            # this learner by id instead of by the programme *name* two
-            # programmes can share. Only set when it resolves unambiguously:
-            # an unresolvable sync must leave whatever link is already there
-            # alone rather than blanking a correct one.
+            # Keep authored plan/KSB synchronization independent of placement labels.
             training_plan = (
                 hydrate_source_training_plan(source)
                 if status.lower() == ACTIVE_STATUS
                 else None
             )
-            linkable_programme_id = _resolve_linkable_programme_id(
-                defaults["programme"],
-                training_plan=training_plan,
-            )
-            if linkable_programme_id:
-                defaults["programme_id"] = linkable_programme_id
-            # Same treatment for the cohort and group this learner sits in, so
-            # curriculum can scope them by reference instead of by a name a
-            # rename can break. Unresolved stays unset rather than blanking a
-            # link an earlier sync got right.
-            linkable_cohort_id, linkable_group_id = _linkable_placement_ids(
-                linkable_programme_id
-                or _s(getattr(learner, "programme_id", "") if learner else ""),
-                defaults["programme"],
-                defaults["cohort"],
-                defaults["group_name"],
-            )
-            if linkable_cohort_id:
-                defaults["cohort_id"] = linkable_cohort_id
-            if linkable_group_id:
-                defaults["group_id"] = linkable_group_id
+            if learner is None:
+                defaults.update({key: getattr(source, key, None) for key in FIELDS})
             if learner is None:
                 # Never force the Created_users primary key into this table:
                 # both sequences are independent after the learner-table merge.
@@ -2236,6 +2135,8 @@ def sync_active_user(source):
                 for field, value in defaults.items():
                     setattr(learner, field, value)
                 learner.save(update_fields=list(defaults))
+            source.__dict__[CACHE] = learner
+            source.__dict__.pop('_placement_names', None)
             if status.lower() == ACTIVE_STATUS:
                 replace_training_plan(learner, training_plan)
                 # Free courses carry no hours/KSBs, so they mirror straight from
@@ -2244,5 +2145,7 @@ def sync_active_user(source):
                 refresh_learner_ksb_snapshot(learner, source, training_plan=training_plan)
         return learner if status.lower() == ACTIVE_STATUS else None
     except DatabaseError as exc:
+        source.__dict__.pop(CACHE, None)
+        source.__dict__.pop('_placement_names', None)
         logger.warning("Could not sync learner %s: %s", source.id, exc)
         return None

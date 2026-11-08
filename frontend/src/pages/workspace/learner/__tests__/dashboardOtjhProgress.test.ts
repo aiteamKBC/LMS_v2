@@ -14,3 +14,15 @@ describe('dashboard OTJH progress', () => {
     expect(dashboardOtjhProgress(193.77, undefined)).toEqual({ target: null, percent: null });
   });
 });
+
+
+describe('official target boundary', () => {
+  it.each([[143.61, 84], [null, null], [0, null], [-1, null], [undefined, null], [NaN, null]])('handles target %s', (target, percent) => {
+    expect(dashboardOtjhProgress(120, target, true).percent).toBe(percent);
+  });
+  it('does not parse malformed official strings or missing actual', () => {
+    expect(dashboardOtjhProgress(120, '143.61 hours', true)).toEqual({ target: null, percent: null });
+    expect(dashboardOtjhProgress(null, 143.61, true)).toEqual({ target: 143.61, percent: null });
+    expect(dashboardOtjhProgress(0, 143.61, true)).toEqual({ target: 143.61, percent: 0 });
+  });
+});

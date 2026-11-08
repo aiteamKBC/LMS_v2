@@ -89,6 +89,9 @@ export interface CreateEnrolmentUserInput extends AptemUserFields {
   programmeStatus?: string;
   learnerStartDate?: string | null;
   learnerEndDate?: string | null;
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme?: string;
   cohort?: string;
   group?: string;
@@ -141,6 +144,9 @@ export interface EnrolmentUserFields extends AptemUserFields {
   status: string;
   /** Programme status — one of PROGRAMME_STATUS_OPTIONS. */
   programmeStatus: string;
+  programmeId?: string | null;
+  cohortId?: string | null;
+  groupId?: string | null;
   programme: string;
   cohort: string;
   group: string;

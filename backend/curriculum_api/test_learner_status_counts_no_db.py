@@ -34,10 +34,10 @@ class LearnerStatusReductionTests(SimpleTestCase):
         result = self.reduce(targets, rows)
         self.assertEqual([result[key]['total'] for key in targets], [3, 2, 1])
 
-    def test_unlinked_legacy_placements_use_names_and_a_missing_record_is_not_zero(self):
+    def test_unlinked_placements_never_use_names_and_a_missing_scope_is_not_zero(self):
         targets = {'G1': lineage(cohortId='C1', cohortName='Intake', groupId='G1', groupName='Group'), 'gone': {'found': False}}
         result = self.reduce(targets, [fact(1, programme_id='', cohort_id='', group_id='', status='')])
-        self.assertEqual(result['G1'], {'total': 1, 'statuses': {'unknown': 1}})
+        self.assertEqual(result['G1'], {'total': 0, 'statuses': {}})
         self.assertIsNone(result['gone'])
 
     def test_direct_and_explicit_module_memberships_match_the_roster_without_broadening_parents(self):

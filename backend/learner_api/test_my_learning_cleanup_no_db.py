@@ -1,4 +1,8 @@
 """Execute production projections with synthetic facts; no Django startup or DB."""
+from learner_api.module_placement_sql import (
+    group_coach_name_sql, module_placement_names_sql, module_tutor_name_sql,
+)
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 import ast
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -31,8 +35,11 @@ class MyLearningScheduleTests(unittest.TestCase):
                 holiday_note_enabled=False, holiday_note='')]]),
             plan_module=Mock(return_value=module), clean_text=str, as_list=lambda v: v,
             is_educational_live_session_week=lambda title: True,
-            visible_child_sql=lambda alias: f'{alias}.deleted_at IS NULL',
-            visible_week_sql=lambda alias: f'{alias}.deleted_at IS NULL',
+            module_placement_names_sql=module_placement_names_sql,
+            module_tutor_name_sql=module_tutor_name_sql,
+            group_coach_name_sql=group_coach_name_sql,
+            visible_child_sql=visible_child_sql,
+            visible_week_sql=visible_week_sql,
             attach_curriculum_slots=Mock(), plan_sessions=Mock(return_value=[{'id': 'S1'}]),
             _canonical_module_progress=Mock(return_value={'M1': {'hours': {'actual': 1}}}),
             _canonical_actual_rows=forbidden, current_coach=forbidden, plan_reviews=forbidden)
@@ -80,12 +87,20 @@ class MyLearningCatalogueTests(unittest.TestCase):
         from learner_api.test_canonical_learning_no_db import adapter
         query = Mock(return_value=[])
         scope = adapter(query)
+        scope.update(__name__='learner_api.canonical_learning', __package__='learner_api')
         owner = {'id': 2, 'enrolment_id': 1, 'name': 'Synthetic learner', 'aptem_id': 3,
                  'programme_planned_hours': 12}
         scope['profile'] = Mock(side_effect=AssertionError('Owner resolved twice'))
         scope['otjh_activities'] = Mock(return_value=[{'id': 'record:1'}])
+        official = ModuleType('learner_api.official_hours')
+        official.official_planned_hours = lambda _owner: 12
+        migrated = ModuleType('coach_api.migrated_otjh')
+        migrated.planned_hours_bulk = lambda _owners: {}
         from learner_api.journal_sources import learner_journal_reads
-        with learner_journal_reads():
+        with patch.dict(sys.modules, {
+                'learner_api.official_hours': official,
+                'coach_api.migrated_otjh': migrated,
+             }), learner_journal_reads():
             compact = scope['source_subjects'](1, lambda items: {'activities': items},
                 owner=owner, records=[], include_ledger=False)
             scope['otjh_activities'].assert_not_called()

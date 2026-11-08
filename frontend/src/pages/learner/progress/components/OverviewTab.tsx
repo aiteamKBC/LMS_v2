@@ -1,3 +1,4 @@
+import { hoursText, hoursAvailability, type OfficialHoursPresentation } from '../officialHoursPresentation';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { LearnerDetail } from '@/api/learnerDetail';
@@ -62,6 +63,7 @@ export function OverviewTab({
   auditOtjhActual,
   auditOtjhPlanned,
   subjectCount,
+  officialHours,
   onNavigateTab,
 }: {
   real: LearnerDetail | null;
@@ -71,6 +73,7 @@ export function OverviewTab({
   auditOtjhActual?: number | null;
   auditOtjhPlanned?: number | null;
   subjectCount?: number | null;
+  officialHours?: OfficialHoursPresentation;
   onNavigateTab: (tab: ProgressTabKey) => void;
 }) {
   const navigate = useNavigate();
@@ -79,10 +82,10 @@ export function OverviewTab({
 
   const usesAuditTotals = auditOtjhActual != null || auditOtjhPlanned != null;
   const usesCombinedSubjects = !usesAuditTotals && recordedOtjhTotal != null;
-  const completedHours = hasMetrics ? metrics?.otjh.actual ?? 0 : usesAuditTotals ? (auditOtjhActual ?? 0) : usesCombinedSubjects ? (recordedOtjhTotal ?? 0) : parseHours(real?.completedHours);
-  const targetHours = hasMetrics ? metrics?.otjh.planned ?? 0 : usesAuditTotals ? (auditOtjhPlanned ?? 0) : usesCombinedSubjects ? 0 : parseHours(real?.targetHours);
-  const otjhPct = targetHours > 0 ? Math.min(100, Math.round((completedHours / targetHours) * 100)) : null;
-  const otjhStatus = hasMetrics ? (metrics?.otjh.actual == null || metrics?.otjh.planned == null ? null : completedHours < targetHours ? 'Needs attention' : 'On track') : usesAuditTotals
+  const completedHours = hasMetrics ? metrics?.otjh?.actual ?? 0 : usesAuditTotals ? (auditOtjhActual ?? 0) : usesCombinedSubjects ? (recordedOtjhTotal ?? 0) : parseHours(real?.completedHours);
+  const targetHours = hasMetrics ? metrics?.otjh?.planned ?? 0 : usesAuditTotals ? (auditOtjhPlanned ?? 0) : usesCombinedSubjects ? 0 : parseHours(real?.targetHours);
+  const otjhPct = officialHours && !officialHours.comparable ? null : targetHours > 0 ? Math.min(100, Math.round((completedHours / targetHours) * 100)) : null;
+  const otjhStatus = officialHours && !officialHours.comparable ? null : hasMetrics ? (metrics?.otjh?.actual == null || metrics?.otjh?.planned == null ? null : completedHours < targetHours ? 'Needs attention' : 'On track') : usesAuditTotals
     ? (targetHours > 0 && completedHours < targetHours ? 'Needs attention' : 'On track')
     : usesCombinedSubjects ? null : real?.otjhStatus || null;
   const otjhAtRisk = /at risk|attention/i.test(otjhStatus || '');
@@ -121,9 +124,9 @@ export function OverviewTab({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <ProgressStat
           icon="ri-calendar-check-line" label="OTJ Hours" tone={otjhStatus ? (otjhAtRisk ? 'caution' : 'positive') : 'brand'} accent="green"
-          value={hasMetrics && metrics?.otjh.actual == null ? '—' : formatHoursMinutes(completedHours)}
+          value={officialHours ? hoursText(officialHours, 'actual', formatHoursMinutes) : hasMetrics && metrics?.otjh?.actual == null ? '—' : formatHoursMinutes(completedHours)}
           percent={otjhPct}
-          caption={hasMetrics ? metrics?.otjh.planned == null ? 'Training plan hours unavailable' : `TP Planned ${formatHoursMinutes(targetHours)}` : usesAuditTotals
+          caption={officialHours ? `Official Planned Hours ${hoursText(officialHours, 'planned', formatHoursMinutes)}${officialHours.comparable ? '' : ` - ${hoursAvailability(officialHours)}`}` : hasMetrics ? metrics?.otjh?.planned == null ? 'Training plan hours unavailable' : `TP Planned ${formatHoursMinutes(targetHours)}` : usesAuditTotals
             ? `Target ${formatHoursMinutes(targetHours)}`
             : usesCombinedSubjects
             ? `Across ${subjectCount || 0} subjects`
@@ -161,8 +164,8 @@ export function OverviewTab({
               size="sm"
               variant="empty"
               icon="ri-checkbox-circle-line"
-              title={hasKsbData ? "You're all caught up" : 'No KSBs defined yet'}
-              description={hasKsbData ? 'Hours and KSBs both look on track.' : 'Your programme has not defined any KSBs yet.'}
+              title={officialHours && !officialHours.comparable ? 'Hours comparison unavailable' : hasKsbData ? "You're all caught up" : 'No KSBs defined yet'}
+              description={officialHours && !officialHours.comparable ? hoursAvailability(officialHours) : hasKsbData ? 'Hours and KSBs both look on track.' : 'Your programme has not defined any KSBs yet.'}
             />
           ) : (
             attentionItems.map((item, i) => (

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,11 +9,13 @@ import { dashboardOtjhProgress } from '@/pages/workspace/learner/dashboardOtjhPr
 import { timelineModuleForDisplay, type DashboardTrainingPayload } from '@/api/dashboardTraining';
 import { EmployerLearningOverview, EmployerTrainingPlan } from './EmployerLearning';
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { id: 'employer-account' } } }) }));
+const account = vi.hoisted(() => ({ id: 'employer-account' }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account } }) }));
 vi.mock('@/api/employerPortal', () => ({ fetchEmployerLearningOverview: vi.fn(), fetchEmployerTraining: vi.fn() }));
 
 let client: QueryClient;
 beforeEach(() => {
+  account.id = 'employer-account';
   vi.resetAllMocks();
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected HTTP request'); }));
@@ -127,4 +129,79 @@ describe('Employer uses learner facts and display calculations', () => {
     expect(screen.queryByRole('button', { name: /overall progress/ })).not.toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
   });
+});
+
+
+describe('official target chart parity', () => {
+  it.each([null, 0, 143.61])('matches the learner scoped chart for target %s', async target => {
+    const payload = dashboardOverviewFixture(); payload.metrics.otjh = { actual: 120, targetToDate: target };
+    payload.hours.planned = 400;
+    vi.mocked(fetchEmployerLearningOverview).mockResolvedValue(payload);
+    const learner = render(<OverviewCharts payload={payload} officialTarget={{ value: target, request: 'ready' }} />, { wrapper });
+    const track = screen.getByRole('progressbar', { name: 'Training plan off-the-job hours progress' });
+    const marker = track.querySelector('b')?.getAttribute('style') ?? null;
+    const monthly = screen.getByRole('button', { name: /October 2026: target/ }).getAttribute('aria-label');
+    learner.unmount();
+    render(<EmployerLearningOverview employerId="9" kind="apprenticeship" learnerId="265" />, { wrapper });
+    const employerTrack = await screen.findByRole('progressbar', { name: 'Training plan off-the-job hours progress' });
+    expect(employerTrack.querySelector('b')?.getAttribute('style') ?? null).toBe(marker);
+    expect(screen.getByRole('button', { name: /October 2026: target/ })).toHaveAttribute('aria-label', monthly);
+    expect(screen.getByRole('link', { name: 'Open OTJ Hours' })).toHaveTextContent(target === 143.61 ? '84%' : target === 0 ? '0.00 h' : 'Unavailable');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('suppresses a retained target after a failed refresh without erasing monthly rows', async () => {
+    vi.mocked(fetchEmployerLearningOverview).mockResolvedValueOnce(dashboardOverviewFixture());
+    render(<EmployerLearningOverview employerId="9" kind="commercial" learnerId="265" />, { wrapper });
+    await screen.findByText('Target to date: 40h');
+    vi.mocked(fetchEmployerLearningOverview).mockRejectedValueOnce(new Error('Refresh failed'));
+    await act(async () => { await client.invalidateQueries({ queryKey: ['employer-learning-overview'] }); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Refresh failed');
+    expect(screen.getByText('Target to date: Unavailable (could not refresh)')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Training plan off-the-job hours progress' }).querySelector('b')).toBeNull();
+    expect(screen.getByRole('button', { name: /October 2026: target/ })).toBeVisible();
+    vi.mocked(fetchEmployerLearningOverview).mockResolvedValueOnce(dashboardOverviewFixture());
+    fireEvent.click(screen.getByRole('button', { name: 'Retry overview' }));
+    expect(await screen.findByText('Target to date: 40h')).toBeVisible();
+  });
+});
+
+
+it('does not publish a late target from a previous account', async () => {
+  let finish!: (value: ReturnType<typeof dashboardOverviewFixture>) => void;
+  vi.mocked(fetchEmployerLearningOverview).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const view = render(<EmployerLearningOverview employerId="9" kind="commercial" learnerId="265" />, { wrapper });
+  account.id = 'other-account';
+  const next = dashboardOverviewFixture(); next.metrics.otjh.targetToDate = null;
+  vi.mocked(fetchEmployerLearningOverview).mockResolvedValueOnce(next);
+  view.rerender(<EmployerLearningOverview employerId="9" kind="commercial" learnerId="265" />);
+  await screen.findByText('Target to date: Unavailable');
+  await act(async () => finish(dashboardOverviewFixture()));
+  expect(screen.queryByText('Target to date: 40h')).not.toBeInTheDocument();
+  expect(screen.getByRole('progressbar', { name: 'Training plan off-the-job hours progress' }).querySelector('b')).toBeNull();
+});
+
+
+it.each(['commercial', 'apprenticeship'] as const)('separates official %s metrics and suppresses retained successes through refresh/error/retry', async kind => {
+  const payload = dashboardOverviewFixture();
+  payload.metrics.otjh = { actual: 120, targetToDate: 143.61, officialPlannedHours: 288 };
+  payload.hours.planned = 400;
+  payload.hours.months = [{ key: '2026-10', target: 400, completed: 30, submitted: 5 }];
+  vi.mocked(fetchEmployerLearningOverview).mockResolvedValueOnce(payload);
+  render(<EmployerLearningOverview employerId="9" kind={kind} learnerId="265" />, { wrapper });
+  expect(await screen.findByRole('progressbar', { name: /Training plan off/ })).toHaveAttribute('aria-valuenow', '8');
+  expect(screen.queryByRole('progressbar', { name: 'Official programme completion' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Official Programme Completion|Official Planned Hours|Canonical Actual Hours|Official Target Marker|Official Variance/)).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Open OTJ Hours' })).toHaveTextContent('84%');
+  let fail!: (error: Error) => void;
+  vi.mocked(fetchEmployerLearningOverview).mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
+  act(() => { void client.invalidateQueries({ queryKey: ['employer-learning-overview'] }); });
+  await waitFor(() => expect(screen.getByRole('progressbar', { name: /Training plan off/ }).querySelector('b')).toBeNull());
+  expect(screen.getByRole('progressbar', { name: /Training plan off/ })).toHaveAttribute('aria-valuenow', '8');
+  await act(async () => fail(new Error('Refresh denied')));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Refresh denied');
+  expect(screen.queryByText('Official Planned Hours: 288h')).not.toBeInTheDocument();
+  vi.mocked(fetchEmployerLearningOverview).mockResolvedValueOnce(payload);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry overview' }));
+  await waitFor(() => expect(screen.getByRole('progressbar', { name: /Training plan off/ }).querySelector('b')).toHaveStyle({ left: '36%' }));
+  expect(fetch).not.toHaveBeenCalled();
 });

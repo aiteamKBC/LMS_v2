@@ -318,7 +318,11 @@ export default function ComponentViewPage() {
     ? formatRecordedClock(record.timeTaken)
     : component ? completionTimeFor(component, detail) : null;
   const noun = componentNoun(component?.type);
-  const contentOpenable = component ? isOpenableComponent(component) || (isAssignment && !!component.componentId) : false;
+  // An assigned live session always has a useful read-only interface, including
+  // the explicit unscheduled state. Do not let generic content availability hide it.
+  const contentOpenable = component
+    ? (isLiveSession && !!component.componentId) || isOpenableComponent(component) || (isAssignment && !!component.componentId)
+    : false;
   const savedAssignment = useSavedAssignmentAccess(kind, id, componentId, isAssignment && !contentOpenable && canUseComponent);
   const openable = contentOpenable || savedAssignment.status === 'available';
 
@@ -2746,16 +2750,20 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
   if ((component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session') {
     const parsedStart = component.sessionDateTimeUtc ? new Date(component.sessionDateTimeUtc) : null;
     const validStart = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : null;
+    const scheduled = Boolean(validStart || component.sessionDate);
     const ended = Boolean(validStart && component.durationMinutes && clock >= validStart.getTime() + component.durationMinutes * 60000);
-    const dateLabel = component.sessionDate
+    const dateLabel = !scheduled
+      ? 'Not scheduled yet'
+      : component.sessionDate
       ? new Date(`${component.sessionDate}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
       : (validStart
         ? formatSystemTimestamp(validStart, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-        : 'Date to be confirmed');
-    const timeLabel = component.sessionTime
+        : 'Not scheduled yet');
+    const timeLabel = !scheduled ? null : component.sessionTime
       || (validStart
         ? `${formatSystemTimestamp(validStart, { hour: '2-digit', minute: '2-digit', hour12: false })} ${systemTimeZoneName(validStart)}`
         : 'Time to be confirmed');
+    const statusLabel = !scheduled ? 'Not scheduled yet' : ended ? 'Session ended' : 'Scheduled';
 
     return (
       <div className="overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
@@ -2769,8 +2777,9 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
                 <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/70">Microsoft Teams live session</p>
                 <p className="mt-1 truncate text-base font-heading font-black">{title}</p>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-white/80">
+                  <span><AppIcon className="ri-information-line mr-1" />{statusLabel}</span>
                   <span><AppIcon className="ri-calendar-line mr-1" />{dateLabel}</span>
-                  <span><AppIcon className="ri-time-line mr-1" />{timeLabel}</span>
+                  {timeLabel ? <span><AppIcon className="ri-time-line mr-1" />{timeLabel}</span> : null}
                   {component.durationMinutes ? <span><AppIcon className="ri-timer-line mr-1" />{component.durationMinutes} min</span> : null}
                 </div>
               </div>
@@ -2785,7 +2794,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             ) : (
               <button type="button" disabled className="inline-flex min-h-11 shrink-0 cursor-not-allowed items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-[11px] font-bold text-white/80">
                 <AppIcon className="ri-calendar-todo-line text-base" />
-                {preview ? 'Join is disabled in preview' : ended ? 'Session ended' : 'Meeting link not scheduled'}
+                {preview ? 'Join is disabled in preview' : ended ? 'Session ended' : !scheduled ? 'Not scheduled yet' : 'Meeting link not available'}
               </button>
             )}
           </div>

@@ -9,6 +9,7 @@ from .response_cache import cached_learner_read
 from . import journal_sources
 from django.db import DatabaseError, connections
 from curriculum_api.week_visibility import visible_child_sql
+from curriculum_api.canonical_read_sql import component_ksb_mappings_sql
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from .projection_performance import measure_projection
@@ -32,11 +33,10 @@ _MISSING = object()
 
 
 def coach_otjh_target_to_date(source, otjh, *, owner=None, as_of=None):
-    from coach_api.selectors.otjh import learner_programme_window
     from coach_api.views import apply_otjh_to_date_metrics
     # Projection callers may reuse this source's already-verified SSOT owner.
     profile = canonical_learning.require_profile(source.pk) if owner is None else owner
-    start, end = learner_programme_window(SimpleNamespace(**profile), source)
+    start, end = profile.get('learner_start_date'), profile.get('learner_end_date')
     data = {'otjhCompleted': otjh.get('actual'), 'otjhPlanned': otjh.get('planned')}
     data.update(otjhProgrammeStartDate=start, plannedEndDate=end)
     return apply_otjh_to_date_metrics(
@@ -365,16 +365,14 @@ def _read_legacy_metrics(source, kind, preloaded=None):
         if preloaded is not None and 'native_components' in preloaded:
             native = preloaded['native_components']
         else:
-            cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
-                (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
-                 FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
+            cursor.execute(f'''SELECT c.id,c.type,c.expected_otjh AS expected_hours,
+                {component_ksb_mappings_sql('c')} AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
                 FROM curriculum.components c
                 WHERE c.module_catalogue_id=ANY(%s)
-                  AND ''' + visible_child_sql('c'), [module_ids])
+                  AND {visible_child_sql('c')}''', [module_ids])
             native = rows(cursor)
         if preloaded is not None and 'native_progress' in preloaded:
             progress = preloaded['native_progress']
@@ -514,13 +512,17 @@ def learner_metrics(request, kind, pk):
                     ).get(source.pk)
                     if payload is None:
                         raise ValueError('Learner identity is unavailable.')
+                    target_input = payload['otjh']
                     if payload['otjh'].get('planned') is None:
-                        # No SSOT programme plan yet: the target follows the
-                        # learning-plan total, as the home progress card does.
+                        # Temporary compatibility debt (owner decision U1): the
+                        # Coach case file still reads the learning-plan total as
+                        # otjh.planned. It is display-only and never paces the
+                        # target, which uses the official total alone.
+                        target_input = {**payload['otjh'], 'planned': None}
                         plan_source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=source.pk)
                         payload['otjh']['planned'] = plan_planned_hours(
                             plan_source, canonical_learning.profile(source.pk))
-                    payload['otjh']['targetToDate'] = coach_otjh_target_to_date(source, payload['otjh'])
+                    payload['otjh']['targetToDate'] = coach_otjh_target_to_date(source, target_input)
                 else:
                     payload = read_metrics(source, kind)
     except model.DoesNotExist:
@@ -745,17 +747,14 @@ def load_native_components_bulk(module_ids):
     if not ids:
         return result
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('''SELECT c.module_catalogue_id,c.id,c.type,c.expected_otjh AS expected_hours,
-                coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
-                (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
-                 FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
+        cursor.execute(f'''SELECT c.module_catalogue_id,c.id,c.type,c.expected_otjh AS expected_hours,
+                {component_ksb_mappings_sql('c')} AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c
             WHERE c.module_catalogue_id=ANY(%s)
-              AND ''' + visible_child_sql('c'), [ids])
+              AND {visible_child_sql('c')}''', [ids])
         for item in rows(cursor):
             result.setdefault(str(item.pop('module_catalogue_id')), []).append(item)
     return result

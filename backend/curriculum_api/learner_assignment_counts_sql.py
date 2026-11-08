@@ -54,13 +54,32 @@ from django.db import connections
 
 from learner_api import learning_plan as plans
 from learner_api.models import EnrolmentUser
+from learner_api.placement_links import with_placements
 
 logger = logging.getLogger(__name__)
 
 #: The relation the production query reads. Parameterised only so the tests can
 #: substitute a literal VALUES list and exercise the jsonb expressions below
 #: against a real Postgres without needing the table.
-LEARNER_RELATION = 'enrolment."Created_users" u'
+#:
+#: Created_users no longer stores programme/group names. Expose them under the
+#: same column names, resolved the way EnrolmentUser.programme/.group are
+#: (_learner_placement_names): through the profile linked by enrolment_id and
+#: its curriculum placement ids. One row per enrolment; no profile or placement
+#: leaves the name NULL, exactly as the ORM fallback path reads it.
+LEARNER_RELATION = '''(
+    SELECT cu.id, placement.programme AS "Programme", placement.group_name AS "Group", placement.group_id,
+           cu."Training_plan", cu."Learning_plan"
+    FROM enrolment."Created_users" cu
+    LEFT JOIN LATERAL (
+        SELECT p.name AS programme, g.group_name, l.group_id
+        FROM "Learner".learners l
+        LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
+        LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
+        WHERE l.enrolment_id = cu.id
+          AND (SELECT count(*) FROM "Learner".learners linked WHERE linked.enrolment_id = cu.id) = 1
+    ) placement ON TRUE
+) u'''
 
 #: One row per learner: enough to apply `_effective_plan_ids` without ever
 #: shipping a plan. `%s` is the caller's module ids as a text[].
@@ -184,7 +203,9 @@ def _preset_ids(programme, group, cache, group_id=''):
     over the (programme, group) name pair.
     """
     group_id = plans._s(group_id)
-    key = ('group_id', group_id) if group_id else (plans._s(programme), plans._s(group))
+    if not group_id:
+        return []
+    key = ('group_id', group_id)
     if key not in cache:
         source = _group_source()
         cache[key] = (
@@ -197,8 +218,7 @@ def _preset_ids(programme, group, cache, group_id=''):
 def seed_preset_cache(facts):
     """One round trip of group presets for every fact, keyed as `_preset_ids` keys them."""
     source = _group_source()
-    by_name = {(fact['programme'], fact['grp']) for fact in facts if not plans._s(fact.get('group_id'))}
-    cache = dict(plans.group_module_ids_bulk(by_name, source=source)) if by_name else {}
+    cache = {}
     group_ids = sorted({plans._s(fact.get('group_id')) for fact in facts if plans._s(fact.get('group_id'))})
     if group_ids:
         relation = source or plans.GROUP_PRESET_SOURCE
@@ -235,26 +255,10 @@ def _learner_columns(alias):
 
 
 def _placement_select(alias):
-    """The programme/group/group_id select list for ``enrolment."Created_users"``.
-
-    The normalised schema keeps only ``programme_id``/``group_id``; the legacy
-    one only the ``Programme``/``Group`` names. Whichever is absent reads ''.
-    Decided once per alias and process (a column cannot appear without a deploy).
-    """
-    if alias not in _PLACEMENT_SQL:
-        if connections[alias].vendor != 'postgresql':
-            return _JSONB_PLACEMENT
-        columns = _learner_columns(alias)
-        if not columns:
-            return _JSONB_PLACEMENT
-        def text(column):
-            return f"COALESCE(u.\"{column}\"::text, '')" if column in columns else "''::text"
-        _PLACEMENT_SQL[alias] = (
-            f"{text('Programme')} AS programme,\n"
-            f"        {text('Group')} AS grp,\n"
-            f"        {text('group_id')} AS group_id,"
-        )
-    return _PLACEMENT_SQL[alias]
+    """Read names and group identity from the canonical learner relation."""
+    return ("COALESCE(u.\"Programme\", '') AS programme, "
+            "COALESCE(u.\"Group\", '') AS grp, "
+            "COALESCE(u.group_id, '') AS group_id,")
 
 
 def fetch_plan_facts(wanted, using=None, source=None):
@@ -366,10 +370,9 @@ def bulk_assigned_learner_counts_sql(module_ids):
         # A plan stored as a JSON string. Rare enough that reading those few rows
         # whole costs nothing, and it keeps the answer exactly the original's.
         logger.info('assignment counts: %d learner(s) fell back to Python plan parsing', len(ambiguous))
-        from . import learner_compat
-        learners = learner_compat.fill(learner_compat.only(
-            EnrolmentUser.all_learners, 'id', 'programme', 'group', 'learning_plan', 'training_plan',
-        ).filter(pk__in=ambiguous), EnrolmentUser)
+        learners = with_placements(EnrolmentUser.all_learners.only(
+            'id', 'programme_id', 'group_id', 'learning_plan', 'training_plan',
+        ).filter(pk__in=ambiguous))
         for learner in learners:
             for module_id in set(plans._effective_plan_ids(learner, cache)):
                 if module_id in wanted:

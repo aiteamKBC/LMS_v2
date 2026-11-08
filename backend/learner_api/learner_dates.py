@@ -12,7 +12,7 @@ def learner_date_values(source):
     return {field: getattr(source, field, None) or None for field in DATE_FIELDS}
 
 
-def save_enrolment_fields(user, fields):
+def _save_enrolment_fields(user, fields):
     profile_fields = {}
     if any(field in fields for field in DATE_FIELDS):
         profile_fields.update(learner_date_values(user))
@@ -48,3 +48,35 @@ def save_enrolment_fields(user, fields):
             setattr(profile, field, value)
         profile.save(using="enrolment", update_fields=[*profile_fields, "updated_at"])
     return {"reviewHandover": handover[1]} if handover is not None else None
+
+
+def save_enrolment_fields(user, fields):
+    """Save registration fields and explicit educational FK changes atomically."""
+    from .placement_links import FIELDS, CACHE, placement_profile, validate_placement
+
+    requested = {key: value for key, value in fields.items() if key in FIELDS}
+    if not requested:
+        return _save_enrolment_fields(user, fields)
+    alias = user._state.db or 'enrolment'
+    with transaction.atomic(using=alias):
+        profile = placement_profile(user)
+        validate_placement(requested, profile, using=alias)
+        registration = {key: value for key, value in fields.items() if key not in FIELDS}
+        if profile is None:
+            # First placement uses the normal profile provisioning path.
+            from .active_users import sync_active_user
+            registration.update(requested)
+            result = _save_enrolment_fields(user, registration)
+            sync_active_user(user)
+            user.__dict__.pop(CACHE, None)
+            profile = placement_profile(user)
+            if profile is None:
+                raise ValueError('Unable to establish the canonical learner placement.')
+        else:
+            result = _save_enrolment_fields(user, registration) if registration else None
+            for key, value in requested.items():
+                setattr(profile, key, value)
+            profile.save(using=alias, update_fields=[*requested, 'updated_at'])
+        user.__dict__[CACHE] = profile
+        user.__dict__.pop('_placement_names', None)
+    return result

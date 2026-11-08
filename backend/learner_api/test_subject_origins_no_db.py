@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
+from learner_api.module_placement_sql import current_module_sql
 from learner_api.subject_origins import read_imported_courses, read_replacement_courses
 
 
@@ -23,7 +24,9 @@ class ImportedCourseOriginTests(unittest.TestCase):
         self.assertEqual(params, [['M-NEW', 'M-OLD']])
         self.assertIn("source_type='mba-legacy'", sql)
         self.assertIn('module_catalogue_id=ANY(%s)', sql)
-        self.assertIn('deleted_at IS NULL OR deleted_via_parent IS NOT NULL', sql)
+        self.assertIn(current_module_sql('m'), sql)
+        self.assertNotIn('deleted_at', sql)
+        self.assertNotIn('deleted_via_parent', sql)
 
     def test_empty_assignment_never_queries_other_modules(self):
         self.assertEqual(read_imported_courses(self.cursor, []), {})

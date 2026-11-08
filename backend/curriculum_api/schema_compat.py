@@ -28,6 +28,7 @@ What the curriculum now does natively, and so is no longer here:
 rows by key; the chosen tutor/coach written as its id), ``calendar_holidays``
 (the holiday calendar, the GOV.UK mirror and cohort choices) and
 ``ksb_mapping_placement`` (mappings scoped and read through their component).
+Placement labels are also projected by FK for SQL filtering and ordering.
 What remains: the lifecycle columns derived from ``status``, the KSB mapping /
 component / free-course-week read shapes, and ``adapt_sql`` -- which hand-written
 statements still need, chiefly the Learner team's code curriculum calls.
@@ -56,8 +57,13 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 # Tables the read relation covers: the lifecycle tables plus free-course
 # weeks, whose title/number/description now live on the week itself.
 DERIVED_COLUMNS = {
+    # SQL filters and ordering need these labels before Python row projection.
+    # They remain FK reads, never copied storage.
+    'cohorts': ('programme_name',),
+    'groups': ('programme_name', 'cohort_name'),
+    'modules': ('programme_name', 'cohort_name', 'group_name'),
     'free_course_weeks': ('week_title', 'week_number', 'description', 'course_name', 'cover_image_url'),
-    # Copied names (programme_name, tutor_name ...), child lists (module_ids,
+    # Staff names (tutor_name ...), child lists (module_ids,
     # group_ids, assigned_*_ids ...) and a cohort's holiday choices are not
     # here: curriculum_names puts them on the rows natively, by key
     # (curriculum_names.ROW_FIELDS, calendar_holidays.attach_cohort_choices).
@@ -407,6 +413,15 @@ def read_relation(table, columns, alias=True):
     def add(name, expression):
         if name not in columns:
             extra.append(f'{expression} as "{name}"')
+
+    for output, source, key, label in (
+        ('programme_name', 'programmes', 'programme_id', 'name'),
+        ('cohort_name', 'cohorts', 'cohort_id', 'cohort_name'),
+        ('group_name', 'groups', 'group_id', 'group_name'),
+    ):
+        if output in DERIVED_COLUMNS.get(table, ()) and key in columns:
+            add(output, f"coalesce((select placement.{label} from {q(source)} placement "
+                        f"where placement.{key} = {t}.{key}), '')::varchar")
 
     if table == 'ksb_mappings':
         joins.append(f'left join {q("components")} cc on cc.id = {t}.component_id')

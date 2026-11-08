@@ -14,6 +14,9 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from audit_api.last_audit_ledger_views import _is_completed
+from curriculum_api.canonical_read_sql import (component_ksb_codes_sql,
+                                                component_ksb_mappings_sql)
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from login.permissions import learner_self_or_staff
 from old_otjh.repository import ksb_codes
 from .attendance import combined_attendance_rows, _summarize_attendance
@@ -25,19 +28,23 @@ from .student_activity import _direct_progress_records
 from .student_activity_access import student_activity_available
 from .training_plan_dashboard import rows as dict_rows
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
+from .module_placement_sql import module_tutor_name_sql
 from .attendance_assignments import assigned_module_ids as effective_assigned_module_ids
 
 log = logging.getLogger(__name__)
 ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type',
-                            'programme', 'group', 'training_plan', 'learning_plan')
+                            'programme_id', 'cohort_id', 'group_id', 'training_plan', 'learning_plan')
 
 # The effective plan includes group inheritance and respects explicit/empty
 # selections, exactly as My Learning. A stale normalized mirror is not a
 # second assignment authority. Historical attendance is read separately.
+# The canonical curriculum.modules table has no deletion marker (deleted_at,
+# deleted_via_parent and is_programme_deleted were removed) and module status
+# is not an attendance rule, so every assigned module row is read; planned and
+# inactive modules keep their attendance history.
 ATTENDANCE_SUBJECTS_SQL = '''
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM curriculum.modules cm WHERE cm.module_catalogue_id=ANY(%s)
-      AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
 
@@ -134,7 +141,7 @@ NATIVE_OCCURRENCES_SQL = f'''SELECT o.id AS session_id,o.id AS occurrence_id,
             COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
             CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
                  THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END AS attendance_report_id,
-            coalesce(nullif(m.tutor_name,''),s.organizer_email) AS tutor_name,
+            coalesce(nullif({module_tutor_name_sql('m')},''),s.organizer_email) AS tutor_name,
             CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
                                     THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END,'')=''
                  THEN false
@@ -147,7 +154,6 @@ NATIVE_OCCURRENCES_SQL = f'''SELECT o.id AS session_id,o.id AS occurrence_id,
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
             {REPLACED_ATTENDANCE_LATERAL_SQL}
             WHERE s.module_catalogue_id=ANY(%s)
-              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
               AND (lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
                    AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
                    OR lower(btrim(o.status)) IN ('cancelled','canceled'))
@@ -302,7 +308,6 @@ def read_cancelled_native_occurrences(source, *, module_ids=None):
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
             WHERE s.module_catalogue_id=ANY(%s)
-              AND m.deleted_at IS NULL
               AND (lower(btrim(coalesce(s.status,''))) IN
                        ('cancelled','canceled','deleted','failed','superseded')
                    OR lower(btrim(coalesce(o.status,''))) IN
@@ -805,6 +810,8 @@ def read_native_components(source, module_refs=None, *, monthly=False):
         cur.execute(ATTENDANCE_SUBJECTS_SQL, [effective_assigned_module_ids(source)])
         modules = [row[0] for row in cur.fetchall() if module_refs is None or row[0] in module_refs]
         description = "''::text" if monthly else 'c.description'
+        mappings = "'[]'::jsonb" if monthly else component_ksb_mappings_sql('c')
+        mapped_codes = "NULL::jsonb" if monthly else component_ksb_codes_sql('c')
         cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,w.title AS week_title,c.type,c.title,{description} AS description,
             jsonb_build_object(
                 'teamsOccurrenceId',c.settings_json->'teamsOccurrenceId',
@@ -814,13 +821,12 @@ def read_native_components(source, module_refs=None, *, monthly=False):
                 'legacySettings',CASE WHEN jsonb_typeof(c.settings_json->'legacySettings')='object'
                     THEN jsonb_build_object('teamsOccurrenceId',c.settings_json #> '{{legacySettings,teamsOccurrenceId}}')
                     ELSE c.settings_json->'legacySettings' END
-            ) AS settings_json,c.expected_otjh,{"'[]'::jsonb" if monthly else 'c.ksb_mappings'} AS ksb_mappings,
-            {"NULL::jsonb" if monthly else '(SELECT jsonb_agg(k.ksb_code ORDER BY k.ksb_code) FROM curriculum.ksb_mappings k WHERE k.component_id=c.id AND k.deleted_at IS NULL)'} AS mapped_ksbs
+            ) AS settings_json,c.expected_otjh,{mappings} AS ksb_mappings,
+            {mapped_codes} AS mapped_ksbs
             FROM curriculum.components c
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND c.deleted_at IS NULL
-              AND NOT c.is_programme_deleted AND (w.id IS NULL OR
-                (w.deleted_at IS NULL AND NOT w.is_programme_deleted))
+            WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
+              AND (w.id IS NULL OR {visible_week_sql('w')})
             ORDER BY c.display_order,c.id''', [modules])
         components = dict_rows(cur)
     progress = [] if monthly else _direct_progress_records(source.id)

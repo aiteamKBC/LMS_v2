@@ -339,7 +339,9 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual({row['module_catalogue_id']: row['attendance_status'] for row in result},
                          {'source': 'present', 'destination': 'absent'})
 
-    def test_schedule_excludes_deleted_modules_and_superseded_or_failed_series_and_occurrences(self):
+    def test_schedule_excludes_superseded_or_failed_series_and_occurrences(self):
+        # The canonical curriculum.modules table has no deletion marker; module
+        # status is not an attendance rule. Series and occurrence status still are.
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
         cur.fetchall.return_value = [('assigned-module', 'Assigned')]
@@ -347,8 +349,9 @@ class AttendanceLectureTests(SimpleTestCase):
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
         sql = cur.execute.call_args_list[1].args[0]
-        self.assertIn('m.deleted_at IS NULL', sql)
-        self.assertIn('NOT coalesce(m.is_programme_deleted,false)', sql)
+        self.assertNotIn('m.deleted_at', sql)
+        self.assertNotIn('m.is_programme_deleted', sql)
+        self.assertNotIn('m.status', sql)
         self.assertIn("lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')", sql)
         self.assertIn("lower(btrim(o.status)) IN ('cancelled','canceled')", sql)
 

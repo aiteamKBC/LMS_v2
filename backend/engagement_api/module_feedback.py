@@ -128,7 +128,7 @@ def sync_module_feedback(learner_id=None):
                                FeedbackDeliveryRecipient.objects.select_for_update().filter(**recipient_scope)}
         learners = {str(row.pk): row for row in EnrolmentUser.all_learners.filter(
             pk__in=[key for key, ids in memberships.items() if ids],
-        ).only('id', 'username', 'email', 'programme')}
+        ).only('id', 'username', 'email', 'programme_id')}
         for module in modules:
             module_id = module['module_catalogue_id']
             for phase, label in MODULE_FORM_TYPES.items():

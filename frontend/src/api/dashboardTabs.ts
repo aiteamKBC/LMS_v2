@@ -13,7 +13,7 @@ export type OverviewModule = {
   dateBounds?: { startFixed: boolean; endFixed: boolean; first: string; last: string };
 };
 export type DashboardOverviewPayload = {
-  metrics: { ksb: Count; otjh: { actual: number | null; targetToDate: number | null } };
+  metrics: { ksb: Count; otjh: { actual: number | null; targetToDate: number | null; officialPlannedHours?: number | null } };
   attendance: { present: number; sessions: number; attendanceRate?: number } | null;
   reviews: Count;
   modules: OverviewModule[];

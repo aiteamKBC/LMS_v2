@@ -8,7 +8,7 @@ import {
   type LearningPlanModule,
   type LearningPlanResponse,
 } from '@/api/learningPlan';
-import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
+import { fetchProgrammeOptions, fetchCohortOptions, fetchGroupOptions, type CurriculumItem } from '@/api/curriculum';
 import { updateEnrolmentUser } from '@/api/enrolmentUsers';
 import { fetchFreeProgrammeModules } from '@/lib/curriculumApi';
 import type { FreeCourseAssignment } from '@/api/trainingPlan';
@@ -44,8 +44,8 @@ import { RowsSkeleton, SkeletonBlock } from '@/components/feature/Skeletons';
 // ============================================================================
 
 /** Whether a learner is placed well enough for a plan to mean anything. */
-function isPlaced(learner: { programme?: string; cohort?: string; group?: string }) {
-  return Boolean(learner.programme?.trim() && learner.cohort?.trim() && learner.group?.trim());
+function isPlaced(learner: { programmeId?: string; cohortId?: string; groupId?: string }) {
+  return Boolean(learner.programmeId?.trim() && learner.cohortId?.trim() && learner.groupId?.trim());
 }
 
 // Free courses are authored under one synthetic programme id (see the
@@ -99,10 +99,10 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   const [pickerProgramme, setPickerProgramme] = useState('');
   // Where an unplaced learner is being put. Names, not ids: that is what the
   // learner record stores and what the plan reads back.
-  const [place, setPlace] = useState({ programme: '', cohort: '', group: '' });
-  const [programmeOptions, setProgrammeOptions] = useState<string[]>([]);
-  const [cohortOptions, setCohortOptions] = useState<string[]>([]);
-  const [groupOptions, setGroupOptions] = useState<string[]>([]);
+  const [place, setPlace] = useState({ programmeId: '', cohortId: '', groupId: '' });
+  const [programmeOptions, setProgrammeOptions] = useState<CurriculumItem[]>([]);
+  const [cohortOptions, setCohortOptions] = useState<CurriculumItem[]>([]);
+  const [groupOptions, setGroupOptions] = useState<CurriculumItem[]>([]);
   const [placing, setPlacing] = useState(false);
   // Read by the background refresh below. Refs rather than state so the
   // listener is bound once instead of re-subscribing on every edit.
@@ -135,9 +135,9 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
         // Whatever the learner already has is where the placement starts, so a
         // learner missing only a group does not have to re-pick the rest.
         setPlace({
-          programme: res.learner.programme || '',
-          cohort: res.learner.cohort || '',
-          group: res.learner.group || '',
+          programmeId: res.learner.programmeId || '',
+          cohortId: res.learner.cohortId || '',
+          groupId: res.learner.groupId || '',
         });
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the learning plan.');
@@ -234,35 +234,35 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   useEffect(() => {
     if (!needsPlacement || readOnly) return;
     let cancelled = false;
-    fetchProgrammes()
+    fetchProgrammeOptions()
       .then((names) => !cancelled && setProgrammeOptions(names))
       .catch(() => !cancelled && setProgrammeOptions([]));
     return () => { cancelled = true; };
   }, [needsPlacement, readOnly]);
 
   useEffect(() => {
-    if (!needsPlacement || readOnly || !place.programme) {
+    if (!needsPlacement || readOnly || !place.programmeId) {
       setCohortOptions([]);
       return;
     }
     let cancelled = false;
-    fetchCohorts(place.programme)
+    fetchCohortOptions(place.programmeId)
       .then((names) => !cancelled && setCohortOptions(names))
       .catch(() => !cancelled && setCohortOptions([]));
     return () => { cancelled = true; };
-  }, [needsPlacement, readOnly, place.programme]);
+  }, [needsPlacement, readOnly, place.programmeId]);
 
   useEffect(() => {
-    if (!needsPlacement || readOnly || !place.programme || !place.cohort) {
+    if (!needsPlacement || readOnly || !place.programmeId || !place.cohortId) {
       setGroupOptions([]);
       return;
     }
     let cancelled = false;
-    fetchGroups(place.programme, place.cohort)
+    fetchGroupOptions(place.programmeId, place.cohortId)
       .then((names) => !cancelled && setGroupOptions(names))
       .catch(() => !cancelled && setGroupOptions([]));
     return () => { cancelled = true; };
-  }, [needsPlacement, readOnly, place.programme, place.cohort]);
+  }, [needsPlacement, readOnly, place.programmeId, place.cohortId]);
 
   const chosen = useMemo(() => new Set(plan.map((m) => m.moduleId)), [plan]);
 
@@ -400,15 +400,15 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     setError('');
     try {
       await updateEnrolmentUser(learnerId, {
-        programme: place.programme,
-        cohort: place.cohort,
-        group: place.group,
+        programmeId: place.programmeId,
+        cohortId: place.cohortId,
+        groupId: place.groupId,
       });
       const res = await fetchLearningPlan(learnerId);
       setData(res);
       setPlan(res.plan);
       setPickerProgramme(res.learner.programmeId || '');
-      toast.success('Learner placed', `${place.programme} · ${place.cohort} · ${place.group}`);
+      toast.success('Learner placed', `${place.programmeId} · ${place.cohortId} · ${place.groupId}`);
       // The directory shows programme and group in their own columns.
       onSaved?.();
     } catch (err) {
@@ -502,9 +502,9 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                 type="button"
                 className={btnPrimary}
                 onClick={savePlacement}
-                disabled={placing || !place.programme || !place.cohort || !place.group}
+                disabled={placing || !place.programmeId || !place.cohortId || !place.groupId}
                 title={
-                  place.programme && place.cohort && place.group
+                  place.programmeId && place.cohortId && place.groupId
                     ? undefined
                     : 'Choose a programme, cohort and group first.'
                 }
@@ -580,14 +580,14 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                 </span>
                 <select
                   className={inputClass}
-                  value={place.programme}
+                  value={place.programmeId}
                   // A cohort belongs to one programme and a group to one cohort,
                   // so changing either clears what sat underneath it.
-                  onChange={(e) => setPlace({ programme: e.target.value, cohort: '', group: '' })}
+                  onChange={(e) => setPlace({ programmeId: e.target.value, cohortId: '', groupId: '' })}
                 >
                   <option value="">Choose a programme…</option>
                   {programmeOptions.map((name) => (
-                    <option key={name} value={name}>{name}</option>
+                    <option key={name.id} value={name.id}>{name.title}</option>
                   ))}
                 </select>
               </label>
@@ -598,22 +598,22 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                 </span>
                 <select
                   className={inputClass}
-                  value={place.cohort}
-                  disabled={!place.programme}
-                  onChange={(e) => setPlace((current) => ({ ...current, cohort: e.target.value, group: '' }))}
+                  value={place.cohortId}
+                  disabled={!place.programmeId}
+                  onChange={(e) => setPlace((current) => ({ ...current, cohortId: e.target.value, groupId: '' }))}
                 >
                   <option value="">
-                    {place.programme ? 'Choose a cohort…' : 'Pick a programme first'}
+                    {place.programmeId ? 'Choose a cohort…' : 'Pick a programme first'}
                   </option>
                   {cohortOptions.map((name) => (
-                    <option key={name} value={name}>{name}</option>
+                    <option key={name.id} value={name.id}>{name.title}</option>
                   ))}
                 </select>
                 {/* Says where to go rather than leaving an empty list to be read
                     as a loading state that never finishes. */}
-                {place.programme && cohortOptions.length === 0 && (
+                {place.programmeId && cohortOptions.length === 0 && (
                   <span className="mt-1 block text-[11px] text-amber-700">
-                    {place.programme} has no cohorts yet — add one in Curriculum Studio.
+                    {programmeOptions.find((item) => item.id === place.programmeId)?.title} has no cohorts yet — add one in Curriculum Studio.
                   </span>
                 )}
               </label>
@@ -624,20 +624,20 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                 </span>
                 <select
                   className={inputClass}
-                  value={place.group}
-                  disabled={!place.cohort}
-                  onChange={(e) => setPlace((current) => ({ ...current, group: e.target.value }))}
+                  value={place.groupId}
+                  disabled={!place.cohortId}
+                  onChange={(e) => setPlace((current) => ({ ...current, groupId: e.target.value }))}
                 >
                   <option value="">
-                    {place.cohort ? 'Choose a group…' : 'Pick a cohort first'}
+                    {place.cohortId ? 'Choose a group…' : 'Pick a cohort first'}
                   </option>
                   {groupOptions.map((name) => (
-                    <option key={name} value={name}>{name}</option>
+                    <option key={name.id} value={name.id}>{name.title}</option>
                   ))}
                 </select>
-                {place.cohort && groupOptions.length === 0 && (
+                {place.cohortId && groupOptions.length === 0 && (
                   <span className="mt-1 block text-[11px] text-amber-700">
-                    {place.cohort} has no groups yet — add one in Curriculum Studio.
+                    {place.cohortId} has no groups yet — add one in Curriculum Studio.
                   </span>
                 )}
               </label>

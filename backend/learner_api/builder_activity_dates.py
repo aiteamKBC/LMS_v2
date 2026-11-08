@@ -96,8 +96,7 @@ def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved
                          'session_week_day', 'session_start_time', 'session_end_time', 'cohort_id', 'session_overrides')
         cursor.execute('''SELECT module_catalogue_id,start_date,sessions_number,
             session_week_day,session_start_time,session_end_time,cohort_id,to_jsonb(m)->'session_overrides'
-            FROM curriculum.modules m WHERE module_catalogue_id=ANY(%s)
-            AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')''', [module_ids])
+            FROM curriculum.modules m WHERE module_catalogue_id=ANY(%s)''', [module_ids])
         modules = {str(row[0]): dict(zip(module_fields, row)) for row in cursor.fetchall()}
         if not modules:
             return {}

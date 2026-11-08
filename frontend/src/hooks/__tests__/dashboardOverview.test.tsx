@@ -18,6 +18,7 @@ describe('compact Overview request lifecycle', () => {
     // A measured full Overview completes after the generic 45-second deadline.
     await act(async () => { await vi.advanceTimersByTimeAsync(61_000); });
     expect(result.current.overview.loading).toBe(true);
+    expect(result.current.overview.isFetching).toBe(true);
     expect(result.current.overview.error).toBe('');
     expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
     const payload = dashboardOverviewFixture();
@@ -28,6 +29,7 @@ describe('compact Overview request lifecycle', () => {
     await act(async () => finish(new Response(JSON.stringify(payload))));
     expect(result.current.overview.payload).toEqual(payload);
     expect(result.current.overview.loading).toBe(false);
+    expect(result.current.overview.isFetching).toBe(false);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -37,6 +39,7 @@ describe('compact Overview request lifecycle', () => {
     const { result } = renderHook(() => useDashboardTabsData('commercial', '265', true, new Set(['overview'])));
     await act(async () => { await vi.advanceTimersByTimeAsync(119_999); });
     expect(result.current.overview.loading).toBe(true);
+    expect(result.current.overview.isFetching).toBe(true);
     expect(result.current.overview.error).toBe('');
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(result.current.overview.error).toMatch(/Loading is taking longer/);

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from old_otjh.service import ServiceError
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from . import overview_week as week_module
 from . import training_plan_dashboard as plan_module
@@ -39,7 +40,8 @@ class HomeSummarySectionTests(SimpleTestCase):
         enqueue.assert_not_called()
 
     def test_home_source_loads_the_programme_period_fields(self):
-        self.assertTrue({'programme', 'cohort', 'start_date', 'end_date'} <= set(HOME_SOURCE_FIELDS))
+        self.assertTrue({'start_date', 'end_date'} <= set(HOME_SOURCE_FIELDS))
+        self.assertTrue({'programme', 'cohort', 'group'}.isdisjoint(HOME_SOURCE_FIELDS))
 
     def test_unknown_sections_are_still_rejected(self):
         response = overview_week.__wrapped__.__wrapped__(
@@ -123,7 +125,8 @@ class HomeSummarySectionTests(SimpleTestCase):
         # The home card receives the same merged activities, attendance scope and SSOT metrics.
         args, kwargs = home.call_args
         self.assertEqual(len(list(args[2])), 2)
-        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics})
+        self.assertEqual(kwargs, {'attendance_module_ids': ['MOD-1', 'MOD-2'], 'canonical_metrics': metrics,
+                                  'reuse_attendance_register': True})
 
 
 def session_row(occurrence_id, start, status='scheduled'):
@@ -151,7 +154,9 @@ class ComponentSqlTests(SimpleTestCase):
         self.assertIn(f'{COMPONENT_SCHEDULE_SETTINGS} AS builder_settings', sql)
         self.assertIn('c.week_id AS builder_week_id', sql)
         # The same component and week filters as before.
-        self.assertIn("(w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')", sql)
+        self.assertIn(f"(w.id IS NULL OR {visible_week_sql('w')})", sql)
+        self.assertIn(visible_child_sql('c'), sql)
+        self.assertNotIn('deleted_via_parent', sql)
 
 
 class UpcomingSectionTests(SimpleTestCase):

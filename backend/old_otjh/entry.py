@@ -17,7 +17,7 @@ def entry_state(account):
     if account.subject_type != 'learner' or not account.is_active:
         raise service.ServiceError('Learner access is required.', 'forbidden', 403)
     # Even when signing is disabled, a missing/unreadable profile is an error.
-    record = repo.student(account.subject_id)
+    record = repo.entry_learner(account.subject_id)
     if not record or 'aptem_id' not in record:
         raise service.ServiceError('We could not verify your learner profile. Please try again.',
                                    'profile_unavailable', 503)

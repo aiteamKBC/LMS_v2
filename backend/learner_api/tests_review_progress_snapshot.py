@@ -62,6 +62,7 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
         self.live_otjh = {'actual': 250.5, 'planned': 40}
         self.live_ksb = {'status': 'ready', 'completed': 159, 'total': 166}
         self.historical = None
+        self.live_owner = {'id': 101, 'enrolment_id': 201}
         def live_inputs(source, profile, *, as_of):
             progress = [{**row, 'component_ref': row.get('componentId'), 'passed': row.get('passed')}
                         for row in records_as_of(profile.training_plan_progress, as_of)]
@@ -71,7 +72,7 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
                     {**row, 'componentId': row['component_ref']} for row in progress]},
                 'metadata': {'builder_subjects': {}},
             })
-            return {'owner': {'id': 101, 'enrolment_id': 201}, 'otjh': dict(self.live_otjh),
+            return {'owner': dict(self.live_owner), 'otjh': dict(self.live_otjh),
                     'ksb': dict(self.live_ksb), **facts}
         patcher = patch.object(review_progress_snapshot, 'read_live_inputs', side_effect=live_inputs)
         self.live_read = patcher.start()
@@ -299,8 +300,12 @@ class ProgressSnapshotCalculationTests(SimpleTestCase):
 
     def test_live_dashboard_hour_target_reuses_same_programme_window(self):
         from .dashboard_metrics import coach_otjh_target_to_date
-        self.source.start_date = date(2024, 10, 18)
-        self.source.end_date = date(2025, 1, 26)  # 100-day window.
+        self.live_owner.update(
+            learner_start_date=date(2024, 10, 18),
+            learner_end_date=date(2025, 1, 26),  # 100-day window.
+        )
+        self.source.start_date = date(2020, 1, 1)
+        self.source.end_date = date(2030, 1, 1)  # Deliberately not the learner's window.
         self.live_otjh = {'actual': 21.9, 'planned': 100}
         with patch.object(review_progress_snapshot, 'coach_otjh_target_to_date', coach_otjh_target_to_date):
             metric = self.snapshot()['offTheJobHours']

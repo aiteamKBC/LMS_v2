@@ -13,7 +13,7 @@ from .tests import account
 class LearnerEntryTests(SimpleTestCase):
     def setUp(self):
         self.user = account()
-        self.student = patch.object(repo, 'student', return_value={'id': 7, 'aptem_id': '42'}).start()
+        self.student = patch.object(repo, 'entry_learner', return_value={'id': 7, 'aptem_id': '42'}).start()
         self.resolve = patch.object(service, 'resolve_authenticated_learner', return_value={'id': 7, 'aptem_id': 42}).start()
         self.summary = patch.object(service, 'summary', return_value={'can_access_lms': False, 'total_months': 2, 'completed_months': 0}).start()
         self.addCleanup(patch.stopall)

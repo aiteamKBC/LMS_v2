@@ -187,7 +187,10 @@ class CanonicalMetricsPayloadTests(SimpleTestCase):
             full = query.call_args.args[0]
         self.assertIn("SELECT to_jsonb(p) AS payload", full)
         self.assertIn("CASE WHEN jsonb_typeof(p.source_payload)='object'", light)
-        self.assertIn("jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref')", light)
+        # Assert the preserved keys without fixing their SQL argument order.
+        self.assertIn("'original_source_ref',p.source_payload->'original_source_ref'", light)
+        self.assertIn("'retakeTimeChoice',p.source_payload->'retakeTimeChoice'", light)
+        self.assertNotIn("THEN to_jsonb(p) END AS payload", light)
         self.assertIn("ELSE to_jsonb(p) END AS payload", light)
 
 
@@ -216,7 +219,7 @@ class HomeAttendanceProfileTests(SimpleTestCase):
              patch.object(home_progress, "lecture_register", return_value=[]) as register, \
              patch.object(home_progress, "apply_canonical_home_metrics",
                           side_effect=lambda home, metrics: home), \
-             patch.object(home_progress, "plan_planned_hours", return_value=None):
+             patch("learner_api.training_plan_dashboard.plan_planned_hours", return_value=None):
             home_progress.read_home_progress(learner, "commercial", [], [], [], [], date(2026, 10, 18),
                                              attendance_module_ids=["MOD-1"], canonical_metrics={"otjh": {}})
         return register
