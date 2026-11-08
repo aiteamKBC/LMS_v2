@@ -6,11 +6,18 @@ Read `CLAUDE.md`, `AGENTS.md` and `SECURITY_AUDIT.md` before Step 1.
 ## Sub-plans
 Detailed per-step instructions: `docs/mcp/README.md` and `docs/mcp/STEP_XX_*.md`. Work from those.
 
+Video workflow track: `docs/mcp/VIDEO_UPLOAD.md`. This adds the manager's device-MP4-to-LMS/Bunny
+workflow after the read-only foundation is accepted; the quiz and structure phases below remain separate.
+
 ## Goal
 
 Let curriculum staff use Claude / ChatGPT (custom connector) to look up curriculum structure, create quizzes with
 structured KSB mappings, add lesson content and (Phase C) create programme/cohort/group/module structure —
 as THEMSELVES, through the existing views, with preview → confirm on every write.
+
+The video track reuses this identity, validation and preview framework. It is planned, not yet an
+implemented upload capability. Receiving a device-local MP4 requires an explicit transfer mechanism;
+the server-hosted MCP cannot read the manager's device by itself.
 
 ## Ground rules (apply to every step)
 

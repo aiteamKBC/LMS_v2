@@ -36,7 +36,9 @@ ALLOWED_CALLS = (
     ("GET", rf"/curriculum_api/curriculum/programmes/{_SEG}/cohorts/"),
     ("GET", rf"/curriculum_api/curriculum/cohorts/{_SEG}/groups/"),
     ("GET", r"/curriculum_api/curriculum/modules/"),
-    ("GET", rf"/curriculum_api/curriculum/modules/{_SEG}/structure/"),
+    # The legacy training-module GET provisions authoring records. Keep it out
+    # of the read-only dispatcher even if another tool tries to call it.
+    ("GET", rf"/curriculum_api/curriculum/modules/(?!training-module-){_SEG}/structure/"),
     ("GET", rf"/curriculum_api/curriculum/(programmes|modules)/{_SEG}/ksb-coverage/"),
     ("GET", r"/quiz_api/quizzes/\d+/preview/"),
     ("GET", r"/curriculum_api/knowledge-base/books/"),

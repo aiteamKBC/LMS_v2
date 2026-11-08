@@ -11,6 +11,7 @@ Do one file at a time, in order. Each sub-plan ends with an acceptance checklist
 | 4 | STEP_04_transport.md | 0 |
 | 5 | STEP_05_preview_apply.md | 0 |
 | 6 | STEP_06_read_tools.md | A |
+| V | VIDEO_UPLOAD.md | Video workflow after the read-only foundation is accepted |
 | 7 | STEP_07_create_quiz.md | B |
 | 8 | STEP_08_edit_clone_quiz.md | B |
 | 9 | STEP_09_ksb_lesson.md | B |
@@ -43,7 +44,9 @@ Guardrails:
       cd backend
       python manage.py test mcp_api --settings=config.settings_sqlite_test --noinput
 
-  Tests are `SimpleTestCase` + in-memory fakes of the MCP managers.
+  Tests are `SimpleTestCase` + in-memory fakes of the MCP managers. The OAuth test base (also used
+  by transport, change and read-tool tests) overrides the default cache with an isolated
+  `LocMemCache`, so its `cache.clear()` and rate-limit checks never use an inherited Redis setting.
 - **Real-database checks** use `mcp_selfcheck` (built in Step 2, extended each step). Against production it needs
   `--allow-production` AND the connected Neon branch id typed back (prompt, or `--confirm-branch ID`). On
   production it only touches the four `login."Mcp_*"` tables (it reads `Login_accounts`), and every mode except

@@ -166,6 +166,33 @@ class ModuleTests(ReadToolTestCase):
         self.assertEqual([m["module_id"] for m in data["modules"]], ["M2"])
         self.assertIn(("GET", f"{C}/modules/", {"compact": "1"}), self.lms.calls)
 
+    def test_programme_id_wins_when_another_programme_has_the_same_name(self):
+        self.lms.modules = [
+            {"moduleCatalogueId": "M1", "name": "Selected module", "programmeId": "P1",
+             "programme": "Digital Marketing L3"},
+            {"moduleCatalogueId": "M2", "name": "Other programme module", "programmeId": "P2",
+             "programme": "Digital Marketing L3"},
+        ]
+        _text, data = self.ok("find_modules", {"programme_id": "P1"})
+        self.assertEqual([m["module_id"] for m in data["modules"]], ["M1"])
+
+    def test_programme_scope_does_not_guess_ownership_for_missing_ids(self):
+        self.lms.modules = [
+            {"moduleCatalogueId": "M1", "name": "Selected module", "programmeId": "P1"},
+            {"moduleCatalogueId": "M2", "name": "No programme id", "programme": "Digital Marketing L3"},
+            {"moduleCatalogueId": "M3", "name": "Empty programme id", "programmeId": "",
+             "programme": "Digital Marketing L3"},
+        ]
+        _text, data = self.ok("find_modules", {"programme_id": "P1"})
+        self.assertEqual([m["module_id"] for m in data["modules"]], ["M1"])
+
+    def test_programme_source_id_is_also_recognised(self):
+        self.lms.modules = [{"moduleCatalogueId": "M1", "name": "Selected module",
+                             "programmeId": "SOURCE-P1", "programme": "Legacy display name"}]
+        with mock.patch.dict(PROGRAMMES[0], {"sourceId": "SOURCE-P1"}):
+            _text, data = self.ok("find_modules", {"programme_id": "SOURCE-P1"})
+        self.assertEqual([m["module_id"] for m in data["modules"]], ["M1"])
+
     def test_caps_at_twenty_and_reports_the_total(self):
         self.lms.modules = [{"moduleCatalogueId": f"X{i:02}", "name": f"Module {i:02}", "status": "draft"}
                             for i in range(25)]
@@ -185,6 +212,14 @@ class ModuleTests(ReadToolTestCase):
 
     def test_missing_module_is_a_plain_error(self):
         self.assertIn("doesn't exist", self.err("get_module_structure", {"module_id": "ZZZ"}))
+
+    def test_legacy_training_module_is_refused_without_calling_its_get(self):
+        path = f"{C}/modules/training-module-123/structure/"
+        self.lms.routes[path] = lambda q: STRUCTURE
+        message = self.err("get_module_structure", {"module_id": "training-module-123"})
+        self.assertIn("saved module", message)
+        self.assertIn("find_modules", message)
+        self.assertNotIn(("GET", path, None), self.lms.calls)
 
 
 class KsbTests(ReadToolTestCase):

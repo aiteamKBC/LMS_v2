@@ -202,8 +202,10 @@ def find_modules(request, arguments):
     if programme_id:
         programme = _programme_by_id(request, programme_id)
         ids = {_s(programme.get("id")), _s(programme.get("sourceId"))} - {""}
-        rows = [row for row in rows if _s(row.get("programmeId")) in ids
-                or _s(row.get("programme")).casefold() == _s(programme.get("name")).casefold()]
+        # Names may be reused (including after archiving a programme). Only a
+        # saved id proves ownership; incomplete legacy rows must not be guessed
+        # into the selected programme.
+        rows = [row for row in rows if _s(row.get("programmeId")) in ids]
     rows = [row for row in rows if _matches(row, _s(arguments.get("query")), "name", "title")]
     rows.sort(key=lambda row: (_s(row.get("programme")).casefold(), _s(row.get("name")).casefold()))
     shown, total = _capped(rows)
@@ -234,6 +236,14 @@ def _component_out(component):
       {"type": "object", "properties": {"module_id": _ID}, "required": ["module_id"], "additionalProperties": False})
 def get_module_structure(request, arguments):
     module_id = _s(arguments["module_id"])
+    if module_id.startswith("training-module-"):
+        # That existing GET can provision authoring records and update the
+        # training-plan link. A read tool must never trigger those writes.
+        raise ToolError(
+            "Use find_modules to look up the saved module id. Legacy training modules "
+            "must be prepared in the LMS before the assistant can read their structure; "
+            "nothing was created or changed."
+        )
     _status, data = call_api(request, "GET", f"{CURRICULUM}/modules/{module_id}/structure/")
     if not isinstance(data, dict):
         raise ToolError("The LMS returned no structure for that module.")

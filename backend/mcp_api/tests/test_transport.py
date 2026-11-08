@@ -303,6 +303,17 @@ class DispatchTests(SimpleTestCase):
                     self.assertRaisesRegex(dispatch.DispatchError, "not available"):
                 dispatch.call_api(self.request, method, path, json_body={} if method != "GET" else None)
 
+    def test_training_module_structure_get_never_reaches_the_provisioning_view(self):
+        view = mock.Mock(return_value=JsonResponse({"moduleCatalogueId": "M1"}))
+        match = SimpleNamespace(func=view, args=(), kwargs={}, route="module-structure")
+        with mock.patch.object(dispatch, "refusal_for", return_value=None), \
+                mock.patch.object(dispatch, "resolve", return_value=match) as resolve:
+            with self.assertRaisesRegex(dispatch.DispatchError, "not available"):
+                dispatch.call_api(self.request, "GET",
+                                  "/curriculum_api/curriculum/modules/training-module-123/structure/")
+        resolve.assert_not_called()
+        view.assert_not_called()
+
     def test_forbidden_keys_are_rejected_not_stripped(self):
         for payload in (
             {"removeMissing": True},

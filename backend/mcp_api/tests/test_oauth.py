@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from django.core.cache import cache
 from django.db import DatabaseError
-from django.test import Client, SimpleTestCase
+from django.test import Client, SimpleTestCase, override_settings
 from django.utils import timezone
 
 from learner_api.models import StaffUser
@@ -134,6 +134,10 @@ class FakeStore:
         ]
 
 
+@override_settings(CACHES={"default": {
+    "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    "LOCATION": "mcp-oauth-tests",
+}})
 class OAuthTestCase(SimpleTestCase):
     def setUp(self):
         self.enterContext(mock.patch.dict("os.environ", {

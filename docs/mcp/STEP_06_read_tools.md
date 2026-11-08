@@ -7,6 +7,11 @@ The AI can find exactly where content goes and what KSBs are allowed, without gu
 - Implemented via `dispatch.call_api` against existing GET endpoints; shape the output down to the listed fields.
 - Exclude archived / deleted / trashed items by default (`include_archived=false` arg).
 - Name queries: case-insensitive contains; max 20 results; return `total` so the model knows if it's truncated.
+- A programme-scoped module search matches the programme's saved id/source id only. Matching names do
+  not establish ownership, and missing programme ids are not guessed into the selected programme.
+- `get_module_structure` refuses `training-module-*` aliases before dispatch. The existing LMS GET may
+  provision those aliases; staff must prepare them in the LMS and then use a saved module id. The
+  dispatcher independently excludes that provisioning GET. Existing saved-module reads are unchanged.
 - Output passes `assert_no_pii`. Only ids, names, codes, counts, statuses, dates.
 - Text summary first line answers the question in plain English.
 
