@@ -3,7 +3,7 @@
 ## Scope and entry points
 
 Curriculum users choose a feedback form manually from a searchable library of
-fourteen cards, then assess the selected learner and meeting. A meeting title
+fifteen cards, then assess the selected learner and meeting. A meeting title
 does not select a form, and choosing a form never changes the calendar meeting
 category. The supplied Word forms are converted to native UI definitions; no
 Word document is produced. Full criterion-specific Gold/Green/Amber/Red guidance,
@@ -11,10 +11,13 @@ N/A availability, session context and action-plan fields are retained.
 
 The library includes Progress Review, Commitment, First Session, Gateway,
 Information, Monthly Coaching Meeting, Teaching, Barriers to Learning, British
-Values, CIAG, EPA, Marking and Feedback, Safeguarding and Target Setting.
+Values, CIAG, EPA, Marking and Feedback, Safeguarding, Target Setting and Portfolio
+Sampling. Portfolio Sampling reuses the existing full portfolio definition:
+nine sections, seventeen criteria, five screenshot areas and the action plan.
 The owner approved adding the missing Gateway assessment-methods criterion,
 merging Teaching's duplicate assessment/feedback criterion, and correcting the
-Target Setting reference heading. The defaults contain 91 judgement criteria.
+Target Setting reference heading. The original fourteen forms contain 91 judgement
+criteria; with the existing portfolio form exposed, the library contains 108.
 
 Every template can be edited and published independently. Users can create custom
 form types and add, remove, reorder or change questions, sections, options, help,
@@ -580,3 +583,85 @@ do not claim live learner saves or deployment validation.
 All source changes stay local on khaled-is-here at task-start HEAD 4b08a703.
 Earlier calendar/recording changes are preserved. No Commit, Push, Pull, Merge,
 branch/worktree switch or deployment was performed.
+
+
+## Portfolio sampling and PDF presentation - 7 November 2026
+
+The library exposes the existing full portfolio form as
+`FORM_PORTFOLIO_SAMPLING`, titled **Portfolio Sampling Feedback Form**, in the
+Portfolio sampling group. Its criteria, screenshot areas, rating descriptors
+and action fields match the supplied Portfolio Sampling Feedback Form 1.odt.
+The source questions are reused from `quality_review_template.template()` rather
+than copied into a second question set. The supplied purpose is retained as an
+optional, validated `purpose` field and displayed with the form and new PDF.
+The other fourteen forms and their criterion guidance remain unchanged.
+
+New review records receive server-owned `pdfLayoutVersion: 2` in their JSON
+snapshot. They use `quality_review_pdf_layout.py`: a branded overview, learner
+and observer details, rating counts, numbered sections, evidence, screenshots,
+original-file metadata/previews, action plans and rating guidance. Counts are
+not converted into an overall grade. Existing review records retain their
+original layout on later saves and first-time PDF exports. Existing stored PDF
+bytes are returned unchanged. A retry returns its original saved revision.
+No schema migration, historical backfill, Teams operation or external AI call
+is required. This rule applies to newly created checks, not the meeting date.
+
+Validation on the final implementation uses isolated SQLite settings, in-memory
+caches, synthetic identities and mocked external services:
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_quality_reviews coach_api.test_quality_form_builder coach_api.test_quality_review_types coach_api.test_quality_feedback_library coach_api.test_quality_pdf_layout --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 82 tests (75 tests passed before the change).
+npm --prefix frontend run test -- src/pages/coaching-recordings src/api/coachingQualityReviews.test.ts src/api/coachingRecordings.test.ts src/pages/learner/monthly-submission/AssignmentPdfPreview.test.tsx --maxWorkers=2 --reporter=dot
+# PASS: 334 tests / 25 files.
+npm --prefix frontend run type-check
+npm --prefix frontend run lint
+git diff --check
+# PASS.
+```
+
+Portfolio, monthly-coaching and long-text/image PDF samples were rendered and
+visually inspected. Automated checks cover all fifteen PDFs, all saved answers,
+selected descriptors, escaped text, long evidence/actions, images/attachments,
+page numbering, layout selection and immutable historical PDFs. A local sample
+uses synthetic data only. Browser/live database workflows were not run: the
+optional read-only check of configured form definitions could not connect
+(OperationalError). No shared database changes were attempted. Teams baseline
+and expanded checks are NOT REQUIRED: no trigger file or Teams dependency
+contract changed. Live Teams operations were NOT RUN.
+
+
+### PDF refinements after visual review - 7 November 2026
+
+Newly created checks now receive `pdfLayoutVersion: 3`. Version 2 remains
+supported with its original page content, including first-time exports and later
+saves. Legacy reviews with no layout marker keep the original renderer. Stored
+PDF bytes remain immutable for every layout version. No schema change or data
+backfill is needed.
+
+Version 3 enlarges the cover logo, reduces spacing without reducing the existing
+body font sizes, and fixes the singular follow-up-action label. The document
+adds the active section name with `(continued)` when a page starts partway
+through that section. A new section at the top of a page replaces the previous
+context. The same behavior supports long evidence and action plans.
+
+The representative portfolio preview is now 5 pages instead of 6; the action
+plan and complete rating guide share the last page. Monthly coaching remains
+4 pages, and the long-text/image example is 8 pages instead of 9. The input
+answers and all descriptors are retained.
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_quality_reviews coach_api.test_quality_form_builder coach_api.test_quality_review_types coach_api.test_quality_feedback_library coach_api.test_quality_pdf_layout --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 87 tests, including all fifteen forms under layouts 2 and 3.
+git diff --check
+# PASS for the scoped changes.
+```
+
+Validation used the existing verified SQLite settings and mocked/blocked
+external services. Before/after hashes of PDF page-content streams matched for
+all 15 version-2 forms. The 48 pages generated from all fifteen version-3 forms
+had no overlapping text boxes or text outside the checked margins. Portfolio,
+monthly-coaching and long-text/image samples were rendered and visually checked.
+Frontend checks and Teams baseline/expanded checks are NOT REQUIRED for these
+backend PDF changes; no Teams trigger or imported Teams contract changed. Live
+Teams and shared-database writes were NOT RUN.

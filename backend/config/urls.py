@@ -40,6 +40,7 @@ urlpatterns = [
     path('curriculum_api/docs/openapi.json', curriculum_openapi_json, name='curriculum-openapi-json'),
     # Teams Calendar health (read-only views plus the confirmed resolution).
     path('curriculum_api/', include('curriculum_api.integrity_urls')),
+    path('curriculum_api/qr-attendance/', include('curriculum_api.qr_attendance_urls')),
     path('curriculum_api/', include('curriculum_api.urls')),
     path('coach_api/', include('coach_api.urls')),
     path('quiz_api/', include('quiz_api.urls')),

@@ -157,6 +157,7 @@ class ManualTimeCorrectionTests(SimpleTestCase):
 
         with patch.object(canonical, 'query', side_effect=self.query), \
              patch.object(coach_logs, 'query', side_effect=self.query), \
+             patch.object(logs, 'attendance_rows', return_value=[]), \
              patch.object(canonical, 'targets_for', return_value={'2026-10': 100}), \
              patch.object(canonical, 'programme_planned_hours', return_value=100), \
              patch('coach_api.selectors.otjh.learner_programme_window', return_value=('2026-01-01', '2026-12-31')), \

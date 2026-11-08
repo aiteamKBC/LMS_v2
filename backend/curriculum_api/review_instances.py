@@ -2250,7 +2250,7 @@ def _locked_linked_calendar_for_mirror(instance_row):
 
 
 def _mirror_linked_calendar_after_signature(instance_row, *, status, completed_at=None):
-    """Project a signature-owned status onto its linked Calendar row atomically."""
+    """Project submission/signature status onto an existing owned Calendar row."""
     from coach_api.models import CoachCalendarEvent
 
     calendar = _locked_linked_calendar_for_mirror(instance_row)
@@ -2259,6 +2259,8 @@ def _mirror_linked_calendar_after_signature(instance_row, *, status, completed_a
 
     if status == STATUS_AWAITING_SIGNATURE:
         allowed = {
+            CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+            CoachCalendarEvent.STATUS_SCHEDULED,
             CoachCalendarEvent.STATUS_IN_PROGRESS,
             CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
         }
@@ -2274,6 +2276,8 @@ def _mirror_linked_calendar_after_signature(instance_row, *, status, completed_a
 
     if status == STATUS_COMPLETED:
         allowed = {
+            CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+            CoachCalendarEvent.STATUS_SCHEDULED,
             CoachCalendarEvent.STATUS_IN_PROGRESS,
             CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
             CoachCalendarEvent.STATUS_COMPLETED,
@@ -2368,8 +2372,6 @@ def record_review_instance_signature(instance_row, role, *, signed_by, signed_na
 
 
 def _complete_review_instance_status_rejection(current_status):
-    if current_status in (STATUS_NOT_SCHEDULED, STATUS_SCHEDULED):
-        return 'This review cannot be completed until attendance has been confirmed for the scheduled Teams meeting.'
     if current_status == STATUS_AWAITING_SIGNATURE:
         return 'This review has already been submitted and is awaiting signature.'
     if current_status == STATUS_COMPLETED:
@@ -2384,9 +2386,8 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
     Curriculum template requires any signature) or straight to Completed (if
     it requires none). Returns (ok, errors).
 
-    A scheduled review requiring signatures can be submitted without a
-    confirmed attendance transition. Reviews without signatures still require
-    in-progress. The DB write is guarded by the locked current status, so a
+    Submission does not require a booking or attendance transition. The DB
+    write is guarded by the locked current status, so a
     concurrent completion attempt or an out-of-order request
     can't silently move the same instance twice or race a legitimate
     transition -- ``errors`` names the reason as ``{'fields': [...]}`` for
@@ -2394,7 +2395,8 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
     invalid status transition, so callers can tell the two apart.
     """
     current_status = instance_row.get('status')
-    if current_status not in (STATUS_SCHEDULED, STATUS_IN_PROGRESS):
+    editable_statuses = (STATUS_NOT_SCHEDULED, STATUS_SCHEDULED, STATUS_IN_PROGRESS)
+    if current_status not in editable_statuses:
         return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
 
     with transaction.atomic():
@@ -2405,13 +2407,16 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
         if not locked:
             return False, {'status': ['Review not found.']}
         current_status = locked.get('status')
-        if current_status not in (STATUS_SCHEDULED, STATUS_IN_PROGRESS):
+        if current_status not in editable_statuses:
             return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
-        if current_status == STATUS_SCHEDULED:
-            locked = _refresh_locked_editable_definition_snapshot(locked, actor=actor)
-            snapshot = curriculum_views.as_json_value(locked.get('definition_snapshot'), {})
-            if not required_signature_roles(snapshot.get('signatures', {})):
-                return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
+        # An optional booking must still belong to this exact review, learner
+        # and coach. Refuse inconsistent links before saving any form answers.
+        try:
+            calendar = _locked_linked_calendar_for_mirror(locked)
+        except ValueError as exc:
+            return False, {'status': [str(exc)]}
+        if calendar is not None and calendar.status not in editable_statuses:
+            return False, {'status': ['The linked Calendar status changed. Reload this review.']}
         if answers is not None:
             locked = _save_review_instance_answers_locked(locked, answers, actor=actor)
         else:
@@ -2433,7 +2438,7 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
         else:
             updated = curriculum_views.update_rows(
                 REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
-                [locked.get('id'), STATUS_IN_PROGRESS],
+                [locked.get('id'), current_status],
                 {
                     'status': STATUS_COMPLETED, 'completed_at': datetime.utcnow(),
                     'updated_by': actor, 'updated_at': datetime.utcnow(),
@@ -2441,6 +2446,9 @@ def complete_review_instance(instance_row, *, actor='system', answers=None):
             )
         if not updated:
             return False, {'status': ['This review status changed. Reload it and try again.']}
+        _mirror_linked_calendar_after_signature(
+            updated[0], status=updated[0]['status'], completed_at=updated[0].get('completed_at'),
+        )
     return True, None
 
 

@@ -46,7 +46,8 @@ def selected_attempt(rows, *, default='latest'):
         if mode in ('correct', 'add', 'retry'):
             fallback = 'retry'
         if selected is None:
-            selected, seconds = row, current
+            selected = row
+            seconds = combine_seconds(row.get('previousSeconds') or 0, current, mode) if mode in ('add', 'retry') else current
         elif mode == 'keep' or (mode == 'retry' and seconds >= current):
             continue
         else:
@@ -55,7 +56,7 @@ def selected_attempt(rows, *, default='latest'):
     return selected, seconds
 
 
-def validate_activity_time(record, history, *, seconds_for, monthly_assignment=False):
+def validate_activity_time(record, history, *, seconds_for, monthly_assignment=False, initial_seconds=0):
     """Validate ordinary activity decisions against server-owned saved attempts."""
     mode = choice(record.get('retakeTimeChoice'), activity=True)
     reason = record.get('retakeTimeReason')
@@ -82,8 +83,11 @@ def validate_activity_time(record, history, *, seconds_for, monthly_assignment=F
         row.get('kind', 'quiz') == 'quiz' and str(row.get('quizId')) == str(quiz) if quiz else
         row.get('componentId') == component and row.get('kind') in ('component', 'video'))]
     ordered = sorted(enumerate(previous), key=lambda item: attempt_order(item[1].get('submittedAt'), item[0]))
-    _, before = selected_attempt([{'seconds': seconds_for(row), 'mode': row.get('retakeTimeChoice')}
+    _, before = selected_attempt([{'seconds': seconds_for(row), 'mode': row.get('retakeTimeChoice'),
+                                   'previousSeconds': row.get('retakePreviousSeconds')}
                                   for _, row in ordered], default='retry')
+    if not previous:
+        before = initial_seconds
     # The prior value is a concurrency guard, never a trusted source of hours.
     expected = record.get('retakePreviousSeconds')
     if expected is not None and (type(expected) not in (int, float) or not isfinite(expected) or abs(expected - before) > 1):
@@ -92,6 +96,9 @@ def validate_activity_time(record, history, *, seconds_for, monthly_assignment=F
     if total > 8 * 3600:
         raise ValueError(f'Adding this time would make the activity total {total / 3600:g} hours, above the 8-hour limit. Enter a smaller additional time and try again. Your answers are kept.')
     record['countedSeconds'] = before if record.get('passed') is False else total
+    # Persist the validated server value, including attendance-only credit.
+    # It seeds the first native attempt after reload; never trust a client total.
+    record['retakePreviousSeconds'] = before
 
 
 def metadata(record):
@@ -148,7 +155,8 @@ def native_choices(baseline, candidates):
         if not explicit or not eligible:
             continue
         selected, seconds = selected_attempt([{**row, 'seconds': row['actual_seconds'],
-            'mode': metadata(row).get('retakeTimeChoice')} for row in eligible],
+            'mode': metadata(row).get('retakeTimeChoice'),
+            'previousSeconds': metadata(row).get('retakePreviousSeconds')} for row in eligible],
             default='retry' if any(metadata(row).get('retakeTimeChoice') in ('correct', 'add', 'retry') for row in eligible) else 'latest')
         latest = eligible[-1]
         end = stamp(selected.get('declared_completed_at') or selected.get('reporting_ended_at')

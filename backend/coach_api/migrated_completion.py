@@ -13,7 +13,7 @@ from PIL import Image as PillowImage, UnidentifiedImageError
 from django.db import transaction
 from django.utils import timezone
 
-from .migrated_reviews import EDITABLE_STATUSES, SCHEDULED_WORK_STATUSES, _visible_fields, validate_answers
+from .migrated_reviews import EDITABLE_STATUSES, _visible_fields, validate_answers
 from .migrated_template_sync import active_answers, preserve_inactive_answers
 from .models import ImportedReviewInstance, MigratedReviewDocument, MigratedReviewSignature
 from .migrated_signature_rules import ROLES, requirements_for_definition, requirements_for_family, requirements_for_overlay
@@ -86,8 +86,8 @@ def submit(overlay, answers):
                 raise ValueError("Required review fields are unanswered.")
             overlay.save(update_fields=["answers", "updated_at"])
         return
-    if overlay.status not in SCHEDULED_WORK_STATUSES:
-        raise ValueError("Only a scheduled or in-progress migrated review can be submitted.")
+    if overlay.status not in EDITABLE_STATUSES:
+        raise ValueError("Only an editable migrated review can be submitted.")
     validate_answers(overlay.template_snapshot, answers, completing=True)
     family = (overlay.template_snapshot.get("templateSource") or {}).get("family") or overlay.migrated_template.review_family
     overlay.signature_requirements = requirements_for_overlay(overlay, family)

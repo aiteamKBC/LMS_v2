@@ -939,11 +939,13 @@ class CanonicalLearningTests(unittest.TestCase):
             activity_rows=lambda _: [{'reporting_month': '2025-07'}, {'reporting_month': '2026-09'}, {'reporting_month': '2026-12'}],
             targets=lambda _: {'2026-08': 2})
         scope = dict(canonical=canonical, defaultdict=defaultdict,
+                     attendance_rows=lambda _: [{'reporting_month': '2026-09'}, {'reporting_month': '2026-12'}],
                      timezone=SimpleNamespace(localdate=lambda: date(2026, 9, 24)))
         functions('monthly_logs.py', scope, {'current_months'})
         grouped = scope['current_months']({'id': 271}, include_open=True)
         self.assertEqual(set(grouped), {'2025-07', '2026-08', '2026-09'})
         self.assertEqual(len(grouped['2025-07']), 1)
+        self.assertEqual(len(grouped['2026-09']), 2)
 
     def test_subject_progress_uses_exact_lineage_and_never_matches_titles(self):
         activity = {'source_activity_id': 10, 'group_id': 50, 'activity': 'Same title', 'completed': False}

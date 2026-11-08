@@ -11,7 +11,7 @@ export interface QualityFormCard { reviewType: string; title: string; group: str
 export interface QualityEvidenceFile { id: string; section: string; filename: string; size: number; contentType: string; hasPreview: boolean }
 export type QualityAnswer = string | number | boolean | null | string[];
 export interface QualityTemplate {
-  id: string; title: string; version?: number; actionsTitle?: string; reviewType?: QualityReviewType; ratings: Record<Exclude<Rating, ''>, string>;
+  id: string; title: string; purpose?: string; version?: number; actionsTitle?: string; reviewType?: QualityReviewType; ratings: Record<Exclude<Rating, ''>, string>;
   sections: { id: string; title: string; screenshots: boolean; criteria: QualityField[] }[];
 }
 export interface QualityTemplateState { id: string; reviewType?: QualityReviewType; revision: number; draft: QualityTemplate; published: QualityTemplate; publishedAt: string | null; updatedAt: string | null }

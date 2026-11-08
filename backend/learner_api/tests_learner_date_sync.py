@@ -64,8 +64,10 @@ class LearnerDateSyncTests(SimpleTestCase):
                 patch('learner_api.active_users._linkable_placement_ids', return_value=(None, None)), \
                 patch('learner_api.active_users.LearnerProfile.objects.create') as create, \
                 patch('learner_api.active_users.replace_training_plan'), \
+                patch('learner_api.active_users.replace_free_courses') as free_courses, \
                 patch('learner_api.active_users.refresh_learner_ksb_snapshot'):
             sync_active_user(source)
         self.assertEqual(create.call_args.kwargs['learner_start_date'], '2028-01-01')
         self.assertEqual(create.call_args.kwargs['learner_end_date'], '2028-12-31')
         self.assertEqual(create.call_args.kwargs['enrolment_id'], 132)
+        free_courses.assert_called_once_with(create.return_value, [])

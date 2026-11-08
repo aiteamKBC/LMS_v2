@@ -120,8 +120,6 @@ def source_identity(series, occurrence, artifact):
 
 def enqueue_recording(series, occurrence, artifact, module):
     from .video_imports import enabled
-    if not enabled():
-        raise VideoImportError('Bunny recording imports are disabled; no Azure fallback was used.')
     source = source_identity(series, occurrence, artifact)
     scope = {key: str(module.get(key) or '') for key in (
         'programme_id', 'programme_name', 'cohort_id', 'cohort_name', 'group_id', 'group_name')}
@@ -142,6 +140,14 @@ def enqueue_recording(series, occurrence, artifact, module):
     content_identity = (scope['content_correlation_id'] + '|' + scope['call_id']) if scope['content_correlation_id'] else artifact['id']
     identity = hashlib.sha256(json.dumps([series['id'], occurrence['id'], content_identity,
         scope['programme_id'], scope['cohort_id'], scope['group_id']], separators=(',', ':')).encode()).hexdigest()
+    if not enabled():
+        # Re-publish an already completed copy even if this worker cannot start
+        # new transfers. A missing runtime flag must not strand saved playback.
+        saved = CurriculumVideoImport.objects.filter(
+            fingerprint=identity, target_kind='live_session', status='ready').first()
+        if saved:
+            return saved
+        raise VideoImportError('Bunny recording imports are disabled; no Azure fallback was used.')
     start = instant(occurrence.get('scheduled_start'))
     day = start.astimezone(ZoneInfo('Europe/London')).date().isoformat() if start else ''
     title = ' — '.join(str(value) for value in (scope['cohort_name'], scope['group_name'],
@@ -258,10 +264,13 @@ def publish_outcome(asset):
             cursor.execute('''INSERT INTO curriculum.session_result_archive
                 (artifact_id,occurrence_id,container,blob_name,status,last_error)
                 VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(artifact_id) DO UPDATE
-                SET status=EXCLUDED.status,blob_name=EXCLUDED.blob_name,last_error=EXCLUDED.last_error,updated_at=now()
-                WHERE session_result_archive.container=%s''',
+                SET container=EXCLUDED.container,status=EXCLUDED.status,
+                    blob_name=EXCLUDED.blob_name,last_error=EXCLUDED.last_error,updated_at=now()
+                WHERE session_result_archive.container=%s
+                   OR (%s<>'' AND session_result_archive.blob_name=%s)''',
                 [artifact_id, asset.scope['occurrence_id'], BUNNY_CONTAINER,
-                 asset.library_id + '/' + asset.video_id, state, asset.error, BUNNY_CONTAINER])
+                 asset.library_id + '/' + asset.video_id, state, asset.error, BUNNY_CONTAINER,
+                 asset.video_id, asset.library_id + '/' + asset.video_id])
 
 
 def recording_player(row, *, download=False, referrer=''):

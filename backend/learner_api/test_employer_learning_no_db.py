@@ -70,6 +70,7 @@ class EmployerLearningParityTests(SimpleTestCase):
                 ('learner_api.training_plan_dashboard.current_coach', {'coach_name': 'Coach', 'coach_email': ''}),
                 ('learner_api.overview_week.read_week', {}),
                 ('learner_api.attendance_lectures.lecture_register', []),
+                ('learner_api.dashboard_overview.saved_attendance_rows', ([], [])),
                 ('learner_api.attendance._summarize_attendance', None),
                 ('django.utils.timezone.localdate', today),
             ):
