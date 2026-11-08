@@ -281,7 +281,9 @@ def attach_cohort_choices(rows, requested=None, excluded=None):
     wanted = [row for row in rows or [] if row is not None and any(field not in row for field in fields)]
     if not wanted or not fields or not in_use():
         return rows
-    choices = cohort_choices({row.get('cohort_id') for row in wanted})
+    # Read with the names, in the request's one lookup round trip.
+    from .curriculum_names import lookups
+    choices = lookups().get('cohort_holidays', {})
     for row in wanted:
         entry = choices.get(str(row.get('cohort_id') or ''), {})
         values = {'holiday_ids': list(entry.get('selected', [])),
@@ -353,6 +355,8 @@ def store_cohort_choices(payload, rows):
                     f'values (%s, %s, %s, %s)',
                     [cohort_id, calendar_id, record_id in want_selected and not is_excluded, is_excluded],
                 )
+    from .curriculum_names import invalidate
+    invalidate()  # the cached lookups carry these choices
 
 
 def release_cohorts(where_sql, params):

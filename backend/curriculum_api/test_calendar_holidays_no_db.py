@@ -92,13 +92,16 @@ class CohortChoiceTests(SimpleTestCase):
             ch.store_cohort_choices({'cohort_name': 'A', 'cohort_id': 'C-1'}, [])
         self.assertEqual(cursor.statements, [])
 
-    def test_choices_are_put_on_cohort_rows(self):
-        cursor = Cursor([[('C-1', '1113', True, False), ('C-1', '1101', False, True)]])
+    def test_choices_are_put_on_cohort_rows_from_the_lookup_round_trip(self):
+        from curriculum_api import curriculum_names
+        cursor = Cursor()
         rows = [{'cohort_id': 'C-1'}, {'cohort_id': 'C-2'}]
-        with patched(cursor), mock.patch.object(ch, 'in_use', return_value=True):
+        found = {'cohort_holidays': {'C-1': {'selected': ['1113'], 'excluded': ['1101']}}}
+        with patched(cursor), mock.patch.object(ch, 'in_use', return_value=True),                 mock.patch.object(curriculum_names, 'lookups', return_value=found):
             ch.attach_cohort_choices(rows)
         self.assertEqual((rows[0]['holiday_ids'], rows[0]['excluded_holiday_ids']), (['1113'], ['1101']))
         self.assertEqual((rows[1]['holiday_ids'], rows[1]['excluded_holiday_ids']), ([], []))
+        self.assertEqual(cursor.statements, [])  # no query of its own
 
     def test_off_the_calendar_table_nothing_is_read(self):
         cursor = Cursor()

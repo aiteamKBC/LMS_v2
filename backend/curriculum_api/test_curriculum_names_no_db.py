@@ -178,3 +178,56 @@ class OrderSqlTests(SimpleTestCase):
             '(select p.name from "curriculum"."programmes" p where p.programme_id = groups.programme_id)',
         )
         self.assertIn('c.cohort_id = groups.cohort_id', cn.cohort_name_sql('groups'))
+
+
+class LookupChoicesTests(SimpleTestCase):
+    def test_holiday_choices_ride_the_lookup_query_in_chosen_order(self):
+        rows = [('p', 'PROG-1', 'Programme One', None, None, None, None, 'active'),
+                ('s', '0123456789abcdef0123456789abcdef', None, None, None, None, None, None),
+                ('h', 'C-1', '1113', 'true', 'false', None, None, '7'),
+                ('h', 'C-1', '1101', 'false', 'true', None, None, '3'),
+                ('h', 'C-1', '1200', 'true', 'false', None, None, '5')]
+        cursor = mock.MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.fetchall.return_value = rows
+        db = mock.Mock(vendor='postgresql')
+        db.cursor.return_value = cursor
+        cn.invalidate()
+        with mock.patch.object(cn, 'connections', {'default': db}), mock.patch.object(cn, '_optional_tables', return_value={'choices': True, 'standards': True}):
+            data = cn.lookups()
+        cn.invalidate()
+        self.assertIn("union all select 'h'", cursor.execute.call_args[0][0])
+        self.assertEqual(data['cohort_holidays']['C-1'], {'selected': ['1200', '1113'], 'excluded': ['1101']})
+        self.assertEqual(data['programmes']['PROG-1']['name'], 'Programme One')
+        self.assertEqual(data['standards_digest'], '0123456789abcdef0123456789abcdef')
+        self.assertIn('md5(coalesce(string_agg(t::text', cursor.execute.call_args[0][0])
+
+
+class StandardsRowsCacheTests(SimpleTestCase):
+    def test_rows_are_reread_only_when_the_digest_changes(self):
+        from curriculum_api import views
+        reads = []
+        fetch = lambda sql: reads.append(sql) or [{'id': len(reads)}]  # noqa: E731
+        saved = views._SKILLS_ENGLAND_ROWS
+        self.addCleanup(setattr, views, '_SKILLS_ENGLAND_ROWS', saved)
+        views._SKILLS_ENGLAND_ROWS = (None, None)
+        digest = ['A']
+        with mock.patch.object(views, 'table_exists', return_value=True), \
+                mock.patch.object(views, 'fetch_all', side_effect=fetch), \
+                mock.patch.object(cn, 'standards_digest', side_effect=lambda: digest[0]):
+            first = views.get_skills_england_ksb_rows()
+            again = views.get_skills_england_ksb_rows()
+            digest[0] = 'B'  # the team edited the table
+            changed = views.get_skills_england_ksb_rows()
+        self.assertEqual(len(reads), 2)
+        self.assertIs(first, again)
+        self.assertEqual(changed, [{'id': 2}])
+
+    def test_without_a_digest_every_call_reads(self):
+        from curriculum_api import views
+        with mock.patch.object(views, 'table_exists', return_value=True), \
+                mock.patch.object(views, 'fetch_all', return_value=[]) as fetch, \
+                mock.patch.object(cn, 'standards_digest', return_value=''):
+            views.get_skills_england_ksb_rows()
+            views.get_skills_england_ksb_rows()
+        self.assertEqual(fetch.call_count, 2)

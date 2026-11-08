@@ -8696,10 +8696,17 @@ def is_actual_delivery_row(row, program_configs_by_id):
 # same projection, so a request reads curriculum.modules once through the read
 # scope instead of shipping the report on each pass.
 MODULE_INDEX_EXCLUDED_COLUMNS = ('ksb_remap_report',)
+# One order for every whole-table module reader, so they share one memoised read
+# (a different ORDER BY is a different read: each cost a round trip and the whole
+# table again). The readers that do not care about order lose nothing.
+MODULE_INDEX_ORDER = 'programme_id, title'
 
 
 def module_index_rows(*, ensure_tables=True):
-    return authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=ensure_tables, exclude_columns=MODULE_INDEX_EXCLUDED_COLUMNS)
+    return authoring_fetch_all(
+        AUTHORING_MODULES_TABLE, order_sql=MODULE_INDEX_ORDER, ensure_tables=ensure_tables,
+        exclude_columns=MODULE_INDEX_EXCLUDED_COLUMNS,
+    )
 
 
 def safe_module_index_rows():
@@ -8942,15 +8949,30 @@ def get_ksb_profile_rows():
     ''')
 
 
+# The standard KSB rows as last read, with the digest they were read under
+# (curriculum_names.standards_digest). Reference data: callers only read it.
+_SKILLS_ENGLAND_ROWS = (None, None)
+
+
 @scoped_curriculum_read
 def get_skills_england_ksb_rows():
     if not table_exists('standard_ksbs'):
         return []
-    return fetch_all(f'''
+    # Re-read only when the table changed: its digest rides the request's one
+    # lookup round trip, so an unchanged table costs nothing.
+    global _SKILLS_ENGLAND_ROWS
+    digest = curriculum_names.standards_digest()
+    cached_digest, cached_rows = _SKILLS_ENGLAND_ROWS
+    if digest and cached_digest == digest:
+        return cached_rows
+    rows = fetch_all(f'''
         select *
         from {table_name("standard_ksbs")}
         order by standard_ref, standard_version, ksb_type, ksb_code, id
     ''')
+    if digest:
+        _SKILLS_ENGLAND_ROWS = (digest, rows)  # one assignment: never a torn pair
+    return rows
 
 
 @scoped_curriculum_read
@@ -9486,7 +9508,7 @@ def get_tutor_module_rows():
 
 def get_authoring_module_rows():
     try:
-        return authoring_fetch_all(AUTHORING_MODULES_TABLE, order_sql='programme_id, title', exclude_columns=MODULE_INDEX_EXCLUDED_COLUMNS)
+        return module_index_rows()
     except Exception:
         logger.exception('Unable to read module authoring modules for curriculum payload.')
         return []
@@ -9759,11 +9781,11 @@ def get_curriculum_rows(compact=False):
     # The authoring reads the readers below make, in one round trip rather than
     # five; each reader still makes its own call and finds its rows memoised.
     prefetch_authoring_reads([
-        ((AUTHORING_MODULES_TABLE,), {'ensure_tables': True, 'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS}),
+        ((AUTHORING_MODULES_TABLE,), {'order_sql': MODULE_INDEX_ORDER, 'ensure_tables': True,
+                                      'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS}),
         ((GROUPS_TABLE,), {'order_sql': GROUP_ROWS_ORDER, 'ensure_tables': True}),
         ((COHORT_AUTHORING_DETAILS_TABLE,), {'order_sql': COHORT_ROWS_ORDER, 'ensure_tables': True}),
         *([] if table_exists('Modules') else [((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS})]),
-        ((AUTHORING_MODULES_TABLE,), {'order_sql': 'programme_id, title', 'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS}),
     ])
     rows = {
         'training': get_training_rows(),
@@ -12271,7 +12293,8 @@ def safe_group_delivery_rows():
     otherwise be fetched hundreds of times over.
     """
     try:
-        rows = authoring_fetch_all(GROUPS_TABLE)
+        # GROUP_ROWS_ORDER: shares the other whole-table group readers' read.
+        rows = authoring_fetch_all(GROUPS_TABLE, order_sql=GROUP_ROWS_ORDER)
     except (Exception, AssertionError):
         logger.debug('Unable to read group rows for the tutor conflict check.', exc_info=True)
         return {}
@@ -13177,7 +13200,11 @@ def skills_england_standard_id(row):
     return slugify(f'{row.get("standard_ref")}-v{row.get("standard_version")}')
 
 
+@scoped_curriculum_read
 def build_skills_england_standards():
+    # Memoised for the read scope: a programme list resolves one standard per
+    # programme, and each used to rebuild the whole index (~30 ms apiece).
+    # Callers only read what it returns.
     grouped = {}
     for row in get_skills_england_ksb_rows():
         key = (clean_str(row.get('standard_ref')), clean_str(row.get('standard_version')))
@@ -13231,18 +13258,24 @@ def build_skills_england_standards():
     return sorted(standards, key=lambda item: (item['code'], item['version']))
 
 
-def find_skills_england_standard(identifier):
-    ident = clean_str(identifier).lower()
+@scoped_curriculum_read
+def _skills_england_standard_index():
+    """``{identifier: standard}`` for every name a standard answers to; the
+    first standard (in build order) keeps a shared identifier."""
+    index = {}
     for standard in build_skills_england_standards():
-        candidates = {
+        for candidate in (
             clean_str(standard.get('id')).lower(),
             clean_str(standard.get('code')).lower(),
             slugify(standard.get('name')).lower(),
             slugify(f'{standard.get("code")}-v{standard.get("version")}').lower(),
-        }
-        if ident in candidates:
-            return standard
-    return None
+        ):
+            index.setdefault(candidate, standard)
+    return index
+
+
+def find_skills_england_standard(identifier):
+    return _skills_england_standard_index().get(clean_str(identifier).lower())
 
 
 @require_GET
@@ -22348,7 +22381,9 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
     try:
         coach_by_group = {
             clean_str(row.get('group_id')): clean_str(row.get('coach_name'))
-            for row in authoring_fetch_all(GROUPS_TABLE)
+            # GROUP_ROWS_ORDER: the order the other whole-table group readers
+            # use, so this shares their memoised read instead of a second one.
+            for row in authoring_fetch_all(GROUPS_TABLE, order_sql=GROUP_ROWS_ORDER)
             if clean_str(row.get('group_id'))
         }
         for summary in summaries.values():
@@ -28711,7 +28746,9 @@ def authoring_scope_module_rows(scope='', identifier=''):
     caller that needs that exact set must still go through it.
     """
     ensure_module_authoring_tables()
-    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
+    # The shared module index (no ksb_remap_report, which nothing reading a
+    # scope's modules looks at): one read per request with the other readers.
+    module_rows = module_index_rows()
     ident = clean_str(identifier)
     if scope == 'module':
         resolved = resolve_authoring_catalogue_id(ident) or ident

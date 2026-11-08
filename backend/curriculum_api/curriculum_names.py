@@ -35,6 +35,20 @@ _LOOKUP_SQL = '''
     union all select 't', id::text, name::text, email::text, null, null, null, status::text from curriculum.tutors
     union all select 'k', id::text, name::text, email::text, null, null, null, status::text from curriculum.coaches
 '''
+# A cohort's holiday choices ride the same round trip (they are read wherever a
+# cohort row is). h.id keeps the order they were chosen in.
+_CHOICES_SQL = '''
+    union all select 'h', h.cohort_id::text, ch.source_record_id::text, h.is_selected::text, h.is_excluded::text,
+                     null, null, h.id::text
+    from curriculum.cohort_calendar_holidays h join curriculum.calendar_holidays ch on ch.id = h.calendar_holiday_id
+'''
+# A digest of every apprenticeship-standard KSB row (reference data the team
+# edits in the database): the rows are re-read only when it changes, without a
+# round trip of their own. Computed by the database; 32 characters come back.
+_STANDARDS_SQL = '''
+    union all select 's', md5(coalesce(string_agg(t::text, '|' order by t.id), '')), null, null, null, null, null, null
+    from curriculum.standard_ksbs t
+'''
 
 
 def is_inactive(status):
@@ -50,10 +64,20 @@ def lookups(using='default'):
     cached = getattr(_LOCAL, 'lookups', None)
     if cached and cached['at'] + _TTL_SECONDS > time.monotonic():
         return cached
-    data = {'programmes': {}, 'cohorts': {}, 'groups': {}, 'modules': {}, 'tutors': {}, 'coaches': {}}
+    data = {'programmes': {}, 'cohorts': {}, 'groups': {}, 'modules': {}, 'tutors': {}, 'coaches': {},
+            'cohort_holidays': {}}
+    choices = []
     with connections[using].cursor() as cursor:
-        cursor.execute(_LOOKUP_SQL)
+        extra = _optional_tables(using)
+        cursor.execute(_LOOKUP_SQL + (_CHOICES_SQL if extra['choices'] else '')
+                       + (_STANDARDS_SQL if extra['standards'] else ''))
         for kind, key, name, a, b, c, d, status in cursor.fetchall():
+            if kind == 's':
+                data['standards_digest'] = key
+                continue
+            if kind == 'h':
+                choices.append((int(status), key, name, a == 'true', b == 'true'))
+                continue
             if kind == 'p':
                 data['programmes'][key] = {'name': name or '', 'status': status}
             elif kind == 'c':
@@ -67,9 +91,39 @@ def lookups(using='default'):
                 data['tutors'][key] = {'name': name or '', 'email': a or '', 'status': status}
             elif kind == 'k':
                 data['coaches'][key] = {'name': name or '', 'email': a or '', 'status': status}
+    for _order, cohort_id, holiday_id, is_selected, is_excluded in sorted(choices):
+        entry = data['cohort_holidays'].setdefault(cohort_id, {'selected': [], 'excluded': []})
+        if is_selected:
+            entry['selected'].append(holiday_id)
+        if is_excluded:
+            entry['excluded'].append(holiday_id)
     data['at'] = time.monotonic()
     _LOCAL.lookups = data
     return data
+
+
+_OPTIONAL_TABLES = {}
+
+
+def _optional_tables(using='default'):
+    """Which optional parts the lookup query can include (cached per process)."""
+    if using not in _OPTIONAL_TABLES:
+        with connections[using].cursor() as cursor:
+            cursor.execute(
+                "select to_regclass('curriculum.cohort_calendar_holidays') is not null "
+                "and to_regclass('curriculum.calendar_holidays') is not null, "
+                "to_regclass('curriculum.standard_ksbs') is not null"
+            )
+            choices, standards = cursor.fetchone()
+        _OPTIONAL_TABLES[using] = {'choices': bool(choices), 'standards': bool(standards)}
+    return _OPTIONAL_TABLES[using]
+
+
+def standards_digest(using='default'):
+    """The current digest of curriculum.standard_ksbs, or '' when unknown."""
+    if connections[using].vendor != 'postgresql':
+        return ''
+    return lookups(using).get('standards_digest') or ''
 
 
 def name_of(kind, key, field='name', using='default'):
