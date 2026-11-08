@@ -14,10 +14,11 @@ from django.views.decorators.http import require_http_methods
 from login.permissions import require_role
 from coach_api.models import CoachAttendanceSourceAdjustment
 from learner_api.models import LearnerProfile
-from learner_api.attendance_assignments import module_roster, assigned_module_ids
+from learner_api.attendance_assignments import assigned_module_ids
+from .learner_compat import module_roster  # learner_api roster, or its by-id read on the normalised schema
 from learner_api.attendance_lectures import read_native_occurrences, _aware
 from learner_api.learner_detail import SOURCE_MODELS
-from .models import LiveSession, LiveSessionOccurrence, ModuleAuthoringModule
+from .models import INACTIVE_STATUSES, LiveSession, LiveSessionOccurrence, ModuleAuthoringModule
 
 
 class CorrectionError(Exception):
@@ -44,8 +45,8 @@ def session_context(series_id, number, module_id, *, lock=False):
         raise CorrectionError('Session is unavailable. Refresh saved results.', 404)
     occurrence = occurrences[0]
     module_id = module_id or series.module_catalogue_id
-    module = ModuleAuthoringModule.objects.using('enrolment').filter(
-        pk=module_id, deleted_at__isnull=True, is_programme_deleted=False).first()
+    module = ModuleAuthoringModule.objects.using('enrolment').filter(pk=module_id).exclude(
+        status__in=INACTIVE_STATUSES).first()
     if module is None:
         raise CorrectionError('Module is unavailable.', 404)
     if module_id != series.module_catalogue_id:

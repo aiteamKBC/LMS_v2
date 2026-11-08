@@ -66,7 +66,7 @@ def module_targets(module_id, week_ids):
     module = v.authoring_module_exists(resolved)
     if not module:
         raise LinkError('The saved module was not found.', 404)
-    if module.get('deleted_at') or module.get('is_programme_deleted'):
+    if v.row_has_deleted_at(module):
         raise LinkError('An archived module cannot be linked.')
     if v.archived_programme_module_edit_error(module, title=module.get('title'),
             programme_id=module.get('programme_id'), programme_name=module.get('programme_name')):

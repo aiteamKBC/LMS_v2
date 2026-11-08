@@ -71,8 +71,7 @@ WITH wanted(module_id) AS (
 src AS (
     SELECT
         u.id              AS learner_id,
-        u."Programme"     AS programme,
-        u."Group"         AS grp,
+        {placement}
         u."Training_plan" AS tp,
         u."Learning_plan" AS lp
     FROM {source}
@@ -82,6 +81,7 @@ resolved AS (
         learner_id,
         programme,
         grp,
+        group_id,
         -- mappers.stored_training_plan: the first of the two columns holding a
         -- list. Anything that is not an array is not a saved plan.
         CASE
@@ -138,6 +138,7 @@ SELECT
     r.learner_id,
     r.programme,
     r.grp,
+    r.group_id,
     r.ambiguous,
     (r.plan IS NOT NULL)                    AS has_plan,
     COALESCE(a.id_count, 0)                 AS id_count,
@@ -149,18 +150,118 @@ LEFT JOIN matched m ON m.learner_id = r.learner_id
 """
 
 
-def _preset_ids(programme, group, cache):
-    """`learning_plan._preset_ids_for`, keyed off plain values not a learner."""
-    key = (plans._s(programme), plans._s(group))
+def _group_source():
+    """Where group presets are read from, in the shape learning_plan reads.
+
+    learning_plan (the Learner team's, not changed here) selects ``module_ids``
+    and filters on ``deleted_at`` and ``programme_name``. The curriculum's groups
+    keep none of them: a group's modules are the live modules naming it, its
+    archive state is ``status``, its programme is ``programme_id``. On that
+    schema this relation answers them from those keys; on a groups table that
+    still stores the list it is None -- learning_plan's own default.
+    """
+    from django.db import connection
+    from . import views
+    if connection.vendor != 'postgresql' or 'module_ids' in set(views.column_names(views.GROUPS_TABLE)):
+        return None
+    inactive = "lower(coalesce({}.status, '')) in ('inactive', 'archived')"
+    # ``only``: a plain table read, never re-routed by the request's SQL adapter.
+    return (
+        "(select g.*, coalesce(p.name, '')::varchar as programme_name, "
+        f"case when {inactive.format('g')} then coalesce(g.updated_at, now()) end as deleted_at, "
+        "coalesce((select jsonb_agg(m.module_catalogue_id order by m.title, m.module_catalogue_id) "
+        'from only "curriculum"."modules" m where m.group_id = g.group_id '
+        f"and not ({inactive.format('m')})), '[]'::jsonb) as module_ids "
+        'from only "curriculum"."groups" g '
+        'left join only "curriculum"."programmes" p on p.programme_id = g.programme_id) as "groups"'
+    )
+
+
+def _preset_ids(programme, group, cache, group_id=''):
+    """`learning_plan._preset_ids_for`, keyed off plain values not a learner.
+
+    Like the original, a placement's group id names the group exactly and wins
+    over the (programme, group) name pair.
+    """
+    group_id = plans._s(group_id)
+    key = ('group_id', group_id) if group_id else (plans._s(programme), plans._s(group))
     if key not in cache:
-        cache[key] = plans._group_module_ids(*key)
+        source = _group_source()
+        cache[key] = (
+            plans._group_module_ids('', '', source=source, group_id=group_id) if group_id
+            else plans._group_module_ids(*key, source=source)
+        )
     return cache[key]
+
+
+def seed_preset_cache(facts):
+    """One round trip of group presets for every fact, keyed as `_preset_ids` keys them."""
+    source = _group_source()
+    by_name = {(fact['programme'], fact['grp']) for fact in facts if not plans._s(fact.get('group_id'))}
+    cache = dict(plans.group_module_ids_bulk(by_name, source=source)) if by_name else {}
+    group_ids = sorted({plans._s(fact.get('group_id')) for fact in facts if plans._s(fact.get('group_id'))})
+    if group_ids:
+        relation = source or plans.GROUP_PRESET_SOURCE
+        rows = plans._rows(
+            f'SELECT group_id, module_ids FROM {relation} WHERE group_id = ANY(%s) '
+            "AND status NOT IN ('inactive','archived')",
+            [group_ids],
+        )
+        found = {plans._s(row.get('group_id')): plans._module_ids_from_column(row.get('module_ids')) for row in rows}
+        manual = plans._manual_roster_module_ids([i for ids in found.values() for i in ids])
+        for group_id in group_ids:
+            cache[('group_id', group_id)] = [i for i in found.get(group_id, []) if i not in manual]
+    return cache
+
+
+#: Placement columns read through to_jsonb: works whatever the relation has,
+#: but serialises every (100+ column) row, so it is kept for substituted test
+#: relations only. The real table gets plain column reads, chosen by its columns.
+_JSONB_PLACEMENT = (
+    "COALESCE(to_jsonb(u) ->> 'Programme', '') AS programme,\n"
+    "        COALESCE(to_jsonb(u) ->> 'Group', '')     AS grp,\n"
+    "        COALESCE(to_jsonb(u) ->> 'group_id', '')  AS group_id,"
+)
+_PLACEMENT_SQL = {}
+
+
+def _learner_columns(alias):
+    with connections[alias].cursor() as cursor:
+        cursor.execute(
+            "select column_name from information_schema.columns "
+            "where table_schema = 'enrolment' and table_name = 'Created_users'"
+        )
+        return {row[0] for row in cursor.fetchall()}
+
+
+def _placement_select(alias):
+    """The programme/group/group_id select list for ``enrolment."Created_users"``.
+
+    The normalised schema keeps only ``programme_id``/``group_id``; the legacy
+    one only the ``Programme``/``Group`` names. Whichever is absent reads ''.
+    Decided once per alias and process (a column cannot appear without a deploy).
+    """
+    if alias not in _PLACEMENT_SQL:
+        if connections[alias].vendor != 'postgresql':
+            return _JSONB_PLACEMENT
+        columns = _learner_columns(alias)
+        if not columns:
+            return _JSONB_PLACEMENT
+        def text(column):
+            return f"COALESCE(u.\"{column}\"::text, '')" if column in columns else "''::text"
+        _PLACEMENT_SQL[alias] = (
+            f"{text('Programme')} AS programme,\n"
+            f"        {text('Group')} AS grp,\n"
+            f"        {text('group_id')} AS group_id,"
+        )
+    return _PLACEMENT_SQL[alias]
 
 
 def fetch_plan_facts(wanted, using=None, source=None):
     """One row per learner describing their plan, without shipping the plan."""
     alias = using or EnrolmentUser.all_learners.db
-    sql = PLAN_FACTS_SQL.format(source=source or LEARNER_RELATION)
+    placement = _JSONB_PLACEMENT if source else _placement_select(alias)
+    sql = PLAN_FACTS_SQL.format(source=source or LEARNER_RELATION, placement=placement)
     with connections[alias].cursor() as cursor:
         cursor.execute(sql, [sorted(wanted)])
         columns = [column[0] for column in cursor.description]
@@ -175,11 +276,11 @@ def _effective_ids_from_fact(fact, wanted, cache):
     matched = {module_id for module_id in (fact['matched'] or []) if module_id in wanted}
     if not fact['has_plan']:
         # No saved plan: the group preset *is* the effective plan.
-        return {i for i in _preset_ids(fact['programme'], fact['grp'], cache) if i in wanted}
+        return {i for i in _preset_ids(fact['programme'], fact['grp'], cache, fact.get('group_id')) if i in wanted}
     if not fact['id_count'] or fact['has_explicit']:
         # A cleared plan stays cleared, and an explicit one is the whole of it.
         return matched
-    return matched | {i for i in _preset_ids(fact['programme'], fact['grp'], cache) if i in wanted}
+    return matched | {i for i in _preset_ids(fact['programme'], fact['grp'], cache, fact.get('group_id')) if i in wanted}
 
 
 def counts_from_plan_facts(facts, wanted, preset_cache=None):
@@ -232,9 +333,7 @@ def assignment_directory_facts(target_module_ids):
     # One round trip for every distinct (programme, group) pair in the result,
     # same as bulk_assigned_learner_counts_sql -- see its own comment for why
     # that matters on a slow link.
-    cache = dict(plans.group_module_ids_bulk(
-        {(fact['programme'], fact['grp']) for fact in facts}
-    ))
+    cache = seed_preset_cache(facts)
     rows = {}
     ambiguous = []
     for fact in facts:
@@ -261,17 +360,16 @@ def bulk_assigned_learner_counts_sql(module_ids):
     # sequential lookups of a 155-row table -- more latency than the learner read
     # this module exists to remove. The keys are exactly what `_preset_ids`
     # builds, so anything the bulk read misses still falls through to it.
-    cache = dict(plans.group_module_ids_bulk(
-        {(fact['programme'], fact['grp']) for fact in facts}
-    ))
+    cache = seed_preset_cache(facts)
     counts, ambiguous = counts_from_plan_facts(facts, wanted, cache)
     if ambiguous:
         # A plan stored as a JSON string. Rare enough that reading those few rows
         # whole costs nothing, and it keeps the answer exactly the original's.
         logger.info('assignment counts: %d learner(s) fell back to Python plan parsing', len(ambiguous))
-        learners = EnrolmentUser.all_learners.only(
-            'id', 'programme', 'group', 'learning_plan', 'training_plan',
-        ).filter(pk__in=ambiguous)
+        from . import learner_compat
+        learners = learner_compat.fill(learner_compat.only(
+            EnrolmentUser.all_learners, 'id', 'programme', 'group', 'learning_plan', 'training_plan',
+        ).filter(pk__in=ambiguous), EnrolmentUser)
         for learner in learners:
             for module_id in set(plans._effective_plan_ids(learner, cache)):
                 if module_id in wanted:

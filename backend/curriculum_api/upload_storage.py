@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 import mimetypes
-import shutil
 import tempfile
 from threading import Lock
 from pathlib import Path
@@ -340,6 +339,3 @@ def copy_local_to_azure(relative_path, content_type='', overwrite=False) -> int:
                            attempt, BULK_UPLOAD_ATTEMPTS, blob, error)
     raise last_error
 
-
-def free_disk_bytes() -> int:
-    return shutil.disk_usage(Path(settings.MEDIA_ROOT).anchor or '/').free

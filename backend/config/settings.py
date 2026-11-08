@@ -455,6 +455,10 @@ MIDDLEWARE = [
     # can refresh the collection that changed instead of all of them. Reads the
     # epoch either side of the view, so it has to wrap it.
     'curriculum_api.middleware.CurriculumChangeLogMiddleware',
+    # Normalised curriculum schema (NEW_ENDPOINT_URL): /curriculum_api/ reads
+    # that name a dropped legacy column go through a legacy-shaped relation.
+    # A no-op on the legacy schema. See curriculum_api/schema_compat.py.
+    'curriculum_api.schema_compat.CurriculumSchemaCompatMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Turns a missing Curriculum table into a 503 naming the absent relations,
@@ -632,7 +636,20 @@ else:
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASE_URL = (
+# NEW_ENDPOINT_URL: the cleaned Neon branch of production (curriculum tables
+# re-linked). When set, it replaces the primary database for BOTH `default` and
+# `enrolment` -- curriculum SQL runs on `default` and joins login/auth/enrolment
+# schemas in the same database, so the two aliases must never be split. Never
+# applied to `manage.py test` or the test-branch modes, whose own guards decide
+# which database they may reach.
+NEW_ENDPOINT_URL = (os.environ.get("NEW_ENDPOINT_URL") or "").strip()
+USE_NEW_ENDPOINT = bool(
+    NEW_ENDPOINT_URL
+    and "test" not in sys.argv
+    and not RUN_APP_ON_TEST_BRANCH
+    and not USE_SECURITY_TEST_BRANCH
+)
+DATABASE_URL = NEW_ENDPOINT_URL if USE_NEW_ENDPOINT else (
     os.environ.get("DATABASE_URL")
     or os.environ.get("DATABASEURL")
     or os.environ.get("Database_url")
@@ -711,7 +728,7 @@ else:
     }
 
 # Enrolment (Neon) database used by the learner_api app via EnrolmentRouter.
-_enrolment_database_url = (
+_enrolment_database_url = NEW_ENDPOINT_URL if USE_NEW_ENDPOINT else (
     os.environ.get('ENROLMENT_DATABASE_URL')
     or os.environ.get('Database_url')
     or os.environ.get('DATABASEURL')
@@ -748,6 +765,13 @@ elif USE_SQLITE_FOR_TESTS:
     # Neon-branch provisioning never runs.
     DATABASES['enrolment'] = dict(DATABASES['default'])
     DATABASES['enrolment']['TEST'] = {'MIRROR': 'default'}
+
+# Payloads cached from one database must never be served for another: give the
+# new endpoint its own cache namespace (Redis outlives a server restart).
+if USE_NEW_ENDPOINT:
+    CACHES['default']['KEY_PREFIX'] = (
+        (CACHES['default'].get('KEY_PREFIX') or 'kbc-lms') + ':new-endpoint'
+    )
 
 # Optional cross-project sink for LMS support-ticket submissions.  The ticket
 # workflow remains on the enrolment database; this separate alias is only used
@@ -795,6 +819,38 @@ if _audit_clone_database_url and not USE_SQLITE_FOR_TESTS:
 _kbc_attendance_database_url = os.environ.get('KBC_ATTENDANCE_DATABASE_URL')
 if _kbc_attendance_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['kbc_attendance'] = database_from_url(_kbc_attendance_database_url)
+
+
+def _same_physical_database(url_a, url_b):
+    """True when two DSNs name the same Neon endpoint and database (pooler or direct)."""
+    a, b = urlparse(_dsn_from_shell_snippet(url_a)), urlparse(_dsn_from_shell_snippet(url_b))
+    host_a = (a.hostname or '').lower().replace('-pooler.', '.')
+    host_b = (b.hostname or '').lower().replace('-pooler.', '.')
+    return bool(host_a) and host_a == host_b and a.path.strip('/') == b.path.strip('/')
+
+
+# With NEW_ENDPOINT_URL active, an alias whose own URL still names the OLD
+# primary database (AUDIT_DATABASE_URL does: Audit/Manual_audit live in the same
+# database, and old_otjh reads it from curriculum learner pages) follows the
+# primary onto the new endpoint. Aliases on other databases are left alone.
+OLD_PRIMARY_DATABASE_URL = (
+    os.environ.get("DATABASE_URL")
+    or os.environ.get("DATABASEURL")
+    or os.environ.get("Database_url")
+    or ""
+)
+NEW_ENDPOINT_FOLLOWED_ALIASES = []
+if USE_NEW_ENDPOINT and OLD_PRIMARY_DATABASE_URL and not USE_SQLITE_FOR_TESTS:
+    for _alias, _alias_url in (
+        ('audit', _audit_database_url),
+        ('audit_clone', _audit_clone_database_url),
+        ('kbc_attendance', _kbc_attendance_database_url),
+        ('assistant_conversations', _assistant_conversations_database_url),
+    ):
+        if (_alias in DATABASES and _alias_url
+                and _same_physical_database(_alias_url, OLD_PRIMARY_DATABASE_URL)):
+            DATABASES[_alias] = database_from_url(NEW_ENDPOINT_URL)
+            NEW_ENDPOINT_FOLLOWED_ALIASES.append(_alias)
 
 # --- Security test branch (A17) ---------------------------------------------
 # Opt-in, test-only path that runs the suite against a dedicated Neon branch —

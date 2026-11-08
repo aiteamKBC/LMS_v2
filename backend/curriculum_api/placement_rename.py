@@ -37,6 +37,42 @@ def _refresh(affected, reason):
             )
 
 
+def learners_store_names():
+    """Whether learner records still carry placement *names* beside their ids.
+
+    The normalised schema (NEW_ENDPOINT_URL) keeps only programme_id /
+    cohort_id / group_id on ``Learner.learners`` and ``enrolment.Created_users``;
+    names are read from the curriculum by id, so a rename has nothing to copy.
+    Unknown (no columns readable, e.g. off PostgreSQL) keeps the legacy behaviour.
+    """
+    from .schema_compat import columns_of
+    columns = columns_of('Learner', 'learners')
+    return not columns or 'programme' in columns
+
+
+def _table_lacks(views, table, column):
+    """True only when ``table``'s columns are known and ``column`` is not one of them.
+
+    Read through schema_compat (PostgreSQL only, cached): off PostgreSQL the
+    columns are unknown and the legacy behaviour stands.
+    """
+    from .schema_compat import columns_of
+    columns = columns_of(views.CURRICULUM_SCHEMA, table)
+    return bool(columns) and column not in columns
+
+
+def placed_learners(id_column, value):
+    """``(enrolment_id, learner_type)`` of the learners placed by ``id_column``."""
+    if id_column not in {'programme_id', 'cohort_id', 'group_id'}:
+        raise ValueError(id_column)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'SELECT enrolment_id, learner_type FROM "Learner".learners WHERE {id_column} = %s',
+            [value],
+        )
+        return set(cursor.fetchall())
+
+
 def propagate_programme_name_to_learners(programme_id, old_name, name):
     """Rename a programme on the learner records placed on it."""
     programme_id, old_name, name = _s(programme_id), _s(old_name), _s(name)
@@ -44,6 +80,10 @@ def propagate_programme_name_to_learners(programme_id, old_name, name):
         return
     # Enrolment and learner placement schemas are PostgreSQL-only.
     if connection.vendor != 'postgresql':
+        return
+    if not learners_store_names():
+        # Nothing to rewrite; the learners' cached screens still name the old title.
+        _refresh(placed_learners('programme_id', programme_id), 'programme-rename')
         return
     params = {'id': programme_id, 'old': old_name, 'name': name}
     with connection.cursor() as cursor:
@@ -91,15 +131,20 @@ def propagate_group_name_to_learners(group, name):
         return
     # Modules carry the group's name beside its id, as they carry the cohort's;
     # the cohort rename refreshes that copy, and so must this.
-    with versioning.audit_context(
-        actor_type=versioning.ACTOR_SYSTEM, source='recalculation', action='recalculated',
-        metadata={'recalculated_from': 'group_rename', 'reason_code': 'group_name_propagation'},
-    ):
-        views.update_authoring_rows(
-            views.AUTHORING_MODULES_TABLE, 'group_id = %s and coalesce(group_name, \'\') <> %s',
-            [group_id, name], {'group_name': name},
-        )
+    if not _table_lacks(views, views.AUTHORING_MODULES_TABLE, 'group_name'):
+        # The normalised schema has no copy on modules: they read it by group_id.
+        with versioning.audit_context(
+            actor_type=versioning.ACTOR_SYSTEM, source='recalculation', action='recalculated',
+            metadata={'recalculated_from': 'group_rename', 'reason_code': 'group_name_propagation'},
+        ):
+            views.update_authoring_rows(
+                views.AUTHORING_MODULES_TABLE, 'group_id = %s and coalesce(group_name, \'\') <> %s',
+                [group_id, name], {'group_name': name},
+            )
     if not old_name or connection.vendor != 'postgresql':
+        return
+    if not learners_store_names():
+        _refresh(placed_learners('group_id', group_id), 'group-rename')
         return
     # A record with no group id is matched within its cohort by the old name.
     # Group names repeat across cohorts, so that needs this group's cohort, and
@@ -113,7 +158,7 @@ def propagate_group_name_to_learners(group, name):
         cursor.execute(
             '''SELECT 1 FROM curriculum.groups
                WHERE cohort_id = %(cohort_id)s AND group_id <> %(id)s
-                 AND group_name IN (%(old)s, %(name)s) AND deleted_at IS NULL LIMIT 1''',
+                 AND group_name IN (%(old)s, %(name)s) AND status NOT IN ('inactive','archived') LIMIT 1''',
             params,
         )
         params['legacy'] = bool(params['cohort_id']) and cursor.fetchone() is None

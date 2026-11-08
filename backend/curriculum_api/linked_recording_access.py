@@ -28,11 +28,11 @@ LINKED_SESSIONS_SQL = '''SELECT s.settings_json->>'teamsLiveSessionId' AS series
     JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
     WHERE r.module_catalogue_id=ANY(%s)
       AND lower(replace(coalesce(r.type,''),'-','_'))='recording_placeholder'
-      AND r.deleted_at IS NULL AND NOT coalesce(r.is_programme_deleted,false)
-      AND (rw.id IS NULL OR (rw.deleted_at IS NULL AND NOT coalesce(rw.is_programme_deleted,false)))
+      AND r.status NOT IN ('inactive','archived')
+      AND (rw.id IS NULL OR (rw.status NOT IN ('inactive','archived')))
       AND lower(replace(coalesce(s.type,''),'-','_'))='live_session'
-      AND s.deleted_at IS NULL AND NOT coalesce(s.is_programme_deleted,false)
-      AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+      AND s.status NOT IN ('inactive','archived')
+      AND m.status NOT IN ('inactive','archived')
       AND (s.settings_json->>'teamsLiveSessionId'=%s OR s.settings_json->>'extraTeamsLiveSessionId'=%s)'''
 
 

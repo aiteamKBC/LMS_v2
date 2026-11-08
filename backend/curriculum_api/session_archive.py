@@ -84,7 +84,13 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
     from learner_api.evidence_storage import upload_blob
     from .views import teams_online_meeting_owner_id
     series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [series_id])[0]
-    modules = read('SELECT group_id,group_name,programme_id,programme_name,cohort_id,cohort_name,title FROM curriculum.modules WHERE module_catalogue_id=%s', [series['module_catalogue_id']])
+    # The module keeps ids; its programme / cohort / group names are their own rows'.
+    modules = read('''SELECT m.group_id, g.group_name, m.programme_id, p.name AS programme_name,
+        m.cohort_id, c.cohort_name, m.title FROM curriculum.modules m
+        LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+        LEFT JOIN curriculum.cohorts c ON c.cohort_id=m.cohort_id
+        LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
+        WHERE m.module_catalogue_id=%s''', [series['module_catalogue_id']])
     occurrences = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s', [series_id])
     by_id = {row['id']: row for row in occurrences}
     artifacts = read('''SELECT a.*,r.status AS saved_status,r.blob_name AS saved_name,

@@ -824,36 +824,6 @@ def _fetch_learner_scoped_overrides_for_reviews(review_ids, learner_id):
     return grouped
 
 
-def skip_occurrence_for_learner(review_id, occurrence_date_iso, programme_id, learner_id, *, actor='staff', reason=''):
-    """Learner-specific skip -- unlike review_schedule.skip_occurrence, this
-    never affects any other learner on the same programme/template."""
-    existing_rows = curriculum_views.fetch_all(
-        f'select * from {curriculum_views.table_name(OVERRIDES_TABLE)} '
-        f'where review_id = %s and occurrence_date = %s and learner_id = %s and deleted_at is null',
-        [review_id, occurrence_date_iso, learner_id],
-    )
-    if existing_rows:
-        curriculum_views.update_rows(OVERRIDES_TABLE, 'id = %s', [existing_rows[0]['id']], {
-            'reason': reason, 'updated_by': actor, 'updated_at': datetime.utcnow(),
-        })
-        return existing_rows[0]['id']
-    override_id = curriculum_views.unique_prefixed_id('REVOL')
-    curriculum_views.insert_row(OVERRIDES_TABLE, {
-        'id': override_id,
-        'review_id': review_id,
-        'programme_id': programme_id,
-        'occurrence_date': occurrence_date_iso,
-        'learner_id': learner_id,
-        'action': 'skip',
-        'reason': reason,
-        'created_by': actor,
-        'updated_by': actor,
-        'created_at': datetime.utcnow(),
-        'updated_at': datetime.utcnow(),
-    })
-    return override_id
-
-
 # -------------------------------------------------------- occurrence engine
 
 def template_recurrence_config(row):
@@ -2568,12 +2538,6 @@ def list_review_instance_reopens(review_instance_id):
         f'where review_instance_id = %s order by changed_at desc',
         [review_instance_id],
     )
-
-
-def latest_review_instance_reopen(review_instance_id):
-    """The most recent reopen for this instance, or None."""
-    rows = list_review_instance_reopens(review_instance_id)
-    return rows[0] if rows else None
 
 
 def _clear_review_instance_signatures(instance_id):

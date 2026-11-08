@@ -38,37 +38,42 @@ from login.permissions import require_role
 from .session_media_policy import artifact_metadata
 from .session_component_identity import TIMEZONE_ALIASES
 from .session_results import read, unavailable
+from .week_visibility import visible_child_sql
 from .session_results_policy import instant
 
-MODULES_SQL = '''SELECT m.module_catalogue_id, m.title, m.programme_name, m.cohort_name,
-        m.group_name, m.deleted_at, m.is_programme_deleted, p.status AS programme_status
+# A module keeps its programme / cohort / group by id; the names are theirs.
+MODULES_SQL = '''SELECT m.module_catalogue_id, m.title, p.name AS programme_name, mc.cohort_name,
+        mg.group_name, m.status, p.status AS programme_status
     FROM curriculum.modules m
     LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
-    ORDER BY m.programme_name, m.cohort_name, m.group_name, m.title, m.module_catalogue_id'''
+    LEFT JOIN curriculum.cohorts mc ON mc.cohort_id=m.cohort_id
+    LEFT JOIN curriculum.groups mg ON mg.group_id=m.group_id
+    ORDER BY p.name, mc.cohort_name, mg.group_name, m.title, m.module_catalogue_id'''
 
 # Same series filter as the module Sessions tab, so both list the same recordings.
 RECORDINGS_SQL = '''SELECT a.id AS artifact_id, a.created_datetime, a.end_datetime, a.metadata,
         a.call_id, a.content_correlation_id,
         o.id AS occurrence_id, o.live_session_id AS series_id, o.session_number, o.scheduled_start,
         s.timezone AS series_timezone,
-        m.module_catalogue_id, m.title AS module_title, m.programme_name, m.cohort_name, m.group_name,
-        (m.deleted_at IS NOT NULL OR COALESCE(m.is_programme_deleted, false)) AS module_archived,
+        m.module_catalogue_id, m.title AS module_title, p.name AS programme_name, mc.cohort_name, mg.group_name,
+        (m.status IN ('inactive','archived')) AS module_archived,
         p.status AS programme_status, r.status AS archive_status
     FROM curriculum.live_session_artifacts a
     JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
     JOIN curriculum.live_sessions s ON s.id=o.live_session_id
     JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
     LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+    LEFT JOIN curriculum.cohorts mc ON mc.cohort_id=m.cohort_id
+    LEFT JOIN curriculum.groups mg ON mg.group_id=m.group_id
     LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
     WHERE a.artifact_type='recording' AND s.status NOT IN ('deleted','superseded','failed')
     ORDER BY o.scheduled_start, a.created_datetime, a.id'''
 
 # A running module's live weeks; an archived module's weeks as they stood when
 # it was deleted (deleting a module soft-deletes its weeks in the same moment).
-_KEPT_WITH_MODULE = '''(
-        (x.deleted_at IS NULL AND NOT COALESCE(x.is_programme_deleted, false))
-        OR (m.deleted_at IS NOT NULL AND x.deleted_at >= m.deleted_at - interval '5 minutes')
-        OR (COALESCE(m.is_programme_deleted, false) AND x.deleted_at IS NULL))'''
+# The learner-facing rule (week_visibility): live rows, plus the rows history
+# says were archived with the module, in the same moment.
+_KEPT_WITH_MODULE = visible_child_sql('x')
 
 WEEKS_SQL = '''SELECT x.id, x.module_catalogue_id, x.week_number, x.title, x.display_order
     FROM curriculum.weeks x JOIN curriculum.modules m ON m.module_catalogue_id=x.module_catalogue_id
@@ -101,15 +106,16 @@ ATTENTION_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_
             'extraTeamsLiveSessionId', c.settings_json -> 'extraTeamsLiveSessionId'
         ) ELSE c.settings_json END AS settings_json,
         w.week_number, w.title AS week_title, w.module_catalogue_id AS week_module_catalogue_id, w.display_order,
-        m.title AS module_title, m.programme_name, m.cohort_name, m.group_name, p.status AS programme_status
+        m.title AS module_title, p.name AS programme_name, mc.cohort_name, mg.group_name, p.status AS programme_status
     FROM curriculum.components c
     JOIN curriculum.weeks w ON w.id=c.week_id
     JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
     LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
-    WHERE c.type IN ('live-session','live_session') AND c.deleted_at IS NULL
-    AND NOT COALESCE(c.is_programme_deleted, false) AND COALESCE(c.library_state, '')<>'library'
-    AND w.deleted_at IS NULL AND NOT COALESCE(w.is_programme_deleted, false)
-    AND m.deleted_at IS NULL AND NOT COALESCE(m.is_programme_deleted, false)
+    LEFT JOIN curriculum.cohorts mc ON mc.cohort_id=m.cohort_id
+    LEFT JOIN curriculum.groups mg ON mg.group_id=m.group_id
+    WHERE c.type IN ('live-session','live_session') AND c.status NOT IN ('inactive','archived') AND COALESCE(c.library_state, '')<>'library'
+    AND w.status NOT IN ('inactive','archived')
+    AND m.status NOT IN ('inactive','archived')
     ORDER BY w.display_order, w.week_number, c.display_order, c.id'''
 
 # Author labels also remain useful for archived deliveries. Keep only weeks
@@ -129,13 +135,15 @@ CALENDAR_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_t
             'durationMinutes', c.settings_json -> 'durationMinutes',
             'teamsDurationMinutes', c.settings_json -> 'teamsDurationMinutes'
         ) ELSE c.settings_json END AS settings_json, w.week_number, w.title AS week_title,
-        m.title AS module_title, m.programme_name, m.cohort_name, m.group_name,
-        (m.deleted_at IS NOT NULL OR COALESCE(m.is_programme_deleted, false)) AS module_archived,
+        m.title AS module_title, p.name AS programme_name, mc.cohort_name, mg.group_name,
+        (m.status IN ('inactive','archived')) AS module_archived,
         p.status AS programme_status
     FROM curriculum.components c
     JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
     JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
     LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+    LEFT JOIN curriculum.cohorts mc ON mc.cohort_id=m.cohort_id
+    LEFT JOIN curriculum.groups mg ON mg.group_id=m.group_id
     WHERE c.type IN ('live-session','live_session')
       AND COALESCE(c.library_state, '')<>'library'
       AND COALESCE(w.library_state, '')<>'library'
@@ -148,8 +156,8 @@ OCCURRENCES_SQL = '''SELECT o.id, o.live_session_id, o.session_number, o.schedul
         o.status, o.actual_start, s.status AS series_status, j.state AS job_state, j.finished_at AS job_finished_at,
         s.module_catalogue_id, s.module_title AS series_module_title, s.timezone AS series_timezone,
         COALESCE(NULLIF(o.join_url, ''), s.join_url) AS join_url,
-        m.title AS module_title, m.programme_name, m.cohort_name, m.group_name,
-        (m.deleted_at IS NOT NULL OR COALESCE(m.is_programme_deleted, false)) AS module_archived,
+        m.title AS module_title, p.name AS programme_name, mc.cohort_name, mg.group_name,
+        (m.status IN ('inactive','archived')) AS module_archived,
         p.status AS programme_status,
         EXISTS (SELECT 1 FROM curriculum.live_session_artifacts a
                 WHERE a.occurrence_id=o.id AND a.artifact_type='recording') AS has_recording
@@ -157,6 +165,8 @@ OCCURRENCES_SQL = '''SELECT o.id, o.live_session_id, o.session_number, o.schedul
     JOIN curriculum.live_sessions s ON s.id=o.live_session_id
     LEFT JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
     LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+    LEFT JOIN curriculum.cohorts mc ON mc.cohort_id=m.cohort_id
+    LEFT JOIN curriculum.groups mg ON mg.group_id=m.group_id
     LEFT JOIN curriculum.session_result_jobs j ON j.live_session_id=s.id
     WHERE o.scheduled_start IS NOT NULL AND s.status NOT IN ('deleted','superseded','failed')'''
 
@@ -244,7 +254,7 @@ def module_index(rows):
         'moduleId': row['module_catalogue_id'], 'title': _text(row.get('title')) or 'Untitled module',
         'programme': _text(row.get('programme_name')),
         'cohort': _text(row.get('cohort_name')), 'group': _text(row.get('group_name')),
-        'archived': bool(row.get('deleted_at') or row.get('is_programme_deleted')),
+        'archived': _text(row.get('status')).lower() in ('inactive', 'archived'),
         'programmeActive': programme_active(row.get('programme_status')),
     } for row in rows]
 

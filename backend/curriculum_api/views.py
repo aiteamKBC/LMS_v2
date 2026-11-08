@@ -29,7 +29,6 @@ from django.conf import settings
 from django.core import signing
 from django.core.cache import cache
 from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.core.serializers.json import DjangoJSONEncoder
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModified, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
@@ -39,6 +38,9 @@ from django.views.decorators.http import require_GET
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
+from . import archive_state
+from . import curriculum_names
+from . import schema_compat
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
@@ -77,7 +79,7 @@ from .ksb_coverage import (
 )
 from .learner_ksb_sync import sync_progress_ksbs
 from .http_cache import (
-    conditional_json_response, encode_json_bytes, encode_json_entry, encode_json_error_entry, entry_payload,
+    conditional_json_response, encode_json_bytes, encode_json_entry, encode_json_error_entry,
     plain_json_response, query_flag, query_list, query_value,
 )
 
@@ -170,6 +172,7 @@ SUPPORTED_KSB_WEIGHT_CLASSES = {'hard', 'soft', 'possible'}
 
 def invalidate_curriculum_cache():
     global _CURRICULUM_CACHE_EPOCH
+    schema_compat.invalidate()
     with _CURRICULUM_CACHE_LOCK:
         # Programme-scoped entries stay: their generation is checked on every
         # read, and the bump this write owes retires exactly the ones it touched.
@@ -1109,6 +1112,9 @@ def rows_as_dicts(cursor):
 
 
 def fetch_all(query, params=None):
+    # Normalised schema: hand-written reads naming a legacy column (deleted_at,
+    # programme_name, ...) go through the legacy-shaped read relation.
+    query = schema_compat.adapt_sql(query)
     with connection.cursor() as cursor:
         cursor.execute(query, params or [])
         return rows_as_dicts(cursor)
@@ -1259,11 +1265,6 @@ def training_row_module_catalogue_id(row):
     return legacy_value if is_canonical_module_catalogue_id(legacy_value) else ''
 
 
-def canonical_module_link_payload(row, module_catalogue_id):
-    module_catalogue_id = clean_str(module_catalogue_id)
-    return {'notes': append_notes_meta((row or {}).get('notes'), {TRAINING_MODULE_CATALOGUE_COLUMN: module_catalogue_id})}
-
-
 def link_training_row_to_catalogue(training_id, module_catalogue_id):
     return False
 
@@ -1310,11 +1311,27 @@ def ensure_program_config_archive_columns():
 def filtered_payload(table, payload, allow_null_columns=None):
     allow_null_columns = set(allow_null_columns or [])
     columns = column_names(table)
+    # The chosen tutor / coach is stored as its id (curriculum_names).
+    payload, staff_nullable = curriculum_names.store_staff(table, payload, columns)
+    # Normalised schema: legacy keys become what the table stores instead
+    # (status, standard_ksb_id). No-op on the old shape.
+    payload, translated_nullable = schema_compat.translate_write(table, payload, columns)
+    allow_null_columns |= translated_nullable | staff_nullable
     return {
         key: value
         for key, value in payload.items()
         if key in columns and (value is not None or key in allow_null_columns)
     }
+
+
+def written_rows(table, rows):
+    """Rows a write returned, carrying the names a read gives them.
+
+    The tables keep ids only; history snapshots and the callers that show the
+    saved record read the module's programme / cohort / group / tutor names off
+    the row, so they are put on it here exactly as authoring_fetch_all does.
+    """
+    return curriculum_names.attach(table, rows)
 
 
 def json_body(request):
@@ -5452,8 +5469,15 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     )
     graph_settings = get_graph_settings()
     url = f'{graph_settings["base_url"].rstrip("/")}/{path}'
+    try:
+        token = microsoft_graph_token()
+    except RuntimeError as exc:
+        # No token is a Microsoft availability failure like the URLError below,
+        # not a server fault: answer 502 instead of an unhandled 500.
+        logger.warning('Unable to fetch Teams %s content: %s', artifact_type, exc)
+        return json_error(f'Microsoft Graph could not return the {artifact_type} content.', status=502)
     request_headers = {
-        'Authorization': f'Bearer {microsoft_graph_token()}',
+        'Authorization': f'Bearer {token}',
         'Accept': 'text/vtt' if artifact_type == 'transcript' else 'video/mp4',
     }
     # <video preload="metadata"> and its seek bar both depend on being able to
@@ -5691,6 +5715,8 @@ def note_live_rows(table, rows):
     Called beside every history record in the write helpers below, from the
     rows the write itself returned, so it costs no query. See module_live.
     """
+    # Names/ids derived for the normalised schema must reflect this write.
+    schema_compat.invalidate()
     try:
         from .module_live import note_rows
         note_rows(table, rows)
@@ -5710,7 +5736,7 @@ def insert_row(table, payload):
         f'values ({placeholders}) returning *'
     )
     try:
-        row = execute_returning(query, [values[column] for column in columns])[0]
+        row = written_rows(table, execute_returning(query, [values[column] for column in columns]))[0]
         # The created row is its own snapshot, so recording the create costs no
         # extra read. Without this a programme, a holiday or a week template
         # entered history only at its first EDIT, and "who created this?" -- the
@@ -5733,27 +5759,33 @@ def insert_row(table, payload):
             f'({", ".join(quote_ident(column) for column in columns)}) '
             f'values ({placeholders}) returning *'
         )
-        row = execute_returning(query, [values[column] for column in columns])[0]
+        row = written_rows(table, execute_returning(query, [values[column] for column in columns]))[0]
         versioning.record_rows(table, [row])
         note_live_rows(table, [row])
         return row
 
 
 def update_rows(table, where_sql, where_params, payload, allow_null_columns=None):
+    if schema_compat.only_derived_copy(table, payload, column_names(table)):
+        # Normalised schema: nothing stored to refresh (see update_authoring_rows).
+        return written_rows(table, fetch_all(f'select * from {table_name(table)} where {where_sql}', where_params))
+    where_sql = schema_compat.write_where(table, where_sql, column_names(table))
+    payload = archive_state.normalise_write(table, payload)
     values = filtered_payload(table, payload, allow_null_columns=allow_null_columns)
     if not values:
         raise ValueError(f'No writable columns found for {table}.')
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in values)
     query = f'update {table_name(table)} set {assignments} where {where_sql} returning *'
-    rows = execute_returning(query, [*values.values(), *where_params])
+    rows = written_rows(table, execute_returning(query, [*values.values(), *where_params]))
     versioning.record_rows(table, rows)
     note_live_rows(table, rows)
     return rows
 
 
 def delete_rows(table, where_sql, where_params):
+    where_sql = schema_compat.write_where(table, where_sql, column_names(table))
     query = f'delete from {table_name(table)} where {where_sql} returning *'
-    rows = execute_returning(query, where_params)
+    rows = written_rows(table, execute_returning(query, where_params))
     # Recorded from the rows the delete returned, which is the only moment the
     # content still exists. Querying the record afterwards finds nothing, and an
     # audit trail whose delete entry cannot say what was deleted is the one entry
@@ -5764,10 +5796,15 @@ def delete_rows(table, where_sql, where_params):
 
 
 def row_has_deleted_at(row):
-    return bool(row and row.get('deleted_at'))
+    """Is this row archived? ``status`` on the lifecycle tables, ``deleted_at`` elsewhere."""
+    return bool(row) and (bool(row.get('deleted_at')) or archive_state.row_inactive(row))
 
 
 def soft_delete_payload(table, *, via_parent='', deleted_by='system', extra=None):
+    if archive_state.uses_status(table):
+        # Normalised schema: status is the whole archive record. Who/why and the
+        # parent it went with are written to history (see soft_delete_rows).
+        return {**archive_state.archive_values(), **(extra or {})}
     payload = {
         'deleted_at': datetime.utcnow(),
         'deleted_by': clean_str(deleted_by) or 'system',
@@ -5794,6 +5831,8 @@ def soft_delete_payload(table, *, via_parent='', deleted_by='system', extra=None
 
 
 def restore_soft_delete_payload(table):
+    if archive_state.uses_status(table):
+        return archive_state.restore_values()
     payload = {'updated_at': datetime.utcnow()}
     if has_column(table, 'deleted_at'):
         payload['deleted_at'] = None
@@ -5811,6 +5850,8 @@ def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', dele
     if not any(column in column_names(table) for column in payload):
         return []
     active_checks = []
+    if archive_state.uses_status(table):
+        active_checks.append(archive_state.live_sql())
     if has_column(table, 'deleted_at'):
         active_checks.append(f'{quote_ident("deleted_at")} is null')
     if has_column(table, 'is_programme_deleted'):
@@ -5821,8 +5862,11 @@ def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', dele
     # `deleted_via_parent` is deliberately NULL for a standalone delete, and
     # filtered_payload drops None unless the column is allowed to be nulled --
     # without this the column would keep a stale value from an earlier cascade.
-    rows = update_rows(table, guarded_where, where_params or [], payload,
-                       allow_null_columns=['deleted_via_parent'])
+    # History records the reason and the parent this archive went with: the
+    # normalised schema keeps neither on the row, and restore reads them back.
+    with archive_state.archive_context(deleted_by, via_parent):
+        rows = update_rows(table, guarded_where, where_params or [], payload,
+                           allow_null_columns=['deleted_via_parent'])
     # Logged even when it matches nothing: a soft delete that hits zero rows is
     # almost always the interesting case (already archived, or wrong id).
     log_curriculum_storage(
@@ -5904,6 +5948,14 @@ def detach_rows_to_library(table, where_sql, where_params=None, **origin):
     """Detach matching rows into the reuse library instead of deleting them."""
     if not table_exists(table):
         return []
+    if not has_column(table, 'library_state') and schema_compat.uses_status_lifecycle(table, column_names(table)):
+        # Normalised schema: a week must belong to a module or free course and a
+        # component to a week (NOT NULL foreign keys). Clearing the parent would
+        # be refused by the database half-way through a delete; stop first.
+        raise schema_compat.UnsupportedOnNormalisedSchema(
+            'Permanently deleting this content would detach weeks/components into the reuse library, '
+            'which the current curriculum database does not support. It stays archived (inactive).'
+        )
     payload = detach_to_library_payload(table, **origin)
     if not any(column in column_names(table) for column in payload):
         return []
@@ -5947,6 +5999,8 @@ def library_sweep_guard(table, where_sql):
 def deleted_sql_condition(table, alias=''):
     prefix = f'{alias}.' if alias else ''
     checks = []
+    if archive_state.uses_status(table):
+        checks.append(archive_state.inactive_sql(alias))
     if has_column(table, 'deleted_at'):
         checks.append(f'{prefix}{quote_ident("deleted_at")} is not null')
     if has_column(table, 'is_programme_deleted'):
@@ -5987,7 +6041,7 @@ def remove_notes_meta(notes, keys):
 def archive_payload(table, existing_notes=None):
     payload = {}
     if has_column(table, 'status'):
-        payload['status'] = 'archived'
+        payload['status'] = archive_state.INACTIVE if archive_state.uses_status(table) else 'archived'
     if has_column(table, 'is_archived'):
         payload['is_archived'] = True
     if has_column(table, 'is_active'):
@@ -6203,20 +6257,6 @@ def holiday_extension_breakdown(holidays, period_start, period_end):
             'days': len(days),
         })
     return breakdown
-
-
-def extend_end_date_for_holidays(base_end_value, holidays, period_start):
-    """Push a schedule end date out by the selected holiday days.
-
-    Kept for callers that need a simple date shift. Cohort contract dates do not
-    use this; module session planning skips clashing dates directly in
-    ``build_module_session_plan``.
-    """
-    base_end = parse_date(base_end_value)
-    if not base_end:
-        return None
-
-    return base_end + timedelta(days=holiday_extension_days(holidays, period_start, base_end))
 
 
 def cohort_applied_holidays(holiday_ids, holiday_rows, period_start, period_end):
@@ -6819,14 +6859,6 @@ def unique_ksb_profile_id(value='', existing_values=None):
     return unique_prefixed_id('KSBP', requested, existing)
 
 
-def existing_training_meta_ids(key):
-    return [
-        row.get('_meta', {}).get(key)
-        for row in get_training_rows()
-        if row.get('_meta', {}).get(key)
-    ]
-
-
 def unique_cohort_id(value=''):
     def existing():
         return [detail.get('cohortId') for detail in cohort_authoring_detail_rows() if detail.get('cohortId')]
@@ -6916,14 +6948,15 @@ def is_archived_program_config(config):
         row_has_deleted_at(config)
         or truthy(config.get('deleted_at'))
         or truthy(config.get('archived'))
-        or clean_str(config.get('status')).lower() == 'archived'
+        or clean_str(config.get('status')).lower() in {'archived', 'inactive'}
     )
 
 
 def normalise_programme_status(value, default='active'):
     status = clean_str(value).lower()
-    if status == 'archived':
-        return status
+    # 'inactive' is how the normalised schema records an archived programme.
+    if status in {'archived', 'inactive'}:
+        return 'archived'
     if status in {'draft', 'active', 'published', 'planned', 'live'}:
         return 'active'
     return default
@@ -7014,56 +7047,6 @@ def programme_dependency_counts(identifier, config=None):
     return counts
 
 
-def programme_dependency_report(identifier, programme=None, config=None):
-    counts = programme_dependency_counts(identifier, config)
-    total = sum(parse_int(value, 0) for value in counts.values())
-    return {
-        'blocked': total > 0,
-        'counts': counts,
-        'total': total,
-        'programme': {
-            'id': clean_str(identifier),
-            'sourceId': clean_str((programme or {}).get('sourceId') or programme_config_identity(config) or identifier),
-            'name': clean_str((programme or {}).get('name') or (config or {}).get('name')),
-        },
-        'cleanupStartStep': 'cohort',
-        'message': (
-            'This programme still has curriculum data attached. '
-            'Open the programme wizard and remove modules, groups and cohorts before deleting the programme.'
-        ),
-    }
-
-
-def archive_programme_config(identifier, config=None):
-    """Soft-delete a programme by flagging curriculum.programmes.is_archived.
-
-    Archiving hides the programme from the operational list while leaving every
-    child row (cohorts, groups, modules) and every learner record intact. This
-    is the default outcome for a delete request whenever the programme still
-    has dependents — see programme_dependency_counts().
-
-    Returns True when a row was flagged.
-    """
-    config = config or programme_config_by_identifier(identifier)
-    if not config:
-        return False
-    try:
-        key_column = programme_config_key_column()
-        key_value = config.get(key_column)
-        if key_value is None:
-            return False
-        updated = update_rows(
-            'programmes',
-            f'{quote_ident(key_column)} = %s',
-            [key_value],
-            soft_delete_payload('programmes', deleted_by='programme-archive'),
-        )
-        return bool(updated)
-    except Exception:
-        logger.warning('Could not archive programme %s.', identifier, exc_info=True)
-        return False
-
-
 def soft_delete_programme_authoring_structure(identifier, programme=None, config=None):
     """Archive a programme and mark its curriculum children as programme-deleted.
 
@@ -7097,12 +7080,13 @@ def soft_delete_programme_authoring_structure(identifier, programme=None, config
             key_column = programme_config_key_column()
             key_value = config.get(key_column)
             if key_value is not None:
-                result['programmeArchived'] = bool(update_rows(
-                    'programmes',
-                    f'{quote_ident(key_column)} = %s',
-                    [key_value],
-                    soft_delete_payload('programmes', deleted_by='programme-delete'),
-                ))
+                with archive_state.archive_context('programme-delete'):
+                    result['programmeArchived'] = bool(update_rows(
+                        'programmes',
+                        f'{quote_ident(key_column)} = %s',
+                        [key_value],
+                        soft_delete_payload('programmes', deleted_by='programme-delete'),
+                    ))
     except Exception:
         logger.warning('Could not archive programme %s during soft delete.', identifier, exc_info=True)
 
@@ -7241,6 +7225,8 @@ def restore_rows_via_parent(table, parent_id, bounds=None):
     left stamped by an earlier archive of the same parent (one later undone by a
     save rather than a restore) are not part of this cascade and stay deleted.
     """
+    if archive_state.uses_status(table):
+        return restore_status_rows_via_parent(table, parent_id, bounds)
     if not has_column(table, 'deleted_via_parent'):
         return []
     payload = restore_soft_delete_payload(table)
@@ -7260,6 +7246,67 @@ def restore_rows_via_parent(table, parent_id, bounds=None):
         payload,
         allow_null_columns=RESTORE_NULLABLE_COLUMNS,
     )
+    log_curriculum_storage('restore', table, rows=rows, parent_id=parent_id)
+    return rows
+
+
+LIFECYCLE_KEY_COLUMNS = {
+    'programmes': 'programme_id', 'cohorts': 'cohort_id', 'groups': 'group_id', 'modules': 'module_catalogue_id',
+    'weeks': 'id', 'components': 'id', 'ksb_mappings': 'id', 'coaches': 'id', 'tutors': 'id',
+}
+
+
+def archived_rows_under(table, parent_id):
+    """Archived rows of ``table`` that sit anywhere under ``parent_id``.
+
+    The parent may be a programme, cohort, module, week or component; every
+    placement column the table has is tried, plus a programme's modules for
+    module content and a component's own parents for KSB mappings. Only the
+    candidates: ``archive_state.archived_with`` decides which of them went with
+    the parent.
+    """
+    columns = column_names(table)
+    key = LIFECYCLE_KEY_COLUMNS[table]
+    modules = authoring_table_name(AUTHORING_MODULES_TABLE)
+    components = authoring_table_name(AUTHORING_COMPONENTS_TABLE)
+    clauses, params = [], []
+    for column in ('programme_id', 'cohort_id', 'module_catalogue_id', 'week_id', 'component_id'):
+        if column in columns:
+            clauses.append(f'{quote_ident(column)} = %s')
+            params.append(parent_id)
+    if 'module_catalogue_id' in columns:
+        clauses.append(f'module_catalogue_id in (select module_catalogue_id from {modules} where programme_id = %s)')
+        params.append(parent_id)
+    if table == AUTHORING_KSB_MAPPINGS_TABLE:
+        clauses.append(
+            f'component_id in (select id from {components} where module_catalogue_id = %s or week_id = %s '
+            f'or module_catalogue_id in (select module_catalogue_id from {modules} where programme_id = %s))'
+        )
+        params += [parent_id, parent_id, parent_id]
+    if not clauses:
+        return []
+    wanted = [key, 'status', 'created_at', 'updated_at'] + [
+        column for column in ('programme_id', 'cohort_id', 'module_catalogue_id', 'week_id', 'component_id')
+        if column in columns and column != key
+    ]
+    return fetch_all(
+        f'select {", ".join(quote_ident(column) for column in dict.fromkeys(wanted))} '
+        f'from {authoring_table_name(table)} where {archive_state.inactive_sql()} and ({" or ".join(clauses)})',
+        params,
+    )
+
+
+def restore_status_rows_via_parent(table, parent_id, bounds=None):
+    """``restore_rows_via_parent`` on the normalised schema: the rows history says went with the parent."""
+    key = LIFECYCLE_KEY_COLUMNS[table]
+    chosen = archive_state.archived_with(table, parent_id, archived_rows_under(table, parent_id), bounds, key_column=key)
+    ids = [clean_str(row.get(key)) for row in chosen if clean_str(row.get(key))]
+    rows = []
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        rows += update_rows(
+            table, f'{quote_ident(key)} in ({", ".join(["%s"] * len(chunk))})', chunk, archive_state.restore_values(),
+        )
     log_curriculum_storage('restore', table, rows=rows, parent_id=parent_id)
     return rows
 
@@ -7947,12 +7994,6 @@ def parse_notes_id_list(value):
     return [clean_str(token) for token in tokens if clean_str(token)]
 
 
-def replace_visible_notes_preserving_meta(existing_notes, visible_notes):
-    hidden_lines = [line for line in str(existing_notes or '').splitlines() if line.strip().startswith('__')]
-    visible_lines = [line for line in str(visible_notes or '').splitlines() if not line.strip().startswith('__')]
-    return '\n'.join([*visible_lines, *hidden_lines]).strip()
-
-
 def visible_notes(notes):
     return '\n'.join(line for line in str(notes or '').splitlines() if not line.strip().startswith('__')).strip()
 
@@ -8246,7 +8287,8 @@ def set_programme_modules_ksb_source(programme_values, source_value):
                 update {authoring_table_name(AUTHORING_MODULES_TABLE)}
                 set ksb_profile_source_id = %s, updated_at = %s
                 where programme_id in ({placeholders})
-                   or programme_name in ({placeholders})
+                   or programme_id in (
+                       select programme_id from {table_name('programmes')} where name in ({placeholders}))
                 ''',
                 [*params, *raw_targets],
             )
@@ -8658,8 +8700,15 @@ def safe_module_index_rows():
 # rows by id (both ids are primary keys, so order cannot change what they
 # hold) ask for the same order, so one build reads each table once through
 # the read scope instead of once per reader.
-GROUP_ROWS_ORDER = 'programme_name, cohort_name, group_name'
-COHORT_ROWS_ORDER = 'programme_name, cohort_name, start_date'
+# Programme and cohort names are read from their own rows (the group and cohort
+# keep only the ids), so the list order sorts by those rows' names.
+_PROGRAMMES_REF = '"curriculum"."programmes"' if connection.vendor == 'postgresql' else '"programmes"'
+_COHORTS_REF = '"curriculum"."cohorts"' if connection.vendor == 'postgresql' else '"cohorts"'
+GROUP_ROWS_ORDER = (
+    f'{curriculum_names.programme_name_sql("groups", _PROGRAMMES_REF)}, '
+    f'{curriculum_names.cohort_name_sql("groups", _COHORTS_REF)}, group_name'
+)
+COHORT_ROWS_ORDER = f'{curriculum_names.programme_name_sql("cohorts", _PROGRAMMES_REF)}, cohort_name, start_date'
 
 
 def authoring_rows_by_id(table, id_column, ids, order_sql, *, ensure_tables=True):
@@ -8826,74 +8875,6 @@ def _notes_with_authoring_meta(module_row, programme_row=None, cohort_row=None, 
     }
     meta_lines = [f'__{key}:{value}' for key, value in meta.items() if clean_str(value)]
     return '\n'.join([notes, *meta_lines]).strip()
-
-
-def get_training_rows_from_authoring_tables():
-    if not table_exists(AUTHORING_MODULES_TABLE):
-        return []
-
-    module_rows = fetch_all(f'''
-        select *
-        from {table_name(AUTHORING_MODULES_TABLE)}
-        order by programme_id, cohort_name nulls last, group_name nulls last, start_date nulls last, title
-    ''')
-    programme_rows = fetch_all(f'select * from {table_name("programmes")}') if table_exists('programmes') else []
-    cohort_rows = fetch_all(f'select * from {table_name("cohorts")}') if table_exists('cohorts') else []
-    group_rows = fetch_all(f'select * from {table_name("groups")}') if table_exists('groups') else []
-
-    programmes_by_id = {clean_str(row.get('program_id')): row for row in programme_rows if clean_str(row.get('program_id'))}
-    cohorts_by_id = {clean_str(row.get('cohort_id')): row for row in cohort_rows if clean_str(row.get('cohort_id'))}
-    groups_by_id = {clean_str(row.get('group_id')): row for row in group_rows if clean_str(row.get('group_id'))}
-
-    rows = []
-    for index, module in enumerate(module_rows, start=1):
-        programme = programmes_by_id.get(clean_str(module.get('programme_id')), {})
-        group = groups_by_id.get(clean_str(module.get('group_id')), {})
-        cohort = cohorts_by_id.get(clean_str(module.get('cohort_id') or group.get('cohort_id')), {})
-        is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group)
-        programme_name = (
-            clean_str(module.get('programme_name'))
-            or clean_str(programme.get('name'))
-            or clean_str(module.get('programme_id'))
-            or 'Unassigned Programme'
-        )
-        cohort_name = clean_str(module.get('cohort_name')) or clean_str(cohort.get('cohort_name'))
-        group_name = clean_str(module.get('group_name')) or clean_str(group.get('group_name'))
-        start_date = module.get('start_date') or cohort.get('start_date')
-        end_date = module.get('end_date') or cohort.get('end_date')
-        status = clean_str(module.get('status') or programme.get('status')).lower()
-        is_archived = (
-            status == 'archived'
-            or truthy(module.get('is_archived'))
-            or truthy(programme.get('is_archived'))
-            or falsey(programme.get('is_active'))
-        )
-        row = {
-            'id': module.get('source_id') or module.get('module_catalogue_id') or index,
-            'Program': programme_name,
-            'module_name': module.get('title') or module.get('module_catalogue_id') or 'Module',
-            'Cohort_name': cohort_name,
-            'group_name': group_name,
-            'status': clean_str(module.get('status') or programme.get('status') or 'draft').lower(),
-            'Starting_date_lable': start_date,
-            'start_date': start_date,
-            'end_date': end_date,
-            'sessions_number': parse_int(module.get('sessions_number'), 0),
-            'session_week_day': clean_str(group.get('session_week_day') or schedule_day_part(group.get('schedule'))) or clean_str(group_name),
-            'session_start_time': group.get('session_start_time') or schedule_time_parts(group.get('schedule'))[0],
-            'session_end_time': group.get('session_end_time') or schedule_time_parts(group.get('schedule'))[1],
-            'Tutor_name': '',
-            'coach_name': group.get('coach_name') or '',
-            'notes': _notes_with_authoring_meta(module, programme, cohort, group),
-            'is_archived': is_archived,
-            'is_programme_deleted': is_programme_deleted,
-            'programme_display_order': None,
-            'cohort_display_order': None,
-            'session_ksb_json': '',
-        }
-        row['_meta'] = extract_notes_meta(row.get('notes'))
-        rows.append(row)
-    return rows
 
 
 @scoped_curriculum_read
@@ -9172,13 +9153,21 @@ def _scoped_holiday_rows(include_archived=False):
     how a closure period stops shifting future session dates.
     """
     rows = []
+    authored_table = authored_holiday_table_name()
+    if (not table_exists(ENGLAND_HOLIDAYS_TABLE) and not authored_table
+            and connection.vendor == 'postgresql' and table_exists('calendar_holidays')):
+        # Normalised schema: both sources live in calendar_holidays, returned in
+        # the two legacy shapes with their original ids (see schema_compat).
+        rows = schema_compat.calendar_holiday_rows()
+        if not include_archived:
+            rows = [row for row in rows if not holiday_row_archived(row)]
+        return sorted(rows, key=holiday_row_sort_key)
     if table_exists(ENGLAND_HOLIDAYS_TABLE):
         rows.extend(fetch_all(f'''
             select *
             from {table_name(ENGLAND_HOLIDAYS_TABLE)}
             order by holiday_date, title
         '''))
-    authored_table = authored_holiday_table_name()
     if authored_table:
         authored = fetch_all(f'''
             select *
@@ -10314,15 +10303,27 @@ def active_learner_programme_counts():
         if learner_relation_exists('learners'):
             has_programme_id = learners_link_programme_by_id()
             id_column = 'programme_id' if has_programme_id else "''"
+            # The normalised Learner.learners keeps only programme_id: there a
+            # learner counts by id alone (the name bucket below stays empty).
+            # Unknown columns keep the original statement.
+            learner_columns = schema_compat.columns_of('Learner', 'learners')
             with connection.cursor() as cursor:
-                # Counted by the database, one row per distinct pair, rather
-                # than one row per learner; the buckets below are unchanged.
-                cursor.execute(
-                    f'select programme, coalesce({id_column}, \'\'), count(*) '
-                    'from "Learner"."learners" '
-                    "where coalesce(btrim(programme), '') <> '' "
-                    f'group by programme, coalesce({id_column}, \'\')'
-                )
+                if learner_columns and 'programme' not in learner_columns:
+                    cursor.execute(
+                        f"select '', coalesce({id_column}, ''), count(*) "
+                        'from "Learner"."learners" '
+                        f"where coalesce(btrim({id_column}), '') <> '' "
+                        f"group by coalesce({id_column}, '')"
+                    )
+                else:
+                    # Counted by the database, one row per distinct pair, rather
+                    # than one row per learner; the buckets below are unchanged.
+                    cursor.execute(
+                        f'select programme, coalesce({id_column}, \'\'), count(*) '
+                        'from "Learner"."learners" '
+                        "where coalesce(btrim(programme), '') <> '' "
+                        f'group by programme, coalesce({id_column}, \'\')'
+                    )
                 for programme_name, programme_id, learner_count in cursor.fetchall():
                     linked_id = clean_str(programme_id)
                     if linked_id:
@@ -10605,12 +10606,23 @@ def active_learner_delivery_counts():
             else:
                 id_select = ", '' as cohort_id, '' as group_id"
                 id_group = ''
-            cursor.execute(
-                f'select programme, cohort, group_name{id_select}, count(*) '
-                'from "Learner"."learners" '
-                "where lifecycle_status = 'active' "
-                f'group by programme, cohort, group_name{id_group}'
-            )
+            # The normalised table links placements by id only: no name columns
+            # there, so '' keeps the row shape. Unknown columns keep the original.
+            learner_columns = schema_compat.columns_of('Learner', 'learners')
+            if learner_columns and 'programme' not in learner_columns:
+                cursor.execute(
+                    f"select '' as programme, '' as cohort, '' as group_name{id_select}, count(*) "
+                    'from "Learner"."learners" '
+                    "where lifecycle_status = 'active' "
+                    f'group by 1, 2, 3{", 4, 5" if id_group else ""}'
+                )
+            else:
+                cursor.execute(
+                    f'select programme, cohort, group_name{id_select}, count(*) '
+                    'from "Learner"."learners" '
+                    "where lifecycle_status = 'active' "
+                    f'group by programme, cohort, group_name{id_group}'
+                )
             rows = cursor.fetchall()
     except Exception as exc:
         logger.warning('Could not count active learners for curriculum delivery: %s', exc)
@@ -10835,18 +10847,6 @@ def meaningful_session_names(names):
 #: the SQL half, so the narrow read below can ask the database for live-session
 #: rows only instead of pulling every component's ``settings_json``.
 LIVE_SESSION_TYPE_SQL = "lower(replace(coalesce(type, ''), '-', '_')) = 'live_session'"
-
-
-def authoring_session_links(module_catalogue_id):
-    """One entry per authored live session in a module, in course order.
-
-    See ``authoring_session_links_by_catalogue`` for the rule. Kept as the
-    single-module spelling so the two cannot describe different things.
-    """
-    module_catalogue_id = clean_str(module_catalogue_id)
-    if not module_catalogue_id:
-        return []
-    return authoring_session_links_by_catalogue([module_catalogue_id]).get(module_catalogue_id, [])
 
 
 def resolved_live_session_date(
@@ -12619,13 +12619,6 @@ class TutorScheduleConflictError(ValueError):
         return tutor_conflict_error(self.candidate, self.conflicts)
 
 
-def raise_on_tutor_schedule_conflict(candidates, module_rows=None):
-    """Validate a save's modules together, raising on the first clash."""
-    candidate, conflicts = first_tutor_schedule_conflict(candidates, module_rows=module_rows)
-    if conflicts:
-        raise TutorScheduleConflictError(candidate, conflicts)
-
-
 def group_tutor_assignment_conflict(group_id, tutor_name, module_rows=None):
     """The clash assigning one tutor across a whole group would create.
 
@@ -14241,10 +14234,6 @@ def sync_group_authoring_details_from_modules():
         logger.warning('Could not sync group authoring details from modules: %s', exc)
 
 
-def sync_cohort_authoring_details_from_training():
-    sync_group_authoring_details_from_modules()
-
-
 def curriculum_identifier_candidates(value):
     text = clean_str(value)
     candidates = {
@@ -14498,24 +14487,6 @@ def find_training_rows_by_cohort(cohort_id):
     return cohort, matches
 
 
-def find_training_rows_by_group(group_id):
-    rows = get_training_rows()
-    program_configs = get_program_config_rows()
-    _, groups = build_cohorts_and_groups(rows, program_configs)
-    group = next((item for item in groups if clean_str(item['id']) == clean_str(group_id)), None)
-    if not group:
-        return None, []
-    configs_by_id = program_config_by_id(program_configs)
-    matches = []
-    for row in rows:
-        identity = programme_identity(row, configs_by_id)
-        cohort = actual_cohort_identity(row, identity['name'])
-        candidate = actual_group_identity(row, cohort['id']) if cohort else None
-        if candidate and candidate['id'] == group['id']:
-            matches.append(row)
-    return group, matches
-
-
 def find_group_with_parent(group_id):
     rows = get_training_rows()
     program_configs = get_program_config_rows()
@@ -14676,22 +14647,6 @@ def ensure_programme_config_for_authoring(programme_name, programme_id=None, sta
     return {'id': source_id, 'sourceId': source_id, 'name': name, 'standard': name}
 
 
-def module_response(identifier):
-    # force: see programme_response() -- this is a just-saved module read back.
-    payload = build_curriculum_payload('all', force=True)
-    ident = clean_str(identifier)
-    for module in enrich_modules_with_authoring(payload['modules'], include_programme_deleted=True):
-        identifiers = {
-            clean_str(module.get('id')),
-            clean_str(module.get('sourceId')),
-            clean_str(module.get('catalogueId')),
-            *[clean_str(item) for item in (module.get('relatedCatalogueIds') or [])],
-        }
-        if ident in identifiers:
-            return module
-    return None
-
-
 AUTHORING_MODULES_TABLE = 'modules'
 AUTHORING_WEEKS_TABLE = 'weeks'
 AUTHORING_COMPONENTS_TABLE = 'components'
@@ -14747,14 +14702,6 @@ def first_clean_payload_value(payload, *keys):
         if value:
             return value
     return ''
-
-
-def identity_values_overlap(left_values, right_values):
-    left = {normalise(value) for value in left_values if normalise(value)}
-    right = {normalise(value) for value in right_values if normalise(value)}
-    if left and right:
-        return bool(left & right)
-    return True
 
 
 def identity_values_match_context(left_values, context_values):
@@ -15814,25 +15761,46 @@ def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensur
     )
     with connection.cursor() as cursor:
         cursor.execute(query, params or [])
-        return rows_as_dicts(cursor)
+        rows = rows_as_dicts(cursor)
+    # Normalised schema: add the legacy keys (soft-delete stamps, copied names,
+    # id lists, KSB code/placement) callers still read. No-op on the old shape.
+    schema_compat.project_rows(
+        table, rows, schema_compat.columns_of(CURRICULUM_SCHEMA, table), requested=columns, excluded=exclude_columns,
+    )
+    # The programme / cohort / group / tutor / coach names, read by id.
+    return curriculum_names.attach(table, rows, requested=columns, excluded=exclude_columns)
 
 
 def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=True, columns=None, exclude_columns=None):
     """The statement authoring_fetch_all() runs; shared so a prefetch sends the same SQL."""
     if ensure_tables:
         ensure_module_authoring_tables()
+    # Normalised schema: read through a relation that also exposes the legacy
+    # columns (status-derived delete stamps, joined names, KSB placement), so a
+    # where/order/column list naming one keeps working. None on the old shape
+    # and off PostgreSQL (columns_of reads nothing there).
+    shape = schema_compat.columns_of(CURRICULUM_SCHEMA, table)
+    relation = schema_compat.read_relation(table, shape)
+    legacy_columns = set(schema_compat.legacy_read_columns(table, shape)) if relation else set()
+    if columns or exclude_columns:
+        available = set(column_names(table)) | legacy_columns
     if columns:
-        wanted = [column for column in columns if has_column(table, column)]
+        wanted = [column for column in columns if column in available]
+        if (archive_state.uses_status(table) and 'status' not in wanted
+                and set(columns) & LEGACY_LIFECYCLE_READ_COLUMNS):
+            # Asking for the archive state means asking for status, the column
+            # that holds it on the normalised schema.
+            wanted.append('status')
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
     elif exclude_columns:
         # Everything but the named columns. Safer than an allow-list for a
         # caller that reads most of the row: a column added later is included
         # automatically instead of silently arriving as None.
-        wanted = sorted(column_names(table) - {column for column in exclude_columns})
+        wanted = sorted(available - {column for column in exclude_columns})
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
     else:
         select_list = '*'
-    query = f'select {select_list} from {authoring_table_name(table)}'
+    query = f'select {select_list} from {relation or authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
@@ -15890,7 +15858,7 @@ def prefetch_authoring_reads(calls):
         except Exception:
             logger.debug('Skipping a curriculum read prefetch.', exc_info=True)
             continue
-        pending[key] = (query, options['params'] or [])
+        pending[key] = (query, options['params'] or [], options['table'], options['columns'], options['exclude_columns'])
     if len(pending) < 2:
         # One read gains nothing from a pipeline; let the call make it.
         return
@@ -15898,7 +15866,7 @@ def prefetch_authoring_reads(calls):
     try:
         connection.ensure_connection()
         with connection.connection.pipeline():
-            for query, params in pending.values():
+            for query, params, *_ in pending.values():
                 cursor = connection.cursor()
                 cursors.append(cursor)
                 cursor.execute(query, params)
@@ -15912,8 +15880,13 @@ def prefetch_authoring_reads(calls):
                 cursor.close()
             except Exception:
                 pass
-    for key, rows in zip(pending, results):
-        memo.setdefault(key, rows)
+    for (key, (_query, _params, table, columns, exclude_columns)), rows in zip(pending.items(), results):
+        # Same projection authoring_fetch_all() applies, so a prefetched read and
+        # a direct one hand callers identical rows.
+        schema_compat.project_rows(
+            table, rows, schema_compat.columns_of(CURRICULUM_SCHEMA, table), requested=columns, excluded=exclude_columns,
+        )
+        memo.setdefault(key, curriculum_names.attach(table, rows, requested=columns, excluded=exclude_columns))
 
 
 def safe_authoring_module_rows():
@@ -16017,10 +15990,15 @@ def module_withdrawn_on_its_own(row):
     differently: a parent's children come back with the parent, while a module
     withdrawn deliberately stays withdrawn until someone restores it.
     """
+    if not row_has_deleted_at(row):
+        return False
+    row = dict(row)
+    if archive_state.row_inactive(row) and not row.get('deleted_by'):
+        # Normalised schema: the reason and parent are history's record.
+        archive_state.annotate(AUTHORING_MODULES_TABLE, [row], key_column='module_catalogue_id')
     return (
-        row_has_deleted_at(row)
-        and not clean_str((row or {}).get('deleted_via_parent'))
-        and clean_str((row or {}).get('deleted_by')) == 'module-delete'
+        not clean_str(row.get('deleted_via_parent'))
+        and clean_str(row.get('deleted_by')) == 'module-delete'
     )
 
 
@@ -16131,8 +16109,15 @@ def free_programme_fetch_all(table, where_sql='', params=None, order_sql='', col
     an id list drags all of them across the wire.
     """
     ensure_free_programme_tables()
+    # Normalised schema: free-course weeks read their title/number/description
+    # from the week and their name/cover from the course (see schema_compat).
+    shape = schema_compat.columns_of(CURRICULUM_SCHEMA, table)
+    relation = schema_compat.read_relation(table, shape)
+    if columns and relation:
+        available = set(shape) | set(schema_compat.legacy_read_columns(table, shape))
+        columns = [column for column in columns if column in available] or None
     selection = ', '.join(quote_ident(column) for column in columns) if columns else '*'
-    query = f'select {selection} from {authoring_table_name(table)}'
+    query = f'select {selection} from {relation or authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
@@ -16151,6 +16136,8 @@ def authoring_delete(table, where_sql='1 = 1', params=None):
     read back inside the same transaction first.
     """
     ensure_module_authoring_tables()
+    where_sql = schema_compat.write_where(table, where_sql, column_names(table))
+    schema_compat.before_delete(table, where_sql, params)
     versioned = table in versioning.VERSIONED_TABLES
     if not versioned:
         with connection.cursor() as cursor:
@@ -16162,7 +16149,7 @@ def authoring_delete(table, where_sql='1 = 1', params=None):
                 f'delete from {authoring_table_name(table)} where {where_sql} returning *',
                 params or [],
             )
-            rows = rows_as_dicts(cursor)
+            rows = written_rows(table, rows_as_dicts(cursor))
     else:
         rows = authoring_fetch_all(table, where_sql, params or [], ensure_tables=False)
         with connection.cursor() as cursor:
@@ -16187,7 +16174,10 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     """
     ensure_module_authoring_tables()
     writable = column_names(table)
-    nullable = set(SOFT_DELETE_COLUMNS) | set(allow_null_columns or ())
+    payload = archive_state.normalise_write(table, payload)
+    payload, staff_nullable = curriculum_names.store_staff(table, payload, writable)
+    payload, translated_nullable = schema_compat.translate_write(table, payload, writable)
+    nullable = set(SOFT_DELETE_COLUMNS) | set(allow_null_columns or ()) | translated_nullable | staff_nullable
     values = {
         key: value
         for key, value in payload.items()
@@ -16218,7 +16208,9 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     with connection.cursor() as cursor:
         cursor.execute(query, [values[column] for column in columns])
         if connection.vendor == 'postgresql':
-            row = rows_as_dicts(cursor)[0]
+            row = written_rows(table, rows_as_dicts(cursor))[0]
+            # Normalised schema: cohort holiday choices live in their own table.
+            schema_compat.after_write(table, payload, [row])
             log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
             # The row the write returned is the snapshot, so history costs no
             # extra read of the record.
@@ -16236,14 +16228,21 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
 def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
     ensure_module_authoring_tables()
     writable = column_names(table)
+    translated = []
+    for payload in payloads:
+        if not payload:
+            continue
+        # The chosen tutor / coach is stored as its id (curriculum_names).
+        payload, staff_nullable = curriculum_names.store_staff(table, archive_state.normalise_write(table, payload), writable)
+        payload, nullable = schema_compat.translate_write(table, payload, writable)
+        translated.append((payload, nullable | staff_nullable))
     payloads = [
         {
             key: value
             for key, value in payload.items()
-            if key in writable and (value is not None or key in SOFT_DELETE_COLUMNS)
+            if key in writable and (value is not None or key in SOFT_DELETE_COLUMNS or key in nullable)
         }
-        for payload in payloads
-        if payload
+        for payload, nullable in translated
     ]
     payloads = [payload for payload in payloads if payload]
     if not payloads:
@@ -16286,7 +16285,7 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
                 values.extend(row.get(column) for column in all_columns)
             placeholders = ', '.join([row_placeholder] * len(batch))
             cursor.execute(f'{prefix}{placeholders}{suffix}', values)
-            saved.extend(rows_as_dicts(cursor))
+            saved.extend(written_rows(table, rows_as_dicts(cursor)))
     # Deliberately one line for the whole call, not one per row: a tree save
     # bulk-writes thousands of components and a per-row trace would bury
     # everything else in the request.
@@ -16446,9 +16445,20 @@ def update_group_fields(group_id, fields):
 def update_authoring_rows(table, where_sql, where_params, payload):
     """Update rows in a ``curriculum`` schema authoring table and return them."""
     ensure_module_authoring_tables()
-    columns = [column for column in payload if column in column_names(table)]
-    if not columns:
+    real_columns = column_names(table)
+    # Normalised schema: refreshing a derived copy (programme_name, ...) is a
+    # no-op, and a WHERE naming a legacy column is matched through the read
+    # relation by primary key. Both no-ops on the legacy shape.
+    if schema_compat.only_derived_copy(table, payload, real_columns):
         return authoring_fetch_all(table, where_sql, where_params)
+    payload, _staff_nullable = curriculum_names.store_staff(table, payload, real_columns)
+    payload, _nullable = schema_compat.translate_write(table, payload, real_columns)
+    where_sql = schema_compat.write_where(table, where_sql, real_columns)
+    columns = [column for column in payload if column in real_columns]
+    if not columns:
+        rows = authoring_fetch_all(table, where_sql, where_params)
+        schema_compat.after_write(table, payload, rows)
+        return rows
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in columns)
     params = [payload[column] for column in columns] + list(where_params)
     key_value = ' '.join(clean_str(value) for value in where_params)
@@ -16458,7 +16468,8 @@ def update_authoring_rows(table, where_sql, where_params, payload):
                 f'update {authoring_table_name(table)} set {assignments} where {where_sql} returning *',
                 params,
             )
-            rows = rows_as_dicts(cursor)
+            rows = written_rows(table, rows_as_dicts(cursor))
+            schema_compat.after_write(table, payload, rows)
             log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
             versioning.record_rows(table, rows)
             note_live_rows(table, rows)
@@ -17537,23 +17548,6 @@ def attach_training_source_metadata(module_row, training_id):
     return
 
 
-def authoring_row_for_training_legacy_ids(row):
-    training_id = clean_str(row.get('id'))
-    candidate_ids = [
-        training_module_identifier(training_id),
-        training_id,
-        training_row_module_catalogue_id(row),
-    ]
-    for candidate_id in [item for item in candidate_ids if item]:
-        existing = authoring_module_exists(candidate_id)
-        if existing:
-            if candidate_id in {training_module_identifier(training_id), training_id}:
-                attach_training_source_metadata(existing, training_id)
-                return authoring_row_for_training_source(training_id) or existing
-            return existing
-    return None
-
-
 def ksb_mappings_from_codes(codes, scope):
     return [
         {
@@ -17647,39 +17641,6 @@ def imported_training_module_payload(row):
             'coach': row.get('coach_name') or '',
         },
     }
-
-
-def ensure_canonical_module_for_training_row(row, overrides=None):
-    """Resolve or create the canonical authoring module for a delivery row."""
-    overrides = overrides or {}
-    module_name = clean_str(overrides.get('title') or overrides.get('moduleName') or row.get('module_name'))
-    if not module_name:
-        return ''
-    invalid_explicit_id = training_row_invalid_explicit_module_catalogue_id(row)
-    if invalid_explicit_id:
-        raise ValueError(f'training_plan {row.get("id")} has invalid explicit module_catalogue_id {invalid_explicit_id}.')
-    existing_catalogue_id = training_row_module_catalogue_id(row)
-    if existing_catalogue_id:
-        if authoring_module_exists(existing_catalogue_id):
-            return existing_catalogue_id
-        raise ValueError(f'training_plan {row.get("id")} references missing canonical module {existing_catalogue_id}.')
-
-    base_payload = imported_training_module_payload({**row, 'module_name': module_name})
-    payload = {
-        **base_payload,
-        **overrides,
-        'title': module_name,
-    }
-    existing = find_existing_authoring_catalogue_id_for_payload(payload)
-    if existing:
-        link_training_row_to_catalogue(row.get('id'), existing)
-        return existing
-
-    saved = save_module_authoring_structure(payload.get('catalogueId') or '', payload)
-    catalogue_id = clean_str(saved.get('catalogueId') or payload.get('catalogueId'))
-    if catalogue_id:
-        link_training_row_to_catalogue(row.get('id'), catalogue_id)
-    return catalogue_id
 
 
 def resolve_authoring_catalogue_id(identifier):
@@ -17905,7 +17866,8 @@ def component_context_for_payload(payload):
             'programme_name': programme_name,
             'title': module_title or f'Module {module_catalogue_id}',
             'description': '',
-            'status': 'draft',
+            # modules.status is the lifecycle (active/inactive), not draft/published.
+            'status': archive_state.ACTIVE,
             'sessions_number': 0,
             'total_otjh': 0,
             'quality_score': 0,
@@ -18124,10 +18086,7 @@ def component_summary_source_rows(catalogue_ids):
             {**row, '_count': 1, '_published': component_is_published(row)}
             for row in active_component_rows(rows)
         ]
-    if 'deleted_at' in columns:
-        clauses.append(f'{quote_ident("deleted_at")} is null')
-    if 'is_programme_deleted' in columns:
-        clauses.append(f'{quote_ident("is_programme_deleted")} is not true')
+    clauses.append(archive_state.live_sql())
     where = ' and '.join(f'({clause})' for clause in clauses)
     table = authoring_table_name(AUTHORING_COMPONENTS_TABLE)
     settings = quote_ident('settings_json')
@@ -18340,10 +18299,11 @@ def rows_for_ids(table, column, values):
     if not wanted or not table_exists(table):
         return []
     placeholders = ', '.join(['%s'] * len(wanted))
-    return fetch_all(
+    # Module rows carry their programme / cohort / group names, as on every read.
+    return curriculum_names.attach(table, fetch_all(
         f'select * from {authoring_table_name(table)} where {quote_ident(column)} in ({placeholders})',
         wanted,
-    )
+    ))
 
 
 def library_component_rows(*, search='', types=None, programme_ids=None, origins=None,
@@ -18613,10 +18573,7 @@ def save_component_builder_payload(payload, component_id=None):
             'display_order': display_order,
             'settings_json': json_db_value(settings),
             'live_sessions_link': clean_str(settings.get('liveSessionUrl') or settings.get('teamsMeetingUrl')),
-            'deleted_at': None,
-            'deleted_by': None,
-            'deleted_via_parent': None,
-            'is_programme_deleted': False,
+            'status': archive_state.ACTIVE,
         })
         authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], deleted_by='component-save')
         authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], mapping_payloads)
@@ -19458,10 +19415,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                     LIVE_SESSION_MEETING_SCOPE_KEY: 'main',
                 }),
                 'live_sessions_link': join_url,
-                'deleted_at': None,
-                'deleted_by': None,
-                'deleted_via_parent': None,
-                'is_programme_deleted': False,
+                'status': archive_state.ACTIVE,
             })
             created += 1
 
@@ -21278,7 +21232,11 @@ def module_archive_event_bounds(module_row):
     None when the module carries no usable stamp, which leaves the marker as the
     only test -- exactly the behaviour before the window existed.
     """
-    archived_at = stamp_datetime((module_row or {}).get('deleted_at'))
+    module_row = dict(module_row or {})
+    if archive_state.row_inactive(module_row) and not module_row.get('deleted_by'):
+        # Normalised schema: the archive moment is history's, not a column.
+        archive_state.annotate(AUTHORING_MODULES_TABLE, [module_row], key_column='module_catalogue_id')
+    archived_at = stamp_datetime(module_row.get('deleted_at'))
     if archived_at is None:
         return None
     return archived_at - MODULE_ARCHIVE_EVENT_WINDOW, archived_at + MODULE_ARCHIVE_EVENT_WINDOW
@@ -21401,6 +21359,12 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         # The type and library exclusions stay: a retired component type and a
         # detached library row are not this module's content either way, and a
         # restore does not make them so.
+        # Provenance (archive time, reason, parent) comes from history on the
+        # normalised schema; read on copies so cached rows stay as they were.
+        module = archive_state.annotate(AUTHORING_MODULES_TABLE, [dict(module)], key_column='module_catalogue_id')[0]
+        stored_week_rows = archive_state.annotate(AUTHORING_WEEKS_TABLE, [dict(row) for row in stored_week_rows])
+        stored_component_rows = archive_state.annotate(AUTHORING_COMPONENTS_TABLE, [dict(row) for row in stored_component_rows])
+        stored_mapping_rows = archive_state.annotate(AUTHORING_KSB_MAPPINGS_TABLE, [dict(row) for row in stored_mapping_rows])
         markers = module_archive_parent_markers(module, module_catalogue_id)
         bounds = module_archive_event_bounds(module)
         week_rows = [
@@ -21642,10 +21606,7 @@ def _live_component_rows_paged(module_ids, order_sql):
         clauses.append(f'module_catalogue_id in ({", ".join(["%s"] * len(module_ids))})')
         params = list(module_ids)
     if connection.vendor == 'postgresql':
-        if has_column(AUTHORING_COMPONENTS_TABLE, 'deleted_at'):
-            clauses.append(f'{quote_ident("deleted_at")} is null')
-        if has_column(AUTHORING_COMPONENTS_TABLE, 'is_programme_deleted'):
-            clauses.append(f'{quote_ident("is_programme_deleted")} is not true')
+        clauses.append(archive_state.live_sql())
     where = ' and '.join(f'({clause})' for clause in clauses)
     rows = []
     seen_ids = set()
@@ -21715,10 +21676,7 @@ def live_component_rows_without_content(module_ids):
     )
     # Same filter as _live_component_rows_paged: live rows of these modules only.
     clauses = [f'component.module_catalogue_id in ({", ".join(["%s"] * len(ids))})']
-    if 'deleted_at' in columns:
-        clauses.append(f'component.{quote_ident("deleted_at")} is null')
-    if 'is_programme_deleted' in columns:
-        clauses.append(f'component.{quote_ident("is_programme_deleted")} is not true')
+    clauses.append(archive_state.live_sql('component'))
     where = ' and '.join(f'({clause})' for clause in clauses)
     table = f'{authoring_table_name(AUTHORING_COMPONENTS_TABLE)} as component'
     # The order first, from the ids alone, then the rows in id batches. Paging
@@ -22039,6 +21997,13 @@ def get_authoring_structure_payloads(
     return payloads
 
 
+# Column names callers use to ask "is this row archived?". On the lifecycle
+# tables the answer is ``status``.
+LEGACY_LIFECYCLE_READ_COLUMNS = frozenset({
+    'deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted', 'is_deleted', 'is_archived',
+})
+
+
 def live_authoring_rows_sql(table, flag_columns):
     """A where clause that drops rows the Python active_*_rows() filters drop.
 
@@ -22053,6 +22018,9 @@ def live_authoring_rows_sql(table, flag_columns):
     """
     clauses = []
     params = []
+    if archive_state.uses_status(table) and set(flag_columns) & LEGACY_LIFECYCLE_READ_COLUMNS:
+        # Normalised schema: status is the archive flag the old columns stood for.
+        clauses.append(archive_state.live_sql())
     for column in flag_columns:
         if not has_column(table, column):
             continue
@@ -22425,13 +22393,6 @@ def authoring_summary_catalogue_item(summary):
             **teams_delivery_metadata_from_weeks(summary.get('weekStructure') or []),
         },
     }
-
-
-def saved_authoring_catalogue_items():
-    items = []
-    for summary in authoring_catalogue_summaries().values():
-        items.append(authoring_summary_catalogue_item(summary))
-    return items
 
 
 def enrich_curriculum_modules_with_authoring_details(modules, *, child_rows=None):
@@ -23085,10 +23046,7 @@ def authoring_mapping_payload(module_catalogue_id, mapping, week_id=None, compon
             mapping.get('weight_class') if 'weight_class' in mapping else mapping.get('weightClass'),
             legacy_weight_class_from_classification(mapping.get('type') or mapping.get('classification')),
         ),
-        'deleted_at': None,
-        'deleted_by': None,
-        'deleted_via_parent': None,
-        'is_programme_deleted': False,
+        'status': archive_state.ACTIVE,
     }
 
 
@@ -23216,18 +23174,6 @@ def sync_component_ksb_projection(component_id, component_row=None, module_row=N
     return json_items
 
 
-def save_authoring_mapping(module_catalogue_id, mapping, week_id=None, component_id=None, module_row=None, source_cache=None, enforce_unique=True):
-    authoring_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], authoring_mapping_payload(
-        module_catalogue_id,
-        mapping,
-        week_id=week_id,
-        component_id=component_id,
-        module_row=module_row,
-        source_cache=source_cache,
-        enforce_unique=enforce_unique,
-    ))
-
-
 # ---------------------------------------------------------------------------
 # Partial structure saves.
 #
@@ -23278,7 +23224,7 @@ def authoring_row_differs(payload, stored_row):
 
 
 def authoring_row_is_active(row):
-    return not row.get('deleted_at') and not truthy(row.get('is_programme_deleted'))
+    return not row_has_deleted_at(row) and not truthy(row.get('is_programme_deleted'))
 
 
 def authoring_mapping_owner(row):
@@ -23643,10 +23589,9 @@ def save_module_authoring_structure(
             'module_catalogue_id': module_catalogue_id,
             'programme_id': programme_id,
             'programme_name': programme_name,
-            'is_programme_deleted': is_programme_deleted,
-            'deleted_at': None if not is_programme_deleted else existing_module_row.get('deleted_at'),
-            'deleted_by': None if not is_programme_deleted else existing_module_row.get('deleted_by'),
-            'deleted_via_parent': None if not is_programme_deleted else existing_module_row.get('deleted_via_parent'),
+            # Normalised schema: one status. A module under an archived programme
+            # stays archived; any other save leaves it live.
+            'status': archive_state.INACTIVE if is_programme_deleted else archive_state.ACTIVE,
             'cohort_id': cohort_id,
             'cohort_name': cohort_name,
             'group_id': group_id,
@@ -23666,7 +23611,8 @@ def save_module_authoring_structure(
                 else payload.get('cover_image_url') if 'cover_image_url' in payload
                 else existing_module_row.get('cover_image_url')
             )),
-            'status': clean_str(payload.get('status') or existing_module_row.get('status') or 'draft').lower(),
+            # No draft/published value: modules.status is the lifecycle only
+            # (active/inactive, CHECK-constrained), set above.
             'sessions_number': stored_sessions_number,
             'weeks_number': authored_week_count or None,
             # parse_date, not the raw value: callers that merge a stored payload
@@ -23743,10 +23689,7 @@ def save_module_authoring_structure(
                 'display_order': week_index,
                 # Attached to this module, so never a detached library item.
                 'library_state': '',
-                'deleted_at': None,
-                'deleted_by': None,
-                'deleted_via_parent': None,
-                'is_programme_deleted': False,
+                'status': archive_state.ACTIVE,
             })
             for mapping in week.get('ksbMappings') or []:
                 mapping_payloads.append(authoring_mapping_payload(
@@ -23827,10 +23770,7 @@ def save_module_authoring_structure(
                     # so it is never a library item - and if it was copied out of
                     # the library, the copy must not inherit that state.
                     'library_state': '',
-                    'deleted_at': None,
-                    'deleted_by': None,
-                    'deleted_via_parent': None,
-                    'is_programme_deleted': False,
+                    'status': archive_state.ACTIVE,
                 })
                 mapping_payloads.extend(component_mapping_payloads)
         for mapping in payload.get('moduleKsbMappings') or []:
@@ -23906,7 +23846,7 @@ def save_module_authoring_structure(
             (existing_module_row.get('group_name'), group_name),
             (existing_module_row.get('title'), (saved_module_row or {}).get('title')),
         )
-    ) or bool(truthy(existing_module_row.get('is_programme_deleted'))) != bool(is_programme_deleted)
+    ) or archive_state.row_inactive(existing_module_row) != bool(is_programme_deleted)
     if group_id and lineage_changed:
         # A module can override its group's timetable. Only a newly inferred
         # group inherits these defaults; saving a module must not rewrite an
@@ -24180,6 +24120,11 @@ def delete_free_programme_data(programme_id):
     if week_ids:
         placeholders = ', '.join(['%s'] * len(week_ids))
         free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, f'id in ({placeholders})', list(week_ids))
+    if course_ids and 'free_course_id' in schema_compat.columns_of(CURRICULUM_SCHEMA, AUTHORING_WEEKS_TABLE):
+        # Normalised schema: a free-course week references its course
+        # (ON DELETE RESTRICT), so the weeks go before the course does.
+        placeholders = ', '.join(['%s'] * len(course_ids))
+        authoring_delete(AUTHORING_WEEKS_TABLE, f'free_course_id in ({placeholders})', list(course_ids))
     if course_ids:
         placeholders = ', '.join(['%s'] * len(course_ids))
         free_programme_delete(FREE_COURSES_TABLE, f'id in ({placeholders})', list(course_ids))
@@ -24213,6 +24158,9 @@ def save_free_programme_modules(programme_id, payload):
         used_course_ids = set(existing_free_course_ids)
         course_ids_by_key = {}
         course_groups = {}
+        # Normalised schema only (PostgreSQL, real columns known): see below.
+        weeks_belong_to_free_courses = 'free_course_id' in schema_compat.columns_of(CURRICULUM_SCHEMA, AUTHORING_WEEKS_TABLE)
+        courses_written = set()
         # One stored object per distinct incoming cover, per save. A course's
         # weeks all carry the same picture, so without this the same bytes would
         # be uploaded once per week of the course.
@@ -24265,6 +24213,28 @@ def save_free_programme_modules(programme_id, payload):
                 for component in components
                 if isinstance(component, dict)
             ))
+            group = course_groups.setdefault(course_id, {
+                'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {len(course_groups) + 1}',
+                'description': module.get('description') or '',
+                'cover_image_url': cover_image_url,
+                'display_order': len(course_groups),
+                'week_count': 0,
+                'component_count': 0,
+                'total_otjh': 0,
+                'week_builder_week_ids': [],
+            })
+            if weeks_belong_to_free_courses:
+                # Normalised schema: the week points at its course
+                # (weeks.free_course_id, FK) instead of carrying the course id
+                # as its module, so the course row must exist first. Its
+                # totals are completed after the loop, as before.
+                if course_id not in courses_written:
+                    free_programme_upsert(FREE_COURSES_TABLE, ['id'], {
+                        'id': course_id,
+                        **{key: value for key, value in group.items() if key != 'week_builder_week_ids'},
+                    })
+                    courses_written.add(course_id)
+                week_payload = {**week_payload, 'free_course_id': course_id, 'module_catalogue_id': None}
             authoring_upsert(AUTHORING_WEEKS_TABLE, ['id'], week_payload)
             free_programme_upsert(FREE_PROGRAMME_MODULES_TABLE, ['id'], {
                 'id': module_id,
@@ -24278,16 +24248,6 @@ def save_free_programme_modules(programme_id, payload):
                 'display_order': module_index,
                 'component_count': len(components),
                 'total_otjh': total_otjh,
-            })
-            group = course_groups.setdefault(course_id, {
-                'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {len(course_groups) + 1}',
-                'description': module.get('description') or '',
-                'cover_image_url': cover_image_url,
-                'display_order': len(course_groups),
-                'week_count': 0,
-                'component_count': 0,
-                'total_otjh': 0,
-                'week_builder_week_ids': [],
             })
             group['week_count'] += 1
             group['component_count'] += len(components)
@@ -24341,8 +24301,8 @@ def archive_module_child_quizzes(module_catalogue_id, *, include_deleted_childre
         return []
 
     component_active_sql = ''
-    if not include_deleted_children and has_column(AUTHORING_COMPONENTS_TABLE, 'deleted_at'):
-        component_active_sql = ' and deleted_at is null'
+    if not include_deleted_children:
+        component_active_sql = f' and {archive_state.live_sql()}'
     module_components = authoring_fetch_all(
         AUTHORING_COMPONENTS_TABLE,
         f'module_catalogue_id = %s{component_active_sql}',
@@ -24377,8 +24337,8 @@ def archive_module_child_quizzes(module_catalogue_id, *, include_deleted_childre
 
     # Legacy quizzes may carry only the module's week id/name metadata.
     week_active_sql = ''
-    if not include_deleted_children and has_column(AUTHORING_WEEKS_TABLE, 'deleted_at'):
-        week_active_sql = ' and deleted_at is null'
+    if not include_deleted_children:
+        week_active_sql = f' and {archive_state.live_sql()}'
     module_weeks = authoring_fetch_all(
         AUTHORING_WEEKS_TABLE,
         f'module_catalogue_id = %s{week_active_sql}',
@@ -24671,24 +24631,6 @@ def delete_programme_authoring_structure(identifier, programme=None, config=None
         'cohorts': len(cohort_ids),
         'programmeId': next(iter(programme_id_candidates), clean_str(identifier)),
     }
-
-
-def update_training_rows(rows, payload):
-    return []
-
-
-def archive_training_rows(rows):
-    where_sql, params = training_row_where_ids(rows)
-    if not where_sql:
-        return []
-    return archive_authoring_delivery_rows(rows)
-
-
-def restore_training_rows(rows):
-    where_sql, params = training_row_where_ids(rows)
-    if not where_sql:
-        return []
-    return restore_authoring_delivery_rows(rows)
 
 
 def row_meta_value(row, key):
@@ -28376,18 +28318,6 @@ def uploads_relative_path(src):
     return f'{COMPONENT_UPLOAD_ROOT}/{tail}'
 
 
-def uploads_absolute_path(relative_path):
-    """The on-disk path for a storage-relative upload, or None if it escapes MEDIA_ROOT."""
-    try:
-        absolute_path = Path(default_storage.path(relative_path)).resolve()
-    except (NotImplementedError, ValueError):
-        return None
-    media_root = Path(settings.MEDIA_ROOT).resolve()
-    if not str(absolute_path).startswith(str(media_root)):
-        return None
-    return absolute_path
-
-
 def parse_byte_range(header, total_size):
     """``(offset, length)`` for a single-range request, None, or 'unsatisfiable'.
 
@@ -29841,7 +29771,7 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
                        coalesce(max(nullif(w.title, '')), '') as live_week_title,
                        max(m.module_catalogue_id) as live_module_catalogue_id,
                        bool_or(m.module_catalogue_id is not null) as module_found,
-                       bool_or(m.deleted_at is not null or coalesce(m.is_programme_deleted, false)) as module_deleted,
+                       bool_or(coalesce(m.status in ('inactive', 'archived'), false)) as module_deleted,
                        k.ksb_code,
                        coalesce(max(k.weight), 0) as weight,
                        coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
@@ -31617,16 +31547,6 @@ def _scope_learner_roster_payload_uncached(request, scope, identifier):
     }
 
 
-def scope_learner_roster_payload(request, scope, identifier):
-    """Cached roster projection keyed by every narrowing filter, as a dict.
-
-    Avoids repeating the schema probes and placement joins for 30s. The HTTP
-    views serve scope_learner_roster_response() instead; this decoded form is
-    for in-process callers.
-    """
-    return entry_payload(scope_learner_roster_entry(request, scope, identifier))
-
-
 def scope_learner_roster_entry(request, scope, identifier):
     """The encoded roster response, keyed by scope and every narrowing filter.
 
@@ -32484,9 +32404,14 @@ def _update_module_cover(request, identifier, payload):
     image = stored_module_cover_image(identifier, image)
     try:
         with connection.cursor() as cursor:
-            cursor.execute('''UPDATE curriculum.modules SET cover_image_url=%s,updated_at=CURRENT_TIMESTAMP
-                              WHERE module_catalogue_id=%s AND deleted_at IS NULL
-                                AND NOT coalesce(is_programme_deleted,false)
+            # Only a live module takes a cover: the legacy stamps, or status on
+            # the normalised schema (an UPDATE target is never adapted).
+            if schema_compat.uses_status_lifecycle(AUTHORING_MODULES_TABLE, column_names(AUTHORING_MODULES_TABLE)):
+                live_sql = schema_compat.active_condition()
+            else:
+                live_sql = "status NOT IN ('inactive','archived')"
+            cursor.execute(f'''UPDATE curriculum.modules SET cover_image_url=%s,updated_at=CURRENT_TIMESTAMP
+                              WHERE module_catalogue_id=%s AND {live_sql}
                               RETURNING module_catalogue_id''', [image, identifier])
             updated_row = cursor.fetchone()
             if not updated_row:
@@ -32750,12 +32675,25 @@ def curriculum_ksb_frameworks(request):
     return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbFrameworks')
 
 
+def _ksb_profiles_removed():
+    """The normalised curriculum schema (PostgreSQL, curriculum tables present)
+    without curriculum.ksb_profiles -- removed there; its rows were all inactive."""
+    return (
+        connection.vendor == 'postgresql'
+        and bool(schema_compat.columns_of(CURRICULUM_SCHEMA, AUTHORING_MODULES_TABLE))
+        and not schema_compat.columns_of(CURRICULUM_SCHEMA, 'ksb_profiles')
+    )
+
+
 @csrf_exempt
 def curriculum_ksb_framework_collection(request):
     if request.method == 'GET':
         return curriculum_ksb_frameworks(request)
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
+    if _ksb_profiles_removed():
+        return json_error('KSB frameworks cannot be created: this curriculum database has no KSB profile table.',
+                          status=503)
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
@@ -32802,6 +32740,14 @@ def curriculum_ksb_framework_collection(request):
 def curriculum_ksb_framework_detail(request, identifier):
     if request.method not in {'GET', 'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
+    if _ksb_profiles_removed():
+        # Normalised schema: curriculum.ksb_profiles was removed (its rows were
+        # all inactive). Reads find nothing, as an empty table would; a change
+        # is refused plainly instead of failing on the missing table.
+        if request.method != 'GET':
+            return json_error('KSB frameworks cannot be changed: this curriculum database has no KSB profile table.',
+                              status=503)
+        return json_error('KSB framework not found.', status=404)
     ensure_ksb_profile_identity_columns()
     ident = clean_str(identifier).replace('ksb-', '', 1)
     rows = fetch_all(
@@ -32897,6 +32843,8 @@ def curriculum_ksb_framework_detail(request, identifier):
 def curriculum_ksb_set_definitions(request, identifier):
     # A single profile's definitions, independently of curriculum coverage.
     # Keep archived assigned sources readable when visibility=all is requested.
+    if _ksb_profiles_removed():
+        return json_error('KSB profile not found.', status=404)  # normalised schema: no profile table
     rows = fetch_all(
         f'select * from {table_name("ksb_profiles")} where cast(id as text) = %s or ksb_profile_id = %s',
         [identifier, identifier],
@@ -33042,61 +32990,6 @@ def curriculum_group_from_authoring_detail(detail):
         'createdAt': detail.get('createdAt') or detail.get('created_at') or '',
         'updatedAt': detail.get('updatedAt') or detail.get('updated_at') or '',
     }
-
-
-def find_authoring_cohort(identifier):
-    ident = clean_str(identifier)
-    for detail in cohort_authoring_detail_rows():
-        cohort = curriculum_cohort_from_authoring_detail(detail)
-        if matches_curriculum_identifier(cohort.get('id'), ident) or matches_curriculum_identifier(cohort.get('name'), ident):
-            return cohort
-    return None
-
-
-def find_authoring_group(identifier):
-    ident = clean_str(identifier)
-    for detail in group_authoring_detail_rows():
-        group = curriculum_group_from_authoring_detail(detail)
-        if matches_curriculum_identifier(group.get('id'), ident) or matches_curriculum_identifier(group.get('name'), ident):
-            return group
-    return None
-
-
-def update_authoring_delivery_metadata(cohort=None, group=None):
-    cohort = cohort or {}
-    group = group or {}
-    cohort_id = clean_str(cohort.get('id') or cohort.get('cohortId'))
-    group_id = clean_str(group.get('id') or group.get('groupId'))
-
-    try:
-        if cohort_id:
-            for stored_group in authoring_fetch_all(GROUPS_TABLE, 'cohort_id = %s', [cohort_id]):
-                authoring_upsert(GROUPS_TABLE, ['group_id'], {
-                    **stored_group,
-                    'cohort_name': cohort.get('name') or stored_group.get('cohort_name') or '',
-                    'programme_id': cohort.get('programmeId') or stored_group.get('programme_id') or '',
-                    'programme_name': cohort.get('programme') or stored_group.get('programme_name') or '',
-                })
-            for module in authoring_fetch_all(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id]):
-                authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
-                    **module,
-                    'cohort_name': cohort.get('name') or module.get('cohort_name') or '',
-                    'programme_id': cohort.get('programmeId') or module.get('programme_id') or '',
-                    'programme_name': cohort.get('programme') or module.get('programme_name') or '',
-                })
-
-        if group_id:
-            for module in authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id]):
-                authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
-                    **module,
-                    'group_name': group.get('name') or module.get('group_name') or '',
-                    'cohort_id': group.get('cohortId') or module.get('cohort_id') or '',
-                    'cohort_name': group.get('cohort') or module.get('cohort_name') or '',
-                    'programme_id': group.get('programmeId') or module.get('programme_id') or '',
-                    'programme_name': group.get('programme') or module.get('programme_name') or '',
-                })
-    except (Exception, AssertionError) as exc:
-        logger.warning('Could not update authoring delivery metadata: %s', exc)
 
 
 def create_curriculum_cohort(payload):
@@ -34063,7 +33956,10 @@ def archived_authoring_rows(table):
     comes back tz-aware from Postgres and naive from sqlite, and comparing the
     two kinds raises. ISO text orders identically either way.
     """
-    rows = [row for row in authoring_fetch_all(table) if curriculum_row_is_archived(row)]
+    rows = [dict(row) for row in authoring_fetch_all(table) if curriculum_row_is_archived(row)]
+    if archive_state.uses_status(table):
+        # When, why and with which parent: history's record of the archive.
+        archive_state.annotate(table, rows, key_column=LIFECYCLE_KEY_COLUMNS[table])
     rows.sort(key=lambda row: format_created_at(row.get('deleted_at')), reverse=True)
     return rows
 
@@ -34496,7 +34392,8 @@ def archived_module_rows():
     listed by the catalogue. Reading that as archived here would put one module
     in both lists at once.
     """
-    rows = [row for row in safe_authoring_module_rows() if curriculum_row_effectively_deleted(row)]
+    rows = [dict(row) for row in safe_authoring_module_rows() if curriculum_row_effectively_deleted(row)]
+    archive_state.annotate(AUTHORING_MODULES_TABLE, rows, key_column='module_catalogue_id')
     rows.sort(key=lambda row: format_created_at(row.get('deleted_at')), reverse=True)
     return rows
 
@@ -35832,6 +35729,13 @@ def curriculum_england_holidays(request):
             from {table_name(ENGLAND_HOLIDAYS_TABLE)}
             order by holiday_date
         ''')
+    elif connection.vendor == 'postgresql' and table_exists('calendar_holidays'):
+        # Normalised schema: the GOV.UK mirror lives in calendar_holidays
+        # (source_kind england_official), read back in its original shape.
+        rows = sorted(
+            (row for row in schema_compat.calendar_holiday_rows() if 'holiday_date' in row),
+            key=lambda row: format_date(row.get('holiday_date')) or '',
+        )
     results = [serialize_england_holiday_row(row) for row in rows]
     # The sync state rides along with the list rather than costing the page a
     # second request: "these are the dates" and "this is when they were last
@@ -36046,14 +35950,6 @@ def tutor_workspace_module_payload(row):
         'sessionStartTime': clean_str(row.get('session_start_time')),
         'sessionEndTime': clean_str(row.get('session_end_time')),
     }
-
-
-def tutor_workspace_next_session(module_ids):
-    """The current or soonest upcoming occurrence across ``module_ids``."""
-    by_module = tutor_workspace_next_session_by_module(module_ids)
-    if not by_module:
-        return None
-    return min(by_module.values(), key=lambda session: session['scheduledStart'])
 
 
 def tutor_workspace_next_session_by_module(module_ids):

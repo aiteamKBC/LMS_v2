@@ -67,10 +67,6 @@ def live_days_per_learner(live):
     return max((len({_day(record) for record in records}) for records in live.values()), default=0)
 
 
-def is_kbc_learner_id(value):
-    return bool(re.fullmatch(r'\d{1,20}', value or ''))
-
-
 # Enrolment rows that only record bookkeeping, not where the learner is.
 _IGNORED_ENROLMENT_STATUSES = {'duplicate - merged'}
 

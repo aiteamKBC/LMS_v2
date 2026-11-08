@@ -759,7 +759,8 @@ class PersistMoveTests(unittest.TestCase):
         self.move()
         table, where, params = self.reads[0]
         self.assertEqual(table, 'components')
-        self.assertIn('deleted_at IS NULL', where)
+        # Archived sessions are excluded by status (normalised schema).
+        self.assertIn("status NOT IN ('inactive','archived')", where)
         self.assertIn("type IN ('live-session', 'live_session')", where)
         self.assertIn("settings_json->>'teamsOccurrenceId' = %s", where)
         self.assertIn("settings_json->>'teamsLiveSessionId' = %s", where)

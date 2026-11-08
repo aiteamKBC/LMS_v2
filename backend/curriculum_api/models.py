@@ -1,7 +1,81 @@
 import uuid
 
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
+
+# Lifecycle on the normalised curriculum schema is one ``status`` column:
+# 'inactive' is archived, anything else is live. ('archived' is read as
+# inactive too, so a value from an older writer is never shown as live.)
+INACTIVE_STATUSES = ('inactive', 'archived')
+
+
+class LegacyLifecycleQuerySet(models.QuerySet):
+    """Bridge for code outside Curriculum that still queries the old columns.
+
+    The normalised schema dropped ``deleted_at`` and ``is_programme_deleted``
+    (one ``status`` instead) and the copied ``*_name`` columns (read by id).
+    learner_api, coach_api and engagement_api still filter with
+    ``deleted_at__isnull=True`` / ``is_programme_deleted=False`` and ask for
+    ``.only(..., 'group_name')``. This translates exactly those spellings so
+    their code keeps its meaning without edits; Curriculum's own code uses
+    ``status`` directly. Owners of those apps should move to ``status`` and
+    drop these spellings; then this class can go.
+
+    Translated: ``deleted_at__isnull=<bool>``, ``is_programme_deleted=<bool>``
+    (in filter/exclude); unknown names in ``only()``/``defer()`` are dropped.
+    """
+
+    def _translate(self, kwargs):
+        condition = Q()
+        rest = {}
+        for key, value in kwargs.items():
+            if key == 'deleted_at__isnull':
+                condition &= ~Q(status__in=INACTIVE_STATUSES) if value else Q(status__in=INACTIVE_STATUSES)
+            elif key == 'is_programme_deleted':
+                condition &= Q(status__in=INACTIVE_STATUSES) if value else ~Q(status__in=INACTIVE_STATUSES)
+            else:
+                rest[key] = value
+        return condition, rest
+
+    def filter(self, *args, **kwargs):
+        condition, rest = self._translate(kwargs)
+        return super().filter(condition, *args, **rest)
+
+    def exclude(self, *args, **kwargs):
+        condition, rest = self._translate(kwargs)
+        return super().exclude(condition, *args, **rest)
+
+    def _known(self, fields):
+        names = {field.name for field in self.model._meta.concrete_fields}
+        return [field for field in fields if field.split('__', 1)[0] in names]
+
+    def only(self, *fields):
+        return super().only(*self._known(fields))
+
+    def defer(self, *fields):
+        return super().defer(*self._known(fields))
+
+
+class StatusLifecycleModel(models.Model):
+    """Read-only legacy attributes derived from ``status`` (see the bridge above)."""
+
+    objects = LegacyLifecycleQuerySet.as_manager()
+
+    class Meta:
+        abstract = True
+
+    @property
+    def is_inactive(self):
+        return str(self.status or '').strip().lower() in INACTIVE_STATUSES
+
+    @property
+    def is_programme_deleted(self):
+        return self.is_inactive
+
+    @property
+    def deleted_at(self):
+        return (self.updated_at or self.created_at) if self.is_inactive else None
 
 
 class CurriculumVideoImport(models.Model):
@@ -47,23 +121,22 @@ class CurriculumVideoChange(models.Model):
         db_table = 'curriculum_video_change'
 
 
-class ModuleAuthoringModule(models.Model):
+class ModuleAuthoringModule(StatusLifecycleModel):
+    """``curriculum.modules`` on the normalised schema.
+
+    Placement and staff are keys (programme/cohort/group/tutor ids); the names
+    are read from their own rows (``curriculum_names``), never stored here.
+    """
     module_catalogue_id = models.CharField(max_length=128, primary_key=True)
-    programme_id = models.CharField(max_length=255, blank=True, default='')
-    programme_name = models.CharField(max_length=255, blank=True, default='')
-    is_programme_deleted = models.BooleanField(default=False)
-    cohort_id = models.CharField(max_length=255, blank=True, default='')
-    cohort_name = models.CharField(max_length=255, blank=True, default='')
-    group_id = models.CharField(max_length=255, blank=True, default='')
-    group_name = models.CharField(max_length=255, blank=True, default='')
-    tutor_name = models.CharField(max_length=255, blank=True, default='')
+    programme_id = models.CharField(max_length=255, blank=True, null=True)
+    cohort_id = models.CharField(max_length=255, blank=True, null=True)
+    group_id = models.CharField(max_length=255, blank=True, null=True)
+    tutor_id = models.CharField(max_length=255, blank=True, null=True)
     title = models.TextField()
-    description = models.TextField(blank=True, default='')
+    description = models.TextField(blank=True, null=True)
     total_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     quality_score = models.IntegerField(default=0)
-    deleted_at = models.DateTimeField(blank=True, null=True)
-    deleted_by = models.CharField(max_length=255, blank=True, null=True)
-    deleted_via_parent = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(max_length=32, default='active')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -71,33 +144,44 @@ class ModuleAuthoringModule(models.Model):
         db_table = 'curriculum"."modules'
         managed = False
 
+    # Read-only names for callers outside Curriculum (see LegacyLifecycleQuerySet).
+    @property
+    def programme_name(self):
+        from .curriculum_names import name_of
+        return name_of('programmes', self.programme_id, using=self._state.db or 'default')
 
-class ModuleAuthoringWeek(models.Model):
+    @property
+    def cohort_name(self):
+        from .curriculum_names import name_of
+        return name_of('cohorts', self.cohort_id, using=self._state.db or 'default')
+
+    @property
+    def group_name(self):
+        from .curriculum_names import name_of
+        return name_of('groups', self.group_id, using=self._state.db or 'default')
+
+    @property
+    def tutor_name(self):
+        from .curriculum_names import name_of
+        return name_of('tutors', self.tutor_id, using=self._state.db or 'default')
+
+
+class ModuleAuthoringWeek(StatusLifecycleModel):
+    """``curriculum.weeks``: a module's week, or (module empty) a free course's."""
     id = models.CharField(max_length=128, primary_key=True)
-    module_catalogue_id = models.CharField(max_length=128, db_index=True)
+    module_catalogue_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    free_course_id = models.CharField(max_length=128, blank=True, null=True)
     week_number = models.IntegerField(default=1)
     title = models.TextField(blank=True, default='')
-    summary = models.TextField(blank=True, default='')
-    learning_outcomes = models.JSONField(default=list, blank=True)
+    summary = models.TextField(blank=True, null=True)
+    learning_outcomes = models.JSONField(default=list, blank=True, null=True)
     display_order = models.IntegerField(default=0)
     # The author's holiday hint for this week, and whether it is published.
     # Held apart so turning the hint off keeps the text, and so a week that was
     # never touched publishes nothing. See sql/2026-09-22_week_holiday_note.sql.
     holiday_note_enabled = models.BooleanField(default=False)
     holiday_note = models.TextField(blank=True, default='')
-    deleted_at = models.DateTimeField(blank=True, null=True)
-    deleted_by = models.CharField(max_length=255, blank=True, null=True)
-    deleted_via_parent = models.CharField(max_length=255, blank=True, null=True)
-    # Declared because the column exists: an ORM read that omits it silently
-    # treats programme-deleted rows as live.
-    is_programme_deleted = models.BooleanField(default=False)
-    # Detached-into-the-library state. See migration 0053.
-    library_state = models.CharField(max_length=16, blank=True, default='')
-    detached_at = models.DateTimeField(blank=True, null=True)
-    origin_module_catalogue_id = models.CharField(max_length=128, blank=True, null=True)
-    origin_module_title = models.TextField(blank=True, null=True)
-    origin_week_id = models.CharField(max_length=128, blank=True, null=True)
-    origin_week_label = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=32, default='active')
     copied_from_id = models.CharField(max_length=128, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -107,7 +191,7 @@ class ModuleAuthoringWeek(models.Model):
         managed = False
 
 
-class ModuleAuthoringComponent(models.Model):
+class ModuleAuthoringComponent(StatusLifecycleModel):
     TYPE_CHOICES = [
         ('live_session', 'Live session'),
         ('video', 'Video'),
@@ -124,32 +208,20 @@ class ModuleAuthoringComponent(models.Model):
     module_catalogue_id = models.CharField(max_length=128, db_index=True)
     type = models.CharField(max_length=64, choices=TYPE_CHOICES)
     title = models.TextField(blank=True, default='')
-    description = models.TextField(blank=True, default='')
+    description = models.TextField(blank=True, null=True)
     expected_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     points = models.IntegerField(default=0)
-    ksb_mappings = models.JSONField(default=list, blank=True)
     reflection_required = models.BooleanField(default=False)
     workplace_evidence_required = models.BooleanField(default=False)
     tutor_validation_required = models.BooleanField(default=False)
+    coach_validation_required = models.BooleanField(default=False)
     display_order = models.IntegerField(default=0)
-    settings_json = models.JSONField(default=dict, blank=True)
+    settings_json = models.JSONField(default=dict, blank=True, null=True)
     reflection_question = models.TextField(
         db_column='Reflection_Question', blank=True, null=True,
     )
-    live_sessions_link = models.TextField(blank=True, default='')
-    deleted_at = models.DateTimeField(blank=True, null=True)
-    deleted_by = models.CharField(max_length=255, blank=True, null=True)
-    deleted_via_parent = models.CharField(max_length=255, blank=True, null=True)
-    # Declared because the column exists: an ORM read that omits it silently
-    # treats programme-deleted rows as live.
-    is_programme_deleted = models.BooleanField(default=False)
-    # Detached-into-the-library state. See migration 0053.
-    library_state = models.CharField(max_length=16, blank=True, default='')
-    detached_at = models.DateTimeField(blank=True, null=True)
-    origin_module_catalogue_id = models.CharField(max_length=128, blank=True, null=True)
-    origin_module_title = models.TextField(blank=True, null=True)
-    origin_week_id = models.CharField(max_length=128, blank=True, null=True)
-    origin_week_label = models.TextField(blank=True, null=True)
+    live_sessions_link = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=32, default='active')
     copied_from_id = models.CharField(max_length=128, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -159,7 +231,12 @@ class ModuleAuthoringComponent(models.Model):
         managed = False
 
 
-class ModuleAuthoringKsbMapping(models.Model):
+class ModuleAuthoringKsbMapping(StatusLifecycleModel):
+    """``curriculum.ksb_mappings``: a component's link to one standard KSB.
+
+    The module and week are the component's; the KSB code and description are
+    the ``standard_ksbs`` row's (``standard_ksb_id``).
+    """
     CLASSIFICATION_CHOICES = [
         ('main', 'Main'),
         ('secondary', 'Secondary'),
@@ -168,20 +245,15 @@ class ModuleAuthoringKsbMapping(models.Model):
     ]
 
     id = models.CharField(max_length=128, primary_key=True)
-    module_catalogue_id = models.CharField(max_length=128, db_index=True)
-    week_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
     component_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
     ksb_id = models.CharField(max_length=255, blank=True, null=True)
-    ksb_code = models.CharField(max_length=64)
-    ksb_description = models.TextField(blank=True, default='')
-    source_type = models.CharField(max_length=32, blank=True, default='')
-    source_id = models.CharField(max_length=255, blank=True, default='')
+    standard_ksb_id = models.BigIntegerField()
+    source_type = models.CharField(max_length=32, blank=True, null=True)
+    source_id = models.CharField(max_length=255, blank=True, null=True)
     classification = models.CharField(max_length=32, choices=CLASSIFICATION_CHOICES, default='secondary')
     weight = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     weight_class = models.CharField(max_length=32, blank=True, default='soft')
-    deleted_at = models.DateTimeField(blank=True, null=True)
-    deleted_by = models.CharField(max_length=255, blank=True, null=True)
-    deleted_via_parent = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(max_length=32, default='active')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -363,7 +435,6 @@ class LiveSessionLearnerAttendance(models.Model):
     ]
 
     occurrence_id = models.CharField(max_length=128, db_index=True)
-    session_date = models.DateField(null=True, blank=True, editable=False)
     live_session_id = models.CharField(max_length=128, db_index=True)
     module_catalogue_id = models.CharField(max_length=128, db_index=True)
     learner_profile_id = models.BigIntegerField(db_index=True)

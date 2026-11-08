@@ -4,6 +4,8 @@ from collections import Counter, defaultdict
 
 from django.db import DatabaseError
 
+from . import curriculum_names
+
 
 def status_key(value):
     return ' '.join(str(value or 'unknown').strip().lower().replace('_', ' ').replace('-', ' ').split()) or 'unknown'
@@ -30,8 +32,12 @@ def learner_facts(module_ids):
     if views.connection.vendor != 'postgresql' or not views.learner_schema_table_exists('learners'):
         raise DatabaseError('Learner counts are unavailable.')
     columns = views.learner_schema_columns('learners')
-    if not {'id', 'programme', 'cohort', 'group_name', 'lifecycle_status'} <= columns:
+    # The normalised database keeps only the placement ids, not the names; the
+    # ids decide placement anyway, so either is enough and a missing name reads as NULL.
+    if not {'id', 'lifecycle_status'} <= columns or not {'programme', 'programme_id'} & columns:
         raise DatabaseError('Learner count columns are unavailable.')
+    names = ', '.join(f"p.{column} AS {column}" if column in columns
+                      else f"NULL::text AS {column}" for column in ('programme', 'cohort', 'group_name'))
     identity = ', '.join(f"coalesce(p.{column}, '') AS {column}" if column in columns
                          else f"'' AS {column}" for column in ('programme_id', 'cohort_id', 'group_id'))
     plan_select = 'false AS explicit, ARRAY[]::text[] AS module_ids, false AS ambiguous'
@@ -54,7 +60,7 @@ def learner_facts(module_ids):
     programme_status = "nullif(btrim(p.programme_status), '')," if 'programme_status' in columns else ''
     with views.connection.cursor() as cursor:
         cursor.execute(f"""
-            SELECT p.id, p.programme, p.cohort, p.group_name, {identity},
+            SELECT p.id, {names}, {identity},
                    coalesce(nullif(btrim(p.lifecycle_status), ''), {programme_status} 'unknown') AS status,
                    {plan_select}
             FROM "Learner"."learners" p {plan_join}
@@ -88,7 +94,8 @@ def placement_lineages(scope, identifiers):
     columns = [id_column, 'programme_id', 'programme_name', 'cohort_id', 'cohort_name', 'group_id', 'group_name']
     if scope == 'module':
         columns.append('learner_roster_mode')
-    available = views.column_names(table)
+    # Names are not columns: they come with the read, from the rows the ids name.
+    available = set(views.column_names(table)) | set(curriculum_names.NAME_FIELDS.get(table, ()))
     columns = tuple(dict.fromkeys(column for column in columns if column in available))
     if id_column not in columns:
         raise DatabaseError('Curriculum placement is unavailable.')

@@ -42,7 +42,7 @@ def _lecture_titles(rows, occurrences, local_date):
             '''SELECT c.module_catalogue_id, c.type, c.title, c.settings_json
                FROM curriculum.components c
                WHERE c.module_catalogue_id = ANY(%s) AND c.type = 'live_session'
-                 AND c.deleted_at IS NULL AND NOT c.is_programme_deleted''',
+                 AND c.status NOT IN ('inactive','archived')''',
             [module_ids],
         )
         components = [

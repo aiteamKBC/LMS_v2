@@ -9,6 +9,8 @@ from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import staff_only
 from learner_api import learning_plan as plans
+
+from . import learner_compat
 from learner_api.active_users import hydrate_training_plan
 from learner_api.mappers import get_training_plan, stored_training_plan, training_plan_field
 from learner_api.models import EnrolmentUser, LearnerProfile
@@ -183,10 +185,14 @@ def _handle(request, scope, identifier):
         if target is None:
             return JsonResponse({'error': f'Active {scope} not found.'}, status=404)
         if request.method == 'GET':
-            learners = EnrolmentUser.all_learners.only(
+            # learner_compat: on the normalised schema the placement names are
+            # read from the curriculum by id (learner_api's model still maps the
+            # dropped name columns).
+            learners = learner_compat.fill(learner_compat.only(
+                EnrolmentUser.all_learners,
                 'id', 'username', 'email', 'programme', 'cohort', 'group',
                 'employer', 'organization', 'programme_status', 'learner_type',
-            ).order_by('username', 'id')
+            ).order_by('username', 'id'), EnrolmentUser)
             return JsonResponse(_payload(target, learners))
         try:
             body = json.loads(request.body)
@@ -268,11 +274,12 @@ def module_learner_assignments(request, identifier):
 def module_assignment_roster(module_id, placement_learners, lifecycle_status=''):
     """Include direct module membership without broadening programme/cohort rosters."""
     placed = {str(row['id']): row for row in placement_learners}
-    profiles = LearnerProfile.objects.filter(
+    profiles = learner_compat.defer_missing(LearnerProfile.objects.filter(
         Q(pk__in=list(placed)) | Q(learning_plan__contains=[{'moduleId': module_id}])
-    )
+    ))
     if lifecycle_status:
         profiles = profiles.filter(lifecycle_status__iexact=lifecycle_status)
+    profiles = learner_compat.fill(profiles, LearnerProfile)
     result = dict(placed)
     for profile in profiles:
         plan = profile.learning_plan
@@ -325,7 +332,8 @@ def bulk_assigned_learner_counts(module_ids):
         return {}
     counts = {module_id: 0 for module_id in wanted}
     cache = {}
-    learners = EnrolmentUser.all_learners.only('id', 'programme', 'group', 'learning_plan', 'training_plan')
+    learners = learner_compat.fill(learner_compat.only(
+        EnrolmentUser.all_learners, 'id', 'programme', 'group', 'learning_plan', 'training_plan'), EnrolmentUser)
     for learner in learners:
         for module_id in set(plans._effective_plan_ids(learner, cache)):
             if module_id in wanted:

@@ -133,7 +133,7 @@ def enqueue_recording(series, occurrence, artifact, module):
     # Reuse the authored IDs; do not infer a week from a session's list index.
     from .session_results import read
     components = read('''SELECT id,week_id FROM curriculum.components
-        WHERE module_catalogue_id=%s AND deleted_at IS NULL AND NOT coalesce(is_programme_deleted,false)
+        WHERE module_catalogue_id=%s AND status NOT IN ('inactive','archived')
           AND coalesce(library_state,'')<>'library'
           AND (settings_json->>'teamsOccurrenceId'=%s OR
                (settings_json->>'teamsLiveSessionId'=%s AND settings_json->>'teamsSessionNumber'=%s))''',
@@ -171,7 +171,7 @@ def transfer_recording(asset, *, lease_id=None):
         WHERE a.id=%s AND a.occurrence_id=%s AND s.id=%s AND a.artifact_type='recording'
           AND s.module_catalogue_id=%s AND coalesce(m.programme_id,'')=%s
           AND coalesce(m.cohort_id,'')=%s AND coalesce(m.group_id,'')=%s
-          AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+          AND m.status NOT IN ('inactive','archived')
           AND s.status NOT IN ('deleted','cancelled','superseded','failed')
           AND o.status NOT IN ('deleted','cancelled','superseded')''',
         [asset.component_id, asset.scope['occurrence_id'], asset.target_id, asset.scope['module_id'],
@@ -241,7 +241,7 @@ def publish_outcome(asset):
             WHERE a.occurrence_id=o.id AND a.occurrence_id=%s AND a.artifact_type='recording'
               AND s.id=%s AND s.module_catalogue_id=%s AND coalesce(m.programme_id,'')=%s
               AND coalesce(m.cohort_id,'')=%s AND coalesce(m.group_id,'')=%s
-              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+              AND m.status NOT IN ('inactive','archived')
               AND s.status NOT IN ('deleted','cancelled','superseded','failed')
               AND o.status NOT IN ('deleted','cancelled','superseded')
               AND ((a.id=%s AND a.graph_artifact_id=%s) OR
