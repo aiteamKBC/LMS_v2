@@ -67,7 +67,7 @@ describe('learner feedback automatic save', () => {
     expect(feedbackApi.myReviewDelivery).toHaveBeenCalledWith(71, undefined);
   });
 
-  it.each(['post_mcm_review', 'post_progress_review', 'general', 'post_event'] as const)(
+  it.each(['post_mcm_review', 'post_progress_review', 'post_epa_review', 'general', 'post_event'] as const)(
     'submits an assigned %s through its matching learner endpoint', async formType => {
       const loaded = { ...form, formType, title: 'Assigned feedback' };
       const response = { response: { id: 11, status: 'completed' as const, submittedAt: '2026-11-02T10:00:00Z', updatedAt: '2026-11-02T10:00:00Z' } };
@@ -77,7 +77,7 @@ describe('learner feedback automatic save', () => {
       vi.mocked(feedbackApi.saveReviewDeliveryResponse).mockResolvedValue(response);
       vi.mocked(feedbackApi.saveResponse).mockResolvedValue(response);
       vi.mocked(feedbackApi.saveEventResponse).mockResolvedValue(response);
-      const isReview = formType === 'post_mcm_review' || formType === 'post_progress_review';
+      const isReview = formType === 'post_mcm_review' || formType === 'post_progress_review' || formType === 'post_epa_review';
       const path = isReview ? '/learner/feedback/review/71' : `/learner/feedback/4${formType === 'post_event' ? '?eventRecipientId=40' : ''}`;
       const user = userEvent.setup();
       render(<MemoryRouter initialEntries={[path]}><Routes>
@@ -98,6 +98,8 @@ describe('learner feedback automatic save', () => {
     ['admin', 'commercial', 'post_progress_review', 'progress-review'],
     ['admin', 'apprenticeship', 'post_progress_review', 'progress-review'],
     ['staff', 'commercial', 'post_mcm_review', 'mcm'],
+    ['staff', 'apprenticeship', 'post_epa_review', 'epa'],
+    ['admin', 'commercial', 'post_epa_review', 'epa'],
   ] as const)('keeps %s preview read-only for a %s learner and preserves review context', async (role, kind, formType, category) => {
     Object.assign(session.account, { role, subjectType: 'staff', subjectId: 8 });
     Object.assign(session.resolved, { kind, id: '125' });

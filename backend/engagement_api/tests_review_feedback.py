@@ -108,8 +108,9 @@ class ReviewFeedbackSyncTests(SimpleTestCase):
         self.profile = SimpleNamespace(pk=17)
         self.form = FeedbackForm(id=81, form_type='post_mcm_review', published_at=LAUNCH)
         self.pr_form = FeedbackForm(id=82, form_type='post_progress_review', published_at=LAUNCH)
+        self.epa_form = FeedbackForm(id=83, form_type='post_epa_review', published_at=LAUNCH)
         forms = self.patch(FeedbackForm.objects, 'filter')
-        forms.return_value.order_by.return_value = [self.form, self.pr_form]
+        forms.return_value.order_by.return_value = [self.form, self.pr_form, self.epa_form]
         self.patch(reviews.EnrolmentUser.all_learners, 'filter').return_value.first.return_value = self.learner
         self.profile_lookup = self.patch(reviews, 'review_profile_for_source', return_value=self.profile)
         self.patch(reviews, 'source_for_learner', return_value=SimpleNamespace(kind='aptem', aptem_id=503))
@@ -183,6 +184,68 @@ class ReviewFeedbackSyncTests(SimpleTestCase):
             with self.subTest(completed=completed):
                 self.rows.return_value = [source_row(completed_date=completed)]
                 self.assertEqual(self.sync()['created'], expected)
+
+    def test_epa_selects_exact_review_name_independently_of_type(self):
+        for kind in ('Gateway Review', 'Progress Review', 'Monthly Coaching Meeting', 'Other Review'):
+            for name in ('Gateway Review', ' gateway REVIEW '):
+                with self.subTest(kind=kind, name=name):
+                    self.rows.return_value = [source_row(review_type=kind, review_name=name,
+                                                        status='Completed', completed_date=COMPLETED)]
+                    self.assertEqual(self.sync()['created'], 1)
+                    self.assertIs(self.create.call_args.kwargs['defaults']['form'], self.epa_form)
+
+    def test_epa_requires_the_full_name_not_type_or_substring(self):
+        for name in ('Gateway Review 1', 'Pre Gateway Review', 'Gateway', '', None):
+            with self.subTest(name=name):
+                self.rows.return_value = [source_row(review_type='Gateway Review', review_name=name,
+                                                    status='Completed', completed_date=COMPLETED)]
+                self.assertEqual(self.sync()['created'], 0)
+        self.create.assert_not_called()
+
+    def test_epa_requires_completed_status_not_just_a_completion_date(self):
+        for status in ('AwaitingSignature', 'In Progress', 'Scheduled', 'Not Scheduled', '', None):
+            with self.subTest(status=status):
+                self.rows.return_value = [source_row(review_type='Gateway Review', review_name='Gateway Review',
+                                                    status=status, completed_date=COMPLETED)]
+                self.assertEqual(self.sync()['created'], 0)
+        self.create.assert_not_called()
+
+    def test_epa_source_metadata_status_and_verified_local_completion(self):
+        self.rows.return_value = [source_row(review_type='Gateway Review', review_name='Gateway Review',
+            status='', completed_date=COMPLETED, review_data={'source_metadata': {'Status': 'Completed'}})]
+        self.assertEqual(self.sync()['created'], 1)
+        self.rows.return_value = [source_row(review_type='Gateway Review', review_name='Gateway Review')]
+        self.overlays.return_value = [overlay()]
+        self.assertEqual(self.sync()['created'], 1)
+
+    def test_epa_launch_date_undated_future_and_reopened_history(self):
+        for completed, expected in ((LAUNCH - timedelta(seconds=1), 0), (LAUNCH, 1),
+                                    (COMPLETED, 1), (NOW + timedelta(days=1), 0), (None, 0)):
+            with self.subTest(completed=completed):
+                self.rows.return_value = [source_row(review_type='Gateway Review', review_name='Gateway Review',
+                    status='Completed', completed_date=completed, updated_at=NOW)]
+                self.assertEqual(self.sync()['created'], expected)
+        self.rows.return_value = [source_row(review_type='Gateway Review', review_name='Gateway Review',
+                                             status='Completed', completed_date=COMPLETED)]
+        self.overlays.return_value = [overlay(meeting_intelligence={'reopenCompletedAt': (LAUNCH - timedelta(days=1)).isoformat()})]
+        self.assertEqual(self.sync()['historical'], 1)
+
+    def test_gateway_without_a_published_epa_form_cannot_fall_back_to_pr(self):
+        reviews.FeedbackForm.objects.filter.return_value.order_by.return_value = [self.form, self.pr_form]
+        self.rows.return_value = [source_row(review_type='Progress Review', review_name='Gateway Review',
+                                             status='Completed', completed_date=COMPLETED)]
+        self.assertEqual(self.sync()['created'], 0)
+        self.create.assert_not_called()
+
+    def test_epa_keeps_learner_identity_checks_and_distinct_source_reviews(self):
+        self.rows.return_value = [source_row(review_type='Gateway Review', review_name='Gateway Review',
+            status='Completed', completed_date=COMPLETED, review_data={'aptem_learner_id': 999})]
+        self.assertEqual(self.sync()['identityConflicts'], 1)
+        self.create.assert_not_called()
+        self.rows.return_value = [source_row(id=identifier, aptem_review_id=f'SYNTHETIC-{identifier}',
+            review_type='Gateway Review', review_name='Gateway Review', status='Completed', completed_date=COMPLETED)
+            for identifier in (9001, 9002)]
+        self.assertEqual(self.sync()['created'], 2)
 
     def test_old_completion_in_either_source_blocks_newer_completion(self):
         for row, local in (
@@ -308,12 +371,15 @@ class CompletionHookTests(SimpleTestCase):
                 }), 'default', update_fields={'status', 'completed_at'})
                 commit.assert_called_once()
 
-    def test_other_managed_review_families_do_not_schedule_feedback(self):
+    def test_completion_family_does_not_prevent_gateway_name_reconciliation(self):
+        # EPA matches the verified source name, which can differ from family.
+        # Source-type exclusion/eligibility tests still prove unrelated reviews
+        # create no deliveries; this callback only schedules post-commit reads.
         with mock.patch.object(signals.transaction, 'on_commit') as commit:
             signals.imported_review_saved(None, overlay(template_snapshot={
                 'templateSource': {'family': 'PSP'},
             }), 'default')
-        commit.assert_not_called()
+        commit.assert_called_once()
 
     def test_failed_callback_is_visible_and_does_not_undo_committed_completion(self):
         with (mock.patch.object(signals.transaction, 'on_commit') as commit,
@@ -409,6 +475,20 @@ class IsolatedDeliveryTransactionTests(TestCase):
                 raise ValueError('Synthetic rollback')
         self.assertEqual(self.deliveries.count(), 0)
         self.assertEqual(reviews.sync_review_feedback(71)['created'], 1)
+
+    def test_epa_retry_and_recompletion_pin_the_original_template(self):
+        FeedbackForm.objects.filter(pk=self.form.pk).update(form_type=reviews.EPA_FORM_TYPE)
+        reviews._source_rows.return_value = [source_row(review_type='Gateway Review', review_name='Gateway Review',
+                                                       status='Completed', completed_date=COMPLETED)]
+        self.assertEqual(reviews.sync_review_feedback(71)['created'], 1)
+        FeedbackForm.objects.filter(pk=self.form.pk).update(is_current=False)
+        FeedbackForm.objects.create(title='Synthetic EPA version two', form_type=reviews.EPA_FORM_TYPE,
+                                    template_key=self.form.template_key, version=2,
+                                    status='published', published_at=LAUNCH, created_by='Synthetic')
+        reviews._source_rows.return_value[0]['completed_date'] = COMPLETED + timedelta(days=1)
+        self.assertEqual(reviews.sync_review_feedback(71)['existing'], 1)
+        self.assertEqual(self.deliveries.count(), 1)
+        self.assertEqual((self.deliveries.get().form_id, self.deliveries.get().completed_at), (self.form.pk, COMPLETED))
 
     def test_two_workers_that_both_miss_the_delivery_create_exactly_one(self):
         barrier, seen = Barrier(2), local()
