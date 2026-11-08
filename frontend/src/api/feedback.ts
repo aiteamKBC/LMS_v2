@@ -142,6 +142,18 @@ export interface FeedbackResponse {
   learnerName: string; programme: string; status: 'in_progress' | 'completed';
   startedAt: string; updatedAt: string; submittedAt: string | null;
   sections?: FeedbackSection[];
+  activity?: FeedbackResponseActivity;
+  assignedAt?: string | null;
+}
+
+export interface FeedbackResponseActivity {
+  kind: 'lecture' | 'review' | 'module' | 'event' | 'general';
+  title: string;
+  date: string | null;
+  dateText?: string;
+  tutorName: string;
+  coachName?: string;
+  relatedLearnerName?: string;
 }
 
 export interface FeedbackAnalyticsData {

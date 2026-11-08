@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { feedbackApi, type FeedbackForm } from '@/api/feedback';
+import { feedbackApi, type FeedbackForm, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
 import { downloadFeedbackResponsePdf } from '@/features/feedback/feedbackResponsePdf';
 import FeedbackPage from './page';
 
@@ -35,6 +35,17 @@ const form: FeedbackForm = {
   createdBy: 'Staff', createdAt: '2026-09-24T10:00:00Z', updatedAt: '2026-09-25T10:00:00Z', publishedAt: '2026-09-24T10:00:00Z',
   assignedCount: 22, responseCount: 3, startedCount: 3, structureLocked: false, willCreateVersion: true,
 };
+
+function contextResponse(id: number, formType: FeedbackResponse['formType'], activity: FeedbackResponseActivity,
+  changes: Partial<FeedbackResponse> = {}): FeedbackResponse {
+  return {
+    id, formId: 20, formTitle: `Synthetic form ${id}`, templateKey: 'template-1', formType,
+    learnerId: '61', learnerName: 'Synthetic respondent', programme: 'Business',
+    deliveryId: null, sessionTitle: '', sessionStartsAt: null, tutorName: '',
+    status: 'completed', startedAt: '2026-11-08T09:00:00Z', updatedAt: '2026-11-08T10:00:00Z',
+    submittedAt: '2026-11-08T10:00:00Z', activity, ...changes,
+  };
+}
 
 describe('feedback form version history', () => {
   beforeEach(() => {
@@ -105,13 +116,14 @@ describe('feedback form version history', () => {
     expect(screen.getByText('Marketing - Session 1')).toBeVisible();
     expect(screen.queryByText('Marketing - Session 2')).not.toBeInTheDocument();
     await user.selectOptions(tutorFilter, 'all');
-    expect(screen.getByRole('columnheader', { name: 'Lecture' })).toBeVisible();
-    expect(screen.getByRole('columnheader', { name: 'Lecture date' })).toBeVisible();
-    expect(screen.getByRole('columnheader', { name: 'Tutor' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Related activity' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Respondent' })).toBeVisible();
+    for (const heading of ['Lecture', 'Lecture date', 'Tutor']) expect(screen.queryByRole('columnheader', { name: heading })).not.toBeInTheDocument();
     expect(screen.getAllByText('19 Oct 2026')).toHaveLength(2);
     const responsesTable = screen.getByRole('table');
     expect(within(responsesTable).getByText('Original Tutor')).toBeVisible();
-    expect(within(responsesTable).getByText('Not recorded')).toBeVisible();
+    const oldLectureRow = within(responsesTable).getByText('Marketing - Session 2').closest('tr')!;
+    expect(within(within(oldLectureRow).getAllByRole('cell')[1]).getByText('Not recorded')).toBeVisible();
     await user.click(screen.getByText('Marketing - Session 1'));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Original Tutor')).toBeVisible();
@@ -123,6 +135,160 @@ describe('feedback form version history', () => {
     await waitFor(() => expect(downloadFeedbackResponsePdf).toHaveBeenCalledWith(expect.objectContaining({ id: 91 })));
     await user.click(within(dialog).getByRole('button', { name: 'Back' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('shows every feedback type in one related-activity column without empty lecture columns', async () => {
+    const cases: Array<[FeedbackResponse['formType'], FeedbackResponseActivity]> = [
+      ['post_lecture', { kind: 'lecture', title: 'Frozen lecture', date: '2026-11-06T10:00:00Z', tutorName: 'Saved tutor' }],
+      ['post_mcm_review', { kind: 'review', title: 'October coaching', date: '2026-11-07T10:00:00Z', tutorName: '', coachName: 'Synthetic MCM coach' }],
+      ['post_progress_review', { kind: 'review', title: 'October progress', date: '2026-11-07T10:00:00Z', tutorName: '', coachName: 'Synthetic PR coach' }],
+      ['post_epa_review', { kind: 'review', title: 'Gateway Review', date: '2026-11-07T10:00:00Z', tutorName: '', coachName: 'Synthetic EPA coach' }],
+      ['post_progress_review_employer', { kind: 'review', title: 'Employer progress', date: '2026-11-07T10:00:00Z', tutorName: '', coachName: 'Synthetic employer PR coach', relatedLearnerName: 'Related learner' }],
+      ['mid_module', { kind: 'module', title: 'Campaign planning', date: null, tutorName: '' }],
+      ['end_module', { kind: 'module', title: 'Marketing principles', date: null, tutorName: '' }],
+      ['post_event', { kind: 'event', title: 'Industry workshop', date: '2026-11-06', tutorName: '' }],
+      ['event_rsvp', { kind: 'event', title: 'Open day', date: null, dateText: '6 November 2026', tutorName: '' }],
+      ['general', { kind: 'general', title: 'General feedback', date: null, tutorName: '' }],
+    ];
+    vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: cases.map(([kind, activity], index) =>
+      contextResponse(index + 1, kind, activity, kind === 'post_progress_review_employer' ? { learnerName: 'Synthetic employer' } : {})) });
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Responses' }));
+    const table = screen.getByRole('table', { name: 'Feedback responses' });
+    expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(
+      ['Form', 'Related activity', 'Respondent', 'Programme', 'Status', 'Assigned', 'Started', 'Submitted']);
+    for (const [kind, activity] of cases) {
+      const row = within(table).getByText(activity.title).closest('tr')!;
+      expect(within(row).getAllByRole('cell')).toHaveLength(8);
+      expect(within(row).getByText(activity.title)).toBeVisible();
+      if (kind !== 'post_lecture') expect(within(row).queryByText('Tutor:')).not.toBeInTheDocument();
+      if (activity.kind === 'review') {
+        expect(within(row).getByText('Coach:')).toBeVisible();
+        expect(within(row).getByText(activity.coachName!)).toBeVisible();
+        expect(within(row).queryByText('Completed:')).not.toBeInTheDocument();
+        expect(within(row).queryByText('07 Nov 2026')).not.toBeInTheDocument();
+      }
+      if (activity.kind === 'module' || activity.kind === 'general') {
+        expect(within(row).queryByText(/Lecture date:|Event date:|Completed:/)).not.toBeInTheDocument();
+      }
+    }
+    expect(within(table).getByText('Saved tutor')).toBeVisible();
+    expect(within(table).getByText('Learner: Related learner')).toBeVisible();
+    expect(within(table).getByText('Synthetic employer')).toBeVisible();
+    expect(within(table).getByText('Employer')).toBeVisible();
+    expect(within(table).getByText('6 November 2026')).toBeVisible();
+  });
+
+  it('clears a tutor selection for a non-lecture form and searches employer respondents', async () => {
+    const reviewForm = { ...form, id: 31, templateKey: 'review-template', title: 'PR form', formType: 'post_progress_review' as const };
+    vi.mocked(feedbackApi.listForms).mockResolvedValue({ forms: [form, reviewForm], summary: { totalForms: 2, publishedForms: 2, draftForms: 0, totalResponses: 3 } });
+    vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [
+      contextResponse(1, 'post_lecture', { kind: 'lecture', title: 'Saved lecture', date: null, tutorName: 'Saved tutor' }, { tutorName: 'Saved tutor' }),
+      contextResponse(2, 'post_progress_review', { kind: 'review', title: 'Saved PR', date: null, tutorName: '' }, { formId: 31, templateKey: 'review-template' }),
+      contextResponse(3, 'post_progress_review_employer', { kind: 'review', title: 'Employer PR', date: null, tutorName: '' }, { formId: 32, templateKey: 'employer-template', learnerName: 'Example employer' }),
+    ] });
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Responses' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by tutor' }), 'Saved tutor');
+    expect(screen.queryByText('Saved PR')).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by form' }), '31');
+    expect(screen.getByText('Saved PR')).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: 'Filter by tutor' })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by form' }), 'all');
+    await user.type(screen.getByRole('textbox', { name: 'Search respondent' }), 'Example employer');
+    expect(screen.getByText('Employer PR')).toBeVisible();
+    expect(screen.queryByText('Saved lecture')).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'in_progress');
+    expect(screen.getByText('No responses found.')).toBeVisible();
+    expect(screen.getByText('No responses found.')).toHaveAttribute('colspan', '8');
+  });
+
+  it('filters all review feedback types by coach with unique sorted names and no blank options', async () => {
+    const reviewKinds = ['post_mcm_review', 'post_progress_review', 'post_epa_review', 'post_progress_review_employer'] as const;
+    vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [
+      ...reviewKinds.map((kind, index) => contextResponse(index + 1, kind,
+        { kind: 'review', title: `Review ${index}`, date: null, tutorName: '', coachName: index === 0 ? ' Alpha coach ' : 'Alpha coach' })),
+      contextResponse(5, 'post_progress_review', { kind: 'review', title: 'Other coach review', date: null, tutorName: '', coachName: 'Zeta coach' }),
+      contextResponse(6, 'post_epa_review', { kind: 'review', title: 'Unknown coach review', date: null, tutorName: '', coachName: '' }),
+      contextResponse(7, 'general', { kind: 'general', title: 'General activity', date: null, tutorName: '', coachName: 'Ignored name' }),
+    ] });
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Responses' }));
+    const coachFilter = screen.getByRole('combobox', { name: 'Filter by coach' });
+    expect(within(coachFilter).getAllByRole('option').map(option => option.textContent)).toEqual(['All coaches', 'Alpha coach', 'Zeta coach']);
+    await user.selectOptions(coachFilter, 'Alpha coach');
+    for (let index = 0; index < 4; index++) expect(screen.getByText(`Review ${index}`)).toBeVisible();
+    expect(screen.queryByText('Other coach review')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unknown coach review')).not.toBeInTheDocument();
+    expect(screen.queryByText('General activity')).not.toBeInTheDocument();
+    await user.selectOptions(coachFilter, 'all');
+    expect(screen.getByText('Unknown coach review')).toBeVisible();
+    expect(screen.getByText('General activity')).toBeVisible();
+  });
+
+  it('combines coach with status and search, and resets incompatible tutor and form filters', async () => {
+    const reviewForm = { ...form, id: 31, templateKey: 'review-template', title: 'PR form', formType: 'post_progress_review' as const };
+    vi.mocked(feedbackApi.listForms).mockResolvedValue({ forms: [form, reviewForm], summary: { totalForms: 2, publishedForms: 2, draftForms: 0, totalResponses: 3 } });
+    vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [
+      contextResponse(1, 'post_lecture', { kind: 'lecture', title: 'Saved lecture', date: null, tutorName: 'Saved tutor' }, { tutorName: 'Saved tutor' }),
+      contextResponse(2, 'post_progress_review', { kind: 'review', title: 'Current PR', date: null, tutorName: '', coachName: 'Saved coach' },
+        { formId: 31, templateKey: 'review-template', learnerName: 'Current learner' }),
+      contextResponse(3, 'post_progress_review', { kind: 'review', title: 'Historical PR', date: null, tutorName: '', coachName: 'Saved coach' },
+        { formId: 30, templateKey: 'review-template', learnerName: 'Historical learner', status: 'in_progress' }),
+    ] });
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Responses' }));
+    const tutorFilter = screen.getByRole('combobox', { name: 'Filter by tutor' });
+    const coachFilter = screen.getByRole('combobox', { name: 'Filter by coach' });
+    await user.selectOptions(tutorFilter, 'Saved tutor');
+    await user.selectOptions(coachFilter, 'Saved coach');
+    expect(tutorFilter).toHaveValue('all');
+    expect(screen.getByText('Current PR')).toBeVisible();
+    expect(screen.queryByText('Saved lecture')).not.toBeInTheDocument();
+    await user.selectOptions(tutorFilter, 'Saved tutor');
+    expect(coachFilter).toHaveValue('all');
+    expect(screen.getByText('Saved lecture')).toBeVisible();
+    await user.selectOptions(coachFilter, 'Saved coach');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by form' }), '20');
+    expect(screen.queryByRole('combobox', { name: 'Filter by coach' })).not.toBeInTheDocument();
+    expect(screen.getByText('Saved lecture')).toBeVisible();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by form' }), '31');
+    const reviewCoachFilter = screen.getByRole('combobox', { name: 'Filter by coach' });
+    expect(reviewCoachFilter).toHaveValue('all');
+    expect(screen.queryByRole('combobox', { name: 'Filter by tutor' })).not.toBeInTheDocument();
+    expect(screen.getByText('Historical PR')).toBeVisible();
+    await user.selectOptions(reviewCoachFilter, 'Saved coach');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'completed');
+    expect(screen.queryByText('Historical PR')).not.toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Search respondent' }), 'Historical');
+    expect(screen.getByText('No responses found.')).toBeVisible();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'all');
+    expect(screen.getByText('Historical PR')).toBeVisible();
+    expect(reviewCoachFilter).toHaveValue('Saved coach');
+  });
+
+  it('shows the recorded assignment date in UK time separately from activity, started and submitted dates', async () => {
+    vi.mocked(feedbackApi.responses).mockResolvedValue({ responses: [
+      contextResponse(1, 'post_progress_review', { kind: 'review', title: 'Recorded PR', date: '2026-06-29T10:00:00Z', tutorName: '' },
+        { assignedAt: '2026-06-30T23:30:00Z' }),
+      contextResponse(2, 'general', { kind: 'general', title: 'No assignment history', date: null, tutorName: '' }, { assignedAt: null }),
+    ] });
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Responses' }));
+    const recorded = screen.getByText('Recorded PR').closest('tr')!;
+    const activity = within(recorded).getAllByRole('cell')[1];
+    expect(within(activity).getByText('Coach:')).toBeVisible();
+    expect(within(activity).getByText('Not recorded')).toBeVisible();
+    expect(within(activity).queryByText('Completed:')).not.toBeInTheDocument();
+    expect(within(recorded).getAllByRole('cell')[5]).toHaveTextContent('01 Jul 2026');
+    expect(within(recorded).getAllByRole('cell')[6]).toHaveTextContent('08 Nov 2026');
+    const missing = screen.getByText('No assignment history').closest('tr')!;
+    expect(within(missing).getAllByRole('cell')[5]).toHaveTextContent('Not recorded');
   });
 
   it('opens assigned learners on the latest lecture and can select another lecture', async () => {

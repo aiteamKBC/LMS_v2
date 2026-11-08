@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
-import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormType, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse } from '@/api/feedback';
+import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormType, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
 import { LectureQuestionAnalytics } from '@/features/feedback/LectureQuestionAnalytics';
 import { FeedbackDashboard } from '@/features/feedback/FeedbackDashboard';
+import { FEEDBACK_TYPE_LABELS } from '@/features/feedback/feedbackDashboardData';
 import { ThemedSelect, type ThemedSelectOption } from '@/components/feature/ThemedSelect';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { FormRenderer } from '@/features/feedback/FormRenderer';
@@ -101,22 +102,62 @@ function FormsTable({ forms, search, status, onSearch, onStatus, onEdit, onPrevi
 
 function ResponsesTable({ responses, forms, onOpen }: { responses: FeedbackResponse[]; forms: FeedbackForm[]; onOpen: (r: FeedbackResponse) => void }) {
   const [formId, setFormId] = useState('all'); const [status, setStatus] = useState('all'); const [tutor, setTutor] = useState('all'); const [learner, setLearner] = useState('');
+  const [coach, setCoach] = useState('all');
   const selectedTemplateKey = forms.find(form => form.id === Number(formId))?.templateKey;
-  const tutors = [...new Set(responses.map(response => response.tutorName.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const filtered = responses.filter(response => (
-    (formId === 'all' || (selectedTemplateKey ? response.templateKey === selectedTemplateKey : response.formId === Number(formId)))
-    && (status === 'all' || response.status === status)
-    && (tutor === 'all' || response.tutorName.trim() === tutor)
+  const formResponses = responses.filter(response => formId === 'all' || (selectedTemplateKey ? response.templateKey === selectedTemplateKey : response.formId === Number(formId)));
+  const hasLectures = formResponses.some(response => response.formType === 'post_lecture');
+  const tutors = [...new Set(formResponses.filter(response => response.formType === 'post_lecture').map(response => response.tutorName.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const activeTutor = tutors.includes(tutor) ? tutor : 'all';
+  const reviewResponses = formResponses.filter(response => response.activity?.kind === 'review');
+  const coaches = [...new Set(reviewResponses.map(response => response.activity?.coachName?.trim() || '').filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const activeCoach = coaches.includes(coach) ? coach : 'all';
+  const filtered = formResponses.filter(response => (
+    (status === 'all' || response.status === status)
+    && (activeTutor === 'all' || response.tutorName.trim() === activeTutor)
+    && (activeCoach === 'all' || (response.activity?.kind === 'review' && response.activity.coachName?.trim() === activeCoach))
     && response.learnerName.toLowerCase().includes(learner.toLowerCase())
   ));
   return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
     <div className="flex flex-wrap gap-3 border-b p-4">
-      <select aria-label="Filter by form" value={formId} onChange={e => setFormId(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(form => <option key={form.id} value={form.id}>{form.title}</option>)}</select>
+      <select aria-label="Filter by form" value={formId} onChange={e => { setFormId(e.target.value); setTutor('all'); setCoach('all'); }} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(form => <option key={form.id} value={form.id}>{form.title}</option>)}</select>
       <select aria-label="Filter by status" value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All statuses</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select>
-      <select aria-label="Filter by tutor" value={tutor} onChange={e => setTutor(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All tutors</option>{tutors.map(name => <option key={name} value={name}>{name}</option>)}</select>
-      <input aria-label="Search learner" value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search learner…" className="rounded-lg border px-3 py-2 text-xs" />
+      {hasLectures && <select aria-label="Filter by tutor" value={activeTutor} onChange={e => { setTutor(e.target.value); setCoach('all'); }} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All tutors</option>{tutors.map(name => <option key={name} value={name}>{name}</option>)}</select>}
+      {reviewResponses.length > 0 && <select aria-label="Filter by coach" value={activeCoach} onChange={e => { setCoach(e.target.value); setTutor('all'); }} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All coaches</option>{coaches.map(name => <option key={name} value={name}>{name}</option>)}</select>}
+      <input aria-label="Search respondent" value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search respondent…" className="rounded-lg border px-3 py-2 text-xs" />
     </div>
-    <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Lecture', 'Lecture date', 'Tutor', 'Learner', 'Programme', 'Status', 'Started', 'Submitted'].map(label => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead><tbody className="divide-y">{filtered.map(response => <tr key={response.id} onClick={() => onOpen(response)} className="cursor-pointer hover:bg-primary-50/40"><td className="px-4 py-3 font-semibold">{response.formTitle}</td><td className="px-4 py-3">{response.formType === 'post_lecture' ? (response.sessionTitle || 'Lecture') : '-'}</td><td className="px-4 py-3">{response.formType === 'post_lecture' ? formatDate(response.sessionStartsAt) : '-'}</td><td className="px-4 py-3">{response.formType === 'post_lecture' ? (response.tutorName || 'Not recorded') : '-'}</td><td className="px-4 py-3">{response.learnerName}</td><td className="px-4 py-3">{response.programme || '—'}</td><td className="px-4 py-3"><Status status={response.status} /></td><td className="px-4 py-3">{formatDate(response.startedAt)}</td><td className="px-4 py-3">{formatDate(response.submittedAt)}</td></tr>)}{!filtered.length && <tr><td colSpan={9} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody></table></div>
+    <div className="overflow-x-auto"><table aria-label="Feedback responses" className="w-full min-w-[880px] text-left text-xs">
+      <thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Related activity', 'Respondent', 'Programme', 'Status', 'Assigned', 'Started', 'Submitted'].map(label => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead>
+      <tbody className="divide-y">{filtered.map(response => <tr key={response.id} onClick={() => onOpen(response)} className="cursor-pointer align-top hover:bg-primary-50/40">
+        <td className="px-4 py-3"><button type="button" className="text-left font-semibold text-foreground-900 hover:text-primary-700 focus-visible:outline-primary-500" onClick={event => { event.stopPropagation(); onOpen(response); }}>{response.formTitle}</button><p className="mt-1 text-[10px] text-foreground-500">{FEEDBACK_TYPE_LABELS[response.formType]}</p></td>
+        <td className="min-w-64 max-w-sm px-4 py-3"><ResponseActivity response={response} /></td>
+        <td className="px-4 py-3"><p className="font-semibold">{response.learnerName}</p><p className="mt-1 text-[10px] text-foreground-500">{response.formType === 'post_progress_review_employer' ? 'Employer' : 'Learner'}</p></td>
+        <td className="px-4 py-3">{response.programme || '—'}</td>
+        <td className="px-4 py-3"><Status status={response.status} /></td>
+        <td className="whitespace-nowrap px-4 py-3">{response.assignedAt ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/London' }).format(new Date(response.assignedAt)) : 'Not recorded'}</td>
+        <td className="whitespace-nowrap px-4 py-3">{formatDate(response.startedAt)}</td>
+        <td className="whitespace-nowrap px-4 py-3">{formatDate(response.submittedAt)}</td>
+      </tr>)}{!filtered.length && <tr><td colSpan={8} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody>
+    </table></div>
+  </div>;
+}
+
+function ResponseActivity({ response }: { response: FeedbackResponse }) {
+  // Lecture fields also support a frontend rollout ahead of the additive list
+  // API field. Missing non-lecture context is explicit, never guessed from dates.
+  const fallback: FeedbackResponseActivity = response.formType === 'post_lecture'
+    ? { kind: 'lecture', title: response.sessionTitle || 'Lecture details not recorded', date: response.sessionStartsAt, tutorName: response.tutorName }
+    : response.formType === 'general'
+      ? { kind: 'general', title: 'General feedback', date: null, tutorName: '' }
+      : { kind: 'general', title: 'Activity details not recorded', date: null, tutorName: '' };
+  const activity = response.activity || fallback;
+  const dateLabel = { lecture: 'Lecture date', review: '', event: 'Event date', module: '', general: '' }[activity.kind];
+  return <div className="break-words"><p className="font-semibold text-foreground-800">{activity.title}</p>
+    {activity.relatedLearnerName && <p className="mt-1 text-[11px] text-foreground-500">Learner: {activity.relatedLearnerName}</p>}
+    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-foreground-500">
+      {dateLabel && <span>{dateLabel}: <span>{activity.date ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/London' }).format(new Date(activity.date)) : activity.dateText || 'Not recorded'}</span></span>}
+      {activity.kind === 'lecture' && <span>Tutor: <span>{activity.tutorName || 'Not recorded'}</span></span>}
+      {activity.kind === 'review' && <span>Coach: <span>{activity.coachName || 'Not recorded'}</span></span>}
+    </div>
   </div>;
 }
 
