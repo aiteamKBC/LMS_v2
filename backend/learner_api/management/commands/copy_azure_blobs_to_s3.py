@@ -15,6 +15,7 @@ but never deleted. Secrets and signed URLs are never printed.
     python manage.py copy_azure_blobs_to_s3 --workers 8
     python manage.py copy_azure_blobs_to_s3 --account <name> --container <name>
 """
+import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -109,6 +110,9 @@ class Command(BaseCommand):
         parser.add_argument('--bucket', default='', help='Override AWS_S3_STORAGE_BUCKET.')
 
     def handle(self, *args, **options):
+        # The SDKs log every request at INFO; that buries the summary lines.
+        for name in ('azure', 'botocore', 'boto3', 's3transfer', 'urllib3'):
+            logging.getLogger(name).setLevel(logging.WARNING)
         bucket = options['bucket'] or blob_storage.s3_bucket()
         if not bucket:
             raise CommandError('Set AWS_S3_STORAGE_BUCKET (or pass --bucket).')
