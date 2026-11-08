@@ -67,6 +67,49 @@ export function FormBuilder() {
   const [linkCopied, setLinkCopied] = useState(false);
   const questionSettingsRef = useRef<HTMLElement>(null);
   const lectureFeedbackUrl = `${window.location.origin}/lecture-feedback`;
+
+  async function downloadLectureQr() {
+    const svg = document.getElementById('live-sessions-feedback-qr');
+    if (!(svg instanceof SVGSVGElement)) return;
+    try {
+      const qrImage = new Image();
+      await new Promise<void>((resolve, reject) => {
+        qrImage.onload = () => resolve();
+        qrImage.onerror = () => reject(new Error('QR image could not be loaded.'));
+        qrImage.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`;
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 900;
+      canvas.height = 1050;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('QR image could not be prepared.');
+      context.fillStyle = '#e9def8';
+      context.fillRect(0, 0, 900, 1050);
+      context.fillStyle = '#ffffff';
+      context.fillRect(120, 160, 660, 660);
+      context.imageSmoothingEnabled = false;
+      context.drawImage(qrImage, 200, 240, 500, 500);
+      context.fillStyle = '#361067';
+      context.textAlign = 'center';
+      context.font = 'bold 42px Arial, sans-serif';
+      context.fillText('Live Sessions Feedback', 450, 110);
+      context.font = '24px Arial, sans-serif';
+      context.fillText(lectureFeedbackUrl, 450, 875, 760);
+      context.font = '20px Arial, sans-serif';
+      context.fillText('Kent Business College', 450, 970);
+
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/png');
+      link.download = 'kbc-live-sessions-feedback-qr.png';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch {
+      void Swal.fire({ icon: 'error', title: 'Could not download QR' });
+    }
+  }
+
   const presentationSections = useMemo(() => lecturePresentationSections(model.formType, model.sections), [model.formType, model.sections]);
   const presentationStep = Math.min(previewStep, Math.max(presentationSections.length - 1, 0));
 
@@ -256,7 +299,15 @@ export function FormBuilder() {
           <h3 className="text-sm font-semibold text-foreground-900">One Live Sessions Feedback QR</h3>
           <p className="mt-1 text-xs text-foreground-500">Use this same QR for every Live Sessions form. The learner enters their Aptem or LMS email, then sees their latest available lecture and module without signing in.</p>
           <p className="mt-1 text-xs text-amber-700">Email is not verified. Anyone who knows a learner's email could respond as them.</p>
-          <div className="mt-3 flex flex-wrap items-center gap-4"><div className="rounded-lg border border-foreground-200 bg-white p-2"><QRCodeSVG value={lectureFeedbackUrl} size={150} level="M" marginSize={1} title="Live Sessions Feedback QR" /></div><div className="min-w-0 flex-1"><p className="break-all text-xs text-foreground-600">{lectureFeedbackUrl}</p><button type="button" className="mt-3 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700" onClick={() => void navigator.clipboard.writeText(lectureFeedbackUrl).then(() => { setLinkCopied(true); window.setTimeout(() => setLinkCopied(false), 1600); }).catch(() => void Swal.fire({ icon: 'error', title: 'Could not copy link' }))}>{linkCopied ? 'Copied' : 'Copy link'}</button></div></div>
+          <div className="mx-auto mt-4 max-w-sm rounded-xl bg-primary-50 p-5 text-center">
+            <div className="mx-auto w-fit rounded-lg bg-white p-3"><QRCodeSVG id="live-sessions-feedback-qr" value={lectureFeedbackUrl} size={200} level="M" marginSize={1} title="Live Sessions Feedback QR" /></div>
+            <p className="mt-3 break-all text-xs text-foreground-700">{lectureFeedbackUrl}</p>
+            <p className="mt-2 text-xs text-foreground-600">The same code works for every lecture.</p>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
+              <button type="button" className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500" onClick={() => void downloadLectureQr()}><i className="ri-download-line" aria-hidden="true" />Download QR</button>
+              <button type="button" className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500" onClick={() => void navigator.clipboard.writeText(lectureFeedbackUrl).then(() => { setLinkCopied(true); window.setTimeout(() => setLinkCopied(false), 1600); }).catch(() => void Swal.fire({ icon: 'error', title: 'Could not copy link' }))}><i className="ri-link" aria-hidden="true" />{linkCopied ? 'Link copied' : 'Copy link'}</button>
+            </div>
+          </div>
         </div>}
         </div>
       </section>
