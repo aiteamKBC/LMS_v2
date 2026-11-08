@@ -7,8 +7,10 @@ This guide describes the implemented server code. It is not evidence of deployme
 - MCP/OAuth HTTP endpoints run inside the existing Django backend. No separate MCP worker is required.
 - The existing `process_curriculum_videos --watch` worker performs queued Bunny transfers independently.
 - ChatGPT desktop/web supplies a file reference. The MCP server never reads a path on the manager's device.
-- The video track saves into existing video components in draft modules. It does not create modules/components
-  or publish content. Every save uses preview, confirmation and `apply_change`.
+- The video track saves into existing video components in draft modules. The separately gated
+  `create_curriculum_component` tool can create a typed draft component inside an existing module/week.
+  Modules and weeks must already exist, and publishing stays in the LMS. Every save uses preview,
+  confirmation and `apply_change`.
 
 ## Configuration
 
@@ -18,6 +20,7 @@ Set deployment configuration through the established secret/configuration mechan
 | --- | --- |
 | `MCP_ENABLED` | Default off. Gates MCP and OAuth endpoints. |
 | `MCP_VIDEO_UPLOADS_ENABLED` | Default off. Independently gates video proposal, apply and status. |
+| `MCP_COMPONENT_CREATION_ENABLED` | Default off. Allows preview/apply of the ten supported non-Teams draft component types, in existing modules/weeks only. |
 | `MCP_PUBLIC_BASE_URL` | Public HTTPS origin, without `/mcp` or a trailing slash. |
 | `MCP_PILOT_ACCOUNT_IDS` | Comma-separated permitted account ids. Also requires the existing staff/curriculum grant. Configure a restricted list for the pilot. |
 | `MCP_ALLOWED_REDIRECT_HOSTS` | Allowed OAuth callback hosts for the intended clients. |

@@ -51,8 +51,9 @@ The live client-to-tool handoff is still unverified. File-input contract:
 
 Use narrow, explicit schemas and the existing tools/dispatcher framework:
 
-1. Lookup: reuse the existing module/structure tools to find a saved video component. Creation of a
-   new component requires a separate explicit requirement; do not silently create curriculum items.
+1. Lookup: reuse the existing module/structure tools to find a saved video component. If the user asks for
+   a new one, use `create_curriculum_component` with `type: "video"`, then confirm/apply its preview first.
+   Reuse the returned `component_id` for the upload. See [component creation](COMPONENT_CREATION.md).
 2. `save_curriculum_video(programme_id, module_id, component_id, file, title?)`: check the destination
    before downloading, stage the MP4, then show a preview using the existing confirmation convention.
    Only draft modules and existing video components are writable. Programme membership is checked by id.

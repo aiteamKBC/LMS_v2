@@ -12,6 +12,7 @@ Do one file at a time, in order. Each sub-plan ends with an acceptance checklist
 | 5 | STEP_05_preview_apply.md | 0 |
 | 6 | STEP_06_read_tools.md | A |
 | V | VIDEO_UPLOAD.md | Video workflow after the read-only foundation is accepted |
+| C | COMPONENT_CREATION.md | Non-Teams draft containers in existing modules/weeks, with video handoff |
 | 7 | STEP_07_create_quiz.md | B |
 | 8 | STEP_08_edit_clone_quiz.md | B |
 | 9 | STEP_09_ksb_lesson.md | B |

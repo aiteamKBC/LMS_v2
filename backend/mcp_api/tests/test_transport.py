@@ -97,15 +97,16 @@ class ProtocolTests(TransportTestCase):
         self.assertIn("inputSchema", whoami)
 
     def test_only_expected_tools_are_registered(self):
-        # Change management, Step 6 lookups and the independently gated video track.
+        # Change management, lookups and independently gated content/video tools.
         self.assertEqual(set(REGISTRY), {
             "apply_change", "cancel_change", "list_my_pending_changes", "test_whoami",
             "find_programmes", "find_cohorts_groups", "find_modules", "get_module_structure",
             "list_standard_ksbs", "ksb_coverage", "get_quiz", "list_books", "search_books",
             "save_curriculum_video", "get_video_import_status",
+            "create_curriculum_component",
         })
         self.assertEqual({name for name, t in REGISTRY.items() if t.writes},
-                         {"apply_change", "save_curriculum_video"})
+                         {"apply_change", "save_curriculum_video", "create_curriculum_component"})
 
     def test_invalid_json_unknown_method_and_batch(self):
         bad = self.post("{not json")

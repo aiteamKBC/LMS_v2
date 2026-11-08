@@ -9,6 +9,7 @@ import logging
 from . import changes  # noqa: F401 - registers apply_change, cancel_change, list_my_pending_changes
 from .tools import read  # noqa: F401 - registers the Step 6 read tools
 from .tools import video  # noqa: F401 - registers the default-off video tools
+from .tools import components  # noqa: F401 - registers default-off draft component creation
 from . import pii, ratelimit
 from . import schema as json_schema
 from .dispatch import DispatchError
@@ -33,6 +34,7 @@ How to work:
 - If a name matches more than one item, or the request is unclear, ask the user which one they mean before doing anything.
 - Every change is a preview first. Show the user the preview and wait for them to confirm it. Only then call apply_change with that preview_id. Never apply a change the user has not confirmed.
 - Never invent KSB codes. Use list_standard_ksbs to get the programme's applied standard and use only the codes it returns.
+- To add a non-Teams component to an existing draft module/week, use create_curriculum_component. It creates a draft container only. After applying a video creation, pass the returned component_id to save_curriculum_video for a separate upload preview. Reuse an existing component instead of creating a duplicate.
 - Write all content (lesson text, explanations) in Markdown, not HTML.
 - You can create and edit drafts only. You cannot publish, delete or archive anything, and you cannot see learner records."""
 

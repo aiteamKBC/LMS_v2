@@ -32,6 +32,7 @@ METHODS = frozenset({"GET", "POST", "PUT", "PATCH"})
 #: Step 6: read-only GETs for the read tools (``tools/read.py``).
 _SEG = r"[^/?#]+"
 VIDEO_UPLOAD_PATH = r"/curriculum_api/curriculum/videos/module/[\w-]+/[\w-]+/"
+COMPONENT_CREATE_PATH = "/curriculum_api/curriculum/components/"
 ALLOWED_CALLS = (
     ("GET", r"/curriculum_api/curriculum/programmes/"),
     ("GET", rf"/curriculum_api/curriculum/programmes/{_SEG}/cohorts/"),
@@ -44,6 +45,7 @@ ALLOWED_CALLS = (
     ("GET", r"/quiz_api/quizzes/\d+/preview/"),
     ("GET", r"/curriculum_api/knowledge-base/books/"),
     ("POST", VIDEO_UPLOAD_PATH),
+    ("POST", COMPONENT_CREATE_PATH),
 )
 
 FORBIDDEN_KEYS = frozenset({"removemissing", "hydrationcomplete", "permanent"})

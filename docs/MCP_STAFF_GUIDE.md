@@ -18,11 +18,21 @@ Make the MP4 available using your client's supported file/device access, then as
 
 > Save this MP4 in programme [name], module [name], week [name], video component [name].
 
-The assistant looks up existing records. If names are ambiguous, it asks which item you mean. The first
-version requires an existing video component in a draft module; it does not create curriculum items or publish them.
+The assistant looks up existing records. If names are ambiguous, it asks which item you mean. It can reuse
+an existing video component or, when component creation is enabled, preview a new one in an existing draft
+module/week. Confirm creation first, then confirm the separate MP4 upload preview. Nothing is published.
 
 Read the preview and confirm it. The server then saves the playable LMS source and queues the Bunny copy.
 Ask for the video's import status when needed; copying and encoding may still be pending after the LMS save.
+
+## Create a component
+
+> Create a Video component named Inspector MP4 Test in programme [name], module [name], week [name].
+
+Supported types: video, podcast, reading, PowerPoint, quiz, assignment, reflection, checkpoint,
+monthly KSB quiz and coaching preparation. These are draft containers with the LMS's type settings;
+creation does not generate questions or upload content for those other types. The existing video tool
+can fill a video container. Modules and weeks must already exist. Teams sessions and recordings are excluded.
 
 ## If something goes wrong
 

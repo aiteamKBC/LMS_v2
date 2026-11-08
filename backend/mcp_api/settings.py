@@ -27,6 +27,11 @@ def video_uploads_enabled():
     return os.environ.get("MCP_VIDEO_UPLOADS_ENABLED", "0").strip().lower() in _ENABLED_VALUES
 
 
+def component_creation_enabled():
+    """Draft component creation is independently enabled by an administrator."""
+    return os.environ.get("MCP_COMPONENT_CREATION_ENABLED", "0").strip().lower() in _ENABLED_VALUES
+
+
 def pilot_account_ids():
     """Optional account restriction; a configured nonmatching list fails closed."""
     raw = os.environ.get("MCP_PILOT_ACCOUNT_IDS", "").strip()

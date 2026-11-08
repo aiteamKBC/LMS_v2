@@ -20,6 +20,11 @@ and status tools are implemented behind `MCP_VIDEO_UPLOADS_ENABLED` (default off
 from the manager's desktop/web sessions and live operation remain acceptance checks; the server-hosted
 MCP cannot read the manager's device by itself.
 
+Draft component containers are also implemented behind `MCP_COMPONENT_CREATION_ENABLED` (default off).
+`create_curriculum_component` supports all ten current non-Teams content types inside existing draft
+modules/weeks. It returns a new component id for the video upload handoff. It does not implement the later
+quiz-question, lesson-content or parent-structure tools. See [component creation](mcp/COMPONENT_CREATION.md).
+
 ## Ground rules (apply to every step)
 
 1. **Additive only.** Do not modify `login/sessions.py::authenticate_request`, the `kbc_session` cookie flow,

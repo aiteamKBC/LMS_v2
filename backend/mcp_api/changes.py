@@ -320,7 +320,7 @@ def _failure_result(reason, progress):
         return {"status": "unknown", "message":
                 f"The save outcome could not be confirmed: {reason}\n"
                 + _bullet(progress.uncertain_steps)
-                + "\nIt may have been saved. Check its status in the LMS before preparing another upload.",
+                + "\nIt may have been saved. Check its status in the LMS before preparing another change.",
                 "completed_steps": progress.steps, "uncertain_steps": progress.uncertain_steps}
     if progress.steps:
         message = (
