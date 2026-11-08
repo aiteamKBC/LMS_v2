@@ -1,4 +1,4 @@
-import { type CurriculumModule, type CurriculumWeeklySession } from '@/lib/curriculumApi';
+import { type CoursePricing, type CurriculumModule, type CurriculumWeeklySession } from '@/lib/curriculumApi';
 import { cleanText } from './model';
 
 
@@ -32,7 +32,7 @@ export interface ModuleFormDeliveryRef {
  * modules as authoring catalogue items â€” same records, different field names â€”
  * and both call sites must end up patching the same canonical id.
  */
-export interface ModuleFormTarget {
+export interface ModuleFormTarget extends CoursePricing {
   isFreeCourse?: boolean;
   /** Canonical module catalogue id: what PATCH /curriculum/modules/<id>/ takes. */
   id: string;
@@ -77,6 +77,9 @@ export function moduleFormTarget(module: CurriculumModule | undefined | null): M
     id,
     name: module.name || '',
     isFreeCourse: module.isFreeCourse,
+    isForSale: module.isForSale,
+    price: module.price,
+    currency: module.currency,
     programmeId: module.programmeId,
     programme: module.programme,
     cohortId: module.cohortId,

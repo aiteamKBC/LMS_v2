@@ -19,16 +19,26 @@ from .legacy_free_course_migration import SOURCE_SYSTEM, adopted_id, completion_
 def adopted_courses():
     from . import views
     rows = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE,
-        "source_type = 'free_course' and source_id is not null",
+        "source_type in ('free_course', 'module_authoring') and source_id is not null",
         columns=['module_catalogue_id', 'source_id'])
-    return {row['source_id']: row['module_catalogue_id'] for row in rows
-            if row['module_catalogue_id'] == adopted_id('MOD', row['source_id'], row['source_id'])}
+    result = {row['source_id']: row['module_catalogue_id'] for row in rows
+              if row['module_catalogue_id'] == adopted_id('MOD', row['source_id'], row['source_id'])}
+    # Includes newly authored courses and converted/archived records. They must
+    # not also appear through the old self-enrolment/content API.
+    if views.has_column(views.FREE_COURSES_TABLE, 'managed_by_builder'):
+        result.update({row['id']: row['module_catalogue_id'] for row in views.free_programme_fetch_all(
+            views.FREE_COURSES_TABLE, 'managed_by_builder = true', columns=['id', 'module_catalogue_id'])})
+    return result
 
 
 def adoption_snapshot():
     from . import views
     from learner_api.models import EnrolmentUser, LearnerFreeCourseProgress, LearnerProfile
     courses = views.free_programme_fetch_all(views.FREE_COURSES_TABLE, order_sql='display_order, id')
+    # Builder-native records have no legacy adoption to replay. Previously
+    # adopted records stay available for resuming learner/history migration.
+    courses = [row for row in courses if not row.get('managed_by_builder') or
+               row.get('module_catalogue_id') == adopted_id('MOD', row['id'], row['id'])]
     weeks = views.free_programme_fetch_all(views.FREE_PROGRAMME_MODULES_TABLE, order_sql='display_order, week_number, id')
     components = views.free_programme_fetch_all(views.FREE_PROGRAMME_COMPONENTS_TABLE,
         'programme_id = %s', ['FREE-COURSES'], 'display_order, id')
@@ -38,6 +48,8 @@ def adoption_snapshot():
     by_course = defaultdict(list)
     course_by_id = {course['id']: course for course in courses}
     for week in views.active_week_rows(weeks):
+        if week['course_id'] not in course_by_id:
+            continue
         by_course[week['course_id']].append(views.free_programme_module_response(
             week, by_week[week['id']], course_by_id.get(week['course_id'])))
     payloads = [course_payload(course, by_course[course['id']], preserve_live=True) for course in courses]
@@ -97,7 +109,7 @@ def adopt_course(payload):
                 raise ValueError('Legacy course disappeared during adoption.')
         existing = views.authoring_module_exists(module_id)
         if existing:
-            if existing.get('source_type') != 'free_course' or existing.get('source_id') != course_id:
+            if existing.get('source_type') not in {'free_course', 'module_authoring'} or existing.get('source_id') != course_id:
                 raise ValueError('Adoption identity is already owned by a different module.')
             return False  # Never replay old content over an edit in Module Builder.
         live_ids = {component['id'] for week in payload['weekStructure'] for component in week['components']

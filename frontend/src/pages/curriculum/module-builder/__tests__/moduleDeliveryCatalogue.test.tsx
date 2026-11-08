@@ -60,10 +60,10 @@ vi.mock('@/pages/curriculum/shared/entities/moduleForm', () => ({
   ModuleFormDrawer: ({ open, defaults, freeCourse, module }: {
     open: boolean;
     freeCourse?: boolean;
-    module?: { id: string; isFreeCourse?: boolean } | null;
+    module?: { id: string; isFreeCourse?: boolean; price?: string | null } | null;
     defaults?: { programmeId?: string; cohortId?: string; groupId?: string };
   }) => open ? (
-    <div data-testid="module-form-defaults" data-free-course={Boolean(freeCourse || module?.isFreeCourse)} data-editing-id={module?.id}>
+    <div data-testid="module-form-defaults" data-free-course={Boolean(freeCourse || module?.isFreeCourse)} data-editing-id={module?.id} data-price={module?.price}>
       {defaults?.programmeId}|{defaults?.cohortId}|{defaults?.groupId}
     </div>
   ) : null,
@@ -344,6 +344,19 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(card.getByText('Independent')).toBeInTheDocument();
     expect(card.queryByRole('button', { name: 'Open delivery' })).not.toBeInTheDocument();
     expect(card.getByRole('button', { name: 'Duplicate free course' })).toBeInTheDocument();
+    expect(card.getByRole('button', { name: 'Move to module' })).toBeInTheDocument();
+    expect(cardFor('Data Foundations').queryByRole('button', { name: 'Move to module' })).not.toBeInTheDocument();
+  });
+
+  it('shows the GBP sale price on a standalone course and passes it to the editor', async () => {
+    modules.push({ id: 'MOD-PRICED', moduleCatalogueId: 'MOD-PRICED', name: 'Paid independent study',
+      isFreeCourse: true, isForSale: true, price: '49.99', currency: 'GBP',
+      programme: '', programmeId: '', weeks: 2, lessons: 1, assignments: 0 } as CurriculumModule);
+    await renderCatalogue('?catalogue=free', 'Paid independent study');
+    const card = cardFor('Paid independent study');
+    expect(card.getByText('For sale · £49.99')).toBeInTheDocument();
+    await userEvent.click(card.getByRole('button', { name: 'Edit course' }));
+    expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-price', '49.99');
   });
 
   it('filters independent free courses without delivery restrictions and restores the module filters', async () => {

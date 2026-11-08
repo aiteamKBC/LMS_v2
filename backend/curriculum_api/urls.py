@@ -7,6 +7,7 @@ from system_audit import activity as system_activity
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .archive_index import curriculum_archive_index
 from .record_snapshots import curriculum_record_snapshot
+from .free_course_conversion import convert_free_course
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from . import learner_directory
@@ -186,6 +187,7 @@ urlpatterns = [
     # What changed since the copy an open Module Builder holds (read-only POST).
     path('curriculum/modules/<str:module_catalogue_id>/changes/', curriculum_module_changes, name='curriculum-module-changes'),
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),
+    path('curriculum/modules/<str:module_catalogue_id>/convert-free-course/', convert_free_course, name='curriculum-convert-free-course'),
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', teams_staff_required(views.curriculum_module_teams_meeting_restore), name='curriculum-module-teams-meeting-restore'),

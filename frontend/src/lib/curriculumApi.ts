@@ -350,7 +350,14 @@ export interface CurriculumWeeklySession {
   endTime: string;
 }
 
-export interface CurriculumModule {
+export interface CoursePricing {
+  isForSale?: boolean;
+  /** GBP decimal string, preserving pence without floating-point arithmetic. */
+  price?: string | null;
+  currency?: 'GBP';
+}
+
+export interface CurriculumModule extends CoursePricing {
   /** Standalone self-study course, assigned directly to learners. */
   isFreeCourse?: boolean;
   id: string;
@@ -4256,7 +4263,7 @@ export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' 
    */
   requiredOtjh?: number | string | null;
 };
-export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes' | 'coverImage'>> & {
+export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes' | 'coverImage'>> & CoursePricing & {
   programmeId?: string;
   programmeName?: string;
   programme?: string;
@@ -4971,6 +4978,19 @@ export interface StaleTeamsCalendar {
 
 export function updateCurriculumModule(id: string, input: CurriculumModuleInput) {
   return patchJson<{ updated: boolean; module: CurriculumModule; revision?: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
+}
+
+export interface FreeCourseConversionDestination {
+  programmeId: string;
+  cohortId: string;
+  groupId: string;
+}
+
+export function convertFreeCourseToModule(id: string, destination: FreeCourseConversionDestination) {
+  return postJson<FreeCourseConversionDestination & {
+    converted: boolean; moduleCatalogueId: string;
+    programmeName: string; cohortName: string; groupName: string;
+  }>(`/curriculum/modules/${encodeURIComponent(id)}/convert-free-course/`, destination);
 }
 
 /**

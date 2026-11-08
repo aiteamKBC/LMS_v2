@@ -40,6 +40,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
+from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
@@ -14325,6 +14326,7 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     # `moduleBelongsToVisibleProgramme()` gate.
     'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
     'learnerRosterMode', 'teamsSharedSourceModuleId', 'ksbRemapReport', 'isProgrammeDeleted', 'isFreeCourse',
+    'isForSale', 'price', 'currency',
     # Counts the catalogue card and the OTJH input render.
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes',
     'totalOtjh', 'declaredTotalOtjh', 'assignments',
@@ -15590,6 +15592,10 @@ def provision_module_authoring_tables():
     ensure_columns(AUTHORING_ADVANCED_TABLE, {
         AI_MATERIAL_COLUMN: json_type,
     })
+    from .course_pricing_schema import provision as provision_course_pricing
+    provision_course_pricing(connection)
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{AUTHORING_MODULES_TABLE}', None)
+    _TABLE_COLUMNS_CACHE.pop(AUTHORING_MODULES_TABLE, None)
     _AUTHORING_TABLES_READY = True
 
 
@@ -21534,6 +21540,7 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'status': module.get('status') or 'draft',
         'sourceType': module.get('source_type') or '',
         'isFreeCourse': module.get('source_type') == 'free_course',
+        **pricing_payload(module),
         'sourceId': module.get('source_id') or '',
         'isProgrammeDeleted': is_programme_deleted,
         'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
@@ -22001,6 +22008,7 @@ def get_authoring_structure_payloads(
             'status': module.get('status') or 'draft',
             'sourceType': module.get('source_type') or '',
             'isFreeCourse': module.get('source_type') == 'free_course',
+            **pricing_payload(module),
             'sourceId': module.get('source_id') or '',
             'isProgrammeDeleted': is_programme_deleted,
             'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
@@ -22251,6 +22259,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             'status': row.get('status') or 'draft',
             'sourceType': row.get('source_type') or '',
             'isFreeCourse': row.get('source_type') == 'free_course',
+            **pricing_payload(row),
             'sourceId': row.get('source_id') or '',
             'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or ''),
             'tutor': row.get('tutor_name') or '',
@@ -22422,6 +22431,7 @@ def authoring_summary_catalogue_item(summary):
         'authoringStatus': summary['status'],
         'sourceType': summary.get('sourceType') or 'authoring',
         'isFreeCourse': summary.get('isFreeCourse', False),
+        **{key: summary.get(key) for key in COURSE_PRICING_FIELDS},
         'ksbProfileSourceId': summary.get('ksbProfileSourceId') or '',
         'deliveryStatus': summary.get('deliveryStatus') or 'unknown',
         'author': '',
@@ -22645,6 +22655,7 @@ def enrich_modules_with_authoring(modules, include_programme_deleted=False, incl
                     'authoringStatus': saved['status'],
                     'sourceType': module_source_type,
                     'isFreeCourse': saved.get('isFreeCourse', False),
+                    **{key: saved.get(key) for key in COURSE_PRICING_FIELDS},
                     'ksbProfileSourceId': saved.get('ksbProfileSourceId') or module.get('ksbProfileSourceId') or '',
                     'deliveryStatus': module.get('deliveryStatus') or saved.get('deliveryStatus') or 'unknown',
                     'notes': saved['description'],
@@ -23498,6 +23509,10 @@ def save_module_authoring_structure(
     else:
         existing_module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) if module_catalogue_id else []
     existing_module_row = existing_module_rows[0] if existing_module_rows else {}
+    try:
+        course_pricing = pricing_values(payload, existing_module_row)
+    except ValueError as error:
+        raise ModuleAuthoringValidationError([{'path': error.args[0], 'message': error.args[1]}]) from error
     is_free_course = (existing_module_row.get('source_type') == 'free_course'
                       or payload.get('isFreeCourse') is True
                       or payload.get('sourceType', payload.get('source_type')) == 'free_course')
@@ -23688,6 +23703,7 @@ def save_module_authoring_structure(
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
             'module_catalogue_id': module_catalogue_id,
+            **course_pricing,
             'programme_id': programme_id,
             'programme_name': programme_name,
             'is_programme_deleted': is_programme_deleted,
@@ -23732,7 +23748,7 @@ def save_module_authoring_structure(
             'weekly_schedule': json_db_value(weekly_schedule),
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
-        })
+        }, allow_null_columns={'price'})
         # Written only when the share itself changed. The `modules` column above
         # and this table say the same thing; rewriting the table on every save
         # meant every save could delete a share, which is how one went missing.
@@ -26772,6 +26788,7 @@ def curriculum_module_collection(request):
         module_payload = {
             'catalogueId': module_catalogue_id,
             'isFreeCourse': payload.get('isFreeCourse') is True,
+            **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload},
             'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'),
             'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme',
             'programmeStatus': payload.get('programmeStatus') or payload.get('programme_status') or '',
@@ -32615,6 +32632,11 @@ def curriculum_module_detail(request, identifier):
         if payload is None:
             return json_error('Invalid JSON body.')
         rename_only = curriculum_name_only_patch(payload, allow_title=True)
+        try:
+            pricing_values(payload, existing_authoring)
+        except ValueError as error:
+            return json_error(error.args[1], status=400, fields=[error.args[0]],
+                              validationErrors=[{'path': error.args[0], 'message': error.args[1]}])
         if (existing_authoring.get('source_type') == 'free_course'
                 or payload.get('isFreeCourse') is True
                 or payload.get('sourceType', payload.get('source_type')) == 'free_course'):
@@ -32659,6 +32681,7 @@ def curriculum_module_detail(request, identifier):
             resolved_weeks_number = len(resolved_week_structure) or requested_weeks_number
         structure_payload = {
             **current,
+            **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload},
             'catalogueId': module_catalogue_id,
             'programmeId': payload.get('programmeId') or current.get('programmeId'),
             'programmeName': payload.get('programmeName') or payload.get('programme') or current.get('programmeName') or current.get('programme'),

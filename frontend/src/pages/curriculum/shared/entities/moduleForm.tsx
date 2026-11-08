@@ -127,6 +127,7 @@ const MODULE_FIELD_LABELS: Record<string, string> = {
   description: 'description',
   color: 'colour',
   coverImage: 'cover image',
+  pricing: 'course pricing',
 };
 
 const UNASSIGNED = 'unassigned';
@@ -209,6 +210,7 @@ export function ModuleFormDrawer({
   storedStructure?: () => StoredWeekStructure | null;
 }) {
   const isFreeCourse = freeCourse || module?.isFreeCourse === true;
+  const [pricing, setPricing] = useState({ isForSale: false, price: '' });
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
   const [cohortId, setCohortId] = useState('');
@@ -311,7 +313,7 @@ export function ModuleFormDrawer({
   const liveValues = {
     name, programmeId, cohortId, groupIds, sessionsNumber, sessionsPerWeek, weekDays,
     groupStartTime, groupEndTime, weeklyTimes, startDate, targetEndDate, tutor, status,
-    description, color, coverImage, deliveryPattern,
+    description, color, coverImage, deliveryPattern, pricing,
   };
   const dirty = !sameFormValues(liveValues, baseline.current);
   const liveRef = useRef<Record<string, unknown>>(liveValues);
@@ -462,6 +464,7 @@ export function ModuleFormDrawer({
       description: visibleNotes(record?.notes),
       color: record?.color || parentGroup?.color || '#2563eb',
       coverImage: cleanText(record?.coverImage),
+      pricing: { isForSale: record?.isForSale === true, price: record?.price ?? '' },
     };
     if (isFreeCourse) {
       initial.programmeId = '';
@@ -528,6 +531,7 @@ export function ModuleFormDrawer({
     setDescription(coEdit.take(verdict, 'description', initial.description));
     setColor(coEdit.take(verdict, 'color', initial.color));
     setCoverImage(coEdit.take(verdict, 'coverImage', initial.coverImage));
+    setPricing(coEdit.take(verdict, 'pricing', initial.pricing));
     coEdit.publish();
   }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, guard.stored, isFreeCourse, module, open, selectableProgrammes]);
 
@@ -1049,6 +1053,18 @@ export function ModuleFormDrawer({
     const renameOnly = Boolean(module && isNameOnlyEdit(liveValues, baseline.current));
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
+    if (isFreeCourse && pricing.isForSale && (
+      !/^[0-9]+(?:\.[0-9]{1,2})?$/.test(pricing.price.trim())
+      || Number(pricing.price) <= 0 || Number(pricing.price) > 99999999.99
+    )) {
+      setError('Enter a GBP price between £0.01 and £99,999,999.99, with at most two decimal places.');
+      return;
+    }
+    const coursePricing = isFreeCourse ? {
+      isForSale: pricing.isForSale,
+      price: pricing.isForSale ? pricing.price.trim() : null,
+      currency: 'GBP' as const,
+    } : {};
     if (!renameOnly && !lockGroup && !placementOptional) {
       if (!programmeId) { setError('Choose the programme this module belongs to.'); return; }
       if (!cohortId) { setError('Choose the cohort this module runs for.'); return; }
@@ -1222,6 +1238,7 @@ export function ModuleFormDrawer({
           ? primaryPattern.days.split(', ').map(day => ({ day, startTime: primaryPattern.startTime, endTime: primaryPattern.endTime }))
           : [];
         const patchPayload = renameOnly ? { name: trimmed } : {
+          ...coursePricing,
           name: trimmed,
           notes: description,
           status,
@@ -1394,6 +1411,7 @@ export function ModuleFormDrawer({
       // group from this same drawer later.
       const created = await createNewModule({
         ...(isFreeCourse ? { isFreeCourse: true, learnerRosterMode: 'manual' as const } : {}),
+        ...coursePricing,
         title: trimmed,
         description,
         programme: programme?.name || programmeId || 'Unassigned programme',
@@ -1575,6 +1593,19 @@ export function ModuleFormDrawer({
       <FormField label={isFreeCourse ? 'Course name' : 'Module name'} required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Modelling" />
       </FormField>
+      {isFreeCourse && <fieldset className="space-y-3 rounded-xl border border-primary-100 bg-primary-50/40 p-4">
+        <legend className="px-1 text-sm font-semibold text-foreground-900">Course pricing</legend>
+        <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-foreground-900">
+          <input type="checkbox" checked={pricing.isForSale}
+            onChange={event => setPricing(value => ({ ...value, isForSale: event.target.checked }))}
+            className="h-4 w-4 rounded border-primary-300 accent-primary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500" />
+          Available for sale
+        </label>
+        {pricing.isForSale ? <FormField label="Price (GBP)" required hint="Enter the course price in pounds sterling (£).">
+          <TextControl value={pricing.price} inputMode="decimal" placeholder="e.g. 49.99"
+            onChange={price => setPricing(value => ({ ...value, price }))} />
+        </FormField> : <p className="text-xs text-foreground-600">This course has no sale price.</p>}
+      </fieldset>}
       {/* Weeks describe the authored module structure. The selected Group owns
           the delivery days and clock; this form owns the module date window. */}
       <FormField

@@ -33,6 +33,7 @@ import {
   fetchCurriculumHolidays,
   fetchCurriculumKsbSets,
   fetchCurriculumDeliveryScope,
+  fetchCurriculumModules,
   fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
@@ -71,6 +72,7 @@ import { PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } fro
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
 import { LearnerPreview } from './LearnerPreview';
+import { FreeCourseMoveDrawer } from './FreeCourseMoveDrawer';
 import { AiMaterialModal } from './AiMaterialModal';
 import { ModuleLearnerProgressDialog } from './ModuleLearnerProgressDialog';
 import { LearnerAssignmentDrawer } from '../shared/entities/LearnerAssignmentDrawer';
@@ -743,6 +745,7 @@ function ModuleBuilderContent() {
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
   const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
   const [createFreeCourse, setCreateFreeCourse] = useState(false);
+  const [movingFreeCourse, setMovingFreeCourse] = useState<ModuleCatalogueItem | null>(null);
   // Programme -> cohort -> group tree plus the holiday list: read only by the
   // module form, so it is fetched the first time that drawer opens rather than
   // on every Module Builder load.
@@ -4133,19 +4136,77 @@ function ModuleBuilderContent() {
         )}
 
         <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
-                <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
-                <span className={`text-[10px] font-semibold ${catalogueMode === 'active' ? 'text-emerald-700' : 'text-foreground-500'}`}>{freeCoursesOnly ? 'Free courses' : allModules ? 'All modules' : 'Active modules'}</span>
+          <div className="space-y-3 border-b border-background-200 px-4 py-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
+                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
+                  <span className={`text-[10px] font-semibold ${catalogueMode === 'active' ? 'text-emerald-700' : 'text-foreground-500'}`}>{freeCoursesOnly ? 'Free courses' : allModules ? 'All modules' : 'Active modules'}</span>
+                </div>
+                <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
               </div>
-              <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
+              <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:flex-nowrap xl:shrink-0">
+                <div role="group" aria-label="Catalogue view" className="grid w-full min-w-0 grid-cols-3 gap-1 rounded-xl border border-background-200 bg-background-100 p-1 sm:flex sm:w-auto">
+                  <button
+                    type="button"
+                    aria-pressed={catalogueMode === 'active'}
+                    onClick={() => changeFilter(() => setCatalogueMode('active'))}
+                    className={`inline-flex h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg border px-2 text-[11px] font-bold leading-tight transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 sm:h-9 sm:flex-row sm:gap-1.5 sm:whitespace-nowrap sm:px-3 sm:text-[12px] ${catalogueMode === 'active' ? 'border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm' : 'border-transparent text-foreground-600 hover:bg-background-50'}`}
+                  >
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <AppIcon className="ri-checkbox-circle-line hidden text-sm sm:inline-block" />
+                      Active
+                    </span>
+                    <span className="shrink-0 rounded-md bg-background-50/70 px-1.5 py-0.5 text-[10px] tabular-nums" aria-hidden="true">{catalogueActivity.data ? activeModules.length : '—'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={allModules}
+                    onClick={() => changeFilter(() => setCatalogueMode('all'))}
+                    className={`inline-flex h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg border px-2 text-[11px] font-bold leading-tight transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 sm:h-9 sm:flex-row sm:gap-1.5 sm:whitespace-nowrap sm:px-3 sm:text-[12px] ${allModules ? 'border-primary-200 bg-primary-50 text-primary-700 shadow-sm' : 'border-transparent text-foreground-600 hover:bg-background-50'}`}
+                  >
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <AppIcon className="ri-stack-line hidden text-sm sm:inline-block" />
+                      All modules
+                    </span>
+                    <span className="shrink-0 rounded-md bg-background-50/70 px-1.5 py-0.5 text-[10px] tabular-nums" aria-hidden="true">{loading && !modules.length ? '—' : matchingModules.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={freeCoursesOnly}
+                    onClick={() => changeFilter(() => setCatalogueMode('free'))}
+                    className={`inline-flex h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg border px-2 text-[11px] font-bold leading-tight transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 sm:h-9 sm:flex-row sm:gap-1.5 sm:whitespace-nowrap sm:px-3 sm:text-[12px] ${freeCoursesOnly ? 'border-primary-200 bg-primary-50 text-primary-700 shadow-sm' : 'border-transparent text-foreground-600 hover:bg-background-50'}`}
+                  >
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <AppIcon className="ri-book-open-line hidden text-sm sm:inline-block" />
+                      Free courses
+                    </span>
+                    <span className="shrink-0 rounded-md bg-background-50/70 px-1.5 py-0.5 text-[10px] tabular-nums" aria-hidden="true">{loading && !modules.length ? '—' : freeCourses.length}</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  disabled={catalogueMode === 'active' && !search && programmeFilter === 'All' && !deliveryFiltersActive}
+                  onClick={() => changeFilter(() => {
+                    setCatalogueMode('active');
+                    setSearch('');
+                    setProgrammeFilter('All');
+                    setCohortFilter('');
+                    setGroupFilter('');
+                    setTutorFilter('');
+                  })}
+                  className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 disabled:opacity-40 disabled:hover:bg-background-50"
+                >
+                  <AppIcon className="ri-refresh-line text-sm"></AppIcon>
+                  Reset
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative min-w-0 grow sm:w-72 sm:grow-0">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-12">
+              <div className="relative min-w-0 sm:col-span-2 xl:col-span-4">
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                <input type="text" value={search} onChange={event => { const value = event.target.value; changeFilter(() => setSearch(value)); }} placeholder="Search modules, tutors, cohorts..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
+                <input type="text" aria-label="Search modules" value={search} onChange={event => { const value = event.target.value; changeFilter(() => setSearch(value)); }} placeholder="Search modules, tutors, cohorts..." className="h-11 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
               </div>
               {!freeCoursesOnly && <>
               <SelectMenu
@@ -4159,7 +4220,7 @@ function ModuleBuilderContent() {
                 })}
                 options={programmeOptions.map(option => ({ value: option, label: option === 'All' ? 'All programmes' : option }))}
                 size="sm"
-                className="min-w-64"
+                className="min-w-0 w-full xl:col-span-2"
               />
               {/* Empty here now means the records genuinely do not exist, not
                   that no module reaches them, so the labels can say so plainly. */}
@@ -4174,7 +4235,7 @@ function ModuleBuilderContent() {
                   : programmeFilter === 'All' ? 'Choose programme first' : 'No cohorts in this programme'}
                 clearable
                 size="sm"
-                className="min-w-64"
+                className="min-w-0 w-full xl:col-span-2"
               />
               <SelectMenu
                 ariaLabel="Group"
@@ -4187,7 +4248,7 @@ function ModuleBuilderContent() {
                   : !cohortFilter ? 'Choose cohort first' : 'No groups in this cohort'}
                 clearable
                 size="sm"
-                className="min-w-64"
+                className="min-w-0 w-full xl:col-span-2"
               />
               <SelectMenu
                 ariaLabel="Tutor"
@@ -4197,55 +4258,9 @@ function ModuleBuilderContent() {
                 placeholder="All tutors"
                 clearable
                 size="sm"
-                className="min-w-64"
+                className="min-w-0 w-full xl:col-span-2"
               />
               </>}
-              <button
-                type="button"
-                aria-pressed={catalogueMode === 'active'}
-                onClick={() => changeFilter(() => setCatalogueMode('active'))}
-                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${catalogueMode === 'active' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
-              >
-                <AppIcon className="ri-checkbox-circle-line text-sm" />
-                Active
-                <span className="text-[10px]" aria-hidden="true">{catalogueActivity.data ? activeModules.length : '—'}</span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={allModules}
-                onClick={() => changeFilter(() => setCatalogueMode('all'))}
-                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${allModules ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
-              >
-                <AppIcon className="ri-stack-line text-sm" />
-                All modules
-                <span className="text-[10px]" aria-hidden="true">{loading && !modules.length ? '—' : matchingModules.length}</span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={freeCoursesOnly}
-                onClick={() => changeFilter(() => setCatalogueMode('free'))}
-                className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${freeCoursesOnly ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
-              >
-                <AppIcon className="ri-book-open-line text-sm" />
-                Free courses
-                <span className="text-[10px]" aria-hidden="true">{loading && !modules.length ? '—' : freeCourses.length}</span>
-              </button>
-              <button
-                type="button"
-                disabled={catalogueMode === 'active' && !search && programmeFilter === 'All' && !deliveryFiltersActive}
-                onClick={() => changeFilter(() => {
-                  setCatalogueMode('active');
-                  setSearch('');
-                  setProgrammeFilter('All');
-                  setCohortFilter('');
-                  setGroupFilter('');
-                  setTutorFilter('');
-                })}
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-background-50"
-              >
-                <AppIcon className="ri-refresh-line text-sm"></AppIcon>
-                Reset
-              </button>
             </div>
           </div>
           {catalogueActivity.error && !freeCoursesOnly && <div role="status" className="flex flex-wrap items-center gap-2 px-4 py-2 text-[12px] text-amber-800">
@@ -4279,6 +4294,7 @@ function ModuleBuilderContent() {
                     onBuild={() => openModule(module, false, 'push')}
                     onSettings={() => openPlacementForm(module)}
                     onDuplicate={() => void confirmDuplicateModule(module)}
+                    onMove={() => setMovingFreeCourse(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
                 ))}
@@ -4330,6 +4346,31 @@ function ModuleBuilderContent() {
             )}
           </div>
         </div>
+        {movingFreeCourse && <FreeCourseMoveDrawer
+          key={movingFreeCourse.catalogueId}
+          module={movingFreeCourse}
+          programmes={curriculumProgrammes}
+          onClose={() => setMovingFreeCourse(null)}
+          onMoved={async result => {
+            // The hook reports load failures through state, so first verify a
+            // fresh read here. The drawer can then retry a failed refresh
+            // without repeating a conversion that already committed.
+            await fetchCurriculumModules(undefined, { compact: true, revalidate: true });
+            await reload({ silent: true, revalidate: false });
+            announceModuleWrite(result.moduleCatalogueId);
+            refreshAssignedLearners?.({ scope: 'module', id: result.moduleCatalogueId, name: movingFreeCourse.title });
+            changeFilter(() => {
+              setCatalogueMode('all');
+              setProgrammeFilter(result.programmeName);
+              setCohortFilter(result.cohortId);
+              setGroupFilter(result.groupId);
+              setTutorFilter('');
+              setSearch('');
+            });
+            setMovingFreeCourse(null);
+            setNoticeAlert({ title: 'Course moved', message: `${movingFreeCourse.title} is now a module in ${result.programmeName} / ${result.cohortName} / ${result.groupName}. Its content, hours and learner history have been preserved.` });
+          }}
+        />}
         <ModuleFormDrawer
           open={createOpen}
           freeCourse={createFreeCourse}
@@ -8513,6 +8554,7 @@ function ModuleCatalogueCard({
   onBuild,
   onSettings,
   onDuplicate,
+  onMove,
   onDelete,
 }: {
   module: ModuleBuilderListItem;
@@ -8525,6 +8567,7 @@ function ModuleCatalogueCard({
   onBuild: () => void;
   onSettings: () => void;
   onDuplicate: () => void;
+  onMove: () => void;
   onDelete: () => void;
 }) {
   // weekStructure is only populated once a module is opened/built. For modules
@@ -8554,6 +8597,9 @@ function ModuleCatalogueCard({
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
                 {module.isFreeCourse && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 ring-1 ring-emerald-200">Free course</span>}
+                {module.isForSale && module.price && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900 ring-1 ring-amber-200">
+                  For sale · {new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(module.price))}
+                </span>}
                 <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${source === 'old_lms' ? 'bg-blue-50 text-blue-800 ring-blue-200' : source === 'new_lms' ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white ring-violet-400/30 shadow-sm shadow-violet-600/20' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
                   {source !== 'unknown' && <AppIcon className={`${source === 'new_lms' ? 'ri-stack-line' : 'ri-archive-line'} text-[10px]`} />}
                   {source === 'old_lms' ? 'Old LMS' : source === 'new_lms' ? 'New LMS' : 'Source not set'}
@@ -8613,6 +8659,7 @@ function ModuleCatalogueCard({
           <span className="mx-0.5 hidden h-6 w-px shrink-0 bg-background-200 xl:block" aria-hidden="true"></span>
           <ModuleCardActionButton label={module.isFreeCourse ? 'Edit course' : 'Edit module'} icon="ri-edit-line" onClick={onSettings} />
           <ModuleCardActionButton label={module.isFreeCourse ? 'Duplicate free course' : 'Duplicate module'} icon="ri-file-copy-line" onClick={onDuplicate} />
+          {module.isFreeCourse && <ModuleCardActionButton label="Move to module" icon="ri-arrow-right-line" onClick={onMove} />}
           <ModuleCardActionButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
         </div>
       </div>
@@ -9705,6 +9752,9 @@ function moduleOptionKey(module: ModuleCatalogueItem) {
 function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: ModuleDeliveryUsage | null): ModuleFormTarget {
   return {
     isFreeCourse: module.isFreeCourse,
+    isForSale: module.isForSale,
+    price: module.price,
+    currency: module.currency,
     id: moduleStructureIdentifier(module) || module.catalogueId,
     name: module.title,
     programmeId: usage?.programmeId || module.programmeId,

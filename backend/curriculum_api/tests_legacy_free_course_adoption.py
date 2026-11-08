@@ -19,6 +19,11 @@ class LegacyFreeCourseAdoptionTests(CurriculumPersistenceTransactionHarness):
     def setUp(self):
         super().setUp()
         views.ensure_free_programme_tables()
+        # The storage bridge retains source rows when runtime fixtures are
+        # removed. Give each test its own synthetic legacy catalogue as well.
+        with connection.cursor() as cursor:
+            for table in (views.FREE_PROGRAMME_COMPONENTS_TABLE, views.FREE_PROGRAMME_MODULES_TABLE, views.FREE_COURSES_TABLE):
+                cursor.execute(f'DELETE FROM {views.authoring_table_name(table)}')
         for model in (models.LearnerTrainingPlanModule, models.LearnerTrainingPlanWeek,
                       models.LearnerTrainingPlanComponent, models.LearnerFreeCourse, models.LearnerFreeCourseProgress):
             with connection.cursor() as cursor:
