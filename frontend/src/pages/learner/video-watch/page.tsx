@@ -6,7 +6,7 @@ import { activityTimeSeconds, applyActivityTime, countedActivityTime, activityTi
 import { ManualTimeSummary } from '@/components/feature/ManualTimeConfirmation';
 import { startActivityClock } from '@/lib/activityClock';
 import { fetchAttachmentResource, fetchPdfResource } from '@/api/pdfResource';
-import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
+import { observeRewardInterval, flushRewardObservations, clearRewardObservations, REWARDS_UNAVAILABLE_NOTICE } from '@/lib/rewardTracking';
 import { SessionResults } from '@/components/feature/SessionResults';
 import { narrationFromHtml, narrationFromPdf, ReadingNarrationError, ReadingPdfNarrationContext, useReadingNarration, type PdfPageReader } from './readingNarration';
 import { parsePersonalLearning } from '@/lib/personalLearning';
@@ -202,6 +202,7 @@ export default function ComponentViewPage() {
   const [timeDecision, setTimeDecision] = useState<{ choice: ActivityTimeChoice; reason: string; previousSeconds: number } | null>(null);
   const [timeLimitIssue, setTimeLimitIssue] = useState('');
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [rewardNotice, setRewardNotice] = useState('');
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const [evidenceFiles, setEvidenceFiles] = useState<EvidenceRecord[]>([]);
@@ -228,6 +229,7 @@ export default function ComponentViewPage() {
     setRepeating(false);
     setRetakeOpen(false); setTimeDecision(null); setTimeLimitIssue('');
     setRefreshError(null);
+    setRewardNotice('');
     setSubmitError(null);
     setPlayerPlaying(false);
     setUnsupported(false);
@@ -687,7 +689,10 @@ export default function ComponentViewPage() {
         trackingSessionRef.current = tracking;
         saveActivityTimerSession(timerStorageKey, tracking);
       }
-      if (tracking.rewardTracking && finalTimeSource === 'timer') await flushRewardObservations(tracking,isVideo?'video':'component',componentId, Boolean(tracking.persistent));
+      let rewardsUnavailable = tracking.rewardTracking === false;
+      if (tracking.rewardTracking && finalTimeSource === 'timer') {
+        rewardsUnavailable = await flushRewardObservations(tracking,isVideo?'video':'component',componentId, Boolean(tracking.persistent)) === 'not_enabled';
+      }
       if (isVideo) {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
@@ -715,6 +720,8 @@ export default function ComponentViewPage() {
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.countedSeconds != null ? formatClock(res.record.countedSeconds) : res.record.timeTaken });
       }
+      setRewardNotice(rewardsUnavailable && ['video', 'audio', 'reading', 'slides'].includes(contentKind)
+        ? REWARDS_UNAVAILABLE_NOTICE : '');
       clearRewardObservations(tracking);
       clearActivityTimer(timerStorageKey);
       setWallElapsed(0);
@@ -1058,6 +1065,7 @@ export default function ComponentViewPage() {
                   </p>
                   <p className="mt-1 text-xs text-emerald-800">Your completion for {weekLabel} is saved.</p>
                   {refreshError && <p role="alert" className="mt-2 text-xs text-amber-900">{refreshError}</p>}
+                  {rewardNotice && <p role="status" className="mt-2 text-xs text-amber-900">{rewardNotice}</p>}
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     {nextActivity && <button type="button" onClick={() => navigate(nextActivity.href)} className="rounded-lg bg-emerald-700 px-3 py-2 text-left text-xs font-semibold text-white hover:bg-emerald-800">
                       Next activity: {nextActivity.label}

@@ -152,6 +152,48 @@ def business_day(instant):
     return timezone.localdate(instant, timezone.get_default_timezone())
 
 
+def component_settings(value):
+    if isinstance(value, dict):
+        return value
+    try:
+        decoded = json.loads(value or '')
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def lecture_title(occurrence, components, module_ids):
+    """Use the unique authored Title linked to this occurrence, never list position."""
+    matches = {}
+    for component in components:
+        settings = component_settings(component.get('settings_json'))
+        settings = {**component_settings(settings.get('legacySettings')), **settings}
+        if clean(settings.get('teamsCalendarBinding')) in {'unverified', 'missing'}:
+            continue
+        extra = clean(settings.get('extraTeamsLiveSessionId'))
+        occurrence_id = clean(settings.get('teamsOccurrenceId'))
+        series_id = clean(settings.get('teamsLiveSessionId'))
+        if extra:
+            # An additional meeting owns its single occurrence, not the inherited series.
+            linked = extra == clean(occurrence['live_session_id']) and occurrence['session_number'] == 1
+        elif occurrence_id:
+            linked = occurrence_id == clean(occurrence['id']) and (
+                not series_id or series_id == clean(occurrence['live_session_id']))
+        else:
+            linked = (series_id == clean(occurrence['live_session_id'])
+                      and clean(settings.get('teamsSessionNumber')) == clean(occurrence['session_number']))
+        if linked:
+            matches.setdefault(component['module_catalogue_id'], {})[component['id']] = clean(component.get('title'))
+    # Prefer the selected delivery's authoring, then its directed shared source.
+    # Ambiguous or absent labels retain the occurrence without inventing a title.
+    for module_id in module_ids:
+        titles = matches.get(module_id, {})
+        if titles:
+            title = next(iter(titles.values())) if len(titles) == 1 else ''
+            return title or f"Session {occurrence['session_number']}"
+    return f"Session {occurrence['session_number']}"
+
+
 def lecture_options(module_id, catalog, eligible, *, now=None):
     if module_id not in eligible:
         raise AttendanceError('Choose a module in your programme.', 'invalid_module')
@@ -159,7 +201,9 @@ def lecture_options(module_id, catalog, eligible, *, now=None):
     now = now or timezone.now()
     today = business_day(now)
     result = {}
-    for row in store.occurrences(shared_sources(module_id, catalog)):
+    sources = shared_sources(module_id, catalog)
+    components = store.lecture_components(sources)
+    for row in store.occurrences(sources):
         if any(clean(row[key]).lower() in INVALID for key in ('status', 'series_status')):
             continue
         start, end = aware(row['scheduled_start']), aware(row['scheduled_end'])
@@ -169,17 +213,17 @@ def lecture_options(module_id, catalog, eligible, *, now=None):
         current = bool(not completed and end and start <= now < end)  # Suggestion only.
         result[row['id']] = {
             'id': row['id'], 'moduleId': module_id,
-            'title': f"{module['title']} — Session {row['session_number']}",
+            'title': lecture_title(row, components, sources),
             'startsAt': start.isoformat(), 'endsAt': end.isoformat() if end else None,
             'group': module.get('group_name') or '', 'cohort': module.get('cohort_name') or '',
             'current': current,
-            'dueToday': clean(row['status']).lower() == 'scheduled' and business_day(start) == today,
-            '_rank': (0 if current else 1 if business_day(start) == today else 2,
-                      abs((start - now).total_seconds()), start, row['id']),
+            # The whole scheduled business day is open, including completed lectures.
+            'dueToday': business_day(start) == today,
+            '_order': (start, row['id']),
         }
-    ordered = sorted(result.values(), key=lambda row: row['_rank'])
+    ordered = sorted(result.values(), key=lambda row: row['_order'])
     for row in ordered:
-        row.pop('_rank')
+        row.pop('_order')
     return ordered
 
 
@@ -202,6 +246,8 @@ def best_lectures(options, eligible, placement):
     """Return every equally best match; sorting is never a tie breaker."""
     ranked = []
     for row in options:
+        if not row['dueToday']:
+            continue
         normal = normal_placement(eligible[row['moduleId']], placement)
         rank = (0 if normal else 1) if row['current'] else 2 if row['dueToday'] and normal else None
         if rank is not None:
@@ -312,7 +358,8 @@ def response(body, status=200):
 def attendance(request):
     try:
         if request.method == 'GET':
-            return response({'csrfToken': get_token(request), 'url': public_url(), 'timeZone': settings.TIME_ZONE})
+            return response({'csrfToken': get_token(request), 'url': public_url(),
+                             'timeZone': settings.TIME_ZONE, 'serverNow': timezone.now().isoformat()})
         if request.method != 'POST':
             return response({'error': 'Method not allowed.', 'code': 'method_not_allowed'}, 405)
         throttle(request)

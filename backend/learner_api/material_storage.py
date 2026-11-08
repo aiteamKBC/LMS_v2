@@ -7,6 +7,8 @@ import urllib.request
 
 from azure.storage.blob import generate_blob_sas, BlobSasPermissions
 
+from config import blob_storage
+
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, file, code, message, headers, target):
@@ -38,10 +40,12 @@ def read_url(row, settings):
         key = settings.AZURE_STORAGE_KEY
     else:
         raise ValueError('Unknown material storage account')
-    if not account or not key:
+    if not blob_storage.storage_configured(account, key):
         raise ValueError('Material storage is not configured')
     container, blob = row['material_blob_container'], row['material_blob_name']
     minutes = min(60, max(1, settings.AZURE_MATERIALS_SAS_TTL_MINUTES))
+    if blob_storage.s3_enabled():
+        return blob_storage.presigned_read_url(account, container, blob, ttl_minutes=minutes)
     token = generate_blob_sas(account_name=account, account_key=key,
         container_name=container, blob_name=blob, permission=BlobSasPermissions(read=True),
         expiry=datetime.now(timezone.utc) + timedelta(minutes=minutes))

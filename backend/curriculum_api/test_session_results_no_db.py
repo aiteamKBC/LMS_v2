@@ -359,6 +359,8 @@ class StorageUrlTests(unittest.TestCase):
         ns = {'datetime': datetime, 'timezone': timezone, 'timedelta': timedelta,
             'settings': types.SimpleNamespace(AZURE_STORAGE_ACCOUNT='synthetic', AZURE_STORAGE_KEY='test-only', AZURE_SAS_TTL_MINUTES=15),
             'generate_blob_sas': sign, 'BlobSasPermissions': lambda **values: values,
+            # Azure mode; the S3 branch is covered by learner_api.test_s3_storage_no_db.
+            'blob_storage': types.SimpleNamespace(s3_enabled=lambda: False),
             'blob_url': lambda container, name: f'https://storage.invalid/{container}/{name}'}
         functions(ROOT.parent / 'learner_api/evidence_storage.py', {'get_read_sas'}, ns)
         before = datetime.now(timezone.utc)

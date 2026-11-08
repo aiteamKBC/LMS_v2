@@ -12,7 +12,7 @@ it('opens through the real app router without a session or an activity audit wri
     const path = new URL(String(input), window.location.origin).pathname;
     requested.push(path);
     const body = path === '/curriculum_api/qr-attendance/'
-      ? { csrfToken: 'csrf', url: 'https://college.example.test/qr-attendance', timeZone: 'Europe/London' }
+      ? { csrfToken: 'csrf', url: 'https://college.example.test/qr-attendance', timeZone: 'Europe/London', serverNow: '2026-11-07T11:00:00Z' }
       : { error: 'Authentication required.' };
     return new Response(JSON.stringify(body), { status: path === '/login_api/me/' ? 401 : 200, headers: { 'Content-Type': 'application/json' } });
   }));

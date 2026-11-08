@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.cache import cache
+from django.core.cache.backends.locmem import LocMemCache
 from django.http import JsonResponse
 from django.test import RequestFactory, SimpleTestCase
 
@@ -221,11 +222,34 @@ class ModuleCatalogueReadTests(SimpleTestCase):
              patch.object(views, 'build_curriculum_payload', side_effect=AssertionError('no overview')):
             response = views.curriculum_modules(RequestFactory().get('/modules/?compact=true&visibility=all', HTTP_CACHE_CONTROL='no-cache'))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(cached.call_args.args[0], 'modules:all:list-v2')
+        self.assertEqual(cached.call_args.args[0], 'modules:all:list-v3')
         self.assertTrue(cached.call_args.kwargs['force'])
         rows.assert_called_once_with(compact=True, force=True)
         source.assert_called_once_with({}, 'all', compact=True, module_list=True)
         enrich.assert_called_once_with([], include_programme_deleted=True, list_only=True)
+
+    def test_compact_list_rebuilds_cache_from_before_free_course_fields(self):
+        stale = [{'id': 'MOD-FREE', 'catalogueId': 'MOD-FREE', 'name': 'Independent course'}]
+        current = [{**stale[0], 'isFreeCourse': True, 'isForSale': True, 'price': '25.00', 'currency': 'GBP'}]
+        isolated_cache = LocMemCache('catalogue-free-course-contract', {})
+        epoch = 731
+        old_key = views.shared_curriculum_cache_key('modules:operational:list-v2', epoch)
+        isolated_cache.set(old_key, stale)
+        with patch.object(views, 'cache', isolated_cache), \
+             patch.dict(views._CURRICULUM_CACHE, {}, clear=True), \
+             patch.object(views, 'shared_curriculum_epoch', return_value=epoch), \
+             patch.object(views, 'get_cached_curriculum_rows', return_value={}), \
+             patch.object(views, 'build_curriculum_payload_from_rows', return_value={'modules': stale}), \
+             patch.object(views, 'enrich_modules_with_authoring', return_value=current) as enrich:
+            first = views.curriculum_modules(RequestFactory().get('/modules/?compact=true'))
+            repeated = views.curriculum_modules(RequestFactory().get('/modules/?compact=true'))
+        self.assertEqual(first.status_code, 200)
+        row = json.loads(first.content)['results'][0]
+        self.assertIs(row.get('isFreeCourse'), True)
+        self.assertEqual((row['isForSale'], row['price'], row['currency']), (True, '25.00', 'GBP'))
+        self.assertEqual(repeated.content, first.content)
+        enrich.assert_called_once()
+        isolated_cache.clear()
 
     def test_delivery_scope_never_builds_modules_or_ksb_library(self):
         with patch.object(views, 'cached_curriculum_value', side_effect=lambda key, factory, **kw: factory()), \

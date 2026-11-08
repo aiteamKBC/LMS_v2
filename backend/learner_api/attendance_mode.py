@@ -105,6 +105,8 @@ def attendance_mode(request, kind, learner_id):
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     if request.method == 'GET':
         return JsonResponse(read_mode(source, kind))
+    if getattr(getattr(request, 'login_account', None), 'role', None) == 'learner':
+        return JsonResponse({'error': 'Your attendance mode is managed by your learning team. Please contact support.'}, status=403)
     if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
         return JsonResponse({'error': 'Missing X-Requested-With header.'}, status=403)
     try:
@@ -115,7 +117,7 @@ def attendance_mode(request, kind, learner_id):
     if mode not in {'live', 'lazy'}:
         return JsonResponse({'error': 'Choose Live Sessions or Lazy Mode.'}, status=400)
     # Administrators (User Management bulk actions) set the mode outright: no
-    # manager approval, no email. A learner's own request still needs approval.
+    # manager approval, no email. Other permitted requests still need approval.
     direct = isinstance(body, dict) and body.get('direct') is True
     if direct and getattr(getattr(request, 'login_account', None), 'role', None) != 'admin':
         return JsonResponse({'error': 'Only an administrator can set the attendance mode directly.'}, status=403)

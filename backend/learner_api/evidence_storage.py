@@ -17,9 +17,13 @@ from urllib.parse import quote, unquote, urlparse
 
 from django.conf import settings
 from azure.storage.blob import (
-    BlobServiceClient, ContentSettings,
+    ContentSettings,
     generate_blob_sas, BlobSasPermissions,
 )
+
+from config import blob_storage
+# Azure SDK or S3, chosen by settings.STORAGE_BACKEND (see config/blob_storage.py).
+from config.blob_storage import BlobServiceClient
 
 
 AZURE_UPLOAD_CONNECTION_TIMEOUT_SECONDS = 60
@@ -28,8 +32,9 @@ AZURE_UPLOAD_READ_TIMEOUT_SECONDS = 60
 
 def azure_configured() -> bool:
     """True when both the account and key are present, so views can 503 cleanly
-    instead of throwing an opaque SDK error when storage isn't set up."""
-    return bool(settings.AZURE_STORAGE_ACCOUNT and settings.AZURE_STORAGE_KEY)
+    instead of throwing an opaque SDK error when storage isn't set up.
+    In S3 mode the bucket replaces the key (credentials come from the role)."""
+    return blob_storage.storage_configured(settings.AZURE_STORAGE_ACCOUNT, settings.AZURE_STORAGE_KEY)
 
 
 def _service_client(upload_block_bytes=None, retry_total=None, download_chunk_bytes=None) -> BlobServiceClient:
@@ -176,6 +181,12 @@ def delete_blob(container, blob_name):
 
 def get_read_sas(container, blob_name, *, content_disposition=None, content_type=None, ttl_minutes=None) -> str:
     """Build a short-lived read-only URL for an explicitly authorised blob."""
+    if blob_storage.s3_enabled():
+        return blob_storage.presigned_read_url(
+            settings.AZURE_STORAGE_ACCOUNT, container, blob_name,
+            ttl_minutes=settings.AZURE_SAS_TTL_MINUTES if ttl_minutes is None else min(720, max(1, int(ttl_minutes))),
+            content_disposition=content_disposition, content_type=content_type,
+        )
     token = generate_blob_sas(
         account_name=settings.AZURE_STORAGE_ACCOUNT,
         container_name=container,
