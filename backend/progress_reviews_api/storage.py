@@ -31,7 +31,7 @@ def _ensure_container():
     if _CONTAINER_READY:
         return
     from azure.core.exceptions import ResourceExistsError
-    from azure.storage.blob import BlobServiceClient
+    from config.blob_storage import BlobServiceClient
 
     client = BlobServiceClient(
         account_url=f"https://{settings.AZURE_STORAGE_ACCOUNT}.blob.core.windows.net",
