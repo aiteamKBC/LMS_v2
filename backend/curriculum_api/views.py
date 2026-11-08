@@ -5412,7 +5412,26 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     if not endpoint:
         return json_error('Unsupported meeting artifact.', status=400)
 
+    occurrence = next(
+        (row for row in occurrences if clean_str(row.get('id')) == clean_str(artifact.get('occurrence_id'))),
+        {},
+    )
     if artifact_type == 'recording':
+        from .session_bunny_policy import bunny_recording, recording_uses_bunny
+        if bunny_recording(artifact.get('metadata')) or recording_uses_bunny(occurrence, artifact):
+            from .bunny_stream import VideoImportError
+            from .session_bunny import recording_player
+            if bunny_recording(artifact.get('metadata')).get('state') != 'ready':
+                return json_error('This Bunny recording is still being prepared. Please try again later.', status=409)
+            try:
+                # Legacy callers expect an MP4, including native video previews.
+                # Serve Bunny's protected rendition without reverting to Microsoft/Azure.
+                url = recording_player(artifact, download=True, referrer=request.build_absolute_uri('/'))
+            except VideoImportError as failure:
+                return json_error(str(failure), status=503)
+            response = HttpResponseRedirect(url)
+            response['Cache-Control'] = 'private, no-store'
+            return response
         # Prefer the archived copy. Graph is an availability risk and deletes
         # recordings on its own retention schedule; once a recording is in the
         # container that is the copy worth serving, and redirecting hands the
@@ -5429,10 +5448,6 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     # A recreated session's transcript and recording live under its own meeting,
     # so the identifiers come from the occurrence the artifact belongs to and fall
     # back to the series only for the sessions that share the series' meeting.
-    occurrence = next(
-        (row for row in occurrences if clean_str(row.get('id')) == clean_str(artifact.get('occurrence_id'))),
-        {},
-    )
     occurrence_meeting_id = clean_str(occurrence.get('online_meeting_id'))
     organizer = clean_str(series.get('organizer_email'))
     meeting_id = occurrence_meeting_id or clean_str(series.get('online_meeting_id'))

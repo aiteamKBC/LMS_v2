@@ -695,7 +695,6 @@ def read_module(source, kind, owner, subject_id):
                 candidate_ids = [ident for ident, placement in continuation_dates.items()
                                  if teaching_date(placement) > cutoff['afterDate']]
                 if candidate_ids:
-                    from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
                     cur.execute(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
                         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
                         WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)

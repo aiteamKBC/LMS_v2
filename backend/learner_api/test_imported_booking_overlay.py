@@ -19,6 +19,7 @@ from django.test import RequestFactory, SimpleTestCase, TestCase
 
 from coach_api import views
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
+from coach_api.tests_support.persisted_fixtures import review_source
 
 from . import calendar, imported_booking
 
@@ -130,6 +131,7 @@ class LearnerBookingEndpointOverlayTests(TestCase):
     """The booking endpoint wires the promotion in, and rolls back failures."""
 
     def setUp(self):
+        review_source(401, learner_id=101, aptem_review_id=KEY.removeprefix("imported-review:"))
         self.overlay = ImportedReviewInstance.objects.create(
             event_key=KEY, owner_email=OWNER, learner_id=101, source_review_id=401,
             status=ImportedReviewInstance.STATUS_NOT_SCHEDULED,
@@ -155,6 +157,10 @@ class LearnerBookingEndpointOverlayTests(TestCase):
         self.enterContext(patch("learner_api.calendar_connections.booking_conflicts", return_value=False))
         self.enterContext(patch("coach_api.booking_availability.ensure_coach_calendar_available"))
         self.enterContext(patch("coach_api.booking_availability.ensure_coach_outlook_available"))
+        # The endpoint now checks Review slots before reserving. Keep the real
+        # slot-validation gate, with a synthetic Outlook availability result.
+        self.available_slots = self.enterContext(patch(
+            "learner_api.coach_availability.free_slots", return_value=["10:00"]))
         self.enterContext(patch("learner_api.booking_calendar.timezone.localdate",
                                 return_value=date(2026, 10, 1)))
         self.reserve = self.enterContext(patch.object(views, "synchronize_reserved_calendar_event",
@@ -193,6 +199,23 @@ class LearnerBookingEndpointOverlayTests(TestCase):
         self.overlay.refresh_from_db()
         self.assertEqual(self.overlay.status, ImportedReviewInstance.STATUS_SCHEDULED)
         self.assertEqual(len(self.graph_calls), 1)
+
+    def test_an_unavailable_calendar_does_not_reserve_or_schedule_the_review(self):
+        from .coach_availability import AvailabilityUnavailable
+        self.available_slots.side_effect = AvailabilityUnavailable("Synthetic unavailable calendar")
+        self.assertEqual(self.book().status_code, 503)
+        self.assertFalse(CoachCalendarEvent.objects.filter(event_key=KEY).exists())
+        self.overlay.refresh_from_db()
+        self.assertEqual(self.overlay.status, ImportedReviewInstance.STATUS_NOT_SCHEDULED)
+        self.assertEqual(self.graph_calls, [])
+
+    def test_a_busy_slot_does_not_reserve_or_schedule_the_review(self):
+        self.available_slots.return_value = []
+        self.assertEqual(self.book().status_code, 409)
+        self.assertFalse(CoachCalendarEvent.objects.filter(event_key=KEY).exists())
+        self.overlay.refresh_from_db()
+        self.assertEqual(self.overlay.status, ImportedReviewInstance.STATUS_NOT_SCHEDULED)
+        self.assertEqual(self.graph_calls, [])
 
     def test_a_rejected_reservation_leaves_no_placeholder_for_the_next_booking(self):
         def refuse(*_args, **_kwargs):

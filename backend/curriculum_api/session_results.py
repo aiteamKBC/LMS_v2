@@ -320,6 +320,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     for register_row in register_rows:
         register_by_id[register_row['occurrence_id']].append(register_row)
     hidden = set()
+    by_occurrence = {row['id']: row for row in occurrences}
+    from curriculum_api.session_bunny_policy import recording_uses_bunny
     for occurrence_id in ids:
         hidden.update(hidden_artifact_ids([row for row in artifacts if row['occurrence_id'] == occurrence_id]))
     for artifact in artifacts:
@@ -327,10 +329,12 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             continue
         bunny_value = artifact_metadata(artifact).get('lmsBunnyRecording')
         bunny = bunny_value if isinstance(bunny_value, dict) else {}
+        uses_bunny = bool(bunny) or recording_uses_bunny(by_occurrence.get(artifact['occurrence_id'], {}), artifact)
         artifacts_by_id[artifact['occurrence_id']].append({
             'id': artifact['id'], 'type': artifact['artifact_type'], 'createdAt': artifact['created_datetime'],
-            'state': bunny.get('state') or artifact['archive_status'] or 'pending', 'text': artifact['transcript_text'],
-            **({'playbackProvider': 'bunny'} if bunny else {}),
+            'state': (bunny.get('state') or 'pending') if uses_bunny else (artifact['archive_status'] or 'pending'),
+            'text': artifact['transcript_text'],
+            **({'playbackProvider': 'bunny'} if uses_bunny else {}),
             'hiddenFromLearners': artifact['id'] in hidden,
             'endsAt': instant(artifact.get('end_datetime')),
             'timingReady': transcript_timing_ready(artifact) if artifact['artifact_type'] == 'transcript' else False,
@@ -1124,13 +1128,16 @@ def stored_content(request, series_id, artifact_id, *, learner_view=False):
                 SELECT occurrence_id FROM curriculum.live_session_artifacts WHERE id=%s)''', [series_id, artifact_id])
         if not any(row['id'] == artifact_id for row in siblings) or artifact_id in hidden_artifact_ids(siblings):
             return JsonResponse({'error': 'File not found.'}, status=404)
-    rows = read('''SELECT r.*,a.artifact_type,a.metadata FROM curriculum.session_result_archive r
+    rows = read('''SELECT r.*,a.artifact_type,a.metadata,o.scheduled_start FROM curriculum.session_result_archive r
         JOIN curriculum.live_session_artifacts a ON a.id=r.artifact_id
-        JOIN curriculum.live_session_occurrences o ON o.id=r.occurrence_id
+        JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id AND r.occurrence_id=o.id
         WHERE r.artifact_id=%s AND o.live_session_id=%s''', [artifact_id, series_id])
     bunny_value = artifact_metadata(rows[0]).get('lmsBunnyRecording') if rows else None
     bunny = bunny_value if isinstance(bunny_value, dict) else {}
-    if not rows or (bunny.get('state') or rows[0]['status']) != 'ready':
+    from curriculum_api.session_bunny_policy import recording_uses_bunny
+    uses_bunny = bool(bunny) or bool(rows and recording_uses_bunny(rows[0], rows[0]))
+    state = (bunny.get('state') or 'pending') if uses_bunny else (rows[0]['status'] if rows else None)
+    if not rows or state != 'ready':
         return JsonResponse({'error': 'This file is still being saved. Please try again later.'}, status=409)
     row = rows[0]
     if row['artifact_type'] == 'recording' and bunny:

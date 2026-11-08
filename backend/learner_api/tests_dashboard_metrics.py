@@ -7,6 +7,8 @@ from unittest.mock import ANY, MagicMock, patch
 from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
 
+from curriculum_api.week_visibility import visible_child_sql
+
 from .dashboard_metrics import (programme_totals, ksb_totals, read_planned_hours,
                                 activity_planned_hours, read_metrics, learner_metrics,
                                 metrics_from_loaded, _read_legacy_metrics)
@@ -189,7 +191,10 @@ class DashboardMetricsTests(SimpleTestCase):
                 query, params = cursor.execute.call_args_list[0].args
                 self.assertIn('c.expected_otjh AS expected_hours', query)
                 self.assertIn('c.module_catalogue_id=ANY(%s)', query)
-                self.assertIn("c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> ''", query)
+                # Keep only the parent's matching archive event, including the
+                # nested KSB read; an arbitrary parent stamp can expose ghosts.
+                self.assertIn(visible_child_sql('c'), query)
+                self.assertIn(visible_child_sql('k'), query)
                 self.assertEqual(params, [['module-one', 'module-two']])
 
     def test_migrated_metrics_keep_audited_inventory_and_refresh_saved_progress(self):

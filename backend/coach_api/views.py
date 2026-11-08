@@ -17175,13 +17175,13 @@ def coach_review_instance_complete(request, instance_id):
     )
     if not ok:
         # errors is {'status': [...]} for an invalid lifecycle transition (not
-        # yet in-progress, or already submitted/completed) or {'fields': [...]}
+        # editable, or already submitted/completed) or {'fields': [...]}
         # for unanswered required questions -- surface whichever one applies
         # as the headline message so the coach sees why, not a generic string.
         detail = (errors or {}).get("status", ["This review cannot be completed yet."])[0]
         return JsonResponse({"detail": detail, "errors": errors}, status=400)
     instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
-    _sync_calendar_record_to_review_instance_status(instance_row)
+    # Completion already mirrors the verified calendar link in its transaction.
     return JsonResponse(_coach_review_instance_definition(instance_row))
 
 

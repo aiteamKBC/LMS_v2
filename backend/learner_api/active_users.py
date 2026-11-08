@@ -236,7 +236,8 @@ def dedupe_otjh_progress_records(progress):
         ordered = sorted(((index, row) for index, row in enumerate(rows) if row.get('passed') is not False),
                          key=lambda item: attempt_order(item[1].get('submittedAt'), item[0]))
         selected, seconds = selected_attempt([{**row, 'seconds': _progress_record_minutes(row) * 60,
-            'mode': row.get('retakeTimeChoice')} for _, row in ordered], default='retry')
+            'mode': row.get('retakeTimeChoice'), 'previousSeconds': row.get('retakePreviousSeconds')}
+            for _, row in ordered], default='retry')
         if selected:
             unique[positions[key]] = {**selected, 'claimedSeconds': seconds,
                 'reportedTime': f'{seconds / 60:g} minutes', 'timeTrackingSource': 'activity-time-decision:input'}
@@ -1139,11 +1140,15 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                 cursor.execute('SELECT id FROM enrolment."Created_users" WHERE id=%s' + lock, [learner.enrolment_id])
         learner = LearnerProfile.objects.select_for_update().get(pk=learner.pk)
         from .retake_timing import validate_activity_time
+        from .activity_time_history import attendance_baseline
         authoritative_record = {**record, 'componentType': component_context.get('componentType') or record.get('componentType')}
-        validate_activity_time(authoritative_record, learner.training_plan_progress,
-                               seconds_for=lambda row: _progress_record_minutes(row) * 60, monthly_assignment=monthly_assignment)
+        history = learner.training_plan_progress
+        validate_activity_time(authoritative_record, history,
+                               seconds_for=lambda row: _progress_record_minutes(row) * 60, monthly_assignment=monthly_assignment,
+                               initial_seconds=attendance_baseline(authoritative_record, history, learner=learner))
         if 'countedSeconds' in authoritative_record:
             record['countedSeconds'] = authoritative_record['countedSeconds']
+            record['retakePreviousSeconds'] = authoritative_record['retakePreviousSeconds']
         if record.get('retakeTimeChoice') in ('correct', 'add', 'retry'):
             # Add/retry append a new attempt. Only a correction must reject a
             # signed month; historical/staff-reviewed allocations stay protected.
@@ -1240,6 +1245,7 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                 cursor.execute('''UPDATE "Learner".learner_progress_entries
                     SET source_payload=coalesce(source_payload,'{}'::jsonb) || %s::jsonb
                     WHERE id=%s AND learner_id=%s''', [json.dumps({'retakeTimeChoice': selected,
+                        **({'retakePreviousSeconds': record['retakePreviousSeconds']} if 'countedSeconds' in record else {}),
                         **({'retakeTimeReason': record['retakeTimeReason'].strip()} if record.get('retakeTimeReason') else {})}), progress.pk, learner.pk])
         LearnerProgressKsb.objects.bulk_create(
             [

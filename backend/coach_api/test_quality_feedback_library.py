@@ -30,9 +30,10 @@ def answers(definition):
 
 class FeedbackDefinitionTests(SimpleTestCase):
     def test_all_fourteen_forms_preserve_their_criteria_and_full_reference_descriptions(self):
-        self.assertEqual(len(defaults()),14)
+        original_forms=[row for row in defaults() if row['reviewType']!='FORM_PORTFOLIO_SAMPLING']
+        self.assertEqual(len(original_forms),14)
         total=0
-        for row in defaults():
+        for row in original_forms:
             definition=default_definition(row['reviewType'])
             fields=definition['sections'][1]['criteria'];total+=len(fields)
             self.assertEqual(definition['title'],row['title'])
@@ -86,9 +87,9 @@ class FeedbackDefinitionTests(SimpleTestCase):
                 pdf=PdfReader(BytesIO(_render(review,{})))
                 text=' '.join(' '.join(page.extract_text() for page in pdf.pages).split())
                 self.assertIn(definition['title'],text)
-                for q in definition['sections'][1]['criteria']:
+                for q in [q for section in definition['sections'] for q in section['criteria'] if q['type']=='rating']:
                     self.assertIn(' '.join(q['text'].split()),text)
-                    self.assertIn(' '.join(q['descriptors']['green'].split()),text)
+                    self.assertIn(' '.join((q.get('descriptors') or definition['ratings'])['green'].split()),text)
                 self.assertTrue(pdf.pages[0].images)
 
 
@@ -116,13 +117,18 @@ class FeedbackStorageTests(SimpleTestCase):
         self.assertEqual(saved['definition'],definition)
         pdf=PdfReader(BytesIO(_render(saved,{})))
         text=' '.join(' '.join(page.extract_text() for page in pdf.pages).split())
-        self.assertIn('N/A: 2',text)
+        # Newly created reviews display the count above the N/A tile label.
+        self.assertIn('2 N/A',text)
         self.assertIn('Observed evidence at 12:30.',text)
         self.assertIn('Not applicable - no additional evidence recorded.',text)
 
-    def test_catalog_has_fourteen_lightweight_cards_and_custom_drafts_require_publication(self):
+    def test_catalog_includes_portfolio_and_custom_drafts_require_publication(self):
         catalog=store.form_catalog()
-        self.assertEqual(len(catalog),14)
+        self.assertEqual(len(catalog),15)
+        portfolio=[card for card in catalog if card['reviewType']=='FORM_PORTFOLIO_SAMPLING']
+        self.assertEqual(len(portfolio),1)
+        self.assertEqual(portfolio[0]['title'],'Portfolio Sampling Feedback Form')
+        self.assertTrue(portfolio[0]['published'])
         self.assertFalse(any('sections' in card for card in catalog))
         kind='FORM_CUSTOM_'+uuid4().hex.upper()
         from .quality_feedback_catalog import new_definition
