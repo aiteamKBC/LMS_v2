@@ -1,0 +1,16 @@
+QR Attendance building image — horizontal signage
+Created 2026-11-08 using the built-in image_gen tool (no CLI).
+Input: kbc-building-branded.webp. Original retained.
+Output: kbc-building-level-signage.png, 1122 x 1402, 2626535 bytes.
+AI-edited illustrative building, not evidence of a real campus.
+User requested clearer image detail and completely horizontal text lines.
+Generated output preserves the original dimensions; native resolution did not increase despite the requested larger size. PNG retained without a further lossy conversion.
+Layout and desktop crop remain CSS-driven. No form or attendance behavior changes.
+
+Exact generation prompt:
+Use case: precise-object-edit.
+Asset type: high-resolution architectural hero image for the existing Kent Business College QR Attendance page.
+Edit the supplied existing portrait building image. Preserve its overall portrait 4:5 composition, architecture, purple-grey facade, vivid blue sky and clouds, purple and gold crest with horse and bird, glass sides, greenery, and lighting. Improve native detail, crisp clean lettering edges, material texture and photographic clarity to premium architectural visualization quality. Render at 2048 x 2560 or higher native resolution if available, do not just blur/upscale the input.
+Critical requested edit: replace the current sloping/warped signage with three perfectly HORIZONTAL, straight, level lines relative to the image canvas, with all letters upright, consistent sizing and spacing, no italic slant, no perspective slope on the text baselines. Text verbatim, one word per line: "Kent" / "Business" / "College". Bold clean sans-serif white dimensional letters, restrained dark extrusion and coherent shadows. Keep them to the right of the existing crest and vertical separator. All text and crest must remain within the left 79% of the full image width because the webpage crops away the right 18%. Keep the crest approximately at its original position and preserve its heraldic design. The complete words must be legible, no clipping, no misspellings, no doubled letters. The user explicitly wants horizontal text even though the building has perspective.
+Do not add any other text, watermark, UI, form, border or gradient. Retain the original portrait framing and leave the right glass wing at the original right edge for CSS cropping.
+
