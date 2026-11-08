@@ -40,6 +40,7 @@ class MonthlyLogsTests(SimpleTestCase):
         # gains canonical/history persistence dependencies. Those integrations
         # have dedicated tests; these cases exercise monthly-log orchestration.
         dependencies = [
+            patch.object(logs, 'attendance_rows', return_value=[]),
             patch.object(logs.canonical, 'enabled', return_value=False),
             patch.object(logs.history, 'later_rows', return_value={}),
             patch.object(logs.history, 'summary', side_effect=lambda learner: logs.old.summary(learner)),

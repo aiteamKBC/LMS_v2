@@ -206,6 +206,20 @@ class RecordingsLibraryTests(unittest.TestCase):
             self.assertEqual(item['playbackProvider'], 'bunny')
             self.assertEqual(item['duplicateCount'], 1)
 
+    def test_cutover_without_bunny_pointer_is_pending_even_with_a_ready_azure_archive(self):
+        row = recording(scheduled_start=datetime(2026, 11, 6, 9, tzinfo=timezone.utc))
+        item = self.weeks_of(self.ns['build_library']([row], WEEKS, []))[0]['recordings'][0]
+        self.assertEqual((item['state'], item['playbackProvider']), ('pending', 'bunny'))
+        self.assertNotEqual(item['status'], 'available')
+
+    def test_ready_cutover_alias_wins_over_an_alias_with_a_missing_provider_pointer(self):
+        old = recording(artifact_id='LOST', content_correlation_id='CONTENT', call_id='CALL',
+                        scheduled_start=datetime(2026, 11, 6, 9, tzinfo=timezone.utc))
+        ready = {**old, 'artifact_id': 'READY', 'metadata': {'lmsBunnyRecording': {'state': 'ready'}}}
+        for rows in ([old, ready], [ready, old]):
+            item = self.weeks_of(self.ns['build_library'](rows, WEEKS, []))[0]['recordings'][0]
+            self.assertEqual((item['id'], item['state'], item['playbackProvider']), ('READY', 'ready', 'bunny'))
+
     def test_ready_bunny_alias_carries_its_provider_when_selected(self):
         rows = [recording(artifact_id='WAIT', content_correlation_id='CONTENT', call_id='CALL',
                           archive_status='pending', metadata={'lmsBunnyRecording': {'state': 'pending'}}),

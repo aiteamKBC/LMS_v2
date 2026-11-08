@@ -32,6 +32,7 @@ import {
   fetchBulkAttendanceDayLearners,
   BulkAttendanceSaveError,
   saveBulkAttendanceChanges,
+  deleteBulkAttendanceRecord,
   type BulkAttendanceChange,
   type BulkAttendanceKbcHistoryRecord,
 } from "@/api/bulkAttendanceLearners";
@@ -128,6 +129,7 @@ export default function AttendancePage() {
   const [detailSaving, setDetailSaving] = useState(false);
   const [detailSaveError, setDetailSaveError] = useState<string | null>(null);
   const [pendingEdits, setPendingEdits] = useState<Record<string, BulkAttendanceChange>>({});
+  const [pendingDeletes, setPendingDeletes] = useState<Record<string, EditableRecord>>({});
   const [kbcRecentVersion, setKbcRecentVersion] = useState(0);
   const [dayMembership, setDayMembership] = useState<{ date: string; ids: Set<string> } | null>(null);
   const [dayLoading, setDayLoading] = useState(true);
@@ -540,7 +542,7 @@ export default function AttendancePage() {
         const nextStatuses: Record<string, AttendanceStatus> = {};
         records.forEach((record) => {
           const learnerId = learnerIdByKbcId.get(record.learnerId);
-          if (learnerId) nextStatuses[learnerId] = record.attendance;
+          if (learnerId) nextStatuses[learnerId] = record.effectiveAttendance ?? record.attendance;
         });
         replaceSavedStatusesForDate(sessionDate, nextStatuses);
       })
@@ -747,7 +749,8 @@ export default function AttendancePage() {
     activeLearners.forEach((learner) => {
       // Preserve the server's chronological order, including its tie-break
       // for multiple saved records on the same date.
-      const databaseRecords = learner.kbcId ? kbcRecent[learner.kbcId] ?? [] : [];
+      const databaseRecords = (learner.kbcId ? kbcRecent[learner.kbcId] ?? [] : [])
+        .filter((record) => record.countsAsSession !== false);
       // Do not use curriculum lecture dates as placeholders here. A missing
       // attendance row is not a lecture record, so it must not appear as one
       // of the learner's last four database sessions.
@@ -757,8 +760,8 @@ export default function AttendancePage() {
           id: `${record.source}:${record.recordKey}`,
           name: `${record.lectureName || record.moduleName || "Lecture title not recorded"} (${record.source === "live" ? "Live register" : "KBC"})`,
           sessionDate: record.sessionDate,
-          status: pendingEdits[`${record.source}:${record.recordKey}`]?.attendance ?? saved,
-          editable: {
+          status: pendingEdits[`${record.source}:${record.recordKey}`]?.attendance ?? record.effectiveAttendance ?? saved,
+          editable: record.effectiveAttendance ? undefined : {
             source: record.source,
             recordKey: record.recordKey,
             attendance: record.attendance ?? ("unmarked" as AttendanceStatus),
@@ -918,6 +921,12 @@ export default function AttendancePage() {
       lectureName: record.lectureName || record.moduleName || "Lecture title not recorded",
       attendance: record.attendance ?? ("unmarked" as AttendanceStatus),
       source: record.source,
+      occurrenceId: record.occurrenceId,
+      effectiveAttendance: record.effectiveAttendance,
+      recoveryOccurrenceId: record.recoveryOccurrenceId,
+      makeupForOccurrenceId: record.makeupForOccurrenceId,
+      makeupForDate: record.makeupForDate,
+      countsAsSession: record.countsAsSession,
   })), [detailKbcHistory]);
   // One set of unsaved present/absent corrections, shared by View details and
   // the Last 4 badges. Each change is saved to its own source (KBC or live register).
@@ -940,16 +949,19 @@ export default function AttendancePage() {
     [pendingEdits],
   );
 
-  const pendingEditCount = Object.keys(pendingEdits).length;
+  const pendingEditCount = Object.keys(pendingEdits).length + Object.keys(pendingDeletes).length;
 
   const saveEdits = async () => {
     const changes = Object.values(pendingEdits);
-    if (changes.length === 0) return;
+    const deletions = Object.values(pendingDeletes);
+    if (changes.length === 0 && deletions.length === 0) return;
     setDetailSaving(true);
     setDetailSaveError(null);
     try {
-      await saveBulkAttendanceChanges(changes);
+      if (changes.length) await saveBulkAttendanceChanges(changes);
       setPendingEdits({});
+      await Promise.all(deletions.map((record) => deleteBulkAttendanceRecord(record)));
+      setPendingDeletes({});
     } catch (reason) {
       const saved = reason instanceof BulkAttendanceSaveError ? new Set(reason.saved) : new Set<string>();
       if (saved.size) {
@@ -1455,8 +1467,22 @@ export default function AttendancePage() {
           pendingCount={pendingEditCount}
           pendingStatus={pendingStatus}
           onToggleRecord={toggleRecord}
+          pendingDelete={(source, recordKey) => Boolean(pendingDeletes[`${source}:${recordKey}`])}
+          onDeleteRecord={(record) => {
+            const key = `${record.source}:${record.recordKey}`;
+            setDetailSaveError(null);
+            setPendingDeletes((current) => {
+              const updated = { ...current };
+              if (updated[key]) delete updated[key];
+              else updated[key] = record;
+              return updated;
+            });
+          }}
           onSave={() => void saveEdits()}
-          onDiscard={() => setPendingEdits({})}
+          onDiscard={() => {
+            setPendingEdits({});
+            setPendingDeletes({});
+          }}
           onClose={() => setHistoryRow(null)}
         />
       )}

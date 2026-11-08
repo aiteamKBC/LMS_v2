@@ -74,6 +74,21 @@ class RetakeTimingTests(unittest.TestCase):
         with self.assertRaises(ActivityTimeConflict):
             validate_activity_time(record, history, seconds_for=lambda row: row['verifiedSeconds'])
 
+    def test_attendance_baseline_survives_reload_and_is_used_only_once(self):
+        first = {**attempt(1, 1800, 'add'), 'kind': 'component', 'quiz_ref': None,
+                 'component_ref': 'C1', 'component_type': 'live_session', 'component_link_source': 'direct',
+                 'source_payload': {'retakeTimeChoice': 'add', 'retakePreviousSeconds': 7200}}
+        rows = self.records([first])
+        self.assertEqual(rows[0]['actual_seconds'], 9000)
+        later = {**first, 'id': 2, 'submitted_at': '2026-11-02T12:00:00Z',
+                 'source_payload': {'retakeTimeChoice': 'add', 'retakePreviousSeconds': 9000}}
+        self.assertEqual(self.records([first, later])[0]['actual_seconds'], 10800)
+        history = [{'kind': 'component', 'componentId': 'C1', 'verifiedSeconds': 1800,
+                    'retakeTimeChoice': 'add', 'retakePreviousSeconds': 7200}]
+        record = {**history[0], 'retakePreviousSeconds': 9000}
+        validate_activity_time(record, history, seconds_for=lambda row: row['verifiedSeconds'])
+        self.assertEqual(record['countedSeconds'], 10800)
+
     def test_quiz_reading_keeps_its_own_time_when_the_quiz_time_is_corrected(self):
         records = [attempt(1, 1800), attempt(2, 600, 'correct')]
         readings = [{**attempt(ident, seconds), 'kind': 'quiz_reading',

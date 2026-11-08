@@ -524,6 +524,7 @@ def _delivery(row, archived=False):
 
 
 def build_library(recordings, weeks, components, attention=None, placement_reviews=None):
+    from curriculum_api.session_bunny_policy import recording_uses_bunny
     owners = week_owners(components)
     placement_reviews = placement_reviews or set()
     week_rows = {row['id']: row for row in weeks}
@@ -541,7 +542,8 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
     for row in recordings:
         bunny_value = artifact_metadata(row).get('lmsBunnyRecording')
         bunny = bunny_value if isinstance(bunny_value, dict) else {}
-        state = bunny.get('state') or _text(row.get('archive_status')) or 'pending'
+        uses_bunny = bool(bunny) or recording_uses_bunny(row, {'artifact_type': 'recording'})
+        state = (bunny.get('state') or 'pending') if uses_bunny else (_text(row.get('archive_status')) or 'pending')
         key = same_recording_key(row)
         if key in kept:
             first = kept[key]
@@ -549,12 +551,12 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
             # Prefer the selected Bunny provider across aliases; a historical
             # Azure copy must not make an unfinished Bunny import look playable.
             first_bunny = first.get('playbackProvider') == 'bunny'
-            if ((bunny and not first_bunny) or
-                    (bool(bunny) == first_bunny and first['status'] != 'available'
+            if ((uses_bunny and not first_bunny) or
+                    (uses_bunny == first_bunny and first['status'] != 'available'
                      and recording_status(state) == 'available')):
                 first.update(id=row['artifact_id'], seriesId=row['series_id'],
                              status=recording_status(state), state=state)
-                if bunny:
+                if uses_bunny:
                     first['playbackProvider'] = 'bunny'
             continue
         delivery = deliveries.setdefault(row['module_catalogue_id'], _delivery(row, bool(row.get('module_archived'))))
@@ -579,7 +581,7 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
             'endsAt': _iso(row.get('end_datetime')),
             'state': state if state in ('pending', 'ready', 'failed') else 'pending',
             'status': recording_status(state), 'duplicateCount': 0,
-            **({'playbackProvider': 'bunny'} if bunny else {}),
+            **({'playbackProvider': 'bunny'} if uses_bunny else {}),
             'placementReview': row['artifact_id'] in placement_reviews and not explicitly_placed,
             'hiddenFromLearners': artifact_metadata(row).get('lmsHiddenFromLearners') is True}
         kept[key] = item
