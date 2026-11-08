@@ -27,7 +27,7 @@ function bankFile() {
 }
 
 describe('fixed spreadsheet questions for other feedback types', () => {
-  it.each(['general', 'post_event', 'event_rsvp', 'post_mcm_review', 'post_progress_review', 'mid_module', 'end_module'] as const)(
+  it.each(['general', 'post_event', 'event_rsvp', 'post_mcm_review', 'post_progress_review', 'post_epa_review', 'mid_module', 'end_module'] as const)(
     'imports all questions for %s while preserving its saved timing, scope and settings', async formType => {
       const user = userEvent.setup();
       const moduleForm = ['mid_module', 'end_module'].includes(formType);

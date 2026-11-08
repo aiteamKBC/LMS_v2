@@ -1,5 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review' | 'post_progress_review_employer' | 'mid_module' | 'end_module';
+export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'post_mcm_review' | 'post_progress_review' | 'post_progress_review_employer' | 'post_epa_review' | 'mid_module' | 'end_module';
 export type FeedbackDeliveryScope = 'manual' | 'all_modules' | 'module';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
@@ -142,6 +142,18 @@ export interface FeedbackResponse {
   learnerName: string; programme: string; status: 'in_progress' | 'completed';
   startedAt: string; updatedAt: string; submittedAt: string | null;
   sections?: FeedbackSection[];
+  activity?: FeedbackResponseActivity;
+  assignedAt?: string | null;
+}
+
+export interface FeedbackResponseActivity {
+  kind: 'lecture' | 'review' | 'module' | 'event' | 'general';
+  title: string;
+  date: string | null;
+  dateText?: string;
+  tutorName: string;
+  coachName?: string;
+  relatedLearnerName?: string;
 }
 
 export interface FeedbackAnalyticsData {
@@ -221,6 +233,8 @@ export interface FeedbackAssignmentSource {
   key: string; type: 'manual' | 'lecture' | 'event' | string; label: string;
   title: string; subtitle: string; startsAt: string | null;
   assignedCount: number; responseCount: number;
+  programmeId?: string; programmeName?: string; cohortId?: string; cohortName?: string;
+  groupId?: string; groupName?: string; moduleCatalogueId?: string;
 }
 export interface FeedbackLectureOption {
   deliveryId: number; occurrenceKey: string; sessionTitle: string; moduleName: string;

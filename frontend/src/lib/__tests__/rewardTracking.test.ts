@@ -26,7 +26,34 @@ it('ambiguous network failures retry the same event rather than duplicating time
 it('disabled or preview timing makes no award observation request',async()=>{
  const session={...timing(),rewardTracking:false};vi.stubGlobal('fetch',vi.fn());
  observeRewardInterval(session,0,3600000);
- await flushRewardObservations(session,'component','preview');expect(fetch).not.toHaveBeenCalled();
+ expect(await flushRewardObservations(session,'component','preview')).toBe('not_enabled');expect(fetch).not.toHaveBeenCalled();
+});
+it('reports disabled rewards separately and keeps the unacknowledged draft for a failed progress save',async()=>{
+ const session=timing();observeRewardInterval(session,0,3000);
+ const request=vi.fn().mockResolvedValue({ok:false,status:409,json:async()=>({code:'rewards_not_enabled',error:'Rewards are not enabled.'})});
+ vi.stubGlobal('fetch',request);
+ const heartbeat=flushRewardObservations(session,'component','slides');
+ const finish=flushRewardObservations(session,'component','slides',true);
+ expect(await heartbeat).toBe('not_enabled');expect(await finish).toBe('not_enabled');
+ expect(JSON.parse(request.mock.calls[0][1].body)).toEqual(JSON.parse(request.mock.calls[1][1].body));
+ const stored=JSON.parse(localStorage.getItem('kbc-reward-intervals:v1:'+session.sessionId)!);
+ expect(stored.inFlight.intervals).toEqual([{startOffsetMs:0,endOffsetMs:3000}]);
+ expect(stored.acknowledgedMilliseconds).toBe(0);
+ expect(session.rewardTracking).toBe(true);
+ // If progress was not saved and rewards become available, retry the same evidence.
+ request.mockImplementation(async(_url,init)=>{
+  const body=JSON.parse(init.body);
+  return {ok:true,json:async()=>({source:'lms',eventId:body.eventId,sessionId:session.sessionId,sequence:body.sequence,
+   status:'pending',observedMilliseconds:3000,cumulativeObservedMilliseconds:3000,duplicate:false})};
+ });
+ expect(await flushRewardObservations(session,'component','slides')).toBe('confirmed');
+ expect(JSON.parse(request.mock.calls[2][1].body)).toEqual(JSON.parse(request.mock.calls[0][1].body));
+});
+it.each([401,403,500,503])('does not treat an authentication or server failure (%s) as disabled rewards',async(status)=>{
+ const session=timing();observeRewardInterval(session,0,1000);
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:false,status,json:async()=>({code:'rewards_not_enabled',error:'refused'})}));
+ await expect(flushRewardObservations(session,'quiz','1')).rejects.toThrow('refused');
+ expect(JSON.parse(localStorage.getItem('kbc-reward-intervals:v1:'+session.sessionId)!).inFlight).not.toBeNull();
 });
 it('malformed acknowledgement cannot clear the pending observation',async()=>{
  const session=timing(),start=performance.now();observeRewardInterval(session,start,start+1000);

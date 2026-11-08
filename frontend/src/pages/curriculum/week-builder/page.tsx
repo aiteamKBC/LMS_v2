@@ -2,6 +2,7 @@ import { CollaborativeField } from '../module-builder/CollaborativeField';
 import { componentSessionTitle, type SessionTitleWeek } from '../shared/sessionDisplayTitle';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
+import { moduleUploadedFiles, withStoredUploads } from './moduleUploadedFiles';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
@@ -42,6 +43,8 @@ import {
   updateWeekTemplate,
   weekTemplateConflict,
   uploadWeekComponentResource,
+  fetchModuleStoredUploads,
+  type StoredModuleUpload,
   validateWeekComponent,
   weekPaletteGroups,
   weekPaletteTypes,
@@ -1427,16 +1430,17 @@ const COMPONENT_PICKER_DESCRIPTIONS: Partial<Record<ModuleComponentType, string>
   assignment: 'Set a task for learners to submit.',
 };
 
-function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse }: {
+function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse, selfStudyOnly = false }: {
   atIndex: number;
   componentCount: number;
   onPick: (type: ModuleComponentType) => void;
   onClose: () => void;
   onReuse?: () => void;
+  selfStudyOnly?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
-  const visibleTypes = weekPaletteTypes.filter(type => (
+  const visibleTypes = weekPaletteTypes.filter(type => (!selfStudyOnly || type.type !== 'live-session') && (
     !query
     || type.label.toLowerCase().includes(query)
     || type.group.toLowerCase().includes(query)
@@ -1539,6 +1543,7 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
 // list (and whatever persistence — save-to-template vs save-to-module — sits
 // on top of it), via a single `onChange(nextComponents)` callback.
 export interface WeekComponentRailProps {
+  selfStudyOnly?: boolean;
   weekId: string;
   displayWeek?: SessionTitleWeek;
   components: ModuleComponent[];
@@ -1586,7 +1591,7 @@ export interface WeekComponentRailProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1776,6 +1781,7 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
       )}
       {pickerIndex !== null && (
         <ComponentTypePickerDialog
+          selfStudyOnly={selfStudyOnly}
           atIndex={pickerIndex}
           componentCount={components.length}
           onPick={type => addComponentAt(type, pickerIndex)}
@@ -2001,6 +2007,7 @@ function SaveStatus({ dirty, saving, isNew }: { dirty: boolean; saving: boolean;
 // importable quizzes and stamp newly-created ones.
 export interface ComponentBodyProps {
   component: ModuleComponent;
+  selfStudyOnly?: boolean;
   onChange: (patch: Partial<ModuleComponent>) => void;
   setSetting: (key: string, value: ComponentSettingValue) => void;
   groupOptions: GroupOption[];
@@ -2028,7 +2035,7 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, displayWeek, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string }) {
+export function ComponentEditor({ component, displayWeek, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly = false }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string; selfStudyOnly?: boolean }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2044,7 +2051,7 @@ export function ComponentEditor({ component, displayWeek, onChange, onBack, grou
       ? manualLiveSessionLinkSettings(component.settings, String(value))
       : { ...component.settings, [key]: value },
   });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly };
 
   return (
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -2437,7 +2444,7 @@ function LinkedRecordingsSection({ component, recordingLinks }: Pick<ComponentBo
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId, recordingLinks }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId, recordingLinks, selfStudyOnly }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   // An explicit edit always wins; otherwise default to the date/time the week is
   // actually scheduled on (the group-creation clock), so the fields read
@@ -2453,7 +2460,12 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
         <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
 
-        {hasMeeting ? (
+        {selfStudyOnly ? (
+          <div className="mt-4">
+            <Field label="Existing Microsoft Teams link"><input value={s('liveSessionUrl') || s('teamsMeetingUrl')} readOnly className={inputClass} /></Field>
+            <p className="mt-2 text-xs text-foreground-500">This existing live activity is retained. Meeting changes are unavailable in a free course.</p>
+          </div>
+        ) : hasMeeting ? (
           // Meeting created: the join link is read-only (copy/open only).
           <LiveSessionScheduleEditor
             component={component}
@@ -2607,7 +2619,7 @@ function componentFileSettings(files: ComponentFile[]) {
 // text (a plain content field, matching the Module Builder's text editor
 // intent) or an uploaded document (Word/PDF/text/RTF/OpenDocument), each with
 // its own field beneath the toggle.
-function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
+function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResource, recordingLinks, moduleId }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceMode = ['File', 'LMS resource'].includes(s('readingSource')) ? 'File' : 'Text';
   // The stored list when one exists, otherwise the single file this component
@@ -2672,6 +2684,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
               componentId={component.id}
               componentType="reading"
               onUpload={uploadResource}
+              moduleLibrary={recordingLinks ? { weeks: recordingLinks.weeks, label: recordingLinks.moduleId ? 'module' : 'template', moduleId: recordingLinks.moduleId ? moduleId || '' : '' } : undefined}
               accept={READING_UPLOAD_ACCEPT}
               files={readingFileList}
               onFilesChange={files => onChange({
@@ -2858,7 +2871,7 @@ function UploadedDeckPreview({ url }: { url: string }) {
 // field rather than a real range. A component authored while an external-link
 // source still existed keeps whatever `presentationUrl` it has in storage —
 // this editor no longer shows or writes it, but nothing here deletes it.
-function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
+function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource, recordingLinks, moduleId }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   // Same fallback as reading. A deck's name lives in `fileName` when the upload
   // predates the shared `uploadedFileName` key.
@@ -2883,6 +2896,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
             componentId={component.id}
             componentType="powerpoint"
             onUpload={uploadResource}
+            moduleLibrary={recordingLinks ? { weeks: recordingLinks.weeks, label: recordingLinks.moduleId ? 'module' : 'template', moduleId: recordingLinks.moduleId ? moduleId || '' : '' } : undefined}
             accept={POWERPOINT_UPLOAD_ACCEPT}
             files={deckFileList}
             onFilesChange={files => onChange({
@@ -3298,7 +3312,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
  * The author never types an index. Position is the order, shown as #1, #2, …
  * one above the zero-based array so the list reads the way a person counts.
  */
-function WeekComponentFileUpload({ componentId, componentType, accept, files, onFilesChange, onUpload = uploadWeekComponentResource }: {
+function WeekComponentFileUpload({ componentId, componentType, accept, files, onFilesChange, onUpload = uploadWeekComponentResource, moduleLibrary }: {
   componentId: string;
   componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
   accept: string;
@@ -3306,8 +3320,15 @@ function WeekComponentFileUpload({ componentId, componentType, accept, files, on
   files: ComponentFile[];
   onFilesChange: (files: ComponentFile[]) => void;
   onUpload?: WeekComponentUploader;
+  /**
+   * When given, files uploaded elsewhere can be reused here: those attached in
+   * `weeks`, plus (with a `moduleId`) files stored for the module that no
+   * component uses any more. A week template has no module folder of its own.
+   */
+  moduleLibrary?: { weeks: RecordingLinkWeek[]; label: 'module' | 'template'; moduleId: string };
 }) {
   const [uploading, setUploading] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState('');
   const [failedFiles, setFailedFiles] = useState<File[]>([]);
   const inputId = useMemo(() => `week-component-upload-${Math.random().toString(36).slice(2)}`, []);
@@ -3344,6 +3365,32 @@ function WeekComponentFileUpload({ componentId, componentType, accept, files, on
     }
     setUploading(false);
   };
+
+  // Reuses the stored path; nothing is uploaded or copied.
+  const attachExisting = (file: ComponentFile) => {
+    if (latest.current.some(existing => existing.url === file.url)) return;
+    const next = [...latest.current, file];
+    latest.current = next;
+    onFilesChange(next);
+  };
+  const moduleLabel = moduleLibrary?.label || 'module';
+  const libraryWeeks = moduleLibrary?.weeks;
+  const libraryModuleId = moduleLibrary?.moduleId || '';
+  const attachedInModule = useMemo(() => (libraryWeeks ? moduleUploadedFiles(libraryWeeks) : []), [libraryWeeks]);
+  const [stored, setStored] = useState<{ moduleId: string; status: 'loading' | 'ready' | 'error'; files: StoredModuleUpload[]; truncated: boolean }>({ moduleId: '', status: 'ready', files: [], truncated: false });
+  // Fetched each time the list opens, so a file uploaded or removed since shows up.
+  useEffect(() => {
+    if (!pickerOpen || !libraryModuleId) return;
+    const controller = new AbortController();
+    setStored({ moduleId: libraryModuleId, status: 'loading', files: [], truncated: false });
+    fetchModuleStoredUploads(libraryModuleId, controller.signal)
+      .then(result => setStored({ moduleId: libraryModuleId, status: 'ready', ...result }))
+      .catch(() => { if (!controller.signal.aborted) setStored({ moduleId: libraryModuleId, status: 'error', files: [], truncated: false }); });
+    return () => controller.abort();
+  }, [pickerOpen, libraryModuleId]);
+  const storedFiles = stored.moduleId === libraryModuleId && stored.status === 'ready' ? stored.files : [];
+  const reusable = withStoredUploads(attachedInModule, storedFiles, libraryWeeks || [])
+    .filter(item => !files.some(existing => existing.url === item.file.url));
 
   const removeAt = (index: number) => {
     const next = latest.current.filter((_, position) => position !== index);
@@ -3394,6 +3441,49 @@ function WeekComponentFileUpload({ componentId, componentType, accept, files, on
         <AppIcon className="ri-information-line shrink-0"></AppIcon>
         Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL} each.
       </p>
+
+      {moduleLibrary && (
+        <div className="mt-2">
+          <button type="button" disabled={uploading} onClick={() => setPickerOpen(open => !open)} aria-expanded={pickerOpen}
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50">
+            <AppIcon className={pickerOpen ? 'ri-close-line' : 'ri-folder-open-line'}></AppIcon>
+            {pickerOpen ? 'Close file list' : `Use a file already uploaded in this ${moduleLabel}`}
+          </button>
+          {pickerOpen && libraryModuleId && stored.status === 'loading' && (
+            <p className="mt-2 text-[11px] text-foreground-400">Checking the files stored for this module…</p>
+          )}
+          {pickerOpen && libraryModuleId && stored.status === 'error' && (
+            <p role="alert" className="mt-2 text-[11px] font-semibold text-red-700">The stored files for this module could not be loaded, so only files attached to components are listed. Close and reopen the list to retry.</p>
+          )}
+          {pickerOpen && stored.truncated && (
+            <p className="mt-2 text-[11px] text-foreground-400">Showing the 500 most recent stored files.</p>
+          )}
+          {pickerOpen && !(libraryModuleId && stored.status === 'loading') && (
+            reusable.length ? (
+              <ul aria-label={`Files already uploaded in this ${moduleLabel}`} className="mt-2 max-h-72 space-y-1.5 overflow-auto rounded-lg border border-background-200 bg-white p-2">
+                {reusable.map(item => (
+                  <li key={item.file.url} className="flex flex-col gap-2 rounded-md px-2 py-1.5 hover:bg-background-100 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-[12px] font-bold text-foreground-800">
+                        {item.file.fileName || 'Uploaded file'}
+                        {item.file.size > 0 && <span className="ml-2 font-normal tabular-nums text-foreground-400">{formatFileSize(item.file.size)}</span>}
+                      </p>
+                      {item.source && <p className="truncate text-[10px] text-foreground-400">Used in {item.source}</p>}
+                      {item.note && <p className="truncate text-[10px] text-amber-700">{item.note}</p>}
+                    </div>
+                    <button type="button" onClick={() => attachExisting(item.file)}
+                      className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-primary-600 px-2.5 text-[11px] font-bold !text-white hover:bg-primary-700">
+                      <AppIcon className="ri-add-line !text-white"></AppIcon> Use this file
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-[11px] text-foreground-400">No other files have been uploaded in this {moduleLabel} yet.</p>
+            )
+          )}
+        </div>
+      )}
 
       {files.length > 0 && (
         <ul className="mt-3 space-y-2">

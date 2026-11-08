@@ -2,7 +2,7 @@ import { requestSessionSync } from '@/api/sessionResults';
 import { coachFetch } from '@/lib/coachFetch';
 import { localClockToUtcIso, zoneOffsetMs } from '@/lib/timeZones';
 import { sessionDeliveryDate } from '@/lib/deliveryWeek';
-import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
+import type { CoursePricing, CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
 import {
   CurriculumApiError,
   clearCurriculumGetCache,
@@ -1285,7 +1285,8 @@ export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
   ));
 }
 
-export interface ModuleCatalogueItem {
+export interface ModuleCatalogueItem extends CoursePricing {
+  isFreeCourse?: boolean;
   learnerRosterMode?: 'inherited' | 'manual' | string;
   teamsSharedSourceModuleId?: string;
   ksbRemapReport?: KsbRemapReport | null;
@@ -1503,7 +1504,7 @@ export function weekExpectedOtjhTotal(week: Pick<ModuleWeek, 'components'>): num
   return roundedMinutesToHours(totalMinutes);
 }
 
-export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string }): ModuleCatalogueItem {
+export function createLocalModuleDraft(input: CoursePricing & { isFreeCourse?: boolean; programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
   const weekCount = Math.max(0, Math.round(Number(input.weeks) || 0));
@@ -1511,6 +1512,10 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   return recalculateModule({
     id,
     catalogueId,
+    isFreeCourse: input.isFreeCourse,
+    isForSale: input.isForSale,
+    price: input.price,
+    currency: input.currency,
     // An unassigned draft carries an EMPTY programmeId, never a placeholder
     // string. 'programme-local' used to be sent here and the backend accepted
     // it as a real identifier, creating junk programme rows. A programme NAME
@@ -1554,7 +1559,10 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   });
 }
 
-export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
+export async function createNewModule(input: CoursePricing & { isFreeCourse?: boolean; programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
+  if (input.isFreeCourse) {
+    input = { ...input, programme: '', programmeId: '', programmeStatus: '', cohortId: '', cohortName: '', groupId: '', groupName: '', learnerRosterMode: 'manual', teamsSharedSourceModuleId: '', startDate: '', endDate: '' };
+  }
   const draft = createLocalModuleDraft(input);
   try {
     const response = await apiJson<{ created: boolean; moduleCatalogueId?: string; module?: ModuleCatalogueItem }>('/curriculum/modules/', {
@@ -1562,6 +1570,10 @@ export async function createNewModule(input: { programme: string; title: string;
       body: JSON.stringify({
         title: draft.title,
         moduleType: 'authoring',
+        ...(input.isFreeCourse ? { isFreeCourse: true, catalogueId: draft.catalogueId } : {}),
+        isForSale: draft.isForSale,
+        price: draft.price,
+        currency: draft.currency,
         sourceType: 'authoring',
         description: draft.description,
         coverImage: draft.coverImage || '',
@@ -1704,6 +1716,9 @@ export async function duplicateModuleStructure(
   source: ModuleCatalogueItem,
   options: DuplicateModuleStructureOptions = {},
 ) {
+  if (source.isFreeCourse) {
+    options = { ...options, keepDates: false, programmeId: '', programmeName: '', cohortId: '', cohortName: '', groupId: '', groupName: '', startDate: '', learnerRosterMode: 'manual', teamsCopyMode: 'independent', deliveryMetadata: {} };
+  }
   const { keepDates = false, renameCopy = true } = options;
   const learnerRosterMode = options.learnerRosterMode || (keepDates ? 'inherited' : 'manual');
   const teamsCopyMode = options.teamsCopyMode || 'independent';
@@ -1736,7 +1751,7 @@ export async function duplicateModuleStructure(
     // one answered was whichever the candidate scan reached first. `sourceId` is
     // re-pointed at the copy's OWN catalogue id below, once the row exists --
     // which is how an authored module names itself.
-    sourceType: 'module_authoring',
+    sourceType: source.isFreeCourse ? 'free_course' : 'module_authoring',
     // The fingerprint of the STORED structure this object was read from -- the
     // original's. The copy has not been stored yet, and carrying a revision that
     // belongs to another module's row is only ever wrong.
@@ -1838,6 +1853,10 @@ export async function duplicateModuleStructure(
   try {
     const created = await createNewModule({
       programme: preparedDuplicate.programmeName,
+      ...(source.isFreeCourse ? { isFreeCourse: true } : {}),
+      isForSale: preparedDuplicate.isForSale,
+      price: preparedDuplicate.price,
+      currency: preparedDuplicate.currency,
       title: preparedDuplicate.title,
       description: preparedDuplicate.description,
       weeks: Math.max(1, preparedDuplicate.weekStructure.length),
@@ -1857,7 +1876,7 @@ export async function duplicateModuleStructure(
       ksbRemapReport: preparedDuplicate.ksbRemapReport,
       moduleKsbMappings: preparedDuplicate.moduleKsbMappings,
       weekStructure: preparedDuplicate.weekStructure,
-      duplicateDestination: true,
+      duplicateDestination: !source.isFreeCourse,
     });
     let payload = recalculateModule({
       ...preparedDuplicate,
@@ -1872,7 +1891,7 @@ export async function duplicateModuleStructure(
         ? (source.catalogueId || source.id)
         : '',
       ksbRemapReport: preparedDuplicate.ksbRemapReport || null,
-      duplicateDestination: true,
+      duplicateDestination: !source.isFreeCourse,
     });
     const saved = await saveModuleStructure(payload.catalogueId, payload);
     return saved;
@@ -2501,7 +2520,11 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
   return recalculateModule({
     id,
     catalogueId,
-    programmeId: module.programmeId || module.programme || 'programme',
+    isFreeCourse: module.isFreeCourse,
+    isForSale: module.isForSale,
+    price: module.price,
+    currency: module.currency,
+    programmeId: module.isFreeCourse ? '' : module.programmeId || module.programme || 'programme',
     programmeName: module.programme || 'Unassigned programme',
     cohortId: module.cohortId || '',
     cohort: module.cohort || '',
@@ -2518,7 +2541,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     lastUpdated: module.lastUpdated || '',
     status: module.status || 'draft',
     authoringStatus: module.authoringStatus || module.status || 'draft',
-    sourceType: undefined,
+    sourceType: module.isFreeCourse ? 'free_course' : undefined,
     sourceId: undefined,
     deliveryStatus: module.deliveryStatus,
     ksbProfileSourceId: module.ksbProfileSourceId || '',

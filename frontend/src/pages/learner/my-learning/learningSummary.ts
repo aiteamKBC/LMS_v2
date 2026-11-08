@@ -4,7 +4,7 @@ import { completedComponentIds, isComponentComplete, quizAttemptsFor, type Journ
 import type { DeliveryWeek } from '@/lib/deliveryWeek';
 
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string; delivery_week?: DeliveryWeek };
-export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
+export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null; readingCompleted?: boolean; pairedQuiz?: SubjectEntry };
 export type SubjectCardSummary = { activityCount: number; completedActivityCount: number; progress: number; status: 'Completed' | 'In progress' | 'Upcoming'; nextTitle?: string | null; finalTestPassed: boolean };
 export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[]; aggregateProgress?: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean; legacyProgressReference?: LegacyProgressReference };
 type BuilderSubject = { id: string; title: string };

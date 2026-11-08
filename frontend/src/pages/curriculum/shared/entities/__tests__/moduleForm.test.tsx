@@ -179,6 +179,86 @@ describe('ModuleFormDrawer', () => {
     tutorEmailStatusMock.mockClear();
   });
 
+  it('creates a standalone free course without inheriting placement or scheduling defaults', async () => {
+    const { onSaved } = renderDrawer({ freeCourse: true, defaults: {
+      programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1',
+    } });
+    expect(screen.getByRole('heading', { name: 'Free course' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /programme|cohort|tutor/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Assign later|Group A/i })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: /Course name/i }), 'Independent study');
+    await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(createNewModuleMock).toHaveBeenCalledWith(expect.objectContaining({
+      isFreeCourse: true, learnerRosterMode: 'manual', title: 'Independent study',
+      programmeId: '', cohortId: '', startDate: '', endDate: '',
+    }));
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(previewModuleSessionPlanMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('reopens a free course as self-study even without the creation prop', () => {
+    renderDrawer({ module: { id: 'MOD-FREE', name: 'Independent study', isFreeCourse: true, weeks: 3 } });
+    expect(screen.getByRole('heading', { name: 'Edit free course' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /Course name/i })).toHaveValue('Independent study');
+    expect(screen.getByRole('spinbutton', { name: /weeks/i })).toHaveValue(3);
+    expect(screen.queryByRole('combobox', { name: /programme|cohort|tutor/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save free course' })).toBeInTheDocument();
+  });
+
+  it('requires a positive price with at most two decimals before creating a course for sale', async () => {
+    renderDrawer({ freeCourse: true });
+    await userEvent.type(screen.getByRole('textbox', { name: /Course name/i }), 'Paid standalone course');
+    expect(screen.queryByRole('textbox', { name: /Price \(GBP\)/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Available for sale' }));
+    const price = screen.getByRole('textbox', { name: /Price \(GBP\)/ });
+    for (const invalid of ['', '0', '-10', '12.345', '1e2']) {
+      await userEvent.clear(price);
+      if (invalid) await userEvent.type(price, invalid);
+      await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
+      expect(createNewModuleMock).not.toHaveBeenCalled();
+      expect(screen.getByText(/Enter a GBP price between/)).toBeInTheDocument();
+    }
+    await userEvent.clear(price);
+    await userEvent.type(price, '49.99');
+    await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
+    await waitFor(() => expect(createNewModuleMock).toHaveBeenCalledWith(expect.objectContaining({
+      isFreeCourse: true, isForSale: true, price: '49.99', currency: 'GBP',
+    })));
+  });
+
+  it('loads the saved sale price and saves an edited price without resizing weeks', async () => {
+    renderDrawer({ module: { id: 'MOD-FREE', name: 'Paid course', isFreeCourse: true,
+      isForSale: true, price: '49.99', currency: 'GBP', weeks: 3 } });
+    expect(screen.getByRole('checkbox', { name: 'Available for sale' })).toBeChecked();
+    const price = screen.getByRole('textbox', { name: /Price \(GBP\)/ });
+    expect(price).toHaveValue('49.99');
+    await userEvent.clear(price);
+    await userEvent.type(price, '75.50');
+    await userEvent.click(screen.getByRole('button', { name: 'Save free course' }));
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledWith('MOD-FREE', expect.objectContaining({
+      isForSale: true, price: '75.50', currency: 'GBP',
+    })));
+    expect(updateCurriculumModuleMock.mock.calls[0][1]).not.toHaveProperty('weeks');
+  });
+
+  it('clears the saved price when sale is disabled', async () => {
+    renderDrawer({ module: { id: 'MOD-FREE', name: 'Paid course', isFreeCourse: true,
+      isForSale: true, price: '49.99', currency: 'GBP', weeks: 3 } });
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Available for sale' }));
+    expect(screen.queryByRole('textbox', { name: /Price \(GBP\)/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Save free course' }));
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledWith('MOD-FREE', expect.objectContaining({
+      isForSale: false, price: null, currency: 'GBP',
+    })));
+  });
+
+  it('keeps pricing out of the ordinary module form', () => {
+    renderDrawer({ module: { id: 'MOD-NORMAL', name: 'Normal module', weeks: 3 } });
+    expect(screen.queryByRole('checkbox', { name: 'Available for sale' })).not.toBeInTheDocument();
+  });
+
   it('reopens imported session rows as eight teaching weeks and keeps the module closure in its preview', async () => {
     const closure = { id: 'saudi', label: 'Saudi National Day', startDate: '2026-09-23', endDate: '2026-09-23' };
     renderDrawer({ module: {

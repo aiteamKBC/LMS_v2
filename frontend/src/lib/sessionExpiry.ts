@@ -63,6 +63,7 @@ const PUBLIC_TOKEN_API_PREFIXES = [
   '/engagement_api/feedback/public-lecture/',
   '/engagement_api/feedback/public-rsvp/',
   '/engagement_api/event-check-in/',
+  '/curriculum_api/qr-attendance/',
 ];
 
 let listener: Listener | null = null;

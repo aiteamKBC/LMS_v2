@@ -204,41 +204,67 @@ class ScheduledContinuationTests(SimpleTestCase):
         self.saved.save.assert_not_called()
 
     def test_unsupported_local_states_cannot_submit_or_bypass_frozen_answers(self):
-        for status in ("awaiting-signature", "completed"):
+        for status in ("cancelled", "awaiting-signature", "completed"):
             with self.subTest(status=status):
                 self.saved.status = status
                 with self.assertRaises(ValueError):
                     submit(self.saved, self.answers)
                 self.assertIn(self._submit().status_code, (400, 409))
-                if status != "not-scheduled":
-                    self.assertEqual(self._post(views.coach_review_instance_answers, answers=self.answers,
-                        answerVersion=answer_version(self.saved)).status_code, 409)
+                self.assertEqual(self._post(views.coach_review_instance_answers, answers=self.answers,
+                    answerVersion=answer_version(self.saved)).status_code, 409)
                 self.saved.save.assert_not_called()
 
-    def test_unbooked_mcm_submits_without_creating_or_starting_a_meeting(self):
-        self.saved.status = 'not-scheduled'
-        self.calendar = None
-        source = deepcopy(self.cursor.fetchall.return_value)
-        snapshot = deepcopy(self.saved.template_snapshot)
-        response = self._submit()
-        self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(self.saved.status, 'awaiting-signature')
-        self.assertEqual(self.saved.answers, self.answers)
-        self.assertEqual(self.saved.template_snapshot, snapshot)
-        self.assertEqual(self.cursor.fetchall.return_value, source)
-        self.calendar_updates.return_value.update.assert_not_called()
-        with self.assertRaisesRegex(ValueError, 'All required signatures'):
-            complete(self.saved)
-
-    def test_unbooked_other_families_still_cannot_submit(self):
-        for family in ('PR', 'PR_SKILLS_RADAR'):
+    def test_unscheduled_forms_submit_without_booking_and_still_require_all_signatures(self):
+        for family in FAMILIES:
             with self.subTest(family=family):
                 self._new_overlay(family)
-                self.saved.status = 'not-scheduled'
-                with self.assertRaises(ValueError):
-                    submit(self.saved, self.answers)
-                self.assertIn(self._submit().status_code, (400, 409))
-                self.saved.save.assert_not_called()
+                self.saved.status = "not-scheduled"
+                self.calendar = None
+                source = deepcopy(self.cursor.fetchall.return_value)
+                snapshot = deepcopy(self.saved.template_snapshot)
+                self.assertEqual(self._submit(answers={}).status_code, 400)
+                self.assertEqual(self.saved.status, "not-scheduled")
+                self.assertEqual(self._submit(answerVersion="stale").status_code, 409)
+                response = self._submit()
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(self.saved.status, "awaiting-signature")
+                self.assertEqual(self.saved.answers, self.answers)
+                self.assertEqual(self.saved.template_snapshot, snapshot)
+                self.assertIsNone(self.saved.completed_at)
+                with self.assertRaisesRegex(ValueError, "All required signatures"):
+                    complete(self.saved)
+                self.saved.migrated_signatures.values_list.return_value = [
+                    role for role, needed in self.saved.signature_requirements.items() if needed]
+                complete(self.saved)
+                self.assertEqual(self.saved.status, "completed")
+                self.assertEqual(self.cursor.fetchall.return_value, source)
+                self.calendar_updates.return_value.update.assert_not_called()
+
+    def test_unscheduled_form_does_not_bypass_learner_identity_checks(self):
+        self.saved.status = "not-scheduled"
+        self.calendar = None
+        self.saved.learner_id = 999
+        self.assertEqual(self._submit().status_code, 409)
+        self.saved.save.assert_not_called()
+        self.calendar_updates.assert_not_called()
+
+    def test_historical_signature_exception_stays_scoped_to_its_mcm(self):
+        from .migrated_signature_rules import requirements_for_overlay, WAIVER_KEY
+        waiver = {
+            "version": 1, "eventKey": self.saved.event_key,
+            "sourceReviewId": self.saved.source_review_id, "learnerId": self.saved.learner_id,
+            "reason": "Synthetic approved historical exception", "appliedBy": "admin@example.invalid",
+            "meetingDate": "2026-10-22", "before": "2026-11-06", "appliedAt": "2026-11-07T12:00:00+00:00",
+        }
+        self.saved.meeting_intelligence = {WAIVER_KEY: waiver}
+        self.assertFalse(any(requirements_for_overlay(self.saved, "MCM").values()))
+        self.assertTrue(requirements_for_overlay(self.saved, "PR")["participant"])
+        self.saved.meeting_intelligence[WAIVER_KEY] = {**waiver, "learnerId": 999}
+        self.assertTrue(requirements_for_overlay(self.saved, "MCM")["participant"])
+        self.saved.status = "not-scheduled"
+        self.calendar = None
+        self.assertEqual(self._submit().status_code, 200)
+        self.assertEqual(self.saved.status, "awaiting-signature")
 
     def test_source_completed_by_status_or_date_cannot_enter_scheduled_flow(self):
         for status, completed in (("Completed", None), ("Not Scheduled", timezone.now())):

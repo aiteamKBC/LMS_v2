@@ -40,6 +40,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
+from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
@@ -3588,6 +3589,8 @@ def curriculum_teams_meeting(request):
         if requested_catalogue_id
         else ''
     )
+    if resolved_catalogue_id and (authoring_module_exists(resolved_catalogue_id) or {}).get('source_type') == 'free_course':
+        return json_error('Free courses contain self-study content only.', status=400)
     # A shared duplicate points at the source calendar. Treat the source as
     # the owner before checking for an active series so this path cannot create
     # a second Graph event for the alias.
@@ -14337,7 +14340,8 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     # Scope. Filters, the programme/cohort/group chain on the card, and the
     # `moduleBelongsToVisibleProgramme()` gate.
     'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
-    'learnerRosterMode', 'teamsSharedSourceModuleId', 'ksbRemapReport', 'isProgrammeDeleted',
+    'learnerRosterMode', 'teamsSharedSourceModuleId', 'ksbRemapReport', 'isProgrammeDeleted', 'isFreeCourse',
+    'isForSale', 'price', 'currency',
     # Counts the catalogue card and the OTJH input render.
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes',
     'totalOtjh', 'declaredTotalOtjh', 'assignments',
@@ -14854,6 +14858,11 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
         if resolved:
             return resolved
 
+    # Standalone courses have no placement to disambiguate a shared title.
+    # Only an explicit existing id can identify an existing free course.
+    if payload.get('isFreeCourse') is True:
+        return ''
+
     try:
         ensure_module_authoring_tables()
         title = first_clean_payload_value(payload, 'title', 'name')
@@ -14886,6 +14895,10 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
         )
         for row in rows:
             if normalise(row.get('title')) != normalise(title):
+                continue
+            # A standalone course and an unplaced module may share a title.
+            # Creation must never adopt the other kind's content or identity.
+            if (row.get('source_type') == 'free_course') != (payload.get('isFreeCourse') is True):
                 continue
             # An archived module is not "the same module" a create is asking
             # for. Adopting it handed a fresh copy the archived row's id, the
@@ -15594,6 +15607,10 @@ def provision_module_authoring_tables():
     ensure_columns(AUTHORING_ADVANCED_TABLE, {
         AI_MATERIAL_COLUMN: json_type,
     })
+    from .course_pricing_schema import provision as provision_course_pricing
+    provision_course_pricing(connection)
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{AUTHORING_MODULES_TABLE}', None)
+    _TABLE_COLUMNS_CACHE.pop(AUTHORING_MODULES_TABLE, None)
     _AUTHORING_TABLES_READY = True
 
 
@@ -17152,6 +17169,17 @@ def component_resource_url(value):
     return text.startswith('/curriculum_api/curriculum/uploads/') or http_url(text)
 
 
+def component_uploaded_video_url(value):
+    """Existing LMS MP4 resources may predate the generated video-import path."""
+    from urllib.parse import unquote
+    parsed = urlparse(clean_str(value))
+    path = unquote(parsed.path)
+    return (not parsed.scheme and not parsed.netloc and not parsed.query and not parsed.fragment
+            and path.startswith('/curriculum_api/curriculum/uploads/')
+            and path.lower().endswith('.mp4') and '\\' not in path
+            and not any(part in {'.', '..'} for part in path.split('/')))
+
+
 def host_matches(value, allowed_hosts):
     if not http_url(value):
         return False
@@ -17266,7 +17294,7 @@ def validate_component_authoring_payload(component, path):
         if video_url and source_type == 'Vimeo' and not host_matches(video_url, {'vimeo.com'}):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid Vimeo URL.'})
         from .video_uploads import stored_video_path
-        saved_mp4 = source_type == 'HTML (MP4)' and bool(stored_video_path(video_url))
+        saved_mp4 = source_type == 'HTML (MP4)' and (bool(stored_video_path(video_url)) or component_uploaded_video_url(video_url))
         if video_url and source_type in {'External Link', 'HTML (MP4)'} and not (http_url(video_url) or saved_mp4):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid URL.'})
         if status != 'Draft' and source_type == 'Embed' and not clean_str(settings.get('embedCode')):
@@ -17909,6 +17937,11 @@ def component_context_for_payload(payload):
             None,
         )
         module_catalogue_id = clean_str((module_row or {}).get('module_catalogue_id'))
+
+    if (module_row or {}).get('source_type') == 'free_course' and stored_component_type(payload.get('type')) == 'live_session':
+        from .free_course_policy import retained_live_component_ids
+        if clean_str(payload.get('id')) not in retained_live_component_ids(module_row):
+            raise ModuleAuthoringValidationError([{'path': 'type', 'message': 'Free courses contain self-study content only.'}])
 
     if not module_catalogue_id:
         module_catalogue_id = unique_module_catalogue_id()
@@ -21521,6 +21554,8 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'coverImage': module.get('cover_image_url') or '',
         'status': module.get('status') or 'draft',
         'sourceType': module.get('source_type') or '',
+        'isFreeCourse': module.get('source_type') == 'free_course',
+        **pricing_payload(module),
         'sourceId': module.get('source_id') or '',
         'isProgrammeDeleted': is_programme_deleted,
         'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
@@ -21987,6 +22022,8 @@ def get_authoring_structure_payloads(
             'coverImage': module.get('cover_image_url') or '',
             'status': module.get('status') or 'draft',
             'sourceType': module.get('source_type') or '',
+            'isFreeCourse': module.get('source_type') == 'free_course',
+            **pricing_payload(module),
             'sourceId': module.get('source_id') or '',
             'isProgrammeDeleted': is_programme_deleted,
             'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
@@ -22236,6 +22273,8 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             'coverImage': row.get('cover_image_url') or '',
             'status': row.get('status') or 'draft',
             'sourceType': row.get('source_type') or '',
+            'isFreeCourse': row.get('source_type') == 'free_course',
+            **pricing_payload(row),
             'sourceId': row.get('source_id') or '',
             'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or ''),
             'tutor': row.get('tutor_name') or '',
@@ -22406,6 +22445,8 @@ def authoring_summary_catalogue_item(summary):
         'status': summary['status'],
         'authoringStatus': summary['status'],
         'sourceType': summary.get('sourceType') or 'authoring',
+        'isFreeCourse': summary.get('isFreeCourse', False),
+        **{key: summary.get(key) for key in COURSE_PRICING_FIELDS},
         'ksbProfileSourceId': summary.get('ksbProfileSourceId') or '',
         'deliveryStatus': summary.get('deliveryStatus') or 'unknown',
         'author': '',
@@ -22628,6 +22669,8 @@ def enrich_modules_with_authoring(modules, include_programme_deleted=False, incl
                     'status': module_status,
                     'authoringStatus': saved['status'],
                     'sourceType': module_source_type,
+                    'isFreeCourse': saved.get('isFreeCourse', False),
+                    **{key: saved.get(key) for key in COURSE_PRICING_FIELDS},
                     'ksbProfileSourceId': saved.get('ksbProfileSourceId') or module.get('ksbProfileSourceId') or '',
                     'deliveryStatus': module.get('deliveryStatus') or saved.get('deliveryStatus') or 'unknown',
                     'notes': saved['description'],
@@ -23430,6 +23473,7 @@ MODULE_ARCHIVED_SAVE_REFUSED = (
 def save_module_authoring_structure(
     module_catalogue_id, payload, *, repair_links=True, write_changed_only=False,
     light=False, stored_rows=None, stored_structure=None, build_result=True,
+    _legacy_live_ids=None,
 ):
     """Persist one module's structure.
 
@@ -23480,6 +23524,20 @@ def save_module_authoring_structure(
     else:
         existing_module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) if module_catalogue_id else []
     existing_module_row = existing_module_rows[0] if existing_module_rows else {}
+    try:
+        course_pricing = pricing_values(payload, existing_module_row)
+    except ValueError as error:
+        raise ModuleAuthoringValidationError([{'path': error.args[0], 'message': error.args[1]}]) from error
+    is_free_course = (existing_module_row.get('source_type') == 'free_course'
+                      or payload.get('isFreeCourse') is True
+                      or payload.get('sourceType', payload.get('source_type')) == 'free_course')
+    if is_free_course:
+        from .free_course_policy import free_course_errors, retained_live_component_ids
+        allowed_live_ids = retained_live_component_ids(existing_module_row) if _legacy_live_ids is None else set(_legacy_live_ids)
+        errors = free_course_errors(payload, existing_module_row, allowed_live_ids=allowed_live_ids)
+        if errors:
+            raise ModuleAuthoringValidationError(errors)
+        payload = {**payload, 'sourceType': 'free_course', 'learnerRosterMode': 'manual'}
     # An editor that still believes an archived module is live sends
     # `isProgrammeDeleted: false` (the Builder derives it from the copy it
     # loaded). Honouring that cleared the archive on the module row alone: the
@@ -23504,14 +23562,18 @@ def save_module_authoring_structure(
         weeks = without_retired_components(current_structure.get('weekStructure') or [])
     else:
         weeks = []
+    if is_free_course:
+        errors = free_course_errors({**payload, 'weekStructure': weeks}, existing_module_row, allowed_live_ids=allowed_live_ids)
+        if errors:
+            raise ModuleAuthoringValidationError(errors)
     checklist, quality_score = module_authoring_quality_check({**payload, 'weekStructure': weeks})
     all_components = [component for week in weeks for component in (week.get('components') or [])]
     total_otjh = otjh_hours_from_minutes(sum(component_expected_otjh_minutes(component) for component in all_components))
     # total_otjh is the persisted aggregate used by catalogue/list views.
     # Keep it derived from components so stale frontend payloads cannot pin it to 0.
     declared_total = total_otjh
-    programme_name = payload.get('programmeName') or payload.get('programme') or existing_module_row.get('programme_name') or 'Unassigned programme'
-    programme = ensure_programme_config_for_authoring(
+    programme_name = '' if is_free_course else payload.get('programmeName') or payload.get('programme') or existing_module_row.get('programme_name') or 'Unassigned programme'
+    programme = None if is_free_course else ensure_programme_config_for_authoring(
         programme_name,
         payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id'),
         payload.get('programmeStatus') or payload.get('programme_status'),
@@ -23520,7 +23582,7 @@ def save_module_authoring_structure(
     # placeholder name: programme_id is a foreign key into programmes, so
     # falling back to programme_name made the insert fail on
     # modules_programme_id_fkey with key (programme_id)=(Unassigned programme).
-    programme_id = (programme or {}).get('sourceId') or persistable_programme_id(
+    programme_id = None if is_free_course else (programme or {}).get('sourceId') or persistable_programme_id(
         payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id')
     ) or None
     delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
@@ -23656,6 +23718,7 @@ def save_module_authoring_structure(
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
             'module_catalogue_id': module_catalogue_id,
+            **course_pricing,
             'programme_id': programme_id,
             'programme_name': programme_name,
             'is_programme_deleted': is_programme_deleted,
@@ -23700,7 +23763,7 @@ def save_module_authoring_structure(
             'weekly_schedule': json_db_value(weekly_schedule),
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
-        })
+        }, allow_null_columns={'price'})
         # Written only when the share itself changed. The `modules` column above
         # and this table say the same thing; rewriting the table on every save
         # meant every save could delete a share, which is how one went missing.
@@ -23717,7 +23780,7 @@ def save_module_authoring_structure(
         # the live_sessions row away from its canonical module, breaking the
         # original's calendar, attendance and recordings.  The alias resolves
         # the source row on reads instead.
-        if not teams_shared_source_module_id:
+        if not teams_shared_source_module_id and not is_free_course:
             link_live_session_series_to_module(module_catalogue_id, {**payload, 'weekStructure': weeks})
         # Read before the withdraw-and-rewrite below, because the assurance
         # flags a payload does not mention must survive this save - see
@@ -23788,7 +23851,7 @@ def save_module_authoring_structure(
                 component_settings = preserve_additional_meeting_settings(
                     component_settings, stored_components_by_id.get(component_id),
                 )
-                if (frontend_component_type(component.get('type')) == 'live-session'
+                if (not is_free_course and frontend_component_type(component.get('type')) == 'live-session'
                         and (not teams_shared_source_module_id
                              or clean_str(component_settings.get('liveSessionLinkOverride')))):
                     from .teams_external_calendar import manual_link_settings
@@ -23948,7 +24011,7 @@ def save_module_authoring_structure(
         # programme_id on groups whose cohort is missing and the foreign key
         # then rejects the write.
         repair_curriculum_parent_links(programme_id)
-    if not light or module_live_sessions_affected(stored_structure, {**payload, 'weekStructure': weeks}):
+    if not is_free_course and (not light or module_live_sessions_affected(stored_structure, {**payload, 'weekStructure': weeks})):
         calendars = authoring_fetch_all(LIVE_SESSIONS_TABLE, "module_catalogue_id = %s and status = 'active'", [module_catalogue_id])
         if calendars and (stored_calendar_series(calendars[0]) or clean_str(calendars[0].get('meeting_type')) == 'linked-external'):
             calendar = calendars[0]
@@ -24132,7 +24195,10 @@ def get_free_programme_modules_payload(programme_id):
         [programme_id],
         'display_order, title',
     ))
-    return [free_programme_module_response(module, components, courses.get(clean_str(module.get('course_id')))) for module in modules]
+    from .legacy_free_course_adoption import adopted_courses
+    adopted = adopted_courses()
+    return [free_programme_module_response(module, components, courses.get(clean_str(module.get('course_id'))))
+            for module in modules if clean_str(module.get('course_id')) not in adopted]
 
 
 def free_programme_owned_ids(programme_id):
@@ -24191,7 +24257,18 @@ def delete_free_programme_data(programme_id):
         logger.warning('Refusing to delete free programme data without a programme id.')
         return set(), set()
     week_ids, course_ids = free_programme_owned_ids(programme_id)
-    free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id])
+    from .legacy_free_course_adoption import adopted_courses
+    protected = set(adopted_courses())
+    protected_weeks = {row['id'] for row in free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE,
+        columns=['id', 'course_id']) if row.get('course_id') in protected}
+    week_ids -= protected_weeks
+    course_ids -= protected
+    if protected_weeks:
+        placeholders = ', '.join(['%s'] * len(protected_weeks))
+        free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE,
+            f'programme_id = %s and free_module_id not in ({placeholders})', [programme_id, *protected_weeks])
+    else:
+        free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id])
     if week_ids:
         placeholders = ', '.join(['%s'] * len(week_ids))
         free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, f'id in ({placeholders})', list(week_ids))
@@ -24209,6 +24286,12 @@ def save_free_programme_modules(programme_id, payload):
     modules = payload.get('modules') or []
     if not isinstance(modules, list):
         modules = []
+
+    from .legacy_free_course_adoption import adopted_courses
+    protected = adopted_courses()
+    if any(clean_str(module.get('courseId') or module.get('course_id')) in protected
+           for module in modules if isinstance(module, dict)):
+        raise ValueError('This free course is now edited in Module Builder. Reload the course catalogue.')
 
     with transaction.atomic():
         # Scope the rewrite to this programme's own free courses/weeks. This
@@ -26628,8 +26711,11 @@ def curriculum_modules(request):
                 return compact_module_list_rows(enriched)
 
             payload = {'schema': CURRICULUM_SCHEMA}
+            # v2 entries can predate the free-course/pricing projection. They
+            # survive a deploy in the shared cache and otherwise make existing
+            # standalone courses look like ordinary modules until expiry.
             modules = cached_curriculum_value(
-                f'modules:{visibility}:list-v2', build_list, force=bypass_cache,
+                f'modules:{visibility}:list-v3', build_list, force=bypass_cache,
             )
         elif bypass_cache:
             payload = build_curriculum_payload(visibility, compact=True, force=True)
@@ -26693,6 +26779,8 @@ def curriculum_module_collection(request):
             # is the archive's Restore, which brings its weeks back with it.
             module_catalogue_id = unique_module_catalogue_id()
         existing_live_module = authoring_module_exists(module_catalogue_id)
+        if existing_live_module and (existing_live_module.get('source_type') == 'free_course') != (payload.get('isFreeCourse') is True):
+            return json_error('This identifier belongs to a different course type. Create a new course instead.', status=400)
         if existing_live_module and truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')):
             # A duplicate is its own module. Matching it to a same-titled module
             # already in the destination group used to replace that module's
@@ -26717,6 +26805,8 @@ def curriculum_module_collection(request):
             }, status=200)
         module_payload = {
             'catalogueId': module_catalogue_id,
+            'isFreeCourse': payload.get('isFreeCourse') is True,
+            **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload},
             'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'),
             'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme',
             'programmeStatus': payload.get('programmeStatus') or payload.get('programme_status') or '',
@@ -32561,6 +32651,18 @@ def curriculum_module_detail(request, identifier):
             return json_error('Invalid JSON body.')
         rename_only = curriculum_name_only_patch(payload, allow_title=True)
         try:
+            pricing_values(payload, existing_authoring)
+        except ValueError as error:
+            return json_error(error.args[1], status=400, fields=[error.args[0]],
+                              validationErrors=[{'path': error.args[0], 'message': error.args[1]}])
+        if (existing_authoring.get('source_type') == 'free_course'
+                or payload.get('isFreeCourse') is True
+                or payload.get('sourceType', payload.get('source_type')) == 'free_course'):
+            from .free_course_policy import free_course_errors
+            errors = free_course_errors(payload, existing_authoring)
+            if errors:
+                return json_error('Free course validation failed.', status=400, validationErrors=errors)
+        try:
             module_weekly_schedule(payload)
         except ValueError as exc:
             return json_error(str(exc), fields=['weeklySchedule'])
@@ -32597,6 +32699,7 @@ def curriculum_module_detail(request, identifier):
             resolved_weeks_number = len(resolved_week_structure) or requested_weeks_number
         structure_payload = {
             **current,
+            **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload},
             'catalogueId': module_catalogue_id,
             'programmeId': payload.get('programmeId') or current.get('programmeId'),
             'programmeName': payload.get('programmeName') or payload.get('programme') or current.get('programmeName') or current.get('programme'),

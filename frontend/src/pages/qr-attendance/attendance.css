@@ -1,0 +1,357 @@
+﻿.qr-attendance-page {
+  --qr-purple: #6724b8;
+  --qr-ink: #1f123f;
+  --qr-muted: #4b3c63;
+  --qr-border: #c9bada;
+  display: grid;
+  grid-template-columns: minmax(0, 45fr) minmax(0, 55fr);
+  min-height: 100svh;
+  background: radial-gradient(ellipse at 70% 10%, #eae1f4 0, #d9cae8 55%, #c6afdb 100%);
+  color: var(--qr-ink);
+  color-scheme: light;
+}
+
+/* The image occupies its grid column; only its decorative fade overlaps the form. */
+.qr-building-panel {
+  position: relative;
+  align-self: stretch;
+  width: calc(100% + clamp(90px, 9vw, 180px));
+  min-height: 100svh;
+  pointer-events: none;
+}
+
+.qr-building-image {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 64%, #d9cae899 88%, #e9e1f3 100%),
+    url('/assets/qr-attendance/kbc-building-branded.webp') center 42% / cover no-repeat;
+  mask-image: linear-gradient(to right, #000 62%, #000c 77%, transparent 100%);
+}
+
+.qr-attendance-content {
+  position: relative;
+  align-self: center;
+  min-width: 0;
+  width: 100%;
+  max-width: 876px;
+  margin: 0 auto;
+  padding: 24px 28px 12px 0;
+}
+
+.qr-attendance-heading {
+  margin-bottom: 22px;
+  text-align: center;
+}
+
+.qr-header-symbol {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 12px;
+  border: 1px solid #ffffffcc;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #ece2f5, #cbb3e3);
+  color: var(--qr-purple);
+}
+
+.qr-header-symbol svg { width: 60%; height: 60%; stroke-width: 1.8; }
+
+.qr-attendance-heading h1 {
+  margin: 0;
+  color: var(--qr-ink);
+  font-size: clamp(34px, 2.8vw, 40px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -1px;
+}
+
+.qr-attendance-heading h1::after {
+  content: '';
+  display: block;
+  width: 42px;
+  height: 2px;
+  margin: 12px auto 10px;
+  border-radius: 2px;
+  background: #d4af37;
+}
+
+.qr-attendance-heading > p {
+  margin: 0;
+  color: var(--qr-muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.qr-attendance-card {
+  padding: 40px;
+  border: 1.5px solid #9a80b9;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #eae2f4f5 0, #dfd0ecf0 55%, #d0bee4eb 100%);
+  box-shadow: 0 20px 44px #33205838, 0 2px 6px #33205826, inset 0 1px 0 #ffffffb3;
+  backdrop-filter: blur(8px);
+}
+
+.qr-step {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.qr-step-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--qr-ink);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.qr-step-number {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #974de0, #6724b8 70%);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.qr-email-fields { display: flex; align-items: stretch; gap: 12px; }
+.qr-email-icon { position: absolute; top: 15px; left: 14px; color: var(--qr-muted); }
+.qr-email-input {
+  min-height: 48px;
+  padding: 12px 14px 12px 42px;
+  border: 1px solid var(--qr-border);
+  border-radius: 11px;
+  background: #f3eef9;
+  color: var(--qr-ink);
+  font-size: 15px;
+  line-height: 22px;
+  box-shadow: none;
+}
+.qr-email-input::placeholder { color: var(--qr-muted); }
+.qr-email-input:focus { border-color: var(--qr-purple); box-shadow: 0 0 0 3px #6724b81a; }
+.qr-email-input:disabled { background: #e8e0f0; }
+.qr-email-input.pr-12 { padding-right: 44px; }
+.qr-email-status {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--qr-muted);
+}
+.qr-email-status > p:first-child { color: var(--qr-muted); }
+
+@media (min-width: 1100px) {
+  .qr-email-step { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 12px; }
+  .qr-email-step > .qr-step-label { grid-area: 1 / 1; margin: 0; }
+  .qr-email-fields { grid-area: 2 / 1 / auto / -1; }
+  .qr-email-status { grid-area: 1 / 2; flex-direction: column; align-items: flex-end; justify-content: center; gap: 0; margin: 0; text-align: right; }
+}
+
+.qr-primary-button {
+  border-radius: 11px;
+  background: linear-gradient(105deg, #431a75, #6724b8 55%, #7e13d5);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+  box-shadow: 0 3px 8px #51199812;
+}
+.qr-primary-button:hover:not(:disabled) { filter: brightness(1.08); }
+.qr-primary-button:focus-visible { outline: 2px solid var(--qr-purple); outline-offset: 3px; }
+.qr-primary-button:disabled { background: #856aa7; box-shadow: none; opacity: .75; }
+.qr-find-button { min-height: 48px; padding: 12px 16px; white-space: nowrap; background: linear-gradient(100deg, #6724b8, #7712c9); }
+.qr-confirm-button { min-height: 52px; padding: 14px 20px; font-size: 16px; }
+
+.qr-email-step, .qr-module-step { padding-bottom: 18px; border-bottom: 1px solid var(--qr-border); }
+.qr-confirm-form { display: grid; gap: 18px; margin-top: 18px; }
+.qr-module-step > p, .qr-module-step > .rounded-xl { margin-top: 10px; }
+.qr-module-control { position: relative; }
+.qr-module-icon { position: absolute; top: 15px; left: 14px; z-index: 1; color: var(--qr-muted); pointer-events: none; }
+.qr-module-trigger {
+  height: auto;
+  min-height: 48px;
+  padding: 10px 12px 10px 42px;
+  border: 1px solid var(--qr-border);
+  border-radius: 11px;
+  background: #f3eef9;
+  box-shadow: none;
+}
+.qr-module-trigger > span:first-child {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  color: var(--qr-ink);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 24px;
+}
+.qr-module-trigger:disabled { background: #e8e0f0; }
+.qr-module-trigger:disabled > span:first-child { color: var(--qr-muted); }
+.qr-module-trigger:focus-visible { outline: 2px solid var(--qr-purple); outline-offset: 2px; }
+.qr-module-menu { border-color: var(--qr-border, #c9bada); background: #f3eef9; box-shadow: 0 12px 32px #3f1c7026; }
+.qr-module-menu [role='option'] { min-height: 48px; }
+.qr-module-menu [role='option'][aria-selected='true'] { background: #f7f3fd; color: #6724b8; }
+.qr-module-menu [role='option'] > span > span:last-child:not(:first-child) { color: #625977; }
+.qr-module-suggestions { margin-top: 12px; color: var(--qr-ink); }
+.qr-module-suggestion-list { display: grid; gap: 8px; max-height: 192px; margin-top: 8px; padding: 3px; overflow-y: auto; scrollbar-width: thin; }
+.qr-module-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 1px solid var(--qr-border);
+  border-radius: 11px;
+  background: #eee7f5;
+  text-align: left;
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.qr-module-suggestion[aria-pressed='true'] { border-color: var(--qr-purple); background: #ddccec; }
+.qr-module-suggestion:hover:not(:disabled) { border-color: var(--qr-purple); }
+.qr-module-suggestion:focus-visible { outline: 2px solid var(--qr-purple); outline-offset: 2px; }
+.qr-module-suggestion:disabled { cursor: wait; opacity: .6; }
+.qr-module-suggestion-detail { display: block; margin-top: 2px; color: var(--qr-muted); font-size: 12px; }
+.qr-lecture-step > legend { float: none; width: 100%; padding: 0; }
+
+.qr-attendance-lectures {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  max-height: 252px;
+  padding: 3px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #c0afd4 transparent;
+  scrollbar-gutter: stable;
+}
+.qr-lecture-card { display: block; position: relative; min-width: 0; }
+.qr-lecture-surface {
+  align-items: center;
+  gap: 14px;
+  min-height: 74px;
+  height: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--qr-border);
+  border-radius: 12px;
+  background: #eee7f5;
+}
+.qr-lecture-card:hover .qr-lecture-surface { border-color: #ad91cd; }
+.qr-lecture-card input:checked + .qr-lecture-surface {
+  border-color: var(--qr-purple);
+  background: linear-gradient(110deg, #e8ddf4, #ddccec);
+  box-shadow: 0 0 0 1px #6724b81f;
+}
+.qr-lecture-card input:focus-visible + .qr-lecture-surface { outline: 2px solid var(--qr-purple); outline-offset: 2px; }
+.qr-lecture-radio {
+  display: inline-flex;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid #968ca4;
+  border-radius: 50%;
+  background: #fff;
+}
+.qr-lecture-card input:checked + .qr-lecture-surface .qr-lecture-radio { border-color: var(--qr-purple); }
+.qr-lecture-card input:checked + .qr-lecture-surface .qr-lecture-radio::after {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--qr-purple);
+}
+.qr-lecture-title { color: var(--qr-ink); font-size: 15px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.qr-lecture-metadata { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 5px; color: var(--qr-muted); font-size: 12px; line-height: 18px; }
+.qr-lecture-metadata > span { display: flex; min-width: 0; align-items: flex-start; gap: 6px; overflow-wrap: anywhere; }
+.qr-lecture-metadata > span + span { border-left: 1px solid var(--qr-border); padding-left: 12px; }
+.qr-lecture-metadata svg { flex-shrink: 0; margin-top: 1px; color: #574270; }
+.qr-current-badge { font-size: 11px; }
+.qr-lecture-placeholder { background: #e5daee; }
+
+/* The permanent QR tools stay outside the student's primary form card. */
+.qr-attendance-sharing { max-width: 360px; margin-top: 8px; border: 0; text-align: center; }
+.qr-attendance-sharing > summary { color: var(--qr-muted); font-size: 12px; }
+.qr-attendance-sharing[open] { border: 1px solid var(--qr-border); border-radius: 12px; background: #e8e0f0; }
+
+@media (min-width: 1100px) and (max-height: 850px) {
+  .qr-attendance-content { padding-top: 12px; padding-bottom: 0; }
+  .qr-header-symbol { width: 64px; height: 64px; margin-bottom: 6px; }
+  .qr-attendance-heading { margin-bottom: 12px; }
+  .qr-attendance-heading h1 { font-size: 34px; }
+  .qr-attendance-heading h1::after { margin: 6px auto; }
+  .qr-attendance-card { padding: 28px 40px; }
+  .qr-step-number { width: 28px; height: 28px; }
+  .qr-step-label { margin-bottom: 6px; }
+  .qr-email-step { row-gap: 8px; }
+  .qr-email-step, .qr-module-step { padding-bottom: 10px; }
+  .qr-confirm-form { gap: 10px; margin-top: 10px; }
+  .qr-attendance-lectures { max-height: 220px; }
+  .qr-lecture-surface { min-height: 68px; padding-block: 10px; }
+}
+
+@media (max-width: 1099px) {
+  .qr-attendance-page { display: block; }
+  .qr-building-panel { width: 100%; min-height: 0; height: clamp(240px, 32vw, 340px); }
+  .qr-building-image {
+    background-position: center 50%;
+    background-image: url('/assets/qr-attendance/kbc-building-branded.webp');
+    background-size: cover;
+    background-repeat: no-repeat;
+    mask-image: linear-gradient(to bottom, #000 75%, transparent 100%);
+  }
+  .qr-attendance-content { width: calc(100% - 48px); max-width: 760px; margin: -20px auto 0; padding: 0 0 16px; }
+  .qr-attendance-heading { margin-bottom: 20px; }
+  .qr-header-symbol { width: 64px; height: 64px; }
+  .qr-attendance-heading h1 { font-size: 32px; }
+  .qr-attendance-card { padding: 36px; }
+}
+
+@media (max-width: 767px) {
+  .qr-building-panel { height: clamp(164px, 44vw, 240px); }
+  .qr-building-image { background-position: center 47%; }
+  .qr-attendance-content { width: calc(100% - 28px); margin-top: -8px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .qr-attendance-heading { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 6px 12px; max-width: 360px; margin: 0 auto 18px; padding: 0 4px; text-align: left; }
+  .qr-header-symbol { grid-row: 1 / 3; width: 48px; height: 48px; margin: 0; border-radius: 14px; }
+  .qr-attendance-heading h1 { font-size: 27px; letter-spacing: -.6px; }
+  .qr-attendance-heading h1::after { display: none; }
+  .qr-attendance-heading > p { grid-column: 2; font-size: 13px; line-height: 1.5; }
+  .qr-attendance-card { padding: 28px 24px; border-radius: 22px; box-shadow: 0 14px 32px #33205830, 0 2px 5px #33205824, inset 0 1px 0 #ffffffb3; }
+  .qr-step-label { font-size: 16px; }
+  .qr-email-fields { flex-direction: column; gap: 10px; }
+  .qr-email-input { min-height: 50px; font-size: 16px; scroll-margin-block: 24px; }
+  .qr-find-button { width: 100%; min-height: 50px; }
+  .qr-email-status { gap: 4px; }
+  .qr-step-number { width: 28px; height: 28px; }
+  .qr-email-step, .qr-module-step { padding-bottom: 16px; }
+  .qr-confirm-form { margin-top: 16px; gap: 16px; }
+  .qr-attendance-lectures { max-height: min(440px, 55svh); scrollbar-gutter: auto; }
+  .qr-lecture-surface { align-items: flex-start; gap: 10px; padding: 12px; }
+  .qr-lecture-radio { margin-top: 2px; }
+  .qr-lecture-metadata { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; font-size: 13px; line-height: 19px; }
+  .qr-lecture-metadata > span + span { border: 0; padding: 0; }
+  .qr-lecture-metadata > span:first-child { grid-column: 1 / -1; }
+  .qr-lecture-metadata > span:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .qr-lecture-placeholder { padding: 16px 12px; }
+  .qr-module-menu input { font-size: 16px; }
+}
+
+@media (max-width: 359px) {
+  .qr-attendance-heading h1 { font-size: 24px; }
+  .qr-attendance-card { padding-inline: 16px; }
+  .qr-step-label { gap: 8px; }
+  .qr-lecture-metadata { grid-template-columns: minmax(0, 1fr); }
+}

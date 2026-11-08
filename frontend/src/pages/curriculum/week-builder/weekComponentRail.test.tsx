@@ -5,6 +5,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { WeekComponentRail } from './page';
 
 describe('WeekComponentRail add flow', () => {
+  it('offers only self-study activities for a standalone free course', async () => {
+    const onChange = vi.fn();
+    render(<WeekComponentRail selfStudyOnly weekId="W1" components={[]} selectedId={null}
+      onSelectId={vi.fn()} onChange={onChange} pointsByType={{}} />);
+    await userEvent.click(screen.getByRole('button', { name: /Add.*component|Add.*part/i }));
+    expect(screen.queryByRole('button', { name: /^Live Teams Session|^Live session/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Reading material/i }));
+    expect(onChange).toHaveBeenCalledWith([expect.objectContaining({ type: 'reading' })]);
+  });
+
   it('shows week titles for live sessions and recordings without changing their saved cards', () => {
     const onChange = vi.fn();
     const base = { weekId: 'W2', moduleId: 'M1', title: 'Live Teams Session 1', description: '', expectedOtjh: 1, points: 5,

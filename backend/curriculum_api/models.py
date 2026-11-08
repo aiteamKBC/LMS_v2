@@ -4,6 +4,30 @@ from django.db import models
 from django.utils import timezone
 
 
+class QRAttendance(models.Model):
+    """Independent email-submitted evidence; never grants attendance or hours.
+
+    Identity fields are scalar snapshots. The migration installs real database
+    foreign keys because the external enrolment/curriculum tables are unmanaged.
+    """
+    enrolment_id = models.IntegerField()
+    programme_id = models.CharField(max_length=150)
+    module_id = models.CharField(max_length=128)
+    occurrence_id = models.CharField(max_length=128)
+    assigned_group_id = models.CharField(max_length=128, null=True, blank=True)
+    attended_group_id = models.CharField(max_length=128, null=True, blank=True)
+    assigned_cohort_id = models.CharField(max_length=128, null=True, blank=True)
+    attended_cohort_id = models.CharField(max_length=128, null=True, blank=True)
+    source = models.CharField(max_length=2, default='qr', editable=False)
+    confirmed_at = models.DateTimeField(default=timezone.now, editable=False)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."qr_attendance'
+        constraints = [models.UniqueConstraint(fields=['enrolment_id', 'occurrence_id'], name='qr_attendance_student_occurrence_uniq')]
+
+
 class CurriculumVideoImport(models.Model):
     """Durable import identity, source and outcome; no learner records."""
 
@@ -49,6 +73,9 @@ class CurriculumVideoChange(models.Model):
 
 class ModuleAuthoringModule(models.Model):
     module_catalogue_id = models.CharField(max_length=128, primary_key=True)
+    is_for_sale = models.BooleanField(default=False)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=3, default='GBP')
     programme_id = models.CharField(max_length=255, blank=True, default='')
     programme_name = models.CharField(max_length=255, blank=True, default='')
     is_programme_deleted = models.BooleanField(default=False)

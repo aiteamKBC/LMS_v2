@@ -41,7 +41,7 @@ def capability(request, kind, activity_id):
     component = resolve(request, kind, activity_id)
     with connections["default"].cursor() as cursor:
         cfg = policy(cursor, component["moduleId"], require=False)
-    return bool(cfg and cfg["enabled"] and cfg["starts_at"])
+    return bool(cfg and cfg["enabled"] and cfg["starts_at"] and cfg["starts_at"] <= timezone.now())
 
 # Browser timing must remain available when the native mobile facade is disabled.
 @mobile.endpoint("POST", require_mobile_enabled=False)
