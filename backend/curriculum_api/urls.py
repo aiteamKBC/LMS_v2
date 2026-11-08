@@ -48,6 +48,7 @@ from . import recordings_library, session_results, tutor_notifications, recordin
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 from .home_summary import curriculum_home_summary
+from .teaching_quality import teaching_review
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
 
@@ -85,6 +86,7 @@ urlpatterns = [
     path('curriculum/modules/tutor-email/', tutor_notifications.modules_tutor_email, name='curriculum-modules-tutor-email'),
     # Every saved recording across modules, for the Recordings page. Read only.
     path('curriculum/session-recordings/calendar-matches/', recordings_calendar.calendar_matches),
+    path('curriculum/session-recordings/quality/', teaching_review, name='teaching-quality-review'),
     path('curriculum/session-recordings/external-recordings/', recordings_external.external_recordings),
     path('curriculum/session-recordings/', recordings_library.recordings_library, name='curriculum-session-recordings'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
