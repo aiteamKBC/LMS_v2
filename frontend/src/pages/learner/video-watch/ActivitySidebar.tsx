@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { JourneyComponent } from '@/utils/learnerJourney';
@@ -8,6 +8,7 @@ import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { PointActivityRows } from './PointActivityRows';
+import { uniqueWeekActivities } from '@/utils/uniqueWeekActivities';
 import { ActivityPlanDetails } from './ActivityPlanDetails';
 import { allocatedActivityHours, requiredActivityRows } from '@/utils/activityPlan';
 import {
@@ -105,12 +106,12 @@ function sidebarActivityMeta(component: JourneyComponent) {
 }
 
 export function ActivitySidebar({
-  weekComponents,
+  weekComponents: suppliedWeekComponents,
   weekTitle,
   weekDateLabel,
   dateLabelFor,
   moduleTitle,
-  weeks,
+  weeks: suppliedWeeks,
   completedIds,
   kind,
   id,
@@ -126,6 +127,14 @@ export function ActivitySidebar({
   accessOpen = true,
   onAccessBlocked,
 }: ActivitySidebarProps) {
+  const weekComponents = useMemo(() => uniqueWeekActivities(suppliedWeekComponents), [suppliedWeekComponents]);
+  const weeks = useMemo(() => suppliedWeeks.map(week => {
+    const components = uniqueWeekActivities(week.components);
+    return components.length === week.components.length ? week : {
+      ...week, components, count: components.length,
+      completed: components.filter(component => isComponentComplete(component, completedIds)).length,
+    };
+  }), [suppliedWeeks, completedIds]);
   const navigate = useNavigate();
   const learnerKind = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
   // Read the plan whenever there is a week to describe, not only when the list
@@ -232,7 +241,7 @@ export function ActivitySidebar({
         </div>
         <ul className="divide-y divide-emerald-100">
           {requiredOnly && !shownWeekComponents.length && <li className="px-4 py-3 text-xs text-foreground-600">No required activities in this week. <button type="button" onClick={() => setRequiredOnly(false)} className="min-h-11 font-semibold text-primary-800 underline">Show all activities</button></li>}
-          <PointActivityRows components={shownWeekComponents} current={isCurrentRow} renderRow={(c) => {
+          <PointActivityRows components={shownWeekComponents} renderRow={(c) => {
             const cm = sidebarActivityMeta(c);
             const isCurrent = isCurrentRow(c);
             const contentAvailable = contentAvailableFor(c);
@@ -386,7 +395,7 @@ export function ActivitySidebar({
                   {expanded && (
                     <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
                       {requiredOnly && !shownComponents.length && <li className="px-4 py-3 text-xs text-foreground-600"><p>No required activities in this week.</p><button type="button" onClick={() => setRequiredOnly(false)} className="min-h-11 font-semibold text-primary-800 underline">Show all activities</button></li>}
-                      <PointActivityRows components={shownComponents} current={isCurrentRow} renderRow={(component) => {
+                      <PointActivityRows components={shownComponents} renderRow={(component) => {
                         const row = weekComponentRows({ ...w, components: [component] }, completedIds)[0];
                         const rowMeta = sidebarActivityMeta(row.component);
                         const openable = canOpen ? canOpen(row.component) : row.openable;

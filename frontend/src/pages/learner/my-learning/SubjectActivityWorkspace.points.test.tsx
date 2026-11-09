@@ -29,19 +29,20 @@ describe('catalogue point navigation', () => {
     expect(within(sidebar).queryByText('20 Oct 2026 – 26 Oct 2026')).not.toBeInTheDocument();
     expect(sidebar).not.toHaveTextContent('Invalid Date');
   });
-  it('opens the exact deep-linked activity inside its point without replacing its player', () => {
+  it('opens the exact deep-linked activity directly in its week without replacing its player', () => {
     render(<MemoryRouter><SubjectActivityWorkspace {...props} requestedActivity="Audio" search="" /></MemoryRouter>);
     expect(screen.getByRole('article', { name: 'Audio player' })).toBeVisible();
-    expect(screen.getByRole('list', { name: 'Point 1 activities' }).closest('details')).toHaveAttribute('open');
+    expect(screen.queryByRole('list', { name: 'Point 1 activities' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'PodcastAudio' })).toBeVisible();
   });
-  it('search selects matching content and keeps the complete point navigation, with quiz last', () => {
+  it('search selects matching content and keeps all week activities in saved order', () => {
     const { rerender } = render(<MemoryRouter><SubjectActivityWorkspace {...props} search="Reading" /></MemoryRouter>);
     expect(screen.getByRole('article', { name: 'Reading player' })).toBeVisible();
     rerender(<MemoryRouter><SubjectActivityWorkspace {...props} search="Audio" /></MemoryRouter>);
     expect(screen.getByRole('article', { name: 'Audio player' })).toBeVisible();
     expect(screen.getByRole('article', { name: 'Reading player', hidden: true })).not.toBeVisible();
-    const point = screen.getByRole('list', { name: 'Point 1 activities' });
+    const point = screen.getByRole('button', { name: 'ReadingReading' }).closest('ul')!;
     expect(within(point).getAllByRole('button').map(button => button.textContent))
-      .toEqual(['ReadingReading', 'PodcastAudio', 'QuizQuiz']);
+      .toEqual(['ReadingReading', 'QuizQuiz', 'PodcastAudio']);
   });
 });

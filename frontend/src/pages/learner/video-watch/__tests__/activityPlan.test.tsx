@@ -54,16 +54,16 @@ describe('planned activity guidance', () => {
     }
   });
 
-  it('filters within the existing points, retains related quizzes and preserves progress totals and the route', () => {
+  it('filters the flat week, retains related quizzes and preserves progress totals and the route', () => {
     mount();
     expect(screen.getByRole('button', { name: 'All activities' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Required only' }));
     expect(screen.getByRole('button', { name: 'Required only' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByRole('button', { name: /Welcome/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Listen to the case/ })).not.toBeInTheDocument();
-    const point = screen.getByRole('list', { name: 'Point 1 activities' });
-    expect(within(point).getAllByRole('button').map(button => button.textContent))
-      .toEqual([expect.stringContaining('Read the case'), expect.stringContaining('Check understanding')]);
+    expect(screen.queryByRole('list', { name: 'Point 1 activities' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Read the case/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /Check understanding/ })).toBeVisible();
     const totals = within(screen.getByRole('heading', { name: 'Week 1' }).parentElement!).getByText(/6 components/);
     expect(totals).toHaveTextContent('1 done');
     expect(totals).toHaveTextContent('3 shown');
