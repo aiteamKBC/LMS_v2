@@ -100,13 +100,13 @@ class ProtocolTests(TransportTestCase):
         # Change management, lookups and independently gated content/video tools.
         self.assertEqual(set(REGISTRY), {
             "apply_change", "cancel_change", "list_my_pending_changes", "test_whoami",
-            "find_programmes", "find_cohorts_groups", "find_modules", "get_module_structure",
+            "find_programmes", "find_cohorts_groups", "find_modules", "get_module_structure", "list_module_weeks",
             "list_standard_ksbs", "ksb_coverage", "get_quiz", "list_books", "search_books",
             "save_curriculum_video", "get_video_import_status",
-            "create_curriculum_component",
+            "create_curriculum_component", "create_week",
         })
         self.assertEqual({name for name, t in REGISTRY.items() if t.writes},
-                         {"apply_change", "save_curriculum_video", "create_curriculum_component"})
+                         {"apply_change", "save_curriculum_video", "create_curriculum_component", "create_week"})
 
     def test_invalid_json_unknown_method_and_batch(self):
         bad = self.post("{not json")

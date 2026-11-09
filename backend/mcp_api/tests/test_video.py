@@ -219,6 +219,65 @@ class VideoPreviewTests(VideoTestCase):
         self.assertEqual(self.downloads, [])
 
 
+class VideoLinkTests(VideoTestCase):
+    LINK = "https://drive.google.com/file/d/abcdefghijk12345/view?usp=sharing"
+
+    def setUp(self):
+        super().setUp()
+        self.link_downloads = []
+        self.enterContext(mock.patch.object(video, "download_video", self.download))
+
+    @contextmanager
+    def download(self, url):
+        self.link_downloads.append(url)
+        stream = tempfile.TemporaryFile()
+        stream.write(self.bytes)
+        try:
+            yield stream
+        finally:
+            stream.close()
+
+    def link_args(self, url=None):
+        return {**{k: v for k, v in ARGS.items() if k != "file"}, "video_url": url or self.LINK}
+
+    def test_pasted_link_is_downloaded_staged_and_saved_without_storing_the_link(self):
+        result = self.run_tool(arguments=self.link_args())
+        self.assertFalse(result.get("isError"), result)
+        self.assertEqual(self.link_downloads, [self.LINK])
+        self.assertEqual(self.post_count, 0)
+        self.assertNotIn(self.LINK, str(result))
+        self.assertNotIn(self.LINK, str(self.pending.rows[1].payload))
+        self.assertEqual(self.pending.rows[1].payload["stage"]["file_name"], "video.mp4")
+        applied = self.apply(result["structuredContent"]["preview_id"])
+        self.assertFalse(applied.get("isError"), applied)
+        self.assertEqual(self.post_count, 1)
+
+    def test_file_and_link_are_mutually_exclusive(self):
+        self.assertIn("not both or neither", self.error({**ARGS, "video_url": self.LINK}))
+        self.assertIn("not both or neither", self.error({k: v for k, v in ARGS.items() if k != "file"}))
+        self.assertEqual(self.link_downloads + self.downloads, [])
+
+    def test_notebooklm_youtube_and_plain_http_links_are_refused_before_downloading(self):
+        for url, text in (("https://notebooklm.google.com/notebook/abc", "NotebookLM"),
+                          ("https://www.youtube.com/watch?v=abcdefghijk", "YouTube"),
+                          ("http://files.example.com/v.mp4", "https link")):
+            with self.subTest(url=url):
+                self.assertIn(text, self.error(self.link_args(url)))
+        self.assertEqual(self.link_downloads, [])
+        self.assertEqual(self.store_file.call_count, 0)
+
+    def test_link_returning_a_non_mp4_never_reaches_storage(self):
+        self.bytes = b"<html>sign in</html>" + b"\x00" * 64
+        self.assertIn("MP4", self.error(self.link_args()))
+        self.assertEqual(self.store_file.call_count, 0)
+        self.assertEqual(self.pending.rows, [])
+
+    def test_bad_destination_is_refused_before_downloading(self):
+        self.module["status"] = "published"
+        self.assertIn("draft module", self.error(self.link_args()))
+        self.assertEqual(self.link_downloads, [])
+
+
 class VideoApplyTests(VideoTestCase):
     def test_apply_uses_existing_upload_contract_once_and_preserves_other_settings(self):
         pid = self.preview()

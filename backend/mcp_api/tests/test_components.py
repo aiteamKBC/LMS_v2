@@ -338,6 +338,8 @@ class ComponentContractTests(SimpleTestCase):
                     status, data = dispatch.call_api(SimpleNamespace(login_account=account), "POST",
                                                      dispatch.COMPONENT_CREATE_PATH, json_body=body)
                     self.assertEqual(status, 201)
+                    # The exact check apply runs: every sent setting must come back.
+                    self.assertIsNotNone(components.confirmed_component(status, data, body), data)
                     created = data["component"]
                     self.assertEqual(created["expectedOtjh"], hours)
                     self.assertEqual(created["points"], points)

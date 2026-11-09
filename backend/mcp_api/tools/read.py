@@ -279,6 +279,40 @@ def get_module_structure(request, arguments):
     return ToolResult("\n".join(lines), {"module": module, "weeks": weeks})
 
 
+@tool("list_module_weeks",
+      "List a module's weeks in order: week_id, week number, title and how many components of each type it has. "
+      "Use it to pick the right week_id before creating a component, or to check a week exists before create_week.",
+      {"type": "object", "properties": {"module_id": _ID}, "required": ["module_id"], "additionalProperties": False})
+def list_module_weeks(request, arguments):
+    module_id = _s(arguments["module_id"])
+    if module_id.startswith("training-module-"):
+        raise ToolError("Use find_modules to look up the saved module id; nothing was created or changed.")
+    # Uncached: this is the lookup made right before creating a component or week.
+    _status, data = call_api(request, "GET", f"{CURRICULUM}/modules/{module_id}/structure/",
+                             query={"skipCache": "1"})
+    if not isinstance(data, dict):
+        raise ToolError("The LMS returned no structure for that module.")
+    weeks = []
+    for week in data.get("weekStructure") or []:
+        if week.get("isDeleted") or _archived(week):
+            continue
+        counts = {}
+        for component in week.get("components") or []:
+            type_ = _s(component.get("type")) or "unknown"
+            counts[type_] = counts.get(type_, 0) + 1
+        weeks.append({"week_id": _s(week.get("id")), "week_number": week.get("weekNumber"),
+                      "title": _s(week.get("title")), "component_count": sum(counts.values()),
+                      "component_types": counts})
+    title = _s(data.get("title"))
+    lines = [f"{title} (id {_s(data.get('moduleCatalogueId') or module_id)}, {_s(data.get('status'))}) "
+             f"— {len(weeks)} week(s)"]
+    for week in weeks:
+        kinds = ", ".join(f"{n} {t}" for t, n in sorted(week["component_types"].items())) or "empty"
+        lines.append(f"- Week {week['week_number']}: {week['title']} (week_id {week['week_id']}) — {kinds}")
+    return ToolResult("\n".join(lines), {"module_id": _s(data.get("moduleCatalogueId") or module_id),
+                                         "title": title, "status": _s(data.get("status")), "weeks": weeks})
+
+
 # --- KSBs ----------------------------------------------------------------------------------
 
 def _resolve_source(value):

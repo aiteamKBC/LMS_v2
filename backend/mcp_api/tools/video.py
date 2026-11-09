@@ -22,7 +22,9 @@ from django.utils.text import get_valid_filename
 
 from curriculum_api import upload_storage
 from curriculum_api.bunny_stream import VideoImportError
-from curriculum_api.video_sources import MAX_VIDEO_BYTES, public_response, source_url, validate_video
+from curriculum_api.video_sources import (
+    MAX_VIDEO_BYTES, YOUTUBE_HOSTS, download_video, public_response, source_url, validate_video,
+)
 from curriculum_api.video_uploads import UPLOAD_ROOT, stored_video_path
 
 from ..changes import Validation, WriteTool, payload_hash, register_write_tool
@@ -110,8 +112,41 @@ def _inspect(stream):
     return size, digest.hexdigest()
 
 
-def _stage(file_ref, request):
+def _store_stage(stream, filename, request):
+    """Check the downloaded bytes are an MP4 and stage them privately for this account."""
     account_id = request.login_account.pk
+    path = f"{STAGE_ROOT}/{int(account_id)}/{uuid.uuid4().hex}.mp4"
+    storage_started = False
+    try:
+        size, digest = _inspect(stream)
+        stage = {"path": path, "file_name": filename, "size": size, "sha256": digest}
+        # Record ownership before writing durable bytes. A process crash
+        # between storage and preview creation must not orphan the file.
+        # This internal ledger is closed immediately and cannot be applied
+        # or appear in list_my_pending_changes. It expires after one day.
+        now = timezone.now()
+        McpPendingChange.objects.create(
+            id=uuid.uuid4(), account_id=account_id, client_id=request.mcp_client.client_id,
+            tool=STAGE_TOOL, payload={"stage": stage}, payload_hash=payload_hash({"stage": stage}),
+            preview={}, expires_at=now + timedelta(days=1), cancelled_at=now,
+        )
+        storage_started = True
+        stored = upload_storage.store(File(stream, name=filename), path, "video/mp4")
+        if stored != path:
+            upload_storage.delete(stored)
+            raise VideoImportError("The video could not be staged safely. Retry the upload.")
+    except VideoImportError as exc:
+        if storage_started:
+            _discard({"path": path}, account_id)
+        raise ToolError(str(exc)) from None
+    except Exception:
+        if storage_started:
+            _discard({"path": path}, account_id)
+        raise ToolError("The video could not be received or stored. Transfer the MP4 again.") from None
+    return stage
+
+
+def _stage(file_ref, request):
     url = file_ref["download_url"]
     try:
         parts = urlsplit(url)
@@ -122,8 +157,6 @@ def _stage(file_ref, request):
             raise ValueError
     except (ValueError, TypeError, SuspiciousFileOperation):
         raise ToolError("Provide an MP4 file using the client's file-transfer capability, not a local path or chat link.") from None
-    path = f"{STAGE_ROOT}/{int(account_id)}/{uuid.uuid4().hex}.mp4"
-    storage_started = False
     try:
         with tempfile.TemporaryFile() as stream:
             deadline = time.monotonic() + 1200
@@ -134,38 +167,53 @@ def _stage(file_ref, request):
                     if size > MAX_VIDEO_BYTES or time.monotonic() > deadline:
                         raise VideoImportError("The MP4 exceeds 300 MB or the transfer timed out.")
                     stream.write(chunk)
-            size, digest = _inspect(stream)
-            stage = {"path": path, "file_name": filename, "size": size, "sha256": digest}
-            # Record ownership before writing durable bytes. A process crash
-            # between storage and preview creation must not orphan the file.
-            # This internal ledger is closed immediately and cannot be applied
-            # or appear in list_my_pending_changes. It expires after one day.
-            now = timezone.now()
-            McpPendingChange.objects.create(
-                id=uuid.uuid4(), account_id=account_id, client_id=request.mcp_client.client_id,
-                tool=STAGE_TOOL, payload={"stage": stage}, payload_hash=payload_hash({"stage": stage}),
-                preview={}, expires_at=now + timedelta(days=1), cancelled_at=now,
-            )
-            storage_started = True
-            stored = upload_storage.store(File(stream, name=filename), path, "video/mp4")
-            if stored != path:
-                upload_storage.delete(stored)
-                raise VideoImportError("The video could not be staged safely. Retry the upload.")
+            return _store_stage(stream, filename, request)
     except VideoImportError as exc:
-        if storage_started:
-            _discard({"path": path}, account_id)
         raise ToolError(str(exc)) from None
+    except ToolError:
+        raise
     except Exception:
-        if storage_started:
-            _discard({"path": path}, account_id)
         raise ToolError("The video could not be received or stored. Transfer the MP4 again.") from None
-    return {"path": path, "file_name": filename, "size": size, "sha256": digest}
+
+
+def _stage_link(url, request):
+    """Download a pasted public video link (direct MP4, Google Drive or SharePoint file share) and stage it.
+
+    Uses the LMS's own link downloader: public addresses only, every redirect
+    re-checked, sign-in/viewing pages refused, 300 MB cap. The link is never stored.
+    """
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        raise ToolError("Paste a valid https link to the video file.") from None
+    if parts.scheme != "https" or not host or parts.username or parts.password:
+        raise ToolError("Paste an https link to the video file, without a username or password in it.")
+    if host == "notebooklm.google.com" or host.endswith(".notebooklm.google.com"):
+        raise ToolError("A NotebookLM link needs your Google sign-in, so the LMS cannot download it. In NotebookLM, "
+                        "download the video, then attach the MP4 here, or upload it to Google Drive, share it as "
+                        "'Anyone with the link' and paste that link.")
+    if host in YOUTUBE_HOSTS:
+        raise ToolError("YouTube links are not imported by the assistant. Attach the MP4 or paste a file link.")
+    name = get_valid_filename(parts.path.rsplit("/", 1)[-1] or "") if parts.path.lower().endswith(".mp4") else ""
+    try:
+        with download_video(url) as stream:
+            return _store_stage(stream, name or "video.mp4", request)
+    except VideoImportError as exc:
+        raise ToolError(str(exc)) from None
+    except ToolError:
+        raise
+    except Exception:
+        raise ToolError("The video link could not be downloaded. Check it is shared publicly, or attach the MP4.") from None
 
 
 class SaveVideo(WriteTool):
     name = NAME
     description = ("Prepare an MP4 save into an existing video component of a draft module. Look up its programme, "
-                   "module and component first. Supply the video through the client's file-transfer capability. "
+                   "module and component first. Supply the video EITHER as an attached file (file) OR as a pasted "
+                   "public link to the video file (video_url: a direct MP4 link, or a Google Drive / SharePoint file "
+                   "shared with anyone who has the link). NotebookLM and YouTube links cannot be used: download the "
+                   "video from NotebookLM and attach it instead. The LMS saves the MP4 and queues the Bunny copy. "
                    "Show the preview and apply only after confirmation. Does not publish content.")
     input_schema = {"type": "object", "properties": {
         **DESTINATION, "title": {"type": "string", "minLength": 1, "maxLength": 500},
@@ -175,15 +223,22 @@ class SaveVideo(WriteTool):
             "file_name": {"type": "string", "maxLength": 255},
             "mime_type": {"type": "string", "maxLength": 100},
         }, "required": ["download_url", "file_id"], "additionalProperties": False},
-    }, "required": [*DESTINATION, "file"], "additionalProperties": False}
+        "video_url": {"type": "string", "minLength": 1, "maxLength": 2048},
+    }, "required": list(DESTINATION), "additionalProperties": False}
     file_params = ("file",)
     rate_bucket = "video_uploads"
 
     def propose(self, request, arguments):
+        if ("file" in arguments) == ("video_url" in arguments):
+            raise ToolError("Give the video either as an attached MP4 file or as a pasted link, not both or neither.")
         _destination(request, arguments)  # Refuse bad destinations before any transfer/storage.
-        stage = _stage(arguments["file"], request)
+        if "file" in arguments:
+            stage = _stage(arguments["file"], request)
+        else:
+            stage = _stage_link(arguments["video_url"].strip(), request)
         try:
-            return super().propose(request, {**{k: v for k, v in arguments.items() if k != "file"}, "stage": stage})
+            source = {k: v for k, v in arguments.items() if k not in ("file", "video_url")}
+            return super().propose(request, {**source, "stage": stage})
         except Exception:
             _discard(stage, request.login_account.pk)
             raise

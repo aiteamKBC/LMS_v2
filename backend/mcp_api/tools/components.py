@@ -48,10 +48,11 @@ def _title_key(value):
     return " ".join(str(value or "").split()).casefold()
 
 
-def _target(request, arguments):
+def draft_module(request, arguments):
+    """The flag-checked ``(programme, module)`` for a draft module of that programme, read without cache."""
     if not component_creation_enabled():
         raise ToolError("MCP component creation is not enabled. Ask an administrator to enable the component pilot.")
-    module_id, week_id = _id(arguments.get("module_id")), _id(arguments.get("week_id"))
+    module_id = _id(arguments.get("module_id"))
     programme = _programme_by_id(request, _id(arguments.get("programme_id")))
     if _archived(programme):
         raise ToolError("Choose an active programme.")
@@ -65,6 +66,12 @@ def _target(request, arguments):
         str(programme.get("id") or ""), str(programme.get("sourceId") or ""),
     } - {""}:
         raise ToolError("That module does not belong to the selected programme.")
+    return programme, module
+
+
+def _target(request, arguments):
+    programme, module = draft_module(request, arguments)
+    module_id, week_id = _id(arguments.get("module_id")), _id(arguments.get("week_id"))
     week = next((w for w in module.get("weekStructure") or [] if w.get("id") == week_id), None)
     if week is None or _archived(week) or week.get("isDeleted"):
         raise ToolError("Choose an existing week in that draft module. No module or week will be created.")
@@ -84,25 +91,53 @@ def _target(request, arguments):
     }
 
 
-def _body(payload):
+def component_body(target, type_, title, description, defaults, *, hours=None, points=None, settings=None):
+    """The single-component create body; ``defaults`` is ``(hours, points, reflection, tutor)``."""
     from curriculum_api.views import normalise_component_settings_payload
 
-    hours, points, reflection, tutor = DEFAULTS[payload["type"]]
-    settings = normalise_component_settings_payload(payload["type"], {})
-    target = payload["target"]
-    hours = payload.get("expected_otjh", hours)
+    default_hours, default_points, reflection, tutor = defaults
+    settings = normalise_component_settings_payload(type_, settings or {})
+    hours = default_hours if hours is None else hours
     return {
         "moduleCatalogueId": target["module_id"], "module": target["module_title"],
         "programme": target["programme_name"], "weekId": target["week_id"], "weekNumber": target["week_number"],
-        "type": payload["type"], "title": payload["title"], "description": payload["description"],
+        "type": type_, "title": title, "description": description,
         "status": "draft", "settings": settings,
+        # The save sets settings.durationMinutes from `duration`, not from the settings
+        # sent (save_component_builder_payload); without it a non-zero default saves as 0.
+        "duration": settings.get("durationMinutes") or 0,
         # Both supported spellings preserve a numeric zero through the existing
         # endpoint's `expectedOtjh or expected_otjh` fallback (video defaults to 0).
-        "expectedOtjh": hours, "expected_otjh": hours, "points": payload.get("points", points),
+        "expectedOtjh": hours, "expected_otjh": hours,
+        "points": default_points if points is None else points,
         "reflectionRequired": reflection, "reflectionQuestion": settings.get("reflectionPrompt") or "",
         "tutorValidationRequired": tutor, "coachValidationRequired": True,
         "workplaceEvidenceRequired": False, "ksbMappings": [],
     }
+
+
+def confirmed_component(status, data, body):
+    """The created component if the LMS response matches ``body``, else None."""
+    component = data.get("component") if isinstance(data, dict) else None
+    expected = {key: body[key] for key in (
+        "moduleCatalogueId", "weekId", "type", "title", "description", "status", "expectedOtjh", "points",
+        "reflectionRequired", "reflectionQuestion", "tutorValidationRequired", "coachValidationRequired",
+        "workplaceEvidenceRequired",
+    )}
+    settings = component.get("settings") if isinstance(component, dict) else None
+    if (status != 201 or not isinstance(data, dict) or data.get("created") is not True
+            or not isinstance(component, dict) or not component.get("id") or component.get("isDeleted")
+            or any(component.get(key) != value for key, value in expected.items())
+            or not isinstance(settings, dict)
+            or any(settings.get(key) != value for key, value in body["settings"].items())):
+        return None
+    return component
+
+
+def _body(payload):
+    return component_body(payload["target"], payload["type"], payload["title"], payload["description"],
+                          DEFAULTS[payload["type"]], hours=payload.get("expected_otjh"),
+                          points=payload.get("points"))
 
 
 @contextmanager
@@ -193,18 +228,8 @@ class CreateComponent(WriteTool):
                 raise ToolError("The destination or defaults changed. Prepare a new preview.")
             progress.uncertain("Creating the component; check the selected week before trying again.")
             status, data = call_api(request, "POST", COMPONENT_CREATE_PATH, json_body=payload["body"])
-            component = data.get("component") if isinstance(data, dict) else None
-            expected = {key: payload["body"][key] for key in (
-                "moduleCatalogueId", "weekId", "type", "title", "description", "status", "expectedOtjh", "points",
-                "reflectionRequired", "reflectionQuestion", "tutorValidationRequired", "coachValidationRequired",
-                "workplaceEvidenceRequired",
-            )}
-            settings = component.get("settings") if isinstance(component, dict) else None
-            if (status != 201 or not isinstance(data, dict) or data.get("created") is not True
-                    or not isinstance(component, dict) or not component.get("id") or component.get("isDeleted")
-                    or any(component.get(key) != value for key, value in expected.items())
-                    or not isinstance(settings, dict)
-                    or any(settings.get(key) != value for key, value in payload["body"]["settings"].items())):
+            component = confirmed_component(status, data, payload["body"])
+            if component is None:
                 raise ToolError("The LMS did not confirm the requested draft component.")
         component_id = str(component["id"])
         progress.uncertain_steps.clear()

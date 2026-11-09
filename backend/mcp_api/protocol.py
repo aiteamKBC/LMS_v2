@@ -10,6 +10,7 @@ from . import changes  # noqa: F401 - registers apply_change, cancel_change, lis
 from .tools import read  # noqa: F401 - registers the Step 6 read tools
 from .tools import video  # noqa: F401 - registers the default-off video tools
 from .tools import components  # noqa: F401 - registers default-off draft component creation
+from .tools import weeks  # noqa: F401 - registers default-off templated week creation
 from . import pii, ratelimit
 from . import schema as json_schema
 from .dispatch import DispatchError
