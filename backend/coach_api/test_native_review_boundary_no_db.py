@@ -237,8 +237,8 @@ class NativeReviewBoundaryTests(SimpleTestCase):
     def test_imported_mcm_invalid_dates_are_rejected_before_source_or_calendar_io(self):
         with patch.object(calendar, "coaching_events_for_learner") as source_events, \
              patch.object(views.CoachCalendarEvent.objects, "get_or_create") as create:
-            for day, message in (("2026-11-19", "20th"), ("2026-12-07", "20th"),
-                                 ("2026-11-21", "Saturdays or Sundays"),
+            for day, message in (("2026-11-21", "Saturdays or Sundays"),
+                                 ("2026-11-22", "Saturdays or Sundays"),
                                  ("2026-12-25", "bank holidays"), ("2026-11-05", "already passed")):
                 with self.subTest(day=day):
                     response = self.learner_book(eventKey="imported-review:A-401", scheduledDate=day)
@@ -246,6 +246,20 @@ class NativeReviewBoundaryTests(SimpleTestCase):
                     self.assertIn(message, json.loads(response.content)["error"])
             source_events.assert_not_called()
             create.assert_not_called()
+        self.graph.assert_not_called()
+
+    def test_imported_mcm_working_days_outside_old_window_still_require_owned_review(self):
+        for day in ("2026-11-19", "2026-12-07"):
+            with self.subTest(day=day), \
+                 patch.object(calendar, "coaching_events_for_learner", return_value=[]) as source_events, \
+                 patch.object(views.CoachCalendarEvent.objects, "get_or_create") as create:
+                response = self.learner_book(eventKey="imported-review:A-401", scheduledDate=day)
+                # The date passes validation, but an absent imported Review
+                # must still be refused before reserving a meeting.
+                self.assertEqual(response.status_code, 409, response.content)
+                self.assertEqual(json.loads(response.content)["code"], "APTEM_REVIEW_SOURCE_ONLY")
+                source_events.assert_called_once_with(self.enrolment, self.person)
+                create.assert_not_called()
         self.graph.assert_not_called()
 
     def test_native_learner_booking_still_links_official_occurrence(self):
