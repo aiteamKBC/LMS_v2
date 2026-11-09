@@ -94,6 +94,7 @@ function ReflectionWindowForm({
   actualTimeUnit = 'hours',
   selectedTimeSeconds,
   selectedTimeSource,
+  readOnlyTime = false,
   noun = 'quiz',
   submitting,
   submitError,
@@ -136,6 +137,8 @@ function ReflectionWindowForm({
   /** Timer/Input duration already selected on the activity completion screen. */
   selectedTimeSeconds?: number;
   selectedTimeSource?: 'timer' | 'input';
+  /** A reflection added separately must not edit or re-submit session time. */
+  readOnlyTime?: boolean;
   noun?: string;
   submitting: boolean;
   submitError: string | null;
@@ -406,7 +409,7 @@ function ReflectionWindowForm({
       setBenefitExplanation(saved.benefitExplanation || '');
       setActualTime(savedActualTime(saved.actualTimeHours || '', inMinutes) || plannedHours);
       setTimeEdited(Boolean(saved.reflectionTimeEdited));
-      setEditedClock(saved.reflectionTimeEdited && saved.actualTimeHours?.trim() && Number.isFinite(Number(saved.actualTimeHours))
+      setEditedClock((readOnlyTime || saved.reflectionTimeEdited) && saved.actualTimeHours?.trim() && Number.isFinite(Number(saved.actualTimeHours))
         ? formatClock(Math.round(Number(saved.actualTimeHours) * 3600)) : null);
       setPaidHours(saved.completedDuringPaidHours || 'yes');
       setDateCompleted(saved.dateCompleted || new Date().toISOString().split('T')[0]);
@@ -455,7 +458,7 @@ function ReflectionWindowForm({
     return () => {
       cancelled = true;
     };
-  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes, draftKey, loadAttempt]);
+  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes, draftKey, loadAttempt, readOnlyTime]);
 
   // Persist each edit locally so leaving the activity does not lose progress.
   // Files themselves are uploaded by the evidence flow; only uploaded names are stored.
@@ -521,7 +524,7 @@ function ReflectionWindowForm({
     };
 
     submissionInFlightRef.current = true;
-    if (mode === 'submit' && (timeEdited || selectedTimeSource === 'input' || !usesClock)
+    if (mode === 'submit' && !readOnlyTime && (timeEdited || selectedTimeSource === 'input' || !usesClock)
       && !await confirmTime(selectedSeconds ?? Math.round(Number(actualTimeHours()) * 3600))) {
       submissionInFlightRef.current = false;
       setTab('otjh');
@@ -700,14 +703,16 @@ function ReflectionWindowForm({
 
   const timeInput = (location: string) => (
     <div>
-      <Field label={usesClock ? 'Selected activity time' : `Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
+      <Field label={readOnlyTime ? 'Recorded session time (reference)' : usesClock ? 'Selected activity time' : `Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
         <input
           ref={timeInputRef}
           type={usesClock ? 'text' : 'number'}
           min={usesClock ? undefined : '0'}
           step={usesClock ? undefined : inMinutes ? '1' : '0.25'}
           value={usesClock ? clockValue : actualTime}
+          readOnly={readOnlyTime}
           onChange={event => {
+            if (readOnlyTime) return;
             setTimeEdited(true);
             if (usesClock) setEditedClock(event.target.value);
             else setActualTime(event.target.value);
@@ -719,11 +724,12 @@ function ReflectionWindowForm({
         />
       </Field>
       <p id={`${timeHelpId}-${location}`} className="mt-2 text-sm text-foreground-700">
-        {usesClock ? 'Format: hours : minutes : seconds. For 30 minutes, enter 00:30:00.'
+        {readOnlyTime ? 'Your session time and attendance stay unchanged. This reflection does not add study hours.'
+          : usesClock ? 'Format: hours : minutes : seconds. For 30 minutes, enter 00:30:00.'
           : inMinutes ? 'Enter minutes. For 30 minutes, enter 30.'
           : 'Enter hours. For 30 minutes, enter 0.5; for 1 hour 30 minutes, enter 1.5.'}
       </p>
-      {!submissionLocked && <p className="mt-1 text-xs text-foreground-500">
+      {!submissionLocked && !readOnlyTime && <p className="mt-1 text-xs text-foreground-500">
         {usesClock && !validTime ? 'Enter hours, minutes and seconds, for example 00:30:00.'
           : 'You can increase or reduce this time. Your final value will be saved.'}
       </p>}

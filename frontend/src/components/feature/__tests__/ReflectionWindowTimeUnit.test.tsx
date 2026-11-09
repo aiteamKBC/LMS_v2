@@ -153,6 +153,31 @@ it.each(['00:90:00', '-1:00:00', '', 'not a time'])('does not allow submission w
 });
 
 
+it('keeps a separate lecture reflection time read-only and preserves its saved duration without a new time confirmation', async () => {
+  mocks.load.mockResolvedValue({
+    status: 'draft', actualTimeHours: '2', reflectionTimeEdited: true, learningReflection: 'Learning '.repeat(100),
+    applicationType: 'apply_now', applicationText: 'Use the learning at work.',
+    selectedBenefits: ['Improved productivity'], benefitExplanation: 'Improve everyday work.',
+    dateCompleted: '2026-10-01', completedDuringPaidHours: 'yes', otjhConfirmed: true, signedDeclaration: true,
+  });
+  mocks.save.mockResolvedValue({ status: 'submitted_for_tutor_review' });
+  const onSubmit = vi.fn();
+  view({ noun: 'session', readOnlyTime: true, selectedTimeSeconds: 1200, selectedTimeSource: 'input', onSubmit });
+  const time = await screen.findByLabelText('Recorded session time (reference)');
+  await waitFor(() => expect(time).toHaveValue('02:00:00'));
+  expect(time).toHaveAttribute('readonly');
+  expect(time).toHaveAccessibleDescription('Your session time and attendance stay unchanged. This reflection does not add study hours.');
+  fireEvent.change(time, { target: { value: '03:00:00' } });
+  expect(time).toHaveValue('02:00:00');
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({
+    activityType: 'session', activityId: 'quiz-1', actualTimeHours: '2', reflectionTimeEdited: true, submissionMode: 'submit',
+  }));
+});
+
 it('preserves the recorded hours of an accepted reflection when reopened', async () => {
   mocks.load.mockResolvedValue({ status: 'accepted', actualTimeHours: '2' });
   view({ noun: 'reading', selectedTimeSeconds: 2400, plannedHours: 14 });
