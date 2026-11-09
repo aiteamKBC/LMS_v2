@@ -13,23 +13,23 @@ const rows: JourneyComponent[] = [
   { componentId: 'LOCKED', title: 'Later reading', type: 'reading', pointNumber: 2, expectedOtjh: 1 },
 ];
 function Location() { return <output data-testid="location">{useLocation().pathname}</output>; }
-function sidebar(current = 'AUDIO', accessOpen = true, blocked = vi.fn()) {
+function sidebar(current = 'AUDIO', accessOpen = true, blocked = vi.fn(), components = rows) {
   return <MemoryRouter initialEntries={['/learner/component/commercial/132/AUDIO']}><ActivitySidebar
-    weekComponents={rows} weekTitle="Week 1" moduleTitle="AI" weeks={[]}
+    weekComponents={components} weekTitle="Week 1" moduleTitle="AI" weeks={[]}
     completedIds={new Set(['READ'])} currentComponentId={current}
     routeFor={row => `/learner/component/commercial/132/${row.componentId}`}
     accessOpen={accessOpen} onAccessBlocked={blocked} /><Location /></MemoryRouter>;
 }
-describe('point sidebar', () => {
-  it('expands the deep-linked point, leaves another point collapsed, and retains native routes', () => {
-    render(sidebar());
-    const point = screen.getByRole('list', { name: 'Point 1 activities' });
-    expect(point.closest('details')).toHaveAttribute('open');
-    expect(within(point).getAllByRole('button').map(button => button.textContent))
-      .toEqual(['ReadingRead the caseRequiredPlanned time: 1h', 'PodcastListen to the case', 'QuizCheck understanding']);
-    expect(screen.getByText('Point 2').closest('details')).not.toHaveAttribute('open');
+describe('flat week sidebar', () => {
+  it('shows all activities directly in saved order and retains native routes', () => {
+    const { container } = render(sidebar());
+    expect(container.querySelector('details')).toBeNull();
+    expect(screen.queryByText(/^Point \d+$/)).not.toBeInTheDocument();
+    const list = screen.getByRole('list');
+    expect(within(list).getAllByRole('button').map(button => button.textContent))
+      .toEqual(['ReadingWelcome', 'ReadingRead the caseRequiredPlanned time: 1h', 'QuizCheck understanding', 'PodcastListen to the case', 'ReadingLater readingRequiredPlanned time: 1h']);
     expect(screen.getByRole('button', { name: /Welcome/ })).toBeVisible();
-    fireEvent.click(within(point).getByRole('button', { name: /Read the case/ }));
+    fireEvent.click(within(list).getByRole('button', { name: /Read the case/ }));
     expect(screen.getByTestId('location')).toHaveTextContent('/learner/component/commercial/132/READ');
   });
 
@@ -41,7 +41,30 @@ describe('point sidebar', () => {
     fireEvent.click(audio);
     expect(blocked).toHaveBeenCalledOnce();
     expect(screen.getByTestId('location')).toHaveTextContent('/AUDIO');
-    fireEvent.click(screen.getByText('Point 2'));
-    expect(screen.getByRole('button', { name: /Later reading/, hidden: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Later reading/ })).toBeDisabled();
+  });
+
+  it('keeps an activity already outside a Point once without merging distinct activities with the same title', () => {
+    const components = [{ ...rows[1], pointNumber: null }, ...rows, { ...rows[1], componentId: 'READ-OTHER' }];
+    const before = JSON.stringify(components);
+    render(sidebar('AUDIO', true, vi.fn(), components));
+    expect(screen.getAllByRole('button', { name: /Read the case/ })).toHaveLength(2);
+    expect(screen.getByText(/6 components/)).toHaveTextContent('1 done');
+    expect(JSON.stringify(components)).toBe(before);
+  });
+
+  it('flattens and deduplicates another week without removing the same activity from the current week', () => {
+    const duplicates = [...rows, { ...rows[1], pointNumber: null }];
+    render(<MemoryRouter><ActivitySidebar weekComponents={rows} weekTitle="Week 1" moduleTitle="AI"
+      weeks={[
+        { week: 'Week 1', count: rows.length, completed: 1, active: true, components: rows },
+        { week: 'Week 2', count: duplicates.length, completed: 2, active: false, components: duplicates },
+      ]} completedIds={new Set(['READ'])} routeFor={row => `/activity/${row.componentId}`} /></MemoryRouter>);
+    const weekButton = screen.getByRole('button', { name: /^Week 2, 5 components/ });
+    fireEvent.click(weekButton);
+    const week = weekButton.closest('li')!;
+    expect(within(week).getAllByRole('button', { name: /Read the case/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /Read the case/ })).toHaveLength(2);
+    expect(week.querySelector('details')).toBeNull();
   });
 });

@@ -459,6 +459,23 @@ def builder_components(native):
     return [component for _, component in found]
 
 
+def read_current_modules(source, now=None):
+    """Continue Learning needs delivery dates, not the full progress/attendance card."""
+    canonical_learning.require_profile(source.pk)
+    start, end = week_bounds(now)
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(HOME_SUBJECTS_SQL, [source.pk])
+        module_ids = [mid for mid, _title, current in cur.fetchall() if current]
+        cur.execute(component_sql("'[]'::jsonb", builder_columns=True), [module_ids])
+        native = rows(cur)
+        dates = read_builder_activity_dates(cur, module_ids, components=builder_components(native))
+        for row in native:
+            row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))
+    week = summarise_week([], native, [], set(), {}, start, end)
+    return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(),
+            'modules': [{key: module[key] for key in ('id', 'title', 'weekLabels')} for module in week['modules']]}
+
+
 def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_summary=False, plan_only=False, monthly_hours_only=False):
     """``home_summary`` is Student Home's compact projection of the ``home`` section.
 
@@ -581,7 +598,7 @@ def overview_week(request, kind, pk):
     read_model_status = None
     try:
         with measure_projection('overview-week', kind=kind, learner_id=pk, section=section) as measurement:
-            if section not in (None, 'home', 'dashboard', 'home-summary'):
+            if section not in (None, 'home', 'dashboard', 'home-summary', 'current-modules'):
                 return JsonResponse({'error': 'Invalid overview section.'}, status=400)
             home = section == 'home'
             home_summary = section == 'home-summary'
@@ -601,7 +618,9 @@ def overview_week(request, kind, pk):
                 if source is None:
                     source = model.all_learners.only(*fields).get(pk=pk)
                 with measurement.stage(section or 'overview'):
-                    if home:
+                    if section == 'current-modules':
+                        payload = read_current_modules(source)
+                    elif home:
                         payload = read_week(source, home_kind=kind)
                     elif home_summary:
                         payload = read_week(source, home_kind=kind, home_summary=True)
