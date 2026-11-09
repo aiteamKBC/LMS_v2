@@ -25,8 +25,7 @@ from .overview_week import upcoming_assignment_deadlines
 from .projection_performance import measure_projection
 from .subject_content import clean_text
 from .training_plan_dashboard import (TRAINING_PLAN_SOURCE_FIELDS, TRAINING_PLAN_PROFILE_FIELDS,
-    UK, plan_reviews, rows, current_coach, source_coach,
-    assigned_group_coach, coach_phone, _active)
+    UK, plan_reviews, rows, current_coach, coach_phone, _active)
 
 IDENTITY_FIELDS = ('username', 'employer', 'organization',
                    'onboarding_status', 'learner_end_date')
@@ -229,8 +228,8 @@ def dashboard_modules(source, owner, *, include_coach=True, include_week_counts=
                  set(canonical_learning.curriculum_module_ids_for(owner)))
     if not ids:
         return ids, []
-    # The coach name is read through curriculum.group_coaches; groups stores
-    # neither coach_id nor coach_name, and modules has no coach column.
+    # The coach names are read through curriculum.group_coaches (curriculum.groups no longer
+    # stores coach_name, and curriculum.modules has no coach column).
     coach_column = f",{group_coach_name_sql('g')} AS coach_name" if include_coach else ''
     coach_join = ' LEFT JOIN curriculum.groups g ON g.group_id=m.group_id' if include_coach else ''
     week_count = f'''EXISTS (SELECT 1 FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id
@@ -303,8 +302,6 @@ def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=
         href = lecture_href(cur, sessions, kind, pk, now)
     contact = current_coach(source, profile, None)
     name, email = contact['coach_name'], contact['coach_email']
-    if not name and not email and source_coach(source) is None:
-        name = assigned_group_coach(source, modules)
     coach = {'name': name}
     if email:
         coach['email'] = email
@@ -363,8 +360,6 @@ def build_minimal_header(source, kind, pk, now=None, include_pending_delivery=Fa
     ids, modules = dashboard_modules(source, owner)
     contact = current_coach(source, profile, None)
     name, email = contact['coach_name'], contact['coach_email']
-    if not name and not email and source_coach(source) is None:
-        name = assigned_group_coach(source, modules)
     payload['coach'] = {'name': name}
     if email:
         payload['coach']['email'] = email

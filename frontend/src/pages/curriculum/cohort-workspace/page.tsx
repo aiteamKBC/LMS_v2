@@ -18,6 +18,7 @@ import {
   wantsWorkspaceEdit,
   WORKSPACE_EDIT_PARAM,
 } from '../shared/entities/model';
+import { coachesOfGroup } from '../shared/entities/groupCoaches';
 import { CohortFormDrawer, GroupFormDrawer } from '../shared/entities/forms';
 import { ModuleFormDrawer, type ModuleFormTarget } from '../shared/entities/moduleForm';
 import { moduleFormTarget } from "../shared/entities/moduleForm.helpers";
@@ -108,10 +109,8 @@ export default function CohortWorkspacePage() {
       const name = cleanText(profile.name) || cleanText(profile.email);
       if (name) names.add(name);
     });
-    groups.forEach(group => {
-      const name = cleanText(group.coach);
-      if (name && normaliseKey(name) !== 'unassigned') names.add(name);
-    });
+    // One option per coach: a group with several names each of them.
+    groups.forEach(group => coachesOfGroup(group).forEach(name => names.add(name)));
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [coaches, groups]);
 

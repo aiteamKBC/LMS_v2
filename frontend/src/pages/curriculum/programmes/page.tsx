@@ -29,7 +29,7 @@ import {
   deleteCurriculumProgramme,
   fetchCurriculumModules,
   fetchCurriculumProgrammeKsbCoverage,
-  fetchCurriculumProgrammeLearnerKsbImpact,
+  fetchCurriculumProgrammeLearnerKsbSummary,
   fetchCurriculumKsbSetSummaries,
   fetchCurriculumKsbSourceDefinitions,
   fetchCurriculumStandards,
@@ -43,6 +43,7 @@ import {
   type CurriculumKsbCoverageItem,
   type CurriculumLearnerKsbConsumption,
   type CurriculumProgrammeLearnerKsbImpactResponse,
+  type CurriculumProgrammeLearnerKsbSummaryResponse,
   type CurriculumKsbEntry,
   type CurriculumKsbSet,
   type CurriculumKsbSetSummary,
@@ -393,7 +394,7 @@ function CurriculumProgrammesContent() {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [learnerImpactProgramme, setLearnerImpactProgramme] = useState<CurriculumProgramme | null>(null);
-  const [learnerImpact, setLearnerImpact] = useState<CurriculumProgrammeLearnerKsbImpactResponse | null>(null);
+  const [learnerImpact, setLearnerImpact] = useState<CurriculumProgrammeLearnerKsbSummaryResponse | null>(null);
   const [learnerImpactLoading, setLearnerImpactLoading] = useState(false);
   const [learnerImpactError, setLearnerImpactError] = useState<string | null>(null);
   const [sourceReview, setSourceReview] = useState<ProgrammeKsbSourceReview | null>(null);
@@ -780,7 +781,7 @@ function CurriculumProgrammesContent() {
     setLearnerImpactError(null);
     setLearnerImpactLoading(true);
     try {
-      const data = await fetchCurriculumProgrammeLearnerKsbImpact(programmeId, { learnerStatus: 'all' });
+      const data = await fetchCurriculumProgrammeLearnerKsbSummary(programmeId, { learnerStatus: 'all' });
       setLearnerImpact(data);
     } catch (err) {
       setLearnerImpactError(err instanceof Error ? err.message : 'Unable to load programme learners.');
@@ -1603,7 +1604,7 @@ function ProgrammeLearnerImpactModal({
   onClose,
 }: {
   programme: CurriculumProgramme;
-  data: CurriculumProgrammeLearnerKsbImpactResponse | null;
+  data: CurriculumProgrammeLearnerKsbSummaryResponse | null;
   loading: boolean;
   error: string | null;
   onClose: () => void;
@@ -1815,87 +1816,24 @@ function ProgrammeLearnerImpactRow({
 
 /** Achieved KSB weight per learner, plus the reflection context for each code.
  *
- * Achievement comes from `consumptionSources.progress` alone — the Component
- * Progress snapshot. Reflections used to be summed into the same `weight` here,
- * which would have double-counted every activity that has both a snapshot and a
- * reflection once the reflection join started resolving. They now annotate:
- * actual OTJH, the reflection text, and the declared weight shown separately.
- *
- * The annotation walks `learnerActivities`, which is keyed on the progress entry
- * id, so a reflection's hours land on exactly the codes that activity achieved.
+ * Built on the server (backend curriculum_api/learner_impact_summary.py) from
+ * `consumptionSources.progress` alone -- the Component Progress snapshot --
+ * with reflections annotating, never adding to, the achieved weight: actual
+ * OTJH, the reflection text, and the declared weight shown separately. The
+ * response names each activity once in `activityLabels`; lines refer to them by
+ * position.
  */
-function learnerAchievementMap(data: CurriculumProgrammeLearnerKsbImpactResponse | null) {
-  const byLearner = new Map<string, Map<string, LearnerKsbAchievement>>();
-  const rowFor = (learnerKey: string, ksbCode: string, create: boolean) => {
-    const learnerRows = byLearner.get(learnerKey) || new Map<string, LearnerKsbAchievement>();
-    const existing = learnerRows.get(ksbCode);
-    if (!existing && !create) return null;
-    const row = existing || {
-      code: ksbCode,
-      count: 0,
-      weight: 0,
-      declaredWeight: 0,
-      actualOtjh: null,
-      actualOtjhSource: 'not_returned',
-      plannedOtjh: null,
-      plannedOtjhSource: 'not_returned',
-      activities: [],
-      reflections: [],
-    };
-    learnerRows.set(ksbCode, row);
-    byLearner.set(learnerKey, learnerRows);
-    return row;
-  };
-
-  (data?.consumptionSources?.progress || []).forEach(source => {
-    const meta = source as Record<string, unknown>;
-    const learnerKey = String(meta.learnerId || '').trim();
-    const ksbCode = String(meta.code || '').trim().toUpperCase();
-    if (!learnerKey || !ksbCode) return;
-    const row = rowFor(learnerKey, ksbCode, true);
-    if (!row) return;
-    const weightValue = Number(meta.weight || 0);
-    row.count += 1;
-    row.weight += Number.isFinite(weightValue) ? weightValue : 0;
-    // Expected OTJH only; actual OTJH is the reflection's, attached below.
-    if (meta.plannedOtjh !== undefined && meta.plannedOtjh !== null) {
-      row.plannedOtjh = (row.plannedOtjh || 0) + Number(meta.plannedOtjh || 0);
-      row.plannedOtjhSource = String(meta.plannedOtjhSource || 'returned');
-    }
-    const activity = [meta.componentTitle, meta.module, meta.week]
-      .map(value => String(value || '').trim())
-      .filter(Boolean)
-      .join(' - ');
-    if (activity && !row.activities.includes(activity)) row.activities.push(activity);
-  });
-
-  (data?.learnerActivities || []).forEach(activity => {
-    const learnerKey = String(activity.learnerId ?? '').trim();
-    if (!learnerKey) return;
-    const reflection = activity.reflection;
-    const actualOtjh = activity.actualOtjh;
-    (activity.ksbSnapshot || []).forEach(item => {
-      const row = rowFor(learnerKey, String(item.code || '').trim().toUpperCase(), false);
-      if (!row) return;
-      if (actualOtjh !== undefined && actualOtjh !== null) {
-        row.actualOtjh = (row.actualOtjh || 0) + Number(actualOtjh || 0);
-        row.actualOtjhSource = String(activity.actualOtjhSource || 'returned');
-      }
-      const text = String(reflection?.text || '').trim();
-      if (text && !row.reflections.includes(text)) row.reflections.push(text);
-    });
-    // Declared weight is reported next to achieved weight, never inside it.
-    (activity.declaredReflectionKsbs || []).forEach(item => {
-      const row = rowFor(learnerKey, String(item.code || '').trim().toUpperCase(), false);
-      if (!row) return;
-      row.declaredWeight += Number(item.weight || 0);
-    });
-  });
-
+function learnerAchievementMap(data: CurriculumProgrammeLearnerKsbSummaryResponse | null) {
+  const labels = data?.activityLabels || [];
   return new Map(
-    Array.from(byLearner.entries()).map(([learnerId, rows]) => [
+    Object.entries(data?.learnerKsbAchievements || {}).map(([learnerId, lines]) => [
       learnerId,
-      Array.from(rows.values()).sort((a, b) => ksbCodeSort(a.code, b.code)),
+      lines.map((line): LearnerKsbAchievement => ({
+        ...line,
+        weight: line.weight ?? 0,
+        declaredWeight: line.declaredWeight ?? Number.NaN,
+        activities: line.activities.map(index => labels[index]).filter((label): label is string => Boolean(label)),
+      })).sort((a, b) => ksbCodeSort(a.code, b.code)),
     ]),
   );
 }

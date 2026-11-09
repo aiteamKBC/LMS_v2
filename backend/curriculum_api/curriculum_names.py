@@ -30,7 +30,7 @@ _LOCAL = threading.local()
 _LOOKUP_SQL = '''
     select 'p', programme_id::text, name::text, null::text, null::text, null::text, null::text, status::text from curriculum.programmes
     union all select 'c', cohort_id::text, cohort_name::text, programme_id::text, null, null, null, status::text from curriculum.cohorts
-    union all select 'g', group_id::text, group_name::text, cohort_id::text, programme_id::text, coach_id::text, null, status::text from curriculum.groups
+    union all select 'g', group_id::text, group_name::text, cohort_id::text, programme_id::text, {group_coach}, null, status::text from curriculum.groups
     union all select 'm', module_catalogue_id::text, title::text, group_id::text, cohort_id::text, tutor_id::text, programme_id::text, status::text from curriculum.modules
     union all select 't', id::text, name::text, email::text, null, null, null, status::text from curriculum.tutors
     union all select 'k', id::text, name::text, email::text, null, null, null, status::text from curriculum.coaches
@@ -41,6 +41,12 @@ _CHOICES_SQL = '''
     union all select 'h', h.cohort_id::text, ch.source_record_id::text, h.is_selected::text, h.is_excluded::text,
                      null, null, h.id::text
     from curriculum.cohort_calendar_holidays h join curriculum.calendar_holidays ch on ch.id = h.calendar_holiday_id
+'''
+# A group's coaches, where they live in curriculum.group_coaches (the group row
+# no longer carries coach_id; a group may have several). See group_coaches.
+_GROUP_COACHES_SQL = '''
+    union all select 'gc', gc.group_id::text, gc.coach_id::text, null, null, null, null, null
+    from curriculum.group_coaches gc
 '''
 # A digest of every apprenticeship-standard KSB row (reference data the team
 # edits in the database): the rows are re-read only when it changes, without a
@@ -67,9 +73,13 @@ def lookups(using='default'):
     data = {'programmes': {}, 'cohorts': {}, 'groups': {}, 'modules': {}, 'tutors': {}, 'coaches': {},
             'cohort_holidays': {}}
     choices = []
+    coach_links = []
     with connections[using].cursor() as cursor:
         extra = _optional_tables(using)
-        cursor.execute(_LOOKUP_SQL + (_CHOICES_SQL if extra['choices'] else '')
+        group_coach = 'coach_id::text' if extra.get('group_coach_column') else 'null::text'
+        cursor.execute(_LOOKUP_SQL.format(group_coach=group_coach)
+                       + (_GROUP_COACHES_SQL if extra.get('group_coaches') else '')
+                       + (_CHOICES_SQL if extra['choices'] else '')
                        + (_STANDARDS_SQL if extra['standards'] else ''))
         for kind, key, name, a, b, c, d, status in cursor.fetchall():
             if kind == 's':
@@ -78,12 +88,16 @@ def lookups(using='default'):
             if kind == 'h':
                 choices.append((int(status), key, name, a == 'true', b == 'true'))
                 continue
+            if kind == 'gc':
+                coach_links.append((key, name))
+                continue
             if kind == 'p':
                 data['programmes'][key] = {'name': name or '', 'status': status}
             elif kind == 'c':
                 data['cohorts'][key] = {'name': name or '', 'programme_id': a, 'status': status}
             elif kind == 'g':
-                data['groups'][key] = {'name': name or '', 'cohort_id': a, 'programme_id': b, 'coach_id': c, 'status': status}
+                data['groups'][key] = {'name': name or '', 'cohort_id': a, 'programme_id': b, 'coach_id': c,
+                                       'coach_ids': [c] if c else [], 'status': status}
             elif kind == 'm':
                 data['modules'][key] = {'title': name or '', 'group_id': a, 'cohort_id': b, 'tutor_id': c,
                                          'programme_id': d, 'status': status}
@@ -91,6 +105,16 @@ def lookups(using='default'):
                 data['tutors'][key] = {'name': name or '', 'email': a or '', 'status': status}
             elif kind == 'k':
                 data['coaches'][key] = {'name': name or '', 'email': a or '', 'status': status}
+    for group_id, coach_id in coach_links:
+        group = data['groups'].get(group_id)
+        if group is not None and coach_id and coach_id not in group['coach_ids']:
+            group['coach_ids'].append(coach_id)
+    for group in data['groups'].values():
+        if len(group['coach_ids']) > 1:
+            # Shown in name order, so the joined label is stable between reads.
+            group['coach_ids'].sort(key=lambda key: ((data['coaches'].get(key) or {}).get('name', '').lower(), key))
+        # coach_id stays the first coach for callers that read one.
+        group['coach_id'] = group['coach_ids'][0] if group['coach_ids'] else None
     for _order, cohort_id, holiday_id, is_selected, is_excluded in sorted(choices):
         entry = data['cohort_holidays'].setdefault(cohort_id, {'selected': [], 'excluded': []})
         if is_selected:
@@ -115,7 +139,15 @@ def _optional_tables(using='default'):
                 "to_regclass('curriculum.standard_ksbs') is not null"
             )
             choices, standards = cursor.fetchone()
-        _OPTIONAL_TABLES[using] = {'choices': bool(choices), 'standards': bool(standards)}
+            cursor.execute(
+                "select to_regclass('curriculum.group_coaches') is not null, "
+                "exists (select 1 from information_schema.columns where table_schema = 'curriculum' "
+                "and table_name = 'groups' and column_name = 'coach_id')"
+            )
+            group_coaches, group_coach_column = cursor.fetchone()
+        _OPTIONAL_TABLES[using] = {'choices': bool(choices), 'standards': bool(standards),
+                                   'group_coaches': bool(group_coaches),
+                                   'group_coach_column': bool(group_coach_column)}
     return _OPTIONAL_TABLES[using]
 
 
@@ -141,7 +173,7 @@ def name_of(kind, key, field='name', using='default'):
 
 NAME_FIELDS = {
     'modules': ('programme_name', 'cohort_name', 'group_name', 'tutor_name', 'tutor_email', 'coach_name'),
-    'groups': ('programme_name', 'cohort_name', 'coach_name'),
+    'groups': ('programme_name', 'cohort_name', 'coach_name', 'coach_names'),
     'cohorts': ('programme_name',),
 }
 
@@ -180,18 +212,37 @@ def _names(table, row, data):
     if table == 'cohorts':
         return {'programme_name': programme.get('name', '')}
     if table == 'groups':
-        coach = data['coaches'].get(_text(row.get('coach_id'))) or {}
+        coaches = _group_coach_names(data, row.get('group_id'), row.get('coach_id'))
         return {'programme_name': programme.get('name', ''), 'cohort_name': cohort.get('name', ''),
-                'coach_name': coach.get('name', '')}
+                'coach_name': COACH_SEPARATOR.join(coaches), 'coach_names': coaches}
     group = data['groups'].get(_text(row.get('group_id'))) or {}
     tutor = data['tutors'].get(_text(row.get('tutor_id'))) or {}
-    # A module's coach is its group's coach.
-    coach = data['coaches'].get(_text(group.get('coach_id'))) or {}
+    # A module's coaches are its group's coaches.
+    coaches = _group_coach_names(data, row.get('group_id'))
     return {
         'programme_name': programme.get('name', ''), 'cohort_name': cohort.get('name', ''),
         'group_name': group.get('name', ''), 'tutor_name': tutor.get('name', ''),
-        'tutor_email': tutor.get('email', ''), 'coach_name': coach.get('name', ''),
+        'tutor_email': tutor.get('email', ''), 'coach_name': COACH_SEPARATOR.join(coaches),
     }
+
+
+# Several coaches share one ``coach_name`` string (see group_coaches).
+COACH_SEPARATOR = ', '
+
+
+def _group_coach_names(data, group_id, row_coach_id=None):
+    """Names of a group's coaches; ``row_coach_id`` is a row that still stores one."""
+    group = data['groups'].get(_text(group_id)) or {}
+    coach_ids = list(group.get('coach_ids') or ())
+    if not coach_ids:
+        single = _text(row_coach_id) or _text(group.get('coach_id'))
+        coach_ids = [single] if single else []
+    names = []
+    for coach_id in coach_ids:
+        name = _text((data['coaches'].get(coach_id) or {}).get('name'))
+        if name:
+            names.append(name)
+    return names
 
 
 def _index(data):
@@ -217,9 +268,10 @@ def _index(data):
         key=lambda item: (item[1].get('name') or '', item[0]),
     )
     for group_id, group in groups:
-        for parent, bucket in ((group.get('cohort_id'), 'groups_by_cohort'), (group.get('coach_id'), 'groups_by_coach')):
-            if parent:
-                index[bucket].setdefault(parent, []).append(group_id)
+        if group.get('cohort_id'):
+            index['groups_by_cohort'].setdefault(group['cohort_id'], []).append(group_id)
+        for coach_id in group.get('coach_ids') or ([group['coach_id']] if group.get('coach_id') else []):
+            index['groups_by_coach'].setdefault(coach_id, []).append(group_id)
     data['_index'] = index
     return index
 

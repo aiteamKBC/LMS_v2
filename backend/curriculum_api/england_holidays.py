@@ -56,7 +56,7 @@ import logging
 import os
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 from django.db import connection, connections, transaction
@@ -539,7 +539,9 @@ def as_datetime(value):
     if isinstance(value, datetime):
         if value.tzinfo is None:
             return value
-        return value.astimezone(tz=None).replace(tzinfo=None)
+        # UTC, not the server's local zone (tz=None): the interval arithmetic
+        # compares this with datetime.utcnow().
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
     text = views.clean_str(value).replace('Z', '').replace('T', ' ')
     for pattern in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
         try:

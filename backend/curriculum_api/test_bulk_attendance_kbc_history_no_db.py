@@ -59,6 +59,16 @@ def load_module():
     directory.learner_directory_dsn = lambda: 'synthetic'
     sys.modules[directory.__name__] = directory
 
+    # The direct-DSN path is what these tests exercise; the new-database link
+    # is covered in test_bulk_attendance_kbc_source_no_db.
+    source = ModuleType('curriculum_api.bulk_attendance_kbc_source')
+    source.NEW_DATABASE = 'django:kbc_sync'
+    source.LINKED_TABLE = 'kbc_sync.kbc_attendance'
+    source.on_new_database = lambda: False
+    source.new_database_cursor = MagicMock()
+    source.dict_rows = MagicMock()
+    sys.modules[source.__name__] = source
+
     psycopg = ModuleType('psycopg')
     psycopg.Error = FakePsycopgError
     psycopg.OperationalError = FakePsycopgError

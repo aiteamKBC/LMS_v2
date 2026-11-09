@@ -34,10 +34,50 @@ logger = logging.getLogger(__name__)
 _worker_lock = threading.Lock()
 
 
+def flag_enabled():
+    return os.environ.get('BUNNY_STREAM_ENABLED', '').lower() in ('true', '1', 'yes')
+
+
+_TABLES_PRESENT = {}
+
+
+def tables_available():
+    """True when this database has the import tables (migrations 0077/0078).
+
+    The normalised database (NEW_ENDPOINT_URL) has neither, and with the flag on
+    every Module Builder save that queued a video then failed whole (500, saved
+    nothing). Read once per process and database; a restart picks up tables
+    created later.
+    """
+    from django.db import connection
+    key = (connection.settings_dict.get('HOST'), connection.settings_dict.get('NAME'), connection.vendor)
+    if key not in _TABLES_PRESENT:
+        if connection.vendor != 'postgresql':
+            _TABLES_PRESENT[key] = True  # the SQLite test schema creates them
+        else:
+            from .models import CurriculumVideoChange
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        'SELECT to_regclass(%s) IS NOT NULL AND to_regclass(%s) IS NOT NULL',
+                        [CurriculumVideoImport._meta.db_table, CurriculumVideoChange._meta.db_table],
+                    )
+                    present = bool(cursor.fetchone()[0])
+            except Exception:
+                logger.warning('Could not check the curriculum video import tables.', exc_info=True)
+                return False  # unknown, not remembered
+            if not present:
+                logger.warning('BUNNY_STREAM_ENABLED is set but this database has no curriculum video '
+                               'import tables; video imports stay off.')
+            _TABLES_PRESENT[key] = present
+    return _TABLES_PRESENT[key]
+
+
 def enabled():
     # Enable only after migrations 0077/0078 are deployed. An absent key is an explicit
-    # failed import, never a silent fallback to local video storage.
-    return os.environ.get('BUNNY_STREAM_ENABLED', '').lower() in ('true', '1', 'yes')
+    # failed import, never a silent fallback to local video storage. The flag alone
+    # is not enough: without the tables a save that queues an import fails whole.
+    return flag_enabled() and tables_available()
 
 
 def _views():
@@ -341,7 +381,9 @@ def component_video(request, kind, target_id, component_id):
     if request.method not in ('GET', 'POST'):
         return JsonResponse({'error': 'Method not allowed.'}, status=405)
     if not enabled():
-        return JsonResponse({'enabled': False, 'error': 'Bunny video imports are not enabled yet.'}, status=503)
+        message = ('Bunny video imports are switched on, but this database has no video import tables yet.'
+                   if flag_enabled() else 'Bunny video imports are not enabled yet.')
+        return JsonResponse({'enabled': False, 'error': message}, status=503)
     try:
         _, rows, scope = target(kind, target_id)
         component = next((r for r in rows if r['id'] == component_id), None)

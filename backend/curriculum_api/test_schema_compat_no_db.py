@@ -101,6 +101,40 @@ class TranslateWriteTests(SimpleTestCase):
         resolve.assert_called_once_with('st0845-v1-1-181', 'K2', module_catalogue_id='MOD-1')
         self.assertEqual(translated['standard_ksb_id'], 42)
 
+    def test_display_status_is_not_written_to_an_archive_flag_column(self):
+        # groups/modules CHECK status in ('active', 'inactive') on the new schema:
+        # a cohort-derived 'planned' or a builder 'draft' was refused (500).
+        for table, value in (('groups', 'planned'), ('modules', 'draft'), ('modules', 'published'), ('weeks', 'draft')):
+            translated, _ = sc.translate_write(table, {'status': value, 'title': 'T'}, NORMALISED[table])
+            self.assertNotIn('status', translated, (table, value))
+            self.assertEqual(translated['title'], 'T')
+        translated, _ = sc.translate_write('groups', {'status': 'Active'}, NORMALISED['groups'])
+        self.assertEqual(translated['status'], 'active')
+        translated, _ = sc.translate_write('groups', {'status': 'archived'}, NORMALISED['groups'])
+        self.assertEqual(translated['status'], 'inactive')
+
+    def test_cohorts_keep_their_own_status_values(self):
+        cohorts = {'cohort_id', 'cohort_name', 'programme_id', 'status', 'updated_at'}
+        translated, _ = sc.translate_write('cohorts', {'status': 'planned'}, cohorts)
+        self.assertEqual(translated['status'], 'planned')
+
+    def test_blank_foreign_keys_are_stored_as_null(self):
+        translated, nullable = sc.translate_write(
+            'modules', {'group_id': '', 'cohort_id': '  ', 'programme_id': 'PROG-1'}, NORMALISED_MODULES)
+        self.assertIsNone(translated['group_id'])
+        self.assertIsNone(translated['cohort_id'])
+        self.assertEqual(translated['programme_id'], 'PROG-1')
+        self.assertTrue({'group_id', 'cohort_id'} <= nullable)
+
+    def test_blank_required_foreign_key_leaves_the_stored_link_alone(self):
+        translated, nullable = sc.translate_write('components', {'week_id': '', 'title': 'T'}, NORMALISED['components'])
+        self.assertNotIn('week_id', translated)
+        self.assertNotIn('week_id', nullable)
+
+    def test_legacy_shape_keeps_blank_strings(self):
+        payload = {'group_id': '', 'status': 'draft'}
+        self.assertEqual(sc.translate_write('modules', payload, LEGACY_MODULES), (payload, set()))
+
     def test_only_derived_copy_detects_name_refresh(self):
         self.assertTrue(sc.only_derived_copy('modules', {'programme_name': 'New', 'updated_at': 'now'}, NORMALISED_MODULES))
         self.assertFalse(sc.only_derived_copy('modules', {'programme_name': 'New', 'title': 'T'}, NORMALISED_MODULES))

@@ -41,6 +41,7 @@ from login.permissions import require_role
 from . import archive_state
 from . import curriculum_names
 from . import calendar_holidays, ksb_mapping_placement, schema_compat
+from . import group_coaches
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
@@ -413,6 +414,23 @@ def ensure_curriculum_epoch_table():
         return False
     global _CURRICULUM_EPOCH_TABLE_READY
     if _CURRICULUM_EPOCH_TABLE_READY:
+        return True
+    if not schema_gate.runtime_bootstrap_allowed():
+        # Schema is migration-owned here (production, the normalised database):
+        # verify the table, never create it. This runs on GET paths, so it must
+        # not issue CREATE SCHEMA / CREATE TABLE / INSERT. A missing table is
+        # the same "cannot be reached" signal as before: the local counter.
+        try:
+            with transaction.atomic():
+                present = schema_gate.table_exists(CURRICULUM_EPOCH_TABLE)
+        except Exception:
+            logger.warning('Unable to verify the shared curriculum epoch table.', exc_info=True)
+            return False
+        if not present:
+            logger.warning('%s.%s is missing; using the process-local curriculum epoch.',
+                           CURRICULUM_SCHEMA, CURRICULUM_EPOCH_TABLE)
+            return False
+        _CURRICULUM_EPOCH_TABLE_READY = True
         return True
     try:
         # Under a savepoint: this runs on a read path that a write request may
@@ -5039,12 +5057,24 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     if request.method == 'GET':
         from .teams_calendar_integrity import off_schedule_runs, read_events
         logged = read_events([live_session_id])
+        # One read per table for the whole series, not two per session: a
+        # 14-session series was 28 round trips to the remote database.
+        occurrence_ids = [occurrence['id'] for occurrence in occurrences]
+        attendance_by_occurrence, artifacts_by_occurrence = {}, {}
+        if occurrence_ids:
+            placeholders = ', '.join(['%s'] * len(occurrence_ids))
+            for row in authoring_fetch_all(
+                LIVE_SESSION_ATTENDANCE_TABLE, f'occurrence_id in ({placeholders})', occurrence_ids, 'display_name asc'
+            ):
+                attendance_by_occurrence.setdefault(row['occurrence_id'], []).append(row)
+            for row in authoring_fetch_all(
+                LIVE_SESSION_ARTIFACTS_TABLE, f'occurrence_id in ({placeholders})', occurrence_ids, 'artifact_type asc'
+            ):
+                artifacts_by_occurrence.setdefault(row['occurrence_id'], []).append(row)
         for occurrence in occurrences:
             # Calls on this link that were not this session, said with their dates.
             occurrence['off_schedule_runs'] = off_schedule_runs(occurrence, logged)
-            actual_attendance = authoring_fetch_all(
-                LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']], 'display_name asc'
-            )
+            actual_attendance = attendance_by_occurrence.get(occurrence['id'], [])
             for attendance in actual_attendance:
                 attendance['intervals'] = parse_json_value(attendance.get('intervals'), [])
                 attendance['raw_data'] = parse_json_value(attendance.get('raw_data'), {})
@@ -5060,11 +5090,12 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     occurrence.get('attendance_report_id') and occurrence.get('actual_end')
                 ),
             )
-            occurrence['artifacts'] = authoring_fetch_all(
-                LIVE_SESSION_ARTIFACTS_TABLE, 'occurrence_id = %s', [occurrence['id']], 'artifact_type asc'
-            )
+            occurrence['artifacts'] = artifacts_by_occurrence.get(occurrence['id'], [])
             for artifact in occurrence['artifacts']:
                 artifact['metadata'] = parse_json_value(artifact.get('metadata'), {})
+                # The transcript cues (up to ~200 KB each) have their own
+                # endpoint; this list only needs to know the artifact exists.
+                artifact['metadata'].pop('lmsTranscriptTimeline', None)
         return JsonResponse({
             'series': {**stamp_live_session_instants(series), 'timeZoneIana': graph_timezone_iana(teams_schedule_settings({}, series=series))},
             'occurrences': [stamp_live_session_instants(occurrence) for occurrence in occurrences],
@@ -5802,6 +5833,9 @@ def update_rows(table, where_sql, where_params, payload, allow_null_columns=None
 
 def delete_rows(table, where_sql, where_params):
     where_sql = schema_compat.write_where(table, where_sql, column_names(table))
+    if table == GROUPS_TABLE:
+        # A group's coach links reference it (RESTRICT): they go with it.
+        group_coaches.release_groups(where_sql, where_params)
     query = f'delete from {table_name(table)} where {where_sql} returning *'
     rows = written_rows(table, execute_returning(query, where_params))
     # Recorded from the rows the delete returned, which is the only moment the
@@ -7047,19 +7081,28 @@ def programme_dependency_counts(identifier, config=None):
                 counts[table] = total
         except Exception:
             logger.debug('Could not count %s rows for programme %s.', table, identifier, exc_info=True)
-    if names and connection.vendor == 'postgresql':
+    if connection.vendor == 'postgresql':
         try:
+            learner_columns = schema_compat.columns_of('Learner', 'learners')
             with connection.cursor() as cursor:
-                cursor.execute("select to_regclass(%s)", ['"Learner"."learners"'])
-                if cursor.fetchone()[0]:
+                if 'programme_id' in learner_columns:
+                    # Normalised schema: the learner names its programme by id
+                    # (the programme name column was dropped).
+                    cursor.execute(
+                        f'select count(*) from "Learner"."learners" where programme_id in ({placeholders})',
+                        params,
+                    )
+                elif names and 'programme' in learner_columns:
                     name_placeholders = ', '.join(['%s'] * len(names))
                     cursor.execute(
                         f'select count(*) from "Learner"."learners" where programme in ({name_placeholders})',
                         list(names),
                     )
-                    total = int(cursor.fetchone()[0] or 0)
-                    if total:
-                        counts['learners'] = total
+                else:
+                    cursor.execute('select 0')
+                total = int(cursor.fetchone()[0] or 0)
+                if total:
+                    counts['learners'] = total
         except Exception:
             logger.debug('Could not count learners for programme %s.', identifier, exc_info=True)
     return counts
@@ -7850,6 +7893,10 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
             id=clean_str(identifier),
             blockers=plan['blockers'],
         )
+    for candidate in plan['candidates']:
+        blocked = permanent_delete_reference_refusal('programme', candidate)
+        if blocked is not None:
+            return blocked
 
     try:
         with transaction.atomic():
@@ -7860,6 +7907,15 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
         # programme then keeps its card on the list until that entry ages out --
         # which is exactly what makes a discarded run look like it was saved.
         invalidate_curriculum_cache()
+    except schema_compat.UnsupportedOnNormalisedSchema as exc:
+        # Normalised schema: weeks/components cannot be detached into the reuse
+        # library, so a programme that still owns authored content is refused
+        # whole (the transaction rolled back) and stays archived.
+        logger.info('Permanent delete of programme %s refused on the current schema: %s', identifier, exc)
+        return json_error(
+            str(exc), status=409, reason='programme-content-cannot-detach',
+            deleted=False, permanent=False, id=clean_str(identifier),
+        )
     except (IntegrityError, DatabaseError) as exc:
         logger.warning('Permanent delete of programme %s was refused: %s', identifier, exc)
         return json_error(
@@ -8705,11 +8761,17 @@ MODULE_INDEX_EXCLUDED_COLUMNS = ('ksb_remap_report',)
 MODULE_INDEX_ORDER = 'programme_id, title'
 
 
+def module_index_read(*, ensure_tables=True):
+    """module_index_rows()'s authoring_fetch_all() call, as ``(args, kwargs)`` for a prefetch."""
+    return ((AUTHORING_MODULES_TABLE,), {
+        'order_sql': MODULE_INDEX_ORDER, 'ensure_tables': ensure_tables,
+        'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS,
+    })
+
+
 def module_index_rows(*, ensure_tables=True):
-    return authoring_fetch_all(
-        AUTHORING_MODULES_TABLE, order_sql=MODULE_INDEX_ORDER, ensure_tables=ensure_tables,
-        exclude_columns=MODULE_INDEX_EXCLUDED_COLUMNS,
-    )
+    args, kwargs = module_index_read(ensure_tables=ensure_tables)
+    return authoring_fetch_all(*args, **kwargs)
 
 
 def safe_module_index_rows():
@@ -8762,8 +8824,24 @@ def authoring_rows_by_id(table, id_column, ids, order_sql, *, ensure_tables=True
     return authoring_fetch_all(table, clause, params, ensure_tables=ensure_tables)
 
 
+def training_index_reads(*, ensure_tables=True, modules=True, groups=True, cohorts=True):
+    """The module, group and cohort reads the training rows are built from, as
+    ``(args, kwargs)`` calls for prefetch_authoring_reads()."""
+    return [
+        *([module_index_read(ensure_tables=ensure_tables)] if modules else []),
+        *([((GROUPS_TABLE,), {'order_sql': GROUP_ROWS_ORDER, 'ensure_tables': ensure_tables})] if groups else []),
+        *([((COHORT_AUTHORING_DETAILS_TABLE,), {'order_sql': COHORT_ROWS_ORDER, 'ensure_tables': ensure_tables})]
+          if cohorts else []),
+    ]
+
+
 def authoring_modules_as_training_rows(*, ensure_tables=True, module_rows=None, group_rows=None, cohort_rows=None):
     try:
+        # The three reads below in one round trip; each still runs as written.
+        prefetch_authoring_reads(training_index_reads(
+            ensure_tables=ensure_tables, modules=module_rows is None,
+            groups=group_rows is None, cohorts=cohort_rows is None,
+        ))
         if module_rows is None:
             module_rows = module_index_rows(ensure_tables=ensure_tables)
         if group_rows is None:
@@ -9476,12 +9554,23 @@ def build_staff_user_profile_collection(role, visibility='operational'):
     training_rows = get_training_rows()
     if visibility != 'all':
         training_rows = [row for row in training_rows if is_operational_training_row(row)]
+    if role != 'tutor':
+        # A coach profile carries the groups that name the coach and nothing
+        # module-shaped (see serialize_staff_profile), so building the module
+        # catalogue here only cost round trips. [] rather than None: None
+        # makes build_staff_profiles build the catalogue itself.
+        _, groups = build_cohorts_and_groups(
+            training_rows,
+            get_program_config_rows(),
+            include_archived=visibility == 'all',
+        )
+        return build_staff_profiles(profile_rows, role, [], groups)
     # Tutor profiles only expose module identities/dates/status. Week titles
     # and group statistics cannot affect those fields. Legacy catalogues keep
     # their existing resolver, including non-authoring identifiers.
     catalogue = (
         authoring_modules_as_catalogue_rows(week_rows=[])
-        if role == 'tutor' and not table_exists('Modules') else get_module_rows()
+        if not table_exists('Modules') else get_module_rows()
     )
     modules = build_modules(
         catalogue,
@@ -9489,14 +9578,7 @@ def build_staff_user_profile_collection(role, visibility='operational'):
         get_program_config_rows(),
         include_unused=visibility == 'all',
     )
-    groups = []
-    if role != 'tutor':
-        _, groups = build_cohorts_and_groups(
-            training_rows,
-            get_program_config_rows(),
-            include_archived=visibility == 'all',
-        )
-    return build_staff_profiles(profile_rows, role, modules, groups)
+    return build_staff_profiles(profile_rows, role, modules, [])
 
 
 def get_tutor_module_rows():
@@ -9575,6 +9657,26 @@ def canonical_staff_assignment_name(role, value, include_archived=True):
         return ''
     row = find_staff_profile_row(role, assignment, include_archived=include_archived)
     return staff_profile_name(row) or assignment
+
+
+def canonical_group_coaches(value):
+    """A group's coaches as the one ``coach_name`` string: each name canonical.
+
+    A group may have several coaches (``curriculum.group_coaches``). They travel
+    as a list (``coaches``) or joined in one string (``coach``); each is matched
+    against the staff directory the way a single coach always was.
+    """
+    names = group_coaches.split_names(value)
+    return group_coaches.join_names([canonical_staff_assignment_name('coach', name) for name in names])
+
+
+def with_group_coaches(payload):
+    """``payload`` with a ``coaches`` list folded into ``coach`` (the key the group
+    writers read). A payload without ``coaches`` is returned unchanged."""
+    if not isinstance(payload, dict) or 'coaches' not in payload:
+        return payload
+    value = payload.get('coaches')
+    return {**payload, 'coach': group_coaches.join_names(value if isinstance(value, (list, tuple)) else [value])}
 
 
 def resolve_staff_assignment_email(role, value, include_archived=True):
@@ -9704,7 +9806,10 @@ def serialize_staff_profile(row, role, modules=None, groups=None):
     named_group_ids = [
         clean_str(group.get('id') or group.get('groupId'))
         for group in groups or []
-        if role == 'coach' and name_key and staff_assignment_key(group.get('coach')) == name_key
+        if role == 'coach' and name_key and name_key in {
+            staff_assignment_key(coach)
+            for coach in group_coaches.split_names(group.get('coaches') or group.get('coach'))
+        }
         and clean_str(group.get('id') or group.get('groupId'))
     ]
     assigned_group_ids = unique([
@@ -9737,7 +9842,6 @@ def serialize_staff_profile(row, role, modules=None, groups=None):
     if role == 'coach':
         profile.update({
             'assignedGroupIds': assigned_group_ids,
-            'storedAssignedGroupIds': [clean_str(item) for item in stored_group_ids if clean_str(item)],
             'groupCount': len(assigned_group_ids),
         })
     else:
@@ -9784,10 +9888,7 @@ def get_curriculum_rows(compact=False):
     # The authoring reads the readers below make, in one round trip rather than
     # five; each reader still makes its own call and finds its rows memoised.
     prefetch_authoring_reads([
-        ((AUTHORING_MODULES_TABLE,), {'order_sql': MODULE_INDEX_ORDER, 'ensure_tables': True,
-                                      'exclude_columns': MODULE_INDEX_EXCLUDED_COLUMNS}),
-        ((GROUPS_TABLE,), {'order_sql': GROUP_ROWS_ORDER, 'ensure_tables': True}),
-        ((COHORT_AUTHORING_DETAILS_TABLE,), {'order_sql': COHORT_ROWS_ORDER, 'ensure_tables': True}),
+        *training_index_reads(),
         *([] if table_exists('Modules') else [((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS})]),
     ])
     rows = {
@@ -14085,6 +14186,7 @@ def module_row_belongs_to_group(row, group):
 
 
 def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
+    group = with_group_coaches(group)
     rows = rows or []
     module_rows = [
         row for row in surviving_authoring_module_rows(module_rows or [])
@@ -14131,7 +14233,7 @@ def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
         'programme_name': programme_name,
         'module_ids': json_db_value(module_ids),
         'module_names': json_db_value(module_names),
-        'coach_name': canonical_staff_assignment_name('coach', group.get('coach') or group.get('coachName') or first_row.get('coach_name') or existing_group.get('coach_name')),
+        'coach_name': canonical_group_coaches(group.get('coach') or group.get('coachName') or first_row.get('coach_name') or existing_group.get('coach_name')),
         'session_week_day': clean_str(group.get('weekDays') or group.get('deliveryDays') or group.get('sessionWeekDay') or group.get('session_week_day') or schedule_day_part(group.get('schedule')) or existing_group.get('session_week_day') or schedule_day_part(existing_group.get('schedule'))),
         'session_start_time': clean_str(group.get('startTime') or group.get('start_time') or group.get('sessionStartTime') or group.get('session_start_time') or existing_group.get('session_start_time') or schedule_time_parts(group.get('schedule') or existing_group.get('schedule'))[0]),
         'session_end_time': clean_str(group.get('endTime') or group.get('end_time') or group.get('sessionEndTime') or group.get('session_end_time') or existing_group.get('session_end_time') or schedule_time_parts(group.get('schedule') or existing_group.get('schedule'))[1]),
@@ -14190,6 +14292,7 @@ def serialize_group_authoring_detail(row):
         'modules': as_json_value(row.get('module_names'), []),
         'moduleIds': as_json_value(row.get('module_ids'), []),
         'coach': row.get('coach_name') or 'Unassigned',
+        'coaches': group_coaches.split_names(row.get('coach_names') or row.get('coach_name')),
         # Overwritten by group_authoring_detail_rows(), which derives the tutor
         # from the group's module rows. Kept as the standalone-call fallback.
         'tutor': 'Unassigned',
@@ -15960,11 +16063,14 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
     return query
 
 
-# Off unless set: measured 2026-10-21 against a Neon branch through the pooler,
-# it cut ~9 round trips from a PROG-PCP-L6 rebuild but showed no wall-clock gain
-# beyond Neon's run-to-run noise, and three of eighteen page bursts with it on
-# stalled (19-48s) where none did without. Enable only with fresh evidence.
-CURRICULUM_PIPELINED_READS = os.environ.get('CURRICULUM_PIPELINED_READS', 'false').lower() in {'true', '1', 'yes'}
+# On unless set to false. The reads go out as one multi-statement query: the
+# connection's cursors bind parameters client-side (Django's default with
+# psycopg 3), so the statements travel as a single simple-protocol message and
+# each comes back as its own result set, with the same types a separate read
+# returns. This replaced psycopg's pipeline mode, which in 2026-10-21 bursts
+# through the Neon pooler stalled three of eighteen pages (19-48s). Measured
+# 2026-11-08 on NEW_ENDPOINT_URL: five reads 1294 ms one by one, 284 ms batched.
+CURRICULUM_BATCHED_READS = os.environ.get('CURRICULUM_BATCHED_READS', 'true').lower() not in {'false', '0', 'no'}
 
 
 def prefetch_authoring_reads(calls):
@@ -15974,18 +16080,18 @@ def prefetch_authoring_reads(calls):
     make them. Each result goes into the read scope under the key that call is
     memoised with, so the call itself then costs nothing. A builder's reads go
     out one round trip at a time, and from a remote database each round trip,
-    not the rows, is most of what a programme build waits on; psycopg's
-    pipeline mode sends them all and waits once.
+    not the rows, is most of what a programme build waits on; one
+    multi-statement query sends them all and waits once.
 
     Only ever an optimisation: the SQL is authoring_select_sql()'s own, and a
     call whose key does not match what was prefetched -- arguments spelled
-    differently, a pipeline that failed -- just reads as it always did. Outside
+    differently, a batch that failed -- just reads as it always did. Outside
     a read scope, inside an atomic block (a failed statement there would poison
     the caller's transaction) or off PostgreSQL, nothing is sent.
     """
     memo = getattr(_CURRICULUM_READ_SCOPE, 'memo', None)
     if (
-        memo is None or not CURRICULUM_PIPELINED_READS
+        memo is None or not CURRICULUM_BATCHED_READS
         or connection.vendor != 'postgresql' or connection.in_atomic_block
     ):
         return
@@ -16012,26 +16118,26 @@ def prefetch_authoring_reads(calls):
             continue
         pending[key] = (query, options['params'] or [], options['table'], options['columns'], options['exclude_columns'])
     if len(pending) < 2:
-        # One read gains nothing from a pipeline; let the call make it.
+        # One read gains nothing from a batch; let the call make it.
         return
-    cursors = []
+    results = []
     try:
-        connection.ensure_connection()
-        with connection.connection.pipeline():
-            for query, params, *_ in pending.values():
-                cursor = connection.cursor()
-                cursors.append(cursor)
-                cursor.execute(query, params)
-        results = [rows_as_dicts(cursor) for cursor in cursors]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '; '.join(query for query, *_ in pending.values()),
+                [value for _query, params, *_ in pending.values() for value in params],
+            )
+            while True:
+                results.append(rows_as_dicts(cursor))
+                if not cursor.nextset():
+                    break
     except Exception:
-        logger.warning('Pipelined curriculum reads failed; they will be read one by one.', exc_info=True)
+        logger.warning('Batched curriculum reads failed; they will be read one by one.', exc_info=True)
         return
-    finally:
-        for cursor in cursors:
-            try:
-                cursor.close()
-            except Exception:
-                pass
+    if len(results) != len(pending):
+        logger.warning('Batched curriculum reads returned %s results for %s reads; they will be read one by one.',
+                       len(results), len(pending))
+        return
     for (key, (_query, _params, table, columns, exclude_columns)), rows in zip(pending.items(), results):
         # Same projection authoring_fetch_all() applies, so a prefetched read and
         # a direct one hand callers identical rows.
@@ -16292,6 +16398,9 @@ def authoring_delete(table, where_sql='1 = 1', params=None):
     if table == COHORT_AUTHORING_DETAILS_TABLE:
         # A cohort's holiday choices reference it (RESTRICT): they go with it.
         calendar_holidays.release_cohorts(where_sql, params)
+    if table == GROUPS_TABLE:
+        # A group's coach links reference it (RESTRICT): they go with it.
+        group_coaches.release_groups(where_sql, params)
     versioned = table in versioning.VERSIONED_TABLES
     if not versioned:
         with connection.cursor() as cursor:
@@ -16366,6 +16475,9 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
             if table == COHORT_AUTHORING_DETAILS_TABLE:
                 # A cohort's holiday choices live in cohort_calendar_holidays.
                 calendar_holidays.store_cohort_choices(payload, [row])
+            if table == GROUPS_TABLE:
+                # A group's coaches live in group_coaches.
+                group_coaches.store(payload, [row])
             log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
             # The row the write returned is the snapshot, so history costs no
             # extra read of the record.
@@ -16614,6 +16726,8 @@ def update_authoring_rows(table, where_sql, where_params, payload):
         rows = authoring_fetch_all(table, where_sql, where_params)
         if table == COHORT_AUTHORING_DETAILS_TABLE:
             calendar_holidays.store_cohort_choices(payload, rows)
+        if table == GROUPS_TABLE:
+            group_coaches.store(payload, rows)
         return rows
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in columns)
     params = [payload[column] for column in columns] + list(where_params)
@@ -16627,6 +16741,8 @@ def update_authoring_rows(table, where_sql, where_params, payload):
             rows = written_rows(table, rows_as_dicts(cursor))
             if table == COHORT_AUTHORING_DETAILS_TABLE:
                 calendar_holidays.store_cohort_choices(payload, rows)
+            if table == GROUPS_TABLE:
+                group_coaches.store(payload, rows)
             log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
             versioning.record_rows(table, rows)
             note_live_rows(table, rows)
@@ -17818,7 +17934,11 @@ def resolve_authoring_catalogue_id(identifier):
     ident = clean_str(identifier)
     if not ident:
         return ''
-    summaries = authoring_catalogue_summaries(include_programme_deleted=True)
+    # Resolution reads only ids, the delivery signature and the ranking figures
+    # (authoring_summary_score), all of which the content-free summaries carry.
+    # The full summaries read every component and KSB mapping in the catalogue
+    # (~10 s on the remote database) just to answer "which module is this?".
+    summaries = authoring_catalogue_summaries(include_programme_deleted=True, include_content=False)
     if not summaries:
         return ''
 
@@ -18144,20 +18264,31 @@ def sort_rows_by_updated_at_desc(rows):
     )
 
 
-def component_builder_rows(module_catalogue_ids=None, omit_content=False):
+def component_builder_rows(module_catalogue_ids=None, omit_content=False, programme_view=False):
     """The component builder rows, whole; or with ``omit_content``, exactly as
     component_rows_without_content() would project them, with the long text
     stripped in the database where it can be (live_component_rows_without_content).
+
+    ``programme_view`` is the programme page's projection
+    (component_rows_for_programme_page); it implies ``omit_content``.
     """
     catalogue_ids = [clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)]
-    stripped_rows = live_component_rows_without_content(catalogue_ids) if omit_content else None
+    omit_content = omit_content or programme_view
+    keep_keys = (PROGRAMME_PAGE_SETTING_KEYS + COMPONENT_DERIVED_SETTING_KEYS) if programme_view else None
+    stripped_rows = live_component_rows_without_content(catalogue_ids, keep_keys=keep_keys) if omit_content else None
     if stripped_rows is None:
         rows = _component_builder_rows(catalogue_ids)
+        if programme_view:
+            return component_rows_for_programme_page(rows)
         return component_rows_without_content(rows) if omit_content else rows
     db_omitted_by_id = {
         str(row.get('id')): list(row.pop(COMPONENT_DB_OMITTED_KEYS_COLUMN, None) or [])
         for row in stripped_rows
     }
+    if programme_view:
+        return component_rows_for_programme_page(
+            _component_builder_rows(catalogue_ids, stripped_rows), already_omitted=db_omitted_by_id,
+        )
     projected = []
     for row in _component_builder_rows(catalogue_ids, stripped_rows):
         db_omitted = db_omitted_by_id.get(str(row.get('id'))) or []
@@ -20934,12 +21065,22 @@ def module_structure_revision(module_catalogue_id, *, source_rows=None):
             return ''
         if keep:
             rows = keep(rows)
+        # Only what the table stores is fingerprinted. On the normalised schema
+        # authoring_fetch_all adds derived keys (programme_name, tutor_name,
+        # deleted_at, library_state ...) that the editor GET's source rows do
+        # not carry, so the fresh read and the GET hashed different material
+        # and every full save was refused as a conflict. Derived keys follow
+        # from stored ones, so dropping them loses no change.
+        try:
+            stored = column_names(table)
+        except Exception:
+            stored = set()
         # Copy rather than mutate: the payload still needs the complete rows.
         # The fingerprint's material remains identical to the previous SQL
         # projection, including columns introduced by future migrations.
         rows = [
             {key: value for key, value in row.items()
-             if key not in STRUCTURE_REVISION_VOLATILE_COLUMNS}
+             if key not in STRUCTURE_REVISION_VOLATILE_COLUMNS and (not stored or key in stored)}
             for row in rows
         ]
         material.append([
@@ -21520,7 +21661,12 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
     module_rows = owned_rows(AUTHORING_MODULES_TABLE)
     if not module_rows:
         return None
-    module = module_rows[0]
+    # Source rows are the stored row only. On the normalised schema the
+    # programme / cohort / group / tutor names are read by id, so put them on a
+    # copy (the raw rows stay as read: the revision fingerprints them). Without
+    # this the builder showed "Unassigned programme" and no tutor for every
+    # module. A no-op where the row already carries the names.
+    module = curriculum_names.attach(AUTHORING_MODULES_TABLE, [dict(module_rows[0])])[0]
     group_rows = authoring_fetch_all(GROUPS_TABLE, 'group_id = %s', [module.get('group_id')]) if module.get('group_id') else []
     group_row = group_rows[0] if group_rows else {}
     # Read through the group's pattern, so every screen shows the days and clock
@@ -21811,7 +21957,7 @@ def _live_component_rows_paged(module_ids, order_sql):
 COMPONENT_DB_OMITTED_KEYS_COLUMN = 'settings_content_omitted__'
 
 
-def live_component_rows_without_content(module_ids):
+def live_component_rows_without_content(module_ids, keep_keys=None):
     """``live_component_rows_paged(module_ids)`` with the authored long text
     (COMPONENT_CONTENT_SETTING_KEYS) stripped from ``settings_json`` by Postgres.
 
@@ -21826,6 +21972,10 @@ def live_component_rows_without_content(module_ids):
 
     Returns None where this read does not apply (not Postgres, no module ids,
     no settings_json column); the caller then takes the full read.
+
+    With ``keep_keys`` every other non-empty key goes as well -- except on a
+    live session, which loses only the content keys: its settings feed
+    meeting_settings() and the Teams readers whole, exactly as before.
     """
     ids = tuple(sorted({clean_str(value) for value in (module_ids or []) if clean_str(value)}))
     if not ids or connection.vendor != 'postgresql':
@@ -21844,12 +21994,21 @@ def live_component_rows_without_content(module_ids):
         f", case when jsonb_typeof({settings}) = 'object' then {settings} - {omitted} else {settings} end"
         f' as {quote_ident("settings_json")}, {omitted}'
     )
+    if keep_keys:
+        live = "replace(coalesce(component.type::text, ''), '_', '-') = 'live-session'"
+        key_filter = f' where (entry.key = any(%s::text[]) or (entry.key <> all(%s::text[]) and not {live}))'
+        key_order = ' order by entry.key'
+        key_params = [keys, list(keep_keys)]
+    else:
+        key_filter = ' where entry.key = any(%s::text[])'
+        key_order = ' order by array_position(%s::text[], entry.key)'
+        key_params = [keys, keys]
     omitted_keys = (
         f"select case when jsonb_typeof({settings}) = 'object' then array("
         f'select entry.key from jsonb_each({settings}) as entry'
-        f' where entry.key = any(%s::text[])'
+        f'{key_filter}'
         f""" and entry.value not in ('null'::jsonb, '""'::jsonb, '[]'::jsonb, '{{}}'::jsonb)"""
-        f' order by array_position(%s::text[], entry.key)'
+        f'{key_order}'
         f') else array[]::text[] end as {quote_ident(COMPONENT_DB_OMITTED_KEYS_COLUMN)}'
     )
     # Same filter as _live_component_rows_paged: live rows of these modules only.
@@ -21871,7 +22030,7 @@ def live_component_rows_without_content(module_ids):
             cursor.execute(
                 f'select {select_list} from {table} cross join lateral ({omitted_keys}) as omitted'
                 f' where ({where}) and component.id in ({", ".join(["%s"] * len(batch))})',
-                [keys, keys, *ids, *batch],
+                [*key_params, *ids, *batch],
             )
             for row in rows_as_dicts(cursor):
                 rows_by_id[row.get('id')] = row
@@ -22290,6 +22449,14 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
     """
     content_counts = None
     try:
+        # The module, week and group reads in one round trip; each still runs as
+        # written (the group read is the one authoring_rows_by_id() makes below
+        # inside a read scope, shared with the training rows).
+        prefetch_authoring_reads([
+            ((AUTHORING_MODULES_TABLE,), {'order_sql': 'updated_at desc, title'}),
+            ((AUTHORING_WEEKS_TABLE,), {'columns': WEEK_INDEX_COLUMNS}),
+            ((GROUPS_TABLE,), {'order_sql': GROUP_ROWS_ORDER}),
+        ])
         module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, order_sql='updated_at desc, title')
         week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, columns=WEEK_INDEX_COLUMNS))
         if include_content and list_only and connection.vendor == 'postgresql':
@@ -24676,26 +24843,44 @@ def archive_module_child_quizzes(module_catalogue_id, *, include_deleted_childre
             if quiz_id
         )
 
-    other_components = authoring_fetch_all(
-        AUTHORING_COMPONENTS_TABLE,
-        f'module_catalogue_id <> %s{component_active_sql}',
-        [module_catalogue_id],
-    )
-    active_other_component_ids = []
-    for component in other_components:
-        settings = parse_json_value(component.get('settings_json'), {})
-        quiz_id = _quiz_reference_id(settings.get('linkedQuizId') if isinstance(settings, dict) else None)
+    # Only the two columns this reads. A ``select *`` here pulled every other
+    # module's components (~40k rows) and, on the normalised schema, derived
+    # each one's KSB mapping list as well -- an archive of a two-week module
+    # took over 100 s.
+    if connection.vendor == 'postgresql' and has_column(AUTHORING_COMPONENTS_TABLE, 'settings_json'):
+        # Only components that link a quiz can share one; read just that value.
+        linked = fetch_all(
+            f"select settings_json ->> 'linkedQuizId' as linked_quiz_id "
+            f'from {table_name(AUTHORING_COMPONENTS_TABLE)} '
+            f'where module_catalogue_id <> %s{component_active_sql} '
+            f"and coalesce(settings_json ->> 'linkedQuizId', '') <> ''",
+            [module_catalogue_id],
+        )
+        linked_values = [row.get('linked_quiz_id') for row in linked]
+    else:
+        other_components = authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE,
+            f'module_catalogue_id <> %s{component_active_sql}',
+            [module_catalogue_id],
+            columns=['id', 'settings_json'],
+        )
+        linked_values = []
+        for component in other_components:
+            settings = parse_json_value(component.get('settings_json'), {})
+            linked_values.append(settings.get('linkedQuizId') if isinstance(settings, dict) else None)
+    for value in linked_values:
+        quiz_id = _quiz_reference_id(value)
         if quiz_id in candidate_ids:
             shared_ids.add(quiz_id)
-        component_id = clean_str(component.get('id'))
-        if component_id:
-            active_other_component_ids.append(component_id)
-    if active_other_component_ids and table_exists('quiz_component_links'):
-        other_placeholders = ', '.join(['%s'] * len(active_other_component_ids))
+    if table_exists('quiz_component_links'):
+        # The same set of other active components, as a subquery rather than
+        # tens of thousands of bound ids.
         other_component_links = fetch_all(
             f'select quiz_id from {table_name("quiz_component_links")} '
-            f'where component_id in ({other_placeholders}) and quiz_id in ({placeholders})',
-            [*active_other_component_ids, *candidate_params],
+            f'where quiz_id in ({placeholders}) and component_id in ('
+            f'select id from {table_name(AUTHORING_COMPONENTS_TABLE)} '
+            f'where module_catalogue_id <> %s{component_active_sql})',
+            [*candidate_params, module_catalogue_id],
         )
         shared_ids.update(
             quiz_id for quiz_id in (_quiz_reference_id(row.get('quiz_id')) for row in other_component_links) if quiz_id
@@ -26426,6 +26611,7 @@ def save_tree_cohort(cohort, programme_id, programme_name, preserve_missing_grou
 
 
 def save_tree_group(group, cohort_row):
+    group = with_group_coaches(group)
     name = clean_str(group.get('name'))
     if not name:
         raise ValueError('Group name is required.')
@@ -26445,7 +26631,7 @@ def save_tree_group(group, cohort_row):
         'cohort': cohort['cohortName'],
         'programmeId': cohort['programmeId'],
         'programme': cohort['programmeName'],
-        'coach': canonical_staff_assignment_name('coach', group.get('coach')) if 'coach' in group else clean_str(existing.get('coach_name')),
+        'coach': canonical_group_coaches(group.get('coach')) if 'coach' in group else clean_str(existing.get('coach_name')),
         'weekDays': group.get('weekDays') or group.get('deliveryDays') or existing.get('session_week_day') or schedule_day_part(existing.get('schedule')),
         'startTime': group.get('startTime') or existing.get('session_start_time') or schedule_time_parts(existing.get('schedule'))[0],
         'endTime': group.get('endTime') or existing.get('session_end_time') or schedule_time_parts(existing.get('schedule'))[1],
@@ -26760,9 +26946,14 @@ def curriculum_programme_cohort_collection(request, programme_id):
     return create_curriculum_cohort(body)
 
 
-@gzip_page
-@require_GET
-def curriculum_delivery_scope(request):
+def delivery_scope_lists(request):
+    """``{'cohorts': [...], 'groups': [...]}`` for the request's visibility.
+
+    The cohorts and groups exactly as the full curriculum payload builds them --
+    same build_cohorts_and_groups(), measured identical on the new database for
+    both visibilities -- without the rest of that payload (34-49 s cold against
+    0.5-1 s here). Shared by delivery-scope and the group list, one cache entry.
+    """
     visibility = curriculum_visibility(request)
 
     def build():
@@ -26772,9 +26963,15 @@ def curriculum_delivery_scope(request):
             )
             return {'cohorts': cohorts, 'groups': groups}
 
-    return JsonResponse(cached_curriculum_value(
+    return cached_curriculum_value(
         f'delivery-scope:{visibility}', build, force=request_bypasses_curriculum_cache(request),
-    ))
+    )
+
+
+@gzip_page
+@require_GET
+def curriculum_delivery_scope(request):
+    return JsonResponse(delivery_scope_lists(request))
 
 
 @gzip_page
@@ -27638,7 +27835,7 @@ def curriculum_free_programme_modules(request, programme_id):
             return json_error('Unable to load free programme modules.', status=500)
         return JsonResponse({'results': modules, 'modules': modules, 'count': len(modules)})
 
-    if request.method not in {'PATCH', 'POST'}:
+    if request.method != 'PATCH':
         return json_error('Method not allowed.', status=405)
     payload = json_body(request)
     if payload is None:
@@ -28177,6 +28374,68 @@ def component_rows_without_content(rows):
     return projected
 
 
+# The programme page's own component read (``fields=programme``): the settings
+# it reads off a list row, and nothing else. Its content preview loads the full
+# component (useCompleteComponent) because every trimmed row names what it lacks
+# in ``settingsOmitted`` -- which also has the server refuse a save built from
+# one (partial_read_errors). Mirrors the reads in
+# frontend/src/pages/curriculum/programme-detail/page.tsx:
+# deliveryKindForComponent() and the Sessions tab's live/recorded rows.
+PROGRAMME_PAGE_SETTING_KEYS = (
+    'attendanceRequired', 'durationMinutes', 'embedCode', 'liveSessionUrl', 'provider',
+    'recordingExpected', 'selectedGroupNames', 'sessionDate', 'sessionDateTimeUtc', 'sessionTime',
+    'sourceType', 'teamsLiveSessionId', 'teamsOccurrenceId', 'teamsSessionNumber', 'videoUrl',
+)
+# Settings component_builder_response() derives top-level fields from (type,
+# status, contentSections, quizQuestions, hasResources, duration). The database
+# must hand these over even though the page never reads them from settings.
+COMPONENT_DERIVED_SETTING_KEYS = (
+    'displayType', 'componentBuilderStatus', 'contentSections', 'quizQuestions',
+    'hasResources', 'durationMinutes',
+)
+# Top-level fields the programme page never reads. Dropped only from a row
+# already marked ``settingsOmitted``: that row cannot be saved back, so a
+# missing reflectionQuestion can never be read as "cleared".
+PROGRAMME_PAGE_DROPPED_FIELDS = (
+    'reflectionQuestion', 'lastEdited', 'isDeleted', 'deletedAt', 'deletedViaParent',
+    'coachValidationRequired',
+)
+# What a trimmed programme-view row carries in ``settingsOmitted``: "everything
+# outside PROGRAMME_PAGE_SETTING_KEYS". Listing each key by name cost ~5 MB on
+# the largest programme, and every reader only asks whether the flag is set
+# (useCompleteComponent, partial_read_errors).
+PROGRAMME_VIEW_OMITTED_MARKER = '*'
+
+
+def component_rows_for_programme_page(rows, already_omitted=None):
+    """Component rows reduced to what the programme page reads.
+
+    ``settings`` keeps only PROGRAMME_PAGE_SETTING_KEYS (empty values too: the
+    page tests some of them for presence). A row that lost anything -- here, or
+    in the database (``already_omitted``), or already marked -- carries
+    ``settingsOmitted: ['*']`` (PROGRAMME_VIEW_OMITTED_MARKER) and loses the
+    PROGRAMME_PAGE_DROPPED_FIELDS too. Copies rather than edits: the rows may
+    be a cached list.
+    """
+    keep = set(PROGRAMME_PAGE_SETTING_KEYS)
+    already_omitted = already_omitted or {}
+    projected = []
+    for row in rows:
+        settings = row.get('settings')
+        settings = settings if isinstance(settings, dict) else {}
+        kept = {key: value for key, value in settings.items() if key in keep}
+        trimmed_here = len(kept) != len(settings)
+        if not (trimmed_here or row.get(COMPONENT_SETTINGS_OMITTED_FLAG)
+                or already_omitted.get(str(row.get('id')))):
+            projected.append(row)
+            continue
+        trimmed = {key: value for key, value in row.items() if key not in PROGRAMME_PAGE_DROPPED_FIELDS}
+        trimmed['settings'] = kept
+        trimmed[COMPONENT_SETTINGS_OMITTED_FLAG] = [PROGRAMME_VIEW_OMITTED_MARKER]
+        projected.append(trimmed)
+    return projected
+
+
 def partial_read_errors(payload, path=''):
     """Refuse a save built from a partial read (see the two projections above).
 
@@ -28211,10 +28470,18 @@ def curriculum_component_collection(request):
             # ``omit=content``: see component_rows_without_content. Opt-in; any
             # other caller still gets every setting.
             omit_content = 'content' in query_list(request, 'omit')
-            project = component_rows_without_content if omit_content else (lambda rows: rows)
+            # ``fields=programme``: the programme page's projection, see
+            # component_rows_for_programme_page. Opt-in like ``omit=content``.
+            programme_view = 'programme' in query_list(request, 'fields')
+            project = (
+                component_rows_for_programme_page if programme_view
+                else component_rows_without_content if omit_content else (lambda rows: rows)
+            )
             if module_catalogue_ids:
                 if query_value(request, 'page') or query_value(request, 'pageSize'):
-                    return curriculum_results_response(component_builder_rows(module_catalogue_ids, omit_content=omit_content), request=request)
+                    return curriculum_results_response(component_builder_rows(
+                        module_catalogue_ids, omit_content=omit_content, programme_view=programme_view,
+                    ), request=request)
                 # The programme page reads every component of the programme
                 # here on each open -- ~17k rows with their settings for the
                 # largest programme -- and nothing cached it. The rows are
@@ -28227,10 +28494,13 @@ def curriculum_component_collection(request):
                 # the rows.
                 ids = sorted({value for value in module_catalogue_ids})
                 digest = hashlib.sha256('\x1f'.join(ids).encode()).hexdigest()[:32]
+                variant = 'programme' if programme_view else 'nocontent' if omit_content else 'full'
                 entry = cached_curriculum_value(
-                    f'components-response:{"nocontent" if omit_content else "full"}:{len(ids)}:{digest}',
+                    f'components-response:{variant}:{len(ids)}:{digest}',
                     lambda: encode_json_bytes(
-                        curriculum_results_response(component_builder_rows(module_catalogue_ids, omit_content=omit_content)).content,
+                        curriculum_results_response(component_builder_rows(
+                            module_catalogue_ids, omit_content=omit_content, programme_view=programme_view,
+                        )).content,
                     ),
                     ttl=60,
                 )
@@ -28920,6 +29190,10 @@ def authoring_scope_module_rows(scope='', identifier=''):
     ensure_module_authoring_tables()
     # The shared module index (no ksb_remap_report, which nothing reading a
     # scope's modules looks at): one read per request with the other readers.
+    if scope == 'programme':
+        # The programme branch builds the training rows below; their group and
+        # cohort reads go out with this module read in one round trip.
+        prefetch_authoring_reads(training_index_reads())
     module_rows = module_index_rows()
     ident = clean_str(identifier)
     if scope == 'module':
@@ -29036,6 +29310,17 @@ def authoring_scope_module_rows(scope='', identifier=''):
     return module_rows
 
 
+def week_scope_module_ids(week_id):
+    """Module ids that own week ``week_id`` or any component placed in it."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'select module_catalogue_id from {authoring_table_name(AUTHORING_WEEKS_TABLE)} where id = %s'
+            f' union select module_catalogue_id from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} where week_id = %s',
+            [week_id, week_id],
+        )
+        return {clean_str(row[0]) for row in cursor.fetchall() if clean_str(row[0])}
+
+
 @scoped_curriculum_read
 def authoring_scope_data(scope='', identifier='', *, stats_only=False):
     """Module/week/component/mapping rows for a scope.
@@ -29052,6 +29337,15 @@ def authoring_scope_data(scope='', identifier='', *, stats_only=False):
     ident = clean_str(identifier)
 
     module_ids = [clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))]
+    if scope == 'week' and ident:
+        # A week scope resolves to every module (authoring_scope_module_rows has
+        # no week branch), and the week filter below then throws away all but
+        # one week's rows -- after reading every module's weeks, components and
+        # mappings. Read only the modules that can hold rows of this week: the
+        # week's own module and the module of any component placed in it (a
+        # mapping is kept through its component, so that covers mappings too).
+        owners = week_scope_module_ids(ident)
+        module_ids = [module_id for module_id in module_ids if module_id in owners]
     if not module_ids:
         return [], [], [], []
 
@@ -29865,9 +30159,95 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
     return dict(totals)
 
 
+def progress_consumption_rows(learner_ids, codes=None):
+    """One row per (progress entry, KSB code), as learner_progress_ksb_consumption reads them.
+
+    Read as two queries joined here rather than one grouped join: the joined
+    result repeated every progress column (titles, reflection text, lineage)
+    once per KSB code -- ~155k wide rows for one programme -- and shipping
+    them, not executing the query (under a second), was the 20-30 s cost.
+    Now the wide columns come once per progress entry and the KSB side is
+    four narrow columns.
+
+    Same rows as the grouped join: an entry with no counted KSB keeps one row
+    with a NULL code (the LEFT join; its hours still count), weight is the
+    largest per (entry, code), and the order is submitted_at desc nulls last,
+    id desc. ``codes``, when given, keeps only entries and KSB rows carrying one
+    of those codes -- for callers that read nothing else.
+    """
+    not_excluded = and_not_excluded('k', connection)
+    code_sql = ' and upper(btrim(k.ksb_code)) = any(%s)' if codes is not None else ''
+    code_params = [list(codes)] if codes is not None else []
+    with connection.cursor() as cursor:
+        cursor.execute(
+            '''
+            select k.progress_id, k.ksb_code,
+                   coalesce(max(k.weight), 0) as weight,
+                   coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
+            from "Learner"."learner_progress_ksbs" k
+            join "Learner"."learner_progress_entries" p on p.id = k.progress_id
+            -- Rows the KSB standards migration registered as not counting drop
+            -- out here; the activity and its hours stay (see below).
+            where p.learner_id = any(%s)''' + not_excluded + code_sql + '''
+            group by k.progress_id, k.ksb_code
+            order by k.progress_id, k.ksb_code
+            ''',
+            [learner_ids, *code_params],
+        )
+        ksbs_by_progress = defaultdict(list)
+        for progress_id, ksb_code, weight, weight_class in cursor.fetchall():
+            ksbs_by_progress[progress_id].append((ksb_code, weight, weight_class))
+        if codes is not None and not ksbs_by_progress:
+            return []
+        entry_filter = ''
+        if codes is not None:
+            entry_filter = (
+                ' and exists (select 1 from "Learner"."learner_progress_ksbs" k'
+                ' where k.progress_id = p.id' + not_excluded + code_sql + ')'
+            )
+        cursor.execute(
+            '''
+            select p.learner_id, p.id as progress_id, p.kind, p.component_ref,
+                   p.component_title, p.component_type, p.quiz_ref,
+                   p.module_title, p.week_title, p.submitted_at,
+                   p.reported_time, p.feedback, p.passed,
+                   p.programme_ref, p.cohort_ref, p.group_ref,
+                   p.module_ref, p.week_ref,
+                   p.expected_otjh as progress_expected_otjh,
+                   c.expected_otjh as component_expected_otjh,
+                   coalesce(nullif(c.title, ''), nullif(p.component_title, ''), '') as resolved_component_title,
+                   -- The progress row's module_title is a label written when
+                   -- the learner completed the activity, so a renamed module
+                   -- reads stale and a deleted one reads as though it were
+                   -- still in the catalogue. Resolve both live and say which.
+                   coalesce(nullif(m.title, ''), '') as live_module_title,
+                   coalesce(nullif(w.title, ''), '') as live_week_title,
+                   m.module_catalogue_id as live_module_catalogue_id,
+                   (m.module_catalogue_id is not null) as module_found,
+                   coalesce(m.status in ('inactive', 'archived'), false) as module_deleted
+            from "Learner"."learner_progress_entries" p
+            left join curriculum.components c on c.id = p.component_ref
+            left join curriculum.weeks w on w.id = c.week_id
+            left join curriculum.modules m
+                   on m.module_catalogue_id = coalesce(c.module_catalogue_id, w.module_catalogue_id)
+            where p.learner_id = any(%s)''' + entry_filter + '''
+            order by p.submitted_at desc nulls last, p.id desc
+            ''',
+            [learner_ids, *code_params],
+        )
+        entries = rows_as_dicts(cursor)
+    rows = []
+    for entry in entries:
+        # LEFT, not inner: a completed component with no KSB snapshot is still
+        # off-the-job hours the learner did. See learner_progress_ksb_consumption.
+        for ksb_code, weight, weight_class in ksbs_by_progress.get(entry['progress_id']) or [(None, 0, 'soft')]:
+            rows.append({**entry, 'ksb_code': ksb_code, 'weight': weight, 'weight_class': weight_class})
+    return rows
+
+
 def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component_ids=(),
                                      include_unattributed=True, restrict_to_components=False,
-                                     scope='', scope_identifier=''):
+                                     scope='', scope_identifier='', codes_only=False):
     """Per-learner achieved KSB weight, and the rows that produced it.
 
     Returns ``(totals, achieved_rows, excluded_rows)``. Failed and unresolved
@@ -29924,52 +30304,9 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     rows_out = []
     excluded_out = []
     try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                '''
-                select p.learner_id, p.id as progress_id, p.kind, p.component_ref,
-                       p.component_title, p.component_type, p.quiz_ref,
-                       p.module_title, p.week_title, p.submitted_at,
-                       p.reported_time, p.feedback, p.passed,
-                       p.programme_ref, p.cohort_ref, p.group_ref,
-                       p.module_ref, p.week_ref,
-                       max(p.expected_otjh) as progress_expected_otjh,
-                       max(c.expected_otjh) as component_expected_otjh,
-                       coalesce(max(nullif(c.title, '')), max(nullif(p.component_title, '')), '') as resolved_component_title,
-                       -- The progress row's module_title is a label written when
-                       -- the learner completed the activity, so a renamed module
-                       -- reads stale and a deleted one reads as though it were
-                       -- still in the catalogue. Resolve both live and say which.
-                       coalesce(max(nullif(m.title, '')), '') as live_module_title,
-                       coalesce(max(nullif(w.title, '')), '') as live_week_title,
-                       max(m.module_catalogue_id) as live_module_catalogue_id,
-                       bool_or(m.module_catalogue_id is not null) as module_found,
-                       bool_or(coalesce(m.status in ('inactive', 'archived'), false)) as module_deleted,
-                       k.ksb_code,
-                       coalesce(max(k.weight), 0) as weight,
-                       coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
-                from "Learner"."learner_progress_entries" p
-                -- LEFT, not inner: a completed component with no KSB snapshot is
-                -- still off-the-job hours the learner did. See the docstring.
-                -- Rows the KSB standards migration registered as not counting
-                -- drop out of the join; the activity and its hours stay.
-                left join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
-                left join curriculum.components c on c.id = p.component_ref
-                left join curriculum.weeks w on w.id = c.week_id
-                left join curriculum.modules m
-                       on m.module_catalogue_id = coalesce(c.module_catalogue_id, w.module_catalogue_id)
-                where p.learner_id = any(%s)
-                group by p.learner_id, p.id, p.kind, p.component_ref,
-                         p.component_title, p.component_type, p.quiz_ref,
-                         p.module_title, p.week_title, p.submitted_at,
-                         p.reported_time, p.feedback, p.passed,
-                         p.programme_ref, p.cohort_ref, p.group_ref,
-                         p.module_ref, p.week_ref, k.ksb_code
-                order by p.submitted_at desc nulls last, p.id desc
-                ''',
-                [learner_ids],
-            )
-            rows = rows_as_dicts(cursor)
+        # ``codes_only``: the caller reads only rows carrying one of this
+        # scope's codes. With no code filter every code counts, so read all.
+        rows = progress_consumption_rows(learner_ids, sorted(code_filter) if codes_only and code_filter else None)
     except Exception as exc:
         logger.warning('Could not load learner progress KSB consumption: %s', exc)
         return {}, [], []
@@ -31563,9 +31900,14 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
     )
     learners = apply_reflection_otjh_to_learners(learners, reflection_rows)
     learner_plans = learner_plans_for_scope(plan, learners)
+    # One row per learner per component of their plan: 293k rows / ~220 MB for
+    # a single group of 34 learners, and only the module progress screens read
+    # it (learner_activity_status / module_progress_metrics, ?moduleProgress=1).
+    # Every other caller -- the scope Achievement panels -- never looks at it.
+    include_activity_plan = request.GET.get('moduleProgress') == '1'
     activity_plan = learner_activity_plan(
         learners, component_rows, module_rows, week_rows, activities, plan, learner_plans,
-    )
+    ) if include_activity_plan else None
     learner_consumption = learner_consumption_payload(
         learners,
         coverage.get('items', []),
@@ -31616,8 +31958,10 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
         'learnerKsbConsumption': learner_consumption,
         'learnerActivities': activities,
         'learnerActivityCount': len(activities),
-        'learnerActivityPlan': activity_plan,
-        'learnerActivityPlanCount': len(activity_plan),
+        **({
+            'learnerActivityPlan': activity_plan,
+            'learnerActivityPlanCount': len(activity_plan),
+        } if include_activity_plan else {}),
         'ksbAchievementPolicy': {
             'achievedWeightSource': 'learner_progress_ksbs',
             'reflectionKsbRole': 'supplementary_evidence',
@@ -31860,7 +32204,15 @@ def curriculum_week_learner_roster(request, week_id):
 @require_GET
 def curriculum_programme_learner_ksb_impact(request, programme_id):
     payload, error = scope_learner_ksb_impact_payload(request, 'programme', programme_id)
-    return error or JsonResponse(payload)
+    if error:
+        return error
+    # The programme card's Learners dialog: one line per learner and KSB code,
+    # built here, instead of every progress row (187 MB for the largest
+    # programme). Without ?view=summary the response is unchanged.
+    if request.GET.get('view') == 'summary':
+        from .learner_impact_summary import learner_impact_summary
+        payload = learner_impact_summary(payload)
+    return JsonResponse(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -31914,6 +32266,8 @@ def programme_achievement_inputs(request, programme_id):
             learner_ids, [item.get('code') for item in definitions],
             [clean_str(row.get('id')) for row in components if clean_str(row.get('id'))],
             True, restrict_to_components=False, scope='programme', scope_identifier=programme_id,
+            # Achievement keeps only rows whose code is an applied definition.
+            codes_only=True,
         )
         return {
             'coverage': {'items': definitions},
@@ -32197,116 +32551,6 @@ def guarded_module_item_write(request, module_catalogue_id, write):
 
 
 @csrf_exempt
-def curriculum_component_ksb_mappings(request, component_id):
-    if request.method == 'POST':
-        owner = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'id = %s', [clean_str(component_id)], columns=['module_catalogue_id'])
-        if owner:
-            return guarded_module_item_write(
-                request, owner[0].get('module_catalogue_id'),
-                lambda: _curriculum_component_ksb_mappings(request, component_id),
-            )
-    return _curriculum_component_ksb_mappings(request, component_id)
-
-
-def _curriculum_component_ksb_mappings(request, component_id):
-    component_id = clean_str(component_id)
-    components = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])
-    if not components:
-        return json_error('Component not found.', status=404)
-    component = components[0]
-    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [component.get('module_catalogue_id')])
-    week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'id = %s', [component.get('week_id')])
-    if request.method == 'GET':
-        projection_rows = active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], 'created_at, id'))
-        source_mappings = component_ksb_mappings_from_row(component, projection_rows)
-        _, rows = normalise_component_ksb_mappings(
-            component.get('module_catalogue_id'),
-            source_mappings,
-            week_id=component.get('week_id'),
-            component_id=component_id,
-            module_row=module_rows[0] if module_rows else {},
-            enforce_unique=False,
-        )
-        rows = mappings_with_inferred_sources(rows, module_rows)
-        coverage = build_coverage([], rows, module_rows, week_rows, components)
-        mappings = [mapping for item in coverage['items'] for mapping in item['mappings']]
-        return JsonResponse({'componentId': component_id, 'count': len(mappings), 'results': mappings})
-
-    if request.method != 'POST':
-        return json_error('Method not allowed.', status=405)
-    payload = json_body(request)
-    if payload is None:
-        return json_error('Invalid JSON body.')
-    mappings = payload.get('mappings') if isinstance(payload.get('mappings'), list) else [payload]
-    mappings = [
-        {
-            **mapping,
-            'sourceType': (
-                mapping.get('sourceType') or
-                mapping.get('source_type') or
-                infer_mapping_source_from_module(module_rows[0] if module_rows else {}, mapping.get('code') or mapping.get('ksbCode'))[0]
-            ),
-            'sourceId': (
-                mapping.get('sourceId') or
-                mapping.get('source_id') or
-                infer_mapping_source_from_module(module_rows[0] if module_rows else {}, mapping.get('code') or mapping.get('ksbCode'))[1]
-            ),
-        } if isinstance(mapping, dict) else mapping
-        for mapping in mappings
-    ]
-    errors = []
-    errors.extend(validate_mapping_duplicates(mappings, 'mappings'))
-    source_cache = {}
-    identities = []
-    for index, mapping in enumerate(mappings):
-        if not isinstance(mapping, dict):
-            errors.append({'path': f'mappings.{index}', 'message': 'KSB mapping must be an object.'})
-            continue
-        errors.extend(validate_ksb_mapping_payload(mapping, f'mappings.{index}', source_cache))
-        identities.append((index, component_mapping_identity(component_id, mapping)))
-    duplicate_rows = duplicate_mapping_query(component_id, [identity for _, identity in identities])
-    duplicate_keys = {
-        (
-            clean_str(row.get('component_id')),
-            coverage_normalise_code(row.get('ksb_code')),
-            clean_str(row.get('source_type')),
-            clean_str(row.get('source_id')),
-        )
-        for row in duplicate_rows
-    }
-    for index, identity in identities:
-        if identity in duplicate_keys:
-            errors.append({'path': f'mappings.{index}.code', 'message': 'This KSB is already mapped to this component.'})
-    if errors:
-        return json_error('KSB mapping validation failed.', status=400, validationErrors=errors)
-    try:
-        with transaction.atomic():
-            existing_mappings = component_ksb_mappings_from_row(
-                component,
-                active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], 'created_at, id')),
-            )
-            merged_mappings = [*existing_mappings, *mappings]
-            json_items, _ = normalise_component_ksb_mappings(
-                component.get('module_catalogue_id'),
-                merged_mappings,
-                week_id=component.get('week_id'),
-                component_id=component_id,
-                module_row=module_rows[0] if module_rows else {},
-                enforce_unique=False,
-            )
-            store_component_ksb_mappings(component, json_items, deleted_by='component-ksb-post')
-    except (IntegrityError, ValueError):
-        return json_error('This KSB is already mapped to this component.', status=409)
-    invalidate_curriculum_cache()
-    component = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id])[0]
-    rows = active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], 'created_at, id'))
-    rows = mappings_with_inferred_sources(rows, module_rows)
-    coverage = build_coverage([], rows, module_rows, week_rows, components)
-    results = [mapping for item in coverage['items'] for mapping in item['mappings']]
-    return JsonResponse({'created': True, 'componentId': component_id, 'count': len(results), 'results': results}, status=201)
-
-
-@csrf_exempt
 def curriculum_ksb_mapping_detail(request, mapping_id):
     if request.method in {'PATCH', 'DELETE'}:
         owner = authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'id = %s', [clean_str(mapping_id)], columns=['module_catalogue_id'])
@@ -32447,16 +32691,6 @@ def curriculum_module_ksb_coverage(request, module_catalogue_id):
 @require_GET
 def curriculum_programme_ksb_coverage(request, programme_id):
     return coverage_endpoint_response(request, 'programme', programme_id)
-
-
-@require_GET
-def curriculum_cohort_ksb_coverage(request, cohort_id):
-    return coverage_endpoint_response(request, 'cohort', cohort_id)
-
-
-@require_GET
-def curriculum_group_ksb_coverage(request, group_id):
-    return coverage_endpoint_response(request, 'group', group_id)
 
 
 @require_GET
@@ -33078,28 +33312,6 @@ def curriculum_ksb_sets(request):
     return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbSets')
 
 
-@require_GET
-def curriculum_cohorts(request):
-    payload = get_cached_payload(request)
-    programme_id = request.GET.get('programme_id') or request.GET.get('programmeId') or request.GET.get('programme')
-    results = payload['cohorts']
-    if programme_id:
-        expected = {
-            clean_str(programme_id),
-            slugify(programme_id),
-            f'program-{slugify(programme_id)}',
-        }
-        results = [
-            cohort for cohort in results
-            if expected.intersection({
-                clean_str(cohort.get('programmeId')),
-                clean_str(cohort.get('programme')),
-                slugify(cohort.get('programme')),
-            })
-        ]
-    return curriculum_collection_response(payload, 'cohorts', results)
-
-
 def curriculum_cohort_from_authoring_detail(detail):
     detail = detail or {}
     epa_months = parse_epa_months(
@@ -33146,6 +33358,10 @@ def curriculum_group_from_authoring_detail(detail):
         'programmeId': detail.get('programmeId') or detail.get('programme_id') or '',
         'programme': detail.get('programme') or detail.get('programmeName') or detail.get('programme_name') or '',
         'coach': detail.get('coach') or detail.get('coach_name') or '',
+        # Every coach of the group; `coach` above is the same names joined.
+        'coaches': group_coaches.split_names(
+            detail.get('coaches') or detail.get('coach_names') or detail.get('coach') or detail.get('coach_name')
+        ),
         'tutor': detail.get('tutor') or '',
         'startDate': detail.get('startDate') or detail.get('start_date') or '',
         'endDate': detail.get('endDate') or detail.get('end_date') or '',
@@ -33389,8 +33605,6 @@ def create_curriculum_cohort(payload):
 
 @csrf_exempt
 def curriculum_cohort_collection(request):
-    if request.method == 'GET':
-        return curriculum_cohorts(request)
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
     payload = json_body(request)
@@ -33563,7 +33777,9 @@ def curriculum_cohort_detail(request, identifier):
 
 @require_GET
 def curriculum_groups(request):
-    payload = get_cached_payload(request)
+    # The groups only (see delivery_scope_lists): building the whole curriculum
+    # payload for them took 34-49 s cold on the new database.
+    payload = {'schema': CURRICULUM_SCHEMA, 'groups': delivery_scope_lists(request)['groups']}
     cohort_id = request.GET.get('cohort_id') or request.GET.get('cohortId') or request.GET.get('cohort')
     results = payload['groups']
     if cohort_id:
@@ -33645,7 +33861,7 @@ def create_curriculum_group(payload):
             'cohort_name': cohort_name,
             'programme_id': programme_id,
             'programme_name': programme,
-            'coach_name': canonical_staff_assignment_name('coach', payload.get('coach')) if 'coach' in payload else clean_str(duplicate.get('coach')),
+            'coach_name': canonical_group_coaches(payload.get('coach')) if 'coach' in payload else clean_str(duplicate.get('coach')),
             'session_week_day': requested_week_day if any(key in payload for key in ('weekDays', 'deliveryDays', 'sessionWeekDay', 'session_week_day')) else clean_str(duplicate.get('weekDays') or duplicate.get('session_week_day')),
             'session_start_time': requested_start_time if any(key in payload for key in ('startTime', 'start_time', 'sessionStartTime', 'session_start_time')) else clean_str(duplicate.get('startTime') or duplicate.get('session_start_time')),
             'session_end_time': requested_end_time if any(key in payload for key in ('endTime', 'end_time', 'sessionEndTime', 'session_end_time')) else clean_str(duplicate.get('endTime') or duplicate.get('session_end_time')),
@@ -33691,7 +33907,7 @@ def create_curriculum_group(payload):
         'cohort': cohort_name,
         'programmeId': programme_id,
         'programme': programme,
-        'coach': canonical_staff_assignment_name('coach', payload.get('coach')),
+        'coach': canonical_group_coaches(payload.get('coach')),
         'weekDays': requested_week_day,
         'startTime': requested_start_time,
         'endTime': requested_end_time,
@@ -33762,20 +33978,11 @@ def curriculum_group_collection(request):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
-    return create_curriculum_group(payload)
+    return create_curriculum_group(with_group_coaches(payload))
 
 
 @csrf_exempt
 def curriculum_cohort_group_collection(request, cohort_id):
-    if request.method == 'GET':
-        payload = get_cached_payload(request)
-        results = [
-            group for group in payload['groups']
-            if matches_curriculum_identifier(group.get('cohortId'), cohort_id)
-            or matches_curriculum_identifier(group.get('cohort'), cohort_id)
-        ]
-        return curriculum_collection_response(payload, 'groups', results)
-
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
 
@@ -33783,7 +33990,7 @@ def curriculum_cohort_group_collection(request, cohort_id):
     if payload is None:
         return json_error('Invalid JSON body.')
     payload['cohortId'] = cohort_id
-    return create_curriculum_group(payload)
+    return create_curriculum_group(with_group_coaches(payload))
 
 
 def stale_teams_calendar_modules(catalogue_ids):
@@ -33913,7 +34120,7 @@ def curriculum_group_detail(request, identifier):
         invalidate_curriculum_cache()
         return JsonResponse({'deleted': True, 'permanent': False, 'id': group_id})
 
-    payload = json_body(request)
+    payload = with_group_coaches(json_body(request))
     if payload is None:
         return json_error('Invalid JSON body.')
 
@@ -33950,7 +34157,7 @@ def curriculum_group_detail(request, identifier):
     if 'name' in payload and clean_str(payload.get('name')):
         updates['group_name'] = clean_str(payload.get('name'))
     if 'coach' in payload:
-        updates['coach_name'] = canonical_staff_assignment_name('coach', payload.get('coach'))
+        updates['coach_name'] = canonical_group_coaches(payload.get('coach'))
     if any(key in payload for key in ('weekDays', 'deliveryDays', 'sessionWeekDay', 'session_week_day')):
         updates['session_week_day'] = clean_str(payload.get('weekDays') or payload.get('deliveryDays') or payload.get('sessionWeekDay') or payload.get('session_week_day'))
     if any(key in payload for key in ('startTime', 'start_time', 'sessionStartTime', 'session_start_time')):
@@ -34452,6 +34659,9 @@ def permanent_cohort_delete_response(cohort_row):
             status=409, reason='cohort-has-live-groups', deleted=False, permanent=False,
             id=cohort_id, blockers={'groups': len(live_groups)},
         )
+    blocked = permanent_delete_reference_refusal('cohort', cohort_id)
+    if blocked is not None:
+        return blocked
 
     try:
         with transaction.atomic():
@@ -34463,6 +34673,9 @@ def permanent_cohort_delete_response(cohort_row):
                 'cohort_id': None,
                 'cohort_name': '',
             })
+            # Its holiday choices reference it with RESTRICT on the normalised
+            # schema: they go with it (authoring_delete does the same).
+            calendar_holidays.release_cohorts('cohort_id = %s', [cohort_id])
             removed = {
                 'groups': len(delete_rows(GROUPS_TABLE, 'cohort_id = %s', [cohort_id])),
                 'cohorts': len(delete_rows(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])),
@@ -34508,6 +34721,10 @@ def permanent_group_delete_response(group_row):
             id=group_id, blockers={'learners': learners},
         )
 
+    blocked = permanent_delete_reference_refusal('group', group_id)
+    if blocked is not None:
+        return blocked
+
     cohort_id = clean_str(group_row.get('cohort_id'))
     try:
         with transaction.atomic():
@@ -34551,13 +34768,105 @@ def permanent_group_delete_response(group_row):
 # same three endpoints, applied to modules.
 # ---------------------------------------------------------------------------
 
+# Children before parents: the permanent delete walks this in order, and the
+# normalised database enforces ksb_mappings -> components -> weeks -> modules
+# (and module_details / module_completion_criteria -> modules) with ON DELETE
+# RESTRICT, so weeks first was refused there every time.
 MODULE_CHILD_AUTHORING_TABLES = (
-    AUTHORING_WEEKS_TABLE,
-    AUTHORING_COMPONENTS_TABLE,
     AUTHORING_KSB_MAPPINGS_TABLE,
+    AUTHORING_COMPONENTS_TABLE,
+    AUTHORING_WEEKS_TABLE,
     AUTHORING_COMPLETION_TABLE,
     AUTHORING_ADVANCED_TABLE,
 )
+
+# Records outside the authoring tree that hold a curriculum row with ON DELETE
+# RESTRICT on the normalised database: learner placement and progress, the
+# live-session attendance register and its identity links, training plans. They
+# are history, so a permanent delete never removes them; it is refused. Counted
+# read-only first so the refusal says what holds the row instead of quoting the
+# database. (relation, column, response key, optional id subquery).
+_MODULE_WEEK_IDS = 'select id from "curriculum"."weeks" where module_catalogue_id = %s'
+_MODULE_COMPONENT_IDS = 'select id from "curriculum"."components" where module_catalogue_id = %s'
+PERMANENT_DELETE_REFERENCES = {
+    'programme': (
+        ('Learner', 'learners', 'programme_id', 'learners', None),
+        ('enrolment', 'Created_users', 'programme_id', 'enrolmentAccounts', None),
+        ('Learner', 'learner_progress_entries', 'programme_id', 'progressEntries', None),
+    ),
+    'cohort': (
+        ('Learner', 'learners', 'cohort_id', 'learners', None),
+        ('enrolment', 'Created_users', 'cohort_id', 'enrolmentAccounts', None),
+        ('Learner', 'learner_progress_entries', 'cohort_id', 'progressEntries', None),
+    ),
+    'group': (
+        ('Learner', 'learners', 'group_id', 'learners', None),
+        ('enrolment', 'Created_users', 'group_id', 'enrolmentAccounts', None),
+        ('Learner', 'learner_progress_entries', 'group_id', 'progressEntries', None),
+    ),
+    'module': (
+        ('curriculum', 'live_session_learner_attendance', 'module_catalogue_id', 'attendance', None),
+        ('curriculum', 'live_session_attendance_aliases', 'module_catalogue_id', 'attendanceAliases', None),
+        ('curriculum', 'live_session_attendance_identity_rules', 'module_catalogue_id', 'attendanceIdentityRules', None),
+        ('curriculum', 'module_teams_shares', 'source_module_catalogue_id', 'teamsShares', None),
+        ('Learner', 'learner_training_plan_modules', 'curriculum_module_id', 'trainingPlanModules', None),
+        ('Learner', 'learner_training_plan_weeks', 'curriculum_week_id', 'trainingPlanWeeks', _MODULE_WEEK_IDS),
+        ('Learner', 'learner_training_plan_components', 'curriculum_component_id', 'trainingPlanComponents',
+         _MODULE_COMPONENT_IDS),
+    ),
+}
+
+
+def permanent_delete_reference_blockers(kind, identifier):
+    """``{key: count}`` of retained records that reference this row. Read-only.
+
+    Only references whose table and column exist are counted, so the legacy
+    schema (no such keys) answers {} and keeps its existing behaviour. A count
+    that cannot be run is skipped: the database still refuses the delete, and
+    the caller turns that into its generic 409.
+    """
+    blockers = {}
+    ident = clean_str(identifier)
+    if not ident or connection.vendor != 'postgresql':
+        return blockers
+    for schema, table, column, key, subquery in PERMANENT_DELETE_REFERENCES.get(kind, ()):
+        try:
+            if column not in schema_compat.columns_of(schema, table):
+                continue
+            condition = f'{quote_ident(column)} in ({subquery})' if subquery else f'{quote_ident(column)} = %s'
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    f'select count(*) from {quote_ident(schema)}.{quote_ident(table)} where {condition}', [ident],
+                )
+                total = int(cursor.fetchone()[0] or 0)
+        except Exception:
+            logger.warning('Could not count %s.%s rows before a permanent %s delete.', schema, table, kind,
+                           exc_info=True)
+            continue
+        if total:
+            blockers[key] = total
+    return blockers
+
+
+def permanent_delete_reference_refusal(kind, identifier):
+    """409 naming the retained records that hold this row, or None."""
+    blockers = permanent_delete_reference_blockers(kind, identifier)
+    if not blockers:
+        return None
+    labels = {
+        'learners': 'learner records', 'enrolmentAccounts': 'enrolment accounts',
+        'progressEntries': 'learner progress entries', 'attendance': 'live-session attendance records',
+        'attendanceAliases': 'attendance name links', 'attendanceIdentityRules': 'attendance identity rules',
+        'teamsShares': 'modules sharing its Teams calendar', 'trainingPlanModules': 'training-plan modules',
+        'trainingPlanWeeks': 'training-plan weeks', 'trainingPlanComponents': 'training-plan activities',
+    }
+    held = ', '.join(f'{count} {labels.get(key, key)}' for key, count in blockers.items())
+    return json_error(
+        f'This {kind} cannot be deleted permanently because {held} still reference it. '
+        'Those records are kept as history, so it stays archived.',
+        status=409, reason=f'{kind}-has-retained-records', deleted=False, permanent=False,
+        id=clean_str(identifier), blockers=blockers,
+    )
 
 # Said on the way out, for the reason ARCHIVE_MODULE_REATTACH_NOTE is: archiving
 # a module sends the quizzes only it owned to the Quiz Archive, and that archive
@@ -34844,6 +35153,9 @@ def permanent_module_delete_response(module_row):
     # A module archived before this check existed can still own a running
     # calendar; deleting it would orphan that calendar's rows for good.
     blocked = module_teams_calendar_block_response(catalogue_id)
+    if blocked is not None:
+        return blocked
+    blocked = permanent_delete_reference_refusal('module', catalogue_id)
     if blocked is not None:
         return blocked
 
@@ -35524,6 +35836,7 @@ def curriculum_staffing_detail(request, identifier):
 
 
 def update_staffing_assignment(identifier, payload):
+    payload = with_group_coaches(payload)
     group_row = resolve_group_row(identifier)
     if not group_row:
         return json_error('Group not found for staffing assignment.', status=404)
@@ -35549,12 +35862,12 @@ def update_staffing_assignment(identifier, payload):
 
     updates = {}
     if 'coach' in payload:
-        updates['coach_name'] = canonical_staff_assignment_name('coach', payload.get('coach'))
+        updates['coach_name'] = canonical_group_coaches(payload.get('coach'))
     update_group_fields(group_id, updates)
 
     next_tutor = canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else ''
     next_tutor_email = resolve_staff_assignment_email('tutor', next_tutor) if next_tutor else ''
-    next_coach = canonical_staff_assignment_name('coach', payload.get('coach')) if 'coach' in payload else clean_str(group_row.get('coach_name'))
+    next_coach = canonical_group_coaches(payload.get('coach')) if 'coach' in payload else clean_str(group_row.get('coach_name'))
     module_assignment_ids = [
         clean_str(row.get('module_catalogue_id'))
         for row in safe_authoring_module_rows()
@@ -36010,11 +36323,6 @@ def curriculum_coaches(request):
 @csrf_exempt
 def curriculum_tutor_detail(request, identifier):
     return curriculum_staff_profile_detail(request, 'tutor', identifier)
-
-
-@csrf_exempt
-def curriculum_coach_detail(request, identifier):
-    return curriculum_staff_profile_detail(request, 'coach', identifier)
 
 
 # ---------------------------------------------------------------------------

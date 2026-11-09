@@ -34,6 +34,7 @@ import {
   ColorControl,
   EntityDrawer,
   FormField,
+  MultiSelectControl,
   SelectControl,
   TextAreaControl,
   TextControl,
@@ -45,6 +46,7 @@ import { useFormFieldMerge, useFormSeedGuard, useRecordGuard, useRecordRebaseRet
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DatePickerField } from '@/components/feature/DatePickerField';
 import { isNameOnlyEdit } from './nameOnlyEdit';
+import { groupCoachNames, joinCoachNames } from './groupCoaches';
 
 // The names these fields go by on screen. A notice that says "you both changed
 // the programmeId" is our vocabulary, not the reader's.
@@ -1033,7 +1035,8 @@ export function GroupFormDrawer({
           cleanText(parent?.programmeId) || cleanText(record.programmeId) || cleanText(record.programme),
         ),
         cohortId: cleanText(record.cohortId),
-        coach: normaliseKey(record.coach) === 'unassigned' ? '' : cleanText(record.coach),
+        // Every coach, joined: the form edits the set and saves it as one string.
+        coach: joinCoachNames(groupCoachNames(record.coach)),
         weekDays: cleanText(record.weekDays),
         startTime: cleanText(record.startTime) || '09:00',
         endTime: cleanText(record.endTime) || '11:00',
@@ -1088,6 +1091,13 @@ export function GroupFormDrawer({
     () => cohortsForProgramme(cohorts, programmes, programmeId),
     [cohorts, programmeId, programmes],
   );
+  // A group may have several coaches. A coach already on the group stays in the
+  // list even when the directory no longer offers them, so it can be unticked.
+  const selectedCoaches = useMemo(() => groupCoachNames(coach), [coach]);
+  const coachOptions = useMemo(() => {
+    const names = groupCoachNames([...coachNames.flatMap(name => groupCoachNames(name)), ...selectedCoaches]);
+    return names.map(name => ({ value: name, label: name }));
+  }, [coachNames, selectedCoaches]);
 
   const handleStartTimeChange = (value: string) => {
     setStartTime(value);
@@ -1210,12 +1220,14 @@ export function GroupFormDrawer({
       <FormField label="Group name" required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Group A" />
       </FormField>
-      <FormField label="Coach">
-        <SelectControl
-          value={coach}
-          onChange={setCoach}
-          options={coachNames.map(coachName => ({ value: coachName, label: coachName }))}
-          placeholder="Unassigned"
+      <FormField label="Coaches" hint={selectedCoaches.length ? `${selectedCoaches.length} selected` : 'Unassigned'}>
+        <MultiSelectControl
+          value={selectedCoaches}
+          onChange={names => setCoach(joinCoachNames(names))}
+          options={coachOptions}
+          searchable={coachOptions.length > 8}
+          searchPlaceholder="Search coaches..."
+          emptyMessage="No coaches in the staff directory yet."
         />
       </FormField>
       <FormField label="Delivery days">

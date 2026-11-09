@@ -42,7 +42,8 @@ def get(path: str) -> dict:
 
 programmes = get("/curriculum_api/curriculum/programmes/").get("results", [])
 modules = get("/curriculum_api/curriculum/modules/").get("results", [])
-cohorts = get("/curriculum_api/curriculum/cohorts/").get("results", [])
+# There is no cohort list read of its own; the delivery scope carries them.
+cohorts = get("/curriculum_api/curriculum/delivery-scope/").get("cohorts", [])
 groups = get("/curriculum_api/curriculum/groups/").get("results", [])
 sessions = get("/curriculum_api/curriculum/sessions/").get("results", [])
 standards = get("/curriculum_api/curriculum/standards/").get("results", [])
@@ -67,7 +68,7 @@ if modules:
 
 if cohorts:
     cohort_id = cohorts[0]["id"]
-    for suffix in ("ksb-coverage/", "groups/", ""):
+    for suffix in ("learner-roster/", "learner-ksb-impact/", "learner-assignments/"):
         get(f"/curriculum_api/curriculum/cohorts/{cohort_id}/{suffix}")
 
 if groups:
@@ -83,7 +84,6 @@ detail_collections = (
     (staffing, "staffing"),
     (holidays, "holidays"),
     (tutors, "tutors"),
-    (coaches, "coaches"),
 )
 for rows, collection in detail_collections:
     if rows:
@@ -94,7 +94,6 @@ if weeks:
 if components:
     component_id = components[0]["id"]
     get(f"/curriculum_api/curriculum/components/{component_id}/")
-    get(f"/curriculum_api/curriculum/components/{component_id}/ksb-mappings/")
 
 quizzes = get("/quiz_api/quizzes/").get("results", [])
 if quizzes:

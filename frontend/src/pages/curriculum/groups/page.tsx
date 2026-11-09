@@ -30,6 +30,7 @@ import {
   upsertById,
   GROUP_SORT_OPTIONS,
 } from '../shared/entities/model';
+import { coachesOfGroup, groupHasCoach } from '../shared/entities/groupCoaches';
 import { GroupFormDrawer } from '../shared/entities/forms';
 import {
   archiveGroupWithConfirm,
@@ -177,10 +178,8 @@ function CurriculumGroupsPageContent() {
   const coachNames = useMemo(() => {
     const names = new Set<string>();
     coaches.forEach(profile => { const name = staffProfileName(profile); if (name) names.add(name); });
-    groups.forEach(group => {
-      const name = cleanText(group.coach);
-      if (name && normaliseKey(name) !== 'unassigned') names.add(name);
-    });
+    // One option per coach: a group with several names each of them.
+    groups.forEach(group => coachesOfGroup(group).forEach(name => names.add(name)));
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [coaches, groups]);
 
@@ -190,7 +189,7 @@ function CurriculumGroupsPageContent() {
       cohortId: cohortFilter,
     });
     const matched = scoped.filter(group => {
-      if (coachFilter && normaliseKey(group.coach) !== normaliseKey(coachFilter)) return false;
+      if (coachFilter && !groupHasCoach(group, coachFilter)) return false;
       if (deliveryDayFilter && !runsOnDeliveryDay(group, deliveryDayFilter)) return false;
       const context = resolveGroupContext(group, cohorts, programmes);
       return matchesSearch(search, [
@@ -209,7 +208,7 @@ function CurriculumGroupsPageContent() {
     const scoped = recordsForProgramme(archived.records, programmes, programmeFilter);
     return scoped.filter(group => {
       if (cohortFilter && !sameIdentifier(group.cohortId, cohortFilter)) return false;
-      if (coachFilter && normaliseKey(group.coach) !== normaliseKey(coachFilter)) return false;
+      if (coachFilter && !groupHasCoach(group, coachFilter)) return false;
       if (deliveryDayFilter && !runsOnDeliveryDay(group, deliveryDayFilter)) return false;
       return matchesSearch(search, [
         group.name, group.id, group.cohort, group.programme, group.coach, scheduleLabel(group),
@@ -275,7 +274,7 @@ function CurriculumGroupsPageContent() {
   // A filter that hides the group just saved reads as a save that did nothing,
   // so whatever would keep it out of the list is cleared.
   const revealGroup = (saved: CurriculumGroup) => {
-    if (coachFilter && normaliseKey(saved.coach) !== normaliseKey(coachFilter)) setCoachFilter('');
+    if (coachFilter && !groupHasCoach(saved, coachFilter)) setCoachFilter('');
     if (deliveryDayFilter && !runsOnDeliveryDay(saved, deliveryDayFilter)) setDeliveryDayFilter('');
     if (cohortFilter && !sameIdentifier(saved.cohortId, cohortFilter)) setCohortFilter('');
     if (programmeFilter && !groupsForScope([saved], cohorts, programmes, { programmeId: programmeFilter }).length) {

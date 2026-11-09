@@ -99,6 +99,17 @@ class SchemaNotProvisionedMiddleware:
         return self.get_response(request)
 
     def process_exception(self, request, exception):
+        from .schema_compat import UnsupportedOnNormalisedSchema
+        if isinstance(exception, UnsupportedOnNormalisedSchema):
+            # A legacy-only write (detaching weeks/components into the reuse
+            # library) asked of the normalised database. The view's atomic
+            # block has already rolled back; say why instead of a bare 500.
+            logger.warning('Unsupported on the current curriculum schema while serving %s: %s',
+                           request.path, exception)
+            return JsonResponse(
+                {'error': str(exception), 'reason': 'unsupported-on-current-schema'},
+                status=409,
+            )
         if not isinstance(exception, SchemaNotProvisioned):
             return None
         logger.error(
