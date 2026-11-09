@@ -43,6 +43,8 @@ export interface ActivitySidebarProps {
   completedIds: Set<string>;
   kind?: string;
   id?: string;
+  /** Catalogue dates are already supplied; attendance identity does not load a second schedule. */
+  attendanceLearner?: { kind?: string; id?: string };
   /** The component being consumed, if this sidebar sits beside one. */
   currentComponentId?: string;
   /** The quiz being sat, if it sits beside one. Quizzes have no componentId. */
@@ -114,6 +116,7 @@ export function ActivitySidebar({
   completedIds,
   kind,
   id,
+  attendanceLearner,
   currentComponentId,
   currentQuizId,
   completionTimeFor,
@@ -273,7 +276,8 @@ export function ActivitySidebar({
                     }`}>
                       {cm.detail || cm.label}
                     </span>
-                    <ActivityPlanDetails hours={c.expectedOtjh} />
+                    <ActivityPlanDetails hours={c.expectedOtjh} componentType={c.type}
+                      kind={attendanceLearner?.kind ?? kind} learnerId={attendanceLearner?.id ?? id} />
                     {completionTime && (
                       <span className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-semibold tabular-nums text-emerald-700" title="Time taken">
                         <AppIcon className="ri-timer-line text-[10px]" />
@@ -416,7 +420,8 @@ export function ActivitySidebar({
                                 }`}>
                                   {rowMeta.detail || rowMeta.label}
                                 </span>
-                                <ActivityPlanDetails hours={row.component.expectedOtjh} />
+                                <ActivityPlanDetails hours={row.component.expectedOtjh} componentType={row.component.type}
+                                  kind={attendanceLearner?.kind ?? kind} learnerId={attendanceLearner?.id ?? id} />
                               </span>
                               {row.complete ? (
                                 <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-[13px] shrink-0" />
