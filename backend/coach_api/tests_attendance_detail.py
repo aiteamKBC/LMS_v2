@@ -44,6 +44,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
             ('learner_api.attendance_lectures._completed_catchup_occurrences', {'side_effect': lambda *_: self.completed}),
             ('learner_api.attendance_lectures._approved_alternative_targets', {'side_effect': lambda *_: self.targets}),
             ('learner_api.attendance_lectures.read_native_components', {'return_value': ([], [])}),
+            ('learner_api.attendance_lectures.read_cancelled_native_occurrences', {'return_value': []}),
             ('coach_api.attendance_detail.page_components', {'return_value': {}}),
             ('coach_api.models.CoachManualAttendance.objects', {}),
             ('coach_api.models.CoachAbsenceReport.objects', {}),
@@ -197,7 +198,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
         self.adjustments[0].is_deleted = True
         self.assertEqual(self.read()['records'], [])
 
-    def test_view_counts_awaiting_recordings_as_absent_without_changing_shared_learner_totals(self):
+    def test_view_keeps_awaiting_recordings_visible_and_matches_shared_learner_totals(self):
         self.rows = []
         self.saved = [register_row(source='microsoft-teams', session_id=f'recorded-{index}', learner_id=901,
             module_catalogue_id='module', session_date=date(2026, 9, 10 + index), attendance_status=status,
@@ -206,7 +207,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
         with patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='lazy'), \
              patch('curriculum_api.recording_views.fully_watched_occurrences', return_value=set()) as watched:
             first, second = self.read(pageSize=2), self.read(pageSize=2, page=2)
-            self.assertEqual(first['summary'], {'present': 1, 'absent': 2, 'sessions': 3, 'attendanceRate': 33})
+            self.assertEqual(first['summary'], {'present': 1, 'absent': 0, 'sessions': 1, 'attendanceRate': 100})
             self.assertEqual(first['attendanceMode'], 'lazy')
             self.assertEqual(first['awaitingRecording'], 2)
             self.assertEqual(second['awaitingRecording'], 2)
@@ -216,24 +217,23 @@ class CoachDetailProjectionTests(SimpleTestCase):
             statuses = {row['id']: row['status'] for row in first['records'] + second['records']}
             self.assertEqual(statuses, {'microsoft-teams:recorded-0': 'awaiting_recording',
                 'microsoft-teams:recorded-1': 'awaiting_recording', 'microsoft-teams:recorded-2': 'present'})
-            # Only View/PDF uses this denominator; shared learner totals retain
-            # the agreed existing exclusion until the recording is completed.
+            # Coach View/PDF and the learner share the same denominator.
             from learner_api.attendance import _summarize_attendance
             from learner_api.recorded_attendance import apply_recorded_attendance
             shared_rows = apply_recorded_attendance(deepcopy(self.saved), self.source, now=NOW)
             shared_summary = _summarize_attendance(shared_rows, now=NOW)
             self.assertEqual((shared_summary['sessions'], shared_summary['attendanceRate']), (1, 100))
             # Completing one recording changes its outcome, never persisted
-            # absence evidence or the View/PDF history denominator.
+            # absence evidence. The completed outcome now enters the denominator.
             watched.return_value = {'recorded-0'}
             completed = self.read()
-            self.assertEqual(completed['summary'], {'present': 2, 'absent': 1, 'sessions': 3, 'attendanceRate': 67})
+            self.assertEqual(completed['summary'], {'present': 2, 'absent': 0, 'sessions': 2, 'attendanceRate': 100})
             self.assertEqual(completed['awaitingRecording'], 1)
             self.assertEqual(completed['pagination']['total'], 3)
             self.assertEqual([row['status'] for row in completed['records']].count('awaiting_recording'), 1)
             self.assertEqual([row['attendance_status'] for row in self.saved], ['absent', 'absent', 'present'])
 
-    def test_only_awaiting_recordings_counts_absence_and_excludes_invalid_future_and_active_sessions(self):
+    def test_only_awaiting_recordings_has_no_absence_and_excludes_invalid_future_and_active_sessions(self):
         self.rows = [register_row(session_id='waiting', attendance_status='awaiting_recording'),
                      register_row(session_id='invalid', attendance_status='awaiting_recording', occurrence_status='cancelled'),
                      register_row(session_id='future', attendance_status='awaiting_recording', session_date=date(2026, 10, 9)),
@@ -241,7 +241,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
                                   scheduled_start=NOW-timedelta(minutes=5), scheduled_end=NOW+timedelta(minutes=5)),
                      register_row(session_id='unmarked', attendance_status='unmarked')]
         actual = self.read()
-        self.assertEqual(actual['summary'], {'present': 0, 'absent': 1, 'sessions': 1, 'attendanceRate': 0})
+        self.assertEqual(actual['summary'], {'present': 0, 'absent': 0, 'sessions': 0, 'attendanceRate': None})
         self.assertEqual(actual['awaitingRecording'], 1)
         self.assertEqual(actual['pagination']['total'], 1)
         self.assertEqual([row['id'] for row in actual['records']], ['kbc-attendance:waiting'])

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { isAttendancePresent } from "@/utils/bulkAttendanceOutcome";
 import type { AttendanceStatus } from "@/types/bulkAttendance";
 import { getDateRange } from "@/utils/bulkAttendance";
 import { downloadCsv, slugify } from "@/utils/bulkCsv";
@@ -46,9 +47,10 @@ function computeBreakdown(
       { name, learners: 0, present: 0, absent: 0, total: 0, rate: 0 };
     entry.learners += 1;
     dayIsos.forEach((iso) => {
-      entry.total += 1;
       const status = getStatus(learner.id, iso);
-      if (status === "present") entry.present += 1;
+      if (status === "awaiting_recording") return;
+      entry.total += 1;
+      if (isAttendancePresent(status)) entry.present += 1;
       else if (status === "absent") entry.absent += 1;
     });
     map.set(name, entry);

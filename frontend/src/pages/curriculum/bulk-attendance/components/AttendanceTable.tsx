@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { AttendanceStatus, Learner } from "@/types/bulkAttendance";
 import { avatarClass, formatShortDate, getInitials } from "@/utils/bulkAttendance";
+import { recordingStatusStyle } from "@/utils/bulkAttendanceOutcome";
 import LearnerStatusBadge from "./LearnerStatusBadge";
 import { HighlightPicker } from "./HighlightControls";
 import { highlightColor, highlightKey, type LearnerHighlight, type LearnerHighlights } from "./highlights";
@@ -238,21 +239,22 @@ export default function AttendanceTable({
                     recent.map((lecture) => {
                       const isPresent = lecture.status === "present";
                       const isAbsent = lecture.status === "absent";
-                      const badgeClass = isPresent
+                      const recording = recordingStatusStyle(lecture.status);
+                      const badgeClass = recording?.className ?? (isPresent
                         ? "bg-green-100 text-green-700"
                         : isAbsent
                         ? "bg-red-100 text-red-700"
-                        : "bg-background-200 text-foreground-500";
-                      const badgeIcon = isPresent
+                        : "bg-background-200 text-foreground-500");
+                      const badgeIcon = recording?.icon ?? (isPresent
                         ? "ri-check-line"
                         : isAbsent
                         ? "ri-close-line"
-                        : "ri-subtract-line";
-                      const badgeLabel = isPresent
+                        : "ri-subtract-line");
+                      const badgeLabel = recording?.label ?? (isPresent
                         ? "Present"
                         : isAbsent
                         ? "Absent"
-                        : "Unmarked";
+                        : "Unmarked");
                       const title = `${lecture.name} • ${formatShortDate(
                         lecture.sessionDate
                       )} • ${badgeLabel}`;
