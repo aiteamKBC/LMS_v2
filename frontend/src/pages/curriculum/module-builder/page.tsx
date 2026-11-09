@@ -1,4 +1,5 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { WebWeekPointsEditor } from './WebWeekPointsEditor';
 import { componentSessionTitle } from '../shared/sessionDisplayTitle';
 import { ModuleLearnerCount } from './ModuleLearnerCount';
 import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
@@ -5818,6 +5819,8 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
           </button>
         </div>
       </div>
+
+      <WebWeekPointsEditor key={`${module.catalogueId || module.id}:${week.id}`} moduleId={module.catalogueId || module.id} weekId={week.id} />
 
       <WeekOverviewPanel
         components={week.components}

@@ -108,6 +108,8 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
     </div>
     {/* Use the catalogue's dates, rather than fetching a second plan by title. */}
     <ActivitySidebar moduleTitle={subject.title} weekTitle={sidebarWeek ? weekTitle(sidebarWeek) : ''}
+      webPointKind={kind} webPointLearnerId={learnerId}
+      pointIdentityFor={item => entries.get(item.componentId || '')?.native?.componentId}
       weekDateLabel={weekDateLabel(sidebarWeek)} dateLabelFor={(_, index) => weekDateLabel(weeks[index])}
       weekComponents={(sidebarWeek?.activities || []).map(component)} weeks={sidebarWeeks}
       completedIds={new Set(combined.activities.filter(entry => entry.completed).map(entry => entry.id))}
