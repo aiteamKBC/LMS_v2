@@ -37,6 +37,13 @@ function dashboard(): TrainingPlanDashboard {
 }
 
 describe('monthly OTJH totals', () => {
+  it('keeps verification hours out of submitted and completed totals', () => {
+    const data = dashboard();
+    data.monthlyLogOtjh!['2026-08'] = { target: 44, submitted: 0, completed: 15, verification: 8 };
+    expect(monthlyHours(data).find(row => row.key === '2026-08')).toMatchObject({
+      submitted: 0, completed: 15, verification: 8 });
+    expect(totalCompletedHours(data, '2026-08', '2026-08')).toBe(15);
+  });
   it('accepts a saved numeric log target and falls back for an empty value', () => {
     expect(monthlyTargetHours('12.5', 20)).toBe(12.5);
     expect(monthlyTargetHours('', 20)).toBe(20);
