@@ -7,6 +7,27 @@ afterEach(cleanup);
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ bookingCalendar: {
   coveredYears: [2026], bankHolidays: [{ date: '2026-12-25', title: 'Christmas Day' }, { date: '2026-12-28', title: 'Boxing Day (substitute day)' }],
 } }) }));
+it('removes the last topic without recreating a blank row and adds exactly one when requested', () => {
+  function Form() {
+    const [entries, setEntries] = useState([{ topic: 'Research', hours: '1.5', date: '2026-09-01' }]);
+    return <AssignmentTimeEntries kind="commercial" learnerId="1" month="2026-09" entries={entries} onChange={setEntries} disabled={false} />;
+  }
+  render(<Form />);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove topic 1' }));
+  expect(screen.queryByLabelText('Topic 1')).not.toBeInTheDocument();
+  expect(screen.getByText(/No learning time added/)).toBeVisible();
+  expect(screen.getByText('Total learning time: 0 hours')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Add topic' }));
+  expect(screen.getByLabelText('Topic 1')).toHaveValue('');
+  expect(screen.queryByLabelText('Topic 2')).not.toBeInTheDocument();
+});
+
+it('does not turn the initial empty placeholder into two topics when Add topic is selected', () => {
+  const change = vi.fn();
+  render(<AssignmentTimeEntries kind="commercial" learnerId="1" month="2026-09" entries={[]} onChange={change} disabled={false} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Add topic' }));
+  expect(change).toHaveBeenCalledWith([{ topic: '', hours: '', date: '' }]);
+});
 it('limits dates to the assignment month, including leap years', () => {
   expect(assignmentMonthBounds('2028-02')).toEqual({ min: '2028-02-01', max: '2028-02-29' });
   expect(assignmentMonthBounds('2026-02')?.max).toBe('2026-02-28');

@@ -33,11 +33,13 @@ export function useLearningStatements(answer: string, learnerId: string, learner
       if (controller.signal.aborted) return;
       const update: Partial<LearningStatements> = {};
       for (const field of Object.keys(snapshot) as (keyof LearningStatements)[]) {
-        if (typeof result[field] === 'string' && latest.current.current[field] === snapshot[field]) update[field] = result[field];
+        if (typeof result[field] === 'string' && result[field].trim() && latest.current.current[field] === snapshot[field]) update[field] = result[field];
       }
-      latest.current.apply(update);
+      if (Object.keys(update).length) latest.current.apply(update);
       setPhase('success');
-      setStatus('Learning statements updated. Review them and add any missing details from your own experience.');
+      setStatus(Object.keys(update).length
+        ? 'Learning statements updated. Review them and add any missing details from your own experience.'
+        : 'No learning statements were changed. Your existing answers have been kept.');
     } catch (error) {
       if (!controller.signal.aborted) {
         setPhase('error');
