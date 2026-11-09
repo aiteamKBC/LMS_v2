@@ -220,7 +220,6 @@ urlpatterns = [
     path('curriculum/components/summary/', views.curriculum_component_summary, name='curriculum-component-summary'),
     path('curriculum/components/', tracked_save(views.curriculum_component_collection, 'component'), name='curriculum-components'),
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
-    path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
     path('curriculum/components/<str:component_id>/', tracked_save(views.curriculum_component_detail, 'component'), name='curriculum-component-detail'),
     path('curriculum/teams-meetings/', teams_staff_required(teams_meeting_collection), name='curriculum-teams-meeting'),
     path('curriculum/teams-meetings/create-status/', teams_create_status, name='curriculum-teams-create-status'),
@@ -271,7 +270,6 @@ urlpatterns = [
     path('curriculum/cohorts/', views.curriculum_cohort_collection, name='curriculum-cohorts'),
     # Before the '<str:identifier>' routes below, or 'archived' is read as a cohort id.
     path('curriculum/cohorts/archived/', views.curriculum_archived_cohorts, name='curriculum-cohorts-archived'),
-    path('curriculum/cohorts/<str:cohort_id>/ksb-coverage/', views.curriculum_cohort_ksb_coverage, name='curriculum-cohort-ksb-coverage'),
     path('curriculum/cohorts/<str:cohort_id>/learner-roster/', views.curriculum_cohort_learner_roster, name='curriculum-cohort-learner-roster'),
     path('curriculum/cohorts/<str:cohort_id>/learner-ksb-impact/', views.curriculum_cohort_learner_ksb_impact, name='curriculum-cohort-learner-ksb-impact'),
     path('curriculum/cohorts/<str:cohort_id>/groups/', views.curriculum_cohort_group_collection, name='curriculum-cohort-groups'),
@@ -281,13 +279,11 @@ urlpatterns = [
     path('curriculum/groups/archived/', views.curriculum_archived_groups, name='curriculum-groups-archived'),
     # Declared before the <identifier> route below, which would otherwise
     # capture these as group ids.
-    path('curriculum/groups/<str:group_id>/ksb-coverage/', views.curriculum_group_ksb_coverage, name='curriculum-group-ksb-coverage'),
     path('curriculum/groups/<str:group_id>/learner-roster/', views.curriculum_group_learner_roster, name='curriculum-group-learner-roster'),
     path('curriculum/groups/<str:group_id>/learner-ksb-impact/', views.curriculum_group_learner_ksb_impact, name='curriculum-group-learner-ksb-impact'),
     path('curriculum/groups/<str:identifier>/restore/', views.curriculum_group_restore, name='curriculum-group-restore'),
     path('curriculum/groups/<str:identifier>/', views.curriculum_group_detail, name='curriculum-group-detail'),
     path('curriculum/groups/<str:identifier>/modules/', views.curriculum_group_modules, name='curriculum-group-modules'),
-    path('curriculum/group-modules/<str:identifier>/', views.curriculum_module_detail, name='curriculum-group-module-detail'),
     path('curriculum/sessions/', views.curriculum_session_collection, name='curriculum-sessions'),
     path('curriculum/sessions/<str:identifier>/', views.curriculum_session_detail, name='curriculum-session-detail'),
     path('curriculum/staffing/', views.curriculum_staffing_collection, name='curriculum-staffing'),
@@ -311,5 +307,4 @@ urlpatterns = [
     path('curriculum/tutors/', views.curriculum_tutors, name='curriculum-tutors'),
     path('curriculum/tutors/<str:identifier>/', views.curriculum_tutor_detail, name='curriculum-tutor-detail'),
     path('curriculum/coaches/', views.curriculum_coaches, name='curriculum-coaches'),
-    path('curriculum/coaches/<str:identifier>/', views.curriculum_coach_detail, name='curriculum-coach-detail'),
 ]

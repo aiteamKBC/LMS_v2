@@ -119,7 +119,7 @@ def source_identity(series, occurrence, artifact):
 
 
 def enqueue_recording(series, occurrence, artifact, module):
-    from .video_imports import enabled
+    from .video_imports import enabled, tables_available
     source = source_identity(series, occurrence, artifact)
     scope = {key: str(module.get(key) or '') for key in (
         'programme_id', 'programme_name', 'cohort_id', 'cohort_name', 'group_id', 'group_name')}
@@ -143,8 +143,10 @@ def enqueue_recording(series, occurrence, artifact, module):
     if not enabled():
         # Re-publish an already completed copy even if this worker cannot start
         # new transfers. A missing runtime flag must not strand saved playback.
+        # Without the import tables (the normalised database) there is no
+        # completed copy to look up; say so instead of failing on the query.
         saved = CurriculumVideoImport.objects.filter(
-            fingerprint=identity, target_kind='live_session', status='ready').first()
+            fingerprint=identity, target_kind='live_session', status='ready').first() if tables_available() else None
         if saved:
             return saved
         raise VideoImportError('Bunny recording imports are disabled; no Azure fallback was used.')

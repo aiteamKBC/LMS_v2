@@ -901,15 +901,15 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
   it('builds weeks and sessions from a week outline and components read without their long text', async () => {
     const api = await import('@/lib/curriculumApi');
-    // What the server sends for omitWeekComponents / omitContent: weeks with no
-    // `components` key, and a component whose transcript was left out.
+    // What the server sends for omitWeekComponents / fields=programme: weeks with
+    // no `components` key, and a component trimmed to the page's own settings.
     const outlineModule = {
       ...modules[0],
       weekStructureOutline: true,
       weekStructure: [{ id: 'WEEK-1', weekNumber: 1, title: 'Kick-off week', componentsOmitted: true }],
     } as unknown as CurriculumModule;
     const trimmedComponents = [
-      { ...components[0], weekId: 'WEEK-1', settingsOmitted: ['transcript'] },
+      { ...components[0], weekId: 'WEEK-1', settingsOmitted: ['*'] },
     ] as unknown as CurriculumComponent[];
     vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockClear();
     vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockClear();
@@ -928,7 +928,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     // Requested when the Sessions tab opens; the Overview reads the summary.
     await openTab(/Sessions/);
     await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledWith(
-      expect.anything(), expect.objectContaining({ moduleCatalogueIds: ['MOD-1'], omitContent: true }),
+      expect.anything(), expect.objectContaining({ moduleCatalogueIds: ['MOD-1'], programmeView: true }),
     ));
 
     // The week title comes from the outline; the session, its schedule and its

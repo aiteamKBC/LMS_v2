@@ -51,12 +51,16 @@ def module_tutor_name_sql(alias='m'):
 
 
 def group_coach_name_sql(group_alias='g'):
-    """SQL expression: the group's coach name, read through ``coach_id``, or NULL.
+    """SQL expression: the group's coach names, joined with ', ', or NULL.
 
-    curriculum.groups no longer stores coach_name (and curriculum.modules has no
-    coach column); curriculum.coaches.name is reached by groups.coach_id. A
-    group without a coach, a missing group row, or a blank name gives NULL,
-    matching the former ``coalesce(nullif(btrim(g.coach_name), ''), ...)``.
+    curriculum.groups no longer stores a coach (neither coach_name nor coach_id,
+    and curriculum.modules has no coach column): a group's coaches are its rows
+    in curriculum.group_coaches, named by curriculum.coaches. A group may have
+    several; they are joined in name order, as the curriculum screens show them.
+    A group without a coach, a missing group row, or only blank names gives
+    NULL, matching the former ``coalesce(nullif(btrim(g.coach_name), ''), ...)``.
     """
-    return (f"(SELECT nullif(btrim(min(coach.name)), '') FROM curriculum.coaches coach "
-            f"WHERE coach.id = {group_alias}.coach_id)")
+    return (f"(SELECT nullif(string_agg(btrim(coach.name), ', ' ORDER BY lower(btrim(coach.name))), '') "
+            f"FROM curriculum.group_coaches group_coach "
+            f"JOIN curriculum.coaches coach ON coach.id = group_coach.coach_id "
+            f"WHERE group_coach.group_id = {group_alias}.group_id AND btrim(coalesce(coach.name, '')) <> '')")

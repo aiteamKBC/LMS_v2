@@ -125,6 +125,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumModules: vi.fn(async () => []),
   fetchCurriculumProgrammeKsbCoverage: vi.fn(async () => null),
   fetchCurriculumProgrammeLearnerKsbImpact: vi.fn(async () => null),
+  fetchCurriculumProgrammeLearnerKsbSummary: vi.fn(async () => null),
 }));
 
 async function renderProgrammes() {

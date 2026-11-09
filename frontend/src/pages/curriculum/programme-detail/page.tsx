@@ -34,6 +34,7 @@ import {
   EntityFilterBar,
   EntityTable,
   InlineError,
+  MultiSelectControl,
   NamedActions,
   PlainCell,
   RowActions,
@@ -44,6 +45,7 @@ import {
   WorkspaceTabs,
 } from '@/pages/curriculum/shared/entities/ui';
 import { archiveCohortWithConfirm, archiveGroupWithConfirm, archiveModuleWithConfirm } from '@/pages/curriculum/shared/entities/archive';
+import { groupCoachNames, joinCoachNames } from '@/pages/curriculum/shared/entities/groupCoaches';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes, formatSystemTimestamp, hoursToRoundedMinutes, roundedMinutesToHours, systemTimeZoneName } from '@/lib/format';
 import type {
@@ -949,10 +951,8 @@ function staffNameOptions(profiles: CurriculumStaffProfile[] | undefined, assign
     const name = clean(profile.name) || clean(profile.email);
     if (name) names.add(name);
   });
-  assigned.forEach(value => {
-    const name = clean(value);
-    if (name && normalise(name) !== 'unassigned') names.add(name);
-  });
+  // A group's `coach` may name several coaches: each is its own option.
+  assigned.forEach(value => groupCoachNames(value).forEach(name => names.add(name)));
   return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
 
@@ -1780,6 +1780,7 @@ function StaffSlot({
   options,
   onAssign,
   saving,
+  multiple = false,
 }: {
   role: string;
   icon: string;
@@ -1787,10 +1788,73 @@ function StaffSlot({
   options: CurriculumStaffProfile[];
   onAssign?: (value: string) => void | Promise<void>;
   saving?: boolean;
+  /**
+   * Several may hold the slot (a group's coaches): `name` is the names joined,
+   * and `onAssign` is handed the chosen set joined the same way ('' = nobody).
+   */
+  multiple?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string[]>([]);
   const assigned = isStaffAssigned(name);
   const canEdit = Boolean(onAssign);
+  const startEditing = () => {
+    setDraft(groupCoachNames(name));
+    setEditing(true);
+  };
+  // Several holders read "First" + a "+2" badge that never truncates: a cut-off
+  // "First, Sec..." hid that there were more. The full list is the hover title.
+  const holders = multiple ? groupCoachNames(name) : [];
+  const slotLabel = holders.length > 1 ? holders[0] : clean(name);
+
+  if (editing && canEdit && multiple) {
+    const choices = groupCoachNames([
+      ...options.map(option => clean(option.name) || clean(option.email) || String(option.id)),
+      ...groupCoachNames(name),
+    ]);
+    const unchanged = joinCoachNames(draft) === joinCoachNames(groupCoachNames(name));
+    return (
+      <div
+        // Wider than the Coach column so names are readable; it sits over the
+        // next cell only while open.
+        className="relative z-10 w-64 max-w-[calc(100vw-2rem)] space-y-2 self-center rounded-xl border border-primary-200 bg-background-50 p-2.5 shadow-lg"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => { if (event.key === 'Escape' && !saving) setEditing(false); }}
+        role="group"
+        aria-label={`Choose the ${role.toLowerCase()}es`}
+      >
+        <MultiSelectControl
+          value={draft}
+          onChange={setDraft}
+          options={choices.map(choice => ({ value: choice, label: choice }))}
+          searchable={choices.length > 8}
+          searchPlaceholder={`Search ${role.toLowerCase()}es...`}
+          emptyMessage={`No ${role.toLowerCase()}es in the staff directory yet.`}
+        />
+        <div className="flex items-center justify-end gap-1.5">
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            disabled={saving}
+            className="h-8 rounded-lg border border-background-200 px-2.5 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={saving || unchanged}
+            onClick={async () => {
+              await onAssign?.(joinCoachNames(draft));
+              setEditing(false);
+            }}
+            className="h-8 rounded-lg bg-primary-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:opacity-40"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (editing && canEdit) {
     return (
@@ -1832,10 +1896,17 @@ function StaffSlot({
         <AppIcon className={`${icon} text-[11px]`}></AppIcon>
       </span>
       {assigned ? (
-        <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-800">{clean(name)}</span>
+        <span className="flex min-w-0 items-center gap-1" title={clean(name)}>
+          <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-800">{slotLabel}</span>
+          {holders.length > 1 && (
+            <span className="shrink-0 rounded-full bg-primary-50 px-1.5 text-[10px] font-bold text-primary-700">
+              +{holders.length - 1}
+            </span>
+          )}
+        </span>
       ) : canEdit ? (
         <button
-          onClick={() => setEditing(true)}
+          onClick={startEditing}
           className="inline-flex items-center gap-1 text-[12px] font-bold text-amber-700 transition-smooth hover:text-amber-800 hover:underline"
         >
           <AppIcon className="ri-add-circle-line text-[11px]"></AppIcon> Assign {role.toLowerCase()}
@@ -1845,9 +1916,9 @@ function StaffSlot({
       )}
       {assigned && canEdit && (
         <button
-          onClick={() => setEditing(true)}
-          aria-label={`Change ${role}`}
-          title={`Change ${role.toLowerCase()}`}
+          onClick={startEditing}
+          aria-label={multiple ? `Change ${role.toLowerCase()}es` : `Change ${role}`}
+          title={multiple ? `Change ${role.toLowerCase()}es` : `Change ${role.toLowerCase()}`}
           className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-background-100 hover:text-foreground-700 focus:opacity-100 group-hover/staff:opacity-100"
         >
           <AppIcon className="ri-pencil-line text-[11px]"></AppIcon>
@@ -2866,10 +2937,11 @@ function ProgrammeDetailContent() {
     if (componentsRequestKeyRef.current === componentsKey) return;
     componentsRequestKeyRef.current = componentsKey;
     const controller = new AbortController();
-    // Without the authored long text: the counts, KSB roll-ups and session
-    // rows read none of it. The KSB placement preview loads one component's
-    // full settings when it opens (see useCompleteComponent).
-    fetchCurriculumComponents(controller.signal, { moduleCatalogueIds, omitContent: true, revalidate: readRevision > 0 })
+    // Only what this page reads (`fields=programme`): the counts, KSB roll-ups
+    // and session rows need a handful of settings, not the authored text or
+    // file lists. The KSB placement preview loads one component's full settings
+    // when it opens (see useCompleteComponent).
+    fetchCurriculumComponents(controller.signal, { moduleCatalogueIds, programmeView: true, revalidate: readRevision > 0 })
       .then(rows => { if (!controller.signal.aborted) setDetailComponents(rows); })
       .catch(error => {
         if (!controller.signal.aborted) {
@@ -3539,7 +3611,8 @@ function ProgrammeDetailContent() {
   const drawerCoachNames = useMemo(() => staffNameOptions(data?.coaches, (data?.groups || []).map(group => group.coach)), [data]);
   const drawerTutorNames = useMemo(() => staffNameOptions(data?.tutors, (data?.modules || []).map(mod => mod.tutor)), [data]);
 
-  // Assign a group's coach straight from the Delivery tab. The group PATCH is the
+  // Assign a group's coaches straight from the Delivery tab (`value` is the
+  // chosen names joined; '' removes every coach). The group PATCH is the
   // canonical endpoint, so nothing here bypasses the rules the form applies.
   const assignGroupCoach = async (groupId: string, value: string) => {
     setSavingAction(`coach:${groupId}`);
@@ -4322,6 +4395,7 @@ function ProgrammeDetailContent() {
                         name={group.coach}
                         options={data?.coaches || []}
                         saving={savingAction === `coach:${group.id}`}
+                        multiple
                         onAssign={group.archived || activeCohort?.archived ? undefined : value => assignGroupCoach(group.id, value)}
                       />
                       {/* The mode alone is not a delivery pattern: every group

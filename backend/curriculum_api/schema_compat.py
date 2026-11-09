@@ -8,7 +8,7 @@ The cleaned database branch (``NEW_ENDPOINT_URL``) normalised ``curriculum``:
 * copied names and id lists (``programme_name``, ``cohort_name``,
   ``group_name``, ``tutor_name``/``tutor_email``, ``coach_name``,
   ``module_ids``, ``group_ids``, ``assigned_*_ids`` ...) were dropped in favour
-  of keys: ``modules.tutor_id -> tutors``, ``groups.coach_id -> coaches``;
+  of keys: ``modules.tutor_id -> tutors``, ``group_coaches -> groups, coaches`` (a group may have several);
 * ``ksb_mappings`` keeps ``component_id`` + ``ksb_id`` and points at
   ``standard_ksbs`` (``standard_ksb_id``) for the code and description; its
   module and week come from the component, and ``components.ksb_mappings``
@@ -51,6 +51,26 @@ ACTIVE = 'active'
 # 'archived' is what the legacy code writes for programmes/cohorts; both read
 # as withdrawn so a value written by an older process is never shown as live.
 INACTIVE_STATUSES = ('inactive', 'archived')
+# Lifecycle tables whose status is CHECKed to ('active', 'inactive') on the
+# normalised schema. Programmes and cohorts keep a free status (cohorts
+# 'planned' ...), so they are not in it.
+BINARY_STATUS_TABLES = frozenset({
+    'groups', 'modules', 'weeks', 'components', 'ksb_mappings', 'coaches', 'tutors',
+})
+# Foreign-key columns on the normalised schema, by nullability (see
+# translate_write: '' is "none", which a key column cannot hold).
+NULLABLE_FOREIGN_KEYS = {
+    'cohorts': ('programme_id',),
+    'groups': ('coach_id',),
+    'modules': ('programme_id', 'cohort_id', 'group_id', 'tutor_id'),
+    'weeks': ('module_catalogue_id', 'free_course_id'),
+    'ksb_mappings': ('component_id',),
+}
+REQUIRED_FOREIGN_KEYS = {
+    'groups': ('programme_id', 'cohort_id'),
+    'components': ('week_id', 'module_catalogue_id'),
+    'ksb_mappings': ('standard_ksb_id',),
+}
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 # Columns the normalised schema derives instead of storing, per table.
@@ -337,6 +357,10 @@ def only_derived_copy(table, payload, columns):
         return False
     if table == 'cohorts' and ({'holiday_ids', 'excluded_holiday_ids'} & set(payload)):
         return False  # stored, in cohort_calendar_holidays (see after_write)
+    if table == 'groups' and 'coach_name' in payload:
+        from . import group_coaches
+        if group_coaches.in_use():
+            return False  # stored, in group_coaches (see group_coaches.store)
     from .curriculum_names import ROW_FIELDS
     legacy = (set(DERIVED_COLUMNS.get(table, ())) | set(ROW_FIELDS.get(table, ())) | set(LEGACY_LIFECYCLE_COLUMNS)
               | {'deleted_by', 'deleted_via_parent'})
@@ -677,6 +701,34 @@ def translate_write(table, payload, columns):
                 payload['status'] = ACTIVE
         if table == 'programmes' and payload.get('is_active') is False and 'status' not in payload:
             payload['status'] = INACTIVE
+        if table in BINARY_STATUS_TABLES and 'status' in payload:
+            # These tables CHECK status in ('active', 'inactive'): it is only
+            # the archive flag. Writers still send display states -- a group
+            # 'planned' from its cohort, a module 'draft'/'published' -- which
+            # the database refuses (groups_status_check ...). Those are not a
+            # lifecycle change, so they are dropped: an insert takes the column
+            # default ('active') and an update leaves archive state alone (a
+            # coerced 'active' would restore an archived row).
+            value = str(payload.get('status') or '').strip().lower()
+            if value in INACTIVE_STATUSES:
+                payload['status'] = INACTIVE
+            elif value == ACTIVE:
+                payload['status'] = ACTIVE
+            else:
+                payload.pop('status')
+
+    # Placement and parent links are foreign keys here. Writers still send ''
+    # for "none" (a module saved without a group, a group without a coach),
+    # which the key refuses (modules_group_id_fkey ...). A nullable key stores
+    # it as NULL -- the same "none", cleared on update as '' always cleared it;
+    # a NOT NULL key keeps what it has (the update leaves it alone).
+    for column in NULLABLE_FOREIGN_KEYS.get(table, ()):
+        if column in payload and column in columns and isinstance(payload[column], str) and not payload[column].strip():
+            payload[column] = None
+            nullable.add(column)
+    for column in REQUIRED_FOREIGN_KEYS.get(table, ()):
+        if column in payload and isinstance(payload[column], str) and not payload[column].strip():
+            payload.pop(column)
 
     if table in {'weeks', 'components'} and payload.get('library_state') == 'library' and 'library_state' not in columns:
         raise UnsupportedOnNormalisedSchema(

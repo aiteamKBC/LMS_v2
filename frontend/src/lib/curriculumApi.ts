@@ -521,6 +521,8 @@ export interface CurriculumComponent {
    * `transcript`. Absent means `settings` is complete. A row carrying it is
    * for display only: load the full component before showing that text or
    * saving it (the server refuses a save that still carries this).
+   * A `programmeView` read sends `['*']`: everything outside the few settings
+   * the programme page reads.
    */
   settingsOmitted?: string[];
 }
@@ -1453,12 +1455,6 @@ export type CurriculumKsbMappingInput = {
   weightClass: 'hard' | 'soft' | 'possible' | string;
   weight_class?: 'hard' | 'soft' | 'possible' | string;
 };
-
-export interface CurriculumComponentKsbMappingsResponse {
-  componentId: string;
-  count: number;
-  results: CurriculumKsbTraceMapping[];
-}
 
 export type CurriculumKsbItemInput = {
   id?: string | number;
@@ -3265,11 +3261,14 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
 
 // `omitContent` leaves each component's authored long text out of `settings`
 // and names what was left out in `settingsOmitted`; see CurriculumComponent.
-export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; omitContent?: boolean; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
+export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; omitContent?: boolean; programmeView?: boolean; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
   const query = new URLSearchParams();
   const moduleCatalogueIds = (options.moduleCatalogueIds || []).filter(Boolean);
   if (moduleCatalogueIds.length) query.set('module_catalogue_ids', moduleCatalogueIds.join(','));
   if (options.omitContent) query.set('omit', 'content');
+  // Only the settings and fields the programme page reads; a trimmed row names
+  // what it lacks in `settingsOmitted` (see useCompleteComponent).
+  if (options.programmeView) query.set('fields', 'programme');
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
@@ -3450,6 +3449,45 @@ export function fetchCurriculumProgrammeLearnerKsbImpact(programmeId: string, pa
   return fetchCurriculumScopeLearnerKsbImpact('programme', programmeId, params, signal);
 }
 
+/** One learner's achieved weight for one KSB code (server: learner_impact_summary). */
+export interface CurriculumLearnerKsbAchievementLine {
+  code: string;
+  count: number;
+  /** Achieved weight, from Component Progress only; a reflection's own declaration is `declaredWeight`. */
+  weight: number | null;
+  declaredWeight: number | null;
+  actualOtjh: number | null;
+  actualOtjhSource: string;
+  plannedOtjh: number | null;
+  plannedOtjhSource: string;
+  /** Positions in the response's `activityLabels`. */
+  activities: number[];
+  reflections: string[];
+}
+
+/**
+ * `?view=summary`: the programme impact with the per-learner KSB lines built on
+ * the server instead of every progress row and activity (187 MB -> a few MB for
+ * the largest programme).
+ */
+export type CurriculumProgrammeLearnerKsbSummaryResponse = Pick<CurriculumScopeLearnerKsbImpactResponse,
+  'scope' | 'identifier' | 'lineage' | 'placementBasis' | 'structure' | 'assignedLearnerCount'
+  | 'assignedLearners' | 'learnerKsbConsumption' | 'otjhAchievement' | 'ksbAchievement'
+  | 'ksbAchievementPolicy' | 'learnerActivityCount'> & {
+  view: 'summary';
+  activityLabels: string[];
+  learnerKsbAchievements: Record<string, CurriculumLearnerKsbAchievementLine[]>;
+};
+
+export function fetchCurriculumProgrammeLearnerKsbSummary(programmeId: string, params: { learnerStatus?: string } = {}, signal?: AbortSignal): Promise<CurriculumProgrammeLearnerKsbSummaryResponse> {
+  const query = new URLSearchParams({ view: 'summary' });
+  if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  return fetchJson<CurriculumProgrammeLearnerKsbSummaryResponse>(
+    `/curriculum/programmes/${encodeURIComponent(programmeId)}/learner-ksb-impact/?${query}`,
+    { signal, timeoutMs: 120000 },
+  );
+}
+
 export function fetchCurriculumProgrammeLearnerRoster(programmeId: string, params: { cohort?: string; group?: string; learnerStatus?: string } = {}, signal?: AbortSignal): Promise<CurriculumProgrammeLearnerRosterResponse> {
   return fetchCurriculumScopeLearnerRoster('programme', programmeId, params, signal);
 }
@@ -3589,14 +3627,6 @@ export function fetchCurriculumKsbAchievementConsumptions(programmeId: string, k
   return fetchJson<CurriculumKsbAchievementConsumptionResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-achievement/${encodeURIComponent(ksbDefinitionId)}/consumptions/${ksbAchievementQuery(params)}`, { signal });
 }
 
-export function fetchCurriculumGroupKsbCoverage(groupId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
-  const query = new URLSearchParams();
-  if (params.sourceType) query.set('source_type', params.sourceType);
-  if (params.sourceId) query.set('source_id', params.sourceId);
-  const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/groups/${encodeURIComponent(groupId)}/ksb-coverage/${suffix}`, { signal });
-}
-
 export function fetchCurriculumModuleKsbCoverage(moduleId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
   const query = new URLSearchParams();
   if (params.sourceType) query.set('source_type', params.sourceType);
@@ -3611,14 +3641,6 @@ export function fetchCurriculumWeekKsbCoverage(weekId: string, params: { sourceT
   if (params.sourceId) query.set('source_id', params.sourceId);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/weeks/${encodeURIComponent(weekId)}/ksb-coverage/${suffix}`, { signal });
-}
-
-export function fetchCurriculumCohortKsbCoverage(cohortId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
-  const query = new URLSearchParams();
-  if (params.sourceType) query.set('source_type', params.sourceType);
-  if (params.sourceId) query.set('source_id', params.sourceId);
-  const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/cohorts/${encodeURIComponent(cohortId)}/ksb-coverage/${suffix}`, { signal });
 }
 
 export function fetchCurriculumKsbTrace(ksbId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageItem> {
@@ -3637,14 +3659,6 @@ export function fetchCurriculumReadiness(params: { scope?: string; identifier?: 
   if (params.sourceId) query.set('source_id', params.sourceId);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumReadinessResponse>(`/curriculum/readiness/ksb-coverage/${suffix}`, { signal });
-}
-
-export function fetchComponentKsbMappings(componentId: string, signal?: AbortSignal): Promise<CurriculumComponentKsbMappingsResponse> {
-  return fetchJson<CurriculumComponentKsbMappingsResponse>(`/curriculum/components/${encodeURIComponent(componentId)}/ksb-mappings/`, { signal });
-}
-
-export function createComponentKsbMapping(componentId: string, input: CurriculumKsbMappingInput | { mappings: CurriculumKsbMappingInput[] }) {
-  return postJson<CurriculumComponentKsbMappingsResponse & { created: boolean }>(`/curriculum/components/${encodeURIComponent(componentId)}/ksb-mappings/`, input);
 }
 
 export function updateComponentKsbMapping(mappingId: string, input: Partial<CurriculumKsbMappingInput>) {
@@ -4287,7 +4301,6 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
    */
   allowTutorConflict?: boolean;
 };
-export type CurriculumComponentInput = Partial<Omit<CurriculumComponent, 'lastEdited'>>;
 export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; /** The ticked ids -- the holidays this cohort's module sessions must skip. */ holidayIds?: Array<string | number>; /** The unticked ids, from the same in-period list. Sent alongside `holidayIds` so an explicit empty array ("Select all") is never mistaken for the key being omitted. */ excludedHolidayIds?: Array<string | number> };
 export type CurriculumGroupInput = { id?: string; groupId?: string; name?: string; cohortId?: string; programmeId?: string; tutor?: string; coach?: string; color?: string; weekDays?: string; startTime?: string; endTime?: string; startDate?: string; endDate?: string; moduleName?: string; sessionsNumber?: number; /** Honoured by PATCH /curriculum/groups/<id>/ only. */ status?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
 export type CurriculumSessionInput = Partial<Pick<CurriculumSession, 'date' | 'startTime' | 'endTime' | 'tutor'>>;
@@ -5058,18 +5071,6 @@ export function updateCurriculumModuleCover(id: string, coverImage: string) {
 
 export function archiveCurriculumModule(id: string) {
   return deleteJson<{ archived: boolean; id: string }>(`/curriculum/modules/${encodeURIComponent(id)}/`);
-}
-
-export function createCurriculumComponent(input: CurriculumComponentInput) {
-  return postJson<{ created: boolean; component: CurriculumComponent }>('/curriculum/components/', input);
-}
-
-export function updateCurriculumComponent(id: string, input: CurriculumComponentInput) {
-  return patchJson<{ updated: boolean; component: CurriculumComponent }>(`/curriculum/components/${encodeURIComponent(id)}/`, input);
-}
-
-export function deleteCurriculumComponent(id: string) {
-  return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/components/${encodeURIComponent(id)}/`);
 }
 
 export function createCurriculumSession(input: CurriculumSessionInput) {

@@ -1,7 +1,7 @@
 """Learner readers resolve tutor, coach and cohort names through canonical FKs.
 
 curriculum.modules no longer stores tutor_name (tutor_id -> curriculum.tutors),
-curriculum.groups no longer stores coach_name (coach_id -> curriculum.coaches),
+curriculum.groups no longer stores a coach (curriculum.group_coaches -> curriculum.coaches),
 programme_name or cohort_name. No Django database connection: SQL is captured
 from recording cursors, and the name expressions run on in-memory sqlite3.
 """
@@ -51,12 +51,15 @@ def name_db():
     db.executescript('''
         CREATE TABLE curriculum.tutors (id TEXT PRIMARY KEY, name TEXT);
         CREATE TABLE curriculum.coaches (id TEXT PRIMARY KEY, name TEXT);
+        CREATE TABLE curriculum.group_coaches (group_id TEXT, coach_id TEXT);
         INSERT INTO curriculum.tutors VALUES ('T1','Dr Tutor');
-        INSERT INTO curriculum.coaches VALUES ('C1','Coach One'),('C2','   ');
+        INSERT INTO curriculum.coaches VALUES ('C1','Coach One'),('C2','   '),('C3','Adam Coach');
         CREATE TABLE main.modules (module_catalogue_id TEXT, tutor_id TEXT, group_id TEXT);
-        CREATE TABLE main.groups (group_id TEXT, coach_id TEXT);
-        INSERT INTO main.modules VALUES ('M1','T1','G1'),('M2',NULL,'G2'),('M3','  ','G3'),('M4','T9','G9');
-        INSERT INTO main.groups VALUES ('G1','C1'),('G2',NULL),('G3','C2');
+        CREATE TABLE main.groups (group_id TEXT);
+        INSERT INTO main.modules VALUES ('M1','T1','G1'),('M2',NULL,'G2'),('M3','  ','G3'),('M4','T9','G9'),
+                                        ('M5','T1','G5');
+        INSERT INTO main.groups VALUES ('G1'),('G2'),('G3'),('G5');
+        INSERT INTO curriculum.group_coaches VALUES ('G1','C1'),('G3','C2'),('G5','C1'),('G5','C3'),('G5','C2');
     ''')
     return db
 
@@ -76,13 +79,15 @@ class NameExpressionTests(SimpleTestCase):
             ('M2', '', None),       # no tutor -> '' default; group without a coach -> NULL
             ('M3', '', None),       # blank tutor id; coach with a blank name -> NULL
             ('M4', '', None),       # unknown tutor; module whose group row is missing -> NULL
+            ('M5', 'Dr Tutor', 'Adam Coach, Coach One'),  # several coaches: name order, blank skipped
         ])
 
     def test_attendance_keeps_its_organizer_fallback(self):
         sql = (f"SELECT coalesce(nullif({module_tutor_name_sql('m')},''),'organizer@example.test') "
                f"FROM modules m ORDER BY m.module_catalogue_id")
         self.assertEqual([row[0] for row in self.db.execute(sql)],
-                         ['Dr Tutor', 'organizer@example.test', 'organizer@example.test', 'organizer@example.test'])
+                         ['Dr Tutor', 'organizer@example.test', 'organizer@example.test', 'organizer@example.test',
+                          'Dr Tutor'])
 
 
 class ReaderSqlTests(SimpleTestCase):

@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchCurriculumComponents, fetchCurriculumHolidays, fetchCurriculumModules, fetchCurriculumOverview, type CurriculumOverview } from '@/lib/curriculumApi';
+import { fetchCurriculumHolidays, fetchCurriculumModules, fetchCurriculumOverview, type CurriculumOverview } from '@/lib/curriculumApi';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
 interface UseCurriculumDataOptions {
   autoLoad?: boolean;
   compact?: boolean;
-  includeComponents?: boolean;
   includeHolidays?: boolean;
   refreshModules?: boolean;
   // Drops weekStructure from the refreshed module list. Opt-in per caller, because
@@ -26,7 +25,7 @@ type LoadOptions = {
   silent?: boolean;
 };
 
-export function useCurriculumData({ autoLoad = true, compact = false, includeComponents = false, includeHolidays = false, refreshModules = false, compactModules = false }: UseCurriculumDataOptions = {}) {
+export function useCurriculumData({ autoLoad = true, compact = false, includeHolidays = false, refreshModules = false, compactModules = false }: UseCurriculumDataOptions = {}) {
   const [data, setData] = useState<CurriculumOverview | null>(null);
   const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
@@ -37,16 +36,14 @@ export function useCurriculumData({ autoLoad = true, compact = false, includeCom
     requestIdRef.current = requestId;
     if (!options.silent) setLoading(true);
     try {
-      const [overview, modules, components, holidays] = await Promise.all([
+      const [overview, modules, holidays] = await Promise.all([
         fetchCurriculumOverview(signal, { compact, skipCache: options.skipCache, revalidate: options.revalidate }),
         refreshModules ? fetchCurriculumModules(signal, { compact: compactModules, skipCache: options.skipCache, revalidate: options.revalidate }).catch(() => []) : Promise.resolve([]),
-        includeComponents ? fetchCurriculumComponents(signal, { skipCache: options.skipCache, revalidate: options.revalidate }).catch(() => []) : Promise.resolve([]),
         includeHolidays ? fetchCurriculumHolidays(signal, { skipCache: options.skipCache, revalidate: options.revalidate }).catch(() => []) : Promise.resolve([]),
       ]);
       const result: CurriculumOverview = {
         ...overview,
         modules: modules.length ? modules : overview.modules,
-        components: includeComponents ? components : overview.components,
         holidays: includeHolidays ? holidays : overview.holidays,
       };
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
@@ -60,7 +57,7 @@ export function useCurriculumData({ autoLoad = true, compact = false, includeCom
     } finally {
       if (!options.silent && !signal?.aborted && requestId === requestIdRef.current) setLoading(false);
     }
-  }, [compact, compactModules, includeComponents, includeHolidays, refreshModules]);
+  }, [compact, compactModules, includeHolidays, refreshModules]);
 
   useEffect(() => {
     if (!autoLoad) return undefined;

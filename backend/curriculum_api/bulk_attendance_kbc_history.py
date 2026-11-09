@@ -11,9 +11,11 @@ from datetime import date
 
 import psycopg
 from psycopg.rows import dict_row
+from django.db import DatabaseError
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
+from .bulk_attendance_kbc_source import LINKED_TABLE, NEW_DATABASE, dict_rows, new_database_cursor, on_new_database
 from .bulk_attendance_learners import learner_directory_dsn
 from .bulk_attendance_live_policy import live_days_per_learner, merge_live_over_kbc, parse_attendance_changes
 
@@ -29,8 +31,36 @@ def _live_day_learner_ids(session_date):
     return read_live_day_learner_ids(session_date)
 
 
+def kbc_dsn():
+    """Where KBC attendance is read: the new database's link, else the direct DSN.
+
+    ``''`` still means "not configured" for the direct connection. On the new
+    database the pooled application connection needs no DSN of its own.
+    """
+    return NEW_DATABASE if on_new_database() else learner_directory_dsn()
+
+
+# The record columns every KBC read returns, in the shape _map_kbc_history_rows reads.
+KBC_RECORD_COLUMNS = '''
+    "key"::text AS "recordKey",
+    "ID"::text AS "learnerId",
+    "date"::text AS "sessionDate",
+    coalesce("module", '') AS "moduleName",
+    coalesce("lecture_name", '') AS "lectureName",
+    "Attendance" AS attendance_value,
+    "attendance_status" AS source_status'''
+
+
 def read_kbc_day_learner_ids(dsn, session_date):
     """Membership in a saved day, including real unmarked records."""
+    if dsn == NEW_DATABASE:
+        with new_database_cursor(read_only=True) as cursor:
+            cursor.execute(
+                f'''SELECT DISTINCT "ID"::text FROM {LINKED_TABLE}
+                    WHERE "date" = %s AND "ID" IS NOT NULL''',
+                [session_date],
+            )
+            return {str(row[0]).strip() for row in cursor.fetchall()}
     with psycopg.connect(dsn, connect_timeout=10) as connection:
         connection.read_only = True
         connection.execute("SET LOCAL statement_timeout = '10s'")
@@ -56,7 +86,7 @@ def bulk_attendance_day_learners(request):
     except ValueError:
         return JsonResponse({'error': 'Choose a valid attendance date.'}, status=400)
     try:
-        dsn = learner_directory_dsn()
+        dsn = kbc_dsn()
         if not dsn:
             return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
         # No recent-record limit: old days must work even outside Last 4.
@@ -80,6 +110,8 @@ def save_kbc_attendance(dsn, changes):
     records each change in lms_attendance_changes.
     """
     keys = list(changes)
+    if dsn == NEW_DATABASE:
+        return _save_linked_kbc_attendance(changes)
     with psycopg.connect(dsn, connect_timeout=10) as connection:
         connection.execute("SET LOCAL statement_timeout = '10s'")
         found = {
@@ -102,6 +134,31 @@ def save_kbc_attendance(dsn, changes):
                 [(1 if status == 'present' else 0, 1 if status == 'present' else 0, key)
                  for key, status in changes.items()],
             )
+    return sorted(keys)
+
+
+KBC_ATTENDANCE_UPDATE = '''UPDATE {table}
+   SET "Attendance" = %s,
+       attendance_status = CASE
+           WHEN %s = 1 AND attendance_status = 'absent' THEN NULL
+           ELSE attendance_status END
+   WHERE "key" = %s'''
+
+
+def _save_linked_kbc_attendance(changes):
+    """save_kbc_attendance through the new database's link, in one transaction."""
+    keys = list(changes)
+    with new_database_cursor(read_only=False) as cursor:
+        cursor.execute(f'SELECT "key" FROM {LINKED_TABLE} WHERE "key" = ANY(%s) FOR UPDATE', [keys])
+        found = {row[0] for row in cursor.fetchall()}
+        missing = sorted(set(keys) - found)
+        if missing:
+            raise LookupError(missing)
+        cursor.executemany(
+            KBC_ATTENDANCE_UPDATE.format(table=LINKED_TABLE),
+            [(1 if status == 'present' else 0, 1 if status == 'present' else 0, key)
+             for key, status in changes.items()],
+        )
     return sorted(keys)
 
 
@@ -128,13 +185,13 @@ def bulk_attendance_save_attendance(request):
     saved_kbc = []
     if kbc:
         try:
-            dsn = learner_directory_dsn()
+            dsn = kbc_dsn()
             if not dsn:
                 return JsonResponse({'error': 'KBC attendance is not configured. Nothing was saved.'}, status=503)
             saved_kbc = save_kbc_attendance(dsn, kbc)
         except LookupError:
             return JsonResponse({'error': 'One or more KBC records no longer exist. Nothing was saved.'}, status=404)
-        except psycopg.Error:
+        except (psycopg.Error, DatabaseError):
             return JsonResponse({'error': 'KBC attendance could not be saved. Nothing was changed; please try again.'}, status=503)
 
     saved_live = []
@@ -172,18 +229,23 @@ def bulk_attendance_delete_attendance(request):
         if not record_key or len(record_key) > 500:
             return JsonResponse({'error': 'A KBC record key is invalid.'}, status=400)
         try:
-            dsn = learner_directory_dsn()
+            dsn = kbc_dsn()
             if not dsn:
                 return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
-            with psycopg.connect(dsn, connect_timeout=10) as connection:
-                connection.execute("SET LOCAL statement_timeout = '10s'")
-                deleted = connection.execute(
-                    'DELETE FROM public.kbc_attendance WHERE "key" = %s RETURNING "key"',
-                    [record_key],
-                ).fetchone()
-                if not deleted:
-                    return JsonResponse({'error': 'The attendance record no longer exists.'}, status=404)
-        except psycopg.Error:
+            if dsn == NEW_DATABASE:
+                with new_database_cursor(read_only=False) as cursor:
+                    cursor.execute(f'DELETE FROM {LINKED_TABLE} WHERE "key" = %s RETURNING "key"', [record_key])
+                    deleted = cursor.fetchone()
+            else:
+                with psycopg.connect(dsn, connect_timeout=10) as connection:
+                    connection.execute("SET LOCAL statement_timeout = '10s'")
+                    deleted = connection.execute(
+                        'DELETE FROM public.kbc_attendance WHERE "key" = %s RETURNING "key"',
+                        [record_key],
+                    ).fetchone()
+            if not deleted:
+                return JsonResponse({'error': 'The attendance record no longer exists.'}, status=404)
+        except (psycopg.Error, DatabaseError):
             return JsonResponse({'error': 'Attendance could not be deleted. Please try again.'}, status=503)
     elif source == 'live':
         match = re.fullmatch(r'live:(\d{1,18})', record_key)
@@ -253,6 +315,23 @@ def _map_kbc_history_rows(rows):
 
 
 def read_kbc_attendance_history(dsn, learner_id, learner_email=''):
+    if dsn == NEW_DATABASE:
+        # Same two-step rule as below: by ID, then the email only when no ID matched.
+        with new_database_cursor(read_only=True) as cursor:
+            cursor.execute(
+                f'''SELECT {KBC_RECORD_COLUMNS} FROM {LINKED_TABLE}
+                    WHERE "ID"::text = %s ORDER BY "date" DESC NULLS LAST, "key" DESC''',
+                [learner_id],
+            )
+            rows = dict_rows(cursor)
+            if rows or not learner_email:
+                return _map_kbc_history_rows(rows)
+            cursor.execute(
+                f'''SELECT {KBC_RECORD_COLUMNS} FROM {LINKED_TABLE}
+                    WHERE lower(trim("Email")) = %s ORDER BY "date" DESC NULLS LAST, "key" DESC''',
+                [learner_email],
+            )
+            return _map_kbc_history_rows(dict_rows(cursor))
     # Neon's pooler rejects startup `options`; set the timeout per transaction.
     with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as connection:
         connection.read_only = True
@@ -317,6 +396,8 @@ def _parse_month(value):
 
 def read_kbc_month_attendance(dsn, first, following, learner_ids=None):
     """Read saved KBC attendance records for one calendar month."""
+    if dsn == NEW_DATABASE:
+        return _read_linked_month(first, following, learner_ids)
     with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as connection:
         connection.read_only = True
         connection.execute("SET LOCAL statement_timeout = '10s'")
@@ -373,7 +454,7 @@ def bulk_attendance_kbc_month_records(request):
         learner_ids = [value.strip() for value in raw_ids if value.strip()]
         if len(learner_ids) > 1000 or any(not re.fullmatch(r'\d{1,20}', value) for value in learner_ids):
             raise ValueError('The selected learners are invalid.')
-        dsn = learner_directory_dsn()
+        dsn = kbc_dsn()
         if not dsn:
             return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
         kbc_records = read_kbc_month_attendance(dsn, first, following, learner_ids)
@@ -405,8 +486,52 @@ def bulk_attendance_kbc_month_records(request):
         return _with_warnings({'records': merged}, warning)
     except ValueError as exc:
         return JsonResponse({'error': str(exc)}, status=400)
-    except psycopg.Error:
+    except (psycopg.Error, DatabaseError):
         return JsonResponse({'error': 'Unable to load monthly KBC attendance. Please try again.'}, status=503)
+
+
+def _read_linked_month(first, following, learner_ids=None):
+    """read_kbc_month_attendance through the new database's link.
+
+    The linked column is a real DATE, so the month is compared as dates: the
+    comparison then runs at the KBC source instead of every row being fetched
+    across the link and filtered here.
+    """
+    where = ['"date" >= %s', '"date" < %s', '"ID" IS NOT NULL']
+    params = [first, following]
+    cleaned_ids = [str(value).strip() for value in (learner_ids or []) if str(value).strip()]
+    if cleaned_ids:
+        where.append('"ID"::text = ANY(%s)')
+        params.append(cleaned_ids)
+    with new_database_cursor(read_only=True) as cursor:
+        cursor.execute(
+            f'''SELECT {KBC_RECORD_COLUMNS} FROM {LINKED_TABLE}
+                WHERE {' AND '.join(where)} ORDER BY "date", "key"''',
+            params,
+        )
+        return _map_kbc_history_rows(dict_rows(cursor))
+
+
+def _read_linked_recent(limit):
+    """read_kbc_recent_attendance through the new database's link."""
+    with new_database_cursor(read_only=True) as cursor:
+        cursor.execute(
+            f'''SELECT "recordKey", "learnerId", "sessionDate", "moduleName",
+                       "lectureName", attendance_value, source_status
+                FROM (
+                    SELECT {KBC_RECORD_COLUMNS},
+                        dense_rank() OVER (PARTITION BY "ID"::text ORDER BY "date" DESC) AS recent_rank
+                    FROM {LINKED_TABLE}
+                    WHERE "ID" IS NOT NULL AND "date" IS NOT NULL AND "date" <= CURRENT_DATE
+                ) recent
+                WHERE recent_rank <= %s
+                ORDER BY "learnerId", "sessionDate", "recordKey"''',
+            [limit],
+        )
+        recent = {}
+        for record in _map_kbc_history_rows(dict_rows(cursor)):
+            recent.setdefault(record['learnerId'], []).append(record)
+        return recent
 
 
 def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
@@ -416,6 +541,8 @@ def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
     records. Rank dates rather than individual rows: a day replaced by Live
     can contain many KBC rows. The endpoint takes four records after merging.
     """
+    if dsn == NEW_DATABASE:
+        return _read_linked_recent(limit)
     # Neon's pooler rejects startup `options`; set the timeout per transaction.
     with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as connection:
         connection.read_only = True
@@ -478,14 +605,14 @@ def bulk_attendance_kbc_recent(request):
     kbc = {}
     if not live_only:
         try:
-            dsn = learner_directory_dsn()
+            dsn = kbc_dsn()
             if not dsn:
                 return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
             # Read four candidate dates plus the dates Live may replace.
             # Each date can contain multiple records; never truncate those
             # before applying the same merge policy as full history.
             kbc = read_kbc_recent_attendance(dsn, RECENT_LECTURE_LIMIT + live_days_per_learner(live))
-        except psycopg.Error:
+        except (psycopg.Error, DatabaseError):
             # Database driver errors can expose connection information.
             return JsonResponse({'error': 'Unable to load recent KBC attendance. Please try again.'}, status=503)
 
@@ -511,11 +638,11 @@ def bulk_attendance_kbc_history(request):
     records = []
     if not live_only:
         try:
-            dsn = learner_directory_dsn()
+            dsn = kbc_dsn()
             if not dsn:
                 return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
             records = read_kbc_attendance_history(dsn, learner_id, learner_email)
-        except psycopg.Error:
+        except (psycopg.Error, DatabaseError):
             # Driver errors can expose connection information.
             return JsonResponse({'error': 'Unable to load KBC attendance history. Please try again.'}, status=503)
 

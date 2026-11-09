@@ -82,6 +82,8 @@ class AchievementReadTests(SimpleTestCase):
         self.learner_progress_ksb_consumption.assert_called_with(
             [7], ['K1', 'K1', 'S1'], ['C1'], True,
             restrict_to_components=False, scope='programme', scope_identifier='P1',
+            # Achievement reads only rows carrying an applied definition's code.
+            codes_only=True,
         )
 
     def test_zero_consumption_still_returns_applied_definitions_without_activity_plans(self):

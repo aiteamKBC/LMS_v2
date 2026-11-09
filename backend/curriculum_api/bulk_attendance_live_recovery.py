@@ -6,6 +6,8 @@ one missed required lecture, but must not become a second required lecture.
 from collections import defaultdict
 
 from django.db import router
+from django.db.models import JSONField
+from django.db.models.expressions import RawSQL
 from django.utils import timezone
 
 from learner_api.alternative_recovery import completed_alternatives_by_occurrence
@@ -14,6 +16,29 @@ from learner_api.models import EnrolmentUser, LearnerProfile
 
 from .models import LiveSessionAttendance, LiveSessionLearnerAttendance, LiveSessionOccurrence
 from .session_results_policy import instant
+
+
+def _plan_keys(column):
+    """The stored plan reduced to what assignment reads: each entry's ids.
+
+    A saved Learning_plan carries every nested week and activity (up to 1.5 MB
+    per learner on the new database), but ``assigned_module_ids`` only reads
+    ``moduleId`` and ``assignmentMode``. Same projection as
+    learner_api.attendance_assignments.roster_sources; a non-array value is
+    passed through unchanged so "unsaved" and "cleared" keep their meaning.
+    """
+    return RawSQL(f'''CASE WHEN jsonb_typeof("enrolment"."Created_users"."{column}"::jsonb)='array'
+        THEN (SELECT coalesce(jsonb_agg(jsonb_build_object(
+            'moduleId',entry->'moduleId','assignmentMode',entry->'assignmentMode')), '[]'::jsonb)
+            FROM jsonb_array_elements("enrolment"."Created_users"."{column}"::jsonb) entry
+            WHERE jsonb_typeof(entry)='object')
+        ELSE "enrolment"."Created_users"."{column}"::jsonb END''', [], output_field=JSONField())
+
+
+def _with_plan_keys(source):
+    source.training_plan = source._training_plan_keys
+    source.learning_plan = source._learning_plan_keys
+    return source
 
 
 def resolve_parallel_links(originals, alternatives, targets, assignments, dates):
@@ -144,9 +169,15 @@ def parallel_recovery_links(register_rows, *, complete=False, database=None):
         return {}, {}
     profiles = [profile for profile in profiles if profile.id in possible_profiles]
     enrolment_ids = {profile.enrolment_id for profile in profiles if profile.enrolment_id is not None}
-    sources = {source.pk: source for source in EnrolmentUser.all_learners
+    # programme/group are no longer columns on Created_users (the normalised
+    # schema keeps programme_id/cohort_id/group_id; the model exposes the names
+    # as read-only properties), so ``only()`` names the FK fields. The effective
+    # plan resolves placement by id, through the linked learner profile.
+    sources = {source.pk: _with_plan_keys(source) for source in EnrolmentUser.all_learners
                .filter(pk__in=enrolment_ids)
-               .only('id', 'programme', 'group', 'training_plan', 'learning_plan')}
+               .only('id', 'programme_record', 'cohort_record', 'group_record')
+               .annotate(_training_plan_keys=_plan_keys('Training_plan'),
+                         _learning_plan_keys=_plan_keys('Learning_plan'))}
     assignments = {
         profile.id: set(map(str, assigned_module_ids(sources[profile.enrolment_id])))
         for profile in profiles if profile.enrolment_id in sources

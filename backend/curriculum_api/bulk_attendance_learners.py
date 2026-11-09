@@ -46,6 +46,35 @@ def read_learners(dsn):
             ]
 
 
+def read_lms_learners():
+    """The register's learner list on the new database: the LMS's own learners.
+
+    The KBC directory (kbc_users_data) does not exist on the new database. The
+    LMS learner keeps the same key -- its Aptem id is the KBC id every KBC and
+    live record is filed under -- so only learners with an Aptem id are listed.
+    Programme and group names come from the curriculum by id. The end date
+    follows the OTJH selector's precedence (end_date, then learner_end_date).
+    """
+    from .bulk_attendance_kbc_source import dict_rows, new_database_cursor
+
+    with new_database_cursor(read_only=True) as cursor:
+        cursor.execute('''
+            SELECT l.aptem_id::text AS id, l.full_name AS name, l.email AS email,
+                   coalesce(p.name, '') AS programme, coalesce(g.group_name, '') AS "group",
+                   coalesce(l.end_date, l.learner_end_date)::text AS "endDate",
+                   l.programme_status AS "kbcStatus"
+            FROM "Learner".learners l
+            LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
+            LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
+            WHERE l.aptem_id IS NOT NULL
+            ORDER BY lower(coalesce(l.full_name, '')), l.aptem_id
+        ''')
+        return [
+            {key: str(value or '').strip() for key, value in row.items()}
+            for row in dict_rows(cursor)
+        ]
+
+
 ENROLMENT_STATUS_WARNING = 'Enrolment statuses could not be read; showing KBC statuses.'
 ENROLMENT_EMAIL_WARNING = 'LMS emails could not be read; learners are matched by their KBC email only.'
 ENROLMENT_ATTENDANCE_MODE_WARNING = 'Attendance modes could not be read; showing Live Sessions.'
@@ -190,16 +219,20 @@ def with_statuses(learners, enrolment_statuses):
 
 @require_GET
 def bulk_attendance_learners(request):
+    from django.db import DatabaseError
+    from .bulk_attendance_kbc_source import on_new_database
+
     try:
-        dsn = learner_directory_dsn()
-        if not dsn:
-            return JsonResponse({'error': 'The learner directory is not configured.'}, status=503)
-        learners = read_learners(dsn)
-    except psycopg.Error:
+        if on_new_database():
+            learners = read_lms_learners()
+        else:
+            dsn = learner_directory_dsn()
+            if not dsn:
+                return JsonResponse({'error': 'The learner directory is not configured.'}, status=503)
+            learners = read_learners(dsn)
+    except (psycopg.Error, DatabaseError):
         # Driver errors can contain connection details; do not expose them.
         return JsonResponse({'error': 'Unable to load the learner directory. Please try again.'}, status=503)
-
-    from django.db import DatabaseError
 
     warnings = []
     try:

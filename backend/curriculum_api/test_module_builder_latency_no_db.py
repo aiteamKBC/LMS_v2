@@ -182,7 +182,11 @@ class TutorCatalogueReadTests(SimpleTestCase):
              patch.object(views, 'build_cohorts_and_groups', return_value=([], [{'id': 'G1', 'coach': 'Staff'}])) as groups:
             views.build_staff_user_profile_collection('tutor', 'all')
             groups.assert_not_called()
-            actual = views.build_staff_user_profile_collection('coach', 'all')
-        self.assertEqual(catalogue.call_count, 2)
+            self.assertEqual(catalogue.call_count, 1)
+            # A coach profile carries groups only, so the coach path must not
+            # build the module catalogue at all.
+            with patch.object(views, 'build_modules', side_effect=AssertionError('unused module build')):
+                actual = views.build_staff_user_profile_collection('coach', 'all')
+        self.assertEqual(catalogue.call_count, 1)
         self.assertEqual(actual[0]['assignedGroupIds'], ['G1'])
         groups.assert_called_once_with([], [], include_archived=True)
