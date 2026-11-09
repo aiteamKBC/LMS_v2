@@ -5,7 +5,7 @@ import { ActivityTimeConflictError } from '@/lib/activityTimeConflict';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('quiz time conflicts', () => {
-  const submission = { answers: { '1': 1 }, timeTakenSeconds: 120, startedAt: '2026-11-01T10:00:00Z', trackingToken: 'synthetic' };
+  const submission = { componentId: 'PROGRAMME-Q1', answers: { '1': 1 }, timeTakenSeconds: 120, startedAt: '2026-11-01T10:00:00Z', trackingToken: 'synthetic' };
   it.each([400, 409])('exposes authoritative time for an explicit retry on status %s', async status => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: 'Review the updated time.', code: 'activity_time_conflict', previousSeconds: 600,

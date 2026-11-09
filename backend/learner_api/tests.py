@@ -2112,7 +2112,7 @@ class QuizSubmitWorkingRulesTests(SimpleTestCase):
         )
         body = {
             "trackingToken": tracking["trackingToken"], "timeTakenSeconds": 0,
-            "answers": {"1": 10},
+            "componentId": "PROGRAMME-QUIZ-77", "answers": {"1": 10},
         }
         body.update(payload or {})
         request = RequestFactory().post(
@@ -2127,7 +2127,16 @@ class QuizSubmitWorkingRulesTests(SimpleTestCase):
         models = {"apprenticeship": Mock()}
         models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
         profile = SimpleNamespace(training_plan_progress=[])
+        authorised_component = {
+            "componentId": "PROGRAMME-QUIZ-77",
+            "isQuiz": True,
+            "quizMeta": {"quizId": self.QUIZ_ID},
+        }
         with patch.object(quiz_views, "SOURCE_MODELS", models), \
+             patch.object(
+                 quiz_views, "_programme_quiz_context",
+                 return_value=(models["apprenticeship"].objects.get.return_value, authorised_component, None),
+             ), \
              patch.object(quiz_views, "_fetch_quiz", return_value=self._quiz()), \
              patch.object(quiz_views, "learner_profile_for_source", return_value=profile), \
              patch.object(quiz_views, "tracking_session_already_used", return_value=False), \
@@ -2149,6 +2158,7 @@ class QuizSubmitWorkingRulesTests(SimpleTestCase):
         save.assert_called_once()
         audit.assert_called_once()
         record = save.call_args.args[1]
+        self.assertEqual(record["componentId"], "PROGRAMME-QUIZ-77")
         self.assertIsNone(record["declaredCompletedAt"])
         self.assertEqual(record["submissionValidationReason"], "")
 

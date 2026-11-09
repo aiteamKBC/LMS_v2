@@ -40,7 +40,7 @@ from .working_rules import (
     resolve_completion_instants,
     validation_response_payload,
 )
-from login.permissions import learner_self_or_admin
+from login.permissions import learner_self_or_admin, learner_self_or_staff
 from quiz_api.answer_keys import choice_label, quiz_submission_error
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,10 @@ def _scrub_answer_key(quiz):
     for q in quiz["questions"]:
         qtype = q["type"]
         answers = q["answers"]
-        safe_q = {k: v for k, v in q.items() if k != "answers"}
+        # Explanations commonly describe why the authored answer is correct,
+        # so they are answer-key material too. They may be returned by a
+        # post-submission result, but never by a quiz-read endpoint.
+        safe_q = {k: v for k, v in q.items() if k not in {"answers", "explanation"}}
 
         if qtype in ("single_choice", "multiple_choice", "true_false"):
             # Legacy imports can contain indistinguishable options. Show one
@@ -245,17 +248,78 @@ def _scrub_answer_key(quiz):
     }
 
 
+def _programme_quiz_context(kind, learner_id, quiz_id, component_id=None, *, include_retired=False):
+    """Resolve a quiz through the learner's canonical Programme components.
+
+    A standalone quiz id is not an entitlement. Free Course components are not
+    part of this projection, so they can only use their dedicated assigned
+    component endpoint. A shared quiz id remains valid when the learner also has
+    an ordinary Programme component linking it.
+    """
+    model = SOURCE_MODELS.get(kind)
+    if model is None or not str(learner_id or "").strip():
+        return None, None, _error("kind and learnerId query params are required.", 400)
+    requested_component = str(component_id or "").strip()
+    if not requested_component:
+        return None, None, _error("componentId is required.", 400)
+    try:
+        # Created_users.objects is apprenticeship-scoped; quiz ownership must
+        # resolve both learner kinds from the shared enrolment table.
+        manager = getattr(model, "all_learners", model.objects)
+        source = manager.get(pk=learner_id)
+    except model.DoesNotExist:
+        return None, None, _error("Learner not found.", 404)
+
+    from .learner_detail import ActivityComponentNotFound, build_learner_detail
+    try:
+        detail = build_learner_detail(
+            source, learner_id, compact=True, read_only=True, quiz_view=True,
+            activity_component_id=requested_component,
+        )
+    except ActivityComponentNotFound:
+        # Free Course components are deliberately absent from the Programme
+        # projection. Possession of their id (or linked quiz id) must not turn
+        # the generic endpoint into an alternative question reader.
+        return source, None, _error("Quiz not found.", 404)
+    candidates = list(detail.get("components") or [])
+    if include_retired:
+        candidates.extend(detail.get("retiredQuizComponents") or [])
+    matches = [
+        component for component in candidates
+        if component.get("isQuiz") is True
+        and str((component.get("quizMeta") or {}).get("quizId")) == str(quiz_id)
+    ]
+    matches = [component for component in matches if str(component.get("componentId")) == requested_component]
+    if not matches:
+        return source, None, _error("Quiz not found.", 404)
+    return source, matches[0], None
+
+
 @csrf_exempt
+@learner_self_or_staff(query_param="learnerId")
 def quiz_detail(request, quiz_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
+    kind = (request.GET.get("kind") or "").strip()
+    learner_id = (request.GET.get("learnerId") or "").strip()
+    component_id = (request.GET.get("componentId") or "").strip()
+    try:
+        _source, _component, error = _programme_quiz_context(
+            kind, learner_id, quiz_id, component_id or None, include_retired=True,
+        )
+    except DatabaseError:
+        return _error("Could not verify quiz access. Please try again.", 503)
+    if error is not None:
+        return error
     try:
         quiz = _fetch_quiz(quiz_id)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DatabaseError:
+        return _error("Could not read this quiz. Please try again.", 503)
     if quiz is None:
         return _error("Quiz not found.", 404)
-    return JsonResponse(_scrub_answer_key(quiz))
+    response = JsonResponse(_scrub_answer_key(quiz))
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 def _norm(text):
@@ -461,6 +525,17 @@ def submit_quiz_attempt(request, quiz_id):
     except (ValueError, UnicodeDecodeError) as exc:
         return _error(f"Invalid JSON body: {exc}", 400)
 
+    component_id = str(payload.get("componentId") or "").strip()
+    try:
+        source, authorised_component, error = _programme_quiz_context(
+            kind, learner_id, quiz_id, component_id or None,
+        )
+    except DatabaseError:
+        return _error("Could not verify quiz access. Please try again.", 503)
+    if error is not None:
+        return error
+    component_id = str(authorised_component.get("componentId") or "").strip()
+
     # Working rules are decided here, before the quiz is fetched, graded or
     # persisted: a refusal must leave no attempt, no progress record, no audit
     # line and no OTJH credit behind. The learner's answers stay in the browser
@@ -494,8 +569,8 @@ def submit_quiz_attempt(request, quiz_id):
 
     try:
         quiz = _fetch_quiz(quiz_id)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DatabaseError:
+        return _error("Could not read this quiz. Please try again.", 503)
     if quiz is None:
         return _error("Quiz not found.", 404)
 
@@ -555,16 +630,9 @@ def submit_quiz_attempt(request, quiz_id):
     passed = grade_pct >= (quiz["passingGrade"] or 0)
 
     try:
-        source = model.objects.get(pk=learner_id)
-    except model.DoesNotExist:
-        return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
-
-    try:
         active = learner_profile_for_source(source, learner_id, active_only=True)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DatabaseError:
+        return _error("Could not read the learner profile. Please try again.", 503)
 
     history = (active.training_plan_progress if active and isinstance(active.training_plan_progress, list) else [])
     # 1-based attempt number for THIS quiz — count prior quiz-kind records for it.
@@ -604,6 +672,7 @@ def submit_quiz_attempt(request, quiz_id):
     attempt = {
         "kind": "quiz",
         "quizId": quiz["id"],
+        "componentId": component_id,
         "attempt": attempt_number,
         "passed": passed,
         "grade": grade_decimal,                # 0-1 decimal, e.g. 0.9
@@ -649,6 +718,7 @@ def submit_quiz_attempt(request, quiz_id):
             "detail": f"Scored {int(grade_pct) if grade_pct == int(grade_pct) else grade_pct}% · {correct_count}/{question_count}",
             "passed": passed,
             "quizId": quiz["id"],
+            "componentId": component_id,
             "week": week_title,
             "module": module_title or quiz["module"],
             "at": submitted_at,
@@ -664,9 +734,9 @@ def submit_quiz_attempt(request, quiz_id):
         except IntegrityError as exc:
             if "learner_progress_tracking_session_uq" in str(exc):
                 return _error("This activity timing session has already been submitted.", 409)
-            return _error(f"Database error saving attempt: {exc}", 502)
-        except DatabaseError as exc:
-            return _error(f"Database error saving attempt: {exc}", 502)
+            return _error("Could not save this quiz attempt. Please try again.", 503)
+        except DatabaseError:
+            return _error("Could not save this quiz attempt. Please try again.", 503)
         record_quiz_attempt(
             kind=kind, learner_id=learner_id, source=source, quiz=quiz,
             attempt_number=attempt_number, passed=passed, grade_pct=grade_pct,

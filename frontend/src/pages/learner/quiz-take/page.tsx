@@ -170,6 +170,7 @@ export default function QuizTakePage() {
   const [programmeName, setProgrammeName] = useState('Programme not set');
   const [reflectionRequired, setReflectionRequired] = useState(true);
   const [reflectionQuestion, setReflectionQuestion] = useState<string | null>(null);
+  const [quizComponentId, setQuizComponentId] = useState<string | null>(null);
   const [reflectionChoiceOpen, setReflectionChoiceOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -234,7 +235,7 @@ export default function QuizTakePage() {
   }, [quizId, kind, id, phase]);
 
   useEffect(() => {
-    if (!quizId) return;
+    if (!quizId || !kind || !id || detailLoading) return;
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
@@ -243,12 +244,17 @@ export default function QuizTakePage() {
     setReflectionChoiceOpen(false);
     setAnswers({});
     setResult(null);
-    fetchQuiz(Number(quizId), id)
+    if (!quizComponentId) {
+      setLoading(false);
+      setLoadError(detailError || 'This quiz is not assigned in the learner’s current programme.');
+      return;
+    }
+    fetchQuiz(Number(quizId), kind as LearnerKind, id, quizComponentId)
       .then((data) => { if (!cancelled) setQuiz(data); })
       .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load quiz'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id, quizId, loadAttempt]);
+  }, [kind, id, quizId, quizComponentId, detailError, detailLoading, loadAttempt]);
 
   // Load the learner's KSBs (from their Active_users row) for the reflection window.
   useEffect(() => {
@@ -258,6 +264,7 @@ export default function QuizTakePage() {
     setDetailLoading(true);
     setDetailError(null);
     setDetail(null);
+    setQuizComponentId(null);
     fetchLearnerDetail(kind as LearnerKind, id, { quizView: true })
       .then((d) => {
         if (!cancelled) {
@@ -268,8 +275,11 @@ export default function QuizTakePage() {
           setLearnerName(d.name || 'Learner');
           setProgrammeName(d.programme || 'Programme not set');
           const quizComponent = (d.components || []).find(component =>
-            String(component.quizMeta?.quizId ?? '') === String(quizId),
+            String(component.quizMeta?.quizId ?? '') === String(quizId)
+            && (!moduleTitle || component.module === moduleTitle)
+            && (!weekTitle || component.week === weekTitle),
           );
+          setQuizComponentId(quizComponent?.componentId || null);
           setReflectionRequired(quizComponent?.reflectionRequired !== false);
           setReflectionQuestion(quizComponent?.reflectionQuestion || null);
         }
@@ -277,7 +287,7 @@ export default function QuizTakePage() {
       .catch(error => { if (!cancelled) setDetailError(error instanceof Error ? error.message : 'Could not load your quiz requirements.'); })
       .finally(() => { if (!cancelled) setDetailLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id, quizId, loadAttempt]);
+  }, [kind, id, moduleTitle, quizId, weekTitle, loadAttempt]);
 
   useEffect(() => {
     if (phase !== 'quiz' || reflectionChoiceOpen || !componentAccess.open) return;
@@ -418,6 +428,10 @@ export default function QuizTakePage() {
     options: QuizCompletionOptions = {},
   ) => {
     if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    if (!quizComponentId) {
+      setSubmitError('This quiz is not assigned in the learner’s current programme.');
+      return;
+    }
     const timerSeconds = options.timerSeconds ?? elapsedSeconds;
     const timeIssue = activityTimeIssue(retakePrevious.current, reflection.timeTakenSeconds ?? timerSeconds, retakeTimeChoice.current);
     if (timeIssue) { setTimeLimitIssue(timeIssue); return; }
@@ -443,6 +457,7 @@ export default function QuizTakePage() {
         rewardsUnavailable = await flushRewardObservations(tracking,'quiz',String(quiz.id), Boolean(tracking.persistent)) === 'not_enabled';
       }
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
+        componentId: quizComponentId,
         answers,
         timeTakenSeconds: reflection.timeTakenSeconds ?? timerSeconds,
         startedAt: tracking.startedAt,

@@ -291,6 +291,7 @@ class QuizActivityTimeTests(SimpleTestCase):
         with ExitStack() as stack:
             stack.enter_context(patch('socket.socket', side_effect=AssertionError('Network forbidden')))
             for name, value in {'SOURCE_MODELS': {kind: model}, '_fetch_quiz': QuizSubmitWorkingRulesTests._quiz(self),
+                    '_programme_quiz_context': (SimpleNamespace(id=19), {'componentId': 'QUIZ-COMP'}, None),
                     'learner_profile_for_source': SimpleNamespace(training_plan_progress=history),
                     'tracking_session_already_used': False}.items():
                 stack.enter_context(patch.object(quizzes, name, new=value) if name == 'SOURCE_MODELS'

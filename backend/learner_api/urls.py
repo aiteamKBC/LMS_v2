@@ -37,7 +37,7 @@ from .dashboard_header import dashboard_header, dashboard_bootstrap
 from .dashboard_weekly import dashboard_weekly
 from .dashboard_tabs import dashboard_tab
 from .dashboard_training import training_module
-from . import module_progress, extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
+from . import module_progress, extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_course_assignments, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 from .my_learning import my_learning
 from . import progress_transfer
 from . import support_tickets
@@ -114,6 +114,11 @@ urlpatterns = [
     # The learner's learning plan: their group's modules, editable within the
     # same programme. Offered once the learner reaches Delivery.
     path("learning-plan/<int:pk>/", learning_plan.learning_plan, name="learning-plan"),
+    path(
+        "learning-plan/<int:pk>/free-courses/",
+        free_course_assignments.free_course_assignments,
+        name="learning-plan-free-course-assignments",
+    ),
     # The same assignment from the module's side: one module, every learner,
     # ticked on or off. A tick is a plan save, so it writes the very same
     # "Created_users" plan the route above reads.
@@ -285,10 +290,12 @@ urlpatterns = [
     path("subject-covers/<int:pk>/", student_activity.subject_covers, name="subject-covers"),
     path("subject-cover/<str:subject_ref>/", student_activity.upload_subject_cover, name="subject-cover-upload"),
     path("training-plan/<str:kind>/<int:pk>/", training_plan_view.training_plan, name="training-plan"),
-    # The free courses assigned to this learner, each with its authored
-    # week/activity tree. Read-only; no hours/KSBs/progress (see free_courses_view).
+    # Assigned Free Course cards and on-demand content. Completion uses its own
+    # store and never contributes hours, KSBs or Programme progress.
     path("free-courses/<str:kind>/<int:pk>/", free_courses_view.free_courses, name="learner-free-courses"),
+    path("free-courses/<str:kind>/<int:pk>/courses/<str:course_id>/", free_courses_view.free_course_detail, name="learner-free-course-detail"),
     path("free-courses/<str:kind>/<int:pk>/complete/", free_courses_view.complete_free_course_activity, name="learner-free-course-complete"),
+    path("free-courses/<str:kind>/<int:pk>/quiz/<str:component_id>/", free_courses_view.free_course_quiz, name="learner-free-course-quiz"),
     path("free-courses/<str:kind>/<int:pk>/quiz/<str:component_id>/submit/", free_courses_view.submit_free_course_quiz, name="learner-free-course-quiz-submit"),
     path("training-plan-dashboard/<str:kind>/<int:pk>/", training_plan_dashboard.training_plan_dashboard, name="training-plan-dashboard"),
     path("certificates/verify/<uuid:token>/", certificates.verify_certificate, name="learner-certificate-verify"),

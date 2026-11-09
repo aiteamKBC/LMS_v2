@@ -48,6 +48,22 @@ from .module_placement_sql import current_module_sql
 
 logger = logging.getLogger(__name__)
 
+
+class ActivityComponentNotFound(ServiceError):
+    """The requested activity is outside this learner's Programme plan.
+
+    This remains a ``ServiceError`` for existing learner-detail callers, while
+    giving component-scoped APIs a precise failure to translate without
+    swallowing unrelated service failures.
+    """
+
+    def __init__(self):
+        super().__init__(
+            "Activity not found in this learner's plan.",
+            code="activity_not_found",
+            status=404,
+        )
+
 #: An uploaded file only counts as a component's audio when it is one of these.
 AUDIO_FILE_SUFFIXES = {'.mp3', '.wav', '.ogg', '.oga', '.m4a', '.aac', '.flac', '.opus', '.wma'}
 
@@ -2284,7 +2300,7 @@ def _annotate_otjh(components):
 def _activity_module_components(components, component_id):
     selected = next((c for c in components if c.get('componentId') == component_id), None)
     if selected is None:
-        raise ServiceError("Activity not found in this learner's plan.", status=404)
+        raise ActivityComponentNotFound()
     module_id = selected.get('moduleId')
     return [c for c in components if (c.get('moduleId') == module_id if module_id else
             not c.get('moduleId') and c.get('module') == selected.get('module'))]

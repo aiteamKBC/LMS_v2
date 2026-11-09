@@ -200,21 +200,43 @@ class HolidayOwnerResolutionTests(SimpleTestCase):
         with patch("learner_api.working_rules._module_cohort_for_component", return_value=""):
             self.assertEqual(learner_holiday_details(None), {})
 
-    def test_only_bank_holidays_close_a_day_each_on_its_own_date(self):
-        # An authored workshop week must not flag every day of that week; a
-        # bank holiday closes exactly its own date.
-        cohort_holidays = [
-            {"id": 1079, "label": "Workshop Oct", "startDate": "2026-09-27",
-             "endDate": "2026-10-03", "source": "authored"},
-            {"id": 7, "label": "Christmas Day", "startDate": "2026-12-25",
-             "endDate": "2026-12-25", "source": "gov.uk"},
+    def test_selected_bank_holidays_are_scoped_bounded_and_deduplicated(self):
+        rows = [
+            {"id": "start", "title": "New Year", "holiday_date": date(2026, 1, 1),
+             "division": "england-and-wales"},
+            {"id": "end", "title": "Year end", "holiday_date": date(2026, 12, 31),
+             "division": "england-and-wales"},
+            {"id": "duplicate", "title": "Summer bank holiday", "holiday_date": date(2026, 8, 31),
+             "division": "england-and-wales"},
+            {"id": "duplicate", "title": "Summer bank holiday", "holiday_date": date(2026, 8, 31),
+             "division": "england-and-wales"},
+            {"id": "outside", "title": "Outside period", "holiday_date": date(2027, 1, 1),
+             "division": "england-and-wales"},
+            {"id": "other-cohort", "title": "Another cohort", "holiday_date": date(2026, 5, 1),
+             "division": "england-and-wales"},
+            {"id": "local", "label": "Workshop week", "start_date": date(2026, 9, 27),
+             "end_date": date(2026, 10, 3), "type": "College closure"},
         ]
-        with patch("learner_api.working_rules._module_cohort_for_component", return_value="CO1"):
-            with patch("curriculum_api.views.cohort_selected_holidays_by_cohort",
-                       return_value={"CO1": cohort_holidays}):
-                details = learner_holiday_details("COMP-1")
-        self.assertEqual(list(details), [date(2026, 12, 25)])
-        self.assertEqual(details[date(2026, 12, 25)][0]["label"], "Christmas Day")
+        choices = {"CO1": {"selected": ["start", "end", "duplicate", "outside", "local"]}}
+        with patch("learner_api.working_rules._module_cohort_for_component", return_value="CO1"), \
+                patch("learner_api.working_rules._cohort_window",
+                      return_value=(date(2026, 1, 1), date(2026, 12, 31))), \
+                patch("curriculum_api.calendar_holidays.cohort_choices", return_value=choices), \
+                patch("curriculum_api.calendar_holidays.rows", return_value=rows):
+            details = learner_holiday_details("COMP-1")
+
+        self.assertEqual(list(details), [date(2026, 1, 1), date(2026, 12, 31), date(2026, 8, 31)])
+        self.assertEqual(len(details[date(2026, 8, 31)]), 1)
+        self.assertNotIn(date(2026, 5, 1), details)
+        self.assertNotIn(date(2026, 9, 27), details)  # Local closures remain a separate rule.
+        self.assertNotIn(date(2027, 1, 1), details)
+
+    def test_missing_or_invalid_cohort_period_has_no_holidays(self):
+        with patch("learner_api.working_rules._module_cohort_for_component", return_value="CO1"), \
+                patch("learner_api.working_rules._cohort_window", return_value=(None, None)), \
+                patch("curriculum_api.calendar_holidays.cohort_choices") as choices:
+            self.assertEqual(learner_holiday_details("COMP-1"), {})
+        choices.assert_not_called()
 
 
 class OverviewBucketingTests(SimpleTestCase):
