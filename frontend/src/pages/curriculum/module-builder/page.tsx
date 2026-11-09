@@ -1,4 +1,5 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { useWeekPointDrafts, type WeekPointDrafts } from './useWeekPointDrafts';
 import { WebWeekPointsEditor } from './WebWeekPointsEditor';
 import { componentSessionTitle } from '../shared/sessionDisplayTitle';
 import { ModuleLearnerCount } from './ModuleLearnerCount';
@@ -1616,10 +1617,13 @@ function ModuleBuilderContent() {
   // Serialising the whole module is the dirty check, the auto-save trigger and
   // the "is this still what we sent" comparison, so it is done once per render
   // rather than three times.
+  const pointDrafts = useWeekPointDrafts(workingModule?.catalogueId || workingModule?.id || '', workingModule?.weekStructure.map(week => week.id) || []);
+  const { save: savePointDrafts, discard: discardPointDrafts, signature: pointDraftSignature } = pointDrafts;
   const workingModuleSnapshot = useMemo(() => moduleSnapshot(workingModule), [workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
     workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
-  ) || videoFiles.hasPending;
+  ) || videoFiles.hasPending || Boolean(pointDraftSignature);
+  const workspaceSaveSnapshot = workingModuleSnapshot + pointDraftSignature;
   const workspaceSaveStatus: WorkspaceSaveStatus = workingModuleProgrammeArchived
     ? 'locked'
     : saving
@@ -2466,7 +2470,7 @@ function ModuleBuilderContent() {
     // Marking the pre-normalisation snapshot alone left the two disagreeing, so
     // a refused save came straight back round as a second attempt at the same
     // payload -- the one thing a refusal must not do.
-    autoSaveAttemptRef.current = sentSnapshot;
+    autoSaveAttemptRef.current = sentSnapshot + pointDraftSignature;
     try {
       if (!pendingFields) setWorkingModule(moduleToSave);
       // The copy the server holds at that revision, so only what the reader
@@ -2538,6 +2542,7 @@ function ModuleBuilderContent() {
         if (savedModuleSnapshotRef.current) savedModuleSnapshotRef.current = moduleSnapshot(apply(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem));
         setWorkingModule(current => current?.catalogueId === saved.catalogueId ? apply(current) : current);
       });
+      await savePointDrafts(saved.catalogueId || saved.id, saved.weekStructure.map(week => week.id));
       setStorageVersion(version => version + 1);
       setActionMessage(pendingFields ? 'Available changes saved. Reserved fields and unresolved choices remain in your draft.' : null);
       setSaveFailure(null);
@@ -2633,7 +2638,7 @@ function ModuleBuilderContent() {
       setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_UNREADABLE_NOTICE });
     }
     return null;
-  }, [collaboration, curriculumProgrammes, ksbSets, reload, selectedComponent?.id, selectedComponent?.type, setModuleConflicts, standards, uploadPendingVideos, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+  }, [pointDraftSignature, savePointDrafts, collaboration, curriculumProgrammes, ksbSets, reload, selectedComponent?.id, selectedComponent?.type, setModuleConflicts, standards, uploadPendingVideos, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
   /**
    * `persistWorkingModule` and the live merge, readable from inside each other.
    *
@@ -2678,12 +2683,12 @@ function ModuleBuilderContent() {
     // A save is already in flight. `saving` is a dependency, so the edits made
     // during it are picked up the moment it settles.
     if (saving) return;
-    if (autoSaveAttemptRef.current === workingModuleSnapshot) return;
+    if (autoSaveAttemptRef.current === workspaceSaveSnapshot) return;
     const timer = window.setTimeout(() => {
       // Stamped with the state being attempted, so a refusal cannot loop: the
       // module is still dirty afterwards, and dirty is this effect's trigger.
       // Editing again produces a different state, which is a new attempt.
-      autoSaveAttemptRef.current = workingModuleSnapshot;
+      autoSaveAttemptRef.current = workspaceSaveSnapshot;
       void persistWorkingModule('auto-save');
     }, AUTO_SAVE_QUIET_MS);
     // Every further edit cancels the pending save and starts the wait again, so
@@ -2696,7 +2701,7 @@ function ModuleBuilderContent() {
     saving,
     workingModule,
     workingModuleProgrammeArchived,
-    workingModuleSnapshot,
+    workspaceSaveSnapshot,
   ]);
 
   /**
@@ -3401,10 +3406,11 @@ function ModuleBuilderContent() {
       return;
     }
     if (result.isDenied) {
+      discardPointDrafts(workingModule?.catalogueId || workingModule?.id || '');
       const restored = restoreSavedWorkingModule();
       await onNavigate(restored);
     }
-  }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
+  }, [discardPointDrafts, workingModule, hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
 
   const pendingSelectionRef = useRef<{ catalogueId: string; selection: Selection } | null>(null);
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
@@ -3820,6 +3826,8 @@ function ModuleBuilderContent() {
               ) : selectedWeek ? (
                 <EditScope kind="week" id={selectedWeek.id}>
                 <ModuleWeekPanel
+                  pointDrafts={pointDrafts}
+                  saving={saving}
                   week={selectedWeek}
                   module={workingModule}
                   groupOptions={componentGroupOptions}
@@ -5776,7 +5784,9 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // different: it copies real authored components out of the library instead
 // of creating empty ones. The only saved-template control on this screen is
 // "From template" in the Course structure rail, which builds a whole new week.
-function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
+function ModuleWeekPanel({ pointDrafts, saving, week, module, groupOptions, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
+  pointDrafts: WeekPointDrafts;
+  saving: boolean;
   week: ModuleWeek;
   module: ModuleCatalogueItem;
   groupOptions: GroupOption[];
@@ -5820,7 +5830,7 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
         </div>
       </div>
 
-      <WebWeekPointsEditor key={`${module.catalogueId || module.id}:${week.id}`} moduleId={module.catalogueId || module.id} weekId={week.id} />
+      <WebWeekPointsEditor key={`${module.catalogueId || module.id}:${week.id}`} moduleId={module.catalogueId || module.id} weekId={week.id} drafts={pointDrafts} busy={saving} />
 
       <WeekOverviewPanel
         components={week.components}
