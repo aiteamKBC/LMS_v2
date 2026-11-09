@@ -9,15 +9,16 @@ from . import dashboard_monthly as monthly
 
 
 class MonthlyProjectionTests(SimpleTestCase):
-    def fixture(self, query='', *, records=None, targets=None, subjects=None, bounds=None, sessions=None, reviews=None, fallback=None, lectures=None):
-        from . import dashboard_tabs, attendance_lectures, overview_week
+    def fixture(self, query='', *, records=None, targets=None, subjects=None, bounds=None, sessions=None, reviews=None, fallback=None, lectures=None, attendance_hours=None):
+        from . import dashboard_tabs, attendance_lectures, overview_week, monthly_log_attendance
         source = SimpleNamespace(pk=265, id=265, email='synthetic@example.invalid')
         owner = {'id': 17, 'start_date': date(2026, 1, 1), 'end_date': date(2027, 1, 1)}
         spine = {'modules': [{'id': 'M1', 'title': 'Module', 'start_date': '2026-01-01', 'end_date': '2027-01-01', 'tutor_name': 'Tutor', 'coach_name': ''}],
                  'moduleLinks': {}, 'reviews': reviews or [], 'coach': {'name': 'Coach'}}
         subjects = subjects if subjects is not None else [{'id': 'current:M1', 'title': 'Unified title', 'activities': []}]
         cursor = MagicMock()
-        with patch.object(monthly.canonical, 'entries_for', return_value=records or []) as entries, \
+        with patch.object(monthly_log_attendance, 'read_rows', return_value=attendance_hours or []), \
+             patch.object(monthly.canonical, 'entries_for', return_value=records or []) as entries, \
              patch.object(monthly.canonical, 'targets_for', return_value={'2026-10': 50} if targets is None else targets), \
              patch.object(monthly.canonical, 'query', return_value=[]), \
              patch.object(dashboard_tabs, 'learning_projection', return_value={}), \
@@ -31,6 +32,14 @@ class MonthlyProjectionTests(SimpleTestCase):
              patch.object(overview_week, 'read_week', return_value=fallback or {}) as week:
             result = monthly.read_monthly(source, 'commercial', owner, object(), RequestFactory().get('/monthly/' + query))
         return result, entries, schedule, session_rows, attendance, week
+
+    def test_attended_hours_use_the_same_deduplicated_register_rows_as_monthly_logs(self):
+        for version in ('', '&version=2'):
+            with self.subTest(version=version):
+                result, *_ = self.fixture('?month=2026-10' + version,
+                    records=[{'accepted': True, 'reporting_month': '2026-10', 'actual_seconds': 9000}],
+                    attendance_hours=[{'accepted': True, 'reporting_month': '2026-10', 'actual_hours': 7.5}])
+                self.assertEqual(result['summary']['achievedHours'], '10 hrs' if version else 10)
 
     def test_exact_payload_and_selected_month_queries_without_week(self):
         result, entries, schedule, rows, attendance, week = self.fixture('?month=2026-10', records=[

@@ -1,6 +1,7 @@
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
 import type { Subject, SubjectEntry } from './learningSummary';
 import type { LearningWeek } from './subjectLearning';
@@ -20,6 +21,33 @@ const props = { subject, weeks, kind: 'commercial', learnerId: '132', progress: 
   renderWeekProgress: () => null };
 
 describe('catalogue point navigation', () => {
+  it.each(['commercial', 'apprenticeship'])('retains authored Points and attendance requirements together (%s)', async kind => {
+    clearAllCachedResources();
+    const live: SubjectEntry = { ...entries[0], id: 'catalogue:session', title: 'Live workshop', category: 'live_session',
+      native: { ...entries[0].native!, componentId: 'SESSION', title: 'Live workshop', type: 'live_session', expectedOtjh: 2 } };
+    const groupedSubject = { ...subject, activities: [live, ...entries] };
+    const groupedWeeks = [{ ...weeks[0], activities: groupedSubject.activities }];
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === `/learner_api/web-points/${kind}/132/`) return new Response(JSON.stringify({ weeks: {
+        W1: { moduleId: 'M1', points: [{ id: 'P1', title: 'Workshop', componentIds: ['SESSION'] }] },
+      } }));
+      if (url === `/learner_api/attendance/${kind}/132/mode/`) return new Response(JSON.stringify({ mode: 'lazy' }));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(<MemoryRouter><SubjectActivityWorkspace {...props} kind={kind} subject={groupedSubject} weeks={groupedWeeks} requestedActivity={live.id} search="" /></MemoryRouter>);
+      const point = await screen.findByRole('list', { name: 'Workshop activities' });
+      expect(within(point).getByText('Live workshop')).toBeVisible();
+      expect(await within(point).findByText('Required: Recording')).toBeVisible();
+      expect(within(screen.getByRole('list', { name: 'Other activities' })).getByTitle('Reading')).toBeVisible();
+      expect(fetchMock.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining([
+        `/learner_api/web-points/${kind}/132/`, `/learner_api/attendance/${kind}/132/mode/`,
+      ]));
+    } finally {
+      cleanup(); vi.unstubAllGlobals(); clearAllCachedResources();
+    }
+  });
   it.each(['commercial', 'apprenticeship'])('shows the supplied week dates in the subject sidebar (%s)', kind => {
     const datedWeeks = [{ ...weeks[0], start: '2026-10-20', end: '2026-10-26' }];
     const { rerender } = render(<MemoryRouter><SubjectActivityWorkspace {...props} kind={kind} weeks={datedWeeks} search="" /></MemoryRouter>);

@@ -90,13 +90,22 @@ class RecordedAttendanceTests(SimpleTestCase):
         self.assertEqual(result['effective_attendance'], 1)
         self.assertEqual(result['session_id'], 'OCC-1:SHARED')
 
-    def test_future_active_cancelled_and_legacy_rows_are_unchanged(self):
+    def test_future_active_and_cancelled_rows_are_unchanged(self):
         rows = [lecture('FUTURE', scheduled_start=NOW+timedelta(days=1), scheduled_end=NOW+timedelta(days=1,hours=1)),
                 lecture('ACTIVE', scheduled_start=NOW-timedelta(minutes=1), scheduled_end=NOW+timedelta(minutes=1)),
-                lecture('CANCELLED', occurrence_status='cancelled'), lecture('LEGACY', source='kbc-attendance')]
+                lecture('CANCELLED', occurrence_status='cancelled')]
         with patch('curriculum_api.recording_views.fully_watched_occurrences') as watch:
             self.assertEqual(self.apply(rows, mode='lazy'), rows)
         watch.assert_not_called()
+
+    def test_legacy_absence_waits_without_inventing_recording_completion(self):
+        row = lecture('LEGACY', source='kbc-attendance')
+        with patch('curriculum_api.recording_views.fully_watched_occurrences') as watch:
+            result = self.apply([row], mode='lazy')[0]
+        watch.assert_not_called()
+        self.assertEqual(attendance_outcome(result, NOW), ('awaiting_recording', False))
+        self.assertEqual(result['attendance_status'], 'absent')
+        self.assertEqual(self.apply([row], mode='live'), [row])
 
     def test_coach_correction_remains_authoritative(self):
         recorded = self.apply([lecture()], mode='lazy', watched={'OCC-1'})

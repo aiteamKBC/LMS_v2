@@ -53,6 +53,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('employer progress reviews', () => {
+  it('opens and signs an owned Gateway review through the same employer-only form flow', async () => {
+    event = { ...event, id: 'gateway-event', eventKey: 'gateway-event', source: 'review',
+      reviewTypeCode: 'gateway_review', title: 'Gateway Review' };
+    definition = { ...definition, template: { ...definition.template, name: 'Gateway Review', reviewTypeCode: 'gateway_review' } };
+    vi.mocked(signReviewAsEmployer).mockImplementation(async () => {
+      definition.signatures.employer = { required: true, signed: true, signedName: 'Employer Jane' };
+      return definition;
+    });
+    mount();
+    expect(await screen.findByRole('heading', { name: 'Gateway Review' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Read & sign' }));
+    expect(await screen.findByRole('heading', { name: 'Gateway Review #1' })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm employer signature' }));
+    await waitFor(() => expect(signReviewAsEmployer).toHaveBeenCalledWith('7', 'commercial', '499', 'instance-1',
+      { name: 'Employer Jane', signature: 'data:image/png;base64,SIG' }));
+    expect(await screen.findByText('All signatures saved')).toBeVisible();
+    expect(onChanged).toHaveBeenCalledOnce();
+    expect(signMigratedReviewAsParty).not.toHaveBeenCalled();
+  });
+
   async function openImportedRecordingReview(overrides: Partial<LearnerCalendarEvent> = {}) {
     event = { ...event, reviewSource: 'aptem', eventKey: 'imported-review:archive', id: 'imported-review:archive',
       calendarEventKey: 'learner-book:verified-legacy', invited: false, migratedForm: true,

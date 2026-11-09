@@ -131,6 +131,21 @@ class EmployerDocumentPreviewTests(SimpleTestCase):
         self.assertEqual(self.review().status_code, 403)
         self.assertEqual(self.review(as_pdf=True).status_code, 403)
 
+    def test_gateway_signoff_uses_only_the_owned_employer_signature(self):
+        self.definition["template"]["reviewTypeCode"] = "gateway_review"
+        payload = {"name": "Synthetic Manager", "signature": "data:image/png;base64,SYNTHETIC"}
+        request = RequestFactory().post("/review/", data=json.dumps(payload), content_type="application/json")
+        request.login_account = self.account
+        with patch("curriculum_api.review_instances.record_review_instance_signature", return_value=self.definition) as sign:
+            response = employer_portal.employer_review_instance(
+                request,
+                employer_id=9, kind="commercial", learner_id=101, event_key="ri-1",
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(sign.call_args.args, (self.instance, "employer"))
+            self.assertEqual(sign.call_args.kwargs["signed_name"], "Synthetic Manager")
+            self.assertEqual(sign.call_args.kwargs["signature"], payload["signature"])
+
     def test_pdf_route_does_not_resolve_as_an_event_key(self):
         route = resolve("/learner_api/employer-portal/9/learner/commercial/101/events/cal:ri-1/review/pdf/")
         self.assertTrue(route.kwargs["as_pdf"])

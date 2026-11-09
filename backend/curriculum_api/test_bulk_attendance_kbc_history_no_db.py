@@ -99,6 +99,7 @@ history = load_module()
 class KbcHistoryTests(unittest.TestCase):
     def setUp(self):
         self.live = patch.object(history, '_live_register', return_value=({}, None)).start()
+        patch.object(history, '_recorded_outcomes', side_effect=lambda records: records).start()
 
     def tearDown(self):
         patch.stopall()

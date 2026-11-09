@@ -397,6 +397,12 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
         months = [month_state(month, rows, signs, targets.get(month), learner_id=learner['id'],
                               lock=locks[month])
                   for month, rows in grouped.items()]
+        # Classification is response metadata only. Do not add it to captured
+        # rows or signed snapshot digests, or change the accepted-hour ledger.
+        from .hour_review_status import review_hour_totals
+        review = review_hour_totals(records, canonical.allocations)
+        for month in months:
+            month.update(review.get(month['month'], {'submitted_hours': 0.0, 'verification_hours': 0.0}))
         programme_metrics = canonical.metrics_from_records(records, targets)['otjh']
         training_plan_totals = {
             'accepted_hours': programme_metrics.get('completed_actual', programme_metrics.get('actual'))

@@ -44,7 +44,7 @@ import { aptemBookingSnapshot, isAptemReview, meetingBookingWarning } from '../r
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
 import { LearnerReviewInstanceForm } from '../reviews/LearnerReviewInstanceForm';
 import { useLearnerReviewInstance } from "../reviews/LearnerReviewInstanceForm.helpers";
-import { bookingInstant, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from '../reviews/bookingDates';
+import { bookingInstant, firstAvailableBookingDate, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 import { BUSINESS_TIME_ZONE } from '@/lib/timeZones';
 
@@ -895,12 +895,12 @@ function LearnerCalendarBody() {
     return null;
   }, [bankHolidayByDate, bookingCalendar, bookingToday]);
   const selectedDateRestriction = bookingDateRestriction(selectedIso);
-  const bookDateRestriction = bookingDateRestriction(bookDate) || (bookType === 'mcr' ? mcmBookingDateRestrictionMessage(bookDate) : null);
+  const bookDateRestriction = bookingDateRestriction(bookDate);
   const openBookSession = useCallback((date?: string, sourceEvent?: CalendarEvent | null) => {
     setRescheduleEvent(null);
     setBookingSourceEvent(sourceEvent || null);
     setBookType(sourceEvent?.bookingSessionType || 'catch-up');
-    setBookDate(firstAvailableBookingDate(date || bookingToday, bookingCalendar, sourceEvent?.bookingSessionType === 'mcr'));
+    setBookDate(firstAvailableBookingDate(date || bookingToday, bookingCalendar));
     setBookTime('09:00');
     setBookDuration(['mcr', 'progress-review', 'review'].includes(sourceEvent?.bookingSessionType || '') ? '60' : String(sourceEvent?.durationMinutes || 60));
     setBookNotes('');

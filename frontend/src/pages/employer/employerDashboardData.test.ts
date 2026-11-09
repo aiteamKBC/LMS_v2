@@ -8,11 +8,18 @@ const review = (values: Partial<LearnerCalendarEvent> = {}) => ({
 } as LearnerCalendarEvent);
 
 describe('employer dashboard review facts', () => {
-  it('keeps Progress Review aliases and excludes other types and cancelled bookings', () => {
+  it('keeps Progress and Gateway reviews while excluding other types and cancelled bookings', () => {
     const events = [review(), review({ importedReviewType: 'Progress Review (+ Skills Radar)', eventKey: 'radar' }),
-      review({ importedReviewType: 'Gateway Review' }), review({ importedReviewType: 'Personal Support Plan' }),
+      review({ importedReviewType: 'Gateway Review', eventKey: 'gateway' }), review({ importedReviewType: 'Personal Support Plan' }),
       review({ bookingStatus: 'cancelled' })];
-    expect(progressReviews(events).map(event => event.eventKey)).toEqual(['pr', 'radar']);
+    expect(progressReviews(events).map(event => event.eventKey)).toEqual(['pr', 'radar', 'gateway']);
+  });
+  it('recognises native Gateway codes without using titles or overriding imported type metadata', () => {
+    const events = [review({ eventKey: 'native', importedReviewType: null, reviewTypeCode: 'gateway_review', source: 'review' }),
+      review({ eventKey: 'alias', importedReviewType: null, reviewTypeCode: 'gateway', source: 'review' }),
+      review({ eventKey: 'hidden-support', importedReviewType: 'Personal Support Plan', reviewTypeCode: 'gateway' }),
+      review({ eventKey: 'cancelled-gateway', importedReviewType: 'Gateway Review', status: 'cancelled' })];
+    expect(progressReviews(events).map(event => event.eventKey)).toEqual(['native', 'alias']);
   });
   it('uses the moved appointment date for month and upcoming filters', () => {
     const events = [review({ scheduledDate: '2026-11-02' })];

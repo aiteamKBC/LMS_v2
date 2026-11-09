@@ -3,7 +3,8 @@ import { coachViewAs } from '@/lib/coachViewAs';
 import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
 import type { Activity, ActivityContent, JournalSummary, MonthDetail, MonthState, SignatureCaptureMethod } from '@/features/old-otjh/api';
 
-export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null };
+export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null;
+  submitted_hours?: number | string; verification_hours?: number | string };
 export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null; demo_only?: boolean };
 export type UnallocatedActivity = Pick<Activity, 'id' | 'title' | 'actual_hours' | 'actual_hours_recorded'>;
 export type LogSummary = Omit<JournalSummary, 'months'> & {
@@ -14,7 +15,8 @@ export type LogSummary = Omit<JournalSummary, 'months'> & {
 /** The per-month hour totals the dashboard reads; a LogSummary satisfies it. */
 export type MonthlyLogHours = {
   learner?: { aptem_id?: number | null; planned_end_date?: string | null } | null;
-  months: Pick<LogMonth, 'month' | 'source' | 'training_plan_target' | 'not_accepted_hours' | 'actual_hours'>[];
+  months: Pick<LogMonth, 'month' | 'source' | 'training_plan_target' | 'not_accepted_hours' | 'actual_hours'
+    | 'submitted_hours' | 'verification_hours'>[];
   training_plan_totals?: LogSummary['training_plan_totals'];
 };
 export type LogLearner = { id: number; name: string; programme: string };

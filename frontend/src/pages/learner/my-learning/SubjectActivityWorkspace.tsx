@@ -110,6 +110,7 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
     <ActivitySidebar moduleTitle={subject.title} weekTitle={sidebarWeek ? weekTitle(sidebarWeek) : ''}
       webPointKind={kind} webPointLearnerId={learnerId}
       pointIdentityFor={item => entries.get(item.componentId || '')?.native?.componentId}
+      attendanceLearner={{ kind, id: learnerId }}
       weekDateLabel={weekDateLabel(sidebarWeek)} dateLabelFor={(_, index) => weekDateLabel(weeks[index])}
       weekComponents={(sidebarWeek?.activities || []).map(component)} weeks={sidebarWeeks}
       completedIds={new Set(combined.activities.filter(entry => entry.completed).map(entry => entry.id))}

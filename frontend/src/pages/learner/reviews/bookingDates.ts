@@ -31,15 +31,7 @@ export function parseBookingDay(value?: string | null): Date | null {
   return selected.getFullYear() === year && selected.getMonth() === month - 1 && selected.getDate() === day ? selected : null;
 }
 
-export function mcmBookingDateRestrictionMessage(value: string): string {
-  const selected = parseBookingDay(value);
-  if (!selected) return value ? 'Choose a valid booking date.' : '';
-  return selected.getDate() > 5 && selected.getDate() < 20
-    ? 'MCM appointments are available from the 20th of each month through the 5th of the following month.'
-    : '';
-}
-
-export function firstAvailableBookingDate(candidate?: string | null, rules?: BookingCalendarRules | null, monthly = false): string {
+export function firstAvailableBookingDate(candidate?: string | null, rules?: BookingCalendarRules | null): string {
   const today = bookingToday();
   const valid = parseBookingDay(candidate) ? candidate! : '';
   const selected = new Date(`${valid && valid >= today ? valid : today}T12:00:00`);
@@ -48,8 +40,7 @@ export function firstAvailableBookingDate(candidate?: string | null, rules?: Boo
   const lastYear = rules ? Math.max(0, ...rules.coveredYears) : selected.getFullYear();
   for (let searched = 0; searched < 3660 && selected.getFullYear() <= lastYear; searched++) {
     const day = isoDate(selected);
-    if (!bookingDateRestrictionMessage(day, rules || null)
-      && !(monthly && mcmBookingDateRestrictionMessage(day))) return day;
+    if (!bookingDateRestrictionMessage(day, rules || null)) return day;
     selected.setDate(selected.getDate() + 1);
   }
   return '';
