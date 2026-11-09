@@ -1,14 +1,14 @@
 """Learner-scoped read of the free courses assigned to a learner.
 
-Free courses are authored in the curriculum editor (the synthetic
-``FREE-COURSES`` programme) and assigned to a learner from the enrolment
-Learning-Plan modal, which stores a pure assignment record
-(``{freeCourseId, courseName, addedAt}``) on ``enrolment.Created_users``
-``Free_courses`` — no hours, no KSBs, no progress, by design.
+Free courses are authored in the canonical curriculum tables and assigned to a
+canonical ``Learner.learners`` identity through
+``Learner.learner_free_courses``. The legacy
+``enrolment.Created_users.Free_courses`` JSON is not an entitlement source.
 
-This view is the learner-facing counterpart: it returns the assigned courses
-enriched with their authored week/activity tree so the "My Learning" page can
-render them like ordinary modules (minus the progress machinery).
+These views are the learner-facing counterpart: the list returns lightweight
+cards for current assignments, and an assignment-scoped detail request returns
+one course's authored week/activity tree. Completion is stored separately from
+Programme progress, hours and KSBs.
 
 Identity is resolved SERVER-SIDE and never trusted from the client (same gate as
 ``learner_detail``/``training_plan``): the caller supplies only the
@@ -18,6 +18,7 @@ here, in-process, and only the learner's *assigned* courses are ever returned.
 """
 
 import json
+import logging
 
 from django.db import DatabaseError
 from django.http import JsonResponse
@@ -25,7 +26,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from login.permissions import learner_self_or_admin, learner_self_or_staff
+from login.permissions import learner_self_only, learner_self_or_staff
+from login.errors import safe_sqlstate
 
 from curriculum_api.views import (
     FREE_COURSES_TABLE,
@@ -36,21 +38,40 @@ from curriculum_api.views import (
     clean_str,
     free_programme_component_response,
     free_programme_fetch_all,
+    programme_deleted_row,
+    truthy,
 )
 
 from .learner_detail import (
-    SOURCE_MODELS,
     _component_files,
     _component_resource_url,
     _video_url_from_settings,
     component_audio_url,
 )
-from .mappers import _normalize_free_courses, _s
-from .models import LearnerFreeCourseProgress
-from .quizzes import _fetch_quiz, _grade_question
+from .free_course_selectors import VALID_LEARNER_KINDS, assigned_course_ids, canonical_learner
+from .mappers import _s
+from .models import LearnerFreeCourseProgress, LearnerProfile
+from .quizzes import _fetch_quiz, _grade_question, _scrub_answer_key
 from quiz_api.answer_keys import quiz_submission_error
 
-FREE_COURSES_PROGRAMME_ID = "FREE-COURSES"
+logger = logging.getLogger(__name__)
+
+INACTIVE_COURSE_STATUSES = {"inactive", "archived"}
+
+COURSE_COLUMNS = [
+    "id", "course_name", "description", "cover_image_url", "display_order",
+    "week_count", "component_count",
+]
+WEEK_COLUMNS = [
+    "id", "course_id", "week_id", "week_number", "week_title",
+    "display_order",
+]
+COMPONENT_SUMMARY_COLUMNS = [
+    "id", "free_module_id", "type", "display_order",
+]
+COMPONENT_DETAIL_COLUMNS = [
+    *COMPONENT_SUMMARY_COLUMNS, "title", "description", "settings_json",
+]
 
 
 def _error(message, status):
@@ -61,6 +82,52 @@ def _in_clause(column, values):
     """A portable ``column IN (...)`` fragment with its ordered params."""
     placeholders = ", ".join(["%s"] * len(values))
     return f"{column} in ({placeholders})", list(values)
+
+
+def _active_course_rows(rows):
+    """Current catalogue courses only, including legacy lifecycle columns."""
+    return [
+        row for row in rows
+        if not programme_deleted_row(row)
+        and _s(row.get("status")).lower() not in INACTIVE_COURSE_STATUSES
+        and not truthy(row.get("is_archived"))
+    ]
+
+
+def _catalogue_rows(stage, table, where_sql, params, order_sql, columns):
+    """Run one curriculum read and retain only safe failure diagnostics.
+
+    Query parameters and exception text can contain learner/catalogue values or
+    connection details, so neither is logged.  The fixed stage and table label,
+    wrapper class and SQLSTATE are sufficient to correlate a failed read with
+    the exact query shape in this module.
+    """
+    try:
+        return free_programme_fetch_all(
+            table,
+            where_sql,
+            params,
+            order_sql,
+            columns=columns,
+        )
+    except DatabaseError as exc:
+        logger.error(
+            "free_course_catalogue_query_failed stage=%s table=%s type=%s sqlstate=%s",
+            stage,
+            table,
+            type(exc).__name__,
+            safe_sqlstate(exc),
+        )
+        raise
+
+
+def _completed_refs(learner_id, course_ids):
+    """Canonical ``(course, component)`` completion keys for this learner."""
+    return set(
+        LearnerFreeCourseProgress.objects
+        .filter(learner_id=learner_id, free_course_ref__in=course_ids)
+        .values_list("free_course_ref", "component_ref")
+    )
 
 
 def _activity(component):
@@ -107,141 +174,207 @@ def _activity(component):
 
 
 def _resolve_source(kind, pk):
-    """The enrolment learner row for either kind, or (None, error-response)."""
-    model = SOURCE_MODELS.get(kind)
-    if model is None:
+    """Resolve the URL enrolment id to its canonical learner identity."""
+    if kind not in VALID_LEARNER_KINDS:
         return None, _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
     try:
-        # all_learners, not objects: the default manager is scoped to
-        # apprenticeship rows, so a commercial learner would 404 here. The
-        # enrolment `Free_courses` column is the source of truth for both kinds.
-        return model.all_learners.only("id", "free_courses").get(pk=pk), None
-    except model.DoesNotExist:
+        return canonical_learner(kind, pk), None
+    except LearnerProfile.DoesNotExist:
         return None, _error("Learner not found.", 404)
     except DatabaseError:
         return None, _error("Could not read the learner record.", 503)
 
 
-def _scoped_rows(assigned_ids):
+def _scoped_rows(assigned_ids, *, include_component_settings=True):
     """Fetch only the assigned courses' course/week/component rows.
 
-    Building the whole FREE-COURSES catalogue instead (every course's weeks and
-    every component's heavy settings_json) is what made the read slow enough to
-    trip the client's timeout — a learner has a handful of courses, not all.
+    The list path deliberately omits component settings and media. Detail reads
+    include those columns for one assigned course only.
     """
     course_where, course_params = _in_clause("id", assigned_ids)
     courses_by_id = {
         clean_str(row.get("id")): row
-        for row in free_programme_fetch_all(FREE_COURSES_TABLE, course_where, course_params)
+        for row in _active_course_rows(_catalogue_rows(
+            "courses", FREE_COURSES_TABLE, course_where, course_params,
+            "display_order, course_name, id", COURSE_COLUMNS,
+        ))
     }
 
     week_where, week_params = _in_clause("course_id", assigned_ids)
-    week_rows = active_week_rows(free_programme_fetch_all(
-        FREE_PROGRAMME_MODULES_TABLE, week_where, week_params, "display_order, week_number, id",
+    week_rows = active_week_rows(_catalogue_rows(
+        "weeks", FREE_PROGRAMME_MODULES_TABLE, week_where, week_params,
+        "display_order, week_number, id", WEEK_COLUMNS,
     ))
+    # A legacy/orphan week must not resurrect a missing or archived course.
+    week_rows = [week for week in week_rows if clean_str(week.get("course_id")) in courses_by_id]
     week_ids = [clean_str(week.get("id")) for week in week_rows if clean_str(week.get("id"))]
 
     component_rows = []
     if week_ids:
         module_in, module_params = _in_clause("free_module_id", week_ids)
-        component_rows = active_component_rows(free_programme_fetch_all(
+        component_rows = active_component_rows(_catalogue_rows(
+            "components",
             FREE_PROGRAMME_COMPONENTS_TABLE,
-            f"programme_id = %s and {module_in}",
-            [FREE_COURSES_PROGRAMME_ID, *module_params],
+            module_in,
+            module_params,
             "display_order, title",
+            COMPONENT_DETAIL_COLUMNS if include_component_settings else COMPONENT_SUMMARY_COLUMNS,
         ))
     return courses_by_id, week_rows, component_rows
+
+
+def _course_detail(course_id, course_row, week_rows, component_rows, completed_refs):
+    """Build one on-demand course tree in canonical curriculum order."""
+    activities_by_week = {}
+    for row in component_rows:
+        activity = _activity(free_programme_component_response(row))
+        activity["completed"] = (course_id, activity["componentId"]) in completed_refs
+        activities_by_week.setdefault(clean_str(row.get("free_module_id")), []).append(activity)
+
+    weeks = []
+    for week in week_rows:
+        if clean_str(week.get("course_id")) != course_id:
+            continue
+        week_id = clean_str(week.get("id"))
+        weeks.append({
+            "weekId": week_id,
+            "weekNumber": week.get("week_number") if isinstance(week.get("week_number"), int) else 0,
+            "weekTitle": clean_str(week.get("week_title")),
+            "displayOrder": week.get("display_order") if isinstance(week.get("display_order"), int) else 0,
+            "activities": activities_by_week.get(week_id, []),
+        })
+
+    return {
+        "freeCourseId": course_id,
+        "courseName": clean_str(course_row.get("course_name")),
+        "description": clean_str(course_row.get("description")),
+        "coverImageUrl": clean_str(course_row.get("cover_image_url")),
+        "weeks": weeks,
+    }
 
 
 @require_GET
 @learner_self_or_staff(kwarg="pk")
 def free_courses(request, kind, pk):
-    """Return the learner's assigned free courses, each with its week/activity tree."""
+    """Return lightweight cards for this learner's current assignments.
+
+    Component settings, media and quiz metadata are loaded only when one course
+    is opened through :func:`free_course_detail`.
+    """
     source, error = _resolve_source(kind, pk)
     if error is not None:
         return error
 
-    assigned = _normalize_free_courses(
-        source.free_courses if isinstance(source.free_courses, list) else []
-    )
-    if not assigned:
+    try:
+        assigned_ids = assigned_course_ids(source)
+    except DatabaseError:
+        return _error("Could not read the learner's free course assignments.", 503)
+    if not assigned_ids:
         response = JsonResponse({"freeCourses": []})
         response["Cache-Control"] = "private, no-store"
         return response
 
-    assigned_ids = [record["freeCourseId"] for record in assigned]
-
     try:
-        courses_by_id, week_rows, component_rows = _scoped_rows(assigned_ids)
+        courses_by_id, week_rows, component_rows = _scoped_rows(
+            assigned_ids, include_component_settings=False,
+        )
     except DatabaseError:
         return _error("Could not read the free course catalogue.", 503)
 
     # This learner's own free-course completions — a separate store that never
-    # touches OTJH/KSB or the programme's overall progress. Read defensively: if
-    # the progress table has not been provisioned yet, the course tree must still
-    # render (just with nothing ticked) rather than failing the whole page.
+    # touches OTJH/KSB or the programme's overall progress. A database failure is
+    # not equivalent to having no progress and must remain visible to the caller.
     try:
-        completed_refs = set(
-            LearnerFreeCourseProgress.objects
-            .filter(learner_id=source.pk)
-            .values_list("component_ref", flat=True)
-        )
+        completed_refs = _completed_refs(source.pk, assigned_ids)
     except DatabaseError:
-        completed_refs = set()
+        return _error("Could not read the learner's free course progress.", 503)
 
-    # Bucket components by their week once, so the tree build stays linear.
-    activities_by_week = {}
+    course_by_week = {
+        clean_str(week.get("id")): clean_str(week.get("course_id"))
+        for week in week_rows
+    }
+    activity_totals = {}
+    completed_totals = {}
     for row in component_rows:
-        activity = _activity(free_programme_component_response(row))
-        activity["completed"] = activity["componentId"] in completed_refs
-        activities_by_week.setdefault(clean_str(row.get("free_module_id")), []).append(activity)
+        component_id = clean_str(row.get("id"))
+        course_id = course_by_week.get(clean_str(row.get("free_module_id")))
+        if not component_id or not course_id:
+            continue
+        activity_totals[course_id] = activity_totals.get(course_id, 0) + 1
+        if (course_id, component_id) in completed_refs:
+            completed_totals[course_id] = completed_totals.get(course_id, 0) + 1
 
-    courses = {}
+    week_totals = {}
     for week in week_rows:
         course_id = clean_str(week.get("course_id"))
-        if course_id not in courses:
-            course_row = courses_by_id.get(course_id) or {}
-            courses[course_id] = {
-                "freeCourseId": course_id,
-                "courseName": clean_str(course_row.get("course_name")) or clean_str(week.get("course_name")),
-                "description": clean_str(course_row.get("description")),
-                "coverImageUrl": clean_str(course_row.get("cover_image_url")),
-                "weeks": [],
-            }
-        courses[course_id]["weeks"].append({
-            "weekId": clean_str(week.get("id")),
-            "weekNumber": week.get("week_number") if isinstance(week.get("week_number"), int) else 0,
-            "weekTitle": clean_str(week.get("week_title")),
-            "activities": activities_by_week.get(clean_str(week.get("id")), []),
-        })
+        if course_id:
+            week_totals[course_id] = week_totals.get(course_id, 0) + 1
 
-    # Return in assignment order. A course the catalogue no longer lists (retired
-    # or mis-referenced) still surfaces as a titled shell, so the learner sees the
-    # assignment rather than it silently vanishing.
+    # Preserve Learning Plan order, but do not expose a missing/withdrawn
+    # catalogue course. Its assignment record remains intact for history.
     result = []
-    for record in assigned:
-        course = courses.get(record["freeCourseId"])
+    for course_id in assigned_ids:
+        course = courses_by_id.get(course_id)
         if course is None:
-            course = {
-                "freeCourseId": record["freeCourseId"],
-                "courseName": record.get("courseName") or "",
-                "description": "",
-                "coverImageUrl": "",
-                "weeks": [],
-            }
-        result.append(course)
+            continue
+        activity_count = activity_totals.get(course_id, 0)
+        completed_count = min(completed_totals.get(course_id, 0), activity_count)
+        result.append({
+            "freeCourseId": course_id,
+            "courseName": clean_str(course.get("course_name")),
+            "description": clean_str(course.get("description")),
+            "coverImageUrl": clean_str(course.get("cover_image_url")),
+            "weekCount": week_totals.get(course_id, 0),
+            "activityCount": activity_count,
+            "completedActivities": completed_count,
+            "progressPercentage": round((completed_count / activity_count) * 100) if activity_count else 0,
+        })
 
     response = JsonResponse({"freeCourses": result})
     response["Cache-Control"] = "private, no-store"
     return response
 
 
+@require_GET
+@learner_self_or_staff(kwarg="pk")
+def free_course_detail(request, kind, pk, course_id):
+    """Return one assigned course's canonical weeks and component content."""
+    source, error = _resolve_source(kind, pk)
+    if error is not None:
+        return error
+
+    try:
+        assigned_ids = set(assigned_course_ids(source))
+    except DatabaseError:
+        return _error("Could not read the learner's free course assignments.", 503)
+    course_id = _s(course_id)
+    if not course_id or course_id not in assigned_ids:
+        return _error("Course not found.", 404)
+
+    try:
+        courses_by_id, week_rows, component_rows = _scoped_rows([course_id])
+    except DatabaseError:
+        return _error("Could not read the free course catalogue.", 503)
+    course = courses_by_id.get(course_id)
+    if course is None:
+        return _error("Course not found.", 404)
+
+    try:
+        completed_refs = _completed_refs(source.pk, [course_id])
+    except DatabaseError:
+        return _error("Could not read the learner's free course progress.", 503)
+
+    response = JsonResponse({
+        "freeCourse": _course_detail(course_id, course, week_rows, component_rows, completed_refs),
+    })
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
 @csrf_exempt
 @require_POST
-# The learner or an admin may record completion — the same gate the normal
-# component completion uses. Free-course completion is not a compliance record
-# (no OTJH/KSBs), so an admin ticking it on the learner's behalf is fine.
-@learner_self_or_admin(kwarg="pk")
+# Staff/admin preview is read-only; only the learner can create completion.
+@learner_self_only(kwarg="pk")
 def complete_free_course_activity(request, kind, pk):
     """Record that the learner finished one free-course activity.
 
@@ -261,17 +394,19 @@ def complete_free_course_activity(request, kind, pk):
     if not component_id:
         return _error("componentId is required.", 400)
 
-    assigned = _normalize_free_courses(
-        source.free_courses if isinstance(source.free_courses, list) else []
-    )
-    assigned_ids = [record["freeCourseId"] for record in assigned]
+    try:
+        assigned_ids = assigned_course_ids(source)
+    except DatabaseError:
+        return _error("Could not read the learner's free course assignments.", 503)
     if not assigned_ids:
         return _error("Activity not found.", 404)
 
     # Resolve the component within the learner's assigned courses, so a stray id
     # cannot record a completion against unassigned content.
     try:
-        _courses, week_rows, component_rows = _scoped_rows(assigned_ids)
+        courses, week_rows, component_rows = _scoped_rows(
+            assigned_ids, include_component_settings=False,
+        )
     except DatabaseError:
         return _error("Could not read the free course catalogue.", 503)
 
@@ -280,8 +415,16 @@ def complete_free_course_activity(request, kind, pk):
     found = False
     for row in component_rows:
         if clean_str(row.get("id")) == component_id:
+            # Quiz completion is owned exclusively by the graded submit path
+            # below.  The generic activity endpoint must never turn possession
+            # of a component id into an ungraded quiz completion.
+            if "quiz" in clean_str(row.get("type")).lower():
+                return _error(
+                    "Quiz activities can only be completed by passing the quiz.",
+                    409,
+                )
             free_course_ref = course_by_week.get(clean_str(row.get("free_module_id")))
-            found = True
+            found = bool(free_course_ref and free_course_ref in courses)
             break
     if not found:
         return _error("Activity not found.", 404)
@@ -307,18 +450,21 @@ def _resolve_quiz_component(source, component_id):
     an assigned quiz with a linked quiz — otherwise a 404/400 is returned so a
     stray id can never reach an unassigned or unlinked quiz.
     """
-    assigned = _normalize_free_courses(
-        source.free_courses if isinstance(source.free_courses, list) else []
-    )
-    assigned_ids = [record["freeCourseId"] for record in assigned]
+    assigned_ids = assigned_course_ids(source)
     if not assigned_ids:
         return None, None, _error("Activity not found.", 404)
 
-    _courses, week_rows, component_rows = _scoped_rows(assigned_ids)
+    courses, week_rows, component_rows = _scoped_rows(assigned_ids)
     course_by_week = {clean_str(week.get("id")): clean_str(week.get("course_id")) for week in week_rows}
     for row in component_rows:
         if clean_str(row.get("id")) != component_id:
             continue
+        free_course_ref = course_by_week.get(clean_str(row.get("free_module_id")))
+        # An assignment record is not sufficient by itself: the course must
+        # still exist in the canonical catalogue and the component must still
+        # belong to one of its active weeks.
+        if not free_course_ref or free_course_ref not in courses:
+            return None, None, _error("Activity not found.", 404)
         mapped = _activity(free_programme_component_response(row))
         if not mapped.get("quizId"):
             return None, None, _error("No quiz is linked to this activity.", 400)
@@ -326,13 +472,40 @@ def _resolve_quiz_component(source, component_id):
             quiz_id = int(str(mapped["quizId"]).strip())
         except (TypeError, ValueError):
             return None, None, _error("No quiz is linked to this activity.", 400)
-        return quiz_id, course_by_week.get(clean_str(row.get("free_module_id"))), None
+        return quiz_id, free_course_ref, None
     return None, None, _error("Activity not found.", 404)
+
+
+@require_GET
+@learner_self_or_staff(kwarg="pk")
+def free_course_quiz(request, kind, pk, component_id):
+    """Return a quiz only through an eligible, currently assigned component."""
+    source, error = _resolve_source(kind, pk)
+    if error is not None:
+        return error
+
+    try:
+        quiz_id, _free_course_ref, error = _resolve_quiz_component(source, component_id)
+    except DatabaseError:
+        return _error("Could not read the free course catalogue.", 503)
+    if error is not None:
+        return error
+
+    try:
+        quiz = _fetch_quiz(quiz_id)
+    except DatabaseError:
+        return _error("Could not read this quiz. Please try again.", 503)
+    if quiz is None:
+        return _error("Quiz not found.", 404)
+
+    response = JsonResponse(_scrub_answer_key(quiz))
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @csrf_exempt
 @require_POST
-@learner_self_or_admin(kwarg="pk")
+@learner_self_only(kwarg="pk")
 def submit_free_course_quiz(request, kind, pk, component_id):
     """Grade a free-course quiz and, on a pass, record its completion.
 
@@ -362,8 +535,8 @@ def submit_free_course_quiz(request, kind, pk, component_id):
 
     try:
         quiz = _fetch_quiz(quiz_id)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    except DatabaseError:
+        return _error("Could not read this quiz. Please try again.", 503)
     if quiz is None:
         return _error("Quiz not found.", 404)
 

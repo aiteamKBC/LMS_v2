@@ -1,9 +1,9 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { qrAttendanceApi, type QRLecture } from '@/api/qrAttendance';
 import QRAttendancePage from './page';
-import { lectureDate } from './dates';
+import { attendanceDayMessage, lectureDate } from './dates';
 
 vi.mock('@/api/qrAttendance', () => ({ qrAttendanceApi: {
   configuration: vi.fn(), lookup: vi.fn(), lectures: vi.fn(), confirm: vi.fn(),
@@ -16,11 +16,14 @@ const modules = [{ id: 'M1', title: 'Module One', group: 'Group A', cohort: 'Oct
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(qrAttendanceApi.configuration).mockResolvedValue({ csrfToken: 'csrf', url: 'https://college.example.test/qr-attendance', timeZone: 'Europe/London' });
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  vi.mocked(qrAttendanceApi.configuration).mockResolvedValue({ csrfToken: 'csrf', url: 'https://college.example.test/qr-attendance', timeZone: 'Europe/London', serverNow: '2026-11-07T11:00:00Z' });
   vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [lecture] });
   vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [lecture] });
   vi.mocked(qrAttendanceApi.confirm).mockResolvedValue({ recorded: true, alreadyRecorded: false, confirmedAt: '2026-11-07T11:01:00Z', message: 'Attendance confirmed successfully.' });
 });
+
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 async function selectModule(user: ReturnType<typeof userEvent.setup>, id: string) {
   await user.click(screen.getByRole('combobox', { name: 'Choose Module' }));
@@ -49,7 +52,7 @@ it('suggests a current lecture and confirms with email only', async () => {
   expect(qrAttendanceApi.confirm).toHaveBeenCalledExactlyOnceWith('csrf', 'student@example.test', 'M1', 'O1');
 });
 
-it('permits manual selection without any current lecture, including a future unassigned module', async () => {
+it('keeps a future unassigned module visible but prevents selecting or confirming its lecture', async () => {
   vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [] });
   vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [{ ...lecture, id: 'FUTURE', moduleId: 'M2', startsAt: '2027-06-01T09:00:00Z', endsAt: '2027-06-01T10:00:00Z', current: false }] });
   const user = await identify();
@@ -57,10 +60,13 @@ it('permits manual selection without any current lecture, including a future una
   await waitFor(() => expect(screen.getByRole('radio')).toHaveAttribute('value', 'FUTURE'));
   const future = screen.getByRole('radio', { name: /1 Jun 2027.*10:00.*11:00/ });
   expect(future).not.toBeChecked();
+  expect(future).toBeDisabled();
+  expect(future).toHaveAccessibleDescription('Attendance opens on the lecture date.');
   await user.click(future);
+  expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeDisabled();
+  expect(screen.getByText(/No lectures are available for attendance today/)).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
-  await screen.findByText('Attendance confirmed successfully.');
-  expect(qrAttendanceApi.confirm).toHaveBeenCalledWith('csrf', 'student@example.test', 'M2', 'FUTURE');
+  expect(qrAttendanceApi.confirm).not.toHaveBeenCalled();
 });
 
 it('keeps multiple current lectures selectable instead of choosing arbitrarily', async () => {
@@ -155,7 +161,7 @@ it('shows all three steps before lookup and validates the email without sending 
   expect(qrAttendanceApi.lookup).not.toHaveBeenCalled();
 });
 
-it('prioritises a current lecture while allowing past and future radio cards with their delivery details', async () => {
+it('allows today while keeping past and future cards disabled with their delivery details', async () => {
   vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [] });
   vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [
     { ...lecture, id: 'PAST', title: 'Past session', startsAt: '2026-01-01T10:00:00Z', endsAt: null, current: false, group: 'Group B', cohort: 'January' },
@@ -168,16 +174,17 @@ it('prioritises a current lecture while allowing past and future radio cards wit
   const current = screen.getByRole('radio', { name: /Module One/ });
   expect(current).toBeChecked();
   await user.click(screen.getByText('Past session'));
-  expect(past).toBeChecked();
-  expect(current).not.toBeChecked();
-  await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
-  await screen.findByText('Attendance confirmed successfully.');
-  expect(qrAttendanceApi.confirm).toHaveBeenLastCalledWith('csrf', 'student@example.test', 'M1', 'PAST');
-  await user.click(screen.getByRole('radio', { name: /Future session/ }));
+  expect(past).toBeDisabled();
+  expect(past).toHaveAccessibleDescription('Attendance closed — lecture date has passed.');
   expect(past).not.toBeChecked();
+  expect(current).toBeChecked();
   await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
   await screen.findByText('Attendance confirmed successfully.');
-  expect(qrAttendanceApi.confirm).toHaveBeenLastCalledWith('csrf', 'student@example.test', 'M1', 'FUTURE');
+  expect(qrAttendanceApi.confirm).toHaveBeenLastCalledWith('csrf', 'student@example.test', 'M1', 'O1');
+  const future = screen.getByRole('radio', { name: /Future session/ });
+  expect(future).toBeDisabled();
+  await user.click(future);
+  expect(current).toBeChecked();
 });
 
 it('allows retry after success and displays the idempotent response as success', async () => {
@@ -242,14 +249,15 @@ it('keeps a configuration failure and its recovery action visible while editing 
 it('selects the server current module even when no lecture is due', async () => {
   vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [],
     moduleCandidates: ['M2'], selection: { moduleId: 'M2', occurrenceId: null } });
-  vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [{ ...lecture, id: 'FUTURE', moduleId: 'M2', current: false }], suggestedOccurrenceId: null });
+  vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [{ ...lecture, id: 'FUTURE', moduleId: 'M2', startsAt: '2026-11-08T10:00:00Z', endsAt: null, current: false }], suggestedOccurrenceId: null });
   const user = await identify();
   await waitFor(() => expect(screen.getByLabelText('Choose Module')).toHaveTextContent('Unassigned Module'));
   const future = await screen.findByRole('radio');
   expect(future).not.toBeChecked();
   expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeDisabled();
   await user.click(future);
-  expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeEnabled();
+  expect(future).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeDisabled();
 });
 
 it('keeps the current module selected when it has no lecture records', async () => {
@@ -357,6 +365,80 @@ it.each([
   ['2026-10-25T00:30:00Z', /01:30 BST/], ['2026-10-25T01:30:00Z', /01:30 GMT/],
 ])('formats the scheduled instant in UK business time at %s', (startsAt, expected) => {
   expect(lectureDate({ ...lecture, startsAt, endsAt: null }, 'Europe/London')).toMatch(expected);
+});
+
+it.each(['2026-11-07T00:00:00Z', '2026-11-07T23:59:59Z'])('allows today before or after the lecture at %s using server time', async serverNow => {
+  vi.mocked(qrAttendanceApi.configuration).mockResolvedValue({ csrfToken: 'csrf', url: 'https://college.example.test/qr-attendance', timeZone: 'Europe/London', serverNow });
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2030-01-01T12:00:00Z'));
+  vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [{ ...lecture, current: false }], suggestedOccurrenceId: 'O1' });
+  const user = await identify();
+  await waitFor(() => expect(screen.getByRole('radio')).toBeChecked());
+  await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
+  expect(await screen.findByText('Attendance confirmed successfully.')).toBeVisible();
+});
+
+it('closes yesterday and opens today when midnight passes with the page open', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  vi.mocked(qrAttendanceApi.configuration).mockResolvedValue({ csrfToken: 'csrf', url: 'https://college.example.test/qr-attendance', timeZone: 'Europe/London', serverNow: '2026-11-07T23:59:59Z' });
+  vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [lecture,
+    { ...lecture, id: 'NEXT', title: 'Next day lecture', startsAt: '2026-11-08T10:00:00Z', endsAt: null, current: false }], suggestedOccurrenceId: 'O1' });
+  const user = await identify();
+  const previous = await screen.findByRole('radio', { name: /Module One/ });
+  const next = screen.getByRole('radio', { name: /Next day lecture/ });
+  expect(previous).toBeChecked();
+  expect(next).toBeDisabled();
+  vi.mocked(performance.now).mockReturnValue(1000);
+  await act(async () => { vi.advanceTimersByTime(1000); });
+  expect(previous).toBeDisabled();
+  expect(previous).not.toBeChecked();
+  expect(next).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeDisabled();
+  await user.click(next);
+  await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
+  expect(await screen.findByText('Attendance confirmed successfully.')).toBeVisible();
+  expect(qrAttendanceApi.confirm).toHaveBeenCalledExactlyOnceWith('csrf', 'student@example.test', 'M1', 'NEXT');
+});
+
+it('rechecks the day on submit even before the next clock refresh', async () => {
+  const user = await identify();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeEnabled());
+  vi.mocked(performance.now).mockReturnValue(24 * 60 * 60 * 1000);
+  await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
+  expect(qrAttendanceApi.confirm).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeDisabled();
+});
+
+it.each(['focus', 'visibilitychange'])('refreshes eligibility on %s after the tab was inactive', async event => {
+  await identify();
+  await waitFor(() => expect(screen.getByRole('radio')).toBeChecked());
+  vi.mocked(performance.now).mockReturnValue(24 * 60 * 60 * 1000);
+  act(() => { (event === 'focus' ? window : document).dispatchEvent(new Event(event)); });
+  expect(screen.getByRole('radio')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeDisabled();
+});
+
+it.each([
+  ['2026-07-01T23:30:00Z', '2026-07-01T22:59:59Z', false],
+  ['2026-07-01T23:30:00Z', '2026-07-01T23:00:00Z', true],
+  ['2026-07-01T23:30:00Z', '2026-07-02T22:59:59Z', true],
+  ['2026-07-01T23:30:00Z', '2026-07-02T23:00:00Z', false],
+  ['2026-03-29T10:00:00Z', '2026-03-29T22:59:59Z', true],
+  ['2026-03-29T10:00:00Z', '2026-03-29T23:00:00Z', false],
+  ['2026-10-25T10:00:00Z', '2026-10-24T23:00:00Z', true],
+  ['2026-10-25T10:00:00Z', '2026-10-25T23:59:59Z', true],
+  ['2026-10-25T10:00:00Z', '2026-10-26T00:00:00Z', false],
+])('checks the college day for %s at %s', (startsAt, now, allowed) => {
+  expect(attendanceDayMessage({ ...lecture, startsAt }, 'Europe/London', Date.parse(now)) === '').toBe(allowed);
+});
+
+it('does not select an out-of-date suggestion returned by a stale server response', async () => {
+  const past = { ...lecture, startsAt: '2026-11-06T10:00:00Z', endsAt: null };
+  vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [past], selection: { moduleId: 'M1', occurrenceId: 'O1' } });
+  vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [past], suggestedOccurrenceId: 'O1' });
+  await identify();
+  expect(await screen.findByRole('radio')).toBeDisabled();
+  expect(screen.getByRole('radio')).not.toBeChecked();
+  expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeDisabled();
 });
 
 it('searches modules by delivery details and selects with the keyboard', async () => {

@@ -255,16 +255,19 @@ describe('MeetingBookingDialog', () => {
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 
-  it.each(['2026-10-06', '2026-10-19'])('blocks an MCM on %s before any booking request', async day => {
+  it.each(['2026-10-06', '2026-10-19'])('books an available MCM on %s without a day-of-month restriction', async day => {
+    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: meeting({ scheduledDate: day, scheduledTime: '09:00', status: 'scheduled' }) });
     mount(meeting());
     const dialog = await screen.findByRole('dialog', { name: 'Book monthly coaching' });
     const submit = within(dialog).getByRole('button', { name: 'Book session' });
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: day } });
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('20th');
-    expect(submit).toBeDisabled();
-    fireEvent.submit(submit.closest('form')!);
-    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    await chooseReviewTime('09:00', dialog);
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('apprenticeship', '125', expect.objectContaining({
+      sessionType: 'mcr', eventKey: meeting().eventKey, scheduledDate: day, scheduledTime: '09:00',
+    })));
   });
 
   it('resolves a minimal Monthly V2 booking input against the authorized calendar', async () => {
@@ -274,7 +277,7 @@ describe('MeetingBookingDialog', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Book monthly coaching' });
     await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Book session' })).toBeEnabled());
     expect(fetchLearnerCalendarEvents).toHaveBeenCalledWith('apprenticeship', '125', { revalidate: true });
-    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-20');
+    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-15');
   });
 
   it('refuses booking when a minimal card identity is absent from the authorized calendar', async () => {

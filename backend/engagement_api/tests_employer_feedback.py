@@ -50,6 +50,15 @@ class EmployerSyncTests(SimpleTestCase):
         result = reviews.sync_review_feedback(71)
         self.assertEqual((result['created'], result['employerCreated']), (0, 1))
 
+    def test_gateway_epa_is_learner_only_even_when_source_type_is_pr(self):
+        reviews.FeedbackForm.objects.filter.return_value.order_by.return_value = [self.f.pr_form, self.form, self.f.epa_form]
+        self.f.rows.return_value = [baseline.source_row(review_type='Progress Review', review_name='Gateway Review',
+            status='Completed', completed_date=baseline.COMPLETED)]
+        result = reviews.sync_review_feedback(71)
+        self.assertEqual((result['created'], result['employerCreated']), (1, 0))
+        self.assertEqual(self.f.create.call_args.kwargs['defaults']['form'], self.f.epa_form)
+        self.create.assert_not_called()
+
     def test_existing_student_delivery_does_not_suppress_new_employer_assignment(self):
         self.f.existing.return_value = [SimpleNamespace(source_review_id=9001, learner_id='71')]
         result = reviews.sync_review_feedback(71)
@@ -296,7 +305,7 @@ class EmployerAuthorizationTests(SimpleTestCase):
               mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related') as lectures,
               mock.patch.object(feedback.FeedbackAssignment.objects, 'filter') as manual,
               mock.patch.object(FeedbackEmployerReviewDelivery.objects, 'select_related') as employers,
-              mock.patch.object(feedback.EnrolmentUser.all_learners, 'all') as learners,
+              mock.patch.object(feedback.EnrolmentUser.all_learners, 'only') as learners,
               mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[])):
             forms.return_value.values_list.return_value = [83]
             lectures.return_value.filter.return_value.order_by.return_value = []

@@ -347,8 +347,6 @@ def read_training(source, kind, owner, profile, request, module_id=None):
     selected = next((m for m in displayed if m['id'] == requested), None) or next((m for m in displayed if m['start'] and m['start'][:7] <= month <= m['end'][:7]), None)
     coach = schedule.current_coach(source, profile, None)
     coach_name = coach['coach_name']
-    if not coach_name and not coach['coach_email'] and schedule.source_coach(source) is None:
-        coach_name = schedule.assigned_group_coach(source, list(modules.values()))
     return {'timeline': {'start': minimum[:7], 'end': maximum[:7], 'programmeStartDate': minimum,
         'monthKeys': list(targets), 'modules': [timeline_module(m) for m in displayed],
         'reviews': reviews, 'coachName': coach_name},

@@ -368,6 +368,9 @@ class FeedbackValidationTests(SimpleTestCase):
         delivery = SimpleNamespace(
             id=3, occurrence_key='martech-2026-09-24',
             session_title='Martech - Thur - Session 1', module_name='Martech - Thur',
+            programme_id='programme-1', programme_name='Marketing Level 6',
+            cohort_id='cohort-1', cohort_name='October 2026', group_id='group-1', group_name='Group A',
+            module_catalogue_id='module-1',
             starts_at=datetime(2026, 9, 24, 9, 30, tzinfo=timezone.utc),
             form=delivery_form,
         )
@@ -389,10 +392,11 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=family_query),
             mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=recipient_query),
             mock.patch.object(feedback.FeedbackAssignment.objects, 'filter', return_value=assignment_query),
-            mock.patch.object(feedback.EnrolmentUser.all_learners, 'all', return_value=learner_query),
+            mock.patch.object(feedback.EnrolmentUser.all_learners, 'only', return_value=learner_query) as learner_fields,
             mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[response]),
         ):
             rows = feedback._form_recipient_rows(form)
+        learner_fields.assert_called_once_with('id', 'username', 'email', 'programme')
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['learnerName'], 'Synthetic Learner')
         self.assertEqual(rows[0]['email'], 'learner@example.test')
@@ -402,6 +406,11 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(rows[0]['sessionStartsAt'], '2026-09-24T09:30:00+00:00')
         self.assertEqual(rows[0]['source'], 'attendance')
         self.assertEqual(rows[0]['responseStatus'], 'completed')
+        source = feedback._recipient_source_summaries(rows)[0]
+        self.assertEqual(source['moduleCatalogueId'], 'module-1')
+        self.assertEqual(source['programmeName'], 'Marketing Level 6')
+        self.assertEqual(source['cohortName'], 'October 2026')
+        self.assertEqual(source['groupName'], 'Group A')
 
     def test_recipient_rows_show_event_learners_and_guests_with_event_context(self):
         form = SimpleNamespace(id=31, form_type='post_event', template_key='template-2', due_date=None, version=1)
@@ -436,7 +445,7 @@ class FeedbackValidationTests(SimpleTestCase):
             mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=empty_delivery_query),
             mock.patch.object(feedback.FeedbackAssignment.objects, 'filter', return_value=empty_assignment_query),
             mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_query),
-            mock.patch.object(feedback.EnrolmentUser.all_learners, 'all', return_value=learner_query),
+            mock.patch.object(feedback.EnrolmentUser.all_learners, 'only', return_value=learner_query),
             mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[completed]),
         ):
             rows = feedback._form_recipient_rows(form)

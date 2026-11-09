@@ -237,7 +237,7 @@ def _render(record, evidence, analysis, kind):
     stream = BytesIO()
     doc = SimpleDocTemplate(stream, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
         topMargin=14 * mm, bottomMargin=16 * mm, title=f'{title} - {name}', author='Kent Business College')
-    logo = Path(__file__).resolve().parents[2] / 'frontend' / 'public' / 'assets' / 'kbc-logo.png'
+    logo = Path(__file__).resolve().parents[1] / 'curriculum_api' / 'templates' / 'kbc-logo.png'
     heading = _p(title, size=11, bold=True)
     heading.style.alignment = TA_RIGHT
     brand = Table([[Image(str(logo), width=48 * mm, height=23 * mm, kind='proportional'), heading]], colWidths=[WIDTH / 2] * 2)

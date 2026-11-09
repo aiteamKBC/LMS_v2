@@ -22,7 +22,8 @@ function signed(value: number) {
 }
 
 function scaleFor(rows: MonthlyHours[]) {
-  const maximum = Math.max(0, ...rows.flatMap(row => [row.target || 0, row.submitted || 0, row.completed || 0]));
+  const maximum = Math.max(0, ...rows.flatMap(row => [row.target || 0,
+    (row.submitted || 0) + (row.completed || 0) + (row.verification || 0)]));
   if (!maximum) return { maximum: 10, step: 2.5 };
   const rough = maximum / 4;
   const magnitude = 10 ** Math.floor(Math.log10(rough));
@@ -43,6 +44,7 @@ function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
       <div><dt><i className={styles.targetKey} />Target:</dt><dd>{targetRatio == null ? 'N/A' : `${targetRatio}% (${hourNumber.format(row.target!)} hours)`}</dd></div>
       <div><dt><i className={styles.submittedKey} />Submitted:</dt><dd>{submittedRatio == null ? 'N/A' : `${submittedRatio}% (${hourNumber.format(row.submitted!)} hours)`}</dd></div>
       <div><dt><i className={styles.completedKey} />Completed:</dt><dd>{completedRatio == null ? 'N/A' : `${completedRatio}% (${hourNumber.format(row.completed!)} hours)`}</dd></div>
+      {!!row.verification && <div><dt><i className={styles.verificationKey} />Needs verification:</dt><dd>{hourNumber.format(row.verification)} hours</dd></div>}
       <div><dt>Total completed or pending:</dt><dd>{row.submitted == null || row.completed == null ? 'N/A' : `${hourNumber.format(row.submitted + row.completed)} hours`}</dd></div>
       <div className={styles.variance}><dt>Variance:</dt><dd>{variance == null || completedRatio == null ? 'N/A' : `${completedRatio - 100 > 0 ? '+' : ''}${completedRatio - 100}% (${signed(variance)} hours)`}</dd></div>
     </dl>
@@ -74,6 +76,7 @@ export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth,
     ? targetToDate.reduce((sum, row) => sum + (row.target ?? 0), 0) : null;
   const totalSubmitted = months.every(row => row.submitted != null) ? months.reduce((sum, row) => sum + row.submitted!, 0) : null;
   const totalCompleted = months.every(row => row.completed != null) ? months.reduce((sum, row) => sum + row.completed!, 0) : null;
+  const totalVerification = months.reduce((sum, row) => sum + (row.verification || 0), 0);
   const officialValue = officialTarget?.value;
   const officialAvailable = officialTarget?.request === 'ready' && typeof officialValue === 'number' && Number.isFinite(officialValue) && officialValue >= 0;
   const progressTarget = officialTarget ? (officialAvailable ? officialValue as number : null) : targetAsOfToday != null && Number.isFinite(targetAsOfToday) && targetAsOfToday > 0
@@ -118,7 +121,9 @@ export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth,
       <span><i className={styles.targetKey} />Target</span>
       <span><i className={styles.submittedKey} />Submitted</span>
       <span><i className={styles.completedKey} />Completed</span>
+      {totalVerification > 0 && <span><i className={styles.verificationKey} />Needs verification</span>}
     </div>
+    {totalVerification > 0 && <p className={styles.subtitle}>Hours needing verification are not accepted hours or work awaiting tutor marking.</p>}
     {active && <div className={styles.tooltipPosition} style={{ '--tooltip-left': `${(activeIndex + .5) / months.length * 100}%` } as CSSProperties}>
       <MonthTooltip row={active} id={tooltipId} />
     </div>}
@@ -132,12 +137,14 @@ export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth,
           const targetHeight = row.target == null ? null : row.target / scale.maximum * 100;
           const submittedHeight = row.submitted == null ? 0 : row.submitted / scale.maximum * 100;
           const completedHeight = row.completed == null ? 0 : row.completed / scale.maximum * 100;
+          const verificationHeight = (row.verification || 0) / scale.maximum * 100;
           return <button key={row.key} type="button" className={styles.monthColumn}
-            aria-label={`${row.label}: target ${row.target == null ? 'unavailable' : `${hourNumber.format(row.target)} hours`}, submitted ${row.submitted == null ? 'unavailable' : `${hourNumber.format(row.submitted)} hours`}, completed ${row.completed == null ? 'unavailable' : `${hourNumber.format(row.completed)} hours`}`}
+            aria-label={`${row.label}: target ${row.target == null ? 'unavailable' : `${hourNumber.format(row.target)} hours`}, submitted ${row.submitted == null ? 'unavailable' : `${hourNumber.format(row.submitted)} hours`}, completed ${row.completed == null ? 'unavailable' : `${hourNumber.format(row.completed)} hours`}${row.verification ? `, needs verification ${hourNumber.format(row.verification)} hours` : ''}`}
             aria-describedby={activeMonth === row.key ? tooltipId : undefined}
             onMouseEnter={() => setActiveMonth(row.key)} onMouseLeave={() => setActiveMonth(current => current === row.key ? '' : current)}
             onFocus={() => setActiveMonth(row.key)} onBlur={() => setActiveMonth(current => current === row.key ? '' : current)}>
             <span className={styles.barArea}>
+              {verificationHeight > 0 && <i className={styles.verificationBar} style={{ bottom: `${completedHeight + submittedHeight}%`, height: `${verificationHeight}%` }} />}
               <i className={styles.submittedBar} style={{ bottom: `${completedHeight}%`, height: `${submittedHeight}%` }} />
               <i className={styles.completedBar} style={{ height: `${completedHeight}%` }} />
               {targetHeight != null && <i className={styles.targetLine} style={{ bottom: `${targetHeight}%` }} />}
@@ -153,7 +160,7 @@ export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth,
           : progressTarget == null ? 'Unavailable' : `${hourNumber.format(progressTarget)}h`}
     </p>}
     {months.length > 0 && <div className={styles.overall}>
-      <div><strong>{officialTarget ? 'Training plan progress' : 'Overall progress'}</strong><span>{totalCompleted == null ? 'Recorded hours unavailable' : `${hourNumber.format(totalCompleted)}h completed${totalSubmitted != null && totalSubmitted > 0 ? ` · ${hourNumber.format(totalSubmitted)}h submitted` : ''}`}</span></div>
+      <div><strong>{officialTarget ? 'Training plan progress' : 'Overall progress'}</strong><span>{totalCompleted == null ? 'Recorded hours unavailable' : `${hourNumber.format(totalCompleted)}h completed${totalSubmitted != null && totalSubmitted > 0 ? ` · ${hourNumber.format(totalSubmitted)}h submitted` : ''}${totalVerification > 0 ? ` · ${hourNumber.format(totalVerification)}h need verification` : ''}`}</span></div>
       <div className={styles.overallTrack} role="progressbar" aria-label={officialTarget ? 'Training plan off-the-job hours progress' : 'Overall off-the-job hours progress'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent == null ? undefined : completedWidth}>
         {totalSubmitted != null && (officialTarget ? plannedTarget != null : progressTarget != null) && <i className={styles.submittedOverall} style={{ left: `${completedWidth}%`, width: `${submittedWidth}%` }} />}
         <i className={styles.completedOverall} style={{ width: `${completedWidth}%` }} />

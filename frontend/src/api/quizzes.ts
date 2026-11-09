@@ -63,6 +63,7 @@ export interface Quiz {
 export type QuizAnswerValue = number | number[] | string | string[] | Record<string, string>;
 
 export interface QuizSubmission {
+  componentId: string;
   retakeTimeChoice?: 'keep' | 'new' | 'correct' | 'add' | 'retry';
   retakeTimeReason?: string;
   retakePreviousSeconds?: number;
@@ -188,8 +189,15 @@ async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T
   return data as T;
 }
 
-export function fetchQuiz(quizId: number, learnerId?: string): Promise<Quiz> {
-  return request<Quiz>(`${BASE}/${quizId}/${learnerId?.startsWith('pl.') ? `?learnerId=${encodeURIComponent(learnerId)}` : ''}`);
+export function fetchQuiz(
+  quizId: number,
+  kind: 'commercial' | 'apprenticeship',
+  learnerId: string,
+  componentId: string,
+): Promise<Quiz> {
+  const query = new URLSearchParams({ kind, learnerId });
+  query.set('componentId', componentId);
+  return request<Quiz>(`${BASE}/${quizId}/?${query.toString()}`);
 }
 
 export function submitQuizAttempt(

@@ -512,6 +512,7 @@ class FeedbackForm(models.Model):
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
         ('post_mcm_review', 'MCM Feedback'),
         ('post_progress_review', 'Progress Review Feedback'),
+        ('post_epa_review', 'EPA Feedback'),
         ('post_progress_review_employer', 'Progress Review – Employer Feedback'),
         ('mid_module', 'Wellbeing'),
         ('end_module', 'End-module Feedback'),

@@ -765,7 +765,10 @@ def quiz(request, component_id):
     if component["mobileMode"] != "quiz":
         raise MobileError("This activity has no published quiz.", 409, "quiz_unavailable")
     quiz_id = _quiz_id(component)
-    return _delegate(request, f"/learner_api/quizzes/{quiz_id}/", quiz_detail, quiz_id=quiz_id)
+    return _delegate(
+        request, f"/learner_api/quizzes/{quiz_id}/", quiz_detail,
+        query={"componentId": component["componentId"]}, quiz_id=quiz_id,
+    )
 
 
 @endpoint("POST")
@@ -777,6 +780,7 @@ def submit_quiz(request, component_id):
         raise MobileError("This activity has no published quiz.", 409, "quiz_unavailable")
     quiz_id = _quiz_id(component)
     payload = _completion_payload(request, component, "quiz", quiz_id)
+    payload["componentId"] = component["componentId"]
     payload["answers"] = _validated_quiz_answers(_fetch_quiz(quiz_id), payload.get("answers"))
     return _delegate(request, f"/learner_api/quizzes/{quiz_id}/submit/",
                      submit_quiz_attempt, payload=payload, quiz_id=quiz_id)

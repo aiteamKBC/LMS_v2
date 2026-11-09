@@ -10,6 +10,7 @@ from django.utils import timezone
 from . import canonical_learning as canonical, training_plan_dashboard as schedule
 from .dashboard_monthly import day, review_day, display_subjects, display_date, MONTH
 from .dashboard_training import display_modules, module_rows, percentage
+from .monthly_log_attendance import read_rows as saved_attendance_hours
 
 
 def saved_attendance_rows(source, profile, *, now):
@@ -127,7 +128,9 @@ def hour_rows(records, targets, weekly, signed_months, current, *, log_summary=N
     from .dashboard_tabs import monthly_hours
     summary = log_summary if log_summary is not None else monthly_hours({}, records, targets,
         signed_months=signed_months, current_month=current)
-    logs = {row['month']: {'completed': row['actual_hours'], 'submitted': row['not_accepted_hours']}
+    logs = {row['month']: {'completed': row['actual_hours'],
+                          'submitted': row.get('submitted_hours', row['not_accepted_hours']),
+                          'verification': row.get('verification_hours', 0)}
             for row in summary['months']}
     actual = defaultdict(float)
     for row in actual_rows if actual_rows is not None else schedule._canonical_actual_rows({}, records):
@@ -144,6 +147,7 @@ def hour_rows(records, targets, weekly, signed_months, current, *, log_summary=N
             actual[month] if month in actual else native.get('actual', 0))
         result.append({'key': month, 'target': target,
                        'submitted': max(0, log['submitted']) if log is not None else native.get('submitted', 0),
+                       **({'verification': max(0, log['verification'])} if log is not None and log['verification'] > 0 else {}),
                        'completed': completed})
     return result
 
@@ -257,13 +261,18 @@ def read_overview(source, kind, owner, profile, request):
     signed = [r['report_month'] for r in canonical.query('''SELECT DISTINCT report_month
         FROM "Learner".learner_monthly_signatures WHERE learner_id=%s AND review_confirmed IS TRUE''', [owner['id']])]
     today = timezone.localdate(timezone=schedule.UK).isoformat()
-    log_summary = monthly_hours(owner, records, targets, signed_months=signed, current_month=today[:7])
+    attendance_hours = saved_attendance_hours(owner, now=attendance_now)
+    log_summary = monthly_hours(owner, records, targets, signed_months=signed, current_month=today[:7],
+                                attendance=attendance_hours)
     reviews = schedule.plan_reviews(source, profile, ('mcr', 'progress-review', 'student-support'), dates_only=True)
     # This authoritative reader intentionally stays separate from the display
     # ledger: its completion population is the established learner metrics contract.
     metrics = canonical.metrics_bulk([source.pk], learner_workspace=True).get(source.pk)
     if metrics is None:
         raise LookupError('Learner identity is unavailable.')
+    if metrics['otjh'].get('actual') is not None:
+        metrics['otjh'] = {**metrics['otjh'], 'actual': metrics['otjh']['actual']
+                          + sum(canonical.number(row['actual_hours']) for row in attendance_hours)}
     # Target-to-Date paces the official programme total only. When it is
     # unset or invalid the target is unavailable; no Training Plan total
     # replaces it. This reader is also the Employer learner Overview.

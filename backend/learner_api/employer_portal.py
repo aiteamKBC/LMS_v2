@@ -1384,8 +1384,16 @@ def _employer_progress_definition(event, learner, profile, template_cache):
     return definition if definition["template"]["visibleTo"].get("employer", False) else None
 
 
+def _is_employer_gateway_review(event):
+    """Use source type metadata; a display title never grants employer access."""
+    if event.get("importedReviewType") is not None:
+        return _s(event["importedReviewType"]).strip().casefold() == "gateway review"
+    code = _s(event.get("reviewTypeCode")).strip().casefold()
+    return code in {"gateway", "gateway_review"} if code else event.get("source") == "gateway"
+
+
 def _employer_progress_review_rows(learner, event_key=None, month=None):
-    """(rows, definitions, None) for the progress reviews this employer may read.
+    """(rows, definitions, None) for this employer's Progress and Gateway reviews.
 
     One visibility rule serves the review list, the review document and the
     meeting recording: a review the employer cannot open is not one whose
@@ -1404,7 +1412,8 @@ def _employer_progress_review_rows(learner, event_key=None, month=None):
             # Imported Gateway/support reviews also use the legacy progress-review
             # routing source; their original review type determines this list.
             category = review_event_category(source)
-            is_progress = category == "progress-review"
+            is_gateway = _is_employer_gateway_review(source)
+            is_progress = category == "progress-review" or is_gateway
             if source.get("reviewTemplateId") and not source.get("reviewTypeCode"):
                 is_progress = False
             if event_key is not None and event_key not in {source.get("id"), source.get("eventKey")}:
@@ -1416,7 +1425,7 @@ def _employer_progress_review_rows(learner, event_key=None, month=None):
                 ).first()
                 if overlay is None:
                     continue
-                if category == "review" and not is_personal_support_form(overlay):
+                if category == "review" and not is_gateway and not is_personal_support_form(overlay):
                     continue
                 migrated_state = signature_states(overlay)["employer"]
                 if category in {"mcr", "review"}:

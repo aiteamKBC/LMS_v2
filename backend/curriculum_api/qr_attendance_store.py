@@ -122,6 +122,24 @@ def occurrences(module_ids):
                    ORDER BY o.scheduled_start, o.id''', list(module_ids))
 
 
+def lecture_components(module_ids):
+    """Read authored titles and saved identities only; never provision or sync."""
+    if not module_ids:
+        return []
+    placeholders = ','.join(['%s'] * len(module_ids))
+    return rows(f'''SELECT c.id, c.module_catalogue_id, c.title, c.settings_json
+                   FROM curriculum.components c
+                   JOIN curriculum.weeks w ON w.id=c.week_id
+                        AND w.module_catalogue_id=c.module_catalogue_id
+                   WHERE c.module_catalogue_id IN ({placeholders})
+                     AND c.type IN ('live_session', 'live-session')
+                     AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted, false)
+                     AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted, false)
+                     AND coalesce(c.library_state, '') <> 'library'
+                     AND coalesce(w.library_state, '') <> 'library'
+                   ORDER BY c.id''', list(module_ids))
+
+
 INSERT_SQL = '''INSERT INTO curriculum.qr_attendance
     (enrolment_id, programme_id, module_id, occurrence_id,
      assigned_group_id, attended_group_id, assigned_cohort_id, attended_cohort_id)
@@ -156,6 +174,9 @@ def confirm(email, module_id, occurrence_id):
         lecture = next((item for item in lectures if item['id'] == occurrence_id), None)
         if lecture is None:
             raise AttendanceError('This lecture is no longer available. Please choose another.', 'invalid_lecture', 400)
+        if not lecture['dueToday']:
+            raise AttendanceError('Attendance can only be confirmed on the lecture date in college time.',
+                                  'outside_attendance_day', 400)
         # Preserve the selected delivery placement, even when its meeting is
         # hosted by a module in another programme. Never reassign the student.
         selected = eligible[module_id]

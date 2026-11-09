@@ -2,9 +2,9 @@
 import json
 import os
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import test_mobile_rewards_contract as rewards
 import test_mobile_contract as base
 from learner_api import reward_tracking
@@ -144,6 +144,45 @@ class BrowserTrackingGateTests(unittest.TestCase):
             self.assert_rejected(503, "auth_unavailable")
         with patch.object(base.mobile, "authenticate_request", side_effect=DatabaseError("synthetic")):
             self.assert_rejected(503, "lms_unavailable")
+
+    def test_browser_reward_capability_respects_the_policy_start_instant(self):
+        now = datetime(2026, 10, 5, 0, 10, tzinfo=timezone.utc)
+        database = MagicMock()
+        for start, expected in ((now - timedelta(seconds=1), True), (now, True),
+                                (now + timedelta(seconds=1), False)):
+            with self.subTest(start=start), patch.object(reward_tracking, "connections", {"default": database}), \
+                    patch.object(reward_tracking, "policy", return_value={"enabled": True, "starts_at": start}):
+                self.assertEqual(reward_tracking.capability(
+                    self.request("start", {}), "component", self.audio["componentId"]), expected)
+
+    def test_disabled_rewards_do_not_advertise_tracking_or_query_reward_storage(self):
+        with override_settings(KBC_SHARED_REWARDS_READY=False), \
+                patch.object(reward_tracking, "connections") as database:
+            self.assertFalse(reward_tracking.capability(
+                self.request("start", {}), "component", self.audio["componentId"]))
+            database.__getitem__.assert_not_called()
+
+    def test_start_response_explicitly_reports_disabled_rewards(self):
+        # Execute the actual handler with an isolated timing issuer. Importing
+        # the application module would load ORM dependencies unrelated to this contract.
+        import ast
+        path = base.ROOT.parent / "learner_api" / "time_tracking.py"
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        handler = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name == "start_time_tracking")
+        handler.decorator_list = []
+        scope = {"json": json, "JsonResponse": base.JsonResponse,
+                 "TrackingSessionError": base.TrackingSessionError,
+                 "issue_tracking_session": MagicMock(return_value={"trackingToken": "synthetic"})}
+        exec(compile(ast.Module(body=[handler], type_ignores=[]), str(path), "exec"), scope)
+        with override_settings(KBC_SHARED_REWARDS_READY=False):
+            for kind in ("commercial", "apprenticeship"):
+                request = self.factory.post(f"/learner_api/time-tracking/start/?kind={kind}&learnerId=501",
+                    data=json.dumps({"activityKind": "component", "activityId": "SLIDES", "countingMode": "visible_page"}),
+                    content_type="application/json")
+                response = scope["start_time_tracking"](request)
+                self.assertEqual(response.status_code, 200)
+                self.assertIs(json.loads(response.content)["rewardTracking"], False)
 
 class BrowserTrackingTests(rewards.RewardsFacadeTests):
     # Keep inherited scope/security regression coverage.

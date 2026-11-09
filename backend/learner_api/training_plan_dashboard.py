@@ -18,7 +18,7 @@ from .learner_detail import SOURCE_MODELS
 from .module_placement_sql import group_coach_name_sql, module_placement_names_sql, module_tutor_name_sql
 from .models import LearnerProfile, StaffUser
 from .learning_plan import _aptem_subject_modules, _effective_plan_ids, request_preset_cache
-from .coach_assignment import current_coach, source_coach
+from .coach_assignment import learner_profile_coach as current_coach
 from .student_activity import _builder_subject_metadata, builder_subject_links
 from .subject_content import as_list, clean_text, safe_url
 from .subject_dates import is_introduction_section
@@ -732,8 +732,6 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
     # still receive the complete response when no section was requested.
     contact = current_coach(source, profile, historical)
     coach_name, coach_email = contact['coach_name'], contact['coach_email']
-    if not coach_name and not coach_email and source_coach(source) is None:
-        coach_name = assigned_group_coach(source, modules)
     reviews = plan_reviews(source, profile, ('mcr', 'progress-review', 'student-support'))
     coach = {'name': coach_name, 'bookingUrl': booking_url(coach_email)}
     if coach_email:

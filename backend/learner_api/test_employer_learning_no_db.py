@@ -71,6 +71,7 @@ class EmployerLearningParityTests(SimpleTestCase):
                 ('learner_api.overview_week.read_week', {}),
                 ('learner_api.attendance_lectures.lecture_register', []),
                 ('learner_api.dashboard_overview.saved_attendance_rows', ([], [])),
+                ('learner_api.dashboard_overview.saved_attendance_hours', []),
                 ('learner_api.attendance._summarize_attendance', None),
                 ('django.utils.timezone.localdate', today),
             ):
@@ -118,17 +119,15 @@ class EmployerLearningParityTests(SimpleTestCase):
             self.assertEqual(len(result['programme']), 3)
             self.assertEqual(next(m['percent'] for m in result['programme'] if m['id'] == 'legacy:8'), 100)
 
-    def test_null_and_explicit_zero_follow_existing_fallback_and_fixed_programme_boundaries(self):
+    def test_null_and_explicit_zero_preserve_official_target_at_programme_boundaries(self):
         for planned in (None, 0, 80):
             for today in (date(2026, 8, 31), date(2026, 9, 1), date(2026, 10, 15), date(2026, 11, 30), date(2026, 12, 1)):
                 with self.subTest(planned=planned, today=today), self.fixture(planned=planned, today=today) as (source, *_):
                     with patch.object(schedule, 'plan_planned_hours', wraps=schedule.plan_planned_hours) as fallback:
                         result = self.compare(source, 'overview')
-                    self.assertEqual(fallback.call_count, 2 if planned is None else 0)
-                    if planned == 0:
+                    fallback.assert_not_called()
+                    if planned is None or planned == 0:
                         self.assertIsNone(result['metrics']['otjh']['targetToDate'])
-                    if planned is None and today == date(2026, 11, 30):
-                        self.assertEqual(result['metrics']['otjh']['targetToDate'], 100)
 
     def test_wrong_profile_or_enrolment_fails_before_reading_learning_facts(self):
         for profile in (None, SimpleNamespace(pk=18, enrolment_id=265), SimpleNamespace(pk=17, enrolment_id=266)):

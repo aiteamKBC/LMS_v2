@@ -12,14 +12,47 @@ field, optional current-lecture suggestions, module and lecture selectors, and
 confirmation. It uses existing KBC branding. No reference screenshot was present
 in the attachment. The page also provides QR SVG download and link copying.
 
-The only eligibility boundary is a verified programme. Assigned and unassigned
-modules, other groups/cohorts, and past/current/future occurrences are allowed.
-Time determines suggestions and ordering only. Cancelled, deleted, failed,
-invalid, superseded, and structurally invalid occurrences are excluded;
-completed occurrences remain valid. No attendance windows or grace periods exist.
+Programme eligibility permits assigned and unassigned modules and other
+groups/cohorts within the verified programme. Following the 8 November 2026
+requirement, confirmation is allowed only on the occurrence's scheduled start
+date in the configured college timezone (Europe/London by default), from local
+midnight inclusive until the next local midnight exclusive. Before/after the
+lecture's hours and completed lectures remain allowed on that same date.
+Past and future dates stay visible with disabled radio controls and an
+explanation. Cancelled, deleted, failed, invalid, superseded, and structurally
+invalid occurrences remain excluded. Overnight lectures use their start date.
+
+The server rechecks the date inside confirmation before inserting evidence;
+client-supplied dates or timezone cannot override it. Suggestions exclude other
+dates. The public configuration includes serverNow, which anchors the page clock
+independently of the device's calendar clock. The page refreshes eligibility
+while open and rechecks on submit. Existing evidence and duplicate constraints
+are unchanged. Historical validation notes below describe the earlier policy;
+past/future confirmation is no longer permitted.
 
 QR records are declarations only: no Teams sync, manual attendance edits,
 feedback changes, hours, progress, completions, or learning-plan updates.
+
+### Same-day attendance validation (8 November 2026)
+
+- PASS: `.\backend\.venv\Scripts\python.exe -B backend/scripts/validate_feedback_attendance_commit.py curriculum_api.tests_qr_attendance`
+  — 63 tests, isolated synthetic SQLite and mocked integrations; external
+  connections blocked by the runner. Covers server rejection of other dates,
+  confirmation after midnight, completed/same-day lectures, programme scope,
+  retry uniqueness, and London's 23/25-hour daylight-saving transition days.
+- PASS: `npm --prefix frontend run test -- src/pages/qr-attendance src/api/qrAttendance.test.ts --maxWorkers=2`
+  — 50 tests in 3 files. Includes disabled past/future cards, same-day early/late
+  confirmation, server time despite an incorrect device clock, midnight changes
+  while open, inactive-tab refresh, stale suggestions and direct submit rechecks.
+- PASS: `npm --prefix frontend run type-check`.
+- PASS: `npm --prefix frontend run lint`. Final changed frontend files also
+  passed `node node_modules/eslint/bin/eslint.js src/api/qrAttendance.ts src/pages/qr-attendance --max-warnings 0`
+  from `frontend`.
+- Teams baseline/expanded checks: NOT REQUIRED; no Teams trigger or shared Teams
+  dependency was changed. Live Teams and real-database/browser validation: NOT RUN.
+- No migration, application-data change, Git publishing or deployment performed.
+  Backend/frontend should be released together because configuration now supplies
+  serverNow. Existing independent styling/image changes were preserved.
 
 ## Verified database relationships
 

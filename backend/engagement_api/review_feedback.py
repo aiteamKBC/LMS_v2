@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 REVIEW_FORM_TYPES = {
     'post_mcm_review': 'Monthly Coaching Meeting',
     'post_progress_review': 'Progress Review',
+    'post_epa_review': 'EPA',
 }
+EPA_FORM_TYPE = 'post_epa_review'
 EMPLOYER_REVIEW_FORM_TYPE = 'post_progress_review_employer'
 ALL_REVIEW_FORM_TYPES = {*REVIEW_FORM_TYPES, EMPLOYER_REVIEW_FORM_TYPE}
 FORM_TYPE_BY_FAMILY = {
@@ -37,6 +39,11 @@ FORM_TYPE_BY_FAMILY = {
     'PR': 'post_progress_review',
     'PR_SKILLS_RADAR': 'post_progress_review',
 }
+
+
+def is_gateway_review(row):
+    """EPA selects the exact source name, independently of its review_type."""
+    return str(row.get('review_name') or '').strip().casefold() == 'gateway review'
 
 
 def completion_datetime(value):
@@ -178,8 +185,11 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
     now = timezone.now()
     for row in rows:
         family = review_family(row['review_type'])
+        gateway = is_gateway_review(row)
         if employer:
-            form_type = EMPLOYER_REVIEW_FORM_TYPE if family in {'PR', 'PR_SKILLS_RADAR'} else None
+            form_type = EMPLOYER_REVIEW_FORM_TYPE if not gateway and family in {'PR', 'PR_SKILLS_RADAR'} else None
+        elif gateway:
+            form_type = EPA_FORM_TYPE
         else:
             form_type = FORM_TYPE_BY_FAMILY.get(family)
         form = templates.get(form_type)
@@ -219,6 +229,15 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
                    else 'identityConflicts'] += 1
             continue
         state = review_completion(row, overlay)
+        if form_type == EPA_FORM_TYPE:
+            metadata = _json_value(data.get('source_metadata'), dict, {})
+            status = str(row.get('status') or metadata.get('Status') or '').strip().casefold()
+            # A date alone is insufficient for EPA: AwaitingSignature and other
+            # unfinished source states must never send it. A verified completed
+            # LMS overlay retains the same completion path as MCM/PR.
+            if status != 'completed' and not state.lms_completed:
+                result['incomplete'] += 1
+                continue
         if not state.completed:
             result['incomplete'] += 1
             continue

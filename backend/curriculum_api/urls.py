@@ -7,8 +7,11 @@ from system_audit import activity as system_activity
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .archive_index import curriculum_archive_index
 from .record_snapshots import curriculum_record_snapshot
+from .free_course_conversion import convert_free_course
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
+from .module_uploads import module_uploaded_files
+from .web_week_points import week_points
 from . import learner_directory
 from . import learner_directory_details
 from .teams_attendee_compare import teams_meeting_attendee_comparison
@@ -46,11 +49,13 @@ from . import recordings_library, session_results, tutor_notifications, recordin
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 from .home_summary import curriculum_home_summary
+from .teaching_quality import teaching_review
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
 
 
 urlpatterns = [
+    path('curriculum/modules/<str:module_id>/weeks/<str:week_id>/web-points/', week_points, name='web-week-points'),
     path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
     path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),
     path('curriculum/learner-directory/counts/', learner_directory.counts),
@@ -83,6 +88,7 @@ urlpatterns = [
     path('curriculum/modules/tutor-email/', tutor_notifications.modules_tutor_email, name='curriculum-modules-tutor-email'),
     # Every saved recording across modules, for the Recordings page. Read only.
     path('curriculum/session-recordings/calendar-matches/', recordings_calendar.calendar_matches),
+    path('curriculum/session-recordings/quality/', teaching_review, name='teaching-quality-review'),
     path('curriculum/session-recordings/external-recordings/', recordings_external.external_recordings),
     path('curriculum/session-recordings/', recordings_library.recordings_library, name='curriculum-session-recordings'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
@@ -188,6 +194,7 @@ urlpatterns = [
     # What changed since the copy an open Module Builder holds (read-only POST).
     path('curriculum/modules/<str:module_catalogue_id>/changes/', curriculum_module_changes, name='curriculum-module-changes'),
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),
+    path('curriculum/modules/<str:module_catalogue_id>/convert-free-course/', convert_free_course, name='curriculum-convert-free-course'),
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', teams_staff_required(views.curriculum_module_teams_meeting_restore), name='curriculum-module-teams-meeting-restore'),
@@ -253,6 +260,7 @@ urlpatterns = [
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/<str:artifact_id>/recording-events/', views.curriculum_teams_recording_events, name='curriculum-teams-recording-events'),
     path('curriculum/presentations/slides/', views.curriculum_presentation_slides, name='curriculum-presentation-slides'),
     path('curriculum/uploads/<path:path>', views.curriculum_uploaded_file, name='curriculum-uploaded-file'),
+    path('curriculum/module-uploads/<str:module_catalogue_id>/', module_uploaded_files, name='curriculum-module-uploaded-files'),
     path('office-preview/<str:token>/<str:filename>', views.curriculum_office_preview_file, name='curriculum-office-preview-file'),
     path('curriculum/weeks/<str:week_id>/ksb-coverage/', views.curriculum_week_ksb_coverage, name='curriculum-week-ksb-coverage'),
     path('curriculum/weeks/<str:week_id>/learner-roster/', views.curriculum_week_learner_roster, name='curriculum-week-learner-roster'),

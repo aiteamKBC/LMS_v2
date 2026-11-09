@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { CheckCircle2, Download, Layers, Link, LoaderCircle, Mail, QrCode, Search } from 'lucide-react';
 import { SelectMenu } from '@/components/feature/SelectField';
 import { qrAttendanceApi, type QRConfiguration, type QRConfirmation, type QRLecture, type QRModule } from '@/api/qrAttendance';
-import { lectureDate } from './dates';
+import { attendanceDayMessage, lectureDate } from './dates';
 import { LectureCards } from './LectureCards';
 import './attendance.css';
 
@@ -38,15 +38,38 @@ export default function QRAttendancePage() {
   const revision = useRef(0);
   const pendingSave = useRef(false);
   const alive = useRef(true);
-  const selected = lectures.find(item => item.id === occurrenceId);
+  const clock = useRef({ instant: 0, receivedAt: 0 });
+  const [now, setNow] = useState(0);
+  const selected = lectures.find(item => item.id === occurrenceId && config && !attendanceDayMessage(item, config.timeZone, now));
   const suggestedModules = modules.filter(item => moduleCandidates.includes(item.id));
+  const availableSuggestions = config ? suggestions.filter(item => !attendanceDayMessage(item, config.timeZone, now)) : [];
+
+  function serverNow() {
+    return clock.current.instant + performance.now() - clock.current.receivedAt;
+  }
 
   useEffect(() => {
     alive.current = true;
     let current = true;
-    qrAttendanceApi.configuration().then(value => { if (current) setConfig(value); })
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const updateClock = () => setNow(serverNow());
+    qrAttendanceApi.configuration().then(value => {
+      if (!current) return;
+      const instant = Date.parse(value.serverNow);
+      if (!Number.isFinite(instant)) throw new Error('Attendance time is unavailable. Please reload the page.');
+      clock.current = { instant, receivedAt: performance.now() };
+      setNow(instant); setConfig(value);
+      timer = setInterval(updateClock, 1000);
+      window.addEventListener('focus', updateClock);
+      document.addEventListener('visibilitychange', updateClock);
+    })
       .catch(reason => { if (current) setError(failure(reason)); });
-    return () => { current = false; alive.current = false; revision.current += 1; };
+    return () => {
+      current = false; alive.current = false; revision.current += 1;
+      clearInterval(timer);
+      window.removeEventListener('focus', updateClock);
+      document.removeEventListener('visibilitychange', updateClock);
+    };
   }, []);
 
   function resetEmail(value: string) {
@@ -66,14 +89,15 @@ export default function QRAttendancePage() {
       const response = await qrAttendanceApi.lectures(knownConfig.csrfToken, lookupEmail, id);
       if (ticket !== revision.current || !alive.current) return;
       setLectures(response.lectures);
-      if (response.lectures.some(item => item.id === preferredOccurrence)) setOccurrenceId(preferredOccurrence);
+      const available = response.lectures.filter(item => !attendanceDayMessage(item, knownConfig.timeZone, serverNow()));
+      if (available.some(item => item.id === preferredOccurrence)) setOccurrenceId(preferredOccurrence);
       else {
         // New servers rank using the business timezone and verified placement.
         // Legacy servers can only suggest one running lecture, never a sole past/future row.
-        const current = response.lectures.filter(item => item.current);
+        const current = available.filter(item => item.current);
         const suggested = response.suggestedOccurrenceId === undefined
           ? (current.length === 1 ? current[0].id : null) : response.suggestedOccurrenceId;
-        if (suggested && response.lectures.some(item => item.id === suggested)) setOccurrenceId(suggested);
+        if (suggested && available.some(item => item.id === suggested)) setOccurrenceId(suggested);
       }
     } catch (reason) {
       if (ticket === revision.current && alive.current) setLectureError(failure(reason));
@@ -113,6 +137,8 @@ export default function QRAttendancePage() {
   async function confirm(event: React.FormEvent) {
     event.preventDefault();
     if (!config || !selected || pendingSave.current) return;
+    const unavailable = attendanceDayMessage(selected, config.timeZone, serverNow());
+    if (unavailable) { setNow(serverNow()); setError(unavailable); return; }
     pendingSave.current = true; setSaving(true); setError(''); setResult(null);
     try {
       const response = await qrAttendanceApi.confirm(config.csrfToken, email.trim(), moduleId, selected.id);
@@ -176,7 +202,7 @@ export default function QRAttendancePage() {
                 searchable searchPlaceholder="Search modules, groups or cohorts…" emptyMessage="No matching modules."
                 triggerClassName="qr-module-trigger" menuClassName="qr-module-menu" />
             </div>
-            {identified && !suggestions.length && suggestedModules.length > 1 && <div className="qr-module-suggestions">
+            {identified && !availableSuggestions.length && suggestedModules.length > 1 && <div className="qr-module-suggestions">
               <p id="qr-module-suggestions-label" className="text-sm font-semibold">Suggested modules</p>
               <div role="group" aria-labelledby="qr-module-suggestions-label" className="qr-module-suggestion-list">
                 {suggestedModules.map(item => <button key={item.id} type="button" aria-pressed={moduleId === item.id}
@@ -191,11 +217,11 @@ export default function QRAttendancePage() {
               </div>
             </div>}
             {identified && !modules.length && <p role="status" className="text-sm leading-6 text-foreground-600">No curriculum modules are available for your programme. Please contact the college.</p>}
-            {suggestions.length > 1 && config && <div className="rounded-xl border border-primary-100 bg-primary-50/50 p-3">
+            {availableSuggestions.length > 1 && config && <div className="rounded-xl border border-primary-100 bg-primary-50/50 p-3">
               <p className="text-sm font-semibold text-primary-800">Suggested lectures</p>
               <p className="mt-1 text-xs text-foreground-600">Choose a suggestion, or select any module above.</p>
               <div className="mt-2 max-h-48 space-y-2 overflow-y-auto">
-                {suggestions.map(item => <button key={`${item.moduleId}:${item.id}`} type="button" disabled={saving} onClick={() => void chooseModule(item.moduleId, item.id)} className="block min-h-11 w-full rounded-lg border border-primary-100 bg-white p-3 text-left text-sm text-primary-800 hover:border-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+                {availableSuggestions.map(item => <button key={`${item.moduleId}:${item.id}`} type="button" disabled={saving} onClick={() => void chooseModule(item.moduleId, item.id)} className="block min-h-11 w-full rounded-lg border border-primary-100 bg-white p-3 text-left text-sm text-primary-800 hover:border-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
                   <span className="block font-semibold">{item.title}</span><span className="mt-1 block text-xs">{lectureDate(item, config.timeZone)}</span>
                   <span className="mt-1 block text-xs">{[item.group, item.cohort].filter(Boolean).join(' · ')}</span>
                 </button>)}
@@ -204,11 +230,15 @@ export default function QRAttendancePage() {
           </div>
           <fieldset className="qr-step qr-lecture-step min-w-0" disabled={saving} aria-busy={loadingLectures}>
             <legend><StepLabel number={3}>Choose Lecture</StepLabel></legend>
+            {config && <p className="mb-2 text-xs text-foreground-600">Attendance is available only on the lecture date, all day in college time ({config.timeZone}).</p>}
             {!moduleId && <p className="qr-lecture-placeholder rounded-xl border border-dashed border-primary-200 bg-background-50 px-4 py-6 text-center text-sm leading-6 text-foreground-600">{identified ? 'Choose a module to see its lectures.' : 'Your available lectures will appear here.'}</p>}
             {loadingLectures && <p role="status" className="flex items-center gap-2 rounded-xl bg-primary-50 px-4 py-6 text-sm text-primary-700"><LoaderCircle aria-hidden="true" size={18} className="motion-safe:animate-spin" />Loading lectures…</p>}
             {moduleId && !loadingLectures && !lectureError && !lectures.length && <p role="status" className="rounded-xl border border-dashed border-primary-200 bg-background-50 px-4 py-6 text-sm leading-6 text-foreground-600">No lectures are scheduled for this module. Please choose another module.</p>}
             {lectureError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{lectureError}<button type="button" className="ml-2 inline-flex min-h-11 items-center px-2 font-semibold underline focus-visible:ring-2 focus-visible:ring-red-500" onClick={() => void chooseModule(moduleId)}>Retry</button></div>}
-            {config && lectures.length > 0 && <LectureCards lectures={lectures} selectedId={occurrenceId} timeZone={config.timeZone} disabled={saving} onSelect={id => { setOccurrenceId(id); setResult(null); setError(''); }} />}
+            {config && lectures.length > 0 && <>
+              {!lectures.some(item => !attendanceDayMessage(item, config.timeZone, now)) && <p role="status" className="mb-2 text-sm text-foreground-600">No lectures are available for attendance today. Other dates are shown below.</p>}
+              <LectureCards lectures={lectures} selectedId={selected?.id || ''} timeZone={config.timeZone} now={now} disabled={saving} onSelect={id => { setOccurrenceId(id); setResult(null); setError(''); }} />
+            </>}
           </fieldset>
           <button className={button} disabled={!identified || !config || !selected || loadingLectures || saving}>
             {saving ? <LoaderCircle aria-hidden="true" size={20} className="motion-safe:animate-spin" /> : <CheckCircle2 aria-hidden="true" size={20} />}

@@ -1,7 +1,7 @@
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
+import { observeRewardInterval, flushRewardObservations, clearRewardObservations, REWARDS_UNAVAILABLE_NOTICE } from '@/lib/rewardTracking';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -170,6 +170,7 @@ export default function QuizTakePage() {
   const [programmeName, setProgrammeName] = useState('Programme not set');
   const [reflectionRequired, setReflectionRequired] = useState(true);
   const [reflectionQuestion, setReflectionQuestion] = useState<string | null>(null);
+  const [quizComponentId, setQuizComponentId] = useState<string | null>(null);
   const [reflectionChoiceOpen, setReflectionChoiceOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -189,6 +190,7 @@ export default function QuizTakePage() {
   const [timingGeneration, setTimingGeneration] = useState(0);
   useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [kind, id, quizId]);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [rewardNotice, setRewardNotice] = useState('');
   const [timeConflict, setTimeConflict] = useState<{
     previousSeconds: number; message: string; reflection: QuizReflection; options: QuizCompletionOptions;
   } | null>(null);
@@ -233,20 +235,26 @@ export default function QuizTakePage() {
   }, [quizId, kind, id, phase]);
 
   useEffect(() => {
-    if (!quizId) return;
+    if (!quizId || !kind || !id || detailLoading) return;
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
     setPhase('intro');
+    setRewardNotice('');
     setReflectionChoiceOpen(false);
     setAnswers({});
     setResult(null);
-    fetchQuiz(Number(quizId), id)
+    if (!quizComponentId) {
+      setLoading(false);
+      setLoadError(detailError || 'This quiz is not assigned in the learner’s current programme.');
+      return;
+    }
+    fetchQuiz(Number(quizId), kind as LearnerKind, id, quizComponentId)
       .then((data) => { if (!cancelled) setQuiz(data); })
       .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load quiz'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id, quizId, loadAttempt]);
+  }, [kind, id, quizId, quizComponentId, detailError, detailLoading, loadAttempt]);
 
   // Load the learner's KSBs (from their Active_users row) for the reflection window.
   useEffect(() => {
@@ -256,6 +264,7 @@ export default function QuizTakePage() {
     setDetailLoading(true);
     setDetailError(null);
     setDetail(null);
+    setQuizComponentId(null);
     fetchLearnerDetail(kind as LearnerKind, id, { quizView: true })
       .then((d) => {
         if (!cancelled) {
@@ -266,8 +275,11 @@ export default function QuizTakePage() {
           setLearnerName(d.name || 'Learner');
           setProgrammeName(d.programme || 'Programme not set');
           const quizComponent = (d.components || []).find(component =>
-            String(component.quizMeta?.quizId ?? '') === String(quizId),
+            String(component.quizMeta?.quizId ?? '') === String(quizId)
+            && (!moduleTitle || component.module === moduleTitle)
+            && (!weekTitle || component.week === weekTitle),
           );
+          setQuizComponentId(quizComponent?.componentId || null);
           setReflectionRequired(quizComponent?.reflectionRequired !== false);
           setReflectionQuestion(quizComponent?.reflectionQuestion || null);
         }
@@ -275,7 +287,7 @@ export default function QuizTakePage() {
       .catch(error => { if (!cancelled) setDetailError(error instanceof Error ? error.message : 'Could not load your quiz requirements.'); })
       .finally(() => { if (!cancelled) setDetailLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id, quizId, loadAttempt]);
+  }, [kind, id, moduleTitle, quizId, weekTitle, loadAttempt]);
 
   useEffect(() => {
     if (phase !== 'quiz' || reflectionChoiceOpen || !componentAccess.open) return;
@@ -344,6 +356,7 @@ export default function QuizTakePage() {
   const beginQuiz = () => {
     if (!quiz || quiz.unavailableReason || !kind || !id || !canUseComponent || detailLoading || detailError) return;
     setSubmitError(null);
+    setRewardNotice('');
     setReflectionChoiceOpen(false);
     trackingSessionRef.current = null;
     const pending = startTimeTracking(
@@ -379,6 +392,7 @@ export default function QuizTakePage() {
   const viewLatestResult = () => {
     if (!quiz || !latestAttempt) return;
     setResult(resultFromStoredAttempt(quiz, latestAttempt));
+    setRewardNotice('');
     setPhase('results');
   };
 
@@ -414,6 +428,10 @@ export default function QuizTakePage() {
     options: QuizCompletionOptions = {},
   ) => {
     if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    if (!quizComponentId) {
+      setSubmitError('This quiz is not assigned in the learner’s current programme.');
+      return;
+    }
     const timerSeconds = options.timerSeconds ?? elapsedSeconds;
     const timeIssue = activityTimeIssue(retakePrevious.current, reflection.timeTakenSeconds ?? timerSeconds, retakeTimeChoice.current);
     if (timeIssue) { setTimeLimitIssue(timeIssue); return; }
@@ -434,8 +452,12 @@ export default function QuizTakePage() {
           .catch(error => { setExpiredTiming(true); throw error; });
         trackingSessionRef.current = tracking;
       }
-      if (tracking.rewardTracking) await flushRewardObservations(tracking,'quiz',String(quiz.id), Boolean(tracking.persistent));
+      let rewardsUnavailable = tracking.rewardTracking === false;
+      if (tracking.rewardTracking) {
+        rewardsUnavailable = await flushRewardObservations(tracking,'quiz',String(quiz.id), Boolean(tracking.persistent)) === 'not_enabled';
+      }
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
+        componentId: quizComponentId,
         answers,
         timeTakenSeconds: reflection.timeTakenSeconds ?? timerSeconds,
         startedAt: tracking.startedAt,
@@ -453,6 +475,7 @@ export default function QuizTakePage() {
       });
       setReflectionChoiceOpen(false);
       setResult(res);
+      setRewardNotice(rewardsUnavailable ? REWARDS_UNAVAILABLE_NOTICE : '');
       clearRewardObservations(tracking);
       setPhase('results');
       setCorrection(null);
@@ -574,6 +597,8 @@ export default function QuizTakePage() {
           />
         ) : (
           result && (
+            <>
+            {rewardNotice && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{rewardNotice}</p>}
             <ResultsScreen
               quiz={quiz}
               result={result}
@@ -582,6 +607,7 @@ export default function QuizTakePage() {
               onBack={() => navigate(-1)}
               onRetake={startQuiz}
             />
+            </>
           )
         )}
         </div>

@@ -7,6 +7,7 @@ import { submitComponentProgress, type ComponentProgressResponse } from '@/api/c
 import { startTimeTracking, resumeTimeTracking, checkpointTimeTracking } from '@/api/timeTracking';
 import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
+import { readLearnerAttendanceMode } from '@/api/learnerAttendanceMode';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
 import { LearnerProgrammeGate } from '@/components/feature/LearnerProgrammeGate';
@@ -38,6 +39,7 @@ vi.mock('./readingDownloads', async () => ({
 }));
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
+vi.mock('@/api/learnerAttendanceMode', () => ({ readLearnerAttendanceMode: vi.fn(), peekLearnerAttendanceMode: () => undefined }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
 vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTracking: vi.fn(), checkpointTimeTracking: vi.fn() }));
 vi.mock('@/api/videos', () => ({ submitVideoProgress: vi.fn() }));
@@ -111,6 +113,7 @@ beforeEach(() => {
   session.holidays = [];
   localStorage.clear();
   vi.mocked(fetchLearnerDetail).mockResolvedValue(detail());
+  vi.mocked(readLearnerAttendanceMode).mockResolvedValue('live');
   vi.mocked(startTimeTracking).mockResolvedValue({
     sessionId: 'S1', trackingToken: 'token', startedAt: new Date().toISOString(), countingMode: 'visible_page',
   });
@@ -119,6 +122,82 @@ beforeEach(() => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each([
+  ['commercial', 'live', 'Required: Live attendance'],
+  ['commercial', 'lazy', 'Required: Recording'],
+  ['apprenticeship', 'live', 'Required: Live attendance'],
+  ['apprenticeship', 'lazy', 'Required: Recording'],
+] as const)('shows the active %s learner requirement (%s) in the heading and sidebar without completing the session', async (kind, mode, label) => {
+  vi.mocked(readLearnerAttendanceMode).mockResolvedValue(mode);
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, liveSessionUrl: 'https://example.invalid/live' }, second,
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  await waitFor(() => expect(screen.getAllByText(label).length).toBeGreaterThanOrEqual(2));
+  expect(readLearnerAttendanceMode).toHaveBeenCalledWith(kind, '1', expect.any(AbortSignal), false);
+  expect(screen.getByRole('link', { name: /Join live session/ })).toBeVisible();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['commercial', 'powerpoint', true], ['apprenticeship', 'powerpoint', true],
+  ['commercial', 'video', true], ['apprenticeship', 'video', true],
+  ['commercial', 'powerpoint', false], ['commercial', 'video', false],
+] as const)('saves %s %s progress when rewards are unavailable (previously enabled: %s)', async (kind, type, rewardTracking) => {
+  const savedSession = { sessionId: `unavailable-${kind}-${type}-${rewardTracking}`, trackingToken: 'retained-token',
+    startedAt: '2026-10-01T09:00:00Z', countingMode: type === 'video' ? 'active_playback' as const : 'visible_page' as const,
+    persistent: true, rewardTracking };
+  const key = `learner_activity_timer:v1:${kind}:1:C1`;
+  localStorage.setItem(key, JSON.stringify({ elapsedSeconds: 25, session: savedSession }));
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  vi.mocked(checkpointTimeTracking).mockResolvedValue({ ...savedSession, savedSeconds: 25 });
+  const activity = { ...first, type, component: 'Synthetic lesson', reflectionRequired: type === 'powerpoint',
+    ...(type === 'video' ? { videoUrl: 'https://example.test/lesson.mp4' } :
+      { resourceUrl: '/learner_api/materials/slide.png', fileName: 'Slide.png' }) };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [activity] } as LearnerDetail);
+  vi.mocked(submitComponentProgress).mockResolvedValue({ record: { ...progress, timeTaken: '00:25' } } as unknown as ComponentProgressResponse);
+  vi.mocked(submitVideoProgress).mockResolvedValue({ record: { ...progress, kind: 'video', timeTaken: '00:25' } } as unknown as VideoProgressResponse);
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+    code: 'rewards_not_enabled', error: 'Study time could not be confirmed. rewards not enabled.',
+  }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+  mount('C1', kind);
+  await screen.findByRole('timer', { name: 'Time on this activity: 00 hours, 00 minutes, 25 seconds' });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: type === 'video' ? 'Confirm' : 'No, finish without reflection' }));
+  expect(await screen.findByText('Your time and progress were saved. Study-time points are not enabled for this activity.')).toBeVisible();
+  expect(type === 'video' ? submitVideoProgress : submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 25, trackingToken: 'retained-token', timeEntrySource: 'timer',
+  }));
+  expect(localStorage.getItem(key)).toBeNull();
+  expect(localStorage.getItem('kbc-reward-intervals:v1:' + savedSession.sessionId)).toBeNull();
+  expect(request.mock.calls.filter(([url]) => String(url) === '/learner_api/time-tracking/observations/')).toHaveLength(rewardTracking ? 1 : 0);
+});
+
+it('retains the activity draft and shows no success notice if progress saving fails after rewards are disabled', async () => {
+  const savedSession = { sessionId: 'retry-disabled', trackingToken: 'retained-token', startedAt: '2026-10-01T09:00:00Z',
+    countingMode: 'visible_page' as const, persistent: true, rewardTracking: true };
+  const key = 'learner_activity_timer:v1:commercial:1:C1';
+  localStorage.setItem(key, JSON.stringify({ elapsedSeconds: 25, session: savedSession }));
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  vi.mocked(checkpointTimeTracking).mockResolvedValue({ ...savedSession, savedSeconds: 25 });
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, type: 'powerpoint',
+    reflectionRequired: true, resourceUrl: '/learner_api/materials/slide.png', fileName: 'Slide.png' }] } as LearnerDetail);
+  vi.mocked(submitComponentProgress).mockRejectedValueOnce(new Error('Progress could not be saved.'));
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ code: 'rewards_not_enabled' }), { status: 409 }));
+  mount('C1', 'commercial');
+  await screen.findByRole('timer', { name: 'Time on this activity: 00 hours, 00 minutes, 25 seconds' });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Progress could not be saved.');
+  expect(screen.queryByText(/Your time and progress were saved/)).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ elapsedSeconds: 25, session: savedSession });
+  expect(JSON.parse(localStorage.getItem('kbc-reward-intervals:v1:' + savedSession.sessionId)!).inFlight).not.toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'No, finish without reflection' }));
+  expect(await screen.findByText('Your time and progress were saved. Study-time points are not enabled for this activity.')).toBeVisible();
+  expect(vi.mocked(submitComponentProgress).mock.calls[1]).toEqual(vi.mocked(submitComponentProgress).mock.calls[0]);
+  expect(localStorage.getItem(key)).toBeNull();
+});
 
 it.each(['commercial', 'apprenticeship'])('shows allocated study time in the %s activity heading separately from session duration', async kind => {
   mount('C1', kind);

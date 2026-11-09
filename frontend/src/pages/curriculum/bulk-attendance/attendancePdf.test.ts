@@ -53,6 +53,24 @@ it('exports the saved KBC and live attendance history for one learner', () => {
   expect(mocks.doc.save).toHaveBeenCalledWith('attendance-history_alex-example.pdf');
 });
 
+it('exports completed and awaiting recordings with their actual outcomes', () => {
+  downloadLearnerAttendancePdf({
+    learner: { id: '301', name: 'Synthetic Learner', email: 'synthetic@example.test',
+      programmeId: '', cohortId: '', groupId: '', endDate: '' },
+    cohortName: '', moduleLabel: '',
+    history: [
+      { id: '1', sessionDate: '2026-10-14', moduleName: 'Module', lectureName: 'Session 1', source: 'live', attendance: 'recorded' },
+      { id: '2', sessionDate: '2026-10-21', moduleName: 'Module', lectureName: 'Session 2', source: 'kbc', attendance: 'awaiting_recording' },
+    ],
+  });
+  expect(mocks.autoTable).toHaveBeenLastCalledWith(mocks.doc, expect.objectContaining({
+    body: [
+      [expect.any(String), 'Module', 'Session 1', 'Live register', 'Recording completed'],
+      [expect.any(String), 'Module', 'Session 2', 'KBC', 'Awaiting recording'],
+    ],
+  }));
+});
+
 it('lists make-up evidence while counting only the original lecture in the PDF', () => {
   downloadLearnerAttendancePdf({
     learner: {

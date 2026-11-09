@@ -16,6 +16,7 @@ from learner_api.models import LearnerProfile
 from .models import INACTIVE_STATUSES, LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
 from .bulk_attendance_live_recovery import parallel_recovery_links
 from .session_results_policy import instant
+from .bulk_attendance_recorded import apply_recorded_outcomes
 
 
 def _local_date(value):
@@ -134,7 +135,7 @@ def bulk_attendance_live_day_records(request):
             for row in register_rows
             if row["learner_profile_id"] in aptem_by_profile
         ]
-        return JsonResponse({"records": records})
+        return JsonResponse({"records": apply_recorded_outcomes(records)})
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except DatabaseError:
@@ -199,7 +200,7 @@ def bulk_attendance_live_month_records(request):
         ) if occurrence_ids else []
         aptem_by_profile = _aptem_ids_by_profile({row["learner_profile_id"] for row in register_rows})
         covered, guests = parallel_recovery_links(register_rows, database=database)
-        return JsonResponse({
+        payload = {
             "occurrences": [
                 {
                     "id": row["id"],
@@ -223,7 +224,9 @@ def bulk_attendance_live_month_records(request):
                 for row in register_rows
                 if row["learner_profile_id"] in aptem_by_profile
             ],
-        })
+        }
+        payload['records'] = apply_recorded_outcomes(payload['records'])
+        return JsonResponse(payload)
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except DatabaseError:

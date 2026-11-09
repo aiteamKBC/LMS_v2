@@ -56,11 +56,14 @@ def group_coach_name_sql(group_alias='g'):
     curriculum.groups no longer stores a coach (neither coach_name nor coach_id,
     and curriculum.modules has no coach column): a group's coaches are its rows
     in curriculum.group_coaches, named by curriculum.coaches. A group may have
-    several; they are joined in name order, as the curriculum screens show them.
+    several; distinct trimmed names are joined in deterministic name order.
+    This display value must never resolve a learner's assigned coach.
     A group without a coach, a missing group row, or only blank names gives
     NULL, matching the former ``coalesce(nullif(btrim(g.coach_name), ''), ...)``.
     """
-    return (f"(SELECT nullif(string_agg(btrim(coach.name), ', ' ORDER BY lower(btrim(coach.name))), '') "
+    return (f"(SELECT string_agg(names.name, ', ' ORDER BY lower(names.name), names.name) "
+            f"FROM (SELECT DISTINCT btrim(coach.name) AS name "
             f"FROM curriculum.group_coaches group_coach "
             f"JOIN curriculum.coaches coach ON coach.id = group_coach.coach_id "
-            f"WHERE group_coach.group_id = {group_alias}.group_id AND btrim(coalesce(coach.name, '')) <> '')")
+            f"WHERE group_coach.group_id = {group_alias}.group_id "
+            f"AND btrim(coalesce(coach.name, '')) <> '') names)")

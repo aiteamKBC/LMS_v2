@@ -1,5 +1,6 @@
 """Owner-scoped Monthly Log attendance; never write progress or Teams data."""
 from datetime import datetime, timezone
+from collections import defaultdict
 from zoneinfo import ZoneInfo
 
 from old_otjh.repository import query
@@ -39,6 +40,15 @@ def represented(lecture, records):
         if (payload.get('original_source_ref') == source_ref
                 or record.get('time_tracking_session_ref') == lecture_ref
                 or declaration.get('lecture_id') == lecture_ref):
+            return True
+        kbc = metadata(payload.get('kbc_attendance'))
+        key = record.get('kbc_attendance_key')
+        # The saved KBC source is joined against this owner's Aptem identity.
+        # Match its exact date/module only when the live register
+        # has a single occurrence there; a delayed import must not add hours twice.
+        if (lecture.get('unique_kbc_match') and key
+                and payload.get('original_source_ref') == f'att:{key}'
+                and kbc.get('date') == day and kbc.get('module') == lecture.get('module_title')):
             return True
         settings = metadata(record.get('settings_json'))
         legacy = metadata(settings.get('legacySettings'))
@@ -110,16 +120,24 @@ def read_rows(owner, *, now):
 
     # Keep existing recorded decisions, including zero-hour staff corrections.
     # Evidence-only attendance events do not represent an hour allocation.
-    records = query('''SELECT p.source_payload,p.time_tracking_session_ref,p.module_ref,c.settings_json
+    records = query('''SELECT p.source_payload,p.time_tracking_session_ref,p.module_ref,a.source_key AS kbc_attendance_key,c.settings_json
         FROM "Learner".learner_progress_entries p
+        JOIN "Learner".learners l ON l.id=p.learner_id
+        LEFT JOIN "Learner".source_lms_attendance a ON a.aptem_id=l.aptem_id
+          AND substr(p.source_payload->>'original_source_ref',1,4)='att:'
+          AND a.source_key=substr(p.source_payload->>'original_source_ref',5)
         LEFT JOIN curriculum.components c ON c.id=coalesce(nullif(p.curriculum_component_ref,''),p.component_ref)
         WHERE p.learner_id=%s AND p.deleted_at IS NULL
           AND ((p.actual_seconds IS NOT NULL AND (p.accepted IS TRUE OR p.actual_basis='staff:module-progress')) OR
             (nullif(p.source_system,'') IS NULL AND p.component_link_source IN ('direct','quiz_ref')
              AND p.kind<>'activity_event' AND p.submitted_at IS NOT NULL))''', [owner['id']])
     by_occurrence = {}
+    kbc_matches = defaultdict(set)
     for lecture in candidates:
         by_occurrence.setdefault(str(lecture['occurrence_id']), []).append(lecture)
+        kbc_matches[lecture['session_date'], lecture['module_title']].add(str(lecture['occurrence_id']))
+    for lecture in candidates:
+        lecture['unique_kbc_match'] = len(kbc_matches[lecture['session_date'], lecture['module_title']]) == 1
     for occurrence, matches in by_occurrence.items():
         # One learner may have the same shared occurrence in several modules.
         if any(represented(item, records) for item in matches):

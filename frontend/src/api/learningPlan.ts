@@ -8,6 +8,7 @@
 // ============================================================================
 import { formatHoursMinutes } from '@/lib/format';
 import { invalidateLearnerDetailCache } from './learnerDetail';
+import { invalidateLearnerFreeCourses } from './freeCourses';
 import type { FreeCourseAssignment } from './trainingPlan';
 const BASE = '/learner_api/learning-plan';
 const MODULE_BASE = '/learner_api/module-learners';
@@ -102,11 +103,12 @@ export interface LearningPlanResponse {
   /** The current plan — the saved one, or the group preset if never saved. */
   plan: LearningPlanModule[];
   /**
-   * Free courses assigned to this learner — a pure assignment record with no
-   * hours or KSBs, stored separately from the plan above (see
-   * EnrolmentUser.free_courses). Independent of programme/group.
+   * Free courses assigned to this learner. Canonical ownership and ordering
+   * live in Learner.learner_free_courses, separately from module hours/KSBs.
    */
   freeCourses: FreeCourseAssignment[];
+  /** Opaque optimistic-concurrency token for the ordered assignment list. */
+  freeCourseAssignmentVersion: string;
   /** The learner's group's modules, for "reset to group default". */
   preset: LearningPlanModule[];
   /** Every catalogue module not already on the plan, for the add picker. */
@@ -154,20 +156,16 @@ export async function fetchLearningPlan(learnerId: string | number): Promise<Lea
 }
 
 /**
- * Save the plan. Order is preserved; hours/titles/dates are re-derived
- * server-side. `freeCourses`, when passed, replaces the learner's free-course
- * assignments (a separate column — no hours/KSBs). Omit it to leave them as they
- * are.
+ * Save the module plan. Order is preserved; hours/titles/dates are re-derived
+ * server-side. Free Course assignments use the dedicated canonical endpoint.
  */
 export async function saveLearningPlan(
   learnerId: string | number,
   moduleIds: string[],
-  freeCourses?: FreeCourseAssignment[],
 ): Promise<LearningPlanResponse> {
-  const body: { modules: { moduleId: string }[]; freeCourses?: FreeCourseAssignment[] } = {
+  const body: { modules: { moduleId: string }[] } = {
     modules: moduleIds.map((moduleId) => ({ moduleId })),
   };
-  if (freeCourses !== undefined) body.freeCourses = freeCourses;
   const result = await parse(
     await fetch(`${BASE}/${learnerId}/`, {
       method: 'PATCH',
@@ -176,6 +174,43 @@ export async function saveLearningPlan(
     }),
   );
   invalidateLearnerDetailCache();
+  return result;
+}
+
+export interface FreeCourseAssignmentsResponse {
+  freeCourses: FreeCourseAssignment[];
+  freeCourseAssignmentVersion: string;
+}
+
+function cookie(name: string): string {
+  const prefix = `${encodeURIComponent(name)}=`;
+  const value = document.cookie.split(';').map(part => part.trim()).find(part => part.startsWith(prefix));
+  return value ? decodeURIComponent(value.slice(prefix.length)) : '';
+}
+
+/** Replace the ordered canonical assignment set. Learning Plan GET establishes
+ * the CSRF cookie; the browser write is refused locally if it is unavailable. */
+export async function saveFreeCourseAssignments(
+  learnerId: string | number,
+  courseIds: string[],
+  expectedVersion: string,
+): Promise<FreeCourseAssignmentsResponse> {
+  const csrf = cookie('csrftoken');
+  if (!csrf) throw new Error('Request verification is unavailable. Reload the Learning Plan and try again.');
+  const result = await parse(
+    await fetch(`${BASE}/${learnerId}/free-courses/`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrf,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ courseIds, expectedVersion }),
+    }),
+  ) as FreeCourseAssignmentsResponse;
+  invalidateLearnerDetailCache();
+  invalidateLearnerFreeCourses();
   return result;
 }
 

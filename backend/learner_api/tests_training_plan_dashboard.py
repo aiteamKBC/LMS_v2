@@ -286,7 +286,8 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.assertEqual(detail['coach_name'], 'Group coach')
         self.assertEqual(detail['end_date'], '2027-02-11')
         self.assertEqual(result['sessions'], [])
-        self.assertEqual(result['coach'], {'name': 'Group coach', 'bookingUrl': None})
+        # Group display names never supply a missing learner assignment.
+        self.assertEqual(result['coach'], {'name': '', 'bookingUrl': None})
         week_sql = next(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list
                         if 'FROM curriculum.weeks w' in str(call.args[0]))
         self.assertIn("lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'", week_sql)

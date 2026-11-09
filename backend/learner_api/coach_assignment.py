@@ -69,3 +69,15 @@ def current_coach(source, profile=None, historical=None):
     historical = historical or {}
     return {"coach_name": _text(historical.get("coach_name")),
             "coach_email": _text(historical.get("coach_email"))}
+
+
+def learner_profile_coach(source, profile=None, historical=None):
+    """Dashboard contact from Learner.learners only; no inferred assignment.
+
+    Keep the reader signature and response keys used by Dashboard projections.
+    Legacy source fields, historical contacts and group coaches cannot override
+    or fill a missing canonical email. This reader never writes an assignment.
+    """
+    email = _text(getattr(profile, 'coach_email', None))
+    return {'coach_name': _text(getattr(profile, 'coach_name', None)) if email else '',
+            'coach_email': email}

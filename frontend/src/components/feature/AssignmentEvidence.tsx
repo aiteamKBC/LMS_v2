@@ -3,7 +3,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
   fetchEvidence, uploadEvidence, getEvidenceDownloadUrl, deleteEvidence,
-  type EvidenceRecord, type EvidenceTrainingPlanDetails,
+  type EvidenceRecord, type EvidenceTrainingPlanDetails, type UploadEvidenceResult,
 } from '@/api/evidence';
 
 /* ═══════════════════════════════════════════════════════
@@ -47,7 +47,7 @@ function formatSize(bytes: number): string {
 }
 
 export function AssignmentEvidence({
-  kind, learnerId, componentId, trainingPlanDetails, onUploaded, onFileSelected, inputId, showPanel = true, readOnly = false,
+  kind, learnerId, componentId, trainingPlanDetails, onUploaded, onUploadCompleted, onFileSelected, inputId, showPanel = true, readOnly = false,
 }: {
   kind: LearnerKind;
   learnerId: string;
@@ -55,6 +55,8 @@ export function AssignmentEvidence({
   trainingPlanDetails: EvidenceTrainingPlanDetails;
   /** Fired after a successful upload so callers can re-check completion criteria. */
   onUploaded?: (files: EvidenceRecord[]) => void;
+  /** Identifies this upload so a caller can attach it once its scan is approved. */
+  onUploadCompleted?: (file: UploadEvidenceResult) => void;
   /** Fired immediately after the learner chooses a file, so external triggers can swap their label. */
   onFileSelected?: (fileName: string) => void;
   /** Lets a button elsewhere on the same page open this uploader directly. */
@@ -76,6 +78,8 @@ export function AssignmentEvidence({
   // mount effect in a loop.
   const onUploadedRef = useRef(onUploaded);
   useEffect(() => { onUploadedRef.current = onUploaded; }, [onUploaded]);
+  const onUploadCompletedRef = useRef(onUploadCompleted);
+  useEffect(() => { onUploadCompletedRef.current = onUploadCompleted; }, [onUploadCompleted]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -115,7 +119,8 @@ export function AssignmentEvidence({
     }
     setUploading(true);
     try {
-      await uploadEvidence(kind, learnerId, file, componentId, trainingPlanDetails);
+      const uploaded = await uploadEvidence(kind, learnerId, file, componentId, trainingPlanDetails);
+      onUploadCompletedRef.current?.(uploaded);
       load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed.');

@@ -59,7 +59,7 @@ describe('coach attendance detail', () => {
     expect(within(screen.getByLabelText('Student attendance report')).getByText('Learning mode').nextElementSibling).toHaveTextContent(label);
   });
 
-  it('shows awaiting recordings across all history and PDF pages as counted absences', async () => {
+  it('keeps awaiting recordings visible across history and PDF pages outside attendance totals', async () => {
     const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
     const records = Array.from({ length: 24 }, (_, index) => ({ ...record(index + 1),
       status: index === 0 ? 'present' : 'awaiting_recording' }));
@@ -67,15 +67,15 @@ describe('coach attendance detail', () => {
       const page = Number(new URL(String(url), 'http://test').searchParams.get('page'));
       return new Response(JSON.stringify({ ...payload(records.slice((page - 1) * 20, page * 20), page, 24),
         attendanceMode: 'lazy', awaitingRecording: 23,
-        summary: { attendanceRate: 4, sessions: 24, present: 1, absent: 23 } }));
+        summary: { attendanceRate: 100, sessions: 1, present: 1, absent: 0 } }));
     });
     render(pageElement);
     await screen.findByText('24 records');
     const summary = within(screen.getByLabelText('Attendance summary'));
-    expect(summary.getByText('4%')).toBeInTheDocument();
-    expect(summary.getByText('1 present out of 24')).toBeInTheDocument();
-    expect(summary.getByText('23 absent')).toBeInTheDocument();
-    expect(summary.getByText('23 awaiting recording — counted as absent until completed in this view and PDF report')).toBeInTheDocument();
+    expect(summary.getByText('100%')).toBeInTheDocument();
+    expect(summary.getByText('1 present out of 1')).toBeInTheDocument();
+    expect(summary.getByText('0 absent')).toBeInTheDocument();
+    expect(summary.getByText('23 awaiting recording — excluded from attendance totals until completed')).toBeInTheDocument();
     expect(within(screen.getAllByRole('table')[0]).getAllByText('Awaiting Recording')).toHaveLength(19);
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByText('Page 2 of 2');
@@ -84,11 +84,19 @@ describe('coach attendance detail', () => {
     await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
     const report = within(screen.getByLabelText('Student attendance report'));
     expect(report.getAllByText('Awaiting Recording')).toHaveLength(23);
-    expect(report.getByText('Total lectures').nextElementSibling).toHaveTextContent('24');
-    expect(report.getByText('Absent').nextElementSibling).toHaveTextContent('23');
-    expect(report.getByText('Attendance rate').nextElementSibling).toHaveTextContent('4%');
-    expect(report.getByText(/23 awaiting recording\. In this report/)).toBeInTheDocument();
+    expect(report.getByText('Total lectures').nextElementSibling).toHaveTextContent('1');
+    expect(report.getByText('Absent').nextElementSibling).toHaveTextContent('0');
+    expect(report.getByText('Attendance rate').nextElementSibling).toHaveTextContent('100%');
+    expect(report.getByText(/23 awaiting recording\. These sessions are excluded/)).toBeInTheDocument();
     expect(report.getByText('Recorded mode')).toBeInTheDocument();
+  });
+
+  it('labels completed watch evidence separately from live presence in the profile and report', async () => {
+    const records = [{ ...record(), attendanceBasis: 'recorded' }];
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ ...payload(records), attendanceMode: 'lazy' })));
+    render(pageElement);
+    await screen.findByRole('heading', { name: 'Synthetic Learner' });
+    expect(screen.getAllByText('Recording completed')).toHaveLength(2);
   });
 
   it('requires an explicit correction when editing an awaiting recording, and Cancel never writes', async () => {

@@ -1184,10 +1184,9 @@ class AttendanceModeTests(SimpleTestCase):
             self.assertEqual(response.status_code, 400)
             state.assert_not_called()
 
-    def _post_mode(self, body, role, before):
-        """Drive the mode view past its auth gate with the enrolment DB mocked."""
+    def _post_mode(self, body, role, before, kind='apprenticeship', learner_id=12):
+        """Exercise the authenticated route with database and email writes mocked."""
         from .attendance_mode import attendance_mode
-        view = inspect.unwrap(attendance_mode)
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         model = MagicMock()
         model.all_learners.filter.return_value.first.return_value = source
@@ -1195,10 +1194,22 @@ class AttendanceModeTests(SimpleTestCase):
         cur = conn.cursor.return_value.__enter__.return_value
         request = RequestFactory().post('/', json.dumps(body), content_type='application/json',
                                         HTTP_X_REQUESTED_WITH='XMLHttpRequest')
-        request.login_account = SimpleNamespace(role=role)
-        with patch('learner_api.attendance_mode.SOURCE_MODELS', {'apprenticeship': model}),              patch('learner_api.attendance_mode.connections', {'enrolment': conn}),              patch('learner_api.attendance_mode.transaction.atomic', return_value=nullcontext()),              patch('learner_api.attendance_mode._ready', return_value=True),              patch('learner_api.attendance_mode._state', side_effect=[before, {**before, 'mode': body['mode'],
-                   'requested_mode': None, 'status': 'active'}]),              patch('learner_api.attendance_mode._manager', return_value='manager@example.test') as manager,              patch('learner_api.attendance_mode.is_configured', return_value=True),              patch('learner_api.attendance_mode._send_request', return_value=True) as send:
-            response = view(request, kind='apprenticeship', learner_id=12)
+        request.login_account = SimpleNamespace(role=role, subject_id=12) if role else None
+        with patch('login.permissions._auth_gate_enabled', return_value=True), \
+             patch('login.permissions.authenticate_request', return_value=request.login_account), \
+             patch('login.permissions.audit_admin_learner_action'), \
+             patch('login.permissions.coach_owns_learner', return_value=False), \
+             patch('login.permissions.staff_owns_learner', return_value=role == 'staff'), \
+             patch('learner_api.attendance_mode.SOURCE_MODELS', {'apprenticeship': model, 'commercial': model}), \
+             patch('learner_api.attendance_mode.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_mode.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.attendance_mode._ready', return_value=True), \
+             patch('learner_api.attendance_mode._state', side_effect=[before, {**before, 'mode': body['mode'],
+                   'requested_mode': None, 'status': 'active'}]), \
+             patch('learner_api.attendance_mode._manager', return_value='manager@example.test') as manager, \
+             patch('learner_api.attendance_mode.is_configured', return_value=True), \
+             patch('learner_api.attendance_mode._send_request', return_value=True) as send:
+            response = attendance_mode(request, kind=kind, learner_id=learner_id)
         return response, cur, manager, send
 
     def test_admin_direct_recorded_mode_applies_without_manager_approval_or_email(self):
@@ -1214,20 +1225,52 @@ class AttendanceModeTests(SimpleTestCase):
         manager.assert_not_called()
         send.assert_not_called()
 
-    def test_learner_cannot_skip_manager_approval(self):
-        before = {'mode': 'live', 'status': 'active', 'email_sent': False}
-        response, cur, manager, send = self._post_mode({'mode': 'lazy', 'direct': True}, 'learner', before)
-        self.assertEqual(response.status_code, 403)
-        cur.execute.assert_not_called()
-        send.assert_not_called()
+    def test_learners_cannot_change_mode_or_request_approval(self):
+        for kind in ('apprenticeship', 'commercial'):
+            for saved_mode, requested_mode in (('live', None), ('lazy', None), ('live', 'lazy')):
+                before = {'mode': saved_mode, 'requested_mode': requested_mode,
+                          'status': 'pending' if requested_mode else 'active', 'email_sent': False}
+                for mode in ('live', 'lazy'):
+                    for direct in (False, True):
+                        with self.subTest(kind=kind, saved=before, mode=mode, direct=direct):
+                            body = {'mode': mode, 'role': 'admin'}
+                            if direct:
+                                body['direct'] = True
+                            response, cur, manager, send = self._post_mode(body, 'learner', before, kind)
+                            self.assertEqual(response.status_code, 403)
+                            self.assertIn('managed by your learning team', json.loads(response.content)['error'])
+                            cur.execute.assert_not_called()
+                            manager.assert_not_called()
+                            send.assert_not_called()
 
-    def test_learner_recorded_request_still_asks_the_manager(self):
+    def test_authorized_staff_recorded_request_still_asks_the_manager(self):
         before = {'mode': 'live', 'status': 'active', 'email_sent': False, 'request_id': None}
-        response, cur, manager, send = self._post_mode({'mode': 'lazy'}, 'learner', before)
+        response, cur, manager, send = self._post_mode({'mode': 'lazy'}, 'staff', before)
         self.assertEqual(response.status_code, 200)
         self.assertIn("status='pending'", cur.execute.call_args_list[-1].args[0])
         manager.assert_called_once()
         send.assert_called_once()
+
+    def test_admin_can_set_either_mode_for_both_learner_kinds(self):
+        for kind in ('apprenticeship', 'commercial'):
+            for mode in ('live', 'lazy'):
+                with self.subTest(kind=kind, mode=mode):
+                    before = {'mode': 'lazy' if mode == 'live' else 'live', 'status': 'active', 'email_sent': False}
+                    response, cur, manager, send = self._post_mode({'mode': mode, 'direct': True}, 'admin', before, kind)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(json.loads(response.content)['mode'], mode)
+                    self.assertEqual(cur.execute.call_args_list[-1].args[1], [mode, 12])
+                    manager.assert_not_called()
+                    send.assert_not_called()
+
+    def test_mode_writes_keep_authentication_and_ownership_checks(self):
+        for role, learner_id, status in ((None, 12, 401), ('learner', 99, 404), ('employer', 12, 403)):
+            with self.subTest(role=role, learner_id=learner_id):
+                response, cur, manager, send = self._post_mode({'mode': 'live'}, role, {}, learner_id=learner_id)
+                self.assertEqual(response.status_code, status)
+                cur.execute.assert_not_called()
+                manager.assert_not_called()
+                send.assert_not_called()
 
     def test_bulk_mode_read_is_staff_or_admin_and_returns_saved_modes(self):
         from .attendance_mode import attendance_modes

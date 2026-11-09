@@ -21,6 +21,7 @@ from django.urls import include, path
 
 from .batch import api_get_batch
 from curriculum_api.openapi_docs import curriculum_openapi_json, curriculum_swagger_ui
+from mcp_api import views as mcp_views
 from system_audit import performance as system_performance
 
 urlpatterns = [
@@ -59,6 +60,17 @@ urlpatterns = [
     # Django (see the comment above) -- keeping this under /api/ would silently
     # fall through to the SPA index instead of reaching this view.
     path('progress_reviews_api/', include('progress_reviews_api.urls')),
+    # MCP server for AI connectors. 404 unless MCP_ENABLED; outside the *_api
+    # prefixes, so production LiteSpeed must be told to forward these paths.
+    path('mcp/', include('mcp_api.urls')),
+    # Some MCP clients drop the slash, and APPEND_SLASH cannot redirect a POST.
+    path('mcp', mcp_views.mcp_endpoint, name='mcp-endpoint-noslash'),
+    path('oauth/', include('mcp_api.oauth_urls')),
+    path('.well-known/oauth-protected-resource', mcp_views.oauth_protected_resource_metadata, name='oauth-protected-resource'),
+    # RFC 9728 path forms, one per spelling of the MCP endpoint.
+    path('.well-known/oauth-protected-resource/mcp', mcp_views.oauth_protected_resource_metadata, {'mcp_path': '/mcp'}, name='oauth-protected-resource-mcp'),
+    path('.well-known/oauth-protected-resource/mcp/', mcp_views.oauth_protected_resource_metadata, {'mcp_path': '/mcp/'}, name='oauth-protected-resource-mcp-slash'),
+    path('.well-known/oauth-authorization-server', mcp_views.oauth_authorization_server_metadata, name='oauth-authorization-server'),
 ]
 
 if settings.DEBUG:

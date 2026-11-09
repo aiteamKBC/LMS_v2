@@ -328,13 +328,10 @@ class EnrolmentUser(models.Model):
     # apprenticeship learners use learning_plan above. get_training_plan() reads
     # whichever is populated.
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
-    # Free courses assigned to this learner from the Learning Plan modal. The
-    # canonical store for BOTH learner kinds (commercial rows are Created_users
-    # rows too), read/written by learner_api.learning_plan. A pure assignment
-    # record ([{freeCourseId, courseName, addedAt}]) — deliberately separate from
-    # learning_plan/training_plan so free courses never enter OTJH totals, the KSB
-    # snapshot, progress, or hydrate_training_plan. NOT NULL '[]' in Postgres,
-    # hence default=list.
+    # Legacy Free Course JSON retained for historical compatibility only.
+    # Canonical assignments live in Learner.learner_free_courses and must never
+    # be rebuilt from this value. It stays separate from the training plan so
+    # old rows remain readable without entering OTJH, KSB or programme progress.
     free_courses = SafeJSONField(db_column="Free_courses", default=list, blank=True)
     # Legacy comma-joined summary columns, also merged in from Commercial_users.
     # Superseded by training_plan; kept so old saved values stay visible.
@@ -1109,20 +1106,17 @@ class LearnerTrainingPlanComponent(models.Model):
 
 
 class LearnerFreeCourse(models.Model):
-    """Free courses assigned to a learner — the Learner-schema read mirror.
+    """Canonical Free Course assignment owned by ``Learner.learners``.
 
-    The enrolment-side source of truth is EnrolmentUser.free_courses
-    (Created_users."Free_courses" jsonb). This flat table mirrors it exactly the
-    way learner_training_plan_modules mirrors the module plan: FK to
-    LearnerProfile, kept in step by learning_plan.sync_learning_plan_mirror and
-    rebuilt at activation. Deliberately carries NO hours, KSBs or component tree
-    — a free course is a pure assignment. free_course_ref is the
-    curriculum.free_courses id (a plain reference, like module_ref), not a
-    cross-schema FK.
+    This table, not ``Created_users.Free_courses``, is the learner-facing
+    assignment source. It deliberately carries no hours, KSBs or component
+    tree. ``free_course_title`` is retained only because it exists in the
+    schema; readers resolve the official title from
+    ``curriculum.free_courses.course_name``.
     """
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="free_courses")
     position = models.PositiveIntegerField()
-    free_course_ref = models.TextField(null=True, blank=True)
+    free_course_ref = models.TextField()
     free_course_title = models.TextField(blank=True)
 
     class Meta:
@@ -1137,20 +1131,23 @@ class LearnerFreeCourseProgress(models.Model):
     Deliberately its OWN store, separate from Training_plan_progress and the KSB
     snapshot: free-course completion is shown on the free-courses page and must
     NEVER enter OTJH totals, the KSB snapshot or the programme's overall
-    progress. Keyed by the enrolment learner id (Created_users.id — the same id
-    the learner-facing endpoints resolve from the session for both learner
-    kinds) and the curriculum component id (FREECOMP-…), so it needs no
-    LearnerProfile row (commercial learners may not have one).
+    progress. Ownership is the canonical ``Learner.learners`` row; the URL's
+    enrolment id must be resolved before this model is queried.
     """
-    learner_id = models.BigIntegerField()
+    learner = models.ForeignKey(
+        LearnerProfile,
+        db_column="learner_id",
+        on_delete=models.CASCADE,
+        related_name="free_course_progress",
+    )
     component_ref = models.TextField()
-    free_course_ref = models.TextField(null=True, blank=True)
+    free_course_ref = models.TextField()
     completed_at = models.DateTimeField()
 
     class Meta:
         managed = False
         db_table = 'Learner"."learner_free_course_progress'
-        unique_together = (("learner_id", "component_ref"),)
+        unique_together = (("learner", "component_ref"),)
 
 
 class LearnerProgressEntry(models.Model):

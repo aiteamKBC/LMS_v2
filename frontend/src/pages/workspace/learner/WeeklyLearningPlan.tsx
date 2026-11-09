@@ -1,4 +1,6 @@
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useWebPointPlan } from '@/hooks/useWebPointPlan';
+import { webPointGroups } from '@/utils/webPointActivities';
 import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { Link } from 'react-router-dom';
 import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Users, Video } from 'lucide-react';
@@ -499,10 +501,14 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
     });
   }, [components, completedIds, query, statusFilter, typeFilter, summaries]);
   const componentPageKey = components.map(component => component.componentId || component.title).join('|');
+  const webPoints = useWebPointPlan(kind, learnerId, components.some(component => !!component.weekId && !!component.moduleId));
+  const groupedComponents = webPointGroups(filteredComponents, webPoints.data).flatMap(group =>
+    group.components.map(component => ({ component, point: group.point })));
   const [page, setPage] = useState(0);
   const pageCount = Math.max(1, Math.ceil(filteredComponents.length / ACTIVITY_PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const visibleComponents = filteredComponents.slice(safePage * ACTIVITY_PAGE_SIZE, safePage * ACTIVITY_PAGE_SIZE + ACTIVITY_PAGE_SIZE);
+  const visibleGroups = groupedComponents.slice(safePage * ACTIVITY_PAGE_SIZE, safePage * ACTIVITY_PAGE_SIZE + ACTIVITY_PAGE_SIZE);
+  const visibleComponents = visibleGroups.map(row => row.component);
   useEffect(() => { setPage(0); }, [componentPageKey]);
   useEffect(() => { setPage(0); }, [query, typeFilter, statusFilter]);
   useEffect(() => { if (page >= pageCount) setPage(Math.max(0, pageCount - 1)); }, [page, pageCount]);
@@ -532,6 +538,7 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
 
   return <div className="overflow-hidden bg-background-50">
     <ActivitiesHeading count={components.length} controls={controls} />
+    {webPoints.error && <p role="status" className="px-4 py-2 text-xs text-amber-800">Point grouping could not load. Activities are shown below. <button type="button" onClick={webPoints.refresh} className="underline">Retry Points</button></p>}
     {!filteredComponents.length ? <EmptyState size="sm" title="No matching activities" description="Try changing your search or filters." className="m-4" /> : <>
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
       <table className="w-full min-w-[760px] table-fixed text-left text-[10px]">
@@ -550,13 +557,20 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
           </tr>
         </thead>
         <tbody>
-          {visibleComponents.map((component, index) => {
+          {visibleGroups.map(({ component, point }, index) => {
             const status = summaries?.[component.componentId || '']?.status ?? activityStatus(component, completedIds);
             const href = canOpenActivities ? activityHref(component, week, kind, learnerId, status === 'completed') : null;
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
             const recordedHours = actualHours?.[component.componentId || ''];
-            return <tr key={component.componentId || component.title} className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
+            return <Fragment key={component.componentId || component.title}>
+              {point && (index === 0 || visibleGroups[index - 1].point !== point) && <tr className="border-t border-primary-100 bg-primary-50">
+                <th scope="rowgroup" colSpan={canOpenActivities ? 8 : 7} className="px-4 py-3 text-sm font-bold text-primary-900" title={point.title}>{point.title}</th>
+              </tr>}
+              {!point && groupedComponents.some(row => row.point) && (index === 0 || visibleGroups[index - 1].point) && <tr className="border-t border-primary-100 bg-primary-50">
+                <th scope="rowgroup" colSpan={canOpenActivities ? 8 : 7} className="px-4 py-3 text-sm font-bold text-primary-900">Other activities</th>
+              </tr>}
+              <tr className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
               <td className="px-2 py-2 text-center align-middle font-semibold tabular-nums text-foreground-500">{safePage * ACTIVITY_PAGE_SIZE + index + 1}</td>
               <td className="px-2 py-2 align-middle">
                 <div className="flex min-w-0 items-center gap-1.5">
@@ -587,7 +601,7 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
                   status === 'in-progress' ? 'bg-primary-600 text-white shadow-sm hover:bg-primary-700' : 'border border-primary-200 bg-background-50 text-primary-700 hover:border-primary-300 hover:bg-primary-50',
                 )}>{activityActionLabel(status)}</Link> : <span className="inline-block whitespace-nowrap text-[10px] text-foreground-400">Not available</span>}
               </td>}
-            </tr>;
+            </tr></Fragment>;
           })}
         </tbody>
       </table>

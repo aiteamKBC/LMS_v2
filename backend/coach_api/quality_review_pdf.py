@@ -140,7 +140,9 @@ def _render(review, images, attachments=()):
 
 
 def review_pdf(review):
-    if review['status']!='completed' or review['templateId']!=TEMPLATE_ID:
+    teaching = (review.get('scope') == 'teaching' and review['templateId'] == 'teaching-session-v1'
+                and review.get('reviewType') == 'FORM_TEACHING' and review.get('learner') is None)
+    if review['status']!='completed' or (review['templateId']!=TEMPLATE_ID and not teaching):
         raise store.ReviewConflict('Complete and save this review before exporting its PDF.')
     def load():
         images=store.read_images(review['id'],review['form']['images'])
