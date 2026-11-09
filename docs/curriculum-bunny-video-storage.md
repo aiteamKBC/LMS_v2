@@ -32,6 +32,14 @@ Templates attached to a free course use the same `Free course` collection.
 
 For a saved module whose `source_type` is `free_course`, Bunny uses the shared
 collection named exactly `Free course`, with no programme/cohort/group requirement.
+A saved course with no actual programme also uses this collection, even if its
+standalone marker is missing. Both programme ID and name must be empty or an
+`Unassigned` / `Not assigned` placeholder (including `programme` / `program`
+suffixes, ignoring case and extra spaces). A real programme ID or name retains
+programme routing. This fallback applies to course components and attached week
+templates, not unattached templates or live-session recording transfers. It only
+changes Bunny routing metadata; it does not change the course's LMS type,
+programme fields, enrolments or hours.
 The worker reuses a matching collection or creates it if missing. Different course
 names never create separate collections. The collection ID is retained in the
 existing import journal. Discovery/creation is serialized across all free courses
@@ -40,15 +48,18 @@ transaction ends before media download/upload. Existing programme collection
 routing is unchanged. Duplicate matching collection names produce a visible
 error rather than choosing an arbitrary destination.
 
-The authoritative course name/type come from the saved module, including for
-attached week templates. Each video sends `lms.free_course_name` with the actual
-course name, `lms.course_type=free_course` and `lms.collection_name=Free course`.
+The authoritative course name comes from the saved module, including for
+attached week templates. Each video using this destination sends
+`lms.free_course_name` with the actual course name, `lms.course_type=free_course`
+and `lms.collection_name=Free course`.
 Video titles start with the course name and keep the activity title and existing
 recovery marker. No programme abbreviation is applied to a free-course name.
 
 Save retries a pre-existing failed standalone import using its original import
-identity, upgrading the missing course-routing metadata. Pending imports without
-a remote video also replace any cached per-course destination with the shared
+identity, upgrading the missing course-routing metadata. This also repairs a
+failed `Unassigned programme` collection lookup when the selected video is saved
+again. Pending imports without a remote video also replace any cached per-course
+destination with the shared
 destination before uploading. Stored MP4 playback,
 linked-video sources, component settings and learner progress remain unchanged.
 This change does not bulk-copy historical videos or move existing Bunny videos.

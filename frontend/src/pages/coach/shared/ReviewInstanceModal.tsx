@@ -1371,6 +1371,7 @@ function ReviewInstanceContent({
                 && !definition.progressSnapshot && hasImportedProgress(definition.sections)) ? (
               <ReviewProgressPanel
                 snapshot={definition.progressSnapshot}
+                useCoachProgrammeTarget
                 ragHistory={definition.ragHistory}
                 showCalculateAction={showMigratedCoachActions ? true : undefined}
                 canCalculate={!isViewingAsCoach && !isSignatureStage && (definition.source !== 'aptem'

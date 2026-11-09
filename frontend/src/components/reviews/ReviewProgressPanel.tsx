@@ -109,16 +109,20 @@ function KsbBar({ metric }: { metric: ReviewKsbProgress | null | undefined }) {
   return <MetricBar label={label} metric={{ actual: null, expected: null, planned: null, ...metric, variancePercent: metric.variancePercent ?? metric.actualPercent - metric.expectedPercent, varianceDirection: metric.varianceDirection ?? (metric.actualPercent >= metric.expectedPercent ? 'above' : 'below') }} tone="blue" />;
 }
 
-function LearningPlanDonut({ metric }: { metric: ReviewProgressMetric }) {
+function LearningPlanDonut({ metric, coachTarget }: {
+  metric: ReviewProgressMetric;
+  coachTarget?: ReviewProgressSnapshot['coachProgrammeTarget'];
+}) {
   const percent = metric?.actualPercent ?? null;
-  const target = clamp(metric?.expectedPercent ?? null);
+  const expectedPercent = coachTarget ? coachTarget.expectedPercent : metric?.expectedPercent ?? null;
+  const target = clamp(expectedPercent);
   const visible = clamp(percent);
   const radius = 66;
   const circumference = 2 * Math.PI * radius;
   return (
     <div className="flex flex-col items-center">
       <p className="mb-5 text-center text-[18px] font-medium text-[#174c67]">Learning Plan Progress</p>
-      <svg width="176" height="176" viewBox="0 0 176 176" role="img" aria-label={`Learning Plan Progress: ${percentLabel(percent)}; target ${percentLabel(metric?.expectedPercent ?? null)}`} className="shrink-0">
+      <svg width="176" height="176" viewBox="0 0 176 176" role="img" aria-label={`Learning Plan Progress: ${percentLabel(percent)}; target ${percentLabel(expectedPercent)}`} className="shrink-0">
         <circle cx="88" cy="88" r={radius} fill="none" stroke="#dce4ec" strokeWidth="22" />
         {visible === null ? null : (
           <circle cx="88" cy="88" r={radius} fill="none" stroke="#174ed4" strokeWidth="22" strokeDasharray={`${circumference * visible / 100} ${circumference}`} transform="rotate(-90 88 88)" />
@@ -126,7 +130,7 @@ function LearningPlanDonut({ metric }: { metric: ReviewProgressMetric }) {
         {target === null ? null : <line data-testid="donut-target-marker" x1="88" y1="8" x2="88" y2="36" stroke="black" strokeWidth="3" transform={`rotate(${target * 3.6} 88 88)`} />}
         <text x="88" y="96" textAnchor="middle" className="fill-[#111827] text-[29px] font-medium">{percentLabel(percent)}</text>
       </svg>
-      <p className="mt-2 text-sm text-[#30383d]">Target: {percentLabel(metric?.expectedPercent ?? null)} · <span>{varianceLabel(metric)}</span></p>
+      <p className="mt-2 text-sm text-[#30383d]">Target: {percentLabel(expectedPercent)} · <span>{varianceLabel(coachTarget ?? metric)}</span></p>
     </div>
   );
 }
@@ -172,6 +176,7 @@ function RagHistory({ entries }: { entries: ReviewRagHistoryEntry[] }) {
 
 export function ReviewProgressPanel({
   snapshot,
+  useCoachProgrammeTarget = false,
   ragHistory = [],
   canCalculate,
   showCalculateAction = canCalculate,
@@ -180,6 +185,8 @@ export function ReviewProgressPanel({
   onCalculate,
 }: {
   snapshot: ReviewProgressSnapshot | null | undefined;
+  /** Only the coach form opts into the saved main-activity target. */
+  useCoachProgrammeTarget?: boolean;
   ragHistory?: ReviewRagHistoryEntry[];
   /** False once the review reaches the signature step -- the figures a party
    *  is signing must not move underneath them. */
@@ -225,7 +232,7 @@ export function ReviewProgressPanel({
         <div className="mt-5 overflow-hidden border border-[#ccd5df] bg-white">
           <div className="grid md:grid-cols-[34%_66%]">
             <div className="flex min-h-[350px] items-center justify-center px-5 py-8 md:border-r md:border-[#ccd5df]">
-              <LearningPlanDonut metric={snapshot.programmeProgress} />
+              <LearningPlanDonut metric={snapshot.programmeProgress} coachTarget={useCoachProgrammeTarget ? snapshot.coachProgrammeTarget : undefined} />
             </div>
             <div className="grid gap-7 border-t border-[#ccd5df] px-5 py-7 md:border-t-0 md:px-7">
               <KsbBar metric={snapshot.ksbProgress} />

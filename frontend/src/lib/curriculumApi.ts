@@ -70,6 +70,8 @@ export function isRetryableError(error: unknown): boolean {
 
 interface CurriculumRequestInit {
   method?: string;
+  /** Opt in to session CSRF for protected writes, retaining curriculum cache/error handling. */
+  csrf?: boolean;
   credentials?: RequestCredentials;
   headers?: Record<string, string>;
   body?: string;
@@ -3174,12 +3176,13 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
   // `revalidate` is destructured out with the other non-fetch options: it is a
   // client-cache directive only and must not reach the backend, or it would
   // force the same rebuild `skipCache` does.
-  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, abandonSignal: _abandonSignal, onDispatch: _onDispatch, ...fetchInit } = init || {};
+  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, abandonSignal: _abandonSignal, onDispatch: _onDispatch, csrf, ...fetchInit } = init || {};
   const signal = callerSignal && timeoutController
     ? anySignal([callerSignal, timeoutController.signal])
     : callerSignal || timeoutController?.signal;
   try {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const request = csrf ? coachFetch : fetch;
+  const response = await request(`${API_BASE_URL}${path}`, {
     ...fetchInit,
     ...(init?.skipCache ? { cache: 'no-store' as const } : {}),
     signal,
@@ -4984,13 +4987,17 @@ export interface FreeCourseConversionDestination {
   programmeId: string;
   cohortId: string;
   groupId: string;
+  tutor: string;
 }
 
 export function convertFreeCourseToModule(id: string, destination: FreeCourseConversionDestination) {
-  return postJson<FreeCourseConversionDestination & {
+  // Conversion is CSRF protected, unlike the older authoring write endpoints.
+  return fetchJson<FreeCourseConversionDestination & {
     converted: boolean; moduleCatalogueId: string;
     programmeName: string; cohortName: string; groupName: string;
-  }>(`/curriculum/modules/${encodeURIComponent(id)}/convert-free-course/`, destination);
+  }>(`/curriculum/modules/${encodeURIComponent(id)}/convert-free-course/`, {
+    method: 'POST', body: JSON.stringify(destination), csrf: true,
+  });
 }
 
 /**

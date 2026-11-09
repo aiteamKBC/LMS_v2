@@ -2389,6 +2389,30 @@ function snapshotFixture(overrides: Partial<ReviewProgressSnapshot> = {}): Revie
 }
 
 describe('Progress Review learning progress snapshot', () => {
+  it.each(['native', 'migrated'])('shows the saved main target after Calculate on a %s coach form without changing answers or actual progress', async kind => {
+    const initial = kind === 'native' ? progressReviewDefinition() : {
+      ...migratedPrDefinition('in-progress', 'PR'), canCalculateProgress: true,
+      progressVersion: 'v1', answerVersion: 'v1', progressSnapshot: null,
+    };
+    const saved = snapshotFixture({ coachProgrammeTarget: {
+      formulaVersion: 'scheduled_main_activities_v1', expected: 1, planned: 5,
+      expectedPercent: 20, variancePercent: 8, varianceDirection: 'above',
+    } });
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    const response = { ...initial, progressSnapshot: saved, progressVersion: 'v2' };
+    vi.mocked(calculateReviewInstanceProgress).mockResolvedValue(response);
+    vi.mocked(calculateMigratedReviewProgress).mockResolvedValue(response);
+    mount(initial.instance.id);
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Unsaved answer' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Calculate' }));
+    expect(await screen.findByRole('img', { name: 'Learning Plan Progress: 28%; target 20%' })).toBeVisible();
+    expect(screen.getByText('8% Above')).toBeVisible();
+    expect(screen.getByDisplayValue('Unsaved answer')).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
+    expect(screen.getByText('12% Above')).toBeVisible();
+    expect(saved.programmeProgress.expectedPercent).toBe(30);
+  });
+
   it.each([false, true])('keeps Native admin calculation hidden with snapshot=%s', async hasSnapshot => {
     coachMode.isViewingAsCoach = true;
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(progressReviewDefinition('in-progress', hasSnapshot ? snapshotFixture() : null));

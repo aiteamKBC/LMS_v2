@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { SelectMenu } from '@/components/feature/SelectField';
 import {
-  convertFreeCourseToModule, curriculumErrorMessage, fetchCurriculumDeliveryScope,
-  type CurriculumProgramme, type CurriculumCohort, type CurriculumGroup,
+  convertFreeCourseToModule, curriculumErrorMessage, fetchCurriculumDeliveryScope, fetchCurriculumTutors,
+  type CurriculumProgramme, type CurriculumCohort, type CurriculumGroup, type CurriculumStaffProfile,
 } from '@/lib/curriculumApi';
 import { EntityDrawer, FormField } from '../shared/entities/ui';
 
@@ -17,6 +17,8 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
   const [programmeId, setProgrammeId] = useState('');
   const [cohortId, setCohortId] = useState('');
   const [groupId, setGroupId] = useState('');
+  const [tutor, setTutor] = useState('');
+  const [tutors, setTutors] = useState<CurriculumStaffProfile[]>([]);
   const [scope, setScope] = useState<{ cohorts: CurriculumCohort[]; groups: CurriculumGroup[] }>({ cohorts: [], groups: [] });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -26,12 +28,14 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
   const [moved, setMoved] = useState<MoveResult | null>(null);
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     setLoading(true);
     setLoadError('');
-    fetchCurriculumDeliveryScope().then(value => { if (active) setScope(value); })
+    Promise.all([fetchCurriculumDeliveryScope(controller.signal), fetchCurriculumTutors(controller.signal)])
+      .then(([value, profiles]) => { if (active) { setScope(value); setTutors(profiles); } })
       .catch(reason => { if (active) setLoadError(curriculumErrorMessage(reason, reason instanceof Error ? reason.message : 'Unable to load destinations.')); })
       .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [retry]);
   const activeProgrammes = programmes.filter(item => !item.isArchived && item.status !== 'archived');
   const programme = activeProgrammes.find(item => (item.sourceId || item.id) === programmeId);
@@ -41,7 +45,12 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
   const cohorts = scope.cohorts.filter(item => belongsToProgramme(item) && item.status !== 'archived');
   const cohort = cohorts.find(item => item.id === cohortId);
   const groups = scope.groups.filter(item => belongsToProgramme(item) && item.cohortId === cohortId && item.status !== 'archived');
-  const valid = Boolean(programme && cohort && groups.some(item => item.id === groupId));
+  const tutorOptions = tutors.filter(item => item.status !== 'archived' && !item.isArchived && !item.is_archived)
+    .map(item => ({ value: String(item.id || item.email || item.name || ''), label: item.name || item.email || '',
+      description: item.email || undefined }))
+    .filter(item => item.value && item.label);
+  const valid = Boolean(programme && cohort && groups.some(item => item.id === groupId)
+    && tutorOptions.some(item => item.value === tutor));
   const locked = saving || Boolean(moved);
   const submit = async () => {
     if (saving || (!moved && (!valid || loading || loadError))) return;
@@ -49,7 +58,7 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
     setError('');
     let result = moved;
     try {
-      result = result || await convertFreeCourseToModule(module.catalogueId, { programmeId, cohortId, groupId });
+      result = result || await convertFreeCourseToModule(module.catalogueId, { programmeId, cohortId, groupId, tutor });
       setMoved(result);
       await onMoved(result);
     } catch (reason) {
@@ -64,7 +73,7 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
     onClose={onClose} onSubmit={submit} saving={saving}
     submitLabel={moved ? 'Refresh catalogue' : 'Move to module'}
     submitDisabled={!moved && (!valid || loading || Boolean(loadError))}
-    dirty={!moved && Boolean(programmeId || cohortId || groupId)} error={error || loadError}>
+    dirty={!moved && Boolean(programmeId || cohortId || groupId || tutor)} error={error || loadError}>
     <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-[12px] leading-6 text-foreground-700">
       This course will become a regular module and leave Free courses. Its content, hours,
       assigned learners and their progress stay intact. Learners in the selected group receive
@@ -88,6 +97,11 @@ export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
       <SelectMenu ariaLabel="Destination group" value={groupId} disabled={locked || loading || !cohort}
         placeholder={!cohort ? 'Choose cohort first' : groups.length ? 'Choose group' : 'No active groups'}
         options={groups.map(item => ({ value: item.id, label: item.name }))} onChange={setGroupId} />
+    </FormField>
+    <FormField label="Tutor" required>
+      <SelectMenu ariaLabel="Destination tutor" value={tutor} disabled={locked || loading}
+        placeholder={loading ? 'Loading tutors...' : tutorOptions.length ? 'Choose tutor' : 'No active tutors available'}
+        options={tutorOptions} searchable searchPlaceholder="Search tutors..." onChange={setTutor} />
     </FormField>
   </EntityDrawer>;
 }

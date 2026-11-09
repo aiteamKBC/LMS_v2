@@ -50,6 +50,13 @@ def _settings(row):
     return json.loads(value) if isinstance(value, str) else value or {}
 
 
+def _unassigned_programme(row):
+    placeholders = {'', 'unassigned', 'unassigned programme', 'unassigned program',
+                    'not assigned', 'not assigned programme', 'not assigned program'}
+    return all(' '.join(str(row.get(key) or '').split()).casefold() in placeholders
+               for key in ('programme_id', 'programme_name'))
+
+
 def target(kind, target_id):
     v = _views()
     if kind == 'module':
@@ -83,7 +90,12 @@ def target(kind, target_id):
         scope['template_title'] = str(parent.get('title') or '')
     scope.update({'module_id': str(parent.get('module_catalogue_id') or (target_id if kind == 'module' else '')),
                   'module_title': str(module.get('title') or ''), 'target_kind': kind, 'target_id': target_id})
-    if module.get('source_type') == 'free_course':
+    # Bunny routing only: an unplaced course can lack the standalone marker.
+    # Keep its saved programme fields/fingerprint and LMS course type intact.
+    # A week template needs an actual parent course; a real programme on either
+    # row must not be mistaken for an unassigned destination.
+    if module.get('source_type') == 'free_course' or (
+            module and scope['module_id'] and _unassigned_programme(module) and _unassigned_programme(parent)):
         scope.update(free_course_module_id=scope['module_id'], free_course_name=scope['module_title'],
                      course_type='free_course', collection_name=FREE_COURSE_COLLECTION)
     return component_table, rows, scope

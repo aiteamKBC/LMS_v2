@@ -4,6 +4,8 @@ Keep the displayed catalogue and its target population together. In particular,
 a historical course already representing a module suppresses its native copy,
 just as it does in Dashboard Overview. Historical membership is not completion.
 """
+import re
+
 from old_otjh.service import ServiceError
 
 from . import canonical_learning
@@ -16,6 +18,14 @@ from .retained_quiz_progress import retain_quiz_progress
 def _unavailable():
     return ServiceError('The learner\'s live activity population needs review.',
                         'activity_identity_review_required', 409)
+
+
+def _main_activity(card, component=None):
+    """Use catalogue types, never titles, for the coach form's target subset."""
+    if component and component.get('isQuiz'):
+        return True
+    category = re.sub(r'[\s_-]+', '', str(card.get('category') or '').casefold())
+    return category in {'reading', 'reading+quiz', 'readingquiz', 'lecture', 'livesession', 'quiz', 'quizzes'}
 
 
 def overview_activity_facts(learning):
@@ -34,6 +44,7 @@ def overview_activity_facts(learning):
         lookup.setdefault((ref, component.get('moduleId')), []).append(component)
     modules, native, seen = [], [], {}
     historical_count = retained_count = 0
+    main = {'nativeComponents': [], 'historicalComponents': 0, 'retainedComponents': 0}
     for subject in overview_subjects(learning):
         module_id = subject.get('moduleId') or (learning['metadata']['builder_subjects'].get(subject['id']) or {}).get('id') \
             or (subject['id'][8:] if subject['id'].startswith('current:') else None)
@@ -48,7 +59,10 @@ def overview_activity_facts(learning):
             placement = None if historical else (module_id, component.get('weekId'), retained)
             if any((c.get('moduleId'), c.get('weekId'), id(c) in retired) != placement for c in candidates):
                 raise _unavailable()
-            signature = (bool(card['completed']), historical, placement)
+            is_main = _main_activity(card, component)
+            if any(_main_activity({'category': c.get('type')}, c) != is_main for c in candidates):
+                raise _unavailable()
+            signature = (bool(card['completed']), historical, placement, is_main)
             identity = card.get('dedupe')
             if identity and identity in seen:
                 if seen[identity] != signature:
@@ -60,13 +74,18 @@ def overview_activity_facts(learning):
             row['completed'] += bool(card['completed'])
             if historical:
                 historical_count += 1
+                main['historicalComponents'] += is_main
             elif retained:
                 retained_count += 1
+                main['retainedComponents'] += is_main
             else:
                 native.append(component)
+                if is_main:
+                    main['nativeComponents'].append(component)
         modules.append(row)
     return {'modules': modules, 'nativeComponents': native,
-            'historicalComponents': historical_count, 'retainedComponents': retained_count}
+            'historicalComponents': historical_count, 'retainedComponents': retained_count,
+            'mainActivities': main}
 
 
 def dashboard_activity_facts(source, profile, *, as_of):

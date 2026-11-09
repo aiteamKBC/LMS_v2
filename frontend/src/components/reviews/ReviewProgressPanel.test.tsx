@@ -38,6 +38,45 @@ function snapshot(overrides: Partial<ReviewProgressSnapshot> = {}): ReviewProgre
 }
 
 describe('ReviewProgressPanel reference visual contract', () => {
+  it.each([false, true])('only opts into the main target in the coach form: %s', useCoachProgrammeTarget => {
+    const saved = snapshot({
+      programmeProgress: metric(17, 81),
+      coachProgrammeTarget: { formulaVersion: 'scheduled_main_activities_v1',
+        expected: 3, planned: 5, expectedPercent: 60, variancePercent: -43, varianceDirection: 'below' },
+    });
+    const before = structuredClone(saved);
+    render(<ReviewProgressPanel snapshot={saved} useCoachProgrammeTarget={useCoachProgrammeTarget}
+      canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: `Learning Plan Progress: 17%; target ${useCoachProgrammeTarget ? 60 : 81}%` })).toBeVisible();
+    expect(screen.getByText(`${useCoachProgrammeTarget ? 43 : 64}% Below`)).toBeVisible();
+    expect(screen.getByTestId('donut-target-marker')).toHaveAttribute('transform', `rotate(${(useCoachProgrammeTarget ? 60 : 81) * 3.6} 88 88)`);
+    expect(screen.getByRole('img', { name: 'Off-the-job hours progress: 64% against an expected 41%' })).toBeVisible();
+    expect(saved).toEqual(before);
+  });
+
+  it('preserves the original target for old snapshots even in the coach form', () => {
+    render(<ReviewProgressPanel snapshot={snapshot()} useCoachProgrammeTarget
+      canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%; target 0%' })).toBeVisible();
+  });
+
+  it.each([0, null])('does not replace an explicit main target of %s with the shared target', expectedPercent => {
+    render(<ReviewProgressPanel snapshot={snapshot({ programmeProgress: metric(17, 81),
+      coachProgrammeTarget: { formulaVersion: 'scheduled_main_activities_v1', expected: 0,
+        planned: expectedPercent === null ? 0 : 5, expectedPercent,
+        variancePercent: expectedPercent === null ? null : 17,
+        varianceDirection: expectedPercent === null ? '' : 'above' },
+    })} useCoachProgrammeTarget canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.getByRole('img', { name: `Learning Plan Progress: 17%; target ${expectedPercent === null ? 'Not recorded' : '0%'}` })).toBeVisible();
+    if (expectedPercent === null) {
+      expect(screen.queryByTestId('donut-target-marker')).not.toBeInTheDocument();
+      expect(screen.getByText('Target unavailable')).toBeVisible();
+    } else {
+      expect(screen.getByTestId('donut-target-marker')).toHaveAttribute('transform', 'rotate(0 88 88)');
+      expect(screen.getByText('17% Above')).toBeVisible();
+    }
+  });
+
   it('keeps an unavailable action hidden unless visibility is explicitly requested', () => {
     render(<ReviewProgressPanel snapshot={snapshot()} canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Recalculate' })).not.toBeInTheDocument();
