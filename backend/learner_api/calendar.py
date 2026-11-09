@@ -26,7 +26,7 @@ from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
-from .booking_calendar import booking_calendar_payload, booking_date_restriction, mcm_booking_date_restriction
+from .booking_calendar import booking_calendar_payload, booking_date_restriction
 # The first session's own vocabulary: its event type, and the college's today.
 # Imported rather than restated so the gate, the booking and the calendar
 # cannot disagree about either.
@@ -877,10 +877,8 @@ def _resolve_assignment_month_mcm_occurrence(learner, mirror):
     """The canonical Curriculum MCM occurrence an assignment_month booking
     should attach to.
 
-    assignment_month is only an eligibility/date-window gate -- the caller
-    separately checks the chosen scheduled_date against
-    monthly_assignment.coaching_booking_bounds(assignment_month). It must
-    never be allowed to invent the Review's own identity: Curriculum's
+    assignment_month is booking context, not a restriction on the appointment
+    date. It must never be allowed to invent the Review's own identity: Curriculum's
     review_templates/review_instances are the only source of truth for which
     MCM this is and when it is due (see the module docstring's architecture
     diagram). Before this function existed, an assignment_month request with
@@ -1905,8 +1903,6 @@ def learner_calendar_book(request, kind, pk):
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
     date_restriction = booking_date_restriction(scheduled_date)
-    if date_restriction is None and session_type == "mcr":
-        date_restriction = mcm_booking_date_restriction(scheduled_date)
     if date_restriction is not None:
         return _error(date_restriction.message, 400)
     if session_type in REVIEW_BOOKING_TYPES:
@@ -2039,21 +2035,15 @@ def learner_calendar_book(request, kind, pk):
         if not imported_review_id and not assignment_booking:
             return _error("reviewId is required when scheduling an imported monthly coaching review.", 400)
         if session_type == "mcr":
-            from .monthly_assignment import coaching_booking_bounds, month_bounds
-            # Assignment bookings use the recurring MCM window checked above;
-            # their submission month does not change the Review's identity.
-            if assignment_booking:
-                if not month_bounds(assignment_month)[0]:
-                    return _error("Choose a valid assignment month for the MCM.", 400)
-            else:
-                start, end = coaching_booking_bounds(assignment_month)
-                if not (start and start <= scheduled_date <= end):
-                    return _error("Book an MCM from the 20th of the submission month through the 5th of the following month.", 400)
+            from .monthly_assignment import month_bounds
+            # The month remains validated context for both entry points; the
+            # appointment may use any available working day.
+            if not month_bounds(assignment_month)[0]:
+                return _error("Choose a valid assignment month for the MCM.", 400)
             # A validated imported Aptem MCM is already the Review's identity
             # (see _assignment_imported_mcm_month) and books on the imported path below.
             if not _s(payload.get("eventKey")) and not (assignment_booking and imported_review_id):
-                # assignment_month is an eligibility gate (the window check
-                # above), never the Review's identity -- resolve the actual
+                # assignment_month is context, never the Review's identity -- resolve the actual
                 # canonical Curriculum occurrence instead of falling through
                 # to the generic reserve_coach_calendar_booking path below,
                 # which has no concept of review_template_id/review_instance_id
@@ -2586,8 +2576,6 @@ def learner_calendar_reschedule(request, kind, pk):
             scheduled_date,
             allow_sunday=_s(record.event_type).lower() == "first-session",
         )
-        if date_restriction is None and _s(record.event_type).lower() == "mcr":
-            date_restriction = mcm_booking_date_restriction(scheduled_date)
         if date_restriction is not None:
             return _error(date_restriction.message, 400)
         if _s(record.event_type).lower() == "catch-up":

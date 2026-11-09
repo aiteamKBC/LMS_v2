@@ -85,6 +85,31 @@ beforeEach(() => {
   mocks.kbcMonthRecords.mockResolvedValue([]);
 });
 
+it('shows recording completion separately from waiting in Last 4 and learner details', async () => {
+  const records = [{
+    recordKey: 'live:1', learnerId: '302', sessionDate: '2026-10-14', moduleName: 'Module A',
+    lectureName: 'Recording one', attendance: 'absent', effectiveAttendance: 'present',
+    attendanceBasis: 'recorded', source: 'live',
+  }, {
+    recordKey: 'legacy:2', learnerId: '302', sessionDate: '2026-10-21', moduleName: 'Module A',
+    lectureName: 'Recording two', attendance: 'absent', effectiveAttendance: 'awaiting_recording',
+    attendanceBasis: 'awaiting_recording', source: 'kbc',
+  }];
+  mocks.kbcRecent.mockResolvedValue({ recent: { '302': records }, warnings: [] });
+  mocks.kbcHistory.mockResolvedValue({ records, warnings: [] });
+  render(<AttendancePage />);
+  expect(await screen.findByTitle(/Recording one .*Recording completed/)).toHaveClass('bg-pink-100');
+  expect(screen.getByTitle(/Recording two .*Awaiting recording/)).toHaveClass('bg-pink-100');
+  expect(mocks.save).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'View details for Morgan Sample' }));
+  const modal = await screen.findByRole('dialog');
+  expect(within(modal).getByText('Recording completed')).toBeVisible();
+  expect(within(modal).getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('0');
+  expect(within(modal).getByText('Present', { selector: 'p' }).parentElement).toHaveTextContent('1');
+  expect(within(modal).getByText('Rate').parentElement).toHaveTextContent('100%');
+  expect(screen.queryByText('Attended through a parallel group session')).not.toBeInTheDocument();
+});
+
 it('filters by saved day membership outside Last 4 while keeping complete history', async () => {
   const recent = [{
     recordKey: 'saved-1', learnerId: '301', sessionDate: '2026-10-14',

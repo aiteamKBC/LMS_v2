@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT.parent))
+from learner_api.hour_review_status import review_hour_totals
 
 
 class ServiceError(Exception):
@@ -75,11 +76,13 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(sum(p['actual_seconds'] for p in parts if p['reporting_month'] == '2026-09'), 1800)
         self.assertFalse(any(p['reporting_month'] == '2026-10' for p in parts))
         dashboard = {'defaultdict': defaultdict, 'canonical': SimpleNamespace(**self.scope),
+                     'review_hour_totals': review_hour_totals,
                      'number': self.scope['number']}
         functions('dashboard_tabs.py', dashboard, {'monthly_hours'})
         chart = dashboard['monthly_hours'](self.owner, [entry], {}, current_month='2026-10')
         self.assertEqual(chart['months'], [{'month': '2026-09', 'actual_hours': 0.5,
-                                          'not_accepted_hours': 0, 'training_plan_target': None}])
+                                          'not_accepted_hours': 0, 'submitted_hours': 0, 'verification_hours': 0,
+                                          'training_plan_target': None}])
         self.scope['entries_for'] = Mock(return_value=[entry])
         found, original_record = self.scope['content_row'](self.owner, '2026-09', row['id'])
         self.assertEqual(found['id'], row['id'])

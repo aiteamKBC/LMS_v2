@@ -1,11 +1,13 @@
 vi.mock('@/api/extraActivities', () => ({ useExtraActivities: () => ({ activities: [], loading: false, error: '', refresh: vi.fn() }) }));
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssignmentSubmissionWizard } from './AssignmentSubmissionWizard';
 import { checkMonthlyAssignment, emptyMonthlyAssignment } from '@/api/monthlyAssignment';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission } from '@/api/reflectionSubmission';
-import { fetchLearnerCalendarEvents } from '@/api/learnerCalendar';
+import { fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { loadAssignmentTopicStates } from '@/api/assignmentTopics';
 
 vi.mock('./page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) => <div data-testid="question-preview" data-url={url}>Question preview</div> }));
 
@@ -14,7 +16,8 @@ vi.mock('@/api/reflectionSubmission', () => ({
 }));
 vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: () => <div>Evidence uploader</div> }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
-vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }), bookLearnerCalendarSession: vi.fn() }));
+vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }), bookLearnerCalendarSession: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn().mockResolvedValue({ artifacts: [] }), learnerMeetingArtifactContentUrl: vi.fn() }));
+vi.mock('@/api/assignmentTopics', () => ({ loadAssignmentTopicStates: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn().mockResolvedValue({ learnerId: null, category: 'monthly-coaching', reviews: [] }) }));
 vi.mock('@/api/monthlyAssignment', async importOriginal => ({ ...await importOriginal<typeof import('@/api/monthlyAssignment')>(), checkMonthlyAssignment: vi.fn() }));
 
@@ -452,6 +455,38 @@ it('restores and saves an uploaded presentation without requiring generated slid
     evidenceFiles: ['My MCM.pptx'],
     monthlyAssignment: expect.objectContaining({ uploadedPresentation: monthly.uploadedPresentation, presentationReviewed: true, slides: [] }),
   })));
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('saves a changed %s MCM link and submits with fresh checks without losing the answer or presentation', async kind => {
+  const oldMeeting = { eventKey: 'mcr:1:old', source: 'mcr', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '09:00', coachName: 'Coach' } as LearnerCalendarEvent;
+  const newMeeting = { ...oldMeeting, eventKey: 'mcr:1:new', scheduledDate: '2026-09-24' };
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValueOnce({ learner: { kind, id: 1 }, events: [oldMeeting, newMeeting] });
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValueOnce([{ topicId: '1', status: 'submitted_for_tutor_review', elapsedSeconds: 0, month: '2026-09', meetingKey: oldMeeting.eventKey }]);
+  const monthly = { ...emptyMonthlyAssignment([], '2026-09'), step: 6, meetingKey: oldMeeting.eventKey,
+    timeEntries: [{ topic: 'Research', hours: '3.5', date: '2026-09-15' }],
+    uploadedPresentation: { id: 'file-mcm', name: 'My MCM.pptx' }, presentationReviewed: true, presentationToken: 'saved-token',
+    plannedReviewed: true, newKnowledge: true, newSkills: true, sharingConsent: true };
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValueOnce({ status: 'draft', assignmentAnswer: 'Keep my assignment answer',
+    actualTimeHours: '3.5', monthlyAssignment: monthly } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+  render(<MemoryRouter><AssignmentSubmissionWizard {...props} kind={kind} assignmentTopicId="2" initialMonth="2026-09" /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Change linked meeting' }));
+  fireEvent.change(screen.getByLabelText('Use an existing coaching booking'), { target: { value: newMeeting.eventKey } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
+    learnerKind: kind, assignmentTopicId: '2', assignmentAnswer: 'Keep my assignment answer',
+    monthlyAssignment: expect.objectContaining({ meetingKey: newMeeting.eventKey, uploadedPresentation: monthly.uploadedPresentation,
+      presentationReviewed: true, presentationToken: 'saved-token' }),
+  })));
+  fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+  expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
+  expect(vi.mocked(checkMonthlyAssignment).mock.calls.at(-1)?.[0]).toMatchObject({ monthlyAssignment: { meetingKey: newMeeting.eventKey } });
+  fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
+  const confirm = await screen.findByRole('button', { name: 'Confirm time' });
+  fireEvent.click(confirm);
+  await waitFor(() => expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ assignmentTopicId: '2', assignmentAnswer: 'Keep my assignment answer' })));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0].monthlyAssignment.meetingKey).toBe(newMeeting.eventKey);
 });
 
 

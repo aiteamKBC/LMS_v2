@@ -7,6 +7,7 @@ import { submitComponentProgress, type ComponentProgressResponse } from '@/api/c
 import { startTimeTracking, resumeTimeTracking, checkpointTimeTracking } from '@/api/timeTracking';
 import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
+import { readLearnerAttendanceMode } from '@/api/learnerAttendanceMode';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
 import { LearnerProgrammeGate } from '@/components/feature/LearnerProgrammeGate';
@@ -38,6 +39,7 @@ vi.mock('./readingDownloads', async () => ({
 }));
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
+vi.mock('@/api/learnerAttendanceMode', () => ({ readLearnerAttendanceMode: vi.fn(), peekLearnerAttendanceMode: () => undefined }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
 vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTracking: vi.fn(), checkpointTimeTracking: vi.fn() }));
 vi.mock('@/api/videos', () => ({ submitVideoProgress: vi.fn() }));
@@ -111,6 +113,7 @@ beforeEach(() => {
   session.holidays = [];
   localStorage.clear();
   vi.mocked(fetchLearnerDetail).mockResolvedValue(detail());
+  vi.mocked(readLearnerAttendanceMode).mockResolvedValue('live');
   vi.mocked(startTimeTracking).mockResolvedValue({
     sessionId: 'S1', trackingToken: 'token', startedAt: new Date().toISOString(), countingMode: 'visible_page',
   });
@@ -119,6 +122,23 @@ beforeEach(() => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each([
+  ['commercial', 'live', 'Required: Live attendance'],
+  ['commercial', 'lazy', 'Required: Recording'],
+  ['apprenticeship', 'live', 'Required: Live attendance'],
+  ['apprenticeship', 'lazy', 'Required: Recording'],
+] as const)('shows the active %s learner requirement (%s) in the heading and sidebar without completing the session', async (kind, mode, label) => {
+  vi.mocked(readLearnerAttendanceMode).mockResolvedValue(mode);
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, liveSessionUrl: 'https://example.invalid/live' }, second,
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  await waitFor(() => expect(screen.getAllByText(label).length).toBeGreaterThanOrEqual(2));
+  expect(readLearnerAttendanceMode).toHaveBeenCalledWith(kind, '1', expect.any(AbortSignal), false);
+  expect(screen.getByRole('link', { name: /Join live session/ })).toBeVisible();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
 
 it.each([
   ['commercial', 'powerpoint', true], ['apprenticeship', 'powerpoint', true],

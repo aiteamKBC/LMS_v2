@@ -15,7 +15,8 @@ type HoursSummary = {
   learner?: { planned_end_date?: string | null } | null;
   training_plan_totals?: { accepted_hours?: number | null; planned_hours?: number | null };
   months: Array<{ month: string; training_plan_target?: number | string | null;
-    not_accepted_hours: number | string; actual_hours: number | string }>;
+    not_accepted_hours: number | string; actual_hours: number | string;
+    submitted_hours?: number | string; verification_hours?: number | string }>;
 };
 
 export function monthlyLogOtjh(summary: HoursSummary) {
@@ -25,7 +26,8 @@ export function monthlyLogOtjh(summary: HoursSummary) {
     plannedTotal: summary.training_plan_totals?.planned_hours ?? null,
     months: Object.fromEntries(summary.months.map(month => [month.month, {
       target: month.training_plan_target == null ? null : hours(month.training_plan_target),
-      submitted: hours(month.not_accepted_hours),
+      submitted: hours(month.submitted_hours ?? month.not_accepted_hours),
+      ...(hours(month.verification_hours) > 0 ? { verification: hours(month.verification_hours) } : {}),
       completed: hours(month.actual_hours),
     }])),
   };

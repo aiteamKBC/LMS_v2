@@ -12,6 +12,7 @@ import type { AttendanceStatus, Lecture } from "@/types/bulkAttendance";
 import { systemDateParts } from "@/lib/format";
 import { avatarClass, getInitials } from "@/utils/bulkAttendance";
 import type { AttendanceRow } from "./AttendanceTable";
+import { attendanceOutcome, isAttendancePresent, recordingStatusStyle } from "@/utils/bulkAttendanceOutcome";
 
 interface MonthlySession {
   key: string;
@@ -171,13 +172,13 @@ export default function MonthlyGrid({
       setResult({ scope, payload });
       const loadedStatuses = {
         ...Object.fromEntries(liveResult.value.records.map((record) => [
-          markKey("live:" + record.occurrenceId, record.learnerId), record.effectiveAttendance ?? record.attendance,
+          markKey("live:" + record.occurrenceId, record.learnerId), attendanceOutcome(record),
         ])),
         ...Object.fromEntries(kbcRecords
-          .filter((record) => record.attendance !== null)
+          .filter((record) => record.attendance !== null || record.attendanceBasis)
           .map((record) => [
             markKey(record.source === "live" ? record.recordKey : "kbc:" + record.recordKey, record.learnerId),
-            (record.effectiveAttendance ?? record.attendance) as AttendanceStatus,
+            attendanceOutcome(record),
           ])),
       };
       // Keep a locally confirmed status visible if a parent refresh races the
@@ -295,8 +296,10 @@ export default function MonthlyGrid({
     session.occurrence && liveRecordByOccurrence.get(session.occurrence.id + ":" + learnerId);
 
   const isRecovered = (session: MonthlySession, learnerId: string) =>
-    Boolean(liveRecordFor(session, learnerId)?.effectiveAttendance
-      || getSavedRecord(session, learnerId)?.effectiveAttendance);
+    Boolean((liveRecordFor(session, learnerId)?.effectiveAttendance === 'present'
+        && !liveRecordFor(session, learnerId)?.attendanceBasis)
+      || (getSavedRecord(session, learnerId)?.effectiveAttendance === 'present'
+        && !getSavedRecord(session, learnerId)?.attendanceBasis));
 
   const liveDatesByLearner = useMemo(() => {
     const occurrenceDates = new Map(occurrences.map((occurrence) => [occurrence.id, occurrence.date]));
@@ -354,8 +357,10 @@ export default function MonthlyGrid({
       if (!learnerSessions.length && daySessions.every((session) =>
         liveRecordByOccurrence.get((session.occurrence?.id ?? "") + ":" + learnerId)?.countsAsSession === false
         || getSavedRecord(session, learnerId)?.countsAsSession === false)) return;
-      total += Math.max(1, learnerSessions.length);
-      present += learnerSessions.filter((session) => getStatus(session, learnerId) === "present").length;
+      total += learnerSessions.length
+        ? learnerSessions.filter((session) => getStatus(session, learnerId) !== 'awaiting_recording').length
+        : 1;
+      present += learnerSessions.filter((session) => isAttendancePresent(getStatus(session, learnerId))).length;
     });
     return [learner.id, total ? Math.round(present / total * 100) : 0];
   })), [appliesTo, days, getStatus, liveRecordByOccurrence, rows]);
@@ -535,6 +540,7 @@ export default function MonthlyGrid({
                           const status = getStatus(session, learnerId);
                           const isPresent = status === "present";
                           const isAbsent = status === "absent";
+                          const recording = recordingStatusStyle(status);
                           return isRecovered(session, learnerId) ? <span key={session.key}
                             role="img" aria-label={learner.name + " " + day + " " + session.title + " present through make-up attendance"}
                             title="Attended through a parallel group session. Edit the original register record in View details."
@@ -544,11 +550,11 @@ export default function MonthlyGrid({
                             aria-label={learner.name + " " + day + " " + session.title + " " + status}
                             title={session.title}
                             className={"flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border text-sm transition-colors disabled:cursor-not-allowed " +
-                              (isPresent ? "border-green-200 bg-green-100 text-green-700 hover:bg-green-200"
+                              (recording?.className ?? (isPresent ? "border-green-200 bg-green-100 text-green-700 hover:bg-green-200"
                                 : isAbsent ? "border-red-200 bg-red-100 text-red-700 hover:bg-red-200"
-                                : "border-background-300 bg-background-100 text-foreground-500 hover:bg-background-200") +
+                                : "border-background-300 bg-background-100 text-foreground-500 hover:bg-background-200")) +
                               (day === today ? " ring-2 ring-primary-300" : "")}>
-                            <i className={isPresent ? "ri-check-line" : isAbsent ? "ri-close-line" : "ri-subtract-line"} aria-hidden="true" />
+                            <i className={recording?.icon ?? (isPresent ? "ri-check-line" : isAbsent ? "ri-close-line" : "ri-subtract-line")} aria-hidden="true" />
                           </button>;
                         })}</div>}
                       </td>;

@@ -739,3 +739,48 @@ tests: NOT RUN for this frontend-only follow-up. Live Teams: NOT RUN. No schema,
 source data, environment, credential or deployment changes. Earlier Quality
 Forms, multipart and teammate edits remain preserved. Work stays local on
 khaled-is-here at HEAD 9422c852; no Pull, Merge, Commit, Push or deployment.
+
+## Backend-only transcript PDF export (9 November 2026)
+
+The reported screen showed a Microsoft-verified transcript followed by a PDF
+preparation error. A reproduced deployment defect was found in
+`recordings_pdf._render`: its logo path pointed into the frontend checkout.
+The AWS Docker build has `context: backend` and copies that directory to `/app`,
+so the referenced `/frontend/public/assets/kbc-logo.png` is absent. Rendering
+then raises `OSError`, which the existing endpoint returns as
+`pdf_render_failed`. Full-repository local tests had masked this packaging issue.
+
+The renderer now uses `curriculum_api/templates/kbc-logo.png`, an existing
+backend-packaged college logo also used by the quality PDFs. A new
+`test_recordings_pdf_no_db` regression creates an image-like backend-only tree,
+blocks network access and renders both transcript and saved-report PDFs. It
+failed before the fix on the missing frontend logo and passed after the fix.
+The existing CI no-database runner discovers this test by its filename; no
+workflow, test gate or existing assertion was weakened.
+
+The preview/download request sharing, in-memory PDF reuse and immediate retry
+after a failed request already exist and remain unchanged. The reported recovery
+after two hours has not been reproduced or established as rate limiting. No
+database/Graph writes or learner transcript extraction was used to reproduce
+the packaging failure, and no private transcript appears in these fixtures.
+
+Validation on the current branch after incorporating main `c1a9e0a0`:
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_recordings_pdf_no_db coach_api.test_recordings_pdf coach_api.test_recordings_transcripts coach_api.test_recordings_evidence_api coach_api.test_quality_pdf_layout curriculum_api.test_teaching_quality --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 66 tests using verified SQLite-only settings and provider doubles.
+npm --prefix frontend run test -- src/pages/coaching-recordings/SavedMeetingEvidence.test.tsx src/pages/coaching-recordings/SavedEvidencePdf.test.tsx src/api/coachingRecordings.test.ts src/pages/curriculum/recordings/__tests__/recordingTranscript.test.tsx src/components/feature/SessionRecordingPlayer.test.tsx --maxWorkers=2 --reporter=dot
+# PASS: 113 tests / 5 files. React act warnings remained visible.
+git diff --check
+# PASS.
+```
+
+A synthetic 7-page transcript was rendered and its first/last pages visually
+inspected. Branding, timestamps, page numbering and the final transcript words
+were retained. No frontend source changed, so frontend lint/type-check/build
+are not required for this backend-only fix. Teams baseline and expanded Teams
+checks: NOT REQUIRED; no trigger file or consumed Teams contract changed.
+Live Teams and an authenticated download of the reported meeting: NOT RUN.
+The fix addresses the reproduced packaging defect; private production error
+logs were unavailable from the current local tools, so the two-hour recovery
+pattern still requires correlation if it persists after deployment.

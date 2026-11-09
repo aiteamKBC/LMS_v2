@@ -793,7 +793,7 @@ export default function ComponentViewPage() {
         ) : component.durationMinutes != null && (
           <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
         )}
-        <ActivityPlanDetails hours={component.expectedOtjh} />
+        <ActivityPlanDetails hours={component.expectedOtjh} componentType={component.type} kind={kind} learnerId={id} />
         {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
       </div>
     </div>

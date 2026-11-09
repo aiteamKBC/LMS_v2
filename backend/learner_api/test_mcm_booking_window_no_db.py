@@ -55,7 +55,7 @@ class McmBookingWindowTests(unittest.TestCase):
                      timezone=types.SimpleNamespace(localdate=lambda: date(2026, 1, 1)))
         load(ROOT / 'booking_calendar.py', {
             'BookingDateRestriction', 'ENGLAND_WALES_BANK_HOLIDAYS', 'COVERED_YEARS',
-            'booking_date_restriction', 'mcm_booking_date_restriction',
+            'booking_date_restriction',
         }, dates)
         self.dates = dates
         self.monthly = types.ModuleType('learner_api.monthly_assignment')
@@ -139,7 +139,6 @@ class McmBookingWindowTests(unittest.TestCase):
                        coaching_events_for_learner=lambda *_: [self.event],
                        _curriculum_mcm_fallback=Mock(return_value=False),
                        booking_date_restriction=dates['booking_date_restriction'],
-                       mcm_booking_date_restriction=dates['mcm_booking_date_restriction'],
                        _resolve_direct_cycle_event_key=lambda *_: (self.event['eventKey'], None),
                        _resolve_assignment_month_mcm_occurrence=lambda *_: (self.event['eventKey'], None),
                        _assignment_imported_mcm_month=lambda *_: ('2026-10', None),
@@ -174,31 +173,16 @@ class McmBookingWindowTests(unittest.TestCase):
         request = types.SimpleNamespace(method='POST', body=json.dumps(payload), headers={})
         return self.ns[endpoint](request, kind, 101)
 
-    def test_fixed_bounds_for_all_month_lengths_and_year_rollover(self):
-        for month, end in [('2026-04', '2026-05-05'), ('2026-10', '2026-11-05'),
-                           ('2027-02', '2027-03-05'), ('2028-02', '2028-03-05'), ('2026-12', '2027-01-05')]:
-            with self.subTest(month=month):
-                self.assertEqual(self.monthly.coaching_booking_bounds(month),
-                                 (date.fromisoformat(month + '-20'), date.fromisoformat(end)))
-                for day in (1, 5, 20, calendar.monthrange(int(month[:4]), int(month[5:]))[1]):
-                    self.assertIsNone(self.dates['mcm_booking_date_restriction'](date.fromisoformat(f'{month}-{day:02}')))
-                for day in (6, 19):
-                    self.assertEqual(self.dates['mcm_booking_date_restriction'](date.fromisoformat(f'{month}-{day:02}')).code,
-                                     'mcm-booking-window')
-        self.assertEqual(self.monthly.coaching_booking_windows('2026-12')[1], (date(2027, 1, 20), date(2027, 2, 5)))
-        self.assertEqual(self.monthly.coaching_booking_bounds('invalid'), (None, None))
-
-    def test_every_booking_entrypoint_rejects_closed_dates_before_writes_or_graph(self):
+    def test_every_booking_entrypoint_accepts_available_dates_throughout_the_month(self):
         for path in ('assignment', 'curriculum', 'generic', 'reschedule', 'imported', 'imported-assignment'):
             for kind in ('commercial', 'apprenticeship'):
-                for day in ('2026-10-06', '2026-10-19'):
+                for day in ('2026-10-01', '2026-10-06', '2026-10-15', '2026-10-19', '2026-10-30'):
                     with self.subTest(path=path, kind=kind, day=day):
                         response = self.request(day, kind=kind, path=path)
-                        self.assertEqual(response.status_code, 400, response)
-                        self.assertIn('20th', response['error'])
-        self.manager.get_or_create.assert_not_called()
-        self.coach.persist_calendar_sync_reservation.assert_not_called()
-        self.coach.synchronize_reserved_calendar_event.assert_not_called()
+                        self.assertIn(response.status_code, (200, 201), response)
+                        self.assertEqual(self.record.scheduled_date, date.fromisoformat(day))
+                        self.assertEqual(self.record.graph_event_id, 'GRAPH-1')
+                        self.assertEqual(self.record.meeting_link, 'https://example.invalid/meeting')
 
     def test_each_entrypoint_accepts_the_20th_and_following_5th(self):
         for path in ('assignment', 'curriculum', 'generic', 'reschedule', 'imported', 'imported-assignment'):
@@ -216,21 +200,21 @@ class McmBookingWindowTests(unittest.TestCase):
             with self.subTest(day=day):
                 self.assertEqual(self.request(day).status_code, 201)
 
-    def test_editable_duration_keeps_mcm_windows_and_existing_meeting_identity(self):
+    def test_editable_duration_keeps_existing_meeting_identity_throughout_the_month(self):
         for path in ('assignment', 'curriculum', 'generic', 'reschedule', 'imported', 'imported-assignment'):
             for duration in (30, 90, 120):
                 with self.subTest(path=path, duration=duration):
-                    response = self.request('2026-10-20', path=path, duration=duration)
+                    response = self.request('2026-10-19', path=path, duration=duration)
                     self.assertIn(response.status_code, (200, 201), response)
                     self.assertEqual(self.record.duration_minutes, duration)
                     self.assertEqual(self.record.graph_event_id, 'GRAPH-1')
                     self.assertEqual(self.record.meeting_link, 'https://example.invalid/meeting')
-                    self.assertEqual(self.request('2026-10-19', path=path, duration=duration).status_code, 400)
 
     def test_weekends_holidays_and_past_dates_stay_closed(self):
-        for day in ('2026-09-20', '2026-12-25', '2025-12-31'):
-            with self.subTest(day=day):
-                self.assertEqual(self.request(day).status_code, 400)
+        for path in ('assignment', 'curriculum', 'generic', 'reschedule', 'imported', 'imported-assignment'):
+            for day in ('2026-09-20', '2026-12-25', '2025-12-31', '2029-01-02'):
+                with self.subTest(path=path, day=day):
+                    self.assertEqual(self.request(day, path=path).status_code, 400)
         self.coach.persist_calendar_sync_reservation.assert_not_called()
 
     def test_progress_reviews_keep_their_independent_dates(self):
@@ -243,18 +227,18 @@ class McmBookingWindowTests(unittest.TestCase):
     def test_ownership_completed_status_and_conflicts_still_prevent_booking(self):
         for changes, status in [({'learnerId': '999'}, 404), ({'source': 'progress-review'}, 404), ({'status': 'completed'}, 409)]:
             with patch.dict(self.event, changes):
-                self.assertEqual(self.request('2026-10-20').status_code, status)
+                self.assertEqual(self.request('2026-10-19').status_code, status)
         self.conflicts.return_value = True
-        self.assertEqual(self.request('2026-10-20').status_code, 409)
+        self.assertEqual(self.request('2026-10-19').status_code, 409)
         self.coach.synchronize_reserved_calendar_event.assert_not_called()
 
     def test_failed_sync_remains_visible_and_retry_keeps_meeting_identity(self):
         self.coach.synchronize_reserved_calendar_event.return_value = (self.record, 'Sync failed', True)
-        first = self.request('2026-10-20')
+        first = self.request('2026-10-19')
         self.assertEqual(first['warning'], 'Sync failed')
         self.manager.get_or_create.return_value = (self.record, False)
         self.coach.synchronize_reserved_calendar_event.return_value = (self.record, '', True)
-        second = self.request('2026-10-20')
+        second = self.request('2026-10-19')
         self.assertEqual(second.status_code, 200)
         self.assertEqual(first['event'], second['event'])
         self.assertEqual(self.record.graph_event_id, 'GRAPH-1')

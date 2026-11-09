@@ -80,10 +80,10 @@ export async function loadImportedReviewForBooking(
 }
 
 /** The server decides whether this is a booking; a planned date is only a suggestion. */
-export function initialReviewBookingDate(definition: ReviewInstanceFormDefinition, monthly: boolean): string {
+export function initialReviewBookingDate(definition: ReviewInstanceFormDefinition): string {
   const booking = definition.booking;
   if (booking?.reserved || booking?.booked || booking?.canReschedule || booking?.canAttach) return booking.scheduledDate || '';
-  return firstAvailableBookingDate(booking?.scheduledDate || definition.instance.targetDate, definition.bookingCalendar, monthly);
+  return firstAvailableBookingDate(booking?.scheduledDate || definition.instance.targetDate, definition.bookingCalendar);
 }
 
 /** Default new appointments to one hour; keep the duration of an existing reservation. */

@@ -11,6 +11,12 @@ it('uses journal targets even when the older contract is unavailable or differen
 });
 
 describe('dashboard OTJH source transition', () => {
+  it('separates actual submissions from historical hours needing verification', () => {
+    const result = monthlyLogOtjh({ months: [{ month: '2026-08', actual_hours: 10,
+      not_accepted_hours: 8, submitted_hours: 0, verification_hours: 8 }] });
+    expect(result.months['2026-08']).toEqual({ target: null, submitted: 0, verification: 8, completed: 10 });
+    expect(monthlyLogActualOtjh(result.months)).toBe(10);
+  });
   it('maps SSOT monthly values and programme totals into the chart payload', () => {
     const summary = {
       learner: { id: 125, aptem_id: 7001, name: 'Learner', programme: 'Programme', coach_name: '', planned_end_date: '2027-10-17' },

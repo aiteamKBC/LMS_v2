@@ -139,6 +139,8 @@ class EmployerPortalOverviewTests(SimpleTestCase):
              "meetingLink": "https://example.invalid/meeting", "importedReview": {"sections": [{"answer": "private"}]}},
             {"id": "closed", "eventKey": "closed", "source": "progress-review", "importedReviewType": "Progress Review",
              "title": "Progress Review", "status": "completed", "targetDate": "2026-10-18", "sequence": 2},
+            {"id": "gateway", "eventKey": "gateway", "source": "review", "importedReviewType": "Gateway Review",
+             "title": "Gateway Review", "status": "scheduled", "targetDate": "2026-10-29", "sequence": 3},
             {"id": "support", "eventKey": "support", "source": "review", "importedReviewType": "Personal Support Plan",
              "title": "Support plan", "status": "scheduled", "targetDate": "2026-10-18", "sequence": 3},
         ]
@@ -149,7 +151,7 @@ class EmployerPortalOverviewTests(SimpleTestCase):
         source.assert_called_once_with(self.learner, mock.ANY, month="2026-10")
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content)
-        self.assertEqual([event["eventKey"] for event in payload["events"]], ["open", "closed"])
+        self.assertEqual([event["eventKey"] for event in payload["events"]], ["open", "closed", "gateway"])
         self.assertNotIn("definitions", payload)
         self.assertNotIn("meetingLink", payload["events"][0])
         self.assertNotIn("importedReview", payload["events"][0])
@@ -178,12 +180,12 @@ class EmployerPortalOverviewTests(SimpleTestCase):
             self.assertEqual(response.status_code, 200)
             payload = json.loads(response.content)
             self.assertEqual([row["eventKey"] for row in payload["events"]],
-                             ["imported-review:0", "imported-review:1", "imported-review:2"])
+                             ["imported-review:0", "imported-review:1", "imported-review:2", "imported-review:3"])
             self.assertEqual(payload["definitions"], {})
         self.assertEqual(events, original)
 
     def test_other_imported_reviews_are_unavailable_in_progress_review_details_and_pdfs(self):
-        for review_type in ("Gateway Review", "Personal Support Plan"):
+        for review_type in ("Personal Support Plan", "Other Review"):
             for code in (None, "progress_review"):
                 event = {"id": "imported-review:88", "eventKey": "imported-review:88",
                          "source": "progress-review", "importedReviewType": review_type,
@@ -197,6 +199,66 @@ class EmployerPortalOverviewTests(SimpleTestCase):
                             self.assertEqual(response.status_code, 404)
                         else:
                             self.assertEqual(json.loads(response.content), {"events": [], "definitions": {}})
+
+    def test_native_gateway_list_detail_and_pdf_preserve_identity_and_employer_visibility(self):
+        from copy import deepcopy
+        from django.http import HttpResponse
+        for kind in ("commercial", "apprenticeship"):
+            for code in ("gateway", "gateway_review"):
+                event = {"id": "gateway-event", "eventKey": "gateway-event", "source": "review",
+                         "reviewTypeCode": code, "reviewInstanceId": "gateway-instance", "title": "Gateway Review"}
+                original = deepcopy(event)
+                definition = {"instance": {"id": "gateway-instance", "status": "awaiting-signature"},
+                              "template": {"visibleTo": {"employer": True}, "reviewTypeCode": code},
+                              "signatures": {"employer": {"required": True, "signed": False}}}
+                with self.subTest(kind=kind, code=code), \
+                        mock.patch.object(employer_portal, "SOURCE_MODELS", {kind: _model(self.learner)}), \
+                        mock.patch("learner_api.calendar._calendar_profile", return_value=SimpleNamespace(pk=55)), \
+                        mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=[event]), \
+                        mock.patch.object(employer_portal.review_instances, "get_review_instance", return_value={"id": "gateway-instance", "learner_id": 55}), \
+                        mock.patch.object(employer_portal.review_instances, "review_instance_form_definition", return_value=definition), \
+                        mock.patch("curriculum_api.review_pdf.learner_information", return_value={}), \
+                        mock.patch("curriculum_api.review_pdf.mcm_pdf_response", return_value=HttpResponse(b"%PDF-saved-gateway")), \
+                        mock.patch.object(employer_portal.review_instances, "ensure_review_instance") as create:
+                    listed = json.loads(self.progress_reviews(kind=kind).content)
+                    self.assertEqual([row["eventKey"] for row in listed["events"]], [event["eventKey"]])
+                    self.assertTrue(listed["events"][0]["employerSignatureRequired"])
+                    detail = self.progress_reviews(kind=kind, event_key=event["eventKey"])
+                    self.assertEqual(json.loads(detail.content)["definition"], definition)
+                    self.assertEqual(self.progress_reviews(kind=kind, event_key=event["eventKey"], as_pdf=True).content, b"%PDF-saved-gateway")
+                    definition["template"]["visibleTo"]["employer"] = False
+                    self.assertEqual(json.loads(self.progress_reviews(kind=kind).content)["events"], [])
+                    self.assertEqual(self.progress_reviews(kind=kind, event_key=event["eventKey"]).status_code, 404)
+                    create.assert_not_called()
+                self.assertEqual(event, original)
+
+    def test_gateway_access_cannot_bypass_employer_learner_or_role_ownership(self):
+        with mock.patch("learner_api.calendar.coaching_events_for_learner") as read:
+            self.assertEqual(self.progress_reviews(employer_id=10, event_key="gateway-event").status_code, 404)
+            self.learner.employer_id = 10
+            self.assertEqual(self.progress_reviews(event_key="gateway-event").status_code, 403)
+            self.learner.employer_id = 9
+            self.account = SimpleNamespace(role="learner", subject_id=101)
+            self.assertEqual(self.progress_reviews(event_key="gateway-event").status_code, 403)
+            read.assert_not_called()
+
+    def test_migrated_gateway_requires_the_existing_employer_signing_role(self):
+        event = {"id": "imported-review:gateway", "eventKey": "imported-review:gateway",
+                 "source": "progress-review", "importedReviewType": " Gateway REVIEW ",
+                 "migratedForm": True, "title": "Gateway Review"}
+        overlay = SimpleNamespace(pk=1)
+        for required in (True, False):
+            with self.subTest(required=required), \
+                    mock.patch("learner_api.calendar._calendar_profile", return_value=SimpleNamespace(pk=55)), \
+                    mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=[event]), \
+                    mock.patch.object(employer_portal.ImportedReviewInstance.objects, "filter") as overlays, \
+                    mock.patch.object(employer_portal, "signature_states", return_value={"employer": {"required": required, "signed": False}}):
+                overlays.return_value.first.return_value = overlay
+                response = self.progress_reviews(event_key=event["eventKey"])
+                self.assertEqual(response.status_code, 200 if required else 404)
+                if required:
+                    self.assertTrue(json.loads(response.content)["event"]["employerSignatureRequired"])
+                overlays.assert_called_once_with(event_key=event["eventKey"], learner_id=55)
 
     def test_scheduled_progress_review_link_is_shared_for_owned_native_and_aptem_reviews(self):
         for kind in ("commercial", "apprenticeship"):

@@ -360,21 +360,24 @@ describe('employer home dashboard', () => {
     expect(panel.getByText('Meeting link not available yet.')).toBeVisible();
   });
 
-  it('counts only progress reviews and filters this month without displaying Gateway or support plans', async () => {
+  it('counts Progress and Gateway reviews this month while excluding unrelated support plans', async () => {
     showPage();
-    const due = await screen.findByRole('button', { name: /Reviews due this month: 1\. Open progress reviews/ });
-    expect(screen.queryByText('Gateway Review')).not.toBeInTheDocument();
+    const due = await screen.findByRole('button', { name: /Reviews due this month: 3\. Open progress reviews/ });
     expect(screen.queryByText('Personal Support Plan')).not.toBeInTheDocument();
     await userEvent.click(due);
     const panel = within(await screen.findByRole('dialog', { name: 'Reviews due this month' }));
     const listed = panel.getAllByRole('listitem');
-    expect(listed).toHaveLength(1);
+    expect(listed).toHaveLength(3);
     expect(listed[0]).toHaveTextContent('Alex Learner');
-    expect(panel.queryByText('Morgan Learner')).not.toBeInTheDocument();
-    expect(panel.getByRole('link', { name: 'View review' }))
-      .toHaveAttribute('href', '/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=pr-11');
+    expect(listed[1]).toHaveTextContent('Alex Learner');
+    expect(listed[2]).toHaveTextContent('Morgan Learner');
+    expect(panel.getAllByRole('link', { name: 'View review' }).map(link => link.getAttribute('href'))).toEqual([
+      '/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=pr-11',
+      '/employers/8/learner/apprenticeship/11?tab=reviews&reviewId=gateway-11',
+      '/employers/8/learner/commercial/12?tab=reviews&reviewId=gateway-12',
+    ]);
     expect(panel.queryByRole('link', { name: /^Join / })).not.toBeInTheDocument();
-    expect(panel.getByText('Meeting link not available yet.')).toBeVisible();
+    expect(panel.getAllByText('Meeting link not available yet.')).toHaveLength(3);
     // The card reads in place now; it must not leave the overview.
     expect(screen.getByTestId('path')).toHaveTextContent(/^\/employers\/8$/);
   });
@@ -558,7 +561,7 @@ describe('employer home dashboard', () => {
     const cards: [RegExp, string, string[]][] = [
       [/^Total learners: 2\./, 'Total learners', ['Alex Learner', 'Morgan Learner']],
       [/^Active on programme: 2\./, 'Active on programme', ['Alex Learner', 'Morgan Learner']],
-      [/^Reviews due this month: 1\./, 'Reviews due this month', ['Alex Learner']],
+      [/^Reviews due this month: 3\./, 'Reviews due this month', ['Alex Learner', 'Alex Learner', 'Morgan Learner']],
       [/^Needs attention: 2\./, 'Needs attention', ['Alex Learner', 'Morgan Learner']],
     ];
     showPage();
@@ -569,7 +572,7 @@ describe('employer home dashboard', () => {
       expect(listed).toHaveLength(expected.length);
       expected.forEach((learner, index) => expect(listed[index]).toHaveTextContent(learner));
       // Only a review row has actions of its own; the learner lists stay read-only.
-      if (title === 'Reviews due this month') expect(panel.getAllByRole('link', { name: 'View review' })).toHaveLength(1);
+      if (title === 'Reviews due this month') expect(panel.getAllByRole('link', { name: 'View review' })).toHaveLength(3);
       else expect(panel.queryByRole('link')).not.toBeInTheDocument();
       await userEvent.click(panel.getByRole('button', { name: 'Close' }));
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
