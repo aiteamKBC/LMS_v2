@@ -7,6 +7,7 @@ import { submitComponentProgress, type ComponentProgressResponse } from '@/api/c
 import { startTimeTracking, resumeTimeTracking, checkpointTimeTracking } from '@/api/timeTracking';
 import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
+import { readWebPointPlan } from '@/api/webWeekPoints';
 import { readLearnerAttendanceMode } from '@/api/learnerAttendanceMode';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
@@ -38,6 +39,9 @@ vi.mock('./readingDownloads', async () => ({
 }));
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
+// These completion fixtures have no authored Points. Grouping and its failure
+// states are covered separately by the sidebar suites.
+vi.mock('@/api/webWeekPoints', () => ({ readWebPointPlan: vi.fn() }));
 vi.mock('@/api/learnerAttendanceMode', () => ({ readLearnerAttendanceMode: vi.fn(), peekLearnerAttendanceMode: () => undefined }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
 vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTracking: vi.fn(), checkpointTimeTracking: vi.fn() }));
@@ -97,6 +101,7 @@ async function finish() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(readWebPointPlan).mockResolvedValue({ weeks: {} });
   programmeRead.loading = false;
   programmeRead.loadError = '';
   Object.assign(session.account, { role: 'learner', subjectType: 'learner', subjectId: 1, learnerRecordId: null });
@@ -115,6 +120,40 @@ beforeEach(() => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each([
+  ['commercial', true], ['apprenticeship', true],
+  ['commercial', false], ['apprenticeship', false],
+] as const)('reopens the saved %s reflection after submission (completed: %s) without submitting again', async (kind, done) => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(done), components: [{
+    ...first, type: 'reading', component: 'Synthetic reading', contentHtml: '<p>Lesson content</p>',
+  }], componentMarkingStatus: { C1: { status: 'submitted_for_tutor_review', feedback: null, reviewedBy: null, reviewedAt: null } } } as LearnerDetail);
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
+    id: 'R1', status: 'submitted_for_tutor_review', activityId: 'C1', activityType: 'reading', activityTitle: 'Synthetic reading',
+    learnerKind: kind, learnerId: '1', learnerName: 'Synthetic learner', programmeName: 'Synthetic programme',
+    moduleTitle: 'Marketing', weekTitle: 'Week 1', plannedOtjh: '1 hour',
+    locked: false, reviewedBy: null, reviewedAt: null, submittedAt: '2026-10-01T09:00:00Z',
+    learningReflection: 'My saved learning from the synthetic lesson.',
+    applicationText: 'I will apply this in the next project.', coachFeedback: 'Discuss this example at our next review.',
+    ksbCodes: ['K1'], ksbExplanations: { K1: 'Planning a project' },
+    ksbWeights: { K1: 100 }, applicationType: 'plan', evidenceConsentConfirmed: true,
+    completedDuringPaidHours: 'yes', otjhConfirmed: true, signedDeclaration: true, qualityScore: 100,
+    confidenceBefore: { K1: 2 }, confidenceAfter: { K1: 4 },
+    selectedBenefits: ['Improved quality'], benefitExplanation: 'Fewer errors in the project.',
+    evidenceFiles: ['Synthetic evidence.pdf'], actualTimeHours: '0.5', dateCompleted: '2026-10-01',
+  });
+  mount('C1', kind);
+  fireEvent.click(await screen.findByRole('button', { name: 'View saved reflection' }));
+  expect(await screen.findByText('My saved learning from the synthetic lesson.')).toBeVisible();
+  expect(screen.getByText('I will apply this in the next project.')).toBeVisible();
+  expect(screen.getByText('Discuss this example at our next review.')).toBeVisible();
+  expect(loadLearningReflectionSubmission).toHaveBeenCalledWith({
+    learnerKind: kind, learnerId: '1', activityType: 'reading', activityId: 'C1',
+  }, { revalidate: true });
+  expect(within(screen.getByRole('region', { name: 'Saved reflection' })).queryByRole('textbox')).not.toBeInTheDocument();
+  expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
 
 it.each([
   ['commercial', 'live', 'Required: Live attendance'],

@@ -28,6 +28,7 @@ import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
 import { ActivityPlanDetails } from '@/pages/learner/video-watch/ActivityPlanDetails';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { SavedReflection } from '@/components/feature/SavedReflection';
 import { formatClock } from "@/components/feature/ReflectionWindow.helpers";
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -594,6 +595,10 @@ export default function QuizTakePage() {
             />
             </>
           )
+        )}
+        {!loading && !detailLoading && !loadError && !detailError && quiz && canUseComponent && kind && id
+          && (phase === 'intro' || phase === 'results') && (latestAttempt || result) && (
+          <SavedReflection learnerKind={kind as LearnerKind} learnerId={id} activityType="quiz" activityId={`quiz-${quiz.id}`} />
         )}
         </div>
 

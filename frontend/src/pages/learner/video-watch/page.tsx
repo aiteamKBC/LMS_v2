@@ -34,6 +34,7 @@ import {
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { SavedReflection } from '@/components/feature/SavedReflection';
 import { formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow.helpers';
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
@@ -1069,6 +1070,10 @@ export default function ComponentViewPage() {
                     {!repeating && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
                   </div>
                 </div>
+              )}
+
+              {!isAssignment && (completed || verdict) && kind && id && componentId && (
+                <SavedReflection learnerKind={kind as LearnerKind} learnerId={id} activityType={noun} activityId={componentId} />
               )}
 
               {component.description && (
