@@ -165,21 +165,18 @@ it('loads own meeting artifacts without a Teams join link', async () => {
   await waitFor(() => expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledWith('commercial', '1', slot.eventKey, expect.any(AbortSignal)));
 });
 
-it('closes the window after the 5th while allowing the 5th itself', async () => {
+it('books an available appointment after the 5th', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
 
   chooseDate('2026-10-06');
-  expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
-  expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
-  chooseDate('2026-10-05');
   await screen.findByRole('option', { name: '09:00' });
   fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
   expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeEnabled();
   await screen.findByRole('option', { name: '09:00' });
   fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'Book 60-minute MCM' }));
-  await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ assignmentMonth: '2026-09', scheduledDate: '2026-10-05' })));
+  await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ assignmentMonth: '2026-09', scheduledDate: '2026-10-06' })));
 });
 
 it('blocks booking when the coach has no available appointments', async () => {
@@ -218,16 +215,16 @@ it('allows choosing and booking another available time when a meeting already ex
 });
 
 
-it('allows upcoming MCM windows and excludes the 6th through 19th, past dates and weekends', async () => {
+it('allows available MCM weekdays throughout the month while excluding past dates and weekends', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
-  for (const date of ['2026-10-20', '2026-11-20', '2026-12-21']) {
+  for (const date of ['2026-10-06', '2026-10-19', '2026-11-18', '2026-12-10', '2026-10-20', '2026-11-20', '2026-12-21']) {
     chooseDate(date);
     await screen.findByRole('option', { name: '09:00' });
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
     expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeEnabled();
   }
-  for (const date of ['2026-09-11', '2026-10-17', '2026-10-19', '2026-11-18', '2026-12-10']) {
+  for (const date of ['2026-09-11', '2026-10-17']) {
     chooseDate(date);
     expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
     expect(screen.getByLabelText('Date')).toHaveTextContent('Select a date');
@@ -235,14 +232,14 @@ it('allows upcoming MCM windows and excludes the 6th through 19th, past dates an
 });
 
 
-it('enables October weekdays only from the 20th through the following 5th', async () => {
+it('enables every October weekday and keeps weekends disabled', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.click(await screen.findByLabelText('Date'));
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   const weekends = [3, 4, 10, 11, 17, 18, 24, 25, 31];
   for (let day = 1; day <= 31; day++) {
     const button = screen.getByRole('button', { name: `2026-10-${String(day).padStart(2, '0')}` });
-    if (weekends.includes(day) || (day > 5 && day < 20)) expect(button).toBeDisabled();
+    if (weekends.includes(day)) expect(button).toBeDisabled();
     else expect(button).toBeEnabled();
   }
 });
