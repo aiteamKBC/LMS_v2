@@ -139,6 +139,7 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             "_local_date": lambda value: value.date(),
             "_aptem_ids_by_profile": lambda _ids: {11: "301"},
             "parallel_recovery_links": lambda _rows, **_kwargs: ({}, {}),
+            "apply_recorded_outcomes": lambda records: records,
         }
         load_members({"bulk_attendance_live_month_records"}, scope)
         result = scope["bulk_attendance_live_month_records"](

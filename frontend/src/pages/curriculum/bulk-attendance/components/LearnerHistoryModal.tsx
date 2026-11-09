@@ -8,6 +8,7 @@ import {
 import type { EditableRecord } from "./AttendanceTable";
 import LearnerStatusBadge from "./LearnerStatusBadge";
 import { downloadLearnerAttendancePdf } from "../attendancePdf";
+import { attendanceOutcome, isAttendancePresent, recordingStatusStyle } from "@/utils/bulkAttendanceOutcome";
 
 export interface LearnerHistoryRecord {
   id: string;
@@ -19,7 +20,8 @@ export interface LearnerHistoryRecord {
   attendance: AttendanceStatus;
   source?: "kbc" | "live";
   occurrenceId?: string;
-  effectiveAttendance?: "present";
+  effectiveAttendance?: "present" | "awaiting_recording";
+  attendanceBasis?: "recorded" | "awaiting_recording";
   recoveryOccurrenceId?: string;
   makeupForOccurrenceId?: string;
   makeupForDate?: string;
@@ -49,6 +51,8 @@ interface LearnerHistoryModalProps {
 }
 
 function statusStyle(status: AttendanceStatus) {
+  const recording = recordingStatusStyle(status);
+  if (recording) return recording;
   if (status === "present") {
     return { className: "border-green-200 bg-green-100 text-green-800", icon: "ri-check-line", label: "Present" };
   }
@@ -103,18 +107,20 @@ export default function LearnerHistoryModal({
         return entry.attendance;
       }
     }
-    return entry.effectiveAttendance ?? entry.attendance;
+    return attendanceOutcome(entry);
   }, [history, pendingStatus]);
 
-  const { present, absent, unmarked, rate } = useMemo(() => {
+  const { present, absent, unmarked, awaiting, rate } = useMemo(() => {
     const statuses = history.filter((entry) => entry.countsAsSession !== false).map(statusOf);
-    const presentCount = statuses.filter((status) => status === "present").length;
+    const presentCount = statuses.filter(isAttendancePresent).length;
     const absentCount = statuses.filter((status) => status === "absent").length;
+    const awaiting = statuses.filter((status) => status === "awaiting_recording").length;
     const markedCount = presentCount + absentCount;
     return {
       present: presentCount,
       absent: absentCount,
-      unmarked: statuses.length - markedCount,
+      unmarked: statuses.length - markedCount - awaiting,
+      awaiting,
       rate: markedCount ? Math.round((presentCount / markedCount) * 100) : 0,
     };
   }, [history, statusOf]);
@@ -189,6 +195,7 @@ export default function LearnerHistoryModal({
             <div className="rounded-md bg-green-100 p-3 text-center"><p className="text-lg font-semibold text-green-700">{present}</p><p className="font-label text-xs uppercase tracking-wide text-green-700">Present</p></div>
             <div className="rounded-md bg-red-100 p-3 text-center"><p className="text-lg font-semibold text-red-700">{absent}</p><p className="font-label text-xs uppercase tracking-wide text-red-700">Absent</p></div>
             <div className="rounded-md bg-background-200 p-3 text-center"><p className="text-lg font-semibold text-foreground-700">{unmarked}</p><p className="font-label text-xs uppercase tracking-wide text-foreground-500">Unmarked</p></div>
+            {awaiting > 0 && <div className="rounded-md bg-pink-100 p-3 text-center"><p className="text-lg font-semibold text-pink-800">{awaiting}</p><p className="font-label text-xs uppercase tracking-wide text-pink-800">Awaiting recording</p></div>}
             <div className="rounded-md bg-background-100 p-3 text-center"><p className={`text-lg font-semibold ${rateClass}`}>{rate}%</p><p className="font-label text-xs uppercase tracking-wide text-foreground-500">Rate</p></div>
           </div>
         )}

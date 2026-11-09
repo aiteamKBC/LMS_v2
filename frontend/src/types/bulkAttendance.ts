@@ -1,4 +1,4 @@
-export type AttendanceStatus = "present" | "absent" | "unmarked";
+export type AttendanceStatus = "present" | "absent" | "unmarked" | "recorded" | "awaiting_recording";
 
 export interface Programme {
   id: string;

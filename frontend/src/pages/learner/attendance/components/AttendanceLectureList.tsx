@@ -255,7 +255,7 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
     <div className={styles.lectureContent} data-label="Key Content">{row.contentSummary || <span className={styles.unmapped}>Content not recorded</span>}</div>
     <div className={styles.lectureKsbs} data-label="KSBs"><KsbChips row={row} /></div>
     <div className={styles.lectureStatus} data-label="Status">
-      <StatusBadge {...(row.attendanceBasis === 'recorded' ? { label: 'Completed by recording', tone: 'positive' as StatusTone }
+      <StatusBadge className={row.attendanceBasis || row.status === 'awaiting_recording' ? 'border-pink-200 bg-pink-100 text-pink-800 dark:border-pink-800 dark:bg-pink-950 dark:text-pink-200' : undefined} {...(row.attendanceBasis === 'recorded' ? { label: 'Completed by recording', tone: 'positive' as StatusTone }
         : outcome.madeUp ? { label: 'Made up', tone: 'positive' as StatusTone } : STATUS[row.status])} />
       {outcome.detail && <StatusBadge tone={outcome.detail.tone} label={outcome.detail.label} />}
     </div>

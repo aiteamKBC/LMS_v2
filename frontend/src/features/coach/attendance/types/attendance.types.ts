@@ -76,6 +76,7 @@ export interface SourceAttendanceInput extends ManualAttendanceInput {
 }
 
 export interface CoachAttendanceDetailRecord {
+  attendanceBasis?: 'recorded' | 'awaiting_recording';
   id: string;
   date: string;
   module: string;
