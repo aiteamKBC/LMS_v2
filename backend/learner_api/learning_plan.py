@@ -37,7 +37,7 @@ from datetime import date, datetime
 
 from django.db import DatabaseError, connection
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 
 from curriculum_api.programme_name_sql import programme_name_sql
 
@@ -47,9 +47,10 @@ from audit_api.last_audit_ledger_views import _connection as _audit_connection
 from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
+from .free_course_selectors import assignment_version, assigned_course_ids, canonical_learner
 from .learner_progression import advance_learner
-from .mappers import _normalize_free_courses, _s, get_training_plan, stored_training_plan, training_plan_field
-from .models import EnrolmentUser
+from .mappers import _s, get_training_plan, stored_training_plan, training_plan_field
+from .models import EnrolmentUser, LearnerProfile
 from .placement_links import placement_ids, placement_payload
 from .projection_performance import projection_call, projection_operation
 
@@ -58,6 +59,99 @@ logger = logging.getLogger(__name__)
 
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
+
+
+def _canonical_free_course_assignment_ids(learner):
+    """Canonical assignment ids for one enrolment row, in official order."""
+    try:
+        profile = canonical_learner(
+            _s(getattr(learner, "learner_type", "")).lower(),
+            learner.pk,
+        )
+    except LearnerProfile.DoesNotExist:
+        return []
+    return assigned_course_ids(profile)
+
+
+def _canonical_free_course_assignment_version(learner, course_ids):
+    """Version token bound to the canonical learner identity."""
+    try:
+        profile = canonical_learner(
+            _s(getattr(learner, "learner_type", "")).lower(),
+            learner.pk,
+        )
+    except LearnerProfile.DoesNotExist:
+        return ""
+    return assignment_version(profile.pk, course_ids)
+
+
+def _canonical_free_course_assignments(learner, course_ids=None):
+    """Learning Plan read shape backed by the canonical assignment table.
+
+    ``addedAt`` remains as an empty compatibility field because
+    ``Learner.learner_free_courses`` has no assignment timestamp. Titles never
+    fall back to the mirror's ``free_course_title`` or legacy enrolment JSON.
+    """
+    if course_ids is None:
+        course_ids = _canonical_free_course_assignment_ids(learner)
+    if not course_ids:
+        return []
+    from curriculum_api.views import FREE_COURSES_TABLE, free_programme_fetch_all
+
+    placeholders = ", ".join(["%s"] * len(course_ids))
+    rows = free_programme_fetch_all(
+        FREE_COURSES_TABLE,
+        f"id in ({placeholders})",
+        course_ids,
+        columns=["id", "course_name"],
+    )
+    names = {_s(row.get("id")): _s(row.get("course_name")) for row in rows}
+    return [
+        {
+            "freeCourseId": course_id,
+            "courseName": names.get(course_id, ""),
+            "addedAt": "",
+            **({"unavailable": True} if course_id not in names else {}),
+        }
+        for course_id in course_ids
+    ]
+
+
+def _validate_free_course_assignment_snapshot(learner, value):
+    """Allow the legacy Learning Plan payload only as a canonical no-op.
+
+    The Learning Plan UI historically posts its full ``freeCourses`` list on
+    every module save. That field is no longer an assignment write contract:
+    canonical writes need their own validated and authorised endpoint. An
+    identical ordered snapshot remains compatible; a changed, stale or
+    malformed snapshot fails before either assignment store is written.
+    """
+    if not isinstance(value, list):
+        return _error("freeCourses must be a list.", 400)
+
+    requested_ids = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            return _error("Every Free Course assignment needs a freeCourseId.", 400)
+        course_id = _s(item.get("freeCourseId"))
+        if not course_id:
+            return _error("Every Free Course assignment needs a freeCourseId.", 400)
+        if course_id in seen:
+            return _error("Free Course assignments must not contain duplicates.", 400)
+        seen.add(course_id)
+        requested_ids.append(course_id)
+
+    try:
+        canonical_ids = _canonical_free_course_assignment_ids(learner)
+    except DatabaseError:
+        return _error("Could not verify the learner's Free Course assignments.", 503)
+    if requested_ids != canonical_ids:
+        return _error(
+            "Free Course assignments cannot be changed through Learning Plan.",
+            409,
+        )
+    return None
 
 
 def _rows(sql, params):
@@ -660,7 +754,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
     not turn a successful staff edit into an error. A lagging mirror is
     recoverable -- ``manage.py sync_learning_plans`` rebuilds it from the plan.
     """
-    from .active_users import replace_free_courses, replace_training_plan
+    from .active_users import replace_training_plan
     from .mappers import get_training_plan
     from .models import LearnerProfile
 
@@ -683,10 +777,6 @@ def sync_learning_plan_mirror(source, *, strict=False):
         profile = mirrors.first()
         if profile is not None:
             replace_training_plan(profile, plan)
-            # Free courses ride the same mirror: the enrolment source holds them
-            # on Created_users."Free_courses", and the coach/learner side reads
-            # the relational learner_free_courses table (no hours/KSBs).
-            replace_free_courses(profile, getattr(source, "free_courses", None) or [])
         EnrolmentUser.all_learners.filter(pk=source.pk).update(
             modules=modules_csv,
             weeks=weeks_csv,
@@ -789,6 +879,7 @@ def _serialize(learner):
     chosen = {_s(m.get("moduleId")) for m in plan}
     everything = _all_modules()
     meetings, meetings_reason = _meetings(learner)
+    free_course_ids = _canonical_free_course_assignment_ids(learner)
     return {
         "learner": {
             "id": str(learner.id),
@@ -800,11 +891,12 @@ def _serialize(learner):
             "programmeStatus": _s(learner.programme_status),
         },
         "plan": plan,
-        # Free courses assigned to this learner. A pure list of assignment
-        # records ([{freeCourseId, courseName, addedAt}]) held in its own column,
-        # deliberately outside `plan`/`preset`/`totals` so they never touch hours
-        # or KSBs — see EnrolmentUser.free_courses.
-        "freeCourses": learner.free_courses if isinstance(learner.free_courses, list) else [],
+        # Canonical relational assignments, deliberately outside
+        # `plan`/`preset`/`totals` so they never touch hours or KSBs.
+        "freeCourses": _canonical_free_course_assignments(learner, free_course_ids),
+        "freeCourseAssignmentVersion": _canonical_free_course_assignment_version(
+            learner, free_course_ids,
+        ),
         "preset": preset,
         # Anything in the catalogue not already on the plan, whichever programme
         # it belongs to. The picker defaults to the learner's own programme and
@@ -824,6 +916,7 @@ def _serialize(learner):
     }
 
 
+@ensure_csrf_cookie
 @csrf_exempt
 # Saving the plan rewrites the learner's modules and can advance their
 # programme; only the learner themselves or staff may write it. Reads stay open.
@@ -841,9 +934,9 @@ def learning_plan(request, pk):
     if request.method == "GET":
         try:
             return JsonResponse(_serialize(learner))
-        except DatabaseError as exc:
+        except DatabaseError:
             logger.exception("learning_plan: read failed")
-            return _error(f"Database error: {exc}", 502)
+            return _error("Could not read the learning plan.", 503)
 
     if request.method not in ("PATCH", "PUT"):
         return _error("Method not allowed.", 405)
@@ -860,12 +953,17 @@ def learning_plan(request, pk):
     if not isinstance(modules, list):
         return _error("modules must be a list.", 400)
 
-    # Free courses are optional and independent of the module list: a pure
-    # assignment record with no hours/KSBs, stored in their own column. Absent
-    # key = leave them untouched; present must be a list.
+    # Older clients include their current Free Course snapshot with every
+    # module save. It is accepted only when it exactly matches the canonical
+    # ordered assignments; this endpoint is not an assignment writer.
     has_free_courses = "freeCourses" in payload
-    if has_free_courses and not isinstance(payload.get("freeCourses"), list):
-        return _error("freeCourses must be a list.", 400)
+    if has_free_courses:
+        assignment_error = _validate_free_course_assignment_snapshot(
+            learner,
+            payload.get("freeCourses"),
+        )
+        if assignment_error is not None:
+            return assignment_error
 
     programme = _s(learner.programme)
     try:
@@ -937,9 +1035,6 @@ def learning_plan(request, pk):
     field = training_plan_field(learner)
     setattr(learner, field, resolved)
     update_fields = [field]
-    if has_free_courses:
-        learner.free_courses = _normalize_free_courses(payload.get("freeCourses"))
-        update_fields.append("free_courses")
     try:
         learner.save(update_fields=update_fields)
     except DatabaseError as exc:

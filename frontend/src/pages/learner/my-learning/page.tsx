@@ -144,7 +144,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
           ) : !isRealMode ? (
             <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
           ) : mode === 'free' ? (
-            <FreeCoursesTab kind={kind} id={id} />
+            <FreeCoursesTab kind={kind} id={id} readOnly={!canProgress} />
           ) : (
             <>
               {view === 'catalogue' && !subjectOpen && <LearningHero />}

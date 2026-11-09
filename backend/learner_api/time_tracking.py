@@ -44,8 +44,8 @@ def component_access_is_open(at=None):
     return True
 
 
-def outside_uk_working_hours(at=None):
-    """Outside UK weekday 08:00-17:00, including official/manual holidays.
+def outside_uk_working_hours(at=None, *, component_id=None, quiz_id=None):
+    """Outside UK weekday 08:00-17:00 or a selected GOV.UK bank holiday.
 
     Europe/London applies GMT/BST automatically. Components remain available.
 
@@ -59,7 +59,7 @@ def outside_uk_working_hours(at=None):
         instant = timezone.make_aware(instant, UK)
     local = instant.astimezone(UK)
     return (local.weekday() not in WORKING_WEEKDAYS or not (WORKING_DAY_START <= local.time() < WORKING_DAY_END)
-            or is_working_hours_holiday(local.date()))
+            or is_working_hours_holiday(local.date(), component_id=component_id, quiz_id=quiz_id))
 
 
 def enforce_component_access_window(at=None):

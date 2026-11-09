@@ -31,7 +31,7 @@ vi.mock('@/components/feature/ReflectionWindow', () => ({
 vi.mock('@/components/feature/ReflectionWindow.helpers', () => ({
   formatClock: (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
 }));
-const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ quizMeta: { quizId: 1 }, reflectionRequired: false }] };
+const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: false }] };
 function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
 const renderPage = () => render(<MemoryRouter initialEntries={['/quiz/commercial/501/1']}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
 
@@ -297,7 +297,7 @@ describe('quiz requirements loading', () => {
   });
 
   it('passes corrected reflection time to quiz completion', async () => {
-    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: true }] });
     mocks.reflectionTimeSeconds = 120;
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
@@ -309,7 +309,7 @@ describe('quiz requirements loading', () => {
   });
 
   it.each(['correct', 'add', 'retry'] as const)('reconfirms %s with server time and preserves the answers, reflection and session', async mode => {
-    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: true }] });
     mocks.reflectionTimeSeconds = 120;
     mocks.submit.mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time. Your answers and reflection are kept.', 600))
       .mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, grade: 1, earned: 1, possible: 1,
@@ -339,7 +339,7 @@ describe('quiz requirements loading', () => {
   });
 
   it('can cancel a time conflict and keep editing the same reflection', async () => {
-    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: true }] });
     mocks.submit.mockRejectedValue(new ActivityTimeConflictError('Review the updated time.', 600));
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
@@ -357,7 +357,7 @@ describe('quiz requirements loading', () => {
   });
 
   it('requires another confirmation if time changes again and preserves the no-reflection choice', async () => {
-    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: true }] });
     mocks.submit.mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time.', 600))
       .mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time.', 900))
       .mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, grade: 1, earned: 1, possible: 1,
@@ -383,7 +383,7 @@ describe('quiz requirements loading', () => {
   });
 
   it('keeps quiz answers and reflection while reducing an addition from nine hours to eight', async () => {
-    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }],
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: true }],
       quizAttempts: [{ kind: 'quiz', quizId: 1, passed: true, grade: 1, questions: [], attempt: 1,
         claimedSeconds: 21600, verifiedSeconds: 10, timeTrackingSource: 'signed:input',
         submittedAt: '2026-10-01T10:00:00Z', timeTaken: '360:00' }] });
@@ -409,7 +409,7 @@ describe('quiz requirements loading', () => {
   });
 
   it('rechecks the eight-hour limit against refreshed time without losing the reflection', async () => {
-    mocks.detail.mockResolvedValue({ ...detail, components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true }] });
+    mocks.detail.mockResolvedValue({ ...detail, components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: true }] });
     mocks.reflectionTimeSeconds = 10800;
     mocks.submit.mockRejectedValueOnce(new ActivityTimeConflictError('Review the updated time.', 21600));
     renderPage();
@@ -436,7 +436,7 @@ describe('quiz requirements loading', () => {
   it('keeps reflection optional for tutor-validated quizzes', async () => {
     mocks.detail.mockResolvedValue({
       ...detail,
-      components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true, tutorValidationRequired: true }],
+      components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: true, tutorValidationRequired: true }],
     });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));

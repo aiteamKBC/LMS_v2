@@ -122,6 +122,20 @@ class SyncMirrorTests(SimpleTestCase):
         self.assertEqual(child_rows.call_count, 1)
         self.assertEqual(child_rows.call_args.args[1], PLAN)
 
+    def test_plan_sync_never_reads_or_rebuilds_legacy_free_courses(self):
+        class Source:
+            pk = 19
+
+            @property
+            def free_courses(self):
+                raise AssertionError("legacy Free_courses must not be read")
+
+        with patch("learner_api.mappers.get_training_plan", return_value=PLAN), \
+                patch("learner_api.learning_plan.EnrolmentUser"), \
+                patch("learner_api.active_users.replace_training_plan"), \
+                patch("learner_api.models.LearnerProfile"):
+            self.assertEqual(sync_learning_plan_mirror(Source()), 1)
+
 
 class ChildRowBatchingTests(SimpleTestCase):
     """The mirror rebuild is three inserts, not one per module and per week.

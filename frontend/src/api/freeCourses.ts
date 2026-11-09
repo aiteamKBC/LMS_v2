@@ -2,14 +2,15 @@ import { learningFetch } from '@/lib/personalLearning';
 import { createCachedResource } from './cachedRequest';
 import { readLearnerJson } from './learnerRead';
 import type { LearnerKind } from './learnerDetail';
+import type { Quiz } from './quizzes';
 
 // ============================================================================
 // Learner-facing free-courses API client.
 //
 // Reads the free courses assigned to a learner from the learner-gated endpoint
 // /learner_api/free-courses/<kind>/<pk>/. Free courses carry no hours, KSBs or
-// progress by design, so this shape deliberately has none of those fields — it
-// is the authored week/activity tree and nothing more.
+// progress by design, so the list is deliberately a lightweight summary. The
+// authored week/activity tree is fetched only after a learner opens one course.
 // ============================================================================
 
 /** One openable activity inside a free-course week. */
@@ -54,21 +55,52 @@ export interface FreeCourse {
   weeks: FreeCourseWeek[];
 }
 
+export interface FreeCourseSummary {
+  freeCourseId: string;
+  courseName: string;
+  description: string;
+  coverImageUrl: string;
+  weekCount: number;
+  activityCount: number;
+  completedActivities: number;
+  progressPercentage: number;
+}
+
 const BASE = '/learner_api/free-courses';
-const freeCoursesResource = createCachedResource<FreeCourse[]>('learner-free-courses', async (key) => {
+const freeCoursesResource = createCachedResource<FreeCourseSummary[]>('learner-free-courses', async (key) => {
   const [kind, id] = key.split(':');
-  const payload = await readLearnerJson<{ freeCourses: FreeCourse[] }>(`${BASE}/${kind}/${id}/`);
+  const payload = await readLearnerJson<{ freeCourses: FreeCourseSummary[] }>(`${BASE}/${kind}/${id}/`);
   return Array.isArray(payload.freeCourses) ? payload.freeCourses : [];
 });
+const freeCourseDetailResource = createCachedResource<FreeCourse>('learner-free-course-detail', async (key) => {
+  const [kind, id, courseId] = JSON.parse(key) as [LearnerKind, string, string];
+  const payload = await readLearnerJson<{ freeCourse: FreeCourse }>(
+    `${BASE}/${kind}/${id}/courses/${encodeURIComponent(courseId)}/`,
+  );
+  return payload.freeCourse;
+});
 
-/** The free courses assigned to this learner, each with its week/activity tree. */
-export function fetchLearnerFreeCourses(kind: LearnerKind, id: string, force = false): Promise<FreeCourse[]> {
+/** Lightweight cards for the free courses currently assigned to this learner. */
+export function fetchLearnerFreeCourses(kind: LearnerKind, id: string, force = false): Promise<FreeCourseSummary[]> {
   return freeCoursesResource.read(`${kind}:${id}`, { force });
 }
 
 /** Render a revisit immediately, without a loading-frame flash. */
-export function peekLearnerFreeCourses(kind: LearnerKind, id: string): FreeCourse[] | undefined {
+export function peekLearnerFreeCourses(kind: LearnerKind, id: string): FreeCourseSummary[] | undefined {
   return freeCoursesResource.peek(`${kind}:${id}`);
+}
+
+/** Assignment changes invalidate both cards and any open course detail. */
+export function invalidateLearnerFreeCourses(): void {
+  freeCoursesResource.invalidate();
+  freeCourseDetailResource.invalidate();
+}
+
+/** Load the canonical weeks/components only after an assigned course is opened. */
+export function fetchLearnerFreeCourse(
+  kind: LearnerKind, id: string, courseId: string, force = false,
+): Promise<FreeCourse> {
+  return freeCourseDetailResource.read(JSON.stringify([kind, id, courseId]), { force });
 }
 
 /** Record that the learner finished one free-course activity. Its completion is
@@ -92,6 +124,14 @@ export async function markFreeCourseActivityComplete(kind: LearnerKind, id: stri
   // The cached tree now carries a stale completed flag; drop it so the next read
   // reflects the new completion.
   freeCoursesResource.invalidate(`${kind}:${id}`);
+  freeCourseDetailResource.invalidate();
+}
+
+/** Load a quiz through its assigned Free Course component. The server derives
+ * the quiz id from that component after checking learner ownership, the current
+ * Learning Plan assignment and the canonical course/week/component links. */
+export function fetchFreeCourseQuiz(kind: LearnerKind, id: string, componentId: string): Promise<Quiz> {
+  return readLearnerJson<Quiz>(`${BASE}/${kind}/${id}/quiz/${encodeURIComponent(componentId)}/`);
 }
 
 export interface FreeCourseQuizResult {
@@ -121,6 +161,9 @@ export async function submitFreeCourseQuiz(
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status}).`);
-  if (data?.passed) freeCoursesResource.invalidate(`${kind}:${id}`);
+  if (data?.passed) {
+    freeCoursesResource.invalidate(`${kind}:${id}`);
+    freeCourseDetailResource.invalidate();
+  }
   return data as FreeCourseQuizResult;
 }

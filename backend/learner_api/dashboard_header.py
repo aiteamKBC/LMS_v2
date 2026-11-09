@@ -229,8 +229,8 @@ def dashboard_modules(source, owner, *, include_coach=True, include_week_counts=
                  set(canonical_learning.curriculum_module_ids_for(owner)))
     if not ids:
         return ids, []
-    # The coach name is read through groups.coach_id (curriculum.groups no longer
-    # stores coach_name, and curriculum.modules has no coach column).
+    # The coach name is read through curriculum.group_coaches; groups stores
+    # neither coach_id nor coach_name, and modules has no coach column.
     coach_column = f",{group_coach_name_sql('g')} AS coach_name" if include_coach else ''
     coach_join = ' LEFT JOIN curriculum.groups g ON g.group_id=m.group_id' if include_coach else ''
     week_count = f'''EXISTS (SELECT 1 FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id

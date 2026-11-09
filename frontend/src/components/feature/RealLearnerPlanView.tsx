@@ -481,11 +481,11 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   // can be resolved back to their text.
   const quizId = c.quizMeta?.quizId;
   useEffect(() => {
-    if (!showBreakdown || quiz || quizId == null) return;
+    if (!showBreakdown || quiz || quizId == null || !kind || !learnerId || !c.componentId) return;
     let cancelled = false;
-    fetchQuiz(quizId).then((q) => { if (!cancelled) setQuiz(q); }).catch(() => { /* text just won't resolve */ });
+    fetchQuiz(quizId, kind as LearnerKind, learnerId, c.componentId).then((q) => { if (!cancelled) setQuiz(q); }).catch(() => { /* text just won't resolve */ });
     return () => { cancelled = true; };
-  }, [showBreakdown, quiz, quizId]);
+  }, [showBreakdown, quiz, quizId, kind, learnerId, c.componentId]);
 
   // Which attempt's breakdown is shown when expanded (defaults to the latest).
   const viewIndex = selectedAttempt ?? attempts.length - 1;

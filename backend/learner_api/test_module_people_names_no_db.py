@@ -1,7 +1,8 @@
 """Learner readers resolve tutor, coach and cohort names through canonical FKs.
 
 curriculum.modules no longer stores tutor_name (tutor_id -> curriculum.tutors),
-curriculum.groups no longer stores coach_name (coach_id -> curriculum.coaches),
+curriculum.groups no longer stores coach_name or coach_id (the canonical
+group_coaches relation points to curriculum.coaches),
 programme_name or cohort_name. No Django database connection: SQL is captured
 from recording cursors, and the name expressions run on in-memory sqlite3.
 """
@@ -21,7 +22,7 @@ from .module_placement_sql import group_coach_name_sql, module_tutor_name_sql
 #: A removed physical column read through a curriculum.modules (m) alias, or a
 #: curriculum.groups (g) alias. groups keeps group_name; modules lost it.
 REMOVED_READ = re.compile(r'\bm\.(tutor_name|tutor_email|coach_name|programme_name|cohort_name|group_name)\b'
-                          r'|\bg\.(coach_name|programme_name|cohort_name|module_ids|module_names)\b')
+                          r'|\bg\.(coach_id|coach_name|programme_name|cohort_name|module_ids|module_names)\b')
 
 
 class Cursor:
@@ -54,9 +55,12 @@ def name_db():
         INSERT INTO curriculum.tutors VALUES ('T1','Dr Tutor');
         INSERT INTO curriculum.coaches VALUES ('C1','Coach One'),('C2','   ');
         CREATE TABLE main.modules (module_catalogue_id TEXT, tutor_id TEXT, group_id TEXT);
-        CREATE TABLE main.groups (group_id TEXT, coach_id TEXT);
+        CREATE TABLE main.groups (group_id TEXT PRIMARY KEY);
+        CREATE TABLE curriculum.group_coaches (group_id TEXT, coach_id TEXT,
+            PRIMARY KEY (group_id, coach_id));
         INSERT INTO main.modules VALUES ('M1','T1','G1'),('M2',NULL,'G2'),('M3','  ','G3'),('M4','T9','G9');
-        INSERT INTO main.groups VALUES ('G1','C1'),('G2',NULL),('G3','C2');
+        INSERT INTO main.groups VALUES ('G1'),('G2'),('G3');
+        INSERT INTO curriculum.group_coaches VALUES ('G1','C1'),('G3','C1'),('G3','C2');
     ''')
     return db
 
@@ -74,7 +78,7 @@ class NameExpressionTests(SimpleTestCase):
         self.assertEqual(result, [
             ('M1', 'Dr Tutor', 'Coach One'),
             ('M2', '', None),       # no tutor -> '' default; group without a coach -> NULL
-            ('M3', '', None),       # blank tutor id; coach with a blank name -> NULL
+            ('M3', '', None),       # blank tutor id; multiple coaches are deliberately ambiguous
             ('M4', '', None),       # unknown tutor; module whose group row is missing -> NULL
         ])
 
@@ -92,6 +96,7 @@ class ReaderSqlTests(SimpleTestCase):
         statement = cursor.sql[0]
         self.assertIsNone(REMOVED_READ.search(statement), statement)
         self.assertIn('curriculum.tutors', statement)
+        self.assertIn('curriculum.group_coaches', statement)
         self.assertIn('curriculum.coaches', statement)
         self.assertIn('AS tutor_name', statement)
         self.assertIn('AS coach_name', statement)
@@ -116,8 +121,10 @@ class ReaderSqlTests(SimpleTestCase):
                     dashboard_header.dashboard_modules(SimpleNamespace(), {}, include_coach=include_coach)
                 statement = cursor.sql[0]
                 self.assertIsNone(REMOVED_READ.search(statement), statement)
+                self.assertEqual('curriculum.group_coaches' in statement, include_coach)
                 self.assertEqual('curriculum.coaches' in statement, include_coach)
                 self.assertEqual('coach_name' in statement, include_coach)
+                self.assertNotIn('g.coach_id', statement)
 
     def test_training_plan_dashboard_and_attendance_and_active_users_read_no_removed_column(self):
         for source in (inspect.getsource(training_plan_dashboard.read_dashboard),
