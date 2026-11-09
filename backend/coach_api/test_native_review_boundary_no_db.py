@@ -237,8 +237,8 @@ class NativeReviewBoundaryTests(SimpleTestCase):
     def test_imported_mcm_invalid_dates_are_rejected_before_source_or_calendar_io(self):
         with patch.object(calendar, "coaching_events_for_learner") as source_events, \
              patch.object(views.CoachCalendarEvent.objects, "get_or_create") as create:
-            for day, message in (("2026-11-19", "20th"), ("2026-12-07", "20th"),
-                                 ("2026-11-21", "Saturdays or Sundays"),
+            # No MCM-only date window since #632; the general rules still apply
+            for day, message in (("2026-11-21", "Saturdays or Sundays"),
                                  ("2026-12-25", "bank holidays"), ("2026-11-05", "already passed")):
                 with self.subTest(day=day):
                     response = self.learner_book(eventKey="imported-review:A-401", scheduledDate=day)
