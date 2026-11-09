@@ -25,7 +25,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
 from login.permissions import require_role
 
-from .bunny_stream import BunnyStream, VideoImportError, is_bunny_url, playback_url
+from .bunny_stream import BunnyStream, FREE_COURSE_COLLECTION, VideoImportError, is_bunny_url, playback_url
 from .models import CurriculumVideoImport
 from .video_sources import download_url, download_video, source_url, validate_video
 from .video_uploads import save_mp4, stored_video, stored_video_path
@@ -83,6 +83,9 @@ def target(kind, target_id):
         scope['template_title'] = str(parent.get('title') or '')
     scope.update({'module_id': str(parent.get('module_catalogue_id') or (target_id if kind == 'module' else '')),
                   'module_title': str(module.get('title') or ''), 'target_kind': kind, 'target_id': target_id})
+    if module.get('source_type') == 'free_course':
+        scope.update(free_course_module_id=scope['module_id'], free_course_name=scope['module_title'],
+                     course_type='free_course', collection_name=FREE_COURSE_COLLECTION)
     return component_table, rows, scope
 
 
@@ -106,7 +109,17 @@ def enqueue(kind, target_id, component, scope, *, file_hash='', title=''):
     })
     if not created:
         asset.requested_at = timezone.now()
-        asset.save(update_fields=['requested_at'])
+        fields = ['requested_at']
+        if (scope.get('free_course_module_id') and not asset.video_id
+                and asset.status in ('queued', 'failed', 'awaiting_file')):
+            # A pre-fix attempt has the same fingerprint but no standalone
+            # routing metadata. Retrying Save upgrades that existing request.
+            if asset.scope.get('collection_name') != FREE_COURSE_COLLECTION:
+                asset.collection_id = ''
+                fields.append('collection_id')
+            asset.scope = scope
+            fields.append('scope')
+        asset.save(update_fields=fields)
     if not created and asset.status == 'superseded':
         # Recheck a previously stored copy when the author selects it again.
         asset.source_at_start = original
@@ -144,6 +157,24 @@ def _matches_current_source(asset):
     return source_url(_settings(row)) == asset.source_at_start
 
 
+def _import_collection(asset, client):
+    course_id = asset.scope.get('free_course_module_id')
+    if not course_id:
+        return client.collection(asset.scope.get('programme_id'), asset.scope.get('programme_name'))
+    # Serialize collection discovery/creation for all free courses in this
+    # library. Course names identify videos, never separate collections.
+    # This short lock ends before any video download, upload or encoding poll.
+    with transaction.atomic():
+        anchor = CurriculumVideoImport.objects.select_for_update().filter(
+            library_id=asset.library_id, scope__collection_name=FREE_COURSE_COLLECTION,
+        ).order_by('created_at', 'id').first()
+        if anchor.collection_id:
+            return anchor.collection_id
+        anchor.collection_id = client.free_course_collection()
+        anchor.save(update_fields=['collection_id', 'updated_at'])
+        return anchor.collection_id
+
+
 def process(import_id, file_obj=None, *, session_lease_id=None):
     with transaction.atomic():
         asset = CurriculumVideoImport.objects.select_for_update().get(pk=import_id)
@@ -166,12 +197,19 @@ def process(import_id, file_obj=None, *, session_lease_id=None):
             from .session_bunny import transfer_recording
             transfer_recording(asset, lease_id=session_lease_id)
             return asset
+        if (asset.scope.get('free_course_module_id') and not asset.video_id
+                and asset.scope.get('collection_name') != FREE_COURSE_COLLECTION):
+            # Pending work from the earlier course-name route must use the
+            # shared destination. Existing remote videos are not moved here.
+            asset.scope = {**asset.scope, 'course_type': 'free_course', 'collection_name': FREE_COURSE_COLLECTION}
+            asset.collection_id = ''
+            asset.save(update_fields=['scope', 'collection_id', 'updated_at'])
         local_source = stored_video_path(asset.source_url)
         if asset.source_url and not local_source:
             download_url(asset.source_url)
         client = BunnyStream(asset.library_id)
         if not asset.collection_id:
-            asset.collection_id = client.collection(asset.scope.get('programme_id'), asset.scope.get('programme_name'))
+            asset.collection_id = _import_collection(asset, client)
             asset.save(update_fields=['collection_id', 'updated_at'])
         if not asset.video_id:
             recovered = client.find_import(asset.id)

@@ -3,13 +3,15 @@
 Curriculum video components can store MP4 uploads and downloadable video links
 in Bunny Stream library `798153`. The server selects an existing collection from
 the saved programme. Programme, cohort, group, module and component identifiers
-and names are sent as `lms.*` metadata. The library API key stays on the backend.
+and names are sent as `lms.*` metadata. All standalone free courses use one
+collection named `Free course`, with their saved course name and type sent as
+metadata instead of requiring programme placement. The library API key stays on the backend.
 
 Keep the existing programme collections. Bunny video titles start with the module
 name, for example `MSP — Recorded session P1: ...`; the recovery marker
 `[LMS:<import-id>]` follows the title. MSP's full LMS module title is displayed as
 `MSP`. Assigned week templates use their module's name; an unassigned template
-uses its own name. No per-module collections are created. Recovery accepts both
+uses its own name. Programme modules do not create per-module collections. Recovery accepts both
 the earlier marker-first titles and the new module-first titles.
 
 New or changed video sources saved through Module Builder, Component Builder and
@@ -24,6 +26,38 @@ separate import button in the editor. Saving unrelated content does not request
 historical sibling videos; the module-scoped command remains available for an
 explicit historical import.
 Unassigned templates need a programme before a collection can be selected.
+Templates attached to a free course use the same `Free course` collection.
+
+## Standalone free-course videos
+
+For a saved module whose `source_type` is `free_course`, Bunny uses the shared
+collection named exactly `Free course`, with no programme/cohort/group requirement.
+The worker reuses a matching collection or creates it if missing. Different course
+names never create separate collections. The collection ID is retained in the
+existing import journal. Discovery/creation is serialized across all free courses
+in the same library using the oldest journal row for that destination; its
+transaction ends before media download/upload. Existing programme collection
+routing is unchanged. Duplicate matching collection names produce a visible
+error rather than choosing an arbitrary destination.
+
+The authoritative course name/type come from the saved module, including for
+attached week templates. Each video sends `lms.free_course_name` with the actual
+course name, `lms.course_type=free_course` and `lms.collection_name=Free course`.
+Video titles start with the course name and keep the activity title and existing
+recovery marker. No programme abbreviation is applied to a free-course name.
+
+Save retries a pre-existing failed standalone import using its original import
+identity, upgrading the missing course-routing metadata. Pending imports without
+a remote video also replace any cached per-course destination with the shared
+destination before uploading. Stored MP4 playback,
+linked-video sources, component settings and learner progress remain unchanged.
+This change does not bulk-copy historical videos or move existing Bunny videos.
+Existing remote video identities and collection IDs are retained, including after
+a course rename. New names do not implicitly rename or relocate existing copies.
+
+The create request follows the public [Bunny Stream OpenAPI specification](https://video.bunnycdn.com/openapi/bunnynet-video-api.public.json):
+`POST /library/{libraryId}/collections` with a `name`, returning the collection
+`guid`. No live Bunny upload or collection creation is part of automated validation.
 
 Linked videos keep their original LMS playback source while a copy is stored on
 Bunny. At the user's follow-up request, MP4 device uploads also save a playable

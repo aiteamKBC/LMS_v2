@@ -22,9 +22,12 @@ COLLECTION_NAMES = {
     'PROG-APM-L4': ('Associate Project Management Level 4', 'Associat Project Managment Level 4'),
     'PROG-PCP-L6': ('Project Controls Professional Level 6', 'Project Control Professional Level 6'),
 }
+FREE_COURSE_COLLECTION = 'Free course'
 
 
 def module_label(scope):
+    if scope.get('free_course_module_id'):
+        return str(scope.get('free_course_name') or '').strip()
     label = str(scope.get('module_code') or scope.get('module_title') or scope.get('template_title') or '').strip()
     label = ' '.join(label.split())
     # The LMS stores MSP's full title; use its familiar module name in Bunny.
@@ -110,6 +113,30 @@ class BunnyStream:
         if len(matches) != 1:
             raise VideoImportError('The programme must match exactly one collection in the Curriculum library.')
         return matches[0]['guid']
+
+    def free_course_collection(self):
+        """All standalone courses share the fixed Free course collection."""
+        name = FREE_COURSE_COLLECTION
+        matches = []
+        for page in range(1, 101):
+            result = self.request('GET', '/collections', params={'page': page, 'itemsPerPage': 100})
+            items = result.get('items')
+            if not isinstance(items, list):
+                raise VideoImportError('Bunny returned an unreadable collection list.')
+            matches.extend(item for item in items if str(item.get('name', '')).strip().casefold() == name.casefold())
+            if len(items) < 100:
+                break
+        else:
+            raise VideoImportError('The Bunny collection list is incomplete. Administrator review is needed.')
+        if len(matches) > 1:
+            raise VideoImportError('More than one Bunny collection is named Free course. Administrator review is needed.')
+        # After a lost create response, a retry finds the collection here before
+        # attempting another POST. API errors remain visible to the importer.
+        collection = matches[0] if matches else self.request('POST', '/collections', json={'name': name})
+        guid = collection.get('guid')
+        if not isinstance(guid, str) or not re.fullmatch(r'[0-9a-fA-F-]{36}', guid):
+            raise VideoImportError('Bunny returned an invalid collection identity.')
+        return guid
 
     def find_import(self, import_id, *, exclude_video_ids=()):
         marker = f'[LMS:{import_id}]'
