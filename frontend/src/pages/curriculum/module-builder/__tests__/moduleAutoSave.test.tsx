@@ -1,3 +1,4 @@
+import { authoredWeekPoints } from '@/api/webWeekPoints';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -9,6 +10,8 @@ import { CurriculumRequestTimeout, ModuleStructureConflictError } from '../modul
 import { fieldKey, projectAvailable } from '../collaborationProtocol';
 import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
 import { coachFetch } from '@/lib/coachFetch';
+
+vi.mock('@/api/webWeekPoints', () => ({ authoredWeekPoints: vi.fn() }));
 
 const collaborationTest = vi.hoisted(() => ({ enabled: false, claim: vi.fn(async () => true) }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn(async () => new Response(
@@ -256,6 +259,13 @@ async function openWorkspaceSaving() {
 
 describe('Module Builder auto-save', { timeout: 25000 }, () => {
   beforeEach(() => {
+    sessionStorage.clear();
+    vi.mocked(authoredWeekPoints).mockReset();
+    vi.mocked(authoredWeekPoints).mockImplementation(async (moduleId, weekId, saved) => ({
+      moduleId, weekId, editorId: 'synthetic-editor', csrfToken: 'synthetic-token', revision: saved ? saved.revision + 1 : 0,
+      points: saved?.points || [{ id: 'P1', title: 'Explore', componentIds: [] }],
+      activities: [{ id: 'COMPONENT-1', title: 'First reading', type: 'reading' }],
+    }));
     vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: true, import: null }), { status: 200 }));
     clearAllCachedResources();
     collaborationTest.enabled = false;
@@ -271,6 +281,58 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       revision += 1;
       return { ...module, structureRevision: `rev-${revision}` };
     });
+  });
+
+  it('saves Point-only edits through Save module, after the structure write succeeds', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'New point name' } });
+    expect(saveState()).not.toBe('All changes saved');
+    expect(screen.queryByRole('button', { name: 'Save Points' })).not.toBeInTheDocument();
+    const gate = holdNextSave();
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+    gate.release();
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(authoredWeekPoints).toHaveBeenLastCalledWith('MOD-AUTOSAVE-1', 'WEEK-1', expect.objectContaining({
+      points: [{ id: 'P1', title: 'New point name', componentIds: [] }], revision: 0,
+    }));
+  });
+
+  it('does not write Points when the module save fails', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Retain me' } });
+    saveModuleStructure.mockRejectedValueOnce(new Error('Module unavailable'));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await screen.findByText('Module unavailable');
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+    expect(screen.getByLabelText('Point 1 name')).toHaveValue('Retain me');
+    expect(saveState()).not.toBe('All changes saved');
+  });
+
+  it('reports a partial save and allows retry without losing Points', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Retry me' } });
+    vi.mocked(authoredWeekPoints).mockRejectedValueOnce(new Error('Points unavailable'));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await screen.findByText(/Module changes saved, but Week Points could not be saved/);
+    expect(saveState()).not.toBe('All changes saved');
+    expect(screen.getByLabelText('Point 1 name')).toHaveValue('Retry me');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    const writes = vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2]);
+    expect(writes).toHaveLength(2);
+    expect(writes[1][2]).toMatchObject({ points: [{ id: 'P1', title: 'Retry me', componentIds: [] }], revision: 0 });
+  });
+
+  it('includes Point-only edits in the existing optional auto-save', async () => {
+    await openWorkspaceSaving();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Automatically saved' } });
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce(), { timeout: 4000 });
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(authoredWeekPoints).toHaveBeenLastCalledWith('MOD-AUTOSAVE-1', 'WEEK-1', expect.objectContaining({
+      points: [{ id: 'P1', title: 'Automatically saved', componentIds: [] }],
+    }));
   });
 
   it('opens module settings without requesting a reservation for the derived hours total', async () => {

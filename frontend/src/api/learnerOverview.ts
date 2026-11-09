@@ -69,6 +69,12 @@ export const homeSummary = resource<HomeSummary>((kind, id) => `${weekPath(kind,
   value => !!value.weekStart && Array.isArray(value.modules)
     && !!value.homeProgress?.otjh && !!value.homeProgress.period && !!value.homeProgress.modules);
 
+/** Navigation stays available while the separate progress card is loading. */
+export const currentLearningWeek = resource<Pick<HomeSummary, 'weekStart' | 'weekEnd' | 'modules'>>(
+  (kind, id) => `${weekPath(kind, id)}?section=current-modules`,
+  value => !!value.weekStart && !!value.weekEnd && Array.isArray(value.modules),
+);
+
 /**
  * One of Student Home's nearest events. ``date`` is an ISO instant, or a UK
  * calendar date (YYYY-MM-DD) for an assignment due date or an unbooked review.
