@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   generateReading: vi.fn(), completeReading: vi.fn(), loadReflection: vi.fn(), reflectionTimeSeconds: undefined as number | undefined,
 }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: mocks.detail }));
+vi.mock('@/api/webWeekPoints', () => ({ readWebPointPlan: vi.fn().mockResolvedValue({ weeks: {} }) }));
 vi.mock('@/api/quizzes', () => ({
   fetchQuiz: mocks.quiz,
   submitQuizAttempt: mocks.submit,
