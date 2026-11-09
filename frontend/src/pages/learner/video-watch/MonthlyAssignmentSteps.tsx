@@ -311,7 +311,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time" data-quality-target="hours" tabIndex={-1}>
         <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
         {disabled && !data.timeEntries?.length ? <fieldset disabled>{timeControl}</fieldset> :
-          <AssignmentTimeEntries kind={kind} learnerId={learnerId} dailyLimit={payload().activityType !== 'extra_activity' && !parsePersonalLearning(learnerId)} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
+          <AssignmentTimeEntries kind={kind} learnerId={learnerId} showInitialTopic={payload().activityType !== 'extra_activity'} dailyLimit={payload().activityType !== 'extra_activity' && !parsePersonalLearning(learnerId)} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
         {check('paidHours', 'This learning was completed during paid working hours.')}
       </section>
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">
