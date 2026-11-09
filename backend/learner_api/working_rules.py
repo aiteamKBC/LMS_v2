@@ -16,12 +16,11 @@ things:
                    declared time outside the rules is still accepted.
 
 The holidays are the learner's OWN holidays. They are resolved through the
-component's module to its cohort and handed to
-``cohort_selected_holidays_by_cohort`` -- the same resolver the Module Builder,
-the Teams series and the learner timeline already use, with the cohort's
-``excluded_holiday_ids`` deny-list honoured upstream. A closure authored
-against somebody else's programme therefore cannot close this learner's day,
-and there is no second holiday store to keep in step.
+component's module to its cohort, then through the cohort's selected rows in
+``curriculum.cohort_calendar_holidays`` to the canonical
+``curriculum.calendar_holidays`` table. A holiday outside the cohort period, or
+selected for somebody else's cohort, therefore cannot close this learner's
+day, and there is no second holiday store to keep in step.
 """
 import os
 
@@ -90,6 +89,73 @@ def _module_cohort_for_quiz(quiz_id):
     return str(row[0]) if row and row[0] else ""
 
 
+def _cohort_window(cohort_id):
+    """The inclusive delivery window for a cohort, or ``(None, None)``."""
+    if not str(cohort_id or "").strip():
+        return None, None
+    with connections["enrolment"].cursor() as cursor:
+        cursor.execute(
+            """SELECT start_date, end_date
+                 FROM curriculum.cohorts
+                WHERE cohort_id = %s
+                LIMIT 1""",
+            [str(cohort_id)],
+        )
+        row = cursor.fetchone()
+    return (row[0], row[1]) if row else (None, None)
+
+
+def _selected_working_holidays(cohort_id):
+    """Selected England/Wales bank holidays inside one cohort's period.
+
+    ``calendar_holidays`` owns both GOV.UK rows and local closure periods, but
+    the established completion rule treats only GOV.UK bank holidays as
+    working-hours holidays. Local closures remain available to curriculum
+    scheduling and are deliberately not promoted into this rule.
+    """
+    from curriculum_api import calendar_holidays
+    from curriculum_api.views import (
+        HOLIDAY_SOURCE_GOVUK,
+        holiday_row_source,
+        parse_date,
+        serialize_holiday_row,
+    )
+
+    period_start, period_end = _cohort_window(cohort_id)
+    period_start, period_end = parse_date(period_start), parse_date(period_end)
+    if not period_start or not period_end or period_end < period_start:
+        return []
+
+    choices = calendar_holidays.cohort_choices([cohort_id]).get(str(cohort_id), {})
+    selected_ids = {
+        str(value).strip() for value in choices.get("selected", [])
+        if str(value).strip()
+    }
+    if not selected_ids:
+        return []
+
+    selected = []
+    seen = set()
+    for row in calendar_holidays.rows():
+        item = serialize_holiday_row(row)
+        holiday_id = str(item.get("id") or "").strip()
+        if holiday_id not in selected_ids or holiday_row_source(item) != HOLIDAY_SOURCE_GOVUK:
+            continue
+        if str((row or {}).get("division") or "england-and-wales") != "england-and-wales":
+            continue
+        start = parse_date(item.get("startDate"))
+        end = parse_date(item.get("endDate")) or start
+        if not start or not end:
+            continue
+        start, end = max(start, period_start), min(end, period_end)
+        identity = (holiday_id, start, end)
+        if end < start or identity in seen:
+            continue
+        seen.add(identity)
+        selected.append({**item, "startDate": start.isoformat(), "endDate": end.isoformat()})
+    return selected
+
+
 def learner_holiday_details(component_id=None, *, quiz_id=None):
     """Closed dates -> the bank holidays closing them, for this activity's cohort.
 
@@ -102,11 +168,7 @@ def learner_holiday_details(component_id=None, *, quiz_id=None):
     delivery (personal learning, a free course) has no cohort calendar to sit
     on, so nothing is a holiday for it.
     """
-    from curriculum_api.views import (
-        HOLIDAY_SOURCE_GOVUK,
-        cohort_selected_holidays_by_cohort,
-        holiday_details_by_date,
-    )
+    from curriculum_api.views import holiday_details_by_date
 
     cohort_id = (
         _module_cohort_for_quiz(quiz_id) if quiz_id
@@ -114,12 +176,7 @@ def learner_holiday_details(component_id=None, *, quiz_id=None):
     )
     if not cohort_id:
         return {}
-    holidays = cohort_selected_holidays_by_cohort([cohort_id]).get(cohort_id) or []
-    bank_holidays = [
-        item for item in holidays
-        if (item or {}).get("source") == HOLIDAY_SOURCE_GOVUK
-    ]
-    return holiday_details_by_date(bank_holidays)
+    return holiday_details_by_date(_selected_working_holidays(cohort_id))
 
 
 def _as_uk(instant):

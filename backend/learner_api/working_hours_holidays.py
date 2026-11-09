@@ -3,12 +3,13 @@
 This does not synchronize feeds, alter curriculum schedules or restrict access.
 
 With ``?componentId=`` the answer is scoped to the holidays that actually apply
-to that component's cohort, resolved through ``working_rules`` -- the same
-curriculum resolver the Module Builder and the learner timeline use. A closure
-authored against another programme therefore never reaches this learner. The
-unscoped answer is kept for callers that have no component in hand.
+to that component's cohort, resolved through ``working_rules`` from the same
+canonical calendar and cohort mappings Curriculum owns. A closure authored
+against another programme therefore never reaches this learner. A caller with
+no component or quiz has no cohort context and receives an empty calendar
+rather than the global Curriculum calendar.
 """
-from django.db import DatabaseError, connection
+from django.db import DatabaseError
 from django.http import JsonResponse
 
 from login.permissions import login_required
@@ -16,21 +17,15 @@ from login.permissions import login_required
 from .working_rules import learner_holiday_details
 
 
-def working_hours_holiday_ranges():
-    with connection.cursor() as cursor:
-        cursor.execute('''
-            SELECT holiday_date, holiday_date
-              FROM curriculum.england_holidays
-             WHERE division = %s
-            UNION
-            SELECT start_date, COALESCE(end_date, start_date)
-              FROM curriculum.holidays
-             WHERE is_archived IS NOT TRUE
-               AND start_date IS NOT NULL
-               AND COALESCE(end_date, start_date) >= start_date
-            ORDER BY 1, 2
-        ''', ['england-and-wales'])
-        return [{'start': str(start), 'end': str(end)} for start, end in cursor.fetchall()]
+def working_hours_holiday_ranges(component_id=None, quiz_id=None):
+    """Working-hours holidays for the named activity's cohort.
+
+    No activity means no cohort context, so the safe answer is an empty
+    calendar rather than every holiday known to Curriculum.
+    """
+    if not (str(component_id or '').strip() or str(quiz_id or '').strip()):
+        return []
+    return component_holiday_ranges(component_id, quiz_id=quiz_id)
 
 
 def component_holiday_ranges(component_id, quiz_id=None):
@@ -55,9 +50,12 @@ def component_holiday_ranges(component_id, quiz_id=None):
     ]
 
 
-def is_working_hours_holiday(day):
+def is_working_hours_holiday(day, *, component_id=None, quiz_id=None):
     key = day.isoformat()
-    return any(row['start'] <= key <= row['end'] for row in working_hours_holiday_ranges())
+    return any(
+        row['start'] <= key <= row['end']
+        for row in working_hours_holiday_ranges(component_id, quiz_id)
+    )
 
 
 @login_required
@@ -67,11 +65,7 @@ def working_hours_holidays(request):
     component_id = (request.GET.get('componentId') or '').strip()
     quiz_id = (request.GET.get('quizId') or '').strip()
     try:
-        ranges = (
-            component_holiday_ranges(component_id, quiz_id or None)
-            if (component_id or quiz_id)
-            else working_hours_holiday_ranges()
-        )
+        ranges = working_hours_holiday_ranges(component_id, quiz_id or None)
     except DatabaseError:
         return JsonResponse({'error': 'Could not load the working-hours holiday calendar. Please try again.'}, status=503)
     return JsonResponse({'holidays': ranges})

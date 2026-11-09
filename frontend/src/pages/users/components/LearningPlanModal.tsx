@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from "@/hooks/useToast";
 import {
   fetchLearningPlan,
+  saveFreeCourseAssignments,
   saveLearningPlan,
   formatHours,
   formatPlanDate,
@@ -59,9 +60,7 @@ interface FreeCourseOption {
 }
 
 function freeCoursesEqual(a: FreeCourseAssignment[], b: FreeCourseAssignment[]) {
-  const key = (list: FreeCourseAssignment[]) =>
-    list.map((f) => f.freeCourseId).sort().join('|');
-  return key(a) === key(b);
+  return a.length === b.length && a.every((row, index) => row.freeCourseId === b[index]?.freeCourseId);
 }
 
 interface Props {
@@ -194,7 +193,13 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       try {
         const res = await fetchLearningPlan(learnerId);
         if (cancelled) return;
-        setData(res);
+        setData((current) => freeDirtyRef.current && current
+          ? {
+              ...res,
+              freeCourses: current.freeCourses,
+              freeCourseAssignmentVersion: current.freeCourseAssignmentVersion,
+            }
+          : res);
         // Keep this session's free-course edits; otherwise take the server's.
         if (!freeDirtyRef.current) setFreeCourses(res.freeCourses ?? []);
         setPlan((current) => {
@@ -349,13 +354,18 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     [data, freeCourses],
   );
 
+  const planNeedsSave = useMemo(() => {
+    if (!data) return false;
+    return dirty || (!data.saved && plan.length > 0) || plan.some((m) => m.inherited || m.fromAptem);
+  }, [data, dirty, plan]);
+
   const canSave = useMemo(() => {
     if (!data) return false;
     // `fromAptem` rows are in the same position as `inherited` ones: the
     // server merged them into the shown plan, so `dirty` is blind to them,
     // and saving is what actually records them on the learner.
-    return dirty || freeCoursesDirty || (!data.saved && plan.length > 0) || plan.some((m) => m.inherited || m.fromAptem);
-  }, [data, dirty, freeCoursesDirty, plan]);
+    return planNeedsSave || freeCoursesDirty;
+  }, [data, freeCoursesDirty, planNeedsSave]);
 
   // Each of these is the staff member editing the plan by hand, which is what
   // the background refresh must not overwrite.
@@ -383,6 +393,16 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   const removeFreeCourse = (freeCourseId: string) => {
     freeDirtyRef.current = true;
     setFreeCourses((rows) => rows.filter((f) => f.freeCourseId !== freeCourseId));
+  };
+  const moveFreeCourse = (index: number, offset: -1 | 1) => {
+    const target = index + offset;
+    if (target < 0 || target >= freeCourses.length) return;
+    freeDirtyRef.current = true;
+    setFreeCourses((rows) => {
+      const next = [...rows];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
   };
 
   const resetToGroup = () => {
@@ -444,7 +464,28 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     savingRef.current = true;
     setError('');
     try {
-      const res = await saveLearningPlan(learnerId, plan.map((m) => m.moduleId), freeCourses);
+      let res = data!;
+      if (freeCoursesDirty) {
+        const assignments = await saveFreeCourseAssignments(
+          learnerId,
+          freeCourses.map((course) => course.freeCourseId),
+          data!.freeCourseAssignmentVersion,
+        );
+        res = {
+          ...res,
+          freeCourses: assignments.freeCourses,
+          freeCourseAssignmentVersion: assignments.freeCourseAssignmentVersion,
+        };
+        // The assignment transaction is independent from the module-plan
+        // writer. Reflect its committed version immediately so a later module
+        // save failure cannot make Retry submit the now-stale token again.
+        setData(res);
+        setFreeCourses(assignments.freeCourses);
+        freeDirtyRef.current = false;
+      }
+      if (planNeedsSave) {
+        res = await saveLearningPlan(learnerId, plan.map((m) => m.moduleId));
+      }
       setData(res);
       setPlan(res.plan);
       setFreeCourses(res.freeCourses ?? []);
@@ -975,21 +1016,40 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
               </p>
             ) : (
               <ul className="rounded-xl border border-foreground-200/60 divide-y divide-foreground-200/40">
-                {freeCourses.map((f) => (
+                {freeCourses.map((f, index) => (
                   <li key={f.freeCourseId} className="flex items-center justify-between gap-3 px-3 py-2">
                     <span className="text-[13px] text-foreground-900 inline-flex items-center gap-2 min-w-0">
                       <i className="ri-gift-line text-primary-600 shrink-0" />
                       <span className="truncate">{f.courseName || f.freeCourseId}</span>
+                      {f.unavailable && (
+                        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                          Unavailable
+                        </span>
+                      )}
                     </span>
                     {!readOnly && (
-                      <button
-                        type="button"
-                        onClick={() => removeFreeCourse(f.freeCourseId)}
-                        title={`Remove ${f.courseName || f.freeCourseId}`}
-                        className="text-foreground-400 hover:text-red-600 cursor-pointer shrink-0"
-                      >
-                        <i className="ri-close-line" />
-                      </button>
+                      <span className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => moveFreeCourse(index, -1)}
+                          disabled={index === 0}
+                          aria-label={`Move ${f.courseName || f.freeCourseId} up`}
+                          className="text-foreground-400 hover:text-primary-600 disabled:opacity-30"
+                        ><i className="ri-arrow-up-line" /></button>
+                        <button
+                          type="button"
+                          onClick={() => moveFreeCourse(index, 1)}
+                          disabled={index === freeCourses.length - 1}
+                          aria-label={`Move ${f.courseName || f.freeCourseId} down`}
+                          className="text-foreground-400 hover:text-primary-600 disabled:opacity-30"
+                        ><i className="ri-arrow-down-line" /></button>
+                        <button
+                          type="button"
+                          onClick={() => removeFreeCourse(f.freeCourseId)}
+                          title={`Remove ${f.courseName || f.freeCourseId}`}
+                          className="text-foreground-400 hover:text-red-600 cursor-pointer"
+                        ><i className="ri-close-line" /></button>
+                      </span>
                     )}
                   </li>
                 ))}

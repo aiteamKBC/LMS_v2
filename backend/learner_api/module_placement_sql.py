@@ -51,12 +51,16 @@ def module_tutor_name_sql(alias='m'):
 
 
 def group_coach_name_sql(group_alias='g'):
-    """SQL expression: the group's coach name, read through ``coach_id``, or NULL.
+    """SQL expression: one unambiguous group coach name, or ``NULL``.
 
-    curriculum.groups no longer stores coach_name (and curriculum.modules has no
-    coach column); curriculum.coaches.name is reached by groups.coach_id. A
-    group without a coach, a missing group row, or a blank name gives NULL,
-    matching the former ``coalesce(nullif(btrim(g.coach_name), ''), ...)``.
+    ``curriculum.groups`` has neither ``coach_name`` nor ``coach_id``.  The
+    canonical many-to-many relationship is ``curriculum.group_coaches`` and
+    names live in ``curriculum.coaches``.  A group without a coach, a missing
+    group row, a blank name, or more than one distinct coach gives ``NULL``;
+    callers must not choose an arbitrary owner from an ambiguous assignment.
     """
-    return (f"(SELECT nullif(btrim(min(coach.name)), '') FROM curriculum.coaches coach "
-            f"WHERE coach.id = {group_alias}.coach_id)")
+    return (f"(SELECT CASE WHEN count(DISTINCT relation.coach_id) = 1 "
+            f"THEN nullif(btrim(min(coach.name)), '') END "
+            f"FROM curriculum.group_coaches relation "
+            f"JOIN curriculum.coaches coach ON coach.id = relation.coach_id "
+            f"WHERE relation.group_id = {group_alias}.group_id)")

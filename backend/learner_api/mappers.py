@@ -495,10 +495,9 @@ def _normalize_training_plan(value):
     return value
 
 
-# Free courses assigned to a learner. A pure assignment record, kept separate
-# from the training plan on purpose: it carries no hours, KSBs or progress, so
-# only the free-course id and its display name are stored. `addedAt` is passed
-# through when the client supplies it (the wizard stamps it on add).
+# Legacy ``Created_users.Free_courses`` JSON normalisation, retained only for
+# historical compatibility tests. Canonical assignment reads and writes must
+# not use this helper; ownership lives in Learner.learner_free_courses.
 def _normalize_free_courses(value):
     if value is None:
         return []

@@ -1,66 +1,96 @@
-"""Exercise the actual read query against isolated, synthetic SQLite tables."""
+"""Learner working-hours holidays use the canonical cohort-scoped resolver."""
 import json
-import sqlite3
-from contextlib import contextmanager
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.db import DatabaseError
-from django.test import SimpleTestCase, RequestFactory
+from django.test import RequestFactory, SimpleTestCase
 
-from .working_hours_holidays import is_working_hours_holiday, working_hours_holidays
+from .working_hours_holidays import (
+    component_holiday_ranges,
+    is_working_hours_holiday,
+    working_hours_holidays,
+)
 
 
 class WorkingHoursHolidayTests(SimpleTestCase):
-    def setUp(self):
-        self.db = sqlite3.connect(':memory:')
-        self.addCleanup(self.db.close)
-        self.db.execute("ATTACH DATABASE ':memory:' AS curriculum")
-        self.db.execute('CREATE TABLE curriculum.england_holidays (holiday_date TEXT, division TEXT)')
-        self.db.execute('CREATE TABLE curriculum.holidays (start_date TEXT, end_date TEXT, is_archived BOOLEAN)')
-        self.db.executemany('INSERT INTO curriculum.england_holidays VALUES (?, ?)', [
-            ('2026-12-25', 'england-and-wales'), ('2026-08-03', 'scotland')])
-        self.db.executemany('INSERT INTO curriculum.holidays VALUES (?, ?, ?)', [
-            ('2026-12-28', '2026-12-31', False), ('2026-06-10', None, False),
-            ('2026-06-11', '2026-06-12', True)])
+    def test_component_ranges_preserve_contract_and_do_not_duplicate_a_day(self):
+        details = {
+            date(2026, 12, 25): [
+                {'label': 'Christmas Day'},
+                {'label': 'Overlapping duplicate'},
+            ],
+            date(2026, 12, 28): [{'label': 'Boxing Day'}],
+        }
+        with patch('learner_api.working_hours_holidays.learner_holiday_details', return_value=details):
+            ranges = component_holiday_ranges('COMP-1')
+        self.assertEqual(ranges, [
+            {'start': '2026-12-25', 'end': '2026-12-25', 'label': 'Christmas Day'},
+            {'start': '2026-12-28', 'end': '2026-12-28', 'label': 'Boxing Day'},
+        ])
 
-        @contextmanager
-        def cursor():
-            cur = self.db.cursor()
-            try:
-                yield SimpleNamespace(execute=lambda sql, params: cur.execute(sql.replace('%s', '?'), params), fetchall=cur.fetchall)
-            finally:
-                cur.close()
+    def test_holiday_predicate_is_scoped_to_the_named_component(self):
+        details = {date(2026, 12, 25): [{'label': 'Christmas Day'}]}
+        with patch('learner_api.working_hours_holidays.learner_holiday_details', return_value=details) as resolver:
+            self.assertTrue(is_working_hours_holiday(date(2026, 12, 25), component_id='COMP-1'))
+            self.assertFalse(is_working_hours_holiday(date(2026, 12, 24), component_id='COMP-1'))
+        resolver.assert_called_with('COMP-1', quiz_id=None)
 
-        mock = patch('learner_api.working_hours_holidays.connection', SimpleNamespace(cursor=cursor))
-        mock.start()
-        self.addCleanup(mock.stop)
+    def test_unscoped_calendar_is_empty_instead_of_global(self):
+        with patch('learner_api.working_hours_holidays.learner_holiday_details') as resolver:
+            self.assertFalse(is_working_hours_holiday(date(2026, 12, 25)))
+        resolver.assert_not_called()
 
-    def test_official_and_manual_ranges_include_both_endpoints(self):
-        for day in (25, 28, 29, 31):
-            self.assertTrue(is_working_hours_holiday(date(2026, 12, day)))
-        self.assertFalse(is_working_hours_holiday(date(2027, 1, 1)))
-        self.assertFalse(is_working_hours_holiday(date(2026, 12, 27)))
-
-    def test_archived_and_other_divisions_do_not_apply(self):
-        self.assertFalse(is_working_hours_holiday(date(2026, 6, 11)))
-        self.assertFalse(is_working_hours_holiday(date(2026, 8, 3)))
-        self.assertTrue(is_working_hours_holiday(date(2026, 6, 10)))
-
-    def test_endpoint_returns_combined_calendar_to_authenticated_users(self):
-        request = RequestFactory().get('/learner_api/working-hours/holidays/')
-        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')):
+    def test_endpoint_returns_the_scoped_calendar_to_authenticated_users(self):
+        request = RequestFactory().get('/learner_api/working-hours/holidays/?componentId=COMP-1')
+        details = {date(2026, 12, 25): [{'label': 'Christmas Day'}]}
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')), \
+                patch('learner_api.working_hours_holidays.learner_holiday_details', return_value=details):
             response = working_hours_holidays(request)
         self.assertEqual(response.status_code, 200)
-        self.assertIn({'start': '2026-12-28', 'end': '2026-12-31'}, json.loads(response.content)['holidays'])
+        self.assertEqual(json.loads(response.content), {'holidays': [
+            {'start': '2026-12-25', 'end': '2026-12-25', 'label': 'Christmas Day'},
+        ]})
+
+    def test_missing_or_invalid_activity_has_no_cohort_holidays(self):
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')), \
+                patch('learner_api.working_hours_holidays.learner_holiday_details', return_value={}):
+            invalid = working_hours_holidays(
+                RequestFactory().get('/learner_api/working-hours/holidays/?componentId=missing')
+            )
+            unscoped = working_hours_holidays(
+                RequestFactory().get('/learner_api/working-hours/holidays/')
+            )
+        self.assertEqual(json.loads(invalid.content), {'holidays': []})
+        self.assertEqual(json.loads(unscoped.content), {'holidays': []})
+
+    def test_quiz_scope_uses_the_same_response_contract(self):
+        details = {date(2026, 8, 31): [{'label': 'Summer bank holiday'}]}
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')), \
+                patch('learner_api.working_hours_holidays.learner_holiday_details', return_value=details) as resolver:
+            response = working_hours_holidays(
+                RequestFactory().get('/learner_api/working-hours/holidays/?quizId=77')
+            )
+        self.assertEqual(response.status_code, 200)
+        resolver.assert_called_once_with('', quiz_id='77')
 
     def test_anonymous_requests_are_denied(self):
         with patch('login.permissions.authenticate_request', return_value=None):
             response = working_hours_holidays(RequestFactory().get('/learner_api/working-hours/holidays/'))
         self.assertEqual(response.status_code, 401)
 
-    def test_database_failure_is_visible_not_an_empty_calendar(self):
-        with patch('learner_api.working_hours_holidays.working_hours_holiday_ranges', side_effect=DatabaseError):
-            response = working_hours_holidays.__wrapped__(RequestFactory().get('/learner_api/working-hours/holidays/'))
+    def test_database_failure_returns_a_sanitized_503(self):
+        with patch(
+            'learner_api.working_hours_holidays.learner_holiday_details',
+            side_effect=DatabaseError('relation curriculum.calendar_holidays does not exist'),
+        ):
+            response = working_hours_holidays.__wrapped__(
+                RequestFactory().get('/learner_api/working-hours/holidays/?componentId=COMP-1')
+            )
+        payload = json.loads(response.content)
         self.assertEqual(response.status_code, 503)
+        self.assertEqual(payload, {
+            'error': 'Could not load the working-hours holiday calendar. Please try again.',
+        })
+        self.assertNotIn('curriculum', response.content.decode())

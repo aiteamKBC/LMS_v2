@@ -39,6 +39,101 @@ def percent(done, total):
     return floor(done / total * 10000 + .5) / 100 if total else 0
 
 
+def free_course_representation_ids(cur, candidate_ids):
+    """Return unambiguous canonical Free Course identities from ``candidate_ids``.
+
+    My Courses receives ids from several generations of the learning-plan
+    payload.  A Free Course can therefore be represented by its course id, its
+    split free-week row id, or the authoring week linked by that row.  Those are
+    stable catalogue relationships; titles are deliberately not considered.
+
+    If an id also names a real ``curriculum.modules`` row, keep it in My
+    Courses.  That fail-open-on-ambiguity rule prevents a legitimate programme
+    module from disappearing just because a historical Free Course happens to
+    share its identifier.
+    """
+    requested = list(dict.fromkeys(str(value) for value in candidate_ids if value))
+    if not requested:
+        return set()
+    cur.execute('''WITH requested(id) AS (SELECT unnest(%s::text[])),
+        free_identities(id) AS (
+            SELECT course.id FROM curriculum.free_courses course
+            JOIN requested ON requested.id=course.id
+            UNION
+            SELECT free_week.id FROM curriculum.free_course_weeks free_week
+            JOIN curriculum.free_courses course ON course.id=free_week.course_id
+            JOIN requested ON requested.id=free_week.id
+            UNION
+            SELECT authoring_week.id FROM curriculum.free_course_weeks free_week
+            JOIN curriculum.free_courses course ON course.id=free_week.course_id
+            JOIN curriculum.weeks authoring_week
+              ON authoring_week.id=free_week.week_id
+             AND authoring_week.free_course_id=course.id
+            JOIN requested ON requested.id=authoring_week.id
+        )
+        SELECT free_identities.id FROM free_identities
+        LEFT JOIN curriculum.modules module
+          ON module.module_catalogue_id=free_identities.id
+        WHERE module.module_catalogue_id IS NULL
+        ORDER BY free_identities.id''', [requested])
+    return {str(row[0]) for row in cur.fetchall()}
+
+
+def legacy_free_course_source_refs(cur, candidate_refs):
+    """Return Old LMS course refs with verified Free Course import lineage.
+
+    The MBA import owns the stable ``course_id -> module_id`` relationship.
+    Legacy Free Courses created from that import retain the exact canonical id
+    ``FREECOURSE-MM-<module_id>``.  Both links must exist and the source-course
+    mapping must have been explicitly retired.  A still-live programme module
+    on either recorded identity makes the relationship ambiguous, so it remains
+    visible in My Courses for review.
+
+    Titles are intentionally absent: equal names never establish lineage.
+    """
+    requested = list(dict.fromkeys(str(value) for value in candidate_refs if value))
+    if not requested:
+        return set()
+    cur.execute('''WITH requested(source_course_ref) AS (SELECT unnest(%s::text[]))
+        SELECT DISTINCT requested.source_course_ref
+        FROM requested
+        JOIN curriculum.source_courses source_course
+          ON source_course.source_course_ref=requested.source_course_ref
+         AND source_course.source_system='old_lms'
+         AND source_course.deleted_at IS NULL
+        JOIN "MBA".course_curriculum legacy
+          ON legacy.course_id::text=requested.source_course_ref
+        JOIN curriculum.free_courses course
+          ON course.id='FREECOURSE-MM-' || legacy.module_id
+        LEFT JOIN curriculum.modules recorded_module
+          ON recorded_module.module_catalogue_id=source_course.curriculum_module_ref
+        LEFT JOIN curriculum.modules imported_module
+          ON imported_module.module_catalogue_id=legacy.module_id
+        WHERE source_course.mapping_status='retired'
+          AND source_course.mapping_method IN
+            ('mapped_activity_consensus','exact_legacy_module_source_id')
+          AND recorded_module.module_catalogue_id IS NULL
+          AND imported_module.module_catalogue_id IS NULL
+        ORDER BY requested.source_course_ref''', [requested])
+    return {str(row[0]) for row in cur.fetchall()}
+
+
+def without_free_course_plan_entries(plan, free_course_ids):
+    """Exclude only id-bearing Free Course representations from a plan."""
+    return [entry for entry in plan if not (
+        isinstance(entry, dict)
+        and entry.get('moduleId')
+        and str(entry['moduleId']) in free_course_ids
+    )]
+
+
+def without_free_course_legacy_courses(courses, free_course_ids, legacy_source_refs=()):
+    """Exclude only Old LMS rows with stable canonical Free Course lineage."""
+    return [course for course in courses
+            if str(course.get('curriculum_module_ref') or '') not in free_course_ids
+            and str(course.get('source_course_ref') or '') not in legacy_source_refs]
+
+
 def catalogue_module_rows(cur, ids, *, identity_metadata):
     """Card metadata and native identities, without constructing a timetable.
 
@@ -404,6 +499,11 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     source._case_file_profile = profile
     with projection_stage('assignments'):
         assigned = effective_training_plan(source, request_preset_cache(source))
+    candidate_ids = [entry.get('moduleId') for entry in assigned if isinstance(entry, dict)]
+    with projection_stage('free_course_separation'):
+        with connections['enrolment'].cursor() as cur:
+            free_course_ids = free_course_representation_ids(cur, candidate_ids)
+    assigned = without_free_course_plan_entries(assigned, free_course_ids)
     ids = list(dict.fromkeys(str(m['moduleId']) for m in assigned if m.get('moduleId')))
     record_options = dict(lineage_only=True,monthly_summary=True)
     if subject_id is None:
@@ -452,6 +552,15 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         else:
             from .progress_demo import courses_for
             courses = courses_for(owner)
+    legacy_candidates = [course.get('curriculum_module_ref') for course in courses]
+    legacy_source_candidates = [course.get('source_course_ref') for course in courses]
+    with projection_stage('free_course_legacy_separation'):
+        with connections['enrolment'].cursor() as cur:
+            legacy_free_course_ids = free_course_representation_ids(cur, legacy_candidates)
+            legacy_free_course_refs = legacy_free_course_source_refs(cur, legacy_source_candidates)
+    courses = without_free_course_legacy_courses(
+        courses, legacy_free_course_ids, legacy_free_course_refs,
+    )
     from .progress_transfer_store import read_state
     transfers = read_state(source.pk)['items'] if owner.get('progress_transfer_active') else []
     # Percentage-only approvals have no component lineage to revalidate. Keep

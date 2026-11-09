@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
-import { fetchQuiz, type Quiz, type QuizAnswerValue } from '@/api/quizzes';
-import { submitFreeCourseQuiz, type FreeCourseQuizResult } from '@/api/freeCourses';
+import { type Quiz, type QuizAnswerValue } from '@/api/quizzes';
+import { fetchFreeCourseQuiz, submitFreeCourseQuiz, type FreeCourseQuizResult } from '@/api/freeCourses';
 import type { LearnerKind } from '@/api/learnerDetail';
 // The question renderer is shared with the normal quiz player — only the submit
 // path differs (free courses store nothing in OTJH/KSBs).
 import { QuestionInput } from '@/pages/learner/quiz-take/page';
 import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
 
-export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed }: {
+export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed, readOnly = false }: {
   kind: LearnerKind; learnerId: string; componentId: string; quizId: number;
   onPassed: () => void;
+  readOnly?: boolean;
 }) {
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -24,11 +25,11 @@ export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed 
     let cancelled = false;
     setQuiz(null);
     setLoadError('');
-    fetchQuiz(quizId)
+    fetchFreeCourseQuiz(kind, learnerId, componentId)
       .then((data) => { if (!cancelled) setQuiz(data); })
       .catch((failure) => { if (!cancelled) setLoadError(failure instanceof Error ? failure.message : 'Could not load the quiz.'); });
     return () => { cancelled = true; };
-  }, [quizId, retry]);
+  }, [kind, learnerId, componentId, quizId, retry]);
 
   const submit = () => {
     if (submitting) return;
@@ -89,6 +90,9 @@ export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed 
       ))}
       {!quiz.questions.length && <p className="text-sm text-foreground-500">This quiz has no questions yet.</p>}
       <div className="border-t border-foreground-100 pt-4">
+        {readOnly ? (
+          <p className="text-sm text-foreground-500">Quiz submission is disabled in staff preview.</p>
+        ) : (
         <button
           type="button"
           onClick={submit}
@@ -98,6 +102,7 @@ export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed 
           {submitting ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
           {submitting ? 'Submitting…' : 'Submit quiz'}
         </button>
+        )}
         {submitError && <p role="alert" className="mt-2 text-[12px] text-red-700">{submitError}</p>}
       </div>
     </div>

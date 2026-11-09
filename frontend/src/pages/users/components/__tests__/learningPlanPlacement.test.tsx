@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchLearningPlan = vi.fn();
 const saveLearningPlan = vi.fn();
+const saveFreeCourseAssignments = vi.fn();
 const updateEnrolmentUser = vi.fn();
 const fetchProgrammeOptions = vi.fn();
 const fetchCohortOptions = vi.fn();
@@ -19,7 +20,7 @@ const fetchFreeProgrammeModules = vi.fn();
 
 vi.mock('@/api/learningPlan', async () => {
   const actual = await vi.importActual<typeof import('@/api/learningPlan')>('@/api/learningPlan');
-  return { ...actual, fetchLearningPlan, saveLearningPlan };
+  return { ...actual, fetchLearningPlan, saveLearningPlan, saveFreeCourseAssignments };
 });
 vi.mock('@/api/enrolmentUsers', () => ({ updateEnrolmentUser }));
 vi.mock('@/api/curriculum', () => ({ fetchProgrammeOptions, fetchCohortOptions, fetchGroupOptions }));
@@ -42,6 +43,8 @@ const { LearningPlanModal } = await import('../LearningPlanModal');
 const planResponse = (learner: Record<string, string>, plan: unknown[] = []) => ({
   learner: { id: '91', name: 'Aya Aya Test', programmeId: '', ...learner },
   plan,
+  freeCourses: [],
+  freeCourseAssignmentVersion: 'v1',
   preset: [],
   available: [],
   saved: false,
@@ -177,5 +180,35 @@ describe('learning plan placement step', () => {
     expect(await screen.findByText(/has to be set on their record/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save and continue' })).toBeNull();
     expect(fetchProgrammeOptions).not.toHaveBeenCalled();
+  });
+
+  it('reorders Free Courses through the dedicated canonical assignment API', async () => {
+    fetchLearningPlan.mockResolvedValue({
+      ...planResponse(PLACED),
+      saved: true,
+      freeCourses: [
+        { freeCourseId: 'A', courseName: 'Alpha', addedAt: '' },
+        { freeCourseId: 'B', courseName: 'Beta', addedAt: '' },
+      ],
+      freeCourseAssignmentVersion: 'v1',
+    });
+    saveFreeCourseAssignments.mockResolvedValue({
+      freeCourses: [
+        { freeCourseId: 'B', courseName: 'Beta', addedAt: '' },
+        { freeCourseId: 'A', courseName: 'Alpha', addedAt: '' },
+      ],
+      freeCourseAssignmentVersion: 'v2',
+    });
+    const user = userEvent.setup();
+
+    render(<LearningPlanModal learnerId="91" learnerName="Aya Aya Test" onClose={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Move Beta up' }));
+    await user.click(screen.getByRole('button', { name: 'Save learning plan' }));
+
+    await waitFor(() => expect(saveFreeCourseAssignments).toHaveBeenCalledWith(
+      '91', ['B', 'A'], 'v1',
+    ));
+    expect(saveLearningPlan).not.toHaveBeenCalled();
   });
 });

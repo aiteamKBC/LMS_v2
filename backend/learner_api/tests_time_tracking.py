@@ -174,7 +174,19 @@ class TimeTrackingSessionTests(SimpleTestCase):
     def test_weekday_holiday_requires_declaration_during_working_hours(self):
         self.holidays.return_value = True
         self.assertTrue(outside_uk_working_hours(datetime(2026, 12, 25, 12, tzinfo=ZoneInfo('UTC'))))
-        self.holidays.assert_called_with(datetime(2026, 12, 25).date())
+        self.holidays.assert_called_with(
+            datetime(2026, 12, 25).date(), component_id=None, quiz_id=None,
+        )
+
+    def test_time_tracking_passes_activity_scope_to_the_canonical_holiday_rule(self):
+        self.holidays.return_value = True
+        self.assertTrue(outside_uk_working_hours(
+            datetime(2026, 12, 25, 12, tzinfo=ZoneInfo('UTC')),
+            component_id='COMP-1',
+        ))
+        self.holidays.assert_called_with(
+            datetime(2026, 12, 25).date(), component_id='COMP-1', quiz_id=None,
+        )
 
     def test_tracking_can_start_and_submit_outside_the_old_window(self):
         started_at = datetime(2026, 1, 18, 22, 0, tzinfo=ZoneInfo("UTC"))

@@ -37,6 +37,97 @@ def fake_connections():
 
 
 class MyLearningAggregateTests(SimpleTestCase):
+    def test_free_course_identity_query_uses_catalogue_relationships_and_preserves_module_collisions(self):
+        cur = MagicMock()
+        cur.fetchall.return_value = [('FREE-1',), ('FREEWEEK-1',), ('WEEK-1',)]
+
+        excluded = learning.free_course_representation_ids(
+            cur, ['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1'],
+        )
+
+        self.assertEqual(excluded, {'FREE-1', 'FREEWEEK-1', 'WEEK-1'})
+        sql, params = cur.execute.call_args.args
+        self.assertIn('curriculum.free_courses', sql)
+        self.assertIn('curriculum.free_course_weeks', sql)
+        self.assertIn('authoring_week.free_course_id=course.id', sql)
+        self.assertIn('LEFT JOIN curriculum.modules', sql)
+        self.assertIn('module.module_catalogue_id IS NULL', sql)
+        self.assertNotIn('title', sql.lower())
+        self.assertEqual(params, [['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1']])
+
+    def test_my_courses_excludes_only_id_verified_free_course_plan_entries(self):
+        plan = [
+            {'moduleId': 'PROGRAMME-1', 'moduleTitle': 'Safeguarding'},
+            {'moduleId': 'FREE-1', 'moduleTitle': 'Safeguarding'},
+            # There is no stable id on this historical snapshot. Preserve it
+            # for review instead of guessing from the matching title.
+            {'moduleTitle': 'Safeguarding'},
+        ]
+
+        visible = learning.without_free_course_plan_entries(plan, {'FREE-1'})
+
+        self.assertEqual(visible, [plan[0], plan[2]])
+
+    def test_old_lms_free_course_representation_requires_verified_module_link(self):
+        courses = [
+            {'source_course_ref': '50', 'source_course_title': 'Free title',
+             'curriculum_module_ref': 'FREE-1'},
+            {'source_course_ref': '60', 'source_course_title': 'Free title',
+             'curriculum_module_ref': 'PROGRAMME-1'},
+            # A title alone is ambiguous and must remain visible.
+            {'source_course_ref': '70', 'source_course_title': 'Free title',
+             'curriculum_module_ref': None},
+        ]
+
+        visible = learning.without_free_course_legacy_courses(courses, {'FREE-1'})
+
+        self.assertEqual(visible, [courses[1], courses[2]])
+
+    def test_eve_legacy_course_uses_import_lineage_not_its_title(self):
+        cur = MagicMock()
+        cur.fetchall.return_value = [('89537',)]
+
+        excluded = learning.legacy_free_course_source_refs(
+            cur, ['89537', 'same-title-but-unrelated'],
+        )
+
+        self.assertEqual(excluded, {'89537'})
+        sql, params = cur.execute.call_args.args
+        self.assertIn('"MBA".course_curriculum', sql)
+        self.assertIn("course.id='FREECOURSE-MM-' || legacy.module_id", sql)
+        self.assertIn("source_course.mapping_status='retired'", sql)
+        self.assertIn("'mapped_activity_consensus'", sql)
+        self.assertIn("'exact_legacy_module_source_id'", sql)
+        self.assertIn('LEFT JOIN curriculum.modules recorded_module', sql)
+        self.assertIn('LEFT JOIN curriculum.modules imported_module', sql)
+        self.assertIn('recorded_module.module_catalogue_id IS NULL', sql)
+        self.assertIn('imported_module.module_catalogue_id IS NULL', sql)
+        self.assertNotIn('title', sql.lower())
+        self.assertEqual(params, [['89537', 'same-title-but-unrelated']])
+
+    def test_verified_legacy_free_course_is_hidden_for_both_learner_kinds(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                courses = [
+                    {'source_course_ref': '89537',
+                     'source_course_title': 'Safeguarding For Learners',
+                     'curriculum_module_ref': None, 'learner_kind': kind},
+                    # The same title is insufficient: this programme-linked
+                    # course remains visible because neither stable identity
+                    # classifies it as a Free Course representation.
+                    {'source_course_ref': 'programme-50',
+                     'source_course_title': 'Safeguarding For Learners',
+                     'curriculum_module_ref': 'PROGRAMME-1', 'learner_kind': kind},
+                ]
+                original = deepcopy(courses)
+
+                visible = learning.without_free_course_legacy_courses(
+                    courses, set(), {'89537'},
+                )
+
+                self.assertEqual(visible, [courses[1]])
+                self.assertEqual(courses, original)  # historical facts are read-only
+
     def test_next_title_uses_the_whole_delivery_week_not_an_individual_material_date(self):
         def item(title, when, placement, completed=False):
             return {'title': title, 'completed': completed, 'position': 1,
@@ -431,7 +522,9 @@ class MyLearningSearchTests(SimpleTestCase):
         from . import models,weekly_learning,dashboard_training,teams_attendance,live_session_progress,subject_origins,previous_learning_groups,builder_activity_dates,student_activity
         source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='')
         manager=MagicMock();manager.only.return_value.filter.return_value.first.return_value=SimpleNamespace(pk=9,enrolment_id=7)
-        connection=fake_connections();connection['enrolment'].cursor.return_value.__enter__.return_value.fetchall.return_value=[('M1','One')]
+        connection=fake_connections()
+        cursor = connection['enrolment'].cursor.return_value.__enter__.return_value
+        cursor.fetchall.side_effect = [[], [('M1','One')]]
         with ExitStack() as stack:
             stack.enter_context(patch.object(models.LearnerProfile,'objects',manager))
             stack.enter_context(patch.object(learning,'connections',connection))
