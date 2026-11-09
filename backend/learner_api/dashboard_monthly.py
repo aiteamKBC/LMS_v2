@@ -197,6 +197,8 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     from . import dashboard_monthly_v2 as display
     now = timezone.now().astimezone(UK)
     requested = validate_month(request.GET.get('month'))
+    from .monthly_log_attendance import read_rows as saved_attendance_hours
+    recorded_attendance = saved_attendance_hours(owner, now=now)
     current = timezone.localdate(timezone=UK).strftime('%Y-%m')
     # Retain lineage context for direct-save replacement and manual corrections.
     records = canonical.entries_for(owner, lineage_only=True, dashboard_metadata=True, monthly_summary=True)
@@ -229,7 +231,8 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     programme_end = request.GET.get('programmeEndDate', owner.get('end_date'))
     minimum = display_date(programme_start) or min((s['start'] for s in subjects if s['start']), default='')
     actual_rows = schedule._canonical_actual_rows(owner, records)
-    payload_months = [*(m for m in targets if m <= current), *(r['month'] for r in actual_rows), *(review_day(r)[:7] for r in spine['reviews'])]
+    payload_months = [*(m for m in targets if m <= current), *(r['month'] for r in actual_rows),
+                      *(r['reporting_month'] for r in recorded_attendance), *(review_day(r)[:7] for r in spine['reviews'])]
     payload_months = [m for m in payload_months if MONTH.fullmatch(m)]
     maximum = max([display_date(programme_end), *(s['visualEnd'] for s in subjects), *(m + '-28' for m in payload_months)], default='')
     minimum, maximum = minimum[:7], maximum[:7]
@@ -246,8 +249,9 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     actual_records = [a for r in records for a in canonical.allocations(r) if a.get('reporting_month') == month]
     signed = canonical.query('''SELECT 1 FROM "Learner".learner_monthly_signatures
         WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month]) if month <= current and month not in targets and not actual_records else []
-    logged = month <= current and (month in targets or actual_records or signed)
-    canonical_actual = sum(canonical.number(r.get('actual_seconds')) / 3600 for r in actual_records if canonical.counts_as_actual(r))
+    attendance_actual = sum(canonical.number(r['actual_hours']) for r in recorded_attendance if r['reporting_month'] == month)
+    logged = month <= current and (month in targets or actual_records or signed or attendance_actual)
+    canonical_actual = sum(canonical.number(r.get('actual_seconds')) / 3600 for r in actual_records if canonical.counts_as_actual(r)) + attendance_actual
     achieved = max(0, canonical_actual) if logged else ((fallback or {}).get('actual', 0) if (fallback or {}).get('includesHistorical') else sum(row['hours'] for row in actual_rows if row['month'] == month) + (fallback or {}).get('actual', 0))
     required = targets.get(month) if month <= current else None
     if required is None:

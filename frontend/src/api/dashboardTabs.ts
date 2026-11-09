@@ -18,7 +18,7 @@ export type DashboardOverviewPayload = {
   reviews: Count;
   modules: OverviewModule[];
   programme: Array<{ id: string; title: string; percent: number | null }>;
-  hours: { months: Array<{ key: string; target: number | null; submitted: number | null; completed: number | null }>;
+  hours: { months: Array<{ key: string; target: number | null; submitted: number | null; completed: number | null; verification?: number }>;
     planned: number | null; end: string };
   programmeStartDate: string | null; programmeEndDate: string | null;
 };
@@ -31,7 +31,8 @@ function valid(data: DashboardOverviewPayload | undefined): data is DashboardOve
     && ['actual', 'targetToDate'].every(key => nullableNumber(data.metrics.otjh[key as keyof typeof data.metrics.otjh]))
     && (data.attendance === null || (!!data.attendance && typeof data.attendance.present === 'number' && typeof data.attendance.sessions === 'number'))
     && data.hours.months.every(row => typeof row?.key === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(row.key)
-      && nullableNumber(row.target) && nullableNumber(row.submitted) && nullableNumber(row.completed));
+      && nullableNumber(row.target) && nullableNumber(row.submitted) && nullableNumber(row.completed)
+      && (row.verification === undefined || (typeof row.verification === 'number' && Number.isFinite(row.verification) && row.verification >= 0)));
 }
 export const dashboardOverview = {
   read: async (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) => {
