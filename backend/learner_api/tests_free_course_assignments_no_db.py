@@ -110,10 +110,11 @@ class BuilderFreeCourseCatalogueTests(SimpleTestCase):
 class FreeCourseLearningPlanTests(SimpleTestCase):
     def setUp(self):
         self.course_module = dict(moduleId='MOD-FREE', moduleTitle='Standalone skills', hours=6,
-                                  programmeId='', programmeName='', groupName='')
+                                  programmeId='', programmeName='', groupName='', isFreeCourse=True)
         self.ordinary = dict(moduleId='MOD-REGULAR', moduleTitle='Programme skills', hours=10,
                              programmeId='PROG-1', programmeName='Programme', groupName='Group')
         self.source = SimpleNamespace(pk=7, id=7, username='Synthetic learner', free_courses=[],
+            learner_type='commercial',
             training_plan=[self.ordinary, self.course_module], learning_plan=None,
             programme='Programme', cohort='Cohort', group='Group', programme_status='Delivery', save=Mock())
         self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
@@ -140,8 +141,9 @@ class FreeCourseLearningPlanTests(SimpleTestCase):
         self.source.save.assert_not_called()
 
     def test_popup_save_updates_the_same_plan_as_builder_assignment_for_both_kinds(self):
-        for field in ('training_plan', 'learning_plan'):
+        for kind, field, total in [('commercial', 'training_plan', 16), ('apprenticeship', 'learning_plan', 10)]:
             with self.subTest(field=field):
+                self.source.learner_type = kind
                 self.source.training_plan = None
                 self.source.learning_plan = None
                 setattr(self.source, field, [self.ordinary])
@@ -150,8 +152,60 @@ class FreeCourseLearningPlanTests(SimpleTestCase):
                 response = plans.learning_plan(request, pk=7)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual([entry['moduleId'] for entry in getattr(self.source, field)], ['MOD-REGULAR', 'MOD-FREE'])
-                self.assertEqual(json.loads(response.content)['totals']['totalHours'], 16)
+                self.assertEqual(json.loads(response.content)['totals']['totalHours'], total)
                 self.assertEqual(self.source.free_courses, [])
+
+    def test_apprentice_keeps_free_assignment_but_only_core_and_meetings_are_planned(self):
+        self.source.learner_type = 'apprenticeship'
+        with patch.object(plans, '_meetings', return_value=([{'hours': 2}], '')):
+            response = plans.learning_plan(RequestFactory().get('/'), pk=7)
+        body = json.loads(response.content)
+        self.assertEqual(body['learner']['learnerType'], 'apprenticeship')
+        self.assertEqual([m['moduleId'] for m in body['plan']], ['MOD-REGULAR', 'MOD-FREE'])
+        self.assertEqual(body['totals'], dict(moduleCount=1, moduleHours=10, freeCourseCount=1,
+            freeCourseHours=6, plannedFreeCourseHours=0, meetingCount=1, meetingHours=2, totalHours=12))
+        self.source.save.assert_not_called()
+
+    def test_free_only_apprentice_has_zero_planned_hours_without_changing_course_duration(self):
+        totals = plans._totals([self.course_module], kind='apprenticeship')
+        self.assertEqual(totals['totalHours'], 0)
+        self.assertEqual(totals['freeCourseHours'], 6)
+        self.assertEqual(self.course_module['hours'], 6)
+
+    def test_converted_course_is_a_normal_planned_module(self):
+        for source_type, expected in [('free_course', 0), ('module_authoring', 6)]:
+            module = plans._module_payload(dict(module_catalogue_id='MOD-FREE', title='Skills',
+                total_otjh=6, source_type=source_type))
+            self.assertEqual(plans._totals([module], kind='apprenticeship')['totalHours'], expected)
+
+    def test_new_plan_documents_exclude_additional_courses_for_apprentices_only(self):
+        from . import apprenticeship_agreement, training_plan_document
+        for document in (apprenticeship_agreement, training_plan_document):
+            for kind, expected in [('apprenticeship', ['MOD-REGULAR']), ('commercial', ['MOD-REGULAR', 'MOD-FREE'])]:
+                with self.subTest(document=document.__name__, kind=kind):
+                    self.source.learner_type = kind
+                    with patch.object(document, 'learner_programme_modules', return_value=[self.ordinary, self.course_module]):
+                        modules = document._plan_modules(self.source)
+                    self.assertEqual([m['moduleId'] for m in modules], expected)
+                    self.assertEqual(len(self.source.training_plan), 2)
+
+    def test_fallback_planned_total_excludes_free_only_for_apprentices_and_preserves_zero(self):
+        from . import training_plan_dashboard as dashboard
+        db = MagicMock()
+        cursor = db.cursor.return_value.__enter__.return_value
+        for kind, total in [('apprenticeship', 10), ('apprenticeship', 0), ('commercial', 16)]:
+            with self.subTest(kind=kind, total=total):
+                self.source.learner_type = kind
+                cursor.fetchone.return_value = (total,)
+                with patch.object(dashboard, 'connections', {'enrolment': db}):
+                    actual = dashboard.plan_planned_hours(self.source, {}, ids=['MOD-REGULAR', 'MOD-FREE'])
+                self.assertEqual(actual, total)
+                sql, params = cursor.execute.call_args.args
+                self.assertEqual(params, [['MOD-REGULAR', 'MOD-FREE']])
+                if kind == 'apprenticeship':
+                    self.assertIn("CASE WHEN source_type = 'free_course' THEN 0 ELSE total_otjh END", sql)
+                else:
+                    self.assertIn('sum(total_otjh)', sql)
 
     def test_popup_removal_keeps_the_other_module(self):
         request = RequestFactory().patch('/learner_api/learning-plan/7/', content_type='application/json',

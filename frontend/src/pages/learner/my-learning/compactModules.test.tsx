@@ -52,6 +52,32 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('opens standalone content only from Free courses when absent from My courses (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules = catalogue.modules.filter(card => card.id !== 'current:M1');
+    catalogue.summary.current = { subjects: 0, total: 0, completed: 0, percent: 0 };
+    catalogue.summary.subjectCount = 1;
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
+      if (url.includes('/free-courses/')) return reply({ freeCourses: [{
+        freeCourseId: 'FC-1', moduleId: 'M1', courseName: 'One', description: '', coverImageUrl: '',
+        weekCount: 1, activityCount: 1, weeks: [],
+      }] });
+      if (url.includes('/modules/')) return reply(makeModule());
+      return reply(catalogue);
+    });
+    route(`/learner/my-learning/${kind}/7`);
+    await screen.findByRole('heading', { name: 'Old' });
+    expect(screen.queryByRole('heading', { name: 'One' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Free courses' }));
+    const card = (await screen.findByRole('heading', { name: 'One' })).closest('article')!;
+    fireEvent.click(within(card).getByRole('button', { name: /Open course/ }));
+    expect(await screen.findByRole('region', { name: 'Module progress' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Quiet lesson', level: 5 })).toBeVisible();
+    expect(urls()).toContain(`/learner_api/my-learning/${kind}/7/modules/current%3AM1/`);
+  });
+
   it.each([
     ['commercial', false], ['commercial', true], ['apprenticeship', false], ['apprenticeship', true],
   ] as const)('uses saved component completion inside the module and hides the old percentage (%s, completed=%s)', async (kind, completed) => {

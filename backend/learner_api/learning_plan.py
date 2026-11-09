@@ -47,6 +47,7 @@ from .learner_progression import advance_learner
 from .mappers import _normalize_free_courses, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
 from .placement_links import placement_ids
+from .planned_learning import learner_type, planned_modules
 from .projection_performance import projection_call, projection_operation
 
 logger = logging.getLogger(__name__)
@@ -121,13 +122,14 @@ def _module_payload(row):
         "startDate": _iso_day(row.get("start_date")),
         "endDate": _iso_day(row.get("end_date")),
         "learnerRosterMode": _s(row.get("learner_roster_mode")) or "inherited",
+        "isFreeCourse": _s(row.get("source_type")) == 'free_course',
     }
 
 
 #: Modules of a deleted programme, and soft-deleted modules, are not offerable.
 _LIVE_MODULE_SQL = """
     SELECT module_catalogue_id, title, group_name, programme_id, programme_name,
-           total_otjh, start_date, end_date, learner_roster_mode
+           total_otjh, start_date, end_date, learner_roster_mode, source_type
     FROM curriculum.modules
     WHERE deleted_at IS NULL AND NOT is_programme_deleted
 """
@@ -475,6 +477,7 @@ def _orphan_module(entry):
         "startDate": _iso_day(entry.get("startDate")),
         "endDate": _iso_day(entry.get("endDate")),
         "orphaned": True,
+        "isFreeCourse": entry.get('isFreeCourse') is True,
     }
 
 
@@ -576,18 +579,25 @@ def _meetings(learner):
     return [], "not-eligible" if has_otjh_template else "no-otjh-reviews"
 
 
-def _totals(modules, meetings=None):
+def _totals(modules, meetings=None, *, kind='commercial'):
     """Plan totals. Module hours and meeting hours are reported separately as
     well as combined, so the modal can show each table its own subtotal and
     still print one figure for the whole commitment."""
-    module_hours = round(sum(float(m.get("hours") or 0) for m in modules), 2)
+    core_modules = [module for module in modules if not module.get('isFreeCourse')]
+    free_courses = [module for module in modules if module.get('isFreeCourse')]
+    module_hours = round(sum(float(m.get("hours") or 0) for m in core_modules), 2)
+    free_hours = round(sum(float(m.get('hours') or 0) for m in free_courses), 2)
+    planned_free_hours = round(sum(float(m.get('hours') or 0) for m in planned_modules(free_courses, kind)), 2)
     meeting_hours = round(sum(float(m.get("hours") or 0) for m in (meetings or [])), 2)
     return {
-        "moduleCount": len(modules),
+        "moduleCount": len(core_modules),
         "moduleHours": module_hours,
+        "freeCourseCount": len(free_courses),
+        "freeCourseHours": free_hours,
+        "plannedFreeCourseHours": planned_free_hours,
         "meetingCount": len(meetings or []),
         "meetingHours": meeting_hours,
-        "totalHours": round(module_hours + meeting_hours, 2),
+        "totalHours": round(module_hours + planned_free_hours + meeting_hours, 2),
     }
 
 
@@ -796,6 +806,7 @@ def _serialize(learner):
             "cohort": _s(learner.cohort),
             "group": group,
             "programmeStatus": _s(learner.programme_status),
+            "learnerType": learner_type(learner),
         },
         "plan": plan,
         # Free courses assigned to this learner. A pure list of assignment
@@ -803,7 +814,7 @@ def _serialize(learner):
         # deliberately outside `plan`/`preset`/`totals` so they never touch hours
         # or KSBs — see EnrolmentUser.free_courses.
         "freeCourses": learner.free_courses if isinstance(learner.free_courses, list) else [],
-        # These courses are assigned via `plan`, so their hours are counted once.
+        # Assignment remains in `plan`; apprenticeship targets exclude these hours.
         "standaloneCourses": builder_free_courses(include_content=False),
         "preset": preset,
         # Anything in the catalogue not already on the plan, whichever programme
@@ -820,7 +831,7 @@ def _serialize(learner):
         "meetings": meetings,
         # Why `meetings` is empty, so the table can say so rather than vanish.
         "meetingsReason": meetings_reason,
-        "totals": _totals(plan, meetings),
+        "totals": _totals(plan, meetings, kind=learner_type(learner)),
     }
 
 

@@ -11,15 +11,16 @@ vi.mock('@/lib/curriculumApi', () => ({ fetchFreeProgrammeModules: vi.fn(async (
 vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn() }) }));
 
 const ordinary = { moduleId: 'M1', moduleTitle: 'Programme module', hours: 10, groupName: 'Group', programmeId: 'P1', programmeName: 'Programme' };
-const standalone = { ...ordinary, moduleId: 'M2', moduleTitle: 'Standalone skills', hours: 6, groupName: '', programmeId: '', programmeName: '' };
-function fixture(assigned = true): LearningPlanResponse {
+const standalone = { ...ordinary, moduleId: 'M2', moduleTitle: 'Standalone skills', hours: 6, groupName: '', programmeId: '', programmeName: '', isFreeCourse: true };
+function fixture(assigned = true, learnerType: 'commercial' | 'apprenticeship' = 'commercial'): LearningPlanResponse {
   return {
-    learner: { id: '7', name: 'Synthetic learner', programme: 'Programme', programmeId: 'P1', cohort: 'Cohort', group: 'Group', programmeStatus: 'Delivery' },
+    learner: { id: '7', name: 'Synthetic learner', learnerType, programme: 'Programme', programmeId: 'P1', cohort: 'Cohort', group: 'Group', programmeStatus: 'Delivery' },
     plan: assigned ? [ordinary, standalone] : [ordinary], preset: [ordinary], available: assigned ? [] : [standalone],
     standaloneCourses: [{ freeCourseId: 'FC-1', moduleId: 'M2', courseName: 'Standalone skills' }],
     freeCourses: [], saved: true, programmes: [], totals: {
-      moduleCount: assigned ? 2 : 1, moduleHours: assigned ? 16 : 10,
-      meetingCount: 0, meetingHours: 0, totalHours: assigned ? 16 : 10,
+      moduleCount: 1, moduleHours: 10, freeCourseCount: assigned ? 1 : 0,
+      freeCourseHours: assigned ? 6 : 0, plannedFreeCourseHours: assigned && learnerType === 'commercial' ? 6 : 0,
+      meetingCount: 0, meetingHours: 0, totalHours: assigned && learnerType === 'commercial' ? 16 : 10,
     },
   };
 }
@@ -36,7 +37,8 @@ describe('Learning plan free-course assignments', () => {
     const section = within(await screen.findByRole('region', { name: 'Assigned free courses' }));
     expect(section.getByText('Standalone skills')).toBeVisible();
     expect(section.getByText('6h')).toBeVisible();
-    expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '2 modules · 16h total')).toBeVisible();
+    expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '1 module · 1 free course · 16h total')).toBeVisible();
+    expect(screen.queryByText('Standalone skills', { selector: 'td' })).not.toBeInTheDocument();
     expect(screen.queryByText(/Extras.*no hours/)).not.toBeInTheDocument();
   });
 
@@ -46,7 +48,7 @@ describe('Learning plan free-course assignments', () => {
     const select = await screen.findByLabelText('Free course to add');
     fireEvent.change(select, { target: { value: 'FC-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add free course' }));
-    expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '2 modules · 16h total')).toBeVisible();
+    expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '1 module · 1 free course · 16h total')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
     await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], []));
   });
@@ -86,5 +88,48 @@ describe('Learning plan free-course assignments', () => {
     renderPlan({ readOnly: true });
     const section = within(await screen.findByRole('region', { name: 'Assigned free courses' }));
     expect(section.getByText('Standalone skills')).toBeVisible();
+  });
+
+  it('keeps apprenticeship free courses before Meetings and outside planned hours', async () => {
+    const data = fixture(true, 'apprenticeship');
+    data.meetings = [{ reviewTemplateId: 'R1', name: 'Review', recurrenceLabel: 'Monthly',
+      hoursEach: 2, occurrences: 1, hours: 2, startDate: '', endDate: '' }];
+    vi.mocked(fetchLearningPlan).mockResolvedValue(data);
+    renderPlan();
+    const section = await screen.findByRole('region', { name: 'Assigned free courses' });
+    expect(within(section).getByText('6h')).toBeVisible();
+    expect(within(section).getByText(/excluded from planned hours/)).toBeVisible();
+    expect(screen.queryByText('Standalone skills', { selector: 'td' })).not.toBeInTheDocument();
+    expect(section.compareDocumentPosition(screen.getByRole('heading', { name: 'Meetings' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '1 module · 1 free course · 1 meeting · 12h total')).toBeVisible();
+  });
+
+  it('adding an apprenticeship free course saves its assignment without increasing planned hours', async () => {
+    vi.mocked(fetchLearningPlan).mockResolvedValue(fixture(false, 'apprenticeship'));
+    renderPlan();
+    fireEvent.change(await screen.findByLabelText('Free course to add'), { target: { value: 'FC-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add free course' }));
+    expect(screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === '1 module · 1 free course · 10h total')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], []));
+  });
+
+  it('resetting group modules retains independently assigned courses', async () => {
+    const data = fixture(true, 'apprenticeship');
+    data.plan.push({ ...ordinary, moduleId: 'M3', moduleTitle: 'Extra programme module' });
+    vi.mocked(fetchLearningPlan).mockResolvedValue(data);
+    renderPlan();
+    fireEvent.click(await screen.findByRole('button', { name: 'Reset to group default' }));
+    expect(within(screen.getByRole('region', { name: 'Assigned free courses' })).getByText('Standalone skills')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save learning plan' }));
+    await waitFor(() => expect(saveLearningPlan).toHaveBeenCalledWith('7', ['M1', 'M2'], []));
+  });
+
+  it('keeps standalone courses out of the core module picker', async () => {
+    vi.mocked(fetchLearningPlan).mockResolvedValue(fixture(false, 'apprenticeship'));
+    renderPlan();
+    fireEvent.click(await screen.findByRole('button', { name: /Add a module/ }));
+    expect(screen.queryByRole('button', { name: /Standalone skills/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'Standalone skills' })).toBeInTheDocument();
   });
 });

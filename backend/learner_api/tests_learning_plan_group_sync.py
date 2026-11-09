@@ -77,6 +77,9 @@ class GroupSyncTests(SimpleTestCase):
         self.assertEqual(body["totals"], {
             "moduleCount": 2,
             "moduleHours": 12.0,
+            "freeCourseCount": 0,
+            "freeCourseHours": 0,
+            "plannedFreeCourseHours": 0,
             "meetingCount": 0,
             "meetingHours": 0,
             "totalHours": 12.0,

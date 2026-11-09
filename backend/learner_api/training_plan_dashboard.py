@@ -388,17 +388,23 @@ def plan_planned_hours(source, owner, *, ids=None):
     the same modules the dashboard lists. Callers use it only when the SSOT
     holds no programme plan for the enrolment. ``ids`` lets a caller that has
     already resolved ``plan_module_ids`` for this source skip resolving it again.
+    Standalone courses contribute to commercial plans, not apprenticeship targets.
     """
+    from .planned_learning import learner_type
+    apprenticeship = learner_type(source, owner) == 'apprenticeship'
+    # Keep every assignment available for learning and actual hours. Only the
+    # planned aggregate excludes additional courses for apprentices.
+    hours_sql = "CASE WHEN source_type = 'free_course' THEN 0 ELSE total_otjh END" if apprenticeship else 'total_otjh'
     with connections['enrolment'].cursor() as cur:
         if ids is None:
             ids, _ = plan_module_ids(cur, source, owner)
         if not ids:
             return None
-        cur.execute('''SELECT sum(total_otjh) FROM curriculum.modules
+        cur.execute(f'''SELECT sum({hours_sql}) FROM curriculum.modules
             WHERE module_catalogue_id=ANY(%s)''', [ids])
         total = cur.fetchone()[0]
     total = number(total)
-    return round(total, 2) if total else None
+    return round(total, 2) if total is not None and (total or apprenticeship) else None
 
 
 def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=False, navigation_only=False):
