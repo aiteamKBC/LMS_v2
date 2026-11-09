@@ -8,7 +8,6 @@ import { Loader2 } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, fetchReviewSlots, learnerMeetingArtifactContentUrl, type LearnerCalendarResponse } from '@/api/learnerCalendar';
 import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
-import { mcmBookingDateRestrictionMessage } from '../reviews/bookingDates';
 
 const CLOSED_REVIEW_STATUSES = ['completed', 'cancelled', 'awaiting-signature'];
 const BOOKED_REVIEW_STATUSES = ['scheduled', 'in-progress', 'completed', 'awaiting-signature'];
@@ -43,14 +42,13 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   latest.current = { kind, learnerId, month, assignmentId, topicId, onSelect };
   const [reload, setReload] = useState(0);
   const [availabilityRetry, setAvailabilityRetry] = useState(0);
-  // MCM appointments run from the 20th through the following 5th, subject to
-  // the server's weekday, UK bank-holiday and past-date rules.
+  // MCMs are available throughout the month, subject to the server's weekday,
+  // UK bank-holiday and past-date rules and the coach's availability.
   const today = calendar?.bookingCalendar?.today || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/London' });
   const lastYear = Math.max(Number(today.slice(0, 4)), ...(calendar?.bookingCalendar?.coveredYears || []));
   const selectableDates: string[] = [];
   for (const day = new Date(`${today}T12:00:00Z`); day.getUTCFullYear() <= lastYear; day.setUTCDate(day.getUTCDate() + 1)) {
     const value = day.toISOString().slice(0, 10);
-    if (mcmBookingDateRestrictionMessage(value)) continue;
     if ([0, 6].includes(day.getUTCDay())) continue;
     if (calendar?.bookingCalendar?.bankHolidays.some(holiday => holiday.date === value)) continue;
     if (calendar?.bookingCalendar && !calendar.bookingCalendar.coveredYears.includes(day.getUTCFullYear())) continue;
@@ -110,7 +108,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     const holiday = calendar?.bookingCalendar?.bankHolidays.find(h => h.date === date);
     if (holiday) return `Sessions cannot be booked on UK bank holidays (${holiday.title}).`;
     if (calendar?.bookingCalendar && !calendar.bookingCalendar.coveredYears.includes(parsed.getFullYear())) return 'The bank-holiday calendar is not available for this year.';
-    return mcmBookingDateRestrictionMessage(date);
+    return '';
   };
   const dateError = restriction();
   const bookingOffset = date ? (12 - Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', hourCycle: 'h23' }).format(new Date(`${date}T12:00:00Z`)))) * 60 : 0;
@@ -167,7 +165,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
         <>
           {slots.length > 0 && <label className="block">Monthly Coaching Meeting slot<select className={input} value={slotKey} onChange={e => setSlotKey(e.target.value)}><option value="">Select your programme MCM</option>{slots.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}</select></label>}
           {aptemSourced && !slots.length && <p role="status" className="text-sm text-slate-600">No open Monthly Coaching Meeting is left in your programme plan. Contact your coach to arrange it.</p>}
-          <p className="text-sm leading-6 text-slate-600">Choose an upcoming weekday from the 20th of a month through the 5th of the following month. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
+          <p className="text-sm leading-6 text-slate-600">Choose any upcoming weekday throughout the month. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
           <div className="grid gap-4 sm:grid-cols-2"><BookingDatePicker value={date} onChange={setDate} dates={selectableDates} /><label>Time<select className={input} value={time} disabled={availabilityLoading || !availableTimes.length} onChange={e => setTime(e.target.value)}><option value="">{availabilityLoading ? 'Loading available times...' : 'Select an available time'}</option>{availableTimes.map(value => <option key={value} value={value}>{value}</option>)}</select></label></div>
           <label className="block">Duration<select className={input} value={duration} onChange={e => { setDuration(Number(e.target.value)); setTime(''); }}>{[30, 45, 60, 90, 120].map(minutes => <option key={minutes} value={minutes}>{minutes === 60 ? '1 hour' : `${minutes} minutes`}</option>)}</select></label>
           {availabilityError && <p role="alert" className="text-sm text-red-700">{availabilityError} <button type="button" onClick={() => setAvailabilityRetry(value => value + 1)} className="underline">Retry availability</button></p>}
