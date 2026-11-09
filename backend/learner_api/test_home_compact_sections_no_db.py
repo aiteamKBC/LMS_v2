@@ -20,6 +20,45 @@ def cursor_connections(cursor):
 
 
 class HomeSummarySectionTests(SimpleTestCase):
+    def test_current_modules_are_independent_of_progress_and_attendance(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [('MOD-1', 'Marketing', True), ('MOD-2', 'Attendance only', False)]
+        native = [{'id': 'c1', 'module_id': 'MOD-1', 'module_title': 'Marketing', 'title': 'Read', 'type': 'reading',
+                   'expected_hours': 1, 'section_title': 'Week 3', 'ksb_mappings': [], 'quiz_id': None,
+                   'builder_week_id': 'W3', 'builder_settings': {}, 'builder_order': 1}]
+        with patch.object(week_module.canonical_learning, 'require_profile', return_value={'id': 9}) as owner, \
+             patch.object(week_module.canonical_learning, 'metrics', side_effect=AssertionError('No metrics on navigation')), \
+             patch.object(week_module, '_direct_progress_records', side_effect=AssertionError('No progress on navigation')), \
+             patch('learner_api.home_progress.read_home_progress', side_effect=AssertionError('No attendance on navigation')), \
+             patch.object(week_module, 'connections', cursor_connections(cursor)), \
+             patch.object(week_module, 'rows', return_value=native), \
+             patch.object(week_module, 'read_builder_activity_dates', return_value={'c1': {'date': '2026-10-14'}}) as dates:
+            payload = week_module.read_current_modules(SimpleNamespace(pk=265), datetime(2026, 10, 14, tzinfo=timezone.utc))
+        owner.assert_called_once_with(265)
+        self.assertEqual(payload, {'weekStart': '2026-10-12', 'weekEnd': '2026-10-18',
+            'modules': [{'id': 'current:MOD-1', 'title': 'Marketing', 'weekLabels': ['Week 3']}]})
+        self.assertEqual(dates.call_args.args[1], ['MOD-1'])
+
+    def test_current_modules_retain_identity_guard(self):
+        with patch.object(week_module.canonical_learning, 'require_profile',
+                          side_effect=ServiceError('not linked', 'ssot_identity_required', 409)), \
+             patch.object(week_module, 'connections') as databases:
+            with self.assertRaises(ServiceError):
+                week_module.read_current_modules(SimpleNamespace(pk=265))
+            databases.__getitem__.assert_not_called()
+
+    def test_current_modules_section_uses_small_reader_for_both_learner_kinds(self):
+        for kind in ['commercial', 'apprenticeship']:
+            model = MagicMock()
+            model.DoesNotExist = type('Missing', (Exception,), {})
+            with patch.dict(week_module.SOURCE_MODELS, {kind: model}), \
+                 patch.object(week_module, 'read_current_modules', return_value={'modules': []}) as navigation, \
+                 patch.object(week_module, 'read_week') as progress:
+                result = overview_week.__wrapped__.__wrapped__(RequestFactory().get('/?section=current-modules'), kind, 265)
+            self.assertEqual(result.status_code, 200)
+            navigation.assert_called_once_with(model.all_learners.only.return_value.get.return_value)
+            progress.assert_not_called()
+
     @override_settings(LEARNER_HOME_SHARED_READ_MODEL_ENABLED=True)
     def test_compact_section_reads_live_without_the_shared_home_snapshot(self):
         model = MagicMock()

@@ -19,6 +19,7 @@ from curriculum_api import recording_views
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
 from .overview_week import overview_week
+from .web_week_points import web_points
 from .rewards_summary import learner_rewards_summary
 from .profile_photo import learner_profile_photo
 from .attendance_lectures import attendance_lectures
@@ -47,6 +48,7 @@ from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('web-points/<str:kind>/<int:pk>/', web_points, name='learner-web-points'),
     path('reading/ocr/csrf/', reading_ocr.reading_ocr_csrf),
     path('reading/ocr/', reading_ocr.reading_ocr),
     path('support/tickets/', support_tickets.learner_tickets),
