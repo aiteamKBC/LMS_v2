@@ -16,11 +16,9 @@ def imported_review_saved(sender, instance, using, raw=False, update_fields=None
             or not (settings.DEBUG or (settings.LEARNER_FEEDBACK_ENABLED
                                       and settings.LEARNER_NON_LECTURE_FEEDBACK_ENABLED))):
         return
-    snapshot = getattr(instance, 'template_snapshot', None)
-    template_source = snapshot.get('templateSource') if isinstance(snapshot, dict) else None
-    family = template_source.get('family') if isinstance(template_source, dict) else None
-    if family and family not in review_feedback.FORM_TYPE_BY_FAMILY:
-        return
+    # Family cannot rule out EPA: its trigger is the persisted review_name.
+    # Reconcile after commit and let the verified source/name checks select a
+    # published form. Unrelated reviews still produce no assignments.
 
     def reconcile():
         try:

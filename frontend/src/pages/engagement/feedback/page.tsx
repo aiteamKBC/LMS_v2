@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
-import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormType, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse } from '@/api/feedback';
+import { feedbackApi, type FeedbackAnalyticsData, type FeedbackAssignmentSource, type FeedbackForm, type FeedbackFormType, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse, type FeedbackResponseActivity } from '@/api/feedback';
 import { LectureQuestionAnalytics } from '@/features/feedback/LectureQuestionAnalytics';
 import { FeedbackDashboard } from '@/features/feedback/FeedbackDashboard';
+import { FEEDBACK_TYPE_LABELS } from '@/features/feedback/feedbackDashboardData';
 import { ThemedSelect, type ThemedSelectOption } from '@/components/feature/ThemedSelect';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { FormRenderer } from '@/features/feedback/FormRenderer';
@@ -69,7 +70,7 @@ export default function FeedbackPage() {
         ['Total Forms', summary.totalForms, 'ri-file-list-3-line'], ['Published', summary.publishedForms, 'ri-send-plane-line'], ['Draft', summary.draftForms, 'ri-draft-line'], ['Responses', summary.totalResponses, 'ri-chat-check-line'],
       ].map(([label, value, icon]) => <div key={String(label)} className="rounded-xl border border-foreground-200/60 bg-background-50 p-4"><div className="flex items-center justify-between"><div><p className="text-xs text-foreground-500">{label}</p><p className="mt-1 text-2xl font-bold text-foreground-900">{value}</p></div><span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className={`${icon} text-lg`} /></span></div></div>)}</div>
       </>}
-      <div className="flex gap-1 overflow-x-auto rounded-lg bg-background-100 p-1">{(['overview', 'forms', 'responses', 'analytics', 'insights'] as Tab[]).map(value => <button key={value} onClick={() => setTab(value)} className={`${button} whitespace-nowrap ${tab === value ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-600 hover:bg-white'}`}>{value === 'insights' ? 'Feedback Insights' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
+      <div className="flex gap-1 overflow-x-auto rounded-lg bg-background-100 p-1">{(['overview', 'forms', 'responses', 'analytics', 'insights'] as Tab[]).map(value => <button key={value} aria-pressed={tab === value} onClick={() => setTab(value)} className={`${button} !transition-none whitespace-nowrap ${tab === value ? '!bg-[#541EA0] !text-white shadow-sm' : '!bg-transparent !text-foreground-600 hover:!bg-white'}`}>{value === 'insights' ? 'Feedback Insights' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
       {loading ? <div className="rounded-xl border bg-white p-10 text-center text-sm text-foreground-400">Loading feedback…</div> : <>
         {tab === 'overview' && <Overview analytics={analytics} forms={forms} onViewForms={() => setTab('forms')} />}
         {tab === 'forms' && <FormsTable forms={filtered} search={search} status={status} onSearch={setSearch} onStatus={setStatusFilter} onEdit={form => navigate(`/engagement/reports/feedback/forms/${form.id}/edit`)} onPreview={form => navigate(`/engagement/reports/feedback/forms/${form.id}/preview`)} onAssign={setAssigning} onViewRecipients={setRecipientForm} onViewVersions={setVersionForm} onResponses={() => setTab('responses')} onAction={action} />}
@@ -93,7 +94,7 @@ function FormsTable({ forms, search, status, onSearch, onStatus, onEdit, onPrevi
   return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
     <div className="flex flex-wrap gap-3 border-b border-background-200 p-4"><input value={search} onChange={e => onSearch(e.target.value)} placeholder="Search forms…" className="min-w-56 flex-1 rounded-lg border border-foreground-200 px-3 py-2 text-xs" /><select value={status} onChange={e => onStatus(e.target.value)} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs"><option value="all">All statuses</option><option value="draft">Draft</option><option value="published">Published</option><option value="closed">Closed</option></select></div>
     <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form Name', 'Status', 'Assigned', 'Responses', 'Created', 'Last Updated', 'Actions'].map(x => <th key={x} className="px-4 py-3 font-semibold">{x}</th>)}</tr></thead><tbody className="divide-y divide-background-200">{forms.map(form => {
-      const versioned = ['post_lecture', 'post_mcm_review', 'post_progress_review', 'post_progress_review_employer', 'mid_module', 'end_module'].includes(form.formType);
+      const versioned = ['post_lecture', 'post_mcm_review', 'post_progress_review', 'post_progress_review_employer', 'post_epa_review', 'mid_module', 'end_module'].includes(form.formType);
       return <tr key={form.id}><td className="px-4 py-3 font-semibold text-foreground-900"><span>{form.title}</span>{versioned && <span className="ml-2 rounded-full bg-primary-50 px-2 py-0.5 text-[10px] text-primary-700">v{form.version}</span>}</td><td className="px-4 py-3"><Status status={form.status} /></td><td className="px-4 py-3"><button type="button" disabled={!form.assignedCount} onClick={() => onViewRecipients(form)} className="font-semibold text-primary-600 underline-offset-2 hover:underline disabled:text-foreground-400 disabled:no-underline">{form.assignedCount}</button></td><td className="px-4 py-3">{form.responseCount} / {form.assignedCount || '—'}</td><td className="px-4 py-3 text-foreground-500">{formatDate(form.createdAt)}</td><td className="px-4 py-3 text-foreground-500">{formatDate(form.updatedAt)}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold"><button onClick={() => onEdit(form)} className="text-primary-600">Edit</button><button onClick={() => onPreview(form)} className="text-primary-600">Preview</button>{versioned && <button onClick={() => onViewVersions(form)} className="text-primary-600">Versions</button>}<button onClick={() => void onAction(form, 'duplicate')} className="text-primary-600">Duplicate</button>{form.formType === 'general' && <button disabled={form.status !== 'published'} onClick={() => onAssign(form)} className="text-primary-600 disabled:text-foreground-300">Assign</button>}{form.status === 'draft' && <button onClick={() => void onAction(form, 'publish')} className="text-emerald-600">Publish</button>}{form.status === 'published' && <><button onClick={() => void onAction(form, 'draft')} className="text-amber-600">Unpublish</button><button onClick={() => void onAction(form, 'close')} className="text-amber-700">Close</button></>}<button onClick={onResponses} className="text-primary-600">Responses</button><button onClick={() => void onAction(form, 'delete')} className="text-red-600">Delete</button></div></td></tr>;
     })}{!forms.length && <tr><td colSpan={7} className="p-10 text-center text-foreground-400">No feedback forms match these filters.</td></tr>}</tbody></table></div>
   </div>;
@@ -101,22 +102,62 @@ function FormsTable({ forms, search, status, onSearch, onStatus, onEdit, onPrevi
 
 function ResponsesTable({ responses, forms, onOpen }: { responses: FeedbackResponse[]; forms: FeedbackForm[]; onOpen: (r: FeedbackResponse) => void }) {
   const [formId, setFormId] = useState('all'); const [status, setStatus] = useState('all'); const [tutor, setTutor] = useState('all'); const [learner, setLearner] = useState('');
+  const [coach, setCoach] = useState('all');
   const selectedTemplateKey = forms.find(form => form.id === Number(formId))?.templateKey;
-  const tutors = [...new Set(responses.map(response => response.tutorName.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const filtered = responses.filter(response => (
-    (formId === 'all' || (selectedTemplateKey ? response.templateKey === selectedTemplateKey : response.formId === Number(formId)))
-    && (status === 'all' || response.status === status)
-    && (tutor === 'all' || response.tutorName.trim() === tutor)
+  const formResponses = responses.filter(response => formId === 'all' || (selectedTemplateKey ? response.templateKey === selectedTemplateKey : response.formId === Number(formId)));
+  const hasLectures = formResponses.some(response => response.formType === 'post_lecture');
+  const tutors = [...new Set(formResponses.filter(response => response.formType === 'post_lecture').map(response => response.tutorName.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const activeTutor = tutors.includes(tutor) ? tutor : 'all';
+  const reviewResponses = formResponses.filter(response => response.activity?.kind === 'review');
+  const coaches = [...new Set(reviewResponses.map(response => response.activity?.coachName?.trim() || '').filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const activeCoach = coaches.includes(coach) ? coach : 'all';
+  const filtered = formResponses.filter(response => (
+    (status === 'all' || response.status === status)
+    && (activeTutor === 'all' || response.tutorName.trim() === activeTutor)
+    && (activeCoach === 'all' || (response.activity?.kind === 'review' && response.activity.coachName?.trim() === activeCoach))
     && response.learnerName.toLowerCase().includes(learner.toLowerCase())
   ));
   return <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
     <div className="flex flex-wrap gap-3 border-b p-4">
-      <select aria-label="Filter by form" value={formId} onChange={e => setFormId(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(form => <option key={form.id} value={form.id}>{form.title}</option>)}</select>
+      <select aria-label="Filter by form" value={formId} onChange={e => { setFormId(e.target.value); setTutor('all'); setCoach('all'); }} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All forms</option>{forms.map(form => <option key={form.id} value={form.id}>{form.title}</option>)}</select>
       <select aria-label="Filter by status" value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All statuses</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select>
-      <select aria-label="Filter by tutor" value={tutor} onChange={e => setTutor(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All tutors</option>{tutors.map(name => <option key={name} value={name}>{name}</option>)}</select>
-      <input aria-label="Search learner" value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search learner…" className="rounded-lg border px-3 py-2 text-xs" />
+      {hasLectures && <select aria-label="Filter by tutor" value={activeTutor} onChange={e => { setTutor(e.target.value); setCoach('all'); }} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All tutors</option>{tutors.map(name => <option key={name} value={name}>{name}</option>)}</select>}
+      {reviewResponses.length > 0 && <select aria-label="Filter by coach" value={activeCoach} onChange={e => { setCoach(e.target.value); setTutor('all'); }} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All coaches</option>{coaches.map(name => <option key={name} value={name}>{name}</option>)}</select>}
+      <input aria-label="Search respondent" value={learner} onChange={e => setLearner(e.target.value)} placeholder="Search respondent…" className="rounded-lg border px-3 py-2 text-xs" />
     </div>
-    <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Lecture', 'Lecture date', 'Tutor', 'Learner', 'Programme', 'Status', 'Started', 'Submitted'].map(label => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead><tbody className="divide-y">{filtered.map(response => <tr key={response.id} onClick={() => onOpen(response)} className="cursor-pointer hover:bg-primary-50/40"><td className="px-4 py-3 font-semibold">{response.formTitle}</td><td className="px-4 py-3">{response.formType === 'post_lecture' ? (response.sessionTitle || 'Lecture') : '-'}</td><td className="px-4 py-3">{response.formType === 'post_lecture' ? formatDate(response.sessionStartsAt) : '-'}</td><td className="px-4 py-3">{response.formType === 'post_lecture' ? (response.tutorName || 'Not recorded') : '-'}</td><td className="px-4 py-3">{response.learnerName}</td><td className="px-4 py-3">{response.programme || '—'}</td><td className="px-4 py-3"><Status status={response.status} /></td><td className="px-4 py-3">{formatDate(response.startedAt)}</td><td className="px-4 py-3">{formatDate(response.submittedAt)}</td></tr>)}{!filtered.length && <tr><td colSpan={9} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody></table></div>
+    <div className="overflow-x-auto"><table aria-label="Feedback responses" className="w-full min-w-[880px] text-left text-xs">
+      <thead className="bg-background-100 text-foreground-500"><tr>{['Form', 'Related activity', 'Respondent', 'Programme', 'Status', 'Assigned', 'Started', 'Submitted'].map(label => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead>
+      <tbody className="divide-y">{filtered.map(response => <tr key={response.id} onClick={() => onOpen(response)} className="cursor-pointer align-top hover:bg-primary-50/40">
+        <td className="px-4 py-3"><button type="button" className="text-left font-semibold text-foreground-900 hover:text-primary-700 focus-visible:outline-primary-500" onClick={event => { event.stopPropagation(); onOpen(response); }}>{response.formTitle}</button><p className="mt-1 text-[10px] text-foreground-500">{FEEDBACK_TYPE_LABELS[response.formType]}</p></td>
+        <td className="min-w-64 max-w-sm px-4 py-3"><ResponseActivity response={response} /></td>
+        <td className="px-4 py-3"><p className="font-semibold">{response.learnerName}</p><p className="mt-1 text-[10px] text-foreground-500">{response.formType === 'post_progress_review_employer' ? 'Employer' : 'Learner'}</p></td>
+        <td className="px-4 py-3">{response.programme || '—'}</td>
+        <td className="px-4 py-3"><Status status={response.status} /></td>
+        <td className="whitespace-nowrap px-4 py-3">{response.assignedAt ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/London' }).format(new Date(response.assignedAt)) : 'Not recorded'}</td>
+        <td className="whitespace-nowrap px-4 py-3">{formatDate(response.startedAt)}</td>
+        <td className="whitespace-nowrap px-4 py-3">{formatDate(response.submittedAt)}</td>
+      </tr>)}{!filtered.length && <tr><td colSpan={8} className="p-10 text-center text-foreground-400">No responses found.</td></tr>}</tbody>
+    </table></div>
+  </div>;
+}
+
+function ResponseActivity({ response }: { response: FeedbackResponse }) {
+  // Lecture fields also support a frontend rollout ahead of the additive list
+  // API field. Missing non-lecture context is explicit, never guessed from dates.
+  const fallback: FeedbackResponseActivity = response.formType === 'post_lecture'
+    ? { kind: 'lecture', title: response.sessionTitle || 'Lecture details not recorded', date: response.sessionStartsAt, tutorName: response.tutorName }
+    : response.formType === 'general'
+      ? { kind: 'general', title: 'General feedback', date: null, tutorName: '' }
+      : { kind: 'general', title: 'Activity details not recorded', date: null, tutorName: '' };
+  const activity = response.activity || fallback;
+  const dateLabel = { lecture: 'Lecture date', review: '', event: 'Event date', module: '', general: '' }[activity.kind];
+  return <div className="break-words"><p className="font-semibold text-foreground-800">{activity.title}</p>
+    {activity.relatedLearnerName && <p className="mt-1 text-[11px] text-foreground-500">Learner: {activity.relatedLearnerName}</p>}
+    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-foreground-500">
+      {dateLabel && <span>{dateLabel}: <span>{activity.date ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/London' }).format(new Date(activity.date)) : activity.dateText || 'Not recorded'}</span></span>}
+      {activity.kind === 'lecture' && <span>Tutor: <span>{activity.tutorName || 'Not recorded'}</span></span>}
+      {activity.kind === 'review' && <span>Coach: <span>{activity.coachName || 'Not recorded'}</span></span>}
+    </div>
   </div>;
 }
 
@@ -129,6 +170,7 @@ const ANALYTICS_FORM_TYPES: ThemedSelectOption<AnalyticsFormType>[] = [
   { value: 'end_module', label: 'End-module Feedback' },
   { value: 'post_mcm_review', label: 'MCM Feedback' },
   { value: 'post_progress_review', label: 'Progress Review Feedback' },
+  { value: 'post_epa_review', label: 'EPA Feedback' },
   { value: 'post_progress_review_employer', label: 'Progress Review – Employer Feedback' },
   { value: 'post_event', label: 'Event Feedback' },
   { value: 'event_rsvp', label: 'Event RSVP' },
@@ -289,17 +331,93 @@ function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () =
   const pages = Math.max(Math.ceil(total / pageSize), 1);
   const isEvent = form.formType === 'post_event';
   const isEmployer = form.formType === 'post_progress_review_employer';
-  const isReview = isEmployer || form.formType === 'post_mcm_review' || form.formType === 'post_progress_review';
+  const isReview = isEmployer || form.formType === 'post_mcm_review' || form.formType === 'post_progress_review' || form.formType === 'post_epa_review';
   const contextHeading = isEvent ? 'Event' : form.formType === 'post_lecture' ? 'Lecture' : isReview ? 'Review' : ['mid_module', 'end_module'].includes(form.formType) ? 'Module' : 'Assignment';
   const recipientHeading = isEmployer ? 'Employer / Learner' : isEvent ? 'Attendee' : 'Learner';
   return <Modal title={`${isEmployer ? 'Assigned employers' : isEvent ? 'Assigned attendees' : 'Assigned learners'} — ${form.title}`} onClose={onClose}>
     {isEmployer && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Each employer answers separately from the learner. Pending link means the employer profile or account needs to be linked before the request appears in their portal. The related learner is shown with each review.</p>}
-    {sources.length > 0 && sources.some(source => source.type !== 'manual') && <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3"><label htmlFor="feedback-source-filter" className="mb-1.5 block text-xs font-semibold text-foreground-700">{contextHeading}</label><select id="feedback-source-filter" aria-label={`Filter by ${contextHeading.toLowerCase()}`} value={sourceKey} onChange={event => { setSourceKey(event.target.value); setPage(1); }} className="w-full rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-xs text-foreground-800"><option value="">All {contextHeading.toLowerCase()}s ({sources.reduce((count, source) => count + source.assignedCount, 0)} assignments)</option>{sources.map(source => <option key={source.key} value={source.key}>{sourceOptionLabel(source)}</option>)}</select></div>}
+    {sources.length > 0 && sources.some(source => source.type !== 'manual') && <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3"><label htmlFor="feedback-source-filter" className="mb-1.5 block text-xs font-semibold text-foreground-700">{contextHeading}</label>{contextHeading === 'Lecture'
+      ? <GroupedLectureFilter sources={sources.filter(source => source.type === 'lecture')} value={sourceKey} onChange={value => { setSourceKey(value); setPage(1); }} />
+      : <select id="feedback-source-filter" aria-label={`Filter by ${contextHeading.toLowerCase()}`} value={sourceKey} onChange={event => { setSourceKey(event.target.value); setPage(1); }} className="w-full rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-xs text-foreground-800"><option value="">All {contextHeading.toLowerCase()}s ({sources.reduce((count, source) => count + source.assignedCount, 0)} assignments)</option>{sources.map(source => <option key={source.key} value={source.key}>{sourceOptionLabel(source)}</option>)}</select>}</div>}
     <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-foreground-500">{total} assignment{total === 1 ? '' : 's'}{sourceKey ? ` for this ${contextHeading.toLowerCase()}` : ''}. Each recipient keeps the source that assigned this form.</p><input aria-label="Search assigned learners" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder={`Search name, email, programme or ${contextHeading.toLowerCase()}…`} className="min-w-64 rounded-lg border px-3 py-2 text-xs" /></div>
     {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
     {loading ? <p className="py-10 text-center text-sm text-foreground-400">Loading assignments…</p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{[recipientHeading, 'Programme', 'Assigned From', contextHeading, 'Assigned', 'Response'].map(label => <th key={label} className="px-3 py-2.5 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y">{recipients.map(recipient => <tr key={recipient.key}><td className="px-3 py-3"><span className="block font-semibold text-foreground-900">{recipient.learnerName}</span><span className="text-[10px] text-foreground-400">{recipient.email || `Learner ${recipient.learnerId}`}</span>{recipient.recipientType === 'guest' && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Guest</span>}</td><td className="px-3 py-3">{recipient.programme || '—'}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${recipient.sourceType === 'lecture' ? 'bg-blue-100 text-blue-700' : recipient.sourceType === 'event' ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>{recipient.sourceLabel}</span></td><td className="px-3 py-3"><span className="block">{recipient.sourceTitle || '—'}</span>{recipient.sourceSubtitle && <span className="text-[10px] text-foreground-400">{recipient.sourceSubtitle}{recipient.sourceType === 'lecture' ? ` · v${recipient.formVersion}` : ''}</span>}{recipient.sourceStartsAt && <span className="block text-[10px] text-foreground-400">{formatSourceDate(recipient.sourceStartsAt)}</span>}</td><td className="px-3 py-3 text-foreground-500">{formatDate(recipient.assignedAt)}</td><td className="px-3 py-3"><Status status={recipient.responseStatus} /></td></tr>)}{!recipients.length && !error && <tr><td colSpan={6} className="p-10 text-center text-foreground-400">No assigned recipients found.</td></tr>}</tbody></table></div>}
     {total > pageSize && <div className="mt-4 flex items-center justify-between"><button type="button" disabled={page === 1} onClick={() => setPage(value => value - 1)} className={`${button} border disabled:opacity-40`}>Previous</button><span className="text-xs text-foreground-500">Page {page} of {pages}</span><button type="button" disabled={page >= pages} onClick={() => setPage(value => value + 1)} className={`${button} border disabled:opacity-40`}>Next</button></div>}
   </Modal>;
+}
+
+function GroupedLectureFilter({ sources, value, onChange }: { sources: FeedbackAssignmentSource[]; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const selected = sources.find(source => source.key === value);
+  const totalAssignments = sources.reduce((count, source) => count + source.assignedCount, 0);
+  const groups = useMemo(() => {
+    const normalised = query.trim().toLowerCase();
+    const grouped = new Map<string, { name: string; context: string; items: FeedbackAssignmentSource[] }>();
+    for (const source of sources) {
+      const key = lectureSourceGroupKey(source);
+      const name = source.subtitle.trim() || 'Other lectures';
+      const context = lectureSourceContext(source);
+      const groupMatches = `${name} ${context}`.toLowerCase().includes(normalised);
+      if (normalised && !groupMatches && !sourceOptionLabel(source).toLowerCase().includes(normalised)) continue;
+      const group = grouped.get(key) || { name, context, items: [] };
+      group.items.push(source);
+      grouped.set(key, group);
+    }
+    return [...grouped.entries()].map(([key, group]) => ({
+      key, ...group, items: group.items.sort((left, right) => (right.startsAt || '').localeCompare(left.startsAt || '')),
+    })).sort((left, right) => left.name.localeCompare(right.name) || left.context.localeCompare(right.context));
+  }, [query, sources]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const key = lectureSourceGroupKey(selected);
+    setExpanded(current => current.has(key) ? current : new Set([...current, key]));
+  }, [selected]);
+
+  const choose = (nextValue: string) => {
+    onChange(nextValue);
+    setOpen(false);
+    setQuery('');
+  };
+  const toggleGroup = (name: string) => setExpanded(current => {
+    const next = new Set(current);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
+
+  return <div className="relative">
+    <button id="feedback-source-filter" type="button" role="combobox" aria-label="Filter by lecture" aria-controls="feedback-lecture-options" aria-expanded={open} onClick={() => setOpen(current => !current)} className="flex w-full items-center justify-between gap-3 rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-left text-xs text-foreground-800 shadow-sm">
+      <span className="min-w-0"><span className="block truncate font-semibold">{selected ? selected.title : `All lectures (${totalAssignments} assignments)`}</span>{selected && <span className="mt-0.5 block truncate text-[10px] text-foreground-400">{selected.subtitle}{selected.startsAt ? ` · ${formatSourceDate(selected.startsAt)}` : ''} · {selected.assignedCount} assigned · {selected.responseCount} responses</span>}</span>
+      <i className={`ri-arrow-down-s-line shrink-0 text-base text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+    </button>
+    {open && <div id="feedback-lecture-options" className="absolute inset-x-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-foreground-200 bg-white shadow-xl">
+      <div className="border-b border-foreground-100 p-2"><div className="flex items-center gap-2 rounded-lg border border-foreground-200 px-3 py-2"><i className="ri-search-line text-foreground-400" aria-hidden="true" /><input autoFocus type="search" aria-label="Search lectures" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setOpen(false); }} placeholder="Search module, lecture or date" className="min-w-0 flex-1 bg-transparent text-xs outline-none" /></div></div>
+      <div role="listbox" aria-label="Lectures grouped by module" className="max-h-80 overflow-y-auto p-2">
+        <button type="button" role="option" aria-selected={!value} onClick={() => choose('')} className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs ${!value ? 'bg-primary-50 font-semibold text-primary-700' : 'text-foreground-700 hover:bg-background-100'}`}><span>All lectures</span><span className="text-[10px] text-foreground-400">{totalAssignments} assignments</span></button>
+        {groups.map(group => {
+          const isExpanded = Boolean(query) || expanded.has(group.key);
+          const assigned = group.items.reduce((count, item) => count + item.assignedCount, 0);
+          return <div key={group.key} className="border-t border-foreground-100 pt-1 first:border-0">
+            <button type="button" aria-expanded={isExpanded} onClick={() => toggleGroup(group.key)} className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left hover:bg-background-100"><span className="min-w-0"><span className="block truncate text-xs font-bold text-foreground-800">{group.name}</span>{group.context && <span className="mt-0.5 block truncate text-[10px] text-foreground-400">{group.context}</span>}</span><span className="flex shrink-0 items-center gap-2 text-[10px] text-foreground-400">{group.items.length} session{group.items.length === 1 ? '' : 's'} · {assigned} assigned<i className={`ri-arrow-down-s-line text-sm transition-transform ${isExpanded ? 'rotate-180' : ''}`} aria-hidden="true" /></span></button>
+            {isExpanded && <div role="group" aria-label={`${group.name}${group.context ? ` — ${group.context}` : ''} lectures`} className="mb-1 ml-3 border-l-2 border-primary-100 pl-2">{group.items.map(source => <button key={source.key} type="button" role="option" aria-selected={source.key === value} onClick={() => choose(source.key)} className={`mb-1 w-full rounded-lg px-3 py-2 text-left ${source.key === value ? 'bg-primary-50 text-primary-700' : 'text-foreground-700 hover:bg-background-100'}`}><span className="block truncate text-xs font-semibold">{source.title}</span><span className="mt-0.5 block text-[10px] text-foreground-400">{source.startsAt ? formatSourceDate(source.startsAt) : 'Date not recorded'} · {source.assignedCount} assigned · {source.responseCount} responses</span></button>)}</div>}
+          </div>;
+        })}
+        {!groups.length && <p role="status" className="px-3 py-8 text-center text-xs text-foreground-400">No lectures match your search.</p>}
+      </div>
+    </div>}
+  </div>;
+}
+
+function lectureSourceGroupKey(source: FeedbackAssignmentSource) {
+  return source.moduleCatalogueId && source.groupId
+    ? `${source.moduleCatalogueId}::${source.groupId}`
+    : source.moduleCatalogueId || source.groupId || source.subtitle.trim() || source.key;
+}
+
+function lectureSourceContext(source: FeedbackAssignmentSource) {
+  return [source.programmeName, source.cohortName, source.groupName].filter(Boolean).join(' · ');
 }
 
 function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onClose: () => void }) {

@@ -6,7 +6,7 @@ import AttendancePage from './page';
 import { lectureCounts } from './lectureCounts';
 import AbsenceReportForm from './components/AbsenceReportForm';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { peekAttendanceWorkspace, type AttendanceLecture, type AttendanceWorkspace } from '@/api/attendanceLectures';
+import { peekAttendanceWorkspace, type AttendanceLecture, type AttendanceMode, type AttendanceWorkspace } from '@/api/attendanceLectures';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule } from '@/api/trainingPlanDashboard';
 import { clearAllCachedResources } from '@/api/cachedRequest';
@@ -702,14 +702,39 @@ describe('Attendance lecture workspace', () => {
     expect(destination.pathname).not.toContain('/monthly-logs/');
   });
 
-  it('requests manager approval and keeps Live Sessions effective while pending', async () => {
-    mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'Lazy Mode' }));
-    expect(await screen.findByText('Your request has been emailed to your manager for approval.')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/Awaiting manager approval/)).toBeInTheDocument());
-    expect(payload.mode.mode).toBe('live');
-    expect(JSON.parse(String(posts[0].body))).toEqual({ mode: 'lazy' });
-    expect(screen.getByText('Absence reminders: paused')).toBeInTheDocument();
+  describe.each(['apprenticeship', 'commercial'])('%s attendance mode is read-only', kind => {
+    it.each<{ label: string; mode: Partial<AttendanceMode> }>([
+      { label: 'live', mode: {} },
+      { label: 'lazy', mode: { mode: 'lazy', remindersEnabled: false } },
+      { label: 'pending approval', mode: { requestedMode: 'lazy', status: 'pending', remindersEnabled: false } },
+      { label: 'no manager', mode: { managerAvailable: false } },
+      { label: 'unavailable', mode: { available: false } },
+      { label: 'expired approval', mode: { status: 'expired' } },
+    ])('disables every mode control when $label without changing saved state', async ({ mode }) => {
+      learnerIdentity.kind = kind;
+      payload.mode = { ...payload.mode, ...mode, plannedLiveHours: 4, plannedRecordedHours: 2 };
+      const savedMode = { ...payload.mode };
+      mount();
+      const controls = await screen.findByRole('group', { name: 'Attendance mode' });
+      const toggle = within(controls).getByRole('switch', { name: 'Lazy Mode' });
+      const lazy = (savedMode.requestedMode || savedMode.mode) === 'lazy';
+      expect(toggle).toHaveAttribute('aria-checked', String(lazy));
+      expect(within(controls).getByRole('button', { name: 'Live Sessions' })).toHaveAttribute('aria-pressed', String(!lazy));
+      for (const control of [toggle, ...within(controls).getAllByRole('button')]) {
+        expect(control).toBeDisabled();
+        fireEvent.click(control);
+      }
+      expect(posts).toEqual([]);
+      expect(payload.mode).toEqual(savedMode);
+      expect(screen.getByText(/Your attendance mode is managed by your learning team/)).toBeInTheDocument();
+      expect(screen.queryByText(/select Lazy Mode|Switch to Lazy Mode/i)).not.toBeInTheDocument();
+      if (savedMode.available) {
+        expect(screen.getByText('4 live')).toBeInTheDocument();
+        expect(screen.getByText('2 recorded')).toBeInTheDocument();
+        expect(screen.getByText(`Absence reminders: ${savedMode.remindersEnabled ? 'enabled' : 'paused'}`)).toBeInTheDocument();
+      }
+      if (savedMode.requestedMode) expect(screen.getByText(/Awaiting manager approval/)).toBeInTheDocument();
+    });
   });
 
   it('refreshes live source edits when the window regains focus', async () => {

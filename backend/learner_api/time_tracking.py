@@ -231,6 +231,7 @@ def start_time_tracking(request):
     except TrackingSessionError as exc:
         return _error(str(exc), 400)
     from django.conf import settings
+    session['rewardTracking'] = False
     if getattr(settings, 'KBC_SHARED_REWARDS_READY', False) is True:
         from .reward_tracking import capability
         from .mobile import MobileError

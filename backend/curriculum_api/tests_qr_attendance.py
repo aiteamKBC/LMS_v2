@@ -49,6 +49,7 @@ class QRPolicyTests(SimpleTestCase):
             training_plan=None, learning_plan=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}])
         self.mods = [module(), module('M2', group='G2', cohort='C2'), module('OTHER', 'P2', 'G3', 'C3')]
         self.occs = [occurrence(), occurrence('O2', 'M2', offset=100), occurrence('O3', 'OTHER')]
+        self.components = []
         for name, result in (
             ('students', [self.student]),
             ('placements', [dict(programme_id='P1', group_id='G1', cohort_id='C1')]),
@@ -60,11 +61,66 @@ class QRPolicyTests(SimpleTestCase):
         ):
             self.enterContext(mock.patch.object(store, name, return_value=result))
         self.enterContext(mock.patch.object(store, 'occurrences', side_effect=lambda ids: [o for o in self.occs if o['source_module_id'] in ids]))
+        self.enterContext(mock.patch.object(store, 'lecture_components', side_effect=lambda ids: [c for c in self.components if c['module_catalogue_id'] in ids]))
         self.enterContext(mock.patch.object(qr.timezone, 'now', return_value=NOW))
 
     def lectures(self, module_id='M1'):
         _, _, _, catalog, eligible = qr.context('student@example.test')
         return qr.lecture_options(module_id, catalog, eligible)
+
+    def test_chronological_list_keeps_fifth_lecture_selected_without_promoting_it(self):
+        self.occs = [occurrence(f'O{number}', offset=(number-5)*24*7)
+                     for number in (5, 6, 4, 7, 3, 8, 2, 9, 1)]
+        result = self.request({'action': 'lectures', 'email': 'student@example.test', 'moduleId': 'M1'})
+        body = json.loads(result.content)
+        self.assertEqual([row['id'] for row in body['lectures']], [f'O{n}' for n in range(1, 10)])
+        self.assertEqual(body['suggestedOccurrenceId'], 'O5')
+        self.assertEqual(qr.lookup('student@example.test')['selection']['occurrenceId'], 'O5')
+
+    def test_authored_title_uses_saved_occurrence_identity_not_module_or_week_position(self):
+        self.components = [dict(id='C1', module_catalogue_id='M1', title='P1:LIVE:Introduction',
+                                settings_json={'teamsOccurrenceId': 'O1', 'teamsLiveSessionId': 'S1'}),
+                           dict(id='C2', module_catalogue_id='M1', title='Wrong lecture',
+                                settings_json={'teamsOccurrenceId': 'OTHER', 'teamsLiveSessionId': 'S1', 'teamsSessionNumber': 1})]
+        self.assertEqual(self.lectures()[0]['title'], 'P1:LIVE:Introduction')
+        self.components[0]['title'] = 'Updated authored title'
+        self.assertEqual(self.lectures()[0]['title'], 'Updated authored title')
+
+    def test_title_supports_series_number_and_legacy_settings_without_guessing_dates(self):
+        for settings in ({'teamsLiveSessionId': 'S1', 'teamsSessionNumber': '1'},
+                         {'legacySettings': json.dumps({'teamsLiveSessionId': 'S1', 'teamsSessionNumber': 1})}):
+            self.components = [dict(id='C1', module_catalogue_id='M1', title='Authored title', settings_json=json.dumps(settings))]
+            self.assertEqual(self.lectures()[0]['title'], 'Authored title')
+        self.components[0]['settings_json'] = {'sessionDate': NOW.date().isoformat()}
+        self.assertEqual(self.lectures()[0]['title'], 'Session 1')
+
+    def test_shared_title_prefers_selected_delivery_then_source_without_cross_group_leak(self):
+        self.mods[0]['shared_source'] = 'OTHER'
+        self.components = [dict(id='SOURCE', module_catalogue_id='OTHER', title='Source title', settings_json={'teamsOccurrenceId': 'O3'}),
+                           dict(id='UNRELATED', module_catalogue_id='M2', title='Other group title', settings_json={'teamsOccurrenceId': 'O3'})]
+        def shared_title():
+            return next(row['title'] for row in self.lectures() if row['id'] == 'O3')
+        self.assertEqual(shared_title(), 'Source title')
+        self.components.append(dict(id='DELIVERY', module_catalogue_id='M1', title='Delivery title', settings_json={'teamsOccurrenceId': 'O3'}))
+        self.assertEqual(shared_title(), 'Delivery title')
+        self.assertTrue(all(row['moduleId'] == 'M1' for row in self.lectures()))
+
+    def test_missing_blank_ambiguous_or_unverified_title_keeps_occurrence_selectable(self):
+        component = dict(id='C1', module_catalogue_id='M1', title='Title', settings_json={'teamsOccurrenceId': 'O1'})
+        for components in ([], [{**component, 'title': ' '}],
+                           [component, {**component, 'id': 'C2', 'title': 'Conflicting'}],
+                           [{**component, 'settings_json': {'teamsOccurrenceId': 'O1', 'teamsCalendarBinding': 'unverified'}}],
+                           [{**component, 'settings_json': {'teamsOccurrenceId': 'O1', 'teamsLiveSessionId': 'OTHER'}}]):
+            self.components = components
+            self.assertEqual(self.lectures()[0]['title'], 'Session 1')
+            self.assertEqual(qr.lookup('student@example.test')['selection']['occurrenceId'], 'O1')
+
+    def test_additional_meeting_title_does_not_label_inherited_main_series(self):
+        self.components = [dict(id='C1', module_catalogue_id='M1', title='Additional lecture',
+                           settings_json={'extraTeamsLiveSessionId': 'EXTRA', 'teamsLiveSessionId': 'S1', 'teamsOccurrenceId': 'O1'})]
+        self.assertEqual(self.lectures()[0]['title'], 'Session 1')
+        self.occs[0]['live_session_id'] = 'EXTRA'
+        self.assertEqual(self.lectures()[0]['title'], 'Additional lecture')
 
     def test_trimmed_case_insensitive_email(self):
         self.assertEqual(qr.email_value('  Student@Example.TEST  '), 'student@example.test')
@@ -165,14 +221,69 @@ class QRPolicyTests(SimpleTestCase):
         with self.assertRaises(qr.AttendanceError):
             self.lectures()
 
-    def test_past_present_future_and_late_dates_are_all_available(self):
+    def test_all_dates_remain_visible_but_only_same_day_can_be_confirmed(self):
         for offset in (-1000, -24, -4, -1, 0, 1, 4, 1000):
             with self.subTest(offset=offset):
                 self.occs[:] = [occurrence(offset=offset, status='completed' if offset < 0 else 'scheduled')]
                 self.assertEqual(len(self.lectures()), 1)
                 with mock.patch.object(store.transaction, 'atomic'), mock.patch.object(store.connection, 'cursor'), \
-                        mock.patch.object(store, 'insert_evidence', return_value=(True, NOW)):
-                    self.assertEqual(store.confirm('student@example.test', 'M1', 'O1'), (True, NOW))
+                        mock.patch.object(store, 'insert_evidence', return_value=(True, NOW)) as insert:
+                    if offset in (-4, -1, 0, 1, 4):
+                        self.assertEqual(store.confirm('student@example.test', 'M1', 'O1'), (True, NOW))
+                    else:
+                        with self.assertRaises(qr.AttendanceError) as error:
+                            store.confirm('student@example.test', 'M1', 'O1')
+                        self.assertEqual(error.exception.code, 'outside_attendance_day')
+                        insert.assert_not_called()
+
+    def test_day_boundaries_follow_london_including_short_and_long_dst_days(self):
+        for start, opening, closing in (
+            ('2026-11-07T10:00:00+00:00', '2026-11-07T00:00:00+00:00', '2026-11-08T00:00:00+00:00'),
+            ('2026-07-01T23:30:00+00:00', '2026-07-01T23:00:00+00:00', '2026-07-02T23:00:00+00:00'),
+            ('2026-03-29T10:00:00+00:00', '2026-03-29T00:00:00+00:00', '2026-03-29T23:00:00+00:00'),
+            ('2026-10-25T10:00:00+00:00', '2026-10-24T23:00:00+00:00', '2026-10-26T00:00:00+00:00'),
+        ):
+            self.occs[0]['scheduled_start'] = datetime.fromisoformat(start)
+            self.occs[0]['scheduled_end'] = datetime.fromisoformat(start) + timedelta(hours=1)
+            first, last = datetime.fromisoformat(opening), datetime.fromisoformat(closing)
+            for now, allowed in ((first - timedelta(microseconds=1), False), (first, True),
+                                 (last - timedelta(microseconds=1), True), (last, False)):
+                with self.subTest(start=start, now=now), mock.patch.object(qr.timezone, 'now', return_value=now), \
+                        mock.patch.object(store.transaction, 'atomic'), mock.patch.object(store.connection, 'cursor'), \
+                        mock.patch.object(store, 'insert_evidence', return_value=(True, now)) as insert:
+                    self.assertEqual(self.lectures()[0]['dueToday'], allowed)
+                    if allowed:
+                        self.assertEqual(store.confirm('student@example.test', 'M1', 'O1'), (True, now))
+                    else:
+                        with self.assertRaises(qr.AttendanceError):
+                            store.confirm('student@example.test', 'M1', 'O1')
+                        insert.assert_not_called()
+
+    def test_confirmation_rechecks_day_after_preview_and_ignores_client_day_claims(self):
+        self.assertTrue(self.lectures()[0]['dueToday'])
+        with mock.patch.object(qr.timezone, 'now', return_value=NOW + timedelta(days=1)), \
+                mock.patch.object(store.transaction, 'atomic'), mock.patch.object(store.connection, 'cursor'), \
+                mock.patch.object(store, 'insert_evidence') as insert:
+            result = self.request({'action': 'confirm', 'email': 'student@example.test',
+                                   'moduleId': 'M1', 'occurrenceId': 'O1', 'dueToday': True,
+                                   'serverNow': NOW.isoformat(), 'timeZone': 'Pacific/Honolulu'})
+            self.assertEqual(result.status_code, 400)
+            self.assertEqual(json.loads(result.content)['code'], 'outside_attendance_day')
+            insert.assert_not_called()
+
+    def test_running_overnight_lecture_from_previous_day_is_not_suggested(self):
+        self.occs[:] = [occurrence()]
+        self.occs[0]['scheduled_start'] = NOW - timedelta(days=1)
+        self.assertTrue(self.lectures()[0]['current'])
+        self.assertEqual(qr.lookup('student@example.test')['suggestions'], [])
+
+    def test_completed_today_is_suggested_and_missing_end_does_not_block_same_day(self):
+        self.occs[:] = [occurrence(status='completed')]
+        self.occs[0]['scheduled_end'] = None
+        self.assertEqual(qr.lookup('student@example.test')['selection']['occurrenceId'], 'O1')
+        with mock.patch.object(store.transaction, 'atomic'), mock.patch.object(store.connection, 'cursor'), \
+                mock.patch.object(store, 'insert_evidence', return_value=(True, NOW)):
+            self.assertEqual(store.confirm('student@example.test', 'M1', 'O1'), (True, NOW))
 
     def test_invalid_occurrences_and_series_are_excluded_but_completed_is_allowed(self):
         for field in ('status', 'series_status'):
@@ -194,6 +305,7 @@ class QRPolicyTests(SimpleTestCase):
         self.assertEqual(self.lectures()[0]['startsAt'], '2026-07-01T09:00:00+00:00')
 
     def test_confirmation_rechecks_identity_and_preserves_selected_delivery(self):
+        self.occs[1] = occurrence('O2', 'M2')
         with mock.patch.object(store.transaction, 'atomic'), mock.patch.object(store.connection, 'cursor'), \
                 mock.patch.object(store, 'insert_evidence', return_value=(True, NOW)) as insert:
             self.assertEqual(store.confirm('student@example.test', 'M2', 'O2'), (True, NOW))
@@ -250,8 +362,9 @@ class QRPolicyTests(SimpleTestCase):
                 self.assertEqual(qr.lookup('student@example.test')['selection'],
                                  {'moduleId': 'M1', 'occurrenceId': 'O1'})
         self.occs[0]['status'] = 'completed'
-        self.assertEqual(qr.lookup('student@example.test')['suggestions'], [])
-        self.assertEqual(len(self.lectures()), 1)  # Completed remains manually available.
+        # Completion does not close the agreed all-day attendance window.
+        self.assertEqual(qr.lookup('student@example.test')['selection']['occurrenceId'], 'O1')
+        self.assertEqual(len(self.lectures()), 1)
 
     def test_today_fallback_uses_london_date_across_summer_midnight(self):
         summer = datetime(2026, 7, 1, 23, 30, tzinfo=utc.utc)
@@ -421,6 +534,49 @@ class QRPolicyTests(SimpleTestCase):
     def test_production_never_generates_a_localhost_qr(self):
         with self.assertRaises(qr.AttendanceError):
             qr.public_url()
+
+
+class QRComponentReadTests(SimpleTestCase):
+    databases = {'default'}
+
+    def setUp(self):
+        from django.db import connection
+        self.assertEqual(connection.settings_dict['ENGINE'], 'django.db.backends.sqlite3')
+        self.assertEqual(connection.settings_dict['NAME'], ':memory:')
+        self.cursor = connection.cursor()
+        self.addCleanup(self.cursor.close)
+        self.cursor.execute("ATTACH DATABASE ':memory:' AS curriculum")
+        self.addCleanup(lambda: self.cursor.execute('DETACH DATABASE curriculum'))
+        self.cursor.execute('''CREATE TABLE curriculum.weeks (
+            id text, module_catalogue_id text, deleted_at text,
+            is_programme_deleted boolean, library_state text)''')
+        self.cursor.execute('''CREATE TABLE curriculum.components (
+            id text, week_id text, module_catalogue_id text, title text, settings_json text,
+            type text, deleted_at text, is_programme_deleted boolean, library_state text)''')
+        self.cursor.execute("INSERT INTO curriculum.weeks VALUES ('W1','M1',NULL,false,''), ('W2','M2',NULL,false,'')")
+        for key, module_id, week_id, kind in [('C1', 'M1', 'W1', 'live_session'),
+                                              ('C2', 'M2', 'W2', 'live-session'),
+                                              ('C3', 'M1', 'W1', 'video'),
+                                              ('C4', 'M1', 'W2', 'live_session')]:
+            self.cursor.execute('INSERT INTO curriculum.components VALUES (%s,%s,%s,%s,%s,%s,NULL,false,%s)',
+                                [key, week_id, module_id, f'Authored {key}', '{"teamsOccurrenceId":"O1"}', kind, ''])
+
+    def test_real_reader_scopes_titles_to_delivery_and_matching_week(self):
+        self.assertEqual(store.lecture_components([]), [])
+        self.assertEqual([row['id'] for row in store.lecture_components(['M1'])], ['C1'])
+        self.assertEqual([row['id'] for row in store.lecture_components(['M1', 'M2'])], ['C1', 'C2'])
+        self.assertEqual(store.lecture_components(["M1' OR 1=1 --"]), [])
+        components = store.lecture_components(['M1'])
+        self.assertEqual(qr.lecture_title(occurrence(), components, ['M1']), 'Authored C1')
+
+    def test_deleted_archived_and_library_components_or_weeks_do_not_supply_titles(self):
+        for table, key in [('components', 'C1'), ('weeks', 'W1')]:
+            for field, value, reset in [('deleted_at', '2026-11-01', None),
+                                        ('is_programme_deleted', True, False), ('library_state', 'library', '')]:
+                with self.subTest(table=table, field=field):
+                    self.cursor.execute(f'UPDATE curriculum.{table} SET {field}=%s WHERE id=%s', [value, key])
+                    self.assertEqual(store.lecture_components(['M1']), [])
+                    self.cursor.execute(f'UPDATE curriculum.{table} SET {field}=%s WHERE id=%s', [reset, key])
 
 
 class SQLiteCursor:

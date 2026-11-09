@@ -453,6 +453,22 @@ export async function uploadWeekComponentResource(componentId: string, file: Fil
   return uploadComponentFile<WeekComponentUploadResult>(`${API_BASE_URL}/curriculum/week-components/${encodeURIComponent(componentId)}/upload/`, form);
 }
 
+/** A file stored under a module's upload folder, attached anywhere or not. */
+export interface StoredModuleUpload {
+  fileName: string;
+  url: string;
+  size: number;
+  contentType: string;
+  /** The component it was uploaded for (its folder), which may no longer use it. */
+  componentId: string;
+  uploadedAt: string | null;
+}
+
+export async function fetchModuleStoredUploads(moduleCatalogueId: string, signal?: AbortSignal): Promise<{ files: StoredModuleUpload[]; truncated: boolean }> {
+  const payload = await request<{ files?: StoredModuleUpload[]; truncated?: boolean }>(`/curriculum/module-uploads/${encodeURIComponent(moduleCatalogueId)}/`, { signal });
+  return { files: payload.files || [], truncated: Boolean(payload.truncated) };
+}
+
 export async function fetchComponentPointsDefaults(): Promise<Partial<Record<ModuleComponentType, number>>> {
   try {
     const rules = await fetchPointsRules();

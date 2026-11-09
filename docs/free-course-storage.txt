@@ -1,0 +1,120 @@
+Standalone course storage and branch-content import
+==================================================
+
+Scope
+-----
+Use curriculum.free_courses, free_course_weeks and free_programme_components
+for the standalone catalogue, including GBP sale metadata. Preserve the shared
+Module Builder, assignment, completion, hours and conversion identities. Import
+new course CONTENT from lms_ideal_architecture; never import branch learners,
+assignments, completions, sessions, or django_migrations.
+
+Relationships
+-------------
+free_courses.id
+  -> free_course_weeks.course_id
+     -> free_programme_components.free_module_id
+
+free_courses.module_catalogue_id       -> modules.module_catalogue_id (unique)
+free_course_weeks.authoring_week_id    -> weeks.id (unique)
+free_programme_components.authoring_component_id -> components.id (unique)
+
+The shared modules/weeks/components rows remain the runtime identities used by
+learner plans, progress, evidence and hours. This is an additive bridge, not a
+replacement of those records. The ideal branch's exactly-one-owner constraint
+on weeks is deliberately NOT copied: that would conflict with these existing
+runtime references. Original legacy course/link/component IDs survive.
+
+Standalone sale metadata lives on free_courses:
+  is_for_sale boolean NOT NULL DEFAULT false
+  price numeric(10,2) NULL
+  currency varchar(3) NOT NULL DEFAULT 'GBP'
+
+Sale requires a positive price; disabling sale requires price=NULL. Currency
+must be GBP. The existing modules pricing columns remain a transactionally
+synchronized compatibility mirror for existing API clients, revisions and
+conversion. They are not dropped by this release. No checkout or access gate
+is added.
+
+Additional lifecycle columns:
+  free_courses.managed_by_builder distinguishes the new workflow from legacy
+    self-enrolment. This remains true after conversion or runtime deletion.
+  free_courses.converted_at records conversion to an ordinary module.
+  deleted_at on all three catalogue tables preserves archived records.
+
+Database triggers mirror Module Builder metadata/content changes into these
+catalogue records in the same transaction, including direct component updates,
+archive/restore and conversion. Price updates on free_courses update the runtime
+mirror as well. FK and owner checks reject mismatched course/week/component
+links. Hard deletion of a runtime identity detaches its link and archives the
+catalogue record; it does not erase historical source rows.
+
+The legacy week_id columns are retained for original records. Use the explicit
+authoring_* links to resolve current runtime content; do not infer runtime IDs
+from source settings or from week-link IDs in a different branch.
+
+Import behavior
+---------------
+Migration 0080 creates missing tables, adds links/pricing/lifecycle columns,
+installs synchronization and backfills existing adopted records. It never
+updates learner plans, submissions, completions or hours ledgers.
+
+The content importer:
+  - Validates ownership and identities before any content write.
+  - Preserves every existing course ID, including converted/archived courses.
+  - Rejects source or runtime content IDs owned by another course.
+  - Imports new source records and their shared runtime structure atomically.
+  - Keeps summaries, content and existing resource URLs; performs no upload.
+  - Keeps inactive branch weeks archived, with their content retained.
+  - Does not assign learners, create meetings or award historical hours.
+  - Is idempotent; a retry does not overwrite edits or create another course.
+
+The 2026-11-08 read-only comparison found 9 common courses, 16 branch-only
+courses and 4 application-only legacy courses. Shared content matched except
+for branch hours being zero and different week-link IDs. Existing application
+hours and IDs must win. The 16 additions contain 34 weeks and 390 activities,
+including 3 inactive weeks. Re-run the plan against the actual release target;
+these counts are observations, not hard-coded migration rules.
+
+Release procedure
+-----------------
+1. Review and merge the code and migrations through the current branch's PR.
+   Follow AGENTS.md for the verified server checkout and one-release-at-a-time
+   deployment. Record the old deployed commit/build and database target.
+2. Verify the actual target database against the production application config.
+   Retain a database restore point and a private export of all three free
+   tables, their schema/constraints/triggers and the linked runtime records.
+   Keep content exports and backups outside Git. Never copy a branch's
+   django_migrations table or overwrite the application's environment file.
+3. Deploy the reviewed backend code and apply curriculum_api migrations through
+   0081_merge_free_courses_qr_attendance using the project's normal migration
+   mechanism. This joins 0080_free_course_storage with main's independent
+   0079_qr_attendance history; neither existing 0079 migration is renamed.
+   The legacy-API filter change and the schema belong in the same release:
+   older code does not recognize every managed_by_builder record.
+4. From backend, preview the content import:
+     python manage.py import_free_course_content --export <private-export.json>
+   It reports counts and a target fingerprint without credentials.
+5. Apply to that same verified target, retaining a fresh private backup:
+     python manage.py import_free_course_content --export <private-export.json> --apply --expected-target <plan-fingerprint> --backup <new-private-backup.json>
+6. Verify the table links, price round-trip, standalone catalogue, direct
+   assignment for both learner types, preserved historical completions and
+   hours, inactive-week archive, and conversion to a normal module. Re-run
+   the preview: coursesToImport must be zero. Follow normal service health and
+   release verification in AGENTS.md. No live Teams operation is required.
+
+Rollback and limits
+-------------------
+Schema application and each import are transactional; failure rolls back their
+writes. Reverse migration is intentionally a no-op so rollback cannot erase
+prices or imported history. Prefer a corrective migration after a live release.
+Do not blindly restore whole tables or delete imported modules after learners
+have started using them. Any data restore must reconcile post-release edits
+and follow AGENTS.md's confirmation requirement for destructive operations.
+
+Automated checks use a verified isolated PostgreSQL cluster and blocked external
+network, including conversion, old completion preservation, import rollback,
+idempotency, ownership, archives and pricing. A separate private rehearsal can
+load content exports locally; it must never connect a mutating test runner to
+the application database. Tests do not establish production deployment or live
+Microsoft availability.

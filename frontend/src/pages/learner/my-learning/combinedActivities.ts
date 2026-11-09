@@ -21,6 +21,7 @@ export function combinedActivities(entries: SubjectEntry[]) {
     const quiz = pairs.get(entry.id);
     if (!quiz) return entry;
     return { ...entry, category: 'Reading + Quiz',
+      readingCompleted: entry.completed, pairedQuiz: quiz,
       completed: entry.completed && quiz.completed,
       bestScorePercent: quiz.bestScorePercent ?? entry.bestScorePercent };
   });

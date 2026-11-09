@@ -33,7 +33,7 @@ vi.mock('@/components/feature/ReflectionWindow.helpers', () => ({
 }));
 const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: false }] };
 function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
-const renderPage = () => render(<MemoryRouter initialEntries={['/quiz/commercial/501/1']}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
+const renderPage = (kind = 'commercial') => render(<MemoryRouter initialEntries={[`/quiz/${kind}/501/1`]}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
 
 describe('quiz requirements loading', () => {
   beforeEach(() => {
@@ -64,6 +64,53 @@ describe('quiz requirements loading', () => {
       },
     });
   });
+  it.each([
+    ['commercial', true], ['apprenticeship', true], ['commercial', false], ['apprenticeship', false],
+  ] as const)('saves %s quiz answers when rewards are unavailable (previously enabled: %s)', async (kind, rewardTracking) => {
+    mocks.detail.mockResolvedValue(detail);
+    mocks.start.mockResolvedValue({ sessionId: `quiz-disabled-${kind}-${rewardTracking}`, trackingToken: 'original-token',
+      startedAt: '2026-10-01T09:00:00Z', countingMode: 'active_quiz', rewardTracking, persistent: true });
+    mocks.checkpoint.mockImplementation(async session => ({ ...session, savedSeconds: 0 }));
+    mocks.submit.mockResolvedValue({
+      attempt: { kind: 'quiz', quizId: 1, attempt: 1, passed: true, timeTaken: '00:00',
+        questions: [], achievedScore: 1, totalScore: 1, submittedAt: '2026-10-01T09:00:00Z' },
+      breakdown: [], earned: 1, possible: 1, grade: 1, achievedScore: 1, totalScore: 1, passed: true,
+    });
+    const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      code: 'rewards_not_enabled', error: 'Study time could not be confirmed. rewards not enabled.',
+    }), { status: 409 }));
+    renderPage(kind);
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    expect(await screen.findByText(/Quiz Passed/)).toBeVisible();
+    expect(screen.getByText('Your time and progress were saved. Study-time points are not enabled for this activity.')).toBeVisible();
+    expect(mocks.submit).toHaveBeenCalledWith(1, kind, '501', expect.objectContaining({
+      trackingToken: 'original-token', answers: { '1': 1 }, timeTakenSeconds: 0,
+    }));
+    expect(request).toHaveBeenCalledTimes(rewardTracking ? 1 : 0);
+    expect(localStorage.getItem(`kbc-reward-intervals:v1:quiz-disabled-${kind}-${rewardTracking}`)).toBeNull();
+    request.mockRestore();
+  });
+
+  it('keeps quiz answers and the reward draft if progress saving fails after the policy refusal', async () => {
+    mocks.detail.mockResolvedValue(detail);
+    mocks.start.mockResolvedValue({ sessionId: 'quiz-retry-disabled', trackingToken: 'original-token',
+      startedAt: '2026-10-01T09:00:00Z', countingMode: 'active_quiz', rewardTracking: true });
+    mocks.submit.mockRejectedValueOnce(new Error('Quiz could not be saved.'));
+    const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ code: 'rewards_not_enabled' }), { status: 409 }));
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    expect(await screen.findByText('Quiz could not be saved.')).toBeVisible();
+    expect(screen.queryByText(/Your time and progress were saved/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Measured outcome/ })).toBeVisible();
+    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({ answers: { '1': 1 }, trackingToken: 'original-token' }));
+    expect(JSON.parse(localStorage.getItem('kbc-reward-intervals:v1:quiz-retry-disabled')!).inFlight).not.toBeNull();
+    request.mockRestore();
+  });
+
   it.each([0.75, null])('keeps allocated quiz hours (%s) separate from its time limit', async hours => {
     mocks.detail.mockResolvedValue({ ...detail, modules: ['Project controls'],
       week: [{ module: 'Project controls', moduleId: 'M1', week: 'Week 1', weekId: 'W1' }], components: [{

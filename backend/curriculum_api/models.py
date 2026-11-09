@@ -152,6 +152,9 @@ class ModuleAuthoringModule(StatusLifecycleModel):
     are read from their own rows (``curriculum_names``), never stored here.
     """
     module_catalogue_id = models.CharField(max_length=128, primary_key=True)
+    is_for_sale = models.BooleanField(default=False)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=3, default='GBP')
     programme_id = models.CharField(max_length=255, blank=True, null=True)
     cohort_id = models.CharField(max_length=255, blank=True, null=True)
     group_id = models.CharField(max_length=255, blank=True, null=True)
