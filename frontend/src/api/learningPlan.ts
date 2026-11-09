@@ -105,6 +105,8 @@ export interface LearningPlanResponse {
    * EnrolmentUser.free_courses). Independent of programme/group.
    */
   freeCourses: FreeCourseAssignment[];
+  /** Builder courses use `plan` module ids for assignment and hours. */
+  standaloneCourses?: { freeCourseId: string; moduleId: string; courseName: string }[];
   /** The learner's group's modules, for "reset to group default". */
   preset: LearningPlanModule[];
   /** Every catalogue module not already on the plan, for the add picker. */

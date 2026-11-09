@@ -695,6 +695,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
 
 
 def _serialize(learner):
+    from .free_course_catalogue import builder_free_courses
     programme = _s(learner.programme)
     group = _s(learner.group)
 
@@ -802,6 +803,8 @@ def _serialize(learner):
         # deliberately outside `plan`/`preset`/`totals` so they never touch hours
         # or KSBs — see EnrolmentUser.free_courses.
         "freeCourses": learner.free_courses if isinstance(learner.free_courses, list) else [],
+        # These courses are assigned via `plan`, so their hours are counted once.
+        "standaloneCourses": builder_free_courses(include_content=False),
         "preset": preset,
         # Anything in the catalogue not already on the plan, whichever programme
         # it belongs to. The picker defaults to the learner's own programme and

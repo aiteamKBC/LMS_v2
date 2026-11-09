@@ -41,6 +41,7 @@ def _learner(plan=None):
 
 class GroupSyncTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch('learner_api.free_course_catalogue.builder_free_courses', return_value=[]))
         self.enterContext(
             patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role="admin")),
         )

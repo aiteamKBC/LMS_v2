@@ -56,6 +56,8 @@ const FREE_COURSES_PROGRAMME_ID = 'FREE-COURSES';
 interface FreeCourseOption {
   freeCourseId: string;
   courseName: string;
+  moduleId?: string;
+  hours?: number;
 }
 
 function freeCoursesEqual(a: FreeCourseAssignment[], b: FreeCourseAssignment[]) {
@@ -265,6 +267,21 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   }, [needsPlacement, readOnly, place.programme, place.cohort]);
 
   const chosen = useMemo(() => new Set(plan.map((m) => m.moduleId)), [plan]);
+  const standaloneByModule = useMemo(() => new Map(
+    (data?.standaloneCourses ?? []).map(course => [course.moduleId, course]),
+  ), [data?.standaloneCourses]);
+  const displayedFreeCourses: FreeCourseOption[] = [
+    ...plan.flatMap(module => {
+      const course = standaloneByModule.get(module.moduleId);
+      return course ? [{ ...course, courseName: module.moduleTitle, hours: module.hours }] : [];
+    }),
+    ...freeCourses.filter(course => !plan.some(module => standaloneByModule.get(module.moduleId)?.freeCourseId === course.freeCourseId)),
+  ];
+  const allFreeCourseOptions: FreeCourseOption[] = [
+    ...(data?.standaloneCourses ?? []).filter(course => [...(data?.available ?? []), ...(data?.plan ?? []), ...(data?.preset ?? [])]
+      .some(module => module.moduleId === course.moduleId && !module.orphaned)),
+    ...freeCourseOptions.filter(course => !(data?.standaloneCourses ?? []).some(item => item.freeCourseId === course.freeCourseId)),
+  ];
 
   // Anything on the programme that isn't already on the plan. Derived from the
   // full catalogue rather than the server's `available`, so a module removed in
@@ -369,9 +386,16 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     setSearch('');
   };
 
-  // Free courses carry no hours/KSBs, so they are added and removed as a plain
-  // list — no catalogue tree to pull in like a module.
+  // Builder courses share the same plan as Module Builder assignments. Only
+  // unmigrated legacy courses remain in the separate assignment list.
   const addFreeCourse = (option: FreeCourseOption) => {
+    if (option.moduleId) {
+      const module = [...(data?.available ?? []), ...(data?.plan ?? []), ...(data?.preset ?? [])]
+        .find(item => item.moduleId === option.moduleId);
+      if (module && !chosen.has(module.moduleId)) add(module);
+      setFreeCoursePicker('');
+      return;
+    }
     freeDirtyRef.current = true;
     setFreeCourses((rows) =>
       rows.some((f) => f.freeCourseId === option.freeCourseId)
@@ -960,31 +984,30 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
             </div>
           )}
 
-          {/* Free courses — optional extras assigned to the learner. Held apart
-              from the modules above: no hours, no KSBs, no progress, and no
-              programme/group needed. */}
-          <div>
+          {/* Builder courses are also shown here, without adding their hours twice. */}
+          <section aria-label="Assigned free courses">
             <div className="flex items-baseline justify-between gap-3 mb-2">
               <h3 className="text-[13px] font-semibold text-foreground-800">Free courses</h3>
-              <span className="text-[11px] text-foreground-500">Extras — no hours or KSBs</span>
+              <span className="text-[11px] text-foreground-500">Hours shown here are included in the plan total</span>
             </div>
 
-            {freeCourses.length === 0 ? (
+            {displayedFreeCourses.length === 0 ? (
               <p className="text-[12px] text-foreground-400">
                 {readOnly ? 'No free courses assigned.' : 'No free courses assigned yet — add one below.'}
               </p>
             ) : (
               <ul className="rounded-xl border border-foreground-200/60 divide-y divide-foreground-200/40">
-                {freeCourses.map((f) => (
+                {displayedFreeCourses.map((f) => (
                   <li key={f.freeCourseId} className="flex items-center justify-between gap-3 px-3 py-2">
                     <span className="text-[13px] text-foreground-900 inline-flex items-center gap-2 min-w-0">
                       <i className="ri-gift-line text-primary-600 shrink-0" />
                       <span className="truncate">{f.courseName || f.freeCourseId}</span>
                     </span>
+                    {f.moduleId && <span className="ml-auto shrink-0 text-[12px] text-foreground-600">{formatHours(f.hours ?? 0)}</span>}
                     {!readOnly && (
                       <button
                         type="button"
-                        onClick={() => removeFreeCourse(f.freeCourseId)}
+                        onClick={() => f.moduleId ? remove(f.moduleId) : removeFreeCourse(f.freeCourseId)}
                         title={`Remove ${f.courseName || f.freeCourseId}`}
                         className="text-foreground-400 hover:text-red-600 cursor-pointer shrink-0"
                       >
@@ -997,11 +1020,11 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
             )}
 
             {!readOnly && (() => {
-              const assigned = new Set(freeCourses.map((f) => f.freeCourseId));
-              const available = freeCourseOptions.filter((o) => !assigned.has(o.freeCourseId));
+              const assigned = new Set(displayedFreeCourses.map((f) => f.freeCourseId));
+              const available = allFreeCourseOptions.filter((o) => !assigned.has(o.freeCourseId));
               // Distinguish "still loading" from "genuinely none left": an empty
               // dropdown during the cold-cache fetch otherwise reads as broken.
-              const placeholder = freeCoursesLoading
+              const placeholder = freeCoursesLoading && available.length === 0
                 ? 'Loading free courses…'
                 : available.length === 0
                   ? 'No free courses to add'
@@ -1012,7 +1035,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                     className={`${inputClass} sm:max-w-[20rem]`}
                     value={freeCoursePicker}
                     onChange={(e) => setFreeCoursePicker(e.target.value)}
-                    disabled={freeCoursesLoading || available.length === 0}
+                    disabled={available.length === 0}
                     aria-label="Free course to add"
                   >
                     <option value="">{placeholder}</option>
@@ -1025,7 +1048,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                     className={btnSecondary}
                     disabled={!freeCoursePicker}
                     onClick={() => {
-                      const option = freeCourseOptions.find((o) => o.freeCourseId === freeCoursePicker);
+                      const option = allFreeCourseOptions.find((o) => o.freeCourseId === freeCoursePicker);
                       if (option) addFreeCourse(option);
                     }}
                   >
@@ -1034,7 +1057,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                 </div>
               );
             })()}
-          </div>
+          </section>
         </div>
       )}
     </Modal>
