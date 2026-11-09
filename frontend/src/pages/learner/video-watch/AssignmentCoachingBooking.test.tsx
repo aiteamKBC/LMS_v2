@@ -1,5 +1,7 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render as renderUi, screen, waitFor, within } from '@testing-library/react';
+import { useState, type ReactElement } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { loadAssignmentTopicStates } from '@/api/assignmentTopics';
 import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
@@ -8,6 +10,7 @@ import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 vi.mock('@/api/learnerCalendar', () => ({ bookLearnerCalendarSession: vi.fn(), fetchLearnerCalendarEvents: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn(), fetchReviewSlots: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn() }));
 vi.mock('@/api/assignmentTopics', () => ({ loadAssignmentTopicStates: vi.fn() }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn() }));
+const render = (ui: ReactElement) => renderUi(ui, { wrapper: MemoryRouter });
 function chooseDate(value: string) {
   fireEvent.click(screen.getByRole('button', { name: 'Date' }));
   let month = screen.getByRole('group', { name: 'Booking calendar' }).getAttribute('data-month')!;
@@ -360,4 +363,120 @@ it('preserves the original booking UI for an assignment without topics', async (
   render(<AssignmentCoachingBooking {...props} assignmentId="LEGACY" meetingKey={slot.eventKey} />);
   expect(await screen.findByRole('button', { name: 'Book 60-minute MCM' })).toBeInTheDocument();
   expect(loadAssignmentTopicStates).not.toHaveBeenCalled();
+});
+
+const replacementMeeting = { ...savedMeeting, id: 'replacement', eventKey: 'mcr:1:replacement',
+  scheduledDate: '2026-09-24', scheduledTime: '10:00' } as LearnerCalendarEvent;
+
+function EditableTopicBooking({ kind = 'commercial', initialKey = '' }: { kind?: 'commercial' | 'apprenticeship'; initialKey?: string }) {
+  const [key, setKey] = useState(initialKey);
+  return <AssignmentCoachingBooking {...props} kind={kind} assignmentId="COMP-TOPICS" topicId="2" meetingKey={key}
+    onSelect={value => { props.onSelect(value); setKey(value); }} />;
+}
+
+it.each(['commercial', 'apprenticeship'] as const)('lets a %s learner change an inherited meeting and keeps the replacement after refresh', async kind => {
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([savedTopic]);
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind, id: 1 }, events: [savedMeeting, replacementMeeting] });
+  render(<EditableTopicBooking kind={kind} />);
+  await screen.findByText('MCM already booked: 2026-09-22 at 09:00 with Coach.');
+  fireEvent.click(screen.getByRole('button', { name: 'Change linked meeting' }));
+  fireEvent.change(screen.getByLabelText('Use an existing coaching booking'), { target: { value: replacementMeeting.eventKey } });
+  expect(await screen.findByText('MCM already booked: 2026-09-24 at 10:00 with Coach.')).toBeVisible();
+  expect(props.onSelect).toHaveBeenLastCalledWith(replacementMeeting.eventKey);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh meetings' }));
+  expect(await screen.findByText('MCM already booked: 2026-09-24 at 10:00 with Coach.')).toBeVisible();
+  expect(props.onSelect).toHaveBeenLastCalledWith(replacementMeeting.eventKey);
+  expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+});
+
+it('restores the draft selection instead of replacing it with an older topic booking', async () => {
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([savedTopic]);
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [savedMeeting, replacementMeeting] });
+  render(<EditableTopicBooking initialKey={replacementMeeting.eventKey} />);
+  expect(await screen.findByText('MCM already booked: 2026-09-24 at 10:00 with Coach.')).toBeVisible();
+  expect(props.onSelect).not.toHaveBeenCalled();
+});
+
+it('opens the existing imported appointment for rescheduling without creating a new meeting', async () => {
+  const imported = { ...savedMeeting, eventKey: 'imported-review:901', calendarEventKey: 'review:1:existing',
+    reviewSource: 'aptem' as const };
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [imported] });
+  render(<EditableTopicBooking initialKey={imported.eventKey} />);
+  const link = await screen.findByRole('link', { name: 'Change meeting date or time' });
+  const url = new URL(link.getAttribute('href')!, 'https://lms.example.test');
+  expect(url.pathname).toBe('/learner/calendar');
+  expect(Object.fromEntries(url.searchParams)).toMatchObject({ kind: 'commercial', learner: '1', event: imported.calendarEventKey,
+    date: '2026-09-22', action: 'reschedule' });
+  expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('recognises the saved calendar key of the same imported MCM for %s', async kind => {
+  const imported = { ...savedMeeting, eventKey: 'imported-review:901', calendarEventKey: 'review:1:existing',
+    reviewSource: 'aptem' as const, bookingStatus: 'scheduled', sourceStatus: 'not-scheduled' };
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind, id: 1 }, events: [imported] });
+  render(<EditableTopicBooking kind={kind} initialKey={imported.calendarEventKey} />);
+  expect(await screen.findByText('MCM already booked: 2026-09-22 at 09:00 with Coach.')).toBeVisible();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(props.onSelect).not.toHaveBeenCalled();
+  expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+});
+
+it('reuses a prior topics booking when it saved the calendar key of the same imported MCM', async () => {
+  const imported = { ...savedMeeting, eventKey: 'imported-review:901', calendarEventKey: 'review:1:existing', reviewSource: 'aptem' as const };
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([{ ...savedTopic, meetingKey: imported.calendarEventKey }]);
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [imported] });
+  render(<EditableTopicBooking />);
+  expect(await screen.findByText(/MCM already booked:/)).toBeVisible();
+  expect(props.onSelect).toHaveBeenCalledWith(imported.eventKey);
+  expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+});
+
+it('does not select an arbitrary MCM when both the saved link and a calendar alias are empty', async () => {
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([{ ...savedTopic, meetingKey: '' }]);
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [{ ...savedMeeting, calendarEventKey: '' }] });
+  render(<EditableTopicBooking />);
+  expect(await screen.findByLabelText('Use an existing coaching booking')).toHaveValue('');
+  expect(screen.queryByText(/MCM already booked:/)).not.toBeInTheDocument();
+  expect(props.onSelect).not.toHaveBeenCalled();
+});
+
+it('keeps historical topic meeting selection read only', async () => {
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [savedMeeting] });
+  render(<AssignmentCoachingBooking {...props} assignmentId="COMP-TOPICS" topicId="1" meetingKey={savedMeeting.eventKey} disabled />);
+  await screen.findByText(/MCM already booked:/);
+  expect(screen.queryByRole('button', { name: 'Change linked meeting' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Change meeting date or time' })).not.toBeInTheDocument();
+  expect(props.onSelect).not.toHaveBeenCalled();
+});
+
+it('lets a learner recover an unavailable saved meeting without replacing it silently', async () => {
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([savedTopic]);
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [savedMeeting] });
+  render(<EditableTopicBooking initialKey="cancelled-mcm" />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Choose an existing coaching booking or arrange a new MCM');
+  const select = screen.getByLabelText('Use an existing coaching booking');
+  expect(props.onSelect).not.toHaveBeenCalled();
+  fireEvent.change(select, { target: { value: savedMeeting.eventKey } });
+  expect(await screen.findByText(/MCM already booked:/)).toBeVisible();
+  expect(props.onSelect).toHaveBeenLastCalledWith(savedMeeting.eventKey);
+});
+
+it.each(['not-scheduled', 'failed', 'cancelled'])('does not present a reserved %s appointment as a confirmed shared MCM', async status => {
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([savedTopic]);
+  const reserved = { ...savedMeeting, status, bookingReserved: true, syncState: 'reconciliation' as const };
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [reserved] });
+  render(<EditableTopicBooking initialKey={reserved.eventKey} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Choose an existing coaching booking');
+  expect(screen.queryByText(/MCM already booked:/)).not.toBeInTheDocument();
+  expect(props.onSelect).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Use an existing coaching booking')).toBeEnabled();
+});
+
+it('does not treat an unbooked imported source as confirmed merely because its form was started', async () => {
+  const imported = { ...savedMeeting, eventKey: 'imported-review:901', reviewSource: 'aptem' as const,
+    status: 'in-progress', sourceStatus: 'not-scheduled', calendarEventKey: null, bookingReserved: true };
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [imported] });
+  render(<EditableTopicBooking initialKey={imported.eventKey} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Choose an existing coaching booking');
+  expect(screen.queryByText(/MCM already booked:/)).not.toBeInTheDocument();
 });
