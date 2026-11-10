@@ -102,8 +102,9 @@ def assigned_curriculum_module_ids(learner):
         from .student_activity import CURRENT_SUBJECTS_SQL
 
         with connections['enrolment'].cursor() as cursor:
-            cursor.execute(CURRENT_SUBJECTS_SQL, [learner_id])
-            return sorted({str(row[0]).strip() for row in cursor.fetchall() if row and str(row[0]).strip()})
+            from .subject_cache import subject_rows
+            rows = subject_rows(cursor, CURRENT_SUBJECTS_SQL, learner_id)
+            return sorted({str(row[0]).strip() for row in rows if row and str(row[0]).strip()})
     except DatabaseError:
         logger.warning("learner_calendar: module assignment lookup failed", exc_info=True)
         return []

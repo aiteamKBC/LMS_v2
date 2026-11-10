@@ -165,6 +165,8 @@ class Command(BaseCommand):
                         views.AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id],
                         {'settings_json': views.json_db_value(updated)},
                     )
+                # Retire cached curriculum payloads and learner content rows.
+                views.invalidate_curriculum_cache()
         links = sum(moved for _id, _settings, moved in changes)
         verb = 'moved' if apply else 'would move'
         self.stdout.write(self.style.SUCCESS(

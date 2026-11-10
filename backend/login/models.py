@@ -65,6 +65,17 @@ ROLE_LEARNER = "learner"
 ROLE_CHOICES = (ROLE_ADMIN, ROLE_STAFF, ROLE_EMPLOYER, ROLE_LEARNER)
 
 
+
+from config.cache_versions import VersionBumpQuerySetMixin
+
+
+class LoginAccountQuerySet(VersionBumpQuerySetMixin, models.QuerySet):
+    """Bulk writes retire the account's cached sessions (login.session_cache)."""
+
+
+class LoginSessionQuerySet(VersionBumpQuerySetMixin, models.QuerySet):
+    """Bulk writes (revocations, renewals, prunes) retire cached sessions."""
+
 class AdvancedAdminLearnerScope(models.Model):
     """Aptem IDs explicitly approved for the Advanced Admin workspace."""
 
@@ -116,6 +127,16 @@ class LoginAccount(models.Model):
 
     created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
     updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
+
+    objects = models.Manager.from_queryset(LoginAccountQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        return {"login-acct": [row["id"] if isinstance(row, dict) else row.pk for row in rows]}
 
     class Meta:
         managed = False
@@ -169,6 +190,16 @@ class LoginSession(models.Model):
     #: what the backfill gives rows created before the column existed: the safer
     #: of the two policies is the right guess when the answer is unknown.
     remember = models.BooleanField(db_column="Remember", default=False)
+
+    objects = models.Manager.from_queryset(LoginSessionQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("account_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        return {"login-acct": [row["account_id"] if isinstance(row, dict) else row.account_id for row in rows]}
 
     class Meta:
         managed = False

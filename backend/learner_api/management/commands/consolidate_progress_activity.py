@@ -104,6 +104,11 @@ class Command(BaseCommand):
                     )
 
                 cursor.execute(f"drop table {ACTIVITY_TABLE}")
+                # Rows were inserted for many learners: once this commits,
+                # retire every learner's cached progress rows at once.
+                from learner_api.progress_cache import NAMESPACE
+                from config import cache_versions
+                transaction.on_commit(lambda: cache_versions.bump_generation(NAMESPACE), using=database)
 
         self.stdout.write(
             self.style.SUCCESS(
