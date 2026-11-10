@@ -320,7 +320,9 @@ export default function ComponentViewPage() {
       const current = ++sequence;
       // A saved watch report can complete this activity. Keep the player and
       // its position mounted while refreshing the server-owned completion.
-      void fetchLearnerDetail(kind, id, { componentId, force: true }).then(updated => {
+      // This is a read responding to invalidation, not another mutation. A
+      // forced read invalidates again and synchronously re-enters this listener.
+      void fetchLearnerDetail(kind, id, { componentId, revalidate: true }).then(updated => {
         if (!disposed && current === sequence) {
           setDetail(updated);
           setRefreshError(null);

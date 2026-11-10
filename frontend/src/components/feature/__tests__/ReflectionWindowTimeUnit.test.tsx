@@ -33,6 +33,34 @@ const completeLecture = {
   otjhConfirmed: true, signedDeclaration: true,
 };
 
+it('identifies an unchanged submitted lecture and enables resubmission only after an edit', async () => {
+  mocks.load.mockResolvedValue({ ...completeLecture, status: 'submitted_for_tutor_review' });
+  view({ noun: 'session', selectedTimeSeconds: 7200, readOnlyTime: true, allowAdditionalTime: true });
+  expect(await screen.findByText('Submitted for tutor review. Your reflection is saved and awaiting review.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submitted for tutor review' })).toBeDisabled());
+  expect(screen.getByRole('button', { name: /Save draft|Draft saved/ })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Learning' }));
+  fireEvent.change(screen.getByPlaceholderText('Type or use the microphone...'), { target: { value: 'Updated reflection '.repeat(100) } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  expect(screen.getByRole('button', { name: 'Submit for tutor review' })).toBeEnabled();
+  expect(mocks.save).not.toHaveBeenCalled();
+});
+
+it('marks a deliberate edit as a draft without retaining a false submitted indicator', async () => {
+  mocks.load.mockResolvedValue({ ...completeLecture, status: 'submitted_for_tutor_review' });
+  mocks.save.mockResolvedValue({ status: 'draft' });
+  view({ noun: 'session', selectedTimeSeconds: 7200, readOnlyTime: true, allowAdditionalTime: true });
+  await screen.findByText('Submitted for tutor review. Your reflection is saved and awaiting review.');
+  fireEvent.change(screen.getByPlaceholderText('Type or use the microphone...'), { target: { value: 'Deliberately edited reflection '.repeat(100) } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+    submissionMode: 'draft', reflectionDraftIntent: 'manual',
+  })));
+  await waitFor(() => expect(screen.queryByText('Submitted for tutor review. Your reflection is saved and awaiting review.')).not.toBeInTheDocument());
+  expect(await screen.findByRole('button', { name: 'Draft saved' })).toBeVisible();
+});
+
 it.each([['correct', 1200, 8400], ['add', 3000, 10200], ['retry', 1800, 9000]] as const)(
   'offers an explicit %s action on an already submitted reflection and retains lecture hours', async (choice, reflected, total) => {
     mocks.load.mockResolvedValue({ ...completeLecture, status: 'submitted_for_tutor_review',

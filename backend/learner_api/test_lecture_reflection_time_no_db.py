@@ -248,7 +248,7 @@ class LectureReflectionTimeTests(SimpleTestCase):
 
 
 class ReflectionTimeSubmissionTests(SimpleTestCase):
-    def submit(self, *, existing=None, addition=None, forged=False, old_client=False, operation=None, mode='submit'):
+    def submit(self, *, existing=None, addition=None, forged=False, old_client=False, operation=None, mode='submit', manual_draft=False):
         from . import reflection_submissions as view
         body = dict(learnerKind='apprenticeship', learnerId='19', activityType='session', activityId='LECTURE',
                     learningReflection='Synthetic reflection', submissionMode=mode, actualTimeHours='2',
@@ -259,6 +259,8 @@ class ReflectionTimeSubmissionTests(SimpleTestCase):
             body.pop('additionalReflectionSeconds')
         if operation:
             body['reflectionTimeOperation'] = operation
+        if manual_draft:
+            body['reflectionDraftIntent'] = 'manual'
         cursor = MagicMock()
         cursor.fetchone.side_effect = [existing, ('SAVED',)]
         connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
@@ -310,6 +312,23 @@ class ReflectionTimeSubmissionTests(SimpleTestCase):
         self.assertEqual(json.loads(response.content)['status'], 'submitted_for_tutor_review')
         add.assert_not_called()
         self.assertFalse(any('insert into' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_a_legacy_autosave_cannot_downgrade_a_confirmed_lecture_submission(self):
+        previous = ('submitted_for_tutor_review', {'learningReflection': 'Submitted work'}, None, None, None, None, 'SAVED')
+        response, cursor, add = self.submit(existing=previous, mode='draft', old_client=True)
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertIn('already submitted', json.loads(response.content)['error'])
+        add.assert_not_called()
+        self.assertFalse(any('insert into' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_a_deliberate_draft_can_preserve_the_previous_submission_as_a_snapshot(self):
+        previous = ('submitted_for_tutor_review', {'learningReflection': 'Submitted work'}, None, None, None, None, 'SAVED')
+        response, cursor, _ = self.submit(existing=previous, mode='draft', old_client=True, manual_draft=True)
+        self.assertEqual(response.status_code, 201, response.content)
+        write = next(call for call in cursor.execute.call_args_list if 'insert into' in call.args[0])
+        full = next(json.loads(value) for value in write.args[1] if isinstance(value, str) and value.startswith('{') and 'learningReflection' in value)
+        self.assertEqual(full['lectureReflectionAttempts'][0]['content']['learningReflection'], 'Submitted work')
+        self.assertNotIn('reflectionDraftIntent', full)
 
     def test_an_older_open_tab_uses_the_same_lock_and_preserves_the_stored_receipt(self):
         receipt = dict(seconds=1800, progressEntryId=101, addedAt='now', countedSeconds=9000)

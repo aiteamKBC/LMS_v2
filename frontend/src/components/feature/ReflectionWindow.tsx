@@ -220,6 +220,7 @@ function ReflectionWindowForm({
   const [reflectionSaving, setReflectionSaving] = useState(false);
   const [reflectionSaveError, setReflectionSaveError] = useState('');
   const [submissionStatus, setSubmissionStatus] = useState('');
+  const [submittedSnapshot, setSubmittedSnapshot] = useState<string | null>(null);
   // Accepted reflections are historical, read-only records. A new activity
   // selection must not replace their saved duration when they are reopened.
   const initialSelectedSeconds = submissionStatus !== 'accepted'
@@ -404,9 +405,16 @@ function ReflectionWindowForm({
     ...(timeOperation && addTime ? { reflectionTimeOperation: timeOperation } : {}),
   } : null;
   const draftSerialized = JSON.stringify(draftPayload);
+  const unchangedSubmission = allowAdditionalTime && submissionStatus === 'submitted_for_tutor_review' && submittedSnapshot === draftSerialized;
   const editableDraft = !submissionLocked && submissionStatus !== 'submitted_for_tutor_review';
   const autosave = useReflectionAutosave(draftPayload,
     Boolean(draftKey && loadedDraftKey === draftKey && serverLoaded && !loadingExisting && editableDraft));
+
+  useEffect(() => {
+    if (allowAdditionalTime && serverLoaded && !loadingExisting && submissionStatus === 'submitted_for_tutor_review' && submittedSnapshot === null) {
+      setSubmittedSnapshot(draftSerialized);
+    }
+  }, [allowAdditionalTime, serverLoaded, loadingExisting, submissionStatus, submittedSnapshot, draftSerialized]);
 
   useEffect(() => {
     if (!learnerKind || !learnerId || !evidenceSectionRef) return;
@@ -426,6 +434,7 @@ function ReflectionWindowForm({
       if (initialTab !== 'learning') setTab(initialTab);
       else if (saved.tab && TABS.some(item => item.id === saved.tab)) setTab(saved.tab);
       setSubmissionStatus(saved.status || '');
+      setSubmittedSnapshot(null);
       setCoachFeedback(saved.coachFeedback || null);
       setReflection(saved.learningReflection || '');
       setSelectedKsbs(Array.isArray(saved.ksbCodes) ? saved.ksbCodes : []);
@@ -602,11 +611,17 @@ function ReflectionWindowForm({
     setReflectionSaveError('');
     try {
       const saved = await autosave.save({ ...draftPayload, submissionMode: mode,
+        ...(mode === 'draft' ? { reflectionDraftIntent: 'manual' as const } : {}),
         ...(declaredAt ? { declaredCompletedAt: declaredAt } : {}),
         ...(mode === 'submit' ? {
           learningReflection: reflection.trim(), applicationText: applicationText.trim(), benefitExplanation: benefitExplanation.trim(),
         } : {}),
       });
+      if (mode === 'draft') {
+        setSubmissionStatus(saved.status || 'draft');
+        setSubmittedSnapshot(null);
+        if ((!saved.status || saved.status === 'draft') && submissionStatus === 'submitted_for_tutor_review') autosave.resume();
+      }
       if (mode === 'submit') {
         if (saved.lectureReflectionTime) {
           setTimeReceipt(saved.lectureReflectionTime);
@@ -616,6 +631,7 @@ function ReflectionWindowForm({
         }
         setTimeCorrection(null);
         setSubmissionStatus(saved.status || 'submitted_for_tutor_review');
+        setSubmittedSnapshot(null);
         try { if (draftKey) localStorage.removeItem(draftKey); } catch { /* Storage unavailable. */ }
         await onSubmit(result);
       }
@@ -951,6 +967,10 @@ function ReflectionWindowForm({
           </div>
         </div>
       )}
+
+      {allowAdditionalTime && submissionStatus === 'submitted_for_tutor_review' && <p role="status" className="border-t border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-semibold text-emerald-900 md:px-8">
+        Submitted for tutor review. Your reflection is saved and awaiting review.
+      </p>}
 
       <fieldset
         disabled={submissionLocked || loadingExisting || reflectionSaving || submitting}
@@ -1469,7 +1489,7 @@ function ReflectionWindowForm({
             <>
               <button
                 onClick={() => void handleSubmit('draft')}
-                disabled={loadingExisting || !serverLoaded || reflectionSaving || submitting || evidenceUploading}
+                disabled={loadingExisting || !serverLoaded || reflectionSaving || submitting || evidenceUploading || unchangedSubmission}
                 className="rounded-xl border border-[#cbd5df] bg-[#f8fcff] px-5 py-2.5 text-sm font-medium text-[#142033] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {autosave.saved ? 'Draft saved' : 'Save draft'}
@@ -1477,12 +1497,12 @@ function ReflectionWindowForm({
               {tab === 'review' ? (
                 <button
                   onClick={() => void handleSubmit()}
-                  disabled={submitting || reflectionSaving || loadingExisting || !serverLoaded || !canSubmit}
+                  disabled={submitting || reflectionSaving || loadingExisting || !serverLoaded || !canSubmit || unchangedSubmission}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#102d52] px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#91a0b3]"
                 >
                   {submitting || reflectionSaving
                     ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving...</>
-                    : <><AppIcon className="ri-edit-line" /> Submit for tutor review</>}
+                    : unchangedSubmission ? 'Submitted for tutor review' : <><AppIcon className="ri-edit-line" /> Submit for tutor review</>}
                 </button>
               ) : (
                 <button
