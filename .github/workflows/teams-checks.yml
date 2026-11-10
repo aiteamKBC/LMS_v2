@@ -1,0 +1,208 @@
+# ------------------------------------------------------------
+# Teams regression checks (AGENTS.md sections 5-7), run by CI instead of
+# relying on each agent or developer to remember them.
+#
+#   pull request into main  -> runs on the PR, so a Teams break shows up
+#                              before merging (make "Teams checks / Result"
+#                              a required check to block the merge)
+#   called by deploy-aws.yml -> the same checks gate the AWS deploy
+#
+#   frontend baseline   npm run test:teams (mocked APIs, ~15 s). Runs on
+#                       every frontend change: that also covers changes to
+#                       anything a Teams file imports (the "indirect" rule).
+#   expanded backend    the Teams suites named in AGENTS.md section 6, on a
+#                       throwaway schema-only Neon branch (never production).
+#                       Runs when a file on .github/ci/teams_files.txt changed.
+#   live Teams          never run from CI (needs explicit permission:
+#                       AGENTS.md section 3) - always reported as NOT RUN.
+#
+# The Result job prints the section 7 handoff table: PASS / FAIL / BLOCKED /
+# NOT REQUIRED for each check.
+# ------------------------------------------------------------
+name: Teams checks
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      base:
+        description: "Commit to compare with (empty = run everything)"
+        type: string
+        default: ""
+      ref:
+        description: "Commit to test"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teams-${{ github.event.pull_request.number || inputs.ref || github.sha }}
+  cancel-in-progress: true
+
+env:
+  REF: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+  BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.base }}
+
+jobs:
+  scope:
+    name: Teams scope
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.scope.outputs.frontend }}
+      backend: ${{ steps.scope.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          fetch-depth: 0
+
+      - id: scope
+        run: |
+          set -euo pipefail
+          all() { echo "frontend=true" >> "$GITHUB_OUTPUT"; echo "backend=true" >> "$GITHUB_OUTPUT"
+                  echo "Running every Teams check: $1" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then all "no base commit to compare with"; fi
+          # A PR is compared with where it branched off, not with newer main
+          FROM=$(git merge-base "$BASE" "$REF")
+          FILES=$(git diff --name-only "$FROM" "$REF")
+          echo "$FILES" | grep -qE '^\.github/(workflows/teams-checks\.yml|ci/teams_files\.txt)$' && all "the Teams checks themselves changed"
+          f=false; b=false
+          echo "$FILES" | grep -q '^frontend/' && f=true
+          TEAMS=$(echo "$FILES" | grep -Ef <(grep -vE '^\s*(#|$)' .github/ci/teams_files.txt) || true)
+          [ -n "$TEAMS" ] && b=true && f=true
+          echo "frontend=$f" >> "$GITHUB_OUTPUT"; echo "backend=$b" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Teams scope"
+            if [ -n "$TEAMS" ]; then echo "Teams files changed (AGENTS.md section 5):"; echo '```'; echo "$TEAMS"; echo '```'
+            else echo "No file on the Teams trigger list changed."; fi
+            echo "frontend baseline: $f, expanded backend checks: $b"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  frontend:
+    name: Teams frontend baseline
+    needs: scope
+    if: needs.scope.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: npm run test:teams
+        run: |
+          set -o pipefail
+          npm run test:teams 2>&1 | tee teams.txt
+      - name: Summary
+        if: always()
+        run: |
+          { echo '### Teams frontend baseline'; echo '```'; grep -E "Test Files|Tests  |FAIL" teams.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  backend:
+    name: Teams expanded backend checks
+    needs: scope
+    if: needs.scope.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      blocked: ${{ steps.neon-check.outputs.blocked }}
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      NEON_PARENT_BRANCH_ID: ${{ vars.NEON_PARENT_BRANCH_ID }}
+    steps:
+      # No safe database = BLOCKED, never a silent pass (AGENTS.md section 5)
+      - id: neon-check
+        run: |
+          if [ -z "$NEON_API_KEY" ] || [ -z "$NEON_PROJECT_ID" ]; then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            echo "::error::BLOCKED: NEON_API_KEY / NEON_PROJECT_ID not available, so there is no verified non-production database"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Create a schema-only Neon branch (no data)
+        id: neon
+        run: bash .github/ci/neon_branch.sh create
+
+      - name: Teams suites (AGENTS.md section 6)
+        env:
+          BRANCH_URL: ${{ steps.neon.outputs.url }}
+          BRANCH_ID: ${{ steps.neon.outputs.id }}
+        run: |
+          set -o pipefail
+          cd backend
+          python3 -m pip install -q -r requirements.txt
+          # Same safety setup as the database tests in deploy-aws.yml:
+          # DATABASE_URL is only compared (by host) to prove the branch is
+          # not production; settings never connect to it in branch mode
+          export DATABASE_URL="postgresql://ci@${{ vars.NEON_PRODUCTION_HOST || 'production.invalid' }}/neondb"
+          export security_Database_url="$BRANCH_URL" SECURITY_TEST_BRANCH_ID="$BRANCH_ID"
+          export USE_SECURITY_TEST_BRANCH=true DJANGO_SECRET_KEY=ci DJANGO_DEBUG=false DB_POOL=false
+          python3 manage.py test --keepdb --noinput --testrunner=login.test_runner.EnrolmentTestRunner \
+            curriculum_api.tests.TeamsMultiDayRecurrenceTests \
+            curriculum_api.tests.TeamsAttendanceRosterTests \
+            curriculum_api.tests.CurriculumTeamsMeetingTests \
+            curriculum_api.tests.TeamsCalendarSyncVerdictTests \
+            coach_api.tests coach_api.tests_calendar_race coach_api.tests_errors coach_api.tests_security \
+            learner_api.tests learner_api.tests_attendance_lectures learner_api.tests_booking_calendar \
+            learner_api.tests_cohort_schedule learner_api.tests_dashboard_metrics \
+            2>&1 | tee ../teams-backend.txt
+      - name: Summary
+        if: always() && steps.neon.outcome == 'success'
+        run: |
+          { echo '### Teams expanded backend checks'; echo '```'; grep -E "^(Ran|OK|FAILED)|^(FAIL|ERROR):" teams-backend.txt | head -40 || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the Neon branch
+        if: always() && steps.neon.outputs.id != ''
+        env:
+          BRANCH_ID: ${{ steps.neon.outputs.id }}
+        run: bash .github/ci/neon_branch.sh delete "$BRANCH_ID"
+
+  # The section 7 handoff, and the single check to require on PRs
+  result:
+    name: Result
+    needs: [scope, frontend, backend]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          SCOPE: ${{ needs.scope.result }}
+          FE: ${{ needs.frontend.result }}
+          BE: ${{ needs.backend.result }}
+          BE_BLOCKED: ${{ needs.backend.outputs.blocked }}
+        run: |
+          verdict() { case "$1" in success) echo PASS;; skipped) echo "NOT REQUIRED";; failure) [ "$2" = true ] && echo BLOCKED || echo FAIL;; *) echo "BLOCKED ($1)";; esac; }
+          fe=$(verdict "$FE"); be=$(verdict "$BE" "$BE_BLOCKED")
+          {
+            echo "### Teams handoff (AGENTS.md section 7)"
+            echo "| Check | Result |"; echo "|---|---|"
+            echo "| Frontend Teams baseline (mocked APIs) | $fe |"
+            echo "| Expanded Teams backend checks (schema-only Neon branch) | $be |"
+            echo "| Live Teams (real meetings/invitations) | NOT RUN - never from CI; needs explicit permission (section 3) |"
+            echo
+            echo "A pass covers only the automated cases; it does not prove live Microsoft behaviour, permissions or invitations."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$SCOPE" = success ] || { echo "::error::Teams scope step did not finish"; exit 1; }
+          case "$fe$be" in *FAIL*|*BLOCKED*) exit 1;; esac
