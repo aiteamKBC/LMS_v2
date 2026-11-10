@@ -128,7 +128,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
       </div>}
       <main className={`workspace-main ${styles.main}`}>{children}</main>
     </div>
-    <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
+    <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} appearance="enrolment" />
     {signOutOpen && createPortal(<SignOutConfirmModal displayName={displayName} email={auth.user?.email || auth.account?.email || ''}
       onClose={() => setSignOutOpen(false)} onConfirm={() => { setSignOutOpen(false); logout(); }} />, document.body)}
   </div>;
