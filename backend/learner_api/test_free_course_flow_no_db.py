@@ -263,6 +263,29 @@ class AssignedFreeCourseReadTests(SimpleTestCase):
 
 
 class FreeCourseQueryShapeTests(SimpleTestCase):
+    def test_empty_assignments_do_not_read_the_catalogue(self):
+        with patch.object(view.free_course_catalogue, "fetch_many") as fetch:
+            self.assertEqual(view._scoped_rows([]), ({}, [], []))
+        fetch.assert_not_called()
+
+    def test_batch_drops_unassigned_missing_archived_and_orphan_content(self):
+        courses, weeks, components = catalogue_rows()
+        courses["ARCHIVED"] = {"id": "ARCHIVED", "status": "archived"}
+        courses["OTHER"] = {"id": "OTHER"}
+        for course_id in ("ARCHIVED", "MISSING", "OTHER"):
+            weeks.append({"id": course_id + "-W", "course_id": course_id})
+            components.append({"id": course_id + "-C", "free_module_id": course_id + "-W"})
+        components.append({"id": "ORPHAN", "free_module_id": "ABSENT"})
+        with patch.object(view.free_course_catalogue, "fetch_many", return_value=[
+            list(courses.values()), weeks, components,
+        ]) as fetch:
+            visible, visible_weeks, visible_components = view._scoped_rows(["FREE-1", "ARCHIVED", "MISSING"])
+        self.assertEqual(set(visible), {"FREE-1"})
+        self.assertEqual([row["id"] for row in visible_weeks], ["W-1", "W-2"])
+        self.assertEqual([row["id"] for row in visible_components], ["C-1", "C-2"])
+        for _table, _where, params, _order, _columns in fetch.call_args.args[0]:
+            self.assertEqual(params, ["FREE-1", "ARCHIVED", "MISSING"])
+
     def test_scoped_queries_only_request_canonical_free_course_columns(self):
         """Guard the 42703 regression from legacy lifecycle column reads."""
         canonical = {
@@ -288,15 +311,16 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
             ],
         }
 
-        def fetch_for(table):
-            def fetch(**kwargs):
-                self.assertEqual(set(kwargs["columns"]) - canonical[table], set())
-                return rows[table]
-            return fetch
+        def fetch_many(reads):
+            # The three reads go to the database together (one round trip).
+            self.assertEqual(len(reads), 3)
+            results = []
+            for table, _where, _params, _order, columns in reads:
+                self.assertEqual(set(columns) - canonical[table], set())
+                results.append(rows[table])
+            return results
 
-        with patch.object(view.free_course_catalogue, "courses", side_effect=fetch_for("free_courses")), \
-             patch.object(view.free_course_catalogue, "weeks", side_effect=fetch_for("free_course_weeks")), \
-             patch.object(view.free_course_catalogue, "components", side_effect=fetch_for("free_programme_components")):
+        with patch.object(view.free_course_catalogue, "fetch_many", side_effect=fetch_many):
             courses, weeks, components = view._scoped_rows(["FREE-1"])
         self.assertEqual(set(courses), {"FREE-1"})
         self.assertEqual([row["id"] for row in weeks], ["W-1"])
@@ -308,7 +332,7 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
         error = DatabaseError("private SQL and connection detail")
         error.__cause__ = driver
 
-        with patch.object(view.free_course_catalogue, "courses", side_effect=error), \
+        with patch.object(view.free_course_catalogue, "fetch_many", side_effect=error), \
              self.assertLogs(view.logger.name, level="ERROR") as logs, \
              self.assertRaises(DatabaseError):
             view._scoped_rows(["FREE-1"])
@@ -322,25 +346,27 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
         self.assertNotIn("private SQL and connection detail", diagnostic)
 
     def test_summary_query_omits_component_settings_and_media(self):
-        courses = Mock(return_value=[{"id": "FREE-1", "course_name": "Course"}])
-        weeks = Mock(return_value=[{"id": "W-1", "course_id": "FREE-1"}])
-        components = Mock(return_value=[{"id": "C-1", "free_module_id": "W-1", "type": "reading"}])
-        with patch.object(view.free_course_catalogue, "courses", courses), \
-             patch.object(view.free_course_catalogue, "weeks", weeks), \
-             patch.object(view.free_course_catalogue, "components", components):
+        fetch = Mock(return_value=[
+            [{"id": "FREE-1", "course_name": "Course"}],
+            [{"id": "W-1", "course_id": "FREE-1"}],
+            [{"id": "C-1", "free_module_id": "W-1", "type": "reading"}],
+        ])
+        with patch.object(view.free_course_catalogue, "fetch_many", fetch):
             view._scoped_rows(["FREE-1"], include_component_settings=False)
-        component_columns = components.call_args.kwargs["columns"]
+        _table, component_where, component_params, _order, component_columns = fetch.call_args.args[0][2]
         self.assertNotIn("settings_json", component_columns)
         self.assertNotIn("cover_image_url", component_columns)
-        self.assertEqual(components.call_args.kwargs["week_ids"], ["W-1"])
+        # Components are selected through the assigned courses' weeks.
+        self.assertIn("free_module_id in (select id from", component_where)
+        self.assertIn("course_id in (%s)", component_where)
+        self.assertEqual(component_params, ["FREE-1"])
 
     def test_inactive_week_is_hidden_without_touching_historical_progress(self):
         course_rows, week_rows, component_rows = catalogue_rows()
         week_rows[1]["status"] = "inactive"
         completed = {("FREE-1", "C-1"), ("FREE-1", "C-2")}
-        with patch.object(view.free_course_catalogue, "courses", return_value=list(course_rows.values())), \
-             patch.object(view.free_course_catalogue, "weeks", return_value=week_rows), \
-             patch.object(view.free_course_catalogue, "components", return_value=component_rows):
+        with patch.object(view.free_course_catalogue, "fetch_many",
+                          return_value=[list(course_rows.values()), week_rows, component_rows]):
             courses, visible_weeks, visible_components = view._scoped_rows(["FREE-1"])
 
         detail = view._course_detail("FREE-1", courses["FREE-1"], visible_weeks, visible_components, completed)

@@ -41,6 +41,8 @@ interface FreeCourse {
   title: string;
   subtitle: string;
   coverImageUrl: string;
+  isForSale: boolean;
+  price: string;
   category: string;
   audience: string;
   color: string;
@@ -54,6 +56,8 @@ interface SavedFreeCourseCard {
   title: string;
   description: string;
   coverImageUrl: string;
+  isForSale: boolean;
+  price: string;
   weeks: FreeProgrammeModule[];
   componentCount: number;
   totalOtjh: number;
@@ -171,6 +175,9 @@ function authoringDocumentToModules(document: FreeCourseAuthoringDocument): Free
     title: document.course.courseName,
     description: document.course.description,
     coverImageUrl: document.course.coverImageUrl,
+    isForSale: document.course.isForSale,
+    price: document.course.price,
+    currency: 'GBP',
     displayOrder: week.displayOrder,
     componentCount: week.components.length,
     totalOtjh: week.components.reduce((sum, component) => sum + Number(component.expectedOtjh || 0), 0),
@@ -194,6 +201,8 @@ export default function FreeCoursesPage() {
     title: '',
     subtitle: '',
     coverImageUrl: '',
+    isForSale: false,
+    price: '',
     category: 'Free Course',
     audience: 'Learners',
     color: '#6d28d9',
@@ -459,7 +468,7 @@ export default function FreeCoursesPage() {
   };
 
   const resetDraftCourse = () => {
-    setCourse(previous => ({ ...previous, id: '', title: '', subtitle: '', coverImageUrl: '', components: [] }));
+    setCourse(previous => ({ ...previous, id: '', title: '', subtitle: '', coverImageUrl: '', isForSale: false, price: '', components: [] }));
     setSelectedComponentId('');
     setCompletedPreviewIds(new Set());
     setEditingCourseKey(null);
@@ -483,6 +492,8 @@ export default function FreeCoursesPage() {
       title: card.title,
       subtitle: card.description,
       coverImageUrl: card.coverImageUrl,
+      isForSale: card.isForSale,
+      price: card.price,
       components,
     }));
     setSelectedComponentId(components[0]?.id || '');
@@ -750,6 +761,12 @@ export default function FreeCoursesPage() {
     setSelectedComponentId(activeId);
   };
 
+  // Same rule the server applies (course_pricing.pricing_values).
+  const pricingError = course.isForSale && (
+    !/^[0-9]+(?:\.[0-9]{1,2})?$/.test(course.price.trim())
+    || Number(course.price) <= 0 || Number(course.price) > 99999999.99
+  ) ? 'Enter a GBP price between £0.01 and £99,999,999.99, with at most two decimal places.' : '';
+
   const draftWeekInputs = () => {
     const storedDocument = course.id ? documentsByCourse[course.id] : undefined;
     const orderedWeeks = draftWeeks.map(week => ({
@@ -793,6 +810,10 @@ export default function FreeCoursesPage() {
   const createFreeCourse = async () => {
     const courseName = course.title.trim();
     if (!courseName || !course.components.length || savingCourse || savedCoursesLoading) return;
+    if (pricingError) {
+      await showCurriculumAlert({ title: 'Check the course price', text: pricingError, icon: 'error' });
+      return;
+    }
     setSavingCourse(true);
     try {
       const weeks = draftWeekInputs();
@@ -803,7 +824,7 @@ export default function FreeCoursesPage() {
         const currentComponentIds = new Set(weeks.flatMap(week => week.components.flatMap(component => 'id' in component && component.id ? [component.id] : [])));
         await updateFreeCourseAuthoring(course.id, {
           expectedRevision: stored.revision,
-          course: { courseName, description: course.subtitle, coverImageUrl: course.coverImageUrl },
+          course: { courseName, description: course.subtitle, isForSale: course.isForSale, price: course.isForSale ? course.price.trim() : null, currency: 'GBP', coverImageUrl: course.coverImageUrl },
           weeks,
           deletedWeekIds: stored.weeks.filter(week => !currentWeekIds.has(week.freeCourseWeekId)).map(week => week.freeCourseWeekId),
           deletedComponentIds: stored.weeks.flatMap(week => week.components).filter(component => !currentComponentIds.has(component.id)).map(component => component.id),
@@ -812,7 +833,7 @@ export default function FreeCoursesPage() {
         await createFreeCourseAuthoring({
           expectedRevision: catalogueRevision,
           clientId: requestKey('course-client'),
-          course: { courseName, description: course.subtitle, coverImageUrl: course.coverImageUrl, courseType: 'free' },
+          course: { courseName, description: course.subtitle, isForSale: course.isForSale, price: course.isForSale ? course.price.trim() : null, currency: 'GBP', coverImageUrl: course.coverImageUrl, courseType: 'free' },
           weeks,
         }, requestKey('create'));
       }
@@ -1152,6 +1173,32 @@ export default function FreeCoursesPage() {
                   </div>
                 </div>
               </div>
+              <fieldset className="lg:col-span-2 space-y-3 rounded-lg border border-primary-100 bg-primary-50/40 p-3">
+                <legend className="px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Course pricing</legend>
+                <label className="flex cursor-pointer items-center gap-3 text-sm font-semibold text-foreground-900">
+                  <input
+                    type="checkbox"
+                    checked={course.isForSale}
+                    onChange={event => setCourse(previous => ({ ...previous, isForSale: event.target.checked }))}
+                    className="h-4 w-4 rounded border-primary-300 accent-primary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+                  />
+                  Available for sale
+                </label>
+                {course.isForSale ? (
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-foreground-500">Price (GBP)</span>
+                    <input
+                      value={course.price}
+                      inputMode="decimal"
+                      placeholder="e.g. 49.99"
+                      aria-invalid={Boolean(pricingError)}
+                      onChange={event => setCourse(previous => ({ ...previous, price: event.target.value }))}
+                      className="h-10 w-full max-w-xs rounded-lg border border-background-200 bg-white px-3 text-sm font-semibold outline-none transition focus:border-primary-300"
+                    />
+                    {pricingError && <span className="mt-1 block text-xs font-semibold text-red-600">{pricingError}</span>}
+                  </label>
+                ) : <p className="text-xs text-foreground-600">This course has no sale price.</p>}
+              </fieldset>
             </div>
           </div>
 
@@ -1781,6 +1828,8 @@ function groupSavedFreeCourses(modules: FreeProgrammeModule[], documents: Record
       title,
       description,
       coverImageUrl,
+      isForSale: module.isForSale === true,
+      price: module.price ?? '',
       weeks: [module],
       componentCount: module.componentCount || module.components?.length || 0,
       totalOtjh: Number(module.totalOtjh || 0),

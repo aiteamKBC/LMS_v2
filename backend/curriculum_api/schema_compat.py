@@ -36,6 +36,9 @@ statements still need, chiefly the Learner team's code curriculum calls.
 from __future__ import annotations
 
 import re
+import threading
+import time
+import uuid
 from datetime import datetime, timezone
 
 from django.db import connection
@@ -63,13 +66,14 @@ NULLABLE_FOREIGN_KEYS = {
     'cohorts': ('programme_id',),
     'groups': ('coach_id',),
     'modules': ('programme_id', 'cohort_id', 'group_id', 'tutor_id'),
-    'weeks': ('module_catalogue_id',),
+    'weeks': ('module_catalogue_id', 'free_course_id'),
     'ksb_mappings': ('component_id',),
 }
 REQUIRED_FOREIGN_KEYS = {
     'groups': ('programme_id', 'cohort_id'),
     'components': ('week_id', 'module_catalogue_id'),
-    'ksb_mappings': ('standard_ksb_id',),
+    # component_id became NOT NULL on 2026-11-10: a mapping belongs to a component.
+    'ksb_mappings': ('standard_ksb_id', 'component_id'),
 }
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
@@ -194,6 +198,8 @@ def _lifecycle_select(table, columns, alias='t'):
 def legacy_read_columns(table, columns):
     """Legacy column names the read relation adds for ``table`` (absent from ``columns``)."""
     columns = set(columns or ())
+    if connection.vendor == 'postgresql' and _linked_free_week_shape(table, columns):
+        return [name for name in _LINKED_FREE_WEEK_FIELDS if name not in columns]
     if connection.vendor != 'postgresql' or table not in RELATION_TABLES or not is_normalised(table, columns):
         return []
     keep = []
@@ -203,6 +209,22 @@ def legacy_read_columns(table, columns):
             keep.append(name)
     keep += [key for key in DERIVED_COLUMNS.get(table, ()) if key not in columns and key != 'ksb_mappings']
     return keep
+
+
+_LINKED_FREE_WEEK_FIELDS = {
+    'week_title': "coalesce(fw.title, '')::text",
+    'week_number': 'coalesce(fw.week_number, 1)',
+    'description': 'fw.summary',
+    'course_name': "coalesce(fc.course_name, '')::text",
+    'cover_image_url': 'fc.cover_image_url',
+}
+
+
+def _linked_free_week_shape(table, columns):
+    # Compatibility for the historical schema only. Canonical rows must never
+    # acquire regular-week ownership, even if a provenance column survives.
+    return (table == 'free_course_weeks' and {'id', 'course_id', 'week_id'} <= set(columns)
+            and 'title' not in columns and 'legacy_copied_from_week_id' not in columns)
 
 
 _COLUMNS_CACHE = {}
@@ -422,9 +444,30 @@ class CurriculumSchemaCompatMiddleware:
             return self.get_response(request)
 
 
-def read_relation(table, columns, alias=True):
-    """``(select ...) as "<table>"`` exposing legacy columns, or None on the legacy shape."""
+# Legacy columns a curriculum read can leave out of its SQL because
+# project_rows() supplies them after the fetch. ``ksb_description`` is the
+# standard KSB's text, repeated on every mapping row -- 2.5 MB of the 6 MB a
+# programme's mapping read moved -- for 235 distinct rows.
+# Only authoring_select_sql defers; hand-written SQL (relation_sql/adapt_sql,
+# the Learner team's reads) still gets the column from the relation.
+PYTHON_DERIVED_COLUMNS = {'ksb_mappings': ('ksb_description',)}
+
+
+def read_relation(table, columns, alias=True, defer=()):
+    """``(select ...) as "<table>"`` exposing legacy columns, or None on the legacy shape.
+
+    ``defer`` names legacy columns to leave out (see PYTHON_DERIVED_COLUMNS):
+    the caller derives them after the fetch.
+    """
     columns = set(columns or ())
+    if connection.vendor == 'postgresql' and _linked_free_week_shape(table, columns):
+        extra = [f'{expression} as "{name}"' for name, expression in _LINKED_FREE_WEEK_FIELDS.items()
+                 if name not in columns and name not in defer]
+        selection = ', '.join(['t.*', *extra])
+        result = (f'(select {selection} from {_internal(table)} t '
+                  f'left join {_internal("free_courses")} fc on fc.id = t.course_id '
+                  f'left join {_internal("weeks")} fw on fw.id = t.week_id)')
+        return result + (f' as "{table}"' if alias else '')
     if connection.vendor != 'postgresql' or table not in RELATION_TABLES or not is_normalised(table, columns):
         return None
     q = _internal
@@ -434,7 +477,7 @@ def read_relation(table, columns, alias=True):
     joins = []
 
     def add(name, expression):
-        if name not in columns:
+        if name not in columns and name not in defer:
             extra.append(f'{expression} as "{name}"')
 
     for output, source, key, label in (
@@ -551,17 +594,50 @@ def _chunks(values, size=2000):
         yield values[start:start + size]
 
 
+# standard_ksbs ids -> (code, description), as last read. Reference data:
+# changed only by a manual Skills England import, which the curriculum cache
+# already lets lag by up to 60 s (views.coverage_entry), so this lags no more.
+STANDARD_TEXTS_TTL_SECONDS = 60
+_STANDARD_TEXTS = {'read_at': 0.0, 'rows': {}}
+_STANDARD_TEXTS_LOCK = threading.Lock()
+
+
+def standard_ksb_texts(standard_ids):
+    """``{standard_ksbs.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
+    wanted = {value for value in standard_ids if value is not None}
+    if not wanted:
+        return {}
+    with _STANDARD_TEXTS_LOCK:
+        if time.monotonic() - _STANDARD_TEXTS['read_at'] > STANDARD_TEXTS_TTL_SECONDS:
+            _STANDARD_TEXTS.update(read_at=time.monotonic(), rows={})
+        known = _STANDARD_TEXTS['rows']
+        missing = wanted - known.keys()
+    if missing:
+        found = {}
+        with connection.cursor() as cursor:
+            for chunk in _chunks(missing):
+                cursor.execute(f'select id, ksb_code, ksb_description from {_internal("standard_ksbs")} where id = any(%s)', [chunk])
+                found.update({sid: (code, description) for sid, code, description in cursor.fetchall()})
+        with _STANDARD_TEXTS_LOCK:
+            known.update(found)
+    return {value: known[value] for value in wanted if value in known}
+
+
+def reset_standard_ksb_texts():
+    with _STANDARD_TEXTS_LOCK:
+        _STANDARD_TEXTS.update(read_at=0.0, rows={})
+
+
 def _project_ksb_mappings(rows, derived):
-    component_ids = {str(row.get('component_id')) for row in rows if row.get('component_id')}
-    standard_ids = {row.get('standard_ksb_id') for row in rows if row.get('standard_ksb_id') is not None}
     placements, standards = {}, {}
-    with connection.cursor() as cursor:
-        for chunk in _chunks(component_ids):
-            cursor.execute(f'select id, module_catalogue_id, week_id from {_internal("components")} where id = any(%s)', [chunk])
-            placements.update({cid: (module_id, week_id) for cid, module_id, week_id in cursor.fetchall()})
-        for chunk in _chunks(standard_ids):
-            cursor.execute(f'select id, ksb_code, ksb_description from {_internal("standard_ksbs")} where id = any(%s)', [chunk])
-            standards.update({sid: (code, description) for sid, code, description in cursor.fetchall()})
+    if {'module_catalogue_id', 'week_id'} & set(derived):
+        component_ids = {str(row.get('component_id')) for row in rows if row.get('component_id')}
+        with connection.cursor() as cursor:
+            for chunk in _chunks(component_ids):
+                cursor.execute(f'select id, module_catalogue_id, week_id from {_internal("components")} where id = any(%s)', [chunk])
+                placements.update({cid: (module_id, week_id) for cid, module_id, week_id in cursor.fetchall()})
+    if {'ksb_code', 'ksb_description'} & set(derived):
+        standards = standard_ksb_texts(row.get('standard_ksb_id') for row in rows)
     for row in rows:
         module_id, week_id = placements.get(str(row.get('component_id')), (None, None))
         code, description = standards.get(row.get('standard_ksb_id'), ('', ''))
@@ -616,8 +692,26 @@ def _project_components(rows, derived):
 
 # --- write translation --------------------------------------------------------
 
-def standard_ksb_id_for(ksb_id='', ksb_code='', programme_id='', module_catalogue_id=''):
-    """``standard_ksbs.id`` for a mapping being written, or None when unknown."""
+def standard_reference(source_id):
+    """``('ST0596', '1.0')`` for a standard source id (``st0596-v1-0``,
+    ``standard:st0596-v1-0``); ``('ST0596', '')`` without a version; ``('', '')``
+    for anything else (a framework id such as ``KSBP-...``)."""
+    value = (source_id or '').strip().split(':', 1)[-1]
+    match = re.fullmatch(r'(st\d+)(?:-v(\d+(?:-\d+)*))?', value, re.IGNORECASE)
+    if not match:
+        return '', ''
+    return match.group(1).upper(), (match.group(2) or '').replace('-', '.')
+
+
+def standard_ksb_id_for(ksb_id='', ksb_code='', programme_id='', module_catalogue_id='', source_type='', source_id=''):
+    """``standard_ksbs.id`` for a mapping being written, or None when unknown.
+
+    The mapping's own standard decides first: a component in one programme may
+    carry a KSB of another standard (ST0596 codes on a Marketing Manager
+    module), and the module's profile would point that code at the wrong
+    standard -- or at none, failing the NOT NULL. The profile is the fallback
+    for a mapping that names no standard (a framework source, or none).
+    """
     with connection.cursor() as cursor:
         if ksb_id:
             cursor.execute(f'select standard_ksb_id from {_qualified("ksb_mappings")} where ksb_id = %s limit 1', [ksb_id])
@@ -627,6 +721,16 @@ def standard_ksb_id_for(ksb_id='', ksb_code='', programme_id='', module_catalogu
         code = (ksb_code or '').strip()
         if not code and ksb_id:
             return None
+        reference, version = standard_reference(source_id) if (source_type or 'standard').strip().lower() == 'standard' else ('', '')
+        if code and reference:
+            cursor.execute(
+                f'select id from {_qualified("standard_ksbs")} where upper(standard_ref) = %s and upper(ksb_code) = upper(%s) '
+                f"order by (standard_version = %s) desc, date_updated desc nulls last, id desc limit 1",
+                [reference, code, version],
+            )
+            found = cursor.fetchone()
+            if found:
+                return found[0]
         # The module's (else the programme's) KSB profile names the standard,
         # e.g. 'standard:st0845-v1-1' -> ST0845.
         profile = ''
@@ -658,6 +762,57 @@ def standard_ksb_id_for(ksb_id='', ksb_code='', programme_id='', module_catalogu
         )
         found = cursor.fetchone()
         return found[0] if found else None
+
+
+def reuse_mapping_rows(payloads):
+    """Fit translated ``ksb_mappings`` payloads to UNIQUE (component_id, standard_ksb_id).
+
+    The constraint covers archived rows too. Taking a KSB off a component
+    archives its row, and putting it back arrives with a newly minted id, so
+    the insert collided with the archived row (500). Each payload now takes
+    the id of the row this component already holds for that KSB: the upsert
+    then reactivates and updates that row, keeping its history, instead of
+    inserting a second one. If another payload in the batch keeps that id as
+    its own (its row is being moved to a different KSB), that payload gets a
+    new id, so the two never write one row. A KSB listed twice for the same
+    component in one batch keeps its first entry, as normalise_component_ksb_mappings
+    does for a repeated code. No-op where the column or constraint does not exist.
+    """
+    keyed = [payload for payload in payloads if payload.get('component_id') and payload.get('standard_ksb_id') is not None]
+    if not keyed or connection.vendor != 'postgresql':
+        return payloads
+    component_ids = sorted({str(payload['component_id']) for payload in keyed})
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'select component_id, standard_ksb_id, id from {_internal("ksb_mappings")} where component_id = any(%s)',
+            [component_ids],
+        )
+        stored = {(str(component_id), standard_id): str(row_id) for component_id, standard_id, row_id in cursor.fetchall()}
+    own_ids = {str(payload.get('id')) for payload in payloads if payload.get('id')}
+    seen, result, renamed = set(), [], {}
+    for payload in payloads:
+        key = (str(payload.get('component_id') or ''), payload.get('standard_ksb_id'))
+        if not key[0] or key[1] is None:
+            result.append(payload)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        stored_id = stored.get(key)
+        if stored_id and stored_id != str(payload.get('id')):
+            if stored_id in own_ids:
+                renamed[stored_id] = f'KSBMAP-{datetime.now(timezone.utc):%Y%m%d%H%M%S%f}{uuid.uuid4().hex[:8].upper()}'
+            payload = {**payload, 'id': stored_id}
+        result.append(payload)
+    if renamed:
+        # The payload whose own id was taken over keeps its content under a new id.
+        result = [
+            {**payload, 'id': renamed[str(payload['id'])]}
+            if str(payload.get('id')) in renamed and stored.get((str(payload.get('component_id') or ''), payload.get('standard_ksb_id'))) != str(payload['id'])
+            else payload
+            for payload in result
+        ]
+    return result
 
 
 def translate_write(table, payload, columns):
@@ -734,6 +889,7 @@ def translate_write(table, payload, columns):
             resolved = standard_ksb_id_for(
                 payload.get('ksb_id') or '', payload.get('ksb_code') or '',
                 module_catalogue_id=payload.get('module_catalogue_id') or '',
+                source_type=payload.get('source_type') or '', source_id=payload.get('source_id') or '',
             )
             if resolved is not None:
                 payload['standard_ksb_id'] = resolved

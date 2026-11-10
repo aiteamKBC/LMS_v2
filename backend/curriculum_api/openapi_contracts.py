@@ -261,7 +261,7 @@ def _response_keys(node):
     return sorted(keys)
 
 
-_STATUS = re.compile(r'status\s*=\s*([1-5][0-9]{2})|json_error\([^\n]*?,\s*([1-5][0-9]{2})\s*[,)]|status_code\s*=\s*([1-5][0-9]{2})')
+_STATUS = re.compile(r'status\s*=\s*([1-5][0-9]{2})|\b(?:json_error|_error)\([^\n]*?,\s*([1-5][0-9]{2})\s*[,)]|status_code\s*=\s*([1-5][0-9]{2})')
 _PERMISSION_CALL = re.compile(r'\b(require_[a-z_]+|[a-z_]*_permission[a-z_]*|can_[a-z_]+|[a-z_]*forbidden[a-z_]*|[a-z_]*_access_error|staff_[a-z_]*required|[a-z_]*editor_required)\(')
 
 
@@ -275,6 +275,24 @@ def _roles_from_decorators(view):
         if 'teams_staff_required' in qualname:
             guards.append('teams_staff_required (admin or staff)')
             roles |= {'admin', 'staff'}
+        # functools.wraps copies the view's own name onto the wrapper, so the
+        # gate is recognised by its code object instead.
+        code_name = getattr(getattr(current, '__code__', None), 'co_qualname', '')
+        if '_learner_progress_gate' in code_name:
+            # login.permissions.learner_self_only / _or_staff / _or_admin:
+            # the learner who owns the record, plus staff or admin when allowed.
+            names = getattr(getattr(current, '__code__', None), 'co_freevars', ())
+            cells = dict(zip(names, getattr(current, '__closure__', None) or ()))
+            flag = lambda name: bool(name in cells and cells[name].cell_contents)  # noqa: E731
+            if flag('allow_staff'):
+                guards.append('learner_self_or_staff (the owning learner, or staff/admin)')
+                roles |= {'learner', 'staff', 'admin'}
+            elif flag('allow_admin'):
+                guards.append('learner_self_or_admin (the owning learner, or an admin)')
+                roles |= {'learner', 'admin'}
+            else:
+                guards.append('learner_self_only (the owning learner only)')
+                roles |= {'learner'}
         if 'require_role' in qualname:
             for cell in getattr(current, '__closure__', None) or ():
                 try:

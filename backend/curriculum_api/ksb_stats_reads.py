@@ -1,4 +1,6 @@
 """Narrow PostgreSQL inputs for programme KSB summary statistics."""
+from collections import Counter
+
 from . import archive_state, ksb_mapping_placement, views
 
 
@@ -17,30 +19,51 @@ def grouped_scope_rows(module_ids):
         (views.AUTHORING_KSB_MAPPINGS_TABLE, ('module_catalogue_id', 'ksb_code', 'source_type', 'source_id', 'weight', *flags), views.active_mapping_rows),
     )
     ids = sorted(set(module_ids))
-    results = []
-    for table, fields, active in specs:
-        # Mappings are read with their component's module and their standard's
-        # code (ksb_mapping_placement); 'status' is the archive flag the
-        # deletion columns stood for, so the active_* filters below see it.
-        if archive_state.uses_status(table):
-            fields = (*fields, 'status')
-        fields = [views.quote_ident(field) for field in fields if ksb_mapping_placement.can_select(table, field)]
-        selections, groups, params = list(fields), list(fields), []
-        if table == views.AUTHORING_KSB_MAPPINGS_TABLE:
-            # Stats only test whether a mapping is component-owned; they never
-            # display or resolve its component id. Preserve Python strip rules.
-            expression = "case when length(btrim(component_id, %s)) > 0 then 'mapped' else '' end"
-            selections.append(expression + ' as component_id')
-            groups.append(str(len(selections)))
-            params.append(_STRIP_CHARS)
-        results.append(active(views.fetch_all(
-            f'select {", ".join(selections)}, count(*) as _stats_count '
-            f'from {ksb_mapping_placement.read_source(table)} '
-            f'where module_catalogue_id in ({", ".join(["%s"] * len(ids))}) '
-            f'group by {", ".join(groups)}',
-            [*params, *ids],
-        )))
-    return tuple(results)
+    return tuple(_grouped_rows(table, fields, active, ids) for table, fields, active in specs)
+
+
+# The component spec above, on its own.
+COMPONENT_COUNT_FIELDS = ('module_catalogue_id', 'type', 'deleted_at', 'is_programme_deleted', 'library_state')
+
+
+def grouped_component_counts(module_ids):
+    """``Counter({module_catalogue_id: active component count})``, counted in SQL.
+
+    What delivery deduplication ranks a module by, without moving every
+    component row: the same grouped read and active filter as the programme
+    statistics above.
+    """
+    counts = Counter()
+    ids = sorted(set(module_ids))
+    if not ids:
+        return counts
+    for row in _grouped_rows(views.AUTHORING_COMPONENTS_TABLE, COMPONENT_COUNT_FIELDS, views.active_component_rows, ids):
+        counts[views.clean_str(row.get('module_catalogue_id'))] += row['_stats_count']
+    return counts
+
+
+def _grouped_rows(table, fields, active, ids):
+    # Mappings are read with their component's module and their standard's
+    # code (ksb_mapping_placement); 'status' is the archive flag the
+    # deletion columns stood for, so the active_* filters below see it.
+    if archive_state.uses_status(table):
+        fields = (*fields, 'status')
+    fields = [views.quote_ident(field) for field in fields if ksb_mapping_placement.can_select(table, field)]
+    selections, groups, params = list(fields), list(fields), []
+    if table == views.AUTHORING_KSB_MAPPINGS_TABLE:
+        # Stats only test whether a mapping is component-owned; they never
+        # display or resolve its component id. Preserve Python strip rules.
+        expression = "case when length(btrim(component_id, %s)) > 0 then 'mapped' else '' end"
+        selections.append(expression + ' as component_id')
+        groups.append(str(len(selections)))
+        params.append(_STRIP_CHARS)
+    return active(views.fetch_all(
+        f'select {", ".join(selections)}, count(*) as _stats_count '
+        f'from {ksb_mapping_placement.read_source(table)} '
+        f'where module_catalogue_id in ({", ".join(["%s"] * len(ids))}) '
+        f'group by {", ".join(groups)}',
+        [*params, *ids],
+    ))
 
 
 def progress_totals(learner_ids, codes):

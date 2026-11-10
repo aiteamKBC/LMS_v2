@@ -129,12 +129,16 @@ def apply_recorded_outcomes(records):
             'scheduled_start': start, 'scheduled_end': occurrence.get('scheduled_end'),
             'occurrence_status': occurrence.get('status'), '_record': record,
         })
+    from .recording_views import shared_recording_reads
     projected = {}
-    for learner_id, rows in grouped.items():
-        for row in apply_recorded_attendance(rows, sources[learner_id], mode='lazy'):
-            basis = row.get('attendance_basis')
-            if basis:
-                record = row['_record']
-                projected[id(record)] = {**record, 'attendanceBasis': basis,
-                    'effectiveAttendance': 'present' if basis == 'recorded' else 'awaiting_recording'}
+    # One read of each session's recordings for the whole register, not one
+    # per learner; each learner's watch progress is still their own read.
+    with shared_recording_reads():
+        for learner_id, rows in grouped.items():
+            for row in apply_recorded_attendance(rows, sources[learner_id], mode='lazy'):
+                basis = row.get('attendance_basis')
+                if basis:
+                    record = row['_record']
+                    projected[id(record)] = {**record, 'attendanceBasis': basis,
+                        'effectiveAttendance': 'present' if basis == 'recorded' else 'awaiting_recording'}
     return [projected.get(id(record), record) for record in records]

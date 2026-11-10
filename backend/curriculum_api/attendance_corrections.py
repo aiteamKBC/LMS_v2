@@ -45,8 +45,11 @@ def session_context(series_id, number, module_id, *, lock=False):
         raise CorrectionError('Session is unavailable. Refresh saved results.', 404)
     occurrence = occurrences[0]
     module_id = module_id or series.module_catalogue_id
+    # Existence only, so only the key is read: the model also maps the course
+    # pricing columns (migration 0079), which the current curriculum database
+    # does not carry -- selecting every field there fails the whole read.
     module = ModuleAuthoringModule.objects.using('enrolment').filter(pk=module_id).exclude(
-        status__in=INACTIVE_STATUSES).first()
+        status__in=INACTIVE_STATUSES).values_list('pk', flat=True).first()
     if module is None:
         raise CorrectionError('Module is unavailable.', 404)
     if module_id != series.module_catalogue_id:

@@ -61,14 +61,44 @@ def is_inactive(status):
     return str(status or '').strip().lower() in INACTIVE_STATUSES
 
 
+# The tables lookups() reads. A write to any other table (weeks, components,
+# KSB mappings, history ...) leaves every name it answers unchanged.
+NAME_TABLES = frozenset({
+    'programmes', 'cohorts', 'groups', 'modules', 'tutors', 'coaches', 'group_coaches',
+    'cohort_calendar_holidays', 'calendar_holidays', 'standard_ksbs',
+})
+
+
 def invalidate():
     _LOCAL.lookups = None
+
+
+def invalidate_for(table):
+    """Drop the cached names only when ``table`` is one they are read from."""
+    if str(table or '').split('.')[-1].strip('"') in NAME_TABLES:
+        invalidate()
+
+
+def begin_request():
+    """Hold the names read during one request for the rest of it.
+
+    The 2 s TTL exists for the other processes' writes (there is no shared
+    cache). Inside one request it only made a long save re-read every name
+    table every two seconds; a write here to a name table still invalidates.
+    """
+    _LOCAL.request_token = object()
+
+
+def end_request():
+    _LOCAL.request_token = None
 
 
 def lookups(using='default'):
     """``{'programmes': {id: {...}}, 'cohorts': ..., 'groups': ..., 'modules': ..., 'tutors': ..., 'coaches': ...}``."""
     cached = getattr(_LOCAL, 'lookups', None)
-    if cached and cached['at'] + _TTL_SECONDS > time.monotonic():
+    token = getattr(_LOCAL, 'request_token', None)
+    if cached and (cached['at'] + _TTL_SECONDS > time.monotonic()
+                   or (token is not None and cached.get('request_token') is token)):
         return cached
     data = {'programmes': {}, 'cohorts': {}, 'groups': {}, 'modules': {}, 'tutors': {}, 'coaches': {},
             'cohort_holidays': {}}
@@ -122,6 +152,7 @@ def lookups(using='default'):
         if is_excluded:
             entry['excluded'].append(holiday_id)
     data['at'] = time.monotonic()
+    data['request_token'] = getattr(_LOCAL, 'request_token', None)
     _LOCAL.lookups = data
     return data
 

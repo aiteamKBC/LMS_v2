@@ -42,8 +42,10 @@ from . import archive_state
 from . import curriculum_names
 from . import calendar_holidays, free_course_catalogue, ksb_mapping_placement, schema_compat
 from . import group_coaches
+from .free_course_catalogue_store import FreeCourseInUse
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
+from . import free_course_pricing
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
@@ -5769,8 +5771,9 @@ def note_live_rows(table, rows):
     Called beside every history record in the write helpers below, from the
     rows the write itself returned, so it costs no query. See module_live.
     """
-    # Names/ids derived for the normalised schema must reflect this write.
-    schema_compat.invalidate()
+    # Names/ids derived for the normalised schema must reflect this write --
+    # but only a write to a table they are read from can change them.
+    curriculum_names.invalidate_for(table)
     try:
         from .module_live import note_rows
         note_rows(table, rows)
@@ -16021,8 +16024,11 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
     # where/order/column list naming one keeps working. None on the old shape
     # and off PostgreSQL (columns_of reads nothing there).
     shape = schema_compat.columns_of(CURRICULUM_SCHEMA, table)
-    relation = schema_compat.read_relation(table, shape)
-    legacy_columns = set(schema_compat.legacy_read_columns(table, shape)) if relation else set()
+    # Columns project_rows() fills in after the fetch (the standard KSB text on
+    # every mapping), so the statement need not move them.
+    deferred = set(schema_compat.PYTHON_DERIVED_COLUMNS.get(table, ())) - set(shape)
+    relation = schema_compat.read_relation(table, shape, defer=deferred)
+    legacy_columns = set(schema_compat.legacy_read_columns(table, shape)) - deferred if relation else set()
     available = set(column_names(table)) | legacy_columns
     # The compatibility relation already resolves missing placement columns.
     # Other shapes (including legacy physical copies) still need canonical
@@ -16046,6 +16052,9 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
         available.update(derived)
     if columns:
         wanted = [column for column in columns if column in available]
+        if relation and deferred & set(columns) and 'standard_ksb_id' in available and 'standard_ksb_id' not in wanted:
+            # A deferred standard KSB text is looked up by this key.
+            wanted.append('standard_ksb_id')
         if (archive_state.uses_status(table) and 'status' not in wanted
                 and set(columns) & LEGACY_LIFECYCLE_READ_COLUMNS):
             # Asking for the archive state means asking for status, the column
@@ -16371,6 +16380,14 @@ def free_programme_fetch_all(table, where_sql='', params=None, order_sql='', col
     payloads on some rows -- hundreds of kilobytes each -- and a `select *` for
     an id list drags all of them across the wire.
     """
+    query = free_programme_select_sql(table, where_sql, order_sql, columns)
+    with connection.cursor() as cursor:
+        cursor.execute(query, params or [])
+        return rows_as_dicts(cursor)
+
+
+def free_programme_select_sql(table, where_sql='', order_sql='', columns=None):
+    """The SELECT free_programme_fetch_all() runs for these arguments."""
     ensure_free_programme_tables()
     # Normalised schema: free-course weeks read their title/number/description
     # from the week and their name/cover from the course (see schema_compat).
@@ -16385,9 +16402,34 @@ def free_programme_fetch_all(table, where_sql='', params=None, order_sql='', col
         query += f' where {where_sql}'
     if order_sql:
         query += f' order by {order_sql}'
+    return query
+
+
+def free_programme_fetch_many(reads):
+    """Several free-course reads in one database round trip.
+
+    ``reads`` is ``[(table, where_sql, params, order_sql, columns), ...]``; the
+    result is one row list per read, in order. On PostgreSQL the statements go
+    out as one multi-statement query (see CURRICULUM_BATCHED_READS): from a
+    remote database the round trips, not the rows, are most of what these
+    endpoints wait on. Elsewhere, or with batching off, they run one by one.
+    """
+    reads = list(reads)
+    if len(reads) < 2 or connection.vendor != 'postgresql' or not CURRICULUM_BATCHED_READS:
+        return [free_programme_fetch_all(table, where_sql, params, order_sql, columns=columns)
+                for table, where_sql, params, order_sql, columns in reads]
+    queries = [free_programme_select_sql(table, where_sql, order_sql, columns)
+               for table, where_sql, _params, order_sql, columns in reads]
+    results = []
     with connection.cursor() as cursor:
-        cursor.execute(query, params or [])
-        return rows_as_dicts(cursor)
+        cursor.execute('; '.join(queries), [value for read in reads for value in (read[2] or [])])
+        while True:
+            results.append(rows_as_dicts(cursor))
+            if not cursor.nextset():
+                break
+    if len(results) != len(reads):
+        raise DatabaseError(f'Batched free-course reads returned {len(results)} results for {len(reads)} reads.')
+    return results
 
 
 def authoring_delete(table, where_sql='1 = 1', params=None):
@@ -16518,6 +16560,9 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
         for payload, nullable in translated
     ]
     payloads = [payload for payload in payloads if payload]
+    if table == AUTHORING_KSB_MAPPINGS_TABLE and 'standard_ksb_id' in writable:
+        # UNIQUE (component_id, standard_ksb_id): a re-added KSB reuses its row.
+        payloads = schema_compat.reuse_mapping_rows(payloads)
     if not payloads:
         return
     now = datetime.utcnow()
@@ -16935,14 +16980,20 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
             if clean_str(module.get('title')):
                 module_names_by_group[group_id].append(clean_str(module.get('title')))
 
-        for cohort in cohorts:
+        # The id/name copies below are stored only where the table still has
+        # the column. The normalised schema derives them (groups have no
+        # module_ids/module_names, cohorts no group_ids), and each "update" was
+        # a read-back of the row: ~40 round trips on every module save.
+        refresh_cohort_copies = has_column(COHORT_AUTHORING_DETAILS_TABLE, 'group_ids')
+        refresh_group_copies = has_column(GROUPS_TABLE, 'module_ids') or has_column(GROUPS_TABLE, 'module_names')
+        for cohort in (cohorts if refresh_cohort_copies else []):
             cohort_id = clean_str(cohort.get('cohort_id'))
             if not cohort_id or (programme_id and clean_str(cohort.get('programme_id')) != programme_id):
                 continue
             if curriculum_row_effectively_deleted(cohort):
                 continue
             update_cohort_fields(cohort_id, {'group_ids': json_db_value(unique(group_ids_by_cohort.get(cohort_id, [])))})
-        for group in groups:
+        for group in (groups if refresh_group_copies else []):
             group_id = clean_str(group.get('group_id'))
             if not group_id or (programme_id and clean_str(group.get('programme_id')) != programme_id):
                 continue
@@ -18867,6 +18918,17 @@ def save_component_builder_payload(payload, component_id=None):
         module_row=module_row,
         enforce_unique=False,
     )
+    # ksb_mappings CHECKs weight > 0. The module save validates each mapping
+    # before writing; this path did not, so a weightless mapping reached the
+    # insert and failed there (500). Refuse it as the module save does.
+    weightless = [
+        {'path': f'ksbMappings.{index}.weight',
+         'message': f"{mapping.get('ksb_code') or 'KSB'}: weight must be greater than zero."}
+        for index, mapping in enumerate(mapping_payloads)
+        if not (mapping.get('weight') or 0) > 0
+    ]
+    if weightless:
+        raise ModuleAuthoringValidationError(weightless)
 
     with transaction.atomic():
         authoring_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], {
@@ -21800,7 +21862,7 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'status': module.get('status') or 'draft',
         'sourceType': module.get('source_type') or '',
         'isFreeCourse': module.get('source_type') == 'free_course',
-        **pricing_payload(module),
+        **free_course_pricing.payload(module, free_course_pricing.lookup([module])),
         'sourceId': module.get('source_id') or '',
         'isProgrammeDeleted': is_programme_deleted,
         'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
@@ -22207,6 +22269,7 @@ def get_authoring_structure_payloads(
         component_rows_by_module[catalogue_id].append(row)
 
     payloads = {}
+    free_course_prices = free_course_pricing.lookup(module_rows)
     for module in module_rows:
         catalogue_id = clean_str(module.get('module_catalogue_id'))
         if not catalogue_id:
@@ -22275,7 +22338,7 @@ def get_authoring_structure_payloads(
             'status': module.get('status') or 'draft',
             'sourceType': module.get('source_type') or '',
             'isFreeCourse': module.get('source_type') == 'free_course',
-            **pricing_payload(module),
+            **free_course_pricing.payload(module, free_course_prices),
             'sourceId': module.get('source_id') or '',
             'isProgrammeDeleted': is_programme_deleted,
             'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
@@ -22521,6 +22584,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
 
     summaries = {}
     module_rows_by_catalogue_id = {}
+    free_course_prices = free_course_pricing.lookup(module_rows)
     for row in module_rows:
         catalogue_id = str(row.get('module_catalogue_id'))
         module_rows_by_catalogue_id[catalogue_id] = row
@@ -22544,7 +22608,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             'status': row.get('status') or 'draft',
             'sourceType': row.get('source_type') or '',
             'isFreeCourse': row.get('source_type') == 'free_course',
-            **pricing_payload(row),
+            **free_course_pricing.payload(row, free_course_prices),
             'sourceId': row.get('source_id') or '',
             'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or ''),
             'tutor': row.get('tutor_name') or '',
@@ -23689,6 +23753,23 @@ def write_changed_authoring_rows(module_catalogue_id, week_payloads, component_p
     authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], written)
 
 
+def free_course_sale_values(payload, module_row, is_free_course):
+    """The sale values a module save may store, or a validation error.
+
+    A free course's omitted values keep its stored price (free_course_pricing);
+    any other module is never for sale -- asking to sell one is refused rather
+    than silently dropped.
+    """
+    if not is_free_course:
+        if payload.get('isForSale') is True:
+            raise ModuleAuthoringValidationError([{'path': 'isForSale', 'message': 'Only a free course can be for sale.'}])
+        return {'is_for_sale': False, 'price': None, 'currency': 'GBP'}
+    try:
+        return pricing_values(payload, free_course_pricing.stored(module_row))
+    except ValueError as error:
+        raise ModuleAuthoringValidationError([{'path': error.args[0], 'message': error.args[1]}]) from error
+
+
 def merge_partial_module_structure(stored, payload):
     """Rebuild the whole module a full save would have sent, from a partial one.
 
@@ -23791,13 +23872,12 @@ def save_module_authoring_structure(
     else:
         existing_module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) if module_catalogue_id else []
     existing_module_row = existing_module_rows[0] if existing_module_rows else {}
-    try:
-        course_pricing = pricing_values(payload, existing_module_row)
-    except ValueError as error:
-        raise ModuleAuthoringValidationError([{'path': error.args[0], 'message': error.args[1]}]) from error
     is_free_course = (existing_module_row.get('source_type') == 'free_course'
                       or payload.get('isFreeCourse') is True
                       or payload.get('sourceType', payload.get('source_type')) == 'free_course')
+    # Only a free course is for sale, and its price lives on its free_courses
+    # row (free_course_pricing), never on the module.
+    course_pricing = free_course_sale_values(payload, existing_module_row, is_free_course)
     if is_free_course:
         from .free_course_policy import free_course_errors, retained_live_component_ids
         allowed_live_ids = retained_live_component_ids(existing_module_row) if _legacy_live_ids is None else set(_legacy_live_ids)
@@ -23985,7 +24065,6 @@ def save_module_authoring_structure(
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
             'module_catalogue_id': module_catalogue_id,
-            **course_pricing,
             'programme_id': programme_id,
             'programme_name': programme_name,
             # Normalised schema: one status. A module under an archived programme
@@ -24030,7 +24109,14 @@ def save_module_authoring_structure(
             'weekly_schedule': json_db_value(weekly_schedule),
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
-        }, allow_null_columns={'price'})
+        })
+        if is_free_course:
+            # After the module write: on the old database that write is what
+            # creates or refreshes the free course row the price is kept on.
+            try:
+                free_course_pricing.save(module_catalogue_id, course_pricing)
+            except free_course_pricing.FreeCoursePricingUnavailable as error:
+                raise ModuleAuthoringValidationError([{'path': error.args[0], 'message': error.args[1]}]) from error
         # Written only when the share itself changed. The `modules` column above
         # and this table say the same thing; rewriting the table on every save
         # meant every save could delete a share, which is how one went missing.
@@ -24456,6 +24542,8 @@ def free_programme_module_response(row, components, course=None):
         'description': course.get('description') if course.get('description') is not None else row.get('description') or '',
         'coverImageUrl': course.get('cover_image_url') if course.get('cover_image_url') is not None else row.get('cover_image_url') or '',
         'weekBuilderWeekIds': as_json_value(course.get('week_builder_week_ids'), []),
+        # The course's own sale metadata (curriculum.free_courses owns it).
+        **pricing_payload(course),
         'displayOrder': parse_int(row.get('display_order'), 0),
         'componentCount': len(module_components),
         'totalOtjh': parse_float(row.get('total_otjh'), 0),
@@ -24465,17 +24553,23 @@ def free_programme_module_response(row, components, course=None):
 
 def get_free_programme_modules_payload(programme_id):
     programme_id = clean_str(programme_id)
-    courses = {
-        clean_str(course.get('id')): course
-        for course in free_course_catalogue.courses()
-    }
-    modules = free_course_catalogue.weeks()
-    components = active_component_rows(
-        free_course_catalogue.components(programme_id=programme_id)
-    )
+    # One round trip for the three reads (free_course_catalogue.fetch_many).
+    course_rows, week_rows, component_rows = free_course_catalogue.fetch_many([
+        (FREE_COURSES_TABLE, '', [], 'display_order, course_name, id', None),
+        (FREE_PROGRAMME_MODULES_TABLE, '', [], 'display_order, week_number, id', None),
+        (FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id], 'display_order, title, id', None),
+    ])
+    courses = {clean_str(course.get('id')): course for course in course_rows}
+    # Staff consumers retain inactive weeks and their explicit status.
+    # Learner reads apply visibility separately; never erase historical weeks.
+    modules = week_rows
+    components_by_week = {}
+    for component in active_component_rows(component_rows):
+        components_by_week.setdefault(clean_str(component.get('free_module_id')), []).append(component)
     from .legacy_free_course_adoption import adopted_courses
     adopted = adopted_courses()
-    return [free_programme_module_response(module, components, courses.get(clean_str(module.get('course_id'))))
+    return [free_programme_module_response(module, components_by_week.get(clean_str(module.get('id')), []),
+                                           courses.get(clean_str(module.get('course_id'))))
             for module in modules if clean_str(module.get('course_id')) not in adopted]
 
 
@@ -24577,6 +24671,14 @@ def save_free_programme_modules(programme_id, payload):
     if any(clean_str(module.get('courseId') or module.get('course_id')) in protected
            for module in modules if isinstance(module, dict)):
         raise ValueError('This free course is now edited in Module Builder. Reload the course catalogue.')
+
+    from . import free_course_catalogue_store as catalogue_store
+    if catalogue_store.applies():
+        # New database: weeks carry their own text and learner records hold
+        # RESTRICT keys, so the delete-and-reinsert below cannot run there.
+        catalogue_store.save_catalogue(programme_id, modules)
+        invalidate_curriculum_cache()
+        return get_free_programme_modules_payload(programme_id)
 
     with transaction.atomic():
         # Scope the rewrite to this programme's own free courses/weeks. This
@@ -27861,12 +27963,24 @@ def _legacy_free_writer_access(request):
 def curriculum_free_programme_modules(request, programme_id):
     programme_id = clean_str(programme_id)
     if request.method == 'GET':
-        try:
+        def build_entry():
             modules = get_free_programme_modules_payload(programme_id)
+            # One copy of the list: the client reads `results` (fetchCollection).
+            return encode_json_entry({'results': modules, 'count': len(modules)})
+
+        try:
+            # Encoded once (JSON + gzip + ETag) and kept until a curriculum
+            # write bumps the epoch -- the free-course save does. A browser
+            # holding the current catalogue gets a 304 with no body.
+            entry = cached_curriculum_value(
+                f'free-programme-modules-response:{programme_id}',
+                build_entry,
+                force=request_bypasses_curriculum_cache(request),
+            )
         except Exception:
             logger.exception('Unable to load free programme modules for %s.', programme_id)
             return json_error('Unable to load free programme modules.', status=500)
-        return JsonResponse({'results': modules, 'modules': modules, 'count': len(modules)})
+        return conditional_json_response(request, entry)
 
     if request.method != 'PATCH':
         return json_error('Method not allowed.', status=405)
@@ -27878,10 +27992,15 @@ def curriculum_free_programme_modules(request, programme_id):
         return json_error('Invalid JSON body.')
     try:
         modules = save_free_programme_modules(programme_id, payload)
-    except Exception as exc:
+    except FreeCourseInUse as exc:
+        return json_error(str(exc), status=409)
+    except ValueError as exc:
+        return json_error(str(exc), status=400)
+    except Exception:
         logger.exception('Unable to save free programme modules for %s.', programme_id)
-        return json_error('Unable to save free programme modules.', status=500, detail=str(exc))
-    return JsonResponse({'saved': True, 'programmeId': programme_id, 'modules': modules, 'results': modules})
+        return json_error('Unable to save free programme modules.', status=500)
+    # One copy of the list: the client reads `modules` (saveFreeProgrammeModules).
+    return JsonResponse({'saved': True, 'programmeId': programme_id, 'modules': modules})
 
 
 def build_free_course_week_structure(source_rows):
@@ -27933,6 +28052,11 @@ def _delete_single_free_course_rows(course_id):
     """
     course_id = clean_str(course_id)
     if not course_id:
+        return
+    from . import free_course_catalogue_store as catalogue_store
+    if catalogue_store.applies():
+        # New database: no curriculum.weeks mirror, RESTRICT keys throughout.
+        catalogue_store.delete_course(course_id)
         return
     week_rows = free_programme_fetch_all(
         FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id], columns=['id', 'week_id'],
@@ -28055,8 +28179,10 @@ def inject_free_course_into_group(course_id, group_id, *, free_programme_id='FRE
         programme_id = clean_str(saved_module.get('programmeId'))
 
         if mode == 'move':
-            _delete_single_free_course_rows(course_id)
+            # Assignments first: on the new database they reference the course
+            # (RESTRICT), so the course cannot go while they remain.
             _scrub_free_course_learner_assignments(course_id)
+            _delete_single_free_course_rows(course_id)
 
         if programme_id:
             repair_curriculum_parent_links(programme_id)
@@ -28094,11 +28220,13 @@ def curriculum_free_programme_convert(request, programme_id):
         return exc.as_response()
     except LookupError as exc:
         return json_error(str(exc) or 'Not found.', status=404)
+    except FreeCourseInUse as exc:
+        return json_error(str(exc), status=409)
     except ValueError as exc:
         return json_error(str(exc), status=400)
-    except Exception as exc:
+    except Exception:
         logger.exception('Unable to convert free course %s.', clean_str(payload.get('courseId')))
-        return json_error('Unable to convert the free course.', status=500, detail=str(exc))
+        return json_error('Unable to convert the free course.', status=500)
     return JsonResponse(result, status=201)
 
 
@@ -28239,11 +28367,13 @@ def curriculum_free_programme_import_module(request, programme_id):
         )
     except LookupError as exc:
         return json_error(str(exc) or 'Module not found.', status=404)
+    except FreeCourseInUse as exc:
+        return json_error(str(exc), status=409)
     except ValueError as exc:
         return json_error(str(exc), status=400)
-    except Exception as exc:
+    except Exception:
         logger.exception('Unable to convert module %s to a free course.', clean_str(payload.get('moduleCatalogueId')))
-        return json_error('Unable to convert the module.', status=500, detail=str(exc))
+        return json_error('Unable to convert the module.', status=500)
     return JsonResponse(result, status=201)
 
 
@@ -29200,14 +29330,19 @@ def authoring_child_rows_for_modules(table, module_ids, *, columns=None, exclude
     if not scoped or getattr(_CURRICULUM_READ_SCOPE, 'targeted_child_reads', False):
         ids = sorted(wanted)
         placeholders = ', '.join(['%s'] * len(ids))
-        return authoring_fetch_all(
+        rows = authoring_fetch_all(
             table, f'module_catalogue_id in ({placeholders})', ids,
             columns=columns, exclude_columns=exclude_columns,
         )
-    return [
-        row for row in authoring_fetch_all(table, columns=columns, exclude_columns=exclude_columns)
-        if clean_str(row.get('module_catalogue_id')) in wanted
-    ]
+    else:
+        rows = [
+            row for row in authoring_fetch_all(table, columns=columns, exclude_columns=exclude_columns)
+            if clean_str(row.get('module_catalogue_id')) in wanted
+        ]
+    # Neither read has an ORDER BY, so the same request could list rows in a
+    # different order each time (and miss its ETag). Sorted here, not in SQL:
+    # order_sql is part of the read memo key, and the full read is shared.
+    return sorted(rows, key=lambda row: (clean_str(row.get('module_catalogue_id')), clean_str(row.get('id'))))
 
 
 @scoped_curriculum_read
@@ -29360,13 +29495,19 @@ def week_scope_module_ids(week_id):
 
 
 @scoped_curriculum_read
-def authoring_scope_data(scope='', identifier='', *, stats_only=False):
+def authoring_scope_data(scope='', identifier='', *, stats_only=False, mapped_components_only=False):
     """Module/week/component/mapping rows for a scope.
 
     The component read excludes settings_json for every caller, deliberately:
     each one either feeds ksb_coverage.py (which never reads it) or only counts
     the rows. Programme summary statistics opt into grouped count/weight facts;
     full coverage callers keep their shared detailed column set.
+
+    ``mapped_components_only`` (KSB coverage): the components returned are the
+    ones a returned mapping sits on -- all coverage looks up -- and delivery
+    deduplication counts every active component in SQL instead of from the
+    rows. For the largest programme that is 3,196 rows instead of 27,483.
+    Learner impact and achievement need every component and do not pass it.
     """
     if stats_only and scope != 'programme':
         raise ValueError('Stats-only authoring rows require a programme scope.')
@@ -29401,6 +29542,22 @@ def authoring_scope_data(scope='', identifier='', *, stats_only=False):
             for row in rows:
                 counter[clean_str(row.get('module_catalogue_id'))] += row['_stats_count']
             counts.append(counter)
+    elif mapped_components_only and connection.vendor == 'postgresql':
+        from .ksb_stats_reads import grouped_component_counts
+        week_rows = active_week_rows(authoring_child_rows_for_modules(AUTHORING_WEEKS_TABLE, module_ids))
+        mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(AUTHORING_KSB_MAPPINGS_TABLE, module_ids))
+        mapped_ids = sorted({clean_str(row.get('component_id')) for row in mapping_rows if clean_str(row.get('component_id'))})
+        component_rows = active_component_rows(authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE,
+            f'module_catalogue_id in ({", ".join(["%s"] * len(module_ids))}) and id = any(%s)',
+            [*module_ids, mapped_ids],
+            columns=COMPONENT_KSB_SCOPE_COLUMNS,
+        )) if mapped_ids else []
+        counts = [
+            Counter(clean_str(row.get('module_catalogue_id')) for row in mapping_rows),
+            grouped_component_counts(module_ids),
+            Counter(clean_str(row.get('module_catalogue_id')) for row in week_rows),
+        ]
     else:
         week_rows = active_week_rows(authoring_child_rows_for_modules(
             AUTHORING_WEEKS_TABLE, module_ids,
@@ -29565,9 +29722,15 @@ def required_ksbs_for_request(request, module_rows, scope='', identifier=''):
 
 
 def _coverage_response_uncached(request, scope='', identifier=''):
+    result = _coverage_payload_uncached(request, scope, identifier)
+    return result if isinstance(result, HttpResponse) else JsonResponse(result)
+
+
+def _coverage_payload_uncached(request, scope='', identifier=''):
+    """The coverage document as a dict, or the error response that replaces it."""
     summary_only = scope == 'programme' and request.GET.get('view') == 'summary'
     module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(
-        scope, identifier, **({'stats_only': True} if summary_only else {}),
+        scope, identifier, **({'stats_only': True} if summary_only else {'mapped_components_only': True}),
     )
     if identifier and scope == 'group' and not module_rows:
         # A group that exists but carries no modules yet is empty, not missing.
@@ -29597,7 +29760,7 @@ def _coverage_response_uncached(request, scope='', identifier=''):
         )
     if not actual_mappings_only:
         coverage = annotate_coverage_sources(coverage)
-    return JsonResponse({
+    return {
         'scope': scope or 'all',
         'identifier': identifier,
         'source': coverage_source_payload(
@@ -29607,7 +29770,7 @@ def _coverage_response_uncached(request, scope='', identifier=''):
             len(required_ksbs),
         ),
         **coverage,
-    })
+    }
 
 
 def coverage_entry(request, scope='', identifier=''):
@@ -29648,7 +29811,98 @@ def coverage_entry(request, scope='', identifier=''):
             response = _coverage_response_uncached(request, scope, identifier)
         return encode_json_bytes(response.content, status=response.status_code)
 
+    part = request.GET.get('view') if scope == 'programme' else ''
+    if part in COVERAGE_PART_VIEWS:
+        # One of the two halves (see COVERAGE_PART_VIEWS). Both are cut in one
+        # build, straight from the document it holds, and cached together: the
+        # heatmap's cells and each item's mapping list are the same placements
+        # filed two ways, so one database read serves both pages. The full
+        # document is neither serialised nor cached on the way -- for the
+        # largest programme encoding it and cutting the halves back out of it
+        # took ~1.2 s of a cold build; cutting them directly takes ~0.17 s.
+        def build_parts():
+            with curriculum_read_scope(targeted_child_reads=True):
+                result = _coverage_payload_uncached(request, scope, identifier)
+            if isinstance(result, HttpResponse):
+                error = encode_json_bytes(result.content, status=result.status_code)
+                return {name: error for name in COVERAGE_PART_VIEWS}
+            # coverage_part replaces top-level keys only, so a shallow copy each
+            # keeps one half's cut out of the other's.
+            return {name: encode_json_entry(coverage_part(dict(result), name)) for name in COVERAGE_PART_VIEWS}
+
+        return cached_curriculum_value(f'{key}:parts-v3', build_parts, ttl=60)[part]
     return cached_curriculum_value(key, build, ttl=60)
+
+
+# ``?view=heatmap``: the programme page's coverage tab, which draws the heatmap
+# and never reads the item list's mappings. ``?view=items``: the programme
+# card's KSB review and the KSB mapping page, which read the items with their
+# mappings and never the heatmap. Programme scope only; without either, the
+# document is unchanged.
+COVERAGE_PART_VIEWS = ('heatmap', 'items')
+
+# What either half's pages read from one placement (the heatmap cell's evidence,
+# the KSB mapping table, the programme card's review), under its snake_case key
+# only -- every reader takes ``snake || camel``. The full mapping carries about
+# fifty keys (each name twice, the standard KSB text, the source labels), which
+# made 8,445 placements 17 MB per half for the largest programme.
+COVERAGE_PART_MAPPING_FIELDS = (
+    'mapping_id', 'module_name', 'week_name', 'component_name', 'component_type', 'component_otjh',
+    'mapping_level', 'classification', 'group_name', 'groups', 'weight',
+)
+
+
+def coverage_part_mapping(mapping):
+    if not isinstance(mapping, dict):
+        return mapping
+    return {field: mapping[field] for field in COVERAGE_PART_MAPPING_FIELDS if field in mapping}
+
+
+def coverage_part(payload, part):
+    """The coverage document without the half ``part`` does not read.
+
+    What is dropped is emptied, not removed, so every key keeps its type, and a
+    flag says so: ``mappingsOmitted`` (each item's ``mappings`` is ``[]``;
+    ``occurrence_count`` still counts them) or ``heatmapOmitted`` (``rows`` is
+    ``[]``; ``modules`` stays). The placements the half keeps carry
+    COVERAGE_PART_MAPPING_FIELDS only (``placementFieldsOnly``), and a heatmap
+    cell keeps its module id, weight and placements -- the module's name is in
+    ``heatmap.modules`` once, not repeated in every row.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if part == 'heatmap':
+        payload['items'] = [
+            {**item, 'mappings': []} if isinstance(item, dict) and item.get('mappings') else item
+            for item in payload.get('items') or []
+        ]
+        heatmap = payload.get('heatmap')
+        if isinstance(heatmap, dict):
+            payload['heatmap'] = {**heatmap, 'rows': [
+                {**row, 'modules': [
+                    {
+                        'module_id': cell.get('module_id'),
+                        'weight': cell.get('weight'),
+                        'mappings': [coverage_part_mapping(mapping) for mapping in cell.get('mappings') or []],
+                    } if isinstance(cell, dict) else cell
+                    for cell in row.get('modules') or []
+                ]} if isinstance(row, dict) else row
+                for row in heatmap.get('rows') or []
+            ]}
+        payload['mappingsOmitted'] = True
+    elif part == 'items':
+        payload['items'] = [
+            {**item, 'mappings': [coverage_part_mapping(mapping) for mapping in item.get('mappings') or []]}
+            if isinstance(item, dict) else item
+            for item in payload.get('items') or []
+        ]
+        heatmap = payload.get('heatmap')
+        if isinstance(heatmap, dict):
+            payload['heatmap'] = {**heatmap, 'rows': []}
+        payload['heatmapOmitted'] = True
+    payload['placementFieldsOnly'] = True
+    payload['view'] = part
+    return payload
 
 
 def coverage_response(request, scope='', identifier=''):
@@ -30197,58 +30451,102 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
     return dict(totals)
 
 
-def progress_consumption_rows(learner_ids, codes=None):
+def progress_scope_predicate(component_ids, lineage_column='', scope_ref=''):
+    """SQL ``(predicate, params)``: progress entry ``p`` is in the scope.
+
+    The SQL form of learner_progress_ksb_consumption's in-scope test: the
+    entry's component is one of ``component_ids``, or its stamped lineage
+    column equals ``scope_ref``. Values are compared trimmed, as clean_str does.
+    """
+    parts = ["btrim(coalesce(p.component_ref, '')) = any(%s)"]
+    params = [sorted(component_ids)]
+    if lineage_column in PROGRESS_LINEAGE_COLUMN_BY_SCOPE.values() and scope_ref:
+        parts.append(f"btrim(coalesce(p.{quote_ident(lineage_column)}, '')) = %s")
+        params.append(scope_ref)
+    return '(' + ' or '.join(parts) + ')', params
+
+
+def out_of_scope_progress_count(learner_ids, predicate, predicate_params):
+    """How many consumption rows lie outside the scope, without reading them.
+
+    One row per (entry, KSB code), or one for an entry with no counted KSB --
+    the same rows progress_consumption_rows() would have returned for them.
+    """
+    not_excluded = and_not_excluded('k', connection)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            '''
+            select coalesce(sum(greatest(1, codes.n)), 0)
+            from "Learner"."learner_progress_entries" p
+            cross join lateral (
+                select count(distinct k.ksb_code) as n
+                from "Learner"."learner_progress_ksbs" k
+                where k.progress_id = p.id''' + not_excluded + '''
+            ) codes
+            where p.learner_id = any(%s) and not ''' + predicate,
+            [learner_ids, *predicate_params],
+        )
+        return int(cursor.fetchone()[0] or 0)
+
+
+def achieved_outcome_predicate(cursor, learner_ids):
+    """SQL ``(predicate, params)`` keeping entries that count as achieved, or None.
+
+    The (kind, passed) pairs these learners actually have are judged by
+    ``progress_counts_as_achieved`` -- the one completion rule -- and only the
+    accepted pairs are written into the query, so the rule is never restated in
+    SQL. None means no entry counts at all.
+    """
+    cursor.execute(
+        'select distinct p.kind, p.passed from "Learner"."learner_progress_entries" p where p.learner_id = any(%s)',
+        [learner_ids],
+    )
+    pairs = [(kind, passed) for kind, passed in cursor.fetchall()
+             if progress_counts_as_achieved(kind=kind, passed=passed)]
+    if not pairs:
+        return None
+    # `is not distinct from`: an ungraded completion leaves `passed` NULL.
+    sql = ' or '.join(['(p.kind is not distinct from %s and p.passed is not distinct from %s)'] * len(pairs))
+    return f'({sql})', [value for pair in pairs for value in pair]
+
+
+def progress_consumption_rows(learner_ids, codes=None, scope_predicate=None, achieved_only=False):
     """One row per (progress entry, KSB code), as learner_progress_ksb_consumption reads them.
 
-    Read as two queries joined here rather than one grouped join: the joined
-    result repeated every progress column (titles, reflection text, lineage)
-    once per KSB code -- ~155k wide rows for one programme -- and shipping
-    them, not executing the query (under a second), was the 20-30 s cost.
-    Now the wide columns come once per progress entry and the KSB side is
-    four narrow columns.
+    One query, one row per progress entry, its KSB codes folded into arrays and
+    unfolded here. A plain join repeated every progress column (titles,
+    reflection text, lineage) once per KSB code -- ~155k wide rows for one
+    programme -- and a separate KSB read still shipped ~120k narrow rows. The
+    query runs in well under a second; shipping rows to the app was the cost.
+    For the same reason each title arrives once, already resolved (live title,
+    else the label stamped on the progress row), rather than both copies.
 
     Same rows as the grouped join: an entry with no counted KSB keeps one row
     with a NULL code (the LEFT join; its hours still count), weight is the
-    largest per (entry, code), and the order is submitted_at desc nulls last,
-    id desc. ``codes``, when given, keeps only entries and KSB rows carrying one
-    of those codes -- for callers that read nothing else.
+    largest per (entry, code), codes run in code order within an entry, and
+    entries run submitted_at desc nulls last, id desc. ``codes``, when given,
+    keeps only entries and KSB rows carrying one of those codes -- for callers
+    that read nothing else. ``scope_predicate`` (from progress_scope_predicate)
+    keeps only the scope's own entries. ``achieved_only`` keeps only entries
+    that count as achieved and leaves the reflection text (``feedback``)
+    behind -- for a caller reading neither.
     """
     not_excluded = and_not_excluded('k', connection)
     code_sql = ' and upper(btrim(k.ksb_code)) = any(%s)' if codes is not None else ''
     code_params = [list(codes)] if codes is not None else []
+    scope_sql, scope_params = (f' and {scope_predicate[0]}', list(scope_predicate[1])) if scope_predicate else ('', [])
     with connection.cursor() as cursor:
-        cursor.execute(
-            '''
-            select k.progress_id, k.ksb_code,
-                   coalesce(max(k.weight), 0) as weight,
-                   coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
-            from "Learner"."learner_progress_ksbs" k
-            join "Learner"."learner_progress_entries" p on p.id = k.progress_id
-            -- Rows the KSB standards migration registered as not counting drop
-            -- out here; the activity and its hours stay (see below).
-            where p.learner_id = any(%s)''' + not_excluded + code_sql + '''
-            group by k.progress_id, k.ksb_code
-            order by k.progress_id, k.ksb_code
-            ''',
-            [learner_ids, *code_params],
-        )
-        ksbs_by_progress = defaultdict(list)
-        for progress_id, ksb_code, weight, weight_class in cursor.fetchall():
-            ksbs_by_progress[progress_id].append((ksb_code, weight, weight_class))
-        if codes is not None and not ksbs_by_progress:
-            return []
-        entry_filter = ''
-        if codes is not None:
-            entry_filter = (
-                ' and exists (select 1 from "Learner"."learner_progress_ksbs" k'
-                ' where k.progress_id = p.id' + not_excluded + code_sql + ')'
-            )
+        if achieved_only:
+            outcome = achieved_outcome_predicate(cursor, learner_ids)
+            if outcome is None:
+                return []
+            scope_sql += f' and {outcome[0]}'
+            scope_params += outcome[1]
         cursor.execute(
             '''
             select p.learner_id, p.id as progress_id, p.kind, p.component_ref,
-                   p.component_title, p.component_type, p.quiz_ref,
-                   p.module_title, p.week_title, p.submitted_at,
-                   p.reported_time, p.feedback, p.passed,
+                   p.component_type, p.quiz_ref, p.submitted_at,
+                   p.reported_time, ''' + ("''::text as feedback" if achieved_only else 'p.feedback') + ''', p.passed,
                    p.programme_ref, p.cohort_ref, p.group_ref,
                    p.module_ref, p.week_ref,
                    p.expected_otjh as progress_expected_otjh,
@@ -30257,36 +30555,68 @@ def progress_consumption_rows(learner_ids, codes=None):
                    -- The progress row's module_title is a label written when
                    -- the learner completed the activity, so a renamed module
                    -- reads stale and a deleted one reads as though it were
-                   -- still in the catalogue. Resolve both live and say which.
-                   coalesce(nullif(m.title, ''), '') as live_module_title,
-                   coalesce(nullif(w.title, ''), '') as live_week_title,
+                   -- still in the catalogue. Resolve both live; the stamped
+                   -- label only where no live title is left.
+                   case when btrim(coalesce(m.title, '')) <> '' then m.title else p.module_title end as live_module_title,
+                   case when btrim(coalesce(w.title, '')) <> '' then w.title else p.week_title end as live_week_title,
                    m.module_catalogue_id as live_module_catalogue_id,
                    (m.module_catalogue_id is not null) as module_found,
-                   coalesce(m.status in ('inactive', 'archived'), false) as module_deleted
+                   coalesce(m.status in ('inactive', 'archived'), false) as module_deleted,
+                   ksb.codes as ksb_codes, ksb.weights as ksb_weights, ksb.classes as ksb_classes
             from "Learner"."learner_progress_entries" p
             left join curriculum.components c on c.id = p.component_ref
             left join curriculum.weeks w on w.id = c.week_id
             left join curriculum.modules m
                    on m.module_catalogue_id = coalesce(c.module_catalogue_id, w.module_catalogue_id)
-            where p.learner_id = any(%s)''' + entry_filter + '''
+            left join lateral (
+                select array_agg(g.ksb_code order by g.ksb_code) as codes,
+                       array_agg(g.weight order by g.ksb_code) as weights,
+                       array_agg(g.weight_class order by g.ksb_code) as classes
+                from (
+                    select k.ksb_code,
+                           coalesce(max(k.weight), 0) as weight,
+                           coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
+                    from "Learner"."learner_progress_ksbs" k
+                    -- Rows the KSB standards migration registered as not
+                    -- counting drop out here; the activity and its hours stay.
+                    where k.progress_id = p.id''' + not_excluded + code_sql + '''
+                    group by k.ksb_code
+                ) g
+            ) ksb on true
+            where p.learner_id = any(%s)''' + (' and ksb.codes is not null' if codes is not None else '') + scope_sql + '''
             order by p.submitted_at desc nulls last, p.id desc
             ''',
-            [learner_ids, *code_params],
+            [*code_params, learner_ids, *scope_params],
         )
         entries = rows_as_dicts(cursor)
     rows = []
     for entry in entries:
+        codes_of = entry.pop('ksb_codes', None) or []
+        weights = entry.pop('ksb_weights', None) or []
+        classes = entry.pop('ksb_classes', None) or []
         # LEFT, not inner: a completed component with no KSB snapshot is still
         # off-the-job hours the learner did. See learner_progress_ksb_consumption.
-        for ksb_code, weight, weight_class in ksbs_by_progress.get(entry['progress_id']) or [(None, 0, 'soft')]:
+        for ksb_code, weight, weight_class in list(zip(codes_of, weights, classes)) or [(None, 0, 'soft')]:
             rows.append({**entry, 'ksb_code': ksb_code, 'weight': weight, 'weight_class': weight_class})
     return rows
 
 
 def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component_ids=(),
                                      include_unattributed=True, restrict_to_components=False,
-                                     scope='', scope_identifier='', codes_only=False):
+                                     scope='', scope_identifier='', codes_only=False,
+                                     in_scope_only=False, achievement_rows_only=False):
     """Per-learner achieved KSB weight, and the rows that produced it.
+
+    ``achievement_rows_only`` (the KSB achievement tab): read only achieved,
+    in-scope entries, without reflection text. That tab keeps nothing else --
+    it drops every row not ``in_scope`` and not ``countsTowardAchievement`` --
+    so its rows are unchanged, while ``totals`` and ``excluded_rows`` then
+    describe only those entries and must not be read.
+
+    ``in_scope_only`` (a narrowed scope only): leave out-of-scope and
+    unattributed activity in the database instead of returning it in
+    ``excluded_rows``; out_of_scope_progress_count() says how many there are.
+    The totals do not change: those rows never reach them.
 
     Returns ``(totals, achieved_rows, excluded_rows)``. Failed and unresolved
     activity is fetched and returned in ``excluded_rows`` — it stays visible as
@@ -30344,10 +30674,20 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     try:
         # ``codes_only``: the caller reads only rows carrying one of this
         # scope's codes. With no code filter every code counts, so read all.
-        rows = progress_consumption_rows(learner_ids, sorted(code_filter) if codes_only and code_filter else None)
+        scope_predicate = None
+        if (scope_filter or restrict_to_components) and (
+                achievement_rows_only or (in_scope_only and not include_unattributed)):
+            scope_predicate = progress_scope_predicate(
+                scope_filter, PROGRESS_LINEAGE_COLUMN_BY_SCOPE.get(clean_str(scope)) or '', clean_str(scope_identifier),
+            )
+        rows = progress_consumption_rows(
+            learner_ids, sorted(code_filter) if codes_only and code_filter else None, scope_predicate,
+            achieved_only=achievement_rows_only,
+        )
     except Exception as exc:
-        logger.warning('Could not load learner progress KSB consumption: %s', exc)
-        return {}, [], []
+        # Not an empty answer: empty totals read as "nobody achieved anything".
+        from .progress_errors import LearnerProgressUnavailable
+        raise LearnerProgressUnavailable() from exc
     lineage_column = PROGRESS_LINEAGE_COLUMN_BY_SCOPE.get(clean_str(scope))
     scope_ref = clean_str(scope_identifier)
     seen = set()
@@ -30886,6 +31226,18 @@ def progress_evidence_index(progress_ids):
     select_sql = ', '.join(f'e.{quote_ident(column)}' for column in ['progress_entry_id'] + optional)
     try:
         with connection.cursor() as cursor:
+            # Ask the evidence table which entries it holds files for (a
+            # partial index covers it), and keep only those of ours. Sending
+            # every progress id instead -- ~60k for one programme, for a table
+            # with a few dozen linked files -- was the whole cost of this read.
+            cursor.execute(
+                'select distinct progress_entry_id::text from "Learner"."evidence_files"'
+                ' where progress_entry_id is not null'
+            )
+            wanted = set(ids)
+            ids = [row[0] for row in cursor.fetchall() if row[0] in wanted]
+            if not ids:
+                return {}
             cursor.execute(
                 f'''
                 select {select_sql}
@@ -31907,12 +32259,27 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
     # no component reference. Anywhere narrower that would be a guess about which
     # cohort or group the activity belonged to.
     include_unattributed = scope == 'programme'
+    # The module progress screens (?moduleProgress=1) show only this scope's
+    # activity, so other scopes' activity -- ~10k rows of a learner's programme
+    # history for one module -- stays in the database and is only counted.
+    # The Achievement panels list it under Activity, so they still read it.
+    in_scope_only = request.GET.get('moduleProgress') == '1' and not include_unattributed
     progress_totals, progress_rows, excluded_progress_rows = learner_progress_ksb_consumption(
         learner_ids, scope_codes, component_ids, include_unattributed,
         restrict_to_components=not include_unattributed,
         scope=scope,
         scope_identifier=identifier,
+        in_scope_only=in_scope_only,
     )
+    out_of_scope_count = None
+    if in_scope_only and learner_ids and connection.vendor == 'postgresql':
+        try:
+            out_of_scope_count = out_of_scope_progress_count(learner_ids, *progress_scope_predicate(
+                {clean_str(value) for value in component_ids if clean_str(value)},
+                PROGRESS_LINEAGE_COLUMN_BY_SCOPE.get(scope) or '', clean_str(identifier),
+            ))
+        except Exception as exc:
+            logger.warning('Could not count out-of-scope progress: %s', exc)
     (
         reflection_declared_totals,
         reflection_rows,
@@ -31984,10 +32351,8 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
         },
         'assignedLearnerCount': len(learners),
         'assignedLearners': learners,
-        # Retained key name: the programme view has always read
-        # `programmeCoverage`, and it is the same coverage payload whatever the
-        # scope. `coverage` is the scope-neutral alias.
-        'programmeCoverage': coverage,
+        # `programmeCoverage` was a second copy of this same payload; nothing
+        # reads it any more (the programme card uses ?view=summary).
         'coverage': coverage,
         # The two roll-ups this whole read exists for: hours actually done, and
         # KSB weight actually earned, for this scope and no other.
@@ -32021,9 +32386,10 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
             'excludedLearningReflectionSubmissions': excluded_reflection_rows,
             'unlinkedLearningReflectionSubmissions': unlinked_reflection_rows,
             # Achieved activity that belongs to a different scope inside the same
-            # programme. Reported so the gap between this scope's total and the
-            # learner's programme total is inspectable.
-            'outOfScopeProgress': out_of_scope_progress,
+            # programme -- the gap between this scope's total and the learner's
+            # programme total. Sent as a count: the rows were 8-11 MB of a
+            # module or cohort response and the page only ever showed how many.
+            'outOfScopeProgressCount': len(out_of_scope_progress) if out_of_scope_count is None else out_of_scope_count,
             'evidenceByProgressEntry': evidence_by_progress,
         },
     }
@@ -32304,8 +32670,9 @@ def programme_achievement_inputs(request, programme_id):
             learner_ids, [item.get('code') for item in definitions],
             [clean_str(row.get('id')) for row in components if clean_str(row.get('id'))],
             True, restrict_to_components=False, scope='programme', scope_identifier=programme_id,
-            # Achievement keeps only rows whose code is an applied definition.
-            codes_only=True,
+            # Achievement keeps only rows whose code is an applied definition,
+            # and only achieved, in-scope ones (see _achievement_projection).
+            codes_only=True, achievement_rows_only=True,
         )
         return {
             'coverage': {'items': definitions},
@@ -32913,10 +33280,13 @@ def curriculum_module_detail(request, identifier):
             return json_error('Invalid JSON body.')
         rename_only = curriculum_name_only_patch(payload, allow_title=True)
         try:
-            pricing_values(payload, existing_authoring)
-        except ValueError as error:
-            return json_error(error.args[1], status=400, fields=[error.args[0]],
-                              validationErrors=[{'path': error.args[0], 'message': error.args[1]}])
+            free_course_sale_values(payload, existing_authoring, (
+                existing_authoring.get('source_type') == 'free_course'
+                or payload.get('isFreeCourse') is True
+                or payload.get('sourceType', payload.get('source_type')) == 'free_course'))
+        except ModuleAuthoringValidationError as error:
+            first = error.errors[0]
+            return json_error(first['message'], status=400, fields=[first['path']], validationErrors=error.errors)
         if (existing_authoring.get('source_type') == 'free_course'
                 or payload.get('isFreeCourse') is True
                 or payload.get('sourceType', payload.get('source_type')) == 'free_course'):

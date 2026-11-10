@@ -11,7 +11,9 @@ the saved watch evidence for read-time credit, independently of recovery plans.
 """
 import json
 import logging
+import threading
 import uuid
+from contextlib import contextmanager
 
 from django.db import connections, DatabaseError, transaction
 from django.http import JsonResponse
@@ -138,23 +140,87 @@ FULL_WATCH_SLACK_SECONDS = 10
 FULL_WATCH_SLACK_RATIO = 0.02
 
 
+_SHARED_RECORDINGS = threading.local()
+
+
+@contextmanager
+def shared_recording_reads():
+    """Read each occurrence's recordings once while this block runs.
+
+    A register checks many learners, one call each, and learners of one group
+    share their sessions: the same recording rows were read once per learner.
+    Only the recordings are shared; each learner's watch progress is still read
+    for that learner. Outside the block every call reads afresh.
+    """
+    previous = getattr(_SHARED_RECORDINGS, 'rows', None)
+    _SHARED_RECORDINGS.rows = {} if previous is None else previous
+    try:
+        yield
+    finally:
+        _SHARED_RECORDINGS.rows = previous
+
+
+def _recording_rows(ids):
+    """``{occurrence_id: [recording row, ...]}`` for ``ids``."""
+    shared = getattr(_SHARED_RECORDINGS, 'rows', None)
+    missing = [value for value in ids if shared is None or value not in shared]
+    by_occurrence = {}
+    if missing:
+        # Recordings only. A transcript row's metadata carries its whole
+        # timeline (up to ~200 KB) and nothing here reads transcripts: a
+        # recording's hidden flag is its own, and the transcripts
+        # hidden_artifact_ids adds are never recordings. Reading every
+        # artifact made the Bulk register ~40 s.
+        for row in read('''SELECT a.*, r.status AS archive_status,o.scheduled_start
+            FROM curriculum.live_session_artifacts a
+            JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
+            LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
+            WHERE a.occurrence_id = ANY(%s)
+              AND a.artifact_type = 'recording'
+            ''', [missing]):
+            by_occurrence.setdefault(row['occurrence_id'], []).append(row)
+    if shared is None:
+        return by_occurrence
+    for value in missing:
+        shared[value] = by_occurrence.get(value, [])
+    return {value: shared[value] for value in ids if shared[value]}
+
+
+def _watch_rows(kind, learner_id, ids):
+    """``{artifact_id: view row}`` of this learner's watch progress on ``ids``.
+
+    Inside shared_recording_reads() each occurrence's views are read once for
+    every learner (artifact, kind and learner are unique together) and this
+    learner's are picked out; otherwise only this learner's are read.
+    """
+    shared = getattr(_SHARED_RECORDINGS, 'rows', None)
+    if shared is None:
+        return {row['artifact_id']: row for row in read(f'''SELECT artifact_id, watched_seconds, duration_seconds
+            FROM {VIEWS_TABLE} WHERE learner_kind=%s AND learner_id=%s AND occurrence_id = ANY(%s)''',
+            [kind, learner_id, ids])}
+    cache = shared.setdefault('__views__', {})
+    missing = [value for value in ids if value not in cache]
+    if missing:
+        for value in missing:
+            cache[value] = []
+        for row in read(f'''SELECT occurrence_id, learner_kind, learner_id, artifact_id, watched_seconds, duration_seconds
+            FROM {VIEWS_TABLE} WHERE occurrence_id = ANY(%s)''', [missing]):
+            cache[row['occurrence_id']].append(row)
+    return {
+        row['artifact_id']: row
+        for value in ids for row in cache[value]
+        if row['learner_kind'] == kind and str(row['learner_id']) == str(learner_id)
+    }
+
+
 def fully_watched_occurrences(kind, learner_id, occurrence_ids):
     """Occurrences whose every recording the learner can play was watched to the end."""
     from .session_bunny_policy import bunny_recording, recording_uses_bunny
     ids = sorted({str(value) for value in occurrence_ids if value})
     if not ids:
         return set()
-    artifacts = read('''SELECT a.*, r.status AS archive_status,o.scheduled_start
-        FROM curriculum.live_session_artifacts a
-        JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
-        LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
-        WHERE a.occurrence_id = ANY(%s)''', [ids])
-    by_occurrence = {}
-    for row in artifacts:
-        by_occurrence.setdefault(row['occurrence_id'], []).append(row)
-    views = {row['artifact_id']: row for row in read(f'''SELECT artifact_id, watched_seconds, duration_seconds
-        FROM {VIEWS_TABLE} WHERE learner_kind=%s AND learner_id=%s AND occurrence_id = ANY(%s)''',
-        [kind, learner_id, ids])}
+    by_occurrence = _recording_rows(ids)
+    views = _watch_rows(kind, learner_id, ids)
 
     def watched_to_end(artifact_id):
         view = views.get(artifact_id)

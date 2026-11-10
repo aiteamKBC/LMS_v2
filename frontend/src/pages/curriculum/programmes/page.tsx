@@ -753,7 +753,7 @@ function CurriculumProgrammesContent() {
     setReviewError(null);
     setReviewLoading(true);
     try {
-      const coverage = await fetchCurriculumProgrammeKsbCoverage(programmeId);
+      const coverage = await fetchCurriculumProgrammeKsbCoverage(programmeId, { view: 'items' });
       const sourceIds = uniqueTextValues([
         programme.ksbProfileSourceId || '',
         ...(coverage.items || []).map(item => String(item.sourceId || item.source_id || '')),

@@ -98,7 +98,8 @@ class TranslateWriteTests(SimpleTestCase):
         with mock.patch.object(sc, 'standard_ksb_id_for', return_value=42) as resolve:
             translated, _ = sc.translate_write('ksb_mappings', {'ksb_id': 'st0845-v1-1-181', 'ksb_code': 'K2',
                                                                 'module_catalogue_id': 'MOD-1'}, NORMALISED_KSB)
-        resolve.assert_called_once_with('st0845-v1-1-181', 'K2', module_catalogue_id='MOD-1')
+        # The mapping's own source rides along: it picks the standard first.
+        resolve.assert_called_once_with('st0845-v1-1-181', 'K2', module_catalogue_id='MOD-1', source_type='', source_id='')
         self.assertEqual(translated['standard_ksb_id'], 42)
 
     def test_display_status_is_not_written_to_an_archive_flag_column(self):
@@ -181,6 +182,35 @@ class ReadRelationTests(SimpleTestCase):
         self.assertIn('cc.id = t.component_id', relation)
         self.assertIn('as "module_catalogue_id"', relation)
         self.assertIn('as "ksb_code"', relation)
+
+    def test_self_contained_free_week_reads_its_own_text_and_status(self):
+        # New database: free_course_weeks has title/summary/status and no
+        # week_id, so a join through curriculum.weeks fails every free-course read.
+        columns = {'id', 'course_id', 'week_number', 'title', 'summary', 'status', 'display_order', 'updated_at'}
+        with PostgresVendor():
+            relation = sc.read_relation('free_course_weeks', columns)
+            extras = sc.legacy_read_columns('free_course_weeks', columns)
+        self.assertNotIn('week_id =', relation)
+        self.assertNotIn('"weeks"', relation)
+        self.assertIn('t.id as "week_id"', relation)
+        self.assertIn('t.title', relation)
+        self.assertIn('as "is_programme_deleted"', relation)
+        self.assertIn('fc.id = t.course_id', relation)
+        self.assertTrue({'week_id', 'week_title', 'is_programme_deleted', 'course_name'} <= set(extras))
+
+    def test_linked_free_week_still_reads_through_curriculum_weeks(self):
+        columns = {'id', 'course_id', 'week_id', 'display_order', 'updated_at'}
+        with PostgresVendor():
+            relation = sc.read_relation('free_course_weeks', columns)
+        self.assertIn('fw.id = t.week_id', relation)
+        self.assertNotIn('as "is_programme_deleted"', relation)
+
+    def test_weeks_without_free_course_id_have_no_library_rows(self):
+        columns = {'id', 'module_catalogue_id', 'status', 'updated_at'}
+        with PostgresVendor():
+            relation = sc.read_relation('weeks', columns)
+        self.assertNotIn('free_course_id', relation)
+        self.assertIn('\'\'::varchar as "library_state"', relation)
 
 
 class AdaptSqlTests(SimpleTestCase):
@@ -296,6 +326,20 @@ class OpenApiTests(SimpleTestCase):
                 self.assertTrue(op['summary'].startswith('⚠️'))
                 self.assertIn('requestBody', op)
         self.assertNotIn('/curriculum_api/docs/', spec['paths'])
+
+    def test_learner_free_course_routes_are_documented_with_their_gate(self):
+        from curriculum_api.openapi_docs import build_curriculum_openapi
+
+        with mock.patch('django.conf.settings.DEBUG', True):
+            spec = build_curriculum_openapi()
+        learner = {path: ops for path, ops in spec['paths'].items() if path.startswith('/learner_api/')}
+        self.assertIn('/learner_api/free-courses/{kind}/{pk}/', learner)
+        self.assertIn('/learner_api/learning-plan/{pk}/free-courses/', learner)
+        self.assertFalse([path for path in learner if 'free-courses' not in path])
+        detail = learner['/learner_api/free-courses/{kind}/{pk}/']['get']
+        self.assertEqual(detail['tags'], ['learner-free-courses'])
+        self.assertIn('learner_self_or_staff', detail['description'])
+        self.assertIn('503', detail['responses'])
 
     def test_observed_shape_never_publishes_data_keys(self):
         from curriculum_api.openapi_contracts import shape_to_schema

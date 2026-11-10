@@ -1,4 +1,5 @@
-"""Swagger UI for every endpoint under ``/curriculum_api/`` (local DEBUG only).
+"""Swagger UI for every endpoint under ``/curriculum_api/``, plus the learner
+free-course endpoints under ``/learner_api/`` (local DEBUG only).
 
 The curriculum views are plain Django function views (``@require_GET``,
 ``@csrf_exempt`` ...), which DRF-based schema generators cannot see. This module
@@ -170,7 +171,24 @@ def _view_methods(view):
     return sorted(found, key=HTTP_METHODS.index)
 
 
+# Learner-facing routes documented beside the curriculum API: the free-course
+# endpoints that read the curriculum's free-course catalogue, and the Learning
+# Plan route that assigns those courses.
+EXTRA_ROUTE_PREFIXES = ('learner_api/free-courses/',)
+EXTRA_ROUTES = frozenset({'learner_api/learning-plan/<int:pk>/free-courses/'})
+EXTRA_TAG = 'learner-free-courses'
+
+
+def _documented(route):
+    route = route.lstrip('^')
+    if route in _DOCS_PATHS:
+        return False
+    return route.startswith(PREFIX) or route.startswith(EXTRA_ROUTE_PREFIXES) or route in EXTRA_ROUTES
+
+
 def _tag_for(path):
+    if not path.startswith('/' + PREFIX):
+        return EXTRA_TAG
     segments = [s for s in path[len('/' + PREFIX):].split('/') if s and not s.startswith('{')]
     # Most routes live under /curriculum_api/curriculum/<area>/; group by <area>.
     if len(segments) > 1 and segments[0] == 'curriculum':
@@ -256,7 +274,7 @@ def build_curriculum_openapi():
     paths = {}
     operation_ids = set()
     for route, view in _iter_patterns(get_resolver().url_patterns):
-        if not route.lstrip('^').startswith(PREFIX) or route in _DOCS_PATHS:
+        if not _documented(route):
             continue
         path, params = _to_openapi_path(route)
         target = _innermost(view)
@@ -368,7 +386,8 @@ def build_curriculum_openapi():
             'title': 'KBC LMS - Curriculum API',
             'version': 'local',
             'description': (
-                'Generated from the live URL configuration of /curriculum_api/. Request fields and query '
+                'Generated from the live URL configuration of /curriculum_api/ and the learner free-course '
+                'routes under /learner_api/. Request fields and query '
                 "parameters are read from each view's code; GET response schemas come from responses observed "
                 'against the configured database (types only) where available. Every operation carries '
                 '`x-contract-completeness` and `x-contract-gaps`, so an incomplete contract is never presented '
