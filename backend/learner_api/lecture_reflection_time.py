@@ -8,6 +8,7 @@ from math import isfinite
 
 from django.db import connections
 from django.utils import timezone
+from .lecture_reflection_operations import requested_operation, replayed_receipt
 
 RECEIPT = 'lectureReflectionTime'
 SECONDS = 'additionalReflectionSeconds'
@@ -15,20 +16,34 @@ SECONDS = 'additionalReflectionSeconds'
 
 def add_reflection_time(payload, stored, *, submission_mode):
     receipt = stored.get(RECEIPT)
-    if isinstance(receipt, dict) and receipt.get('progressEntryId'):
+    operation = requested_operation(payload)
+    replay = replayed_receipt(payload, stored)
+    if replay:
+        return replay
+    previous_reflection = receipt['seconds'] if isinstance(receipt, dict) and receipt.get('progressEntryId') else 0
+    if operation and (operation['expectedReflectionSeconds'] != previous_reflection or
+            operation['expectedProgressEntryId'] != (receipt or {}).get('progressEntryId', 0)):
+        raise ValueError('The saved reflection time changed. Reload the reflection and choose again. Your entered time is kept.')
+    if submission_mode == 'draft':
+        return receipt if isinstance(receipt, dict) and receipt.get('progressEntryId') else None
+    if isinstance(receipt, dict) and receipt.get('progressEntryId') and operation is None:
         # A client cannot replace the receipt or credit the same writing twice.
         requested = payload.get(SECONDS, receipt['seconds'])
         if requested != receipt['seconds']:
             raise ValueError('This reflection time has already been added. Its recorded duration cannot be changed here.')
         return receipt
     if SECONDS not in payload:
+        if operation is not None:
+            raise ValueError('Enter reflection time for this action.')
         return None
     seconds = payload[SECONDS]
     if type(seconds) not in (int, float) or not isfinite(seconds) or seconds < 0 or seconds != int(seconds):
         raise ValueError('Enter reflection time as a non-negative whole number of seconds.')
     if seconds > 8 * 3600:
         raise ValueError('Reflection time exceeds the 8-hour activity limit. Enter a shorter time.')
-    if submission_mode == 'draft' or seconds == 0:
+    if seconds == 0 and operation is not None:
+        raise ValueError('Enter reflection time greater than zero.')
+    if seconds == 0:
         return None
     if not payload.get('otjhConfirmed') or not payload.get('signedDeclaration'):
         raise ValueError('Confirm the OTJH record and learner declaration before adding reflection time.')
@@ -81,6 +96,14 @@ def add_reflection_time(payload, stored, *, submission_mode):
     if len(previous_ids) > 1:
         raise ValueError('This lecture has time on multiple linked activities. Ask your coach to review it before adding time.')
     target = next(iter(previous_ids)) if previous_ids else credit['componentId'] if credit else component_id
+    if operation and receipt:
+        from old_otjh.repository import query
+        original = query('''SELECT id,claimed_seconds FROM "Learner".learner_progress_entries
+            WHERE id=%s AND learner_id=%s AND component_ref=ANY(%s) AND deleted_at IS NULL''',
+            [receipt['progressEntryId'], learner.pk, sorted(identities)])
+        expected_claim = receipt.get('ledgerSeconds', receipt.get('inputSeconds', receipt['seconds']))
+        if len(original) != 1 or original[0].get('claimed_seconds') != expected_claim:
+            raise ValueError('The original reflection time entry needs a coach review. No time was changed.')
     if len(identities) > 1:
         # A protected allocation on either card protects the same lecture.
         from old_otjh.repository import query
@@ -117,6 +140,28 @@ def add_reflection_time(payload, stored, *, submission_mode):
         'timeTaken': f'{int(baseline) // 60:02d}:{int(baseline) % 60:02d}',
         'timeTrackingSource': (credit or {}).get('timeTrackingSource', 'verified_session_credit')}
     validate_activity_time(baseline_record, history, seconds_for=seconds_for, initial_seconds=baseline)
+    current_total = baseline_record['countedSeconds']
+    if previous_reflection > current_total:
+        raise ValueError('The saved reflection time no longer matches this lecture. Ask your coach to review it.')
+    lecture_seconds = round(max(baseline, current_total - previous_reflection))
+    from .retake_timing import combine_seconds
+    mode = operation['choice'] if operation else 'add'
+    reflection_seconds = int(combine_seconds(previous_reflection, seconds, mode))
+    if lecture_seconds + previous_reflection > current_total:
+        # Attendance can gain verified credit after the original reflection.
+        # Retain that new credit AND the existing writing time before deciding.
+        floor = lecture_seconds + previous_reflection
+        baseline_record.update(claimedSeconds=floor, reportedTime=f'{floor / 60:g} minutes',
+            timeTaken=f'{floor // 60:02d}:{floor % 60:02d}')
+        validate_activity_time(baseline_record, history, seconds_for=seconds_for, initial_seconds=baseline)
+    if mode != 'add':
+        # Quiz arithmetic applies to writing time only. A correction must never
+        # replace attendance/recording credit with the smaller writing duration.
+        total = lecture_seconds + reflection_seconds
+        record.update(retakeTimeChoice=mode, claimedSeconds=total,
+            reportedTime=f'{total / 60:g} minutes', timeTaken=f'{total // 60:02d}:{total % 60:02d}')
+        if mode == 'correct':
+            record['retakeTimeReason'] = operation['reason']
     # Existing native time may be less than lecture credit already included in
     # the read projection. Append that server-owned baseline before adding the
     # writing time, so the supplement cannot absorb the learner's new minutes.
@@ -132,5 +177,8 @@ def add_reflection_time(payload, stored, *, submission_mode):
         'title': payload.get('activityTitle') or 'Lecture reflection',
         'detail': record['reportedTime'], 'at': record['submittedAt'],
     })
-    return {'seconds': int(seconds), 'progressEntryId': progress.pk,
-            'addedAt': record['submittedAt'], 'countedSeconds': record['countedSeconds']}
+    return {'seconds': int(reflection_seconds), 'progressEntryId': progress.pk,
+            'addedAt': record['submittedAt'], 'countedSeconds': record['countedSeconds'],
+            'lectureSeconds': int(lecture_seconds), 'inputSeconds': int(seconds), 'choice': mode,
+            'ledgerSeconds': record['claimedSeconds'],
+            **({'operationId': operation['id'], 'reason': operation['reason']} if operation else {})}

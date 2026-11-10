@@ -199,7 +199,8 @@ export default function ComponentViewPage() {
   useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [timerStorageKey]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
-  const [lectureReflectionSaved, setLectureReflectionSaved] = useState<{ activityKey: string; version: number; addedSeconds: number } | null>(null);
+  const [lectureReflectionSaved, setLectureReflectionSaved] = useState<{ activityKey: string; version: number; addedSeconds: number; timeChoice?: string } | null>(null);
+  const [reflectionInitialTab, setReflectionInitialTab] = useState<'learning' | 'otjh'>('learning');
   const [repeating, setRepeating] = useState(false);
   const [retakeOpen, setRetakeOpen] = useState(false);
   const [timeDecision, setTimeDecision] = useState<{ choice: ActivityTimeChoice; reason: string; previousSeconds: number } | null>(null);
@@ -671,11 +672,11 @@ export default function ComponentViewPage() {
     }, { manualTimeConfirmed: true });
   };
 
-  const finishLectureReflection = async (reflection: { additionalReflectionSeconds?: number }) => {
+  const finishLectureReflection = async (reflection: { additionalReflectionSeconds?: number; reflectionTimeChoice?: string }) => {
     const savedActivityKey = timerStorageKey;
     if (!kind || !id || !componentId || currentTimingKeyRef.current !== savedActivityKey) return;
     setLectureReflectionSaved(current => ({ activityKey: savedActivityKey, version: (current?.version || 0) + 1,
-      addedSeconds: reflection.additionalReflectionSeconds || 0 }));
+      addedSeconds: reflection.additionalReflectionSeconds || 0, timeChoice: reflection.reflectionTimeChoice }));
     setPhase('consume');
     setRefreshError(null);
     try {
@@ -900,6 +901,7 @@ export default function ComponentViewPage() {
               selectedTimeSource={phase === 'lecture-reflect' ? undefined : timeSource}
               readOnlyTime={phase === 'lecture-reflect'}
               allowAdditionalTime={phase === 'lecture-reflect'}
+              initialTab={phase === 'lecture-reflect' ? reflectionInitialTab : 'learning'}
               additionalTimeAvailable={completed}
               workingHoursHolidays={componentAccess.holidays ?? []}
               submitting={submitting}
@@ -1098,13 +1100,17 @@ export default function ComponentViewPage() {
 
               {(isLiveSession || recordedEvent) && marking?.status !== 'accepted' && <section className="mt-4 rounded-xl border border-background-300 bg-white p-4" aria-label="Lecture reflection">
                 <p className="text-sm text-foreground-700">You can add an optional reflection for this lecture. Your attendance and recorded study time stay unchanged.</p>
-                <button type="button" disabled={!canUseComponent || submitting} onClick={() => setPhase('lecture-reflect')}
+                <button type="button" disabled={!canUseComponent || submitting} onClick={() => { setReflectionInitialTab('learning'); setPhase('lecture-reflect'); }}
                   className="mt-3 rounded-lg border border-primary-300 px-3 py-2 text-sm font-semibold text-primary-700 disabled:opacity-50">
                   {verdict || lectureReflectionSaved?.activityKey === timerStorageKey ? 'Open lecture reflection' : 'Add lecture reflection'}
                 </button>
+                {completed && <button type="button" disabled={!canUseComponent || submitting}
+                  onClick={() => { setReflectionInitialTab('otjh'); setPhase('lecture-reflect'); }}
+                  className="ml-3 mt-3 rounded-lg border border-primary-300 px-3 py-2 text-sm font-semibold text-primary-700">Manage reflection time</button>}
               </section>}
               {lectureReflectionSaved?.activityKey === timerStorageKey && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                <p role="status" className="text-sm text-emerald-900">{lectureReflectionSaved.addedSeconds > 0
+                <p role="status" className="text-sm text-emerald-900">{lectureReflectionSaved.timeChoice && lectureReflectionSaved.timeChoice !== 'add'
+                  ? 'Your reflection time action was recorded. Your lecture time and attendance are kept.' : lectureReflectionSaved.addedSeconds > 0
                   ? 'Your lecture reflection was submitted for tutor review. Its additional time is recorded; your lecture attendance is unchanged.'
                   : 'Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.'}</p>
                 {refreshError && <p role="alert" className="mt-2 text-sm text-amber-900">{refreshError}</p>}

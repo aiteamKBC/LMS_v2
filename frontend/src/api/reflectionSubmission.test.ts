@@ -25,6 +25,19 @@ it.each([undefined, { seconds: 1800, progressEntryId: 0 }, { seconds: 900, progr
     .rejects.toThrow('Your reflection was saved, but its additional time was not confirmed.');
 });
 
+it('keeps a positive draft uncredited and confirms a new action using its input and operation ID', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ id: 'R', status: 'draft' }), { status: 201 }));
+  const input = { learnerKind: 'apprenticeship', learnerId: '19', additionalReflectionSeconds: 1200,
+    reflectionTimeOperation: { id: 'operation-1', choice: 'add', reason: '', expectedReflectionSeconds: 1800, expectedProgressEntryId: 10 } } as LearningReflectionSubmissionInput;
+  await expect(saveLearningReflectionSubmission({ ...input, submissionMode: 'draft' })).resolves.toMatchObject({ status: 'draft' });
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ id: 'R', status: 'submitted_for_tutor_review',
+    lectureReflectionTime: { seconds: 3000, inputSeconds: 1200, operationId: 'operation-1', progressEntryId: 11, countedSeconds: 10200 } }), { status: 201 }));
+  await expect(saveLearningReflectionSubmission(input)).resolves.toMatchObject({ lectureReflectionTime: { seconds: 3000 } });
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ id: 'R', lectureReflectionTime: {
+    seconds: 3000, inputSeconds: 1200, operationId: 'another-operation', progressEntryId: 11 } }), { status: 201 }));
+  await expect(saveLearningReflectionSubmission(input)).rejects.toThrow('additional time was not confirmed');
+});
+
 describe('reflection submission API', () => {
   it('loads all learner reflection statuses with one request', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({

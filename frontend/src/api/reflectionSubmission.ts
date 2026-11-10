@@ -4,12 +4,26 @@ import { readLearnerJson } from './learnerRead';
 import { invalidateWeeklyProgress } from './weeklyLearning';
 import type { MonthlyAssignment } from './monthlyAssignment';
 import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
+import type { ActivityTimeChoice } from '@/lib/activityTimeDecision';
+
+export interface ReflectionTimeOperation {
+  id: string;
+  choice: ActivityTimeChoice;
+  reason: string;
+  expectedReflectionSeconds: number;
+  expectedProgressEntryId: number;
+}
 
 export interface LectureReflectionTime {
   seconds: number;
   progressEntryId: number;
   addedAt: string;
   countedSeconds: number;
+  lectureSeconds?: number;
+  inputSeconds?: number;
+  choice?: ActivityTimeChoice;
+  operationId?: string;
+  reason?: string;
 }
 
 export interface LearningReflectionSubmissionInput {
@@ -42,6 +56,10 @@ export interface LearningReflectionSubmissionInput {
   additionalReflectionSeconds?: number;
   /** Server-owned receipt; sending it never creates credit. */
   lectureReflectionTime?: LectureReflectionTime;
+  reflectionTimeOperation?: ReflectionTimeOperation;
+  lectureReflectionTimeHistory?: LectureReflectionTime[];
+  lectureReflectionAttempts?: Array<{ status: string; submittedAt?: string; coachFeedback?: string;
+    reviewedBy?: string; reviewedAt?: string; content: Partial<LearningReflectionSubmissionInput> }>;
   declaredCompletedAt?: string;
   completedDuringPaidHours: string;
   dateCompleted: string;
@@ -76,6 +94,7 @@ export interface HistoricalAssignmentContent {
 }
 
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
+  lectureReflectionPendingTime?: { operation: ReflectionTimeOperation; seconds: number };
   submissionAttempts?: SubmissionAttempt[];
   /** Server-owned provenance; learners cannot request the import exemption. */
   submissionOrigin?: 'learner' | 'imported_legacy' | 'classified_legacy' | 'coach';
@@ -167,8 +186,9 @@ export async function saveLearningReflectionSubmission(
       (data.validation.reason || '') as WorkingRuleReason | '', data.validation.holidayName || '');
     throw new Error(data.error || `Could not save the reflection (${response.status}).`);
   }
-  if ((input.additionalReflectionSeconds || 0) > 0 && (!data.lectureReflectionTime?.progressEntryId
-    || data.lectureReflectionTime.seconds !== input.additionalReflectionSeconds)) {
+  if (input.submissionMode !== 'draft' && (input.additionalReflectionSeconds || 0) > 0 && (!data.lectureReflectionTime?.progressEntryId
+    || (data.lectureReflectionTime.inputSeconds ?? data.lectureReflectionTime.seconds) !== input.additionalReflectionSeconds
+    || (input.reflectionTimeOperation && data.lectureReflectionTime.operationId !== input.reflectionTimeOperation.id))) {
     throw new Error('Your reflection was saved, but its additional time was not confirmed. Refresh the reflection to check its recorded time before trying again.');
   }
   invalidateWeeklyProgress(input.learnerKind, input.learnerId, input.activityId);
