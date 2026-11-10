@@ -401,3 +401,5 @@ class Command(BaseCommand):
             views.AUTHORING_COMPONENTS_TABLE, 'id = %s', [component['id']],
             {'settings_json': views.json_db_value(settings)},
         )
+        # Retire cached curriculum payloads and learner content rows.
+        views.invalidate_curriculum_cache()

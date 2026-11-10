@@ -23,6 +23,34 @@ const saved: StoredLearningReflectionSubmission = {
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(saved); });
 afterEach(cleanup);
 
+it('shows additional lecture reflection time separately from the recorded lecture duration', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ ...saved, actualTimeHours: '2',
+    lectureReflectionTime: { seconds: 1800, progressEntryId: 10, addedAt: 'now', countedSeconds: 9000 } });
+  render(<SavedReflection {...identity} />);
+  fireEvent.click(screen.getByRole('button', { name: 'View saved reflection' }));
+  expect(await screen.findByText('Additional reflection time added')).toBeVisible();
+  expect(screen.getByText('Recorded activity total')).toBeVisible();
+  expect(screen.getByText('02:30:00')).toBeVisible();
+  expect(screen.getByText('00:30:00')).toBeVisible();
+});
+
+it('shows immutable time actions and the previous reflection in the coach time-history view', async () => {
+  const receipt = { seconds: 1200, inputSeconds: 1200, progressEntryId: 11, countedSeconds: 8400,
+    lectureSeconds: 7200, choice: 'correct' as const, addedAt: '2026-11-10T12:00:00Z', reason: 'Corrected minutes.' };
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ ...saved, lectureReflectionTime: receipt,
+    lectureReflectionTimeHistory: [receipt], lectureReflectionAttempts: [{ status: 'submitted_for_tutor_review',
+      content: { learningReflection: 'Original writing preserved.' }, coachFeedback: 'Original review preserved.' }] });
+  render(<SavedReflection {...identity} timeOnly />);
+  fireEvent.click(screen.getByRole('button', { name: 'View reflection time history' }));
+  expect(await screen.findByRole('heading', { name: 'Reflection time history' })).toBeVisible();
+  expect(screen.getByText(/Lecture time: 02:00:00/)).toHaveTextContent('Reflection time: 00:20:00');
+  expect(screen.getByText('Reason: Corrected minutes.')).toBeVisible();
+  fireEvent.click(screen.getByText(/Previous reflection 1/));
+  expect(screen.getByText('Original writing preserved.')).toBeVisible();
+  expect(screen.getByText('Coach feedback: Original review preserved.')).toBeVisible();
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+});
+
 it.each([
   ['submitted_for_tutor_review', 'Pending coach review'], ['accepted', 'Accepted'],
   ['referred', 'Rejected'], ['rejected', 'Rejected'], ['escalated', 'Pending coach review'],

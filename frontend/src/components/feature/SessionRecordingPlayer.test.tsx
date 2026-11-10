@@ -2,18 +2,47 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRecordingPlayer } from './SessionRecordingPlayer';
 import { loadRecordingWatch, loadTranscriptCues, recordRecordingWatch, type SessionFile } from '@/api/sessionResults';
+import { loadRecordingInsights } from '@/api/recordingInsights';
 
 vi.mock('@/api/sessionResults', async importOriginal => ({ ...await importOriginal<typeof import('@/api/sessionResults')>(), loadTranscriptCues: vi.fn(), recordRecordingWatch: vi.fn(), loadRecordingWatch: vi.fn() }));
+vi.mock('@/api/recordingInsights', () => ({ loadRecordingInsights: vi.fn() }));
 const recording: SessionFile = { id: 'V', type: 'recording', state: 'ready', transcriptLinks: [{ id: 'T', timingReady: true, offsetSeconds: 2 }] };
 const transcript: SessionFile = { id: 'T', type: 'transcript', state: 'ready', timingReady: true };
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(loadRecordingInsights).mockResolvedValue({ audience: 'learner', highlights: { watched: null, finished: null } });
   vi.mocked(loadTranscriptCues).mockResolvedValue({ cues: [
     { start: 0, end: 2, text: 'First phrase', speaker: 'Tutor' },
     { start: 3, end: 5, text: 'Second phrase', speaker: 'Learner' },
   ] });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it('shows learner encouragement without writing viewing time or changing playback', async () => {
+  vi.mocked(loadRecordingInsights).mockResolvedValue({ audience: 'learner', highlights: { watched: 124, finished: 28 } });
+  render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={{ kind: 'commercial', id: '7' }} label="Recording" />);
+  const video = screen.getByLabelText('Recording');
+  expect(await screen.findByLabelText('Learning community')).toHaveTextContent('124 learners watched');
+  expect(screen.getByLabelText('Recording')).toBe(video);
+  expect(recordRecordingWatch).not.toHaveBeenCalled();
+});
+
+it('attaches the existing timed transcript as a private English caption track', async () => {
+  const revoke = vi.fn();
+  class CaptionURL extends URL {
+    static createObjectURL = vi.fn(() => 'blob:private-caption');
+    static revokeObjectURL = revoke;
+  }
+  vi.stubGlobal('URL', CaptionURL);
+  const view = render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} label="Recording" />);
+  await waitFor(() => expect(screen.getByLabelText('Recording').querySelector('track')).toHaveAttribute('src', 'blob:private-caption'));
+  const track = screen.getByLabelText('Recording').querySelector('track')!;
+  expect(track).toHaveAttribute('srclang', 'en');
+  expect(track).toHaveAttribute('kind', 'captions');
+  expect(track).toHaveAttribute('default');
+  view.unmount();
+  expect(revoke).toHaveBeenCalledWith('blob:private-caption');
+});
 
 describe('recording watch tracking', () => {
   const learner = { kind: 'apprenticeship' as const, id: '101' };
@@ -136,6 +165,8 @@ describe('recording transcript', () => {
     render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} label="Recording" />);
     const first = await screen.findByRole('button', { name: /First phrase/ });
     const second = screen.getByRole('button', { name: /Second phrase/ });
+    // Finish the initial follow before observing scrolling after the user's toggle.
+    await act(async () => undefined);
     const scrollTo = transcriptScroll(first, second);
     const follow = screen.getByRole('button', { name: 'Follow video' });
     expect(follow).toHaveAttribute('aria-pressed', 'true');

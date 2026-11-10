@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { fetchEmployerMeetingArtifacts } from '../employerPortal';
-import { fetchLearnerMeetingArtifacts } from '../learnerCalendar';
+import { fetchLearnerMeetingArtifacts, fetchLearnerMeetingRecordings } from '../learnerCalendar';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -24,6 +24,24 @@ it.each(['commercial', 'apprenticeship'] as const)('reads newly saved resources 
     expect(init.method || 'GET').toBe('GET');
     expect(init.credentials).toBe('include');
     // The learner read client owns its transport signal for deduplicated reads.
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.body).toBeUndefined();
+  }
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('requests stored recordings separately from the unchanged artifact read for %s', async kind => {
+  const data = { artifacts: [], resourceMode: 'stored' };
+  const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify(data)));
+  vi.stubGlobal('fetch', fetch);
+  const signal = new AbortController().signal;
+  await fetchLearnerMeetingRecordings(kind, '71', 'mcr:booking/901', signal);
+  await fetchLearnerMeetingArtifacts(kind, '71', 'mcr:booking/901', signal);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch.mock.calls[0][0]).toBe(`/learner_api/calendar/${kind}/71/events/mcr%3Abooking%2F901/artifacts/?recordings_only=1`);
+  expect(fetch.mock.calls[1][0]).toBe(`/learner_api/calendar/${kind}/71/events/mcr%3Abooking%2F901/artifacts/`);
+  for (const [, init] of fetch.mock.calls) {
+    expect(init.method || 'GET').toBe('GET');
+    expect(init.credentials).toBe('include');
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(init.body).toBeUndefined();
   }

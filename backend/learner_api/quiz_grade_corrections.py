@@ -193,6 +193,8 @@ def apply_plan(cursor, plan, question_id, *, refresh):
             [after["grade"], after["achieved_score"], after["feed_detail"], before["id"]])
         if cursor.rowcount != 1:
             raise ValueError("Historical attempt changed; preview again.")
+        from .progress_cache import bump_learners
+        bump_learners([before["learner_id"]])
         saved = _rows(cursor, '''SELECT * FROM "Learner".learner_progress_entries
             WHERE id = %s''', [before["id"]])[0]
         for field, value in after.items():

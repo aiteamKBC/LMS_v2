@@ -6,6 +6,7 @@ identity before sending bytes so a retry can reuse it.
 from __future__ import annotations
 
 import os
+import base64
 import re
 from urllib.parse import urlsplit
 
@@ -142,5 +143,14 @@ class BunnyStream:
         return self.request('PUT', f'/videos/{video_id}', data=file_obj,
                             headers={'Content-Type': 'application/octet-stream'}, timeout=(15, 1200))
 
-    def video(self, video_id):
-        return self.request('GET', f'/videos/{video_id}')
+    def video(self, video_id, *, timeout=(15, 60)):
+        return self.request('GET', f'/videos/{video_id}', timeout=timeout)
+
+    def caption(self, video_id, content, *, label):
+        result = self.request('POST', f'/videos/{video_id}/captions/en', timeout=(3, 8), json={
+            'srclang': 'en', 'label': label,
+            'captionsFile': base64.b64encode(content.encode('utf-8')).decode('ascii'),
+        })
+        if result.get('data', {}).get('valid') is False:
+            raise VideoImportError('Bunny could not validate the saved captions.')
+        return result

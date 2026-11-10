@@ -9,10 +9,12 @@ import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
 import { readWebPointPlan } from '@/api/webWeekPoints';
 import { readLearnerAttendanceMode } from '@/api/learnerAttendanceMode';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
 import { LearnerProgrammeGate } from '@/components/feature/LearnerProgrammeGate';
 import { downloadReadingPdf } from './readingDownloads';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 const readingPdf = vi.hoisted(() => ({ getPage: vi.fn(), cleanup: vi.fn() }));
 const programmeRead = vi.hoisted(() => ({
   real: {}, loading: false, loadError: '', refresh: vi.fn(),
@@ -129,6 +131,113 @@ const lectureDraft = (kind = 'apprenticeship') => ({
   completedDuringPaidHours: 'yes', dateCompleted: '2026-10-22', otjhConfirmed: true, signedDeclaration: true,
 } as StoredLearningReflectionSubmission);
 
+it.each(['commercial', 'apprenticeship'])('keeps a confirmed %s reflection submitted through real read invalidation', async kind => {
+  const reads = await vi.importActual<typeof import('@/api/learnerDetail')>('@/api/learnerDetail');
+  const reflections = await vi.importActual<typeof import('@/api/reflectionSubmission')>('@/api/reflectionSubmission');
+  clearAllCachedResources();
+  let status = 'draft';
+  const writes: Array<{ submissionMode?: string }> = [];
+  const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === '/learner_api/reflection/submissions/' && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as { submissionMode?: string };
+      writes.push(body);
+      status = body.submissionMode === 'draft' ? 'draft' : 'submitted_for_tutor_review';
+      return new Response(JSON.stringify({ id: 'R-LECTURE', status }), { status: 201 });
+    }
+    if (url.startsWith('/learner_api/learner-detail/')) return new Response(JSON.stringify({
+      ...detail(true), id: '1', components: [first],
+      componentMarkingStatus: status === 'draft' ? {} : { C1: { status } },
+    }));
+    throw new Error(`Unexpected synthetic request: ${url}`);
+  });
+  vi.stubGlobal('fetch', transport);
+  vi.mocked(fetchLearnerDetail).mockImplementation(reads.fetchLearnerDetail);
+  vi.mocked(saveLearningReflectionSubmission).mockImplementation(reflections.saveLearningReflectionSubmission);
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(lectureDraft(kind));
+  try {
+    mount('C1', kind);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+    await screen.findByText('Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.');
+    expect(status).toBe('submitted_for_tutor_review');
+    expect(writes).toHaveLength(1);
+    expect(writes[0].submissionMode).toBe('submit');
+    expect(transport.mock.calls.filter(([url]) => String(url).startsWith('/learner_api/learner-detail/')).length).toBeLessThanOrEqual(3);
+    expect(screen.queryByText('Maximum call stack size exceeded')).not.toBeInTheDocument();
+    expect(submitComponentProgress).not.toHaveBeenCalled();
+    expect(submitVideoProgress).not.toHaveBeenCalled();
+  } finally {
+    cleanup(); clearAllCachedResources(); vi.unstubAllGlobals();
+  }
+});
+
+it.each(['commercial', 'apprenticeship'])('refreshes the %s recording chip after saved watch evidence without resubmitting or remounting playback', async kind => {
+  const recording = { ...first, type: 'recording_placeholder', recordingSeriesId: 'SERIES',
+    recordingSessionNumber: 1, recordingDate: '2026-10-22' };
+  const original = { ...detail(), components: [recording] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  vi.mocked(readLearnerAttendanceMode).mockResolvedValue('lazy');
+  await act(async () => { mount('C1', kind); });
+  const player = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  expect(screen.queryByText('Completed')).not.toBeInTheDocument();
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...original, componentProgress: [{ ...progress,
+    timeTaken: null, reportedTime: '150 minutes', timeTrackingSource: 'verified_recording_watch' }] } as LearnerDetail);
+  act(() => invalidateLearnerReads());
+  await waitFor(() => expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', revalidate: true }));
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(player.isConnected).toBe(true);
+  expect(screen.getByRole('button', { name: 'Simulate recording watch' })).toBe(player);
+  expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', revalidate: true });
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  expect(submitVideoProgress).not.toHaveBeenCalled();
+});
+
+it('keeps an unwatched recording incomplete when a watch report only saves partial progress', async () => {
+  const original = { ...detail(), components: [{ ...first, type: 'recording_placeholder',
+    recordingSeriesId: 'SERIES', recordingSessionNumber: 1, recordingDate: '2026-10-22' }] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  await act(async () => { mount(); });
+  const player = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  act(() => invalidateLearnerReads());
+  await waitFor(() => expect(fetchLearnerDetail).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText('Completed')).not.toBeInTheDocument();
+  expect(player.isConnected).toBe(true);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('keeps playback and the incomplete chip when its completion refresh fails, and shows the failure', async () => {
+  const original = { ...detail(), components: [{ ...first, type: 'recording_placeholder',
+    recordingSeriesId: 'SERIES', recordingSessionNumber: 1, recordingDate: '2026-10-22' }] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  await act(async () => { mount(); });
+  const player = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  vi.mocked(fetchLearnerDetail).mockRejectedValue(new Error('Synthetic refresh failure'));
+  act(() => invalidateLearnerReads());
+  expect(await screen.findByRole('alert')).toHaveTextContent('Lecture completion could not refresh.');
+  expect(screen.queryByText('Completed')).not.toBeInTheDocument();
+  expect(player.isConnected).toBe(true);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('keeps the latest recording completion when an older refresh finishes afterwards', async () => {
+  const original = { ...detail(), components: [{ ...first, type: 'recording_placeholder',
+    recordingSeriesId: 'SERIES', recordingSessionNumber: 1, recordingDate: '2026-10-22' }] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  await act(async () => { mount(); });
+  await screen.findByRole('button', { name: 'Simulate recording watch' });
+  let finishOlder!: (value: LearnerDetail) => void;
+  vi.mocked(fetchLearnerDetail).mockImplementationOnce(() => new Promise(resolve => { finishOlder = resolve; }))
+    .mockResolvedValueOnce({ ...original, componentProgress: [{ ...progress, kind: 'component' as const, componentType: 'recording_placeholder', startedAt: null }] });
+  act(() => invalidateLearnerReads());
+  act(() => invalidateLearnerReads());
+  expect(await screen.findByText('Completed')).toBeVisible();
+  await act(async () => { finishOlder(original); });
+  expect(screen.getByText('Completed')).toBeVisible();
+});
+
 it.each([
   ['commercial', false], ['commercial', true], ['apprenticeship', false], ['apprenticeship', true],
 ] as const)('offers an optional %s lecture reflection without repeating completion (completed: %s)', async (kind, done) => {
@@ -140,15 +249,16 @@ it.each([
   mount('C1', kind);
   fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
   const time = await screen.findByLabelText('Recorded session time (reference)');
-  await waitFor(() => expect(time).toHaveValue('02:00:00'));
+  await waitFor(() => expect(time).toHaveValue(done ? '00:00:20' : 'Not recorded'));
   expect(time).toHaveAttribute('readonly');
+  expect(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }).hasAttribute('disabled')).toBe(!done);
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   const submit = screen.getByRole('button', { name: 'Submit for tutor review' });
   await waitFor(() => expect(submit).toBeEnabled());
   fireEvent.click(submit);
   await screen.findByText('Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.');
   expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
-    learnerKind: kind, learnerId: '1', activityType: 'session', activityId: 'C1', actualTimeHours: '2', submissionMode: 'submit',
+    learnerKind: kind, learnerId: '1', activityType: 'session', activityId: 'C1', additionalReflectionSeconds: 0, submissionMode: 'submit',
   }));
   expect(submitComponentProgress).not.toHaveBeenCalled();
   expect(submitVideoProgress).not.toHaveBeenCalled();
@@ -168,7 +278,7 @@ it('keeps the lecture reflection open on save failure and retries without a prog
   });
   mount();
   fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
-  await screen.findByDisplayValue('02:00:00');
+  await screen.findByDisplayValue('00:00:20');
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
   expect(await screen.findByText('Synthetic save failure')).toBeVisible();
@@ -187,6 +297,35 @@ it('offers the same reflection action for a dated lecture recording', async () =
   mount();
   fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
   expect(await screen.findByLabelText('Recorded session time (reference)')).toHaveAttribute('readonly');
+  expect(submitVideoProgress).not.toHaveBeenCalled();
+});
+
+it.each(['commercial', 'apprenticeship'])('submits %s lecture reflection minutes through the atomic reflection save and refreshes the total', async kind => {
+  const original = { ...detail(true), components: [first], componentProgress: [{ ...progress, timeTaken: '120:00' }] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(lectureDraft(kind));
+  vi.mocked(saveLearningReflectionSubmission).mockImplementation(async payload => {
+    if (payload.submissionMode !== 'submit') return { id: 'R-LECTURE', status: 'draft' };
+    vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...original, componentProgress: [
+      ...original.componentProgress, { ...progress, timeTaken: '30:00', submittedAt: '2026-11-10T12:00:00Z', retakeTimeChoice: 'add' },
+    ] } as LearnerDetail);
+    return { id: 'R-LECTURE', status: 'submitted_for_tutor_review', lectureReflectionTime: {
+      seconds: 1800, progressEntryId: 10, addedAt: '2026-11-10T12:00:00Z', countedSeconds: 9000,
+    } };
+  });
+  mount('C1', kind);
+  fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
+  fireEvent.click(screen.getByRole('button', { name: 'OTJH' }));
+  await waitFor(() => expect(screen.getByLabelText('Recorded session time (reference)')).toHaveValue('02:00:00'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
+  fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '30' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  expect(await screen.findByText(/Its additional time is recorded/)).toBeVisible();
+  expect(screen.getByText('· 02:30:00')).toBeVisible();
+  expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({ additionalReflectionSeconds: 1800, submissionMode: 'submit' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
   expect(submitVideoProgress).not.toHaveBeenCalled();
 });
 

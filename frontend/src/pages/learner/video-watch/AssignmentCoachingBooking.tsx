@@ -6,7 +6,7 @@ import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArt
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, fetchReviewSlots, learnerMeetingArtifactContentUrl, type LearnerCalendarResponse } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingRecordings, fetchReviewSlots, learnerMeetingArtifactContentUrl, type LearnerCalendarResponse } from '@/api/learnerCalendar';
 import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 
 const CLOSED_REVIEW_STATUSES = ['completed', 'cancelled', 'awaiting-signature'];
@@ -17,7 +17,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   assignmentId?: string; topicId?: string;
   onSave: () => Promise<boolean>; onSelect: (key: string) => void;
 }) {
-  const loadArtifacts = useCallback((key: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(kind, learnerId, key, signal), [kind, learnerId]);
+  const loadArtifacts = useCallback((key: string, signal?: AbortSignal) => fetchLearnerMeetingRecordings(kind, learnerId, key, signal), [kind, learnerId]);
   const contentUrl = useCallback((key: string, type: string, id: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(kind, learnerId, key, type, id, options), [kind, learnerId]);
   const [calendar, setCalendar] = useState<LearnerCalendarResponse | null>(null);
   const [importedMcms, setImportedMcms] = useState<ImportedReview[]>([]);
@@ -157,8 +157,8 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
         </div>}
       </div>}
       {selected && <div className="space-y-3">
-        <p className="text-sm leading-6 text-slate-600">Recording and transcription are enabled automatically using the live-session settings. The recording, transcript and attendance appear here once Teams has processed them after the meeting.</p>
-        <CoachMeetingArtifactsPanel event={selected} storedOnly={selected.reviewSource === 'aptem'} fetchArtifacts={loadArtifacts} contentUrl={contentUrl} showAttendance />
+        <p className="text-sm leading-6 text-slate-600">Your meeting recording will appear here when it is available after the meeting.</p>
+        <CoachMeetingArtifactsPanel event={selected} storedOnly canCheck={false} showAttendance={false} showMeetingSummary={false} visibleArtifactTypes={['recording']} fetchArtifacts={loadArtifacts} contentUrl={contentUrl} />
       </div>}
       {!topicBooked && <fieldset disabled={disabled || busy || !calendar} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
         <legend className="px-2 text-sm font-semibold">Schedule an official MCM</legend>

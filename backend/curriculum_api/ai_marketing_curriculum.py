@@ -257,4 +257,7 @@ def sync_projection():
         # must not remain visible to the learner.
         views.authoring_delete(views.AUTHORING_COMPONENTS_TABLE, "module_catalogue_id = %s", [MODULE_ID])
         views.authoring_bulk_upsert(views.AUTHORING_COMPONENTS_TABLE, ["id"], components)
+        # Retire cached curriculum payloads and learner content rows; inside the
+        # transaction, so the epoch moves only with the rewrite.
+        views.invalidate_curriculum_cache()
     return {"components": len(components), "total_otjh": float(total_otjh)}

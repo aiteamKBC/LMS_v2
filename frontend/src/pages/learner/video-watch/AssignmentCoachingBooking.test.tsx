@@ -5,9 +5,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { loadAssignmentTopicStates } from '@/api/assignmentTopics';
 import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, fetchReviewSlots, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingRecordings, fetchReviewSlots, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
-vi.mock('@/api/learnerCalendar', () => ({ bookLearnerCalendarSession: vi.fn(), fetchLearnerCalendarEvents: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn(), fetchReviewSlots: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn() }));
+vi.mock('@/api/learnerCalendar', () => ({ bookLearnerCalendarSession: vi.fn(), fetchLearnerCalendarEvents: vi.fn(), fetchLearnerMeetingRecordings: vi.fn(), fetchReviewSlots: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn() }));
 vi.mock('@/api/assignmentTopics', () => ({ loadAssignmentTopicStates: vi.fn() }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn() }));
 const render = (ui: ReactElement) => renderUi(ui, { wrapper: MemoryRouter });
@@ -30,7 +30,7 @@ const slot = { eventKey: 'mcr:1:2026-09-15', title: 'Monthly Coaching', targetDa
 const props = { kind: 'commercial' as const, learnerId: '1', month: '2026-09', title: 'Assignment', meetingKey: '', disabled: false, onSave: vi.fn().mockResolvedValue(true), onSelect: vi.fn() };
 beforeEach(() => {
   vi.mocked(loadAssignmentTopicStates).mockResolvedValue([]);
-  vi.mocked(fetchLearnerMeetingArtifacts).mockResolvedValue({ artifacts: [] });
+  vi.mocked(fetchLearnerMeetingRecordings).mockResolvedValue({ artifacts: [] });
   vi.mocked(fetchReviewSlots).mockResolvedValue(['09:00', '10:00']);
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ times: ['09:00', '10:00'] }) }));
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [slot], bookingCalendar: { division: 'england-and-wales', today: '2026-09-12', coveredYears: [2026], bankHolidays: [] } });
@@ -48,11 +48,11 @@ it('reads saved imported meeting resources without exposing Coach refresh action
   const imported = { ...slot, reviewSource: 'aptem' as const, eventKey: 'imported-review:901', status: 'scheduled',
     scheduledDate: '2026-09-15', scheduledTime: '09:00', meetingLink: 'https://teams.example.test/saved' };
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [imported] });
-  vi.mocked(fetchLearnerMeetingArtifacts).mockResolvedValue({ artifacts: [], resourceMode: 'stored' });
+  vi.mocked(fetchLearnerMeetingRecordings).mockResolvedValue({ artifacts: [], resourceMode: 'stored' });
   render(<AssignmentCoachingBooking {...props} meetingKey={imported.eventKey} />);
   expect(await screen.findByText(/No saved meeting recording is available/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
-  expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledExactlyOnceWith('commercial', '1', imported.eventKey, expect.any(AbortSignal));
+  expect(fetchLearnerMeetingRecordings).toHaveBeenCalledExactlyOnceWith('commercial', '1', imported.eventKey, expect.any(AbortSignal));
 });
 
 it('books the official MCM key and links the returned meeting after saving the draft', async () => {
@@ -158,11 +158,43 @@ it.each(['commercial', 'apprenticeship'] as const)('books the second assignment 
 
 it('loads own meeting artifacts without a Teams join link', async () => {
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValueOnce({ learner: { kind: 'commercial', id: 1 }, events: [{ ...slot, id: 'meeting', status: 'scheduled', scheduledDate: '2026-09-22', meetingLink: 'https://teams.microsoft.com/meeting' }] });
-  vi.mocked(fetchLearnerMeetingArtifacts).mockResolvedValue({ artifacts: [] });
+  vi.mocked(fetchLearnerMeetingRecordings).mockResolvedValue({ artifacts: [] });
   render(<AssignmentCoachingBooking {...props} meetingKey={slot.eventKey} />);
-  expect(await screen.findByText('Recording, Transcript & Attendance')).toBeInTheDocument();
+  expect(await screen.findByText('Meeting Recording')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Attendance tracking')).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Join MCM' })).not.toBeInTheDocument();
-  await waitFor(() => expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledWith('commercial', '1', slot.eventKey, expect.any(AbortSignal)));
+  await waitFor(() => expect(fetchLearnerMeetingRecordings).toHaveBeenCalledWith('commercial', '1', slot.eventKey, expect.any(AbortSignal)));
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('keeps saved recording playback without Coach controls or attendance for %s assignments', async kind => {
+  const booked = { ...slot, status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '09:00', meetingLink: 'https://teams.example.test/meeting' };
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind, id: 1 }, events: [booked] });
+  vi.mocked(fetchLearnerMeetingRecordings).mockResolvedValue({
+    resourceMode: 'stored',
+    artifacts: [{ id: 'saved-video', artifact_type: 'recording', graph_artifact_id: 'saved-video', content_available: true },
+                { id: 'private-transcript', artifact_type: 'transcript', graph_artifact_id: 'private-transcript' }],
+  });
+  render(<AssignmentCoachingBooking {...props} kind={kind} meetingKey={booked.eventKey} />);
+  expect(await screen.findByRole('button', { name: 'Play' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Attendance tracking')).not.toBeInTheDocument();
+  expect(screen.queryByText('AI Meeting Summary')).not.toBeInTheDocument();
+  expect(screen.queryByText('Transcript')).not.toBeInTheDocument();
+  expect(screen.getByText(/Linked meeting/)).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Change meeting date or time' })).toBeInTheDocument();
+  expect(fetchLearnerMeetingRecordings).toHaveBeenCalledExactlyOnceWith(kind, '1', booked.eventKey, expect.any(AbortSignal));
+});
+
+it('keeps Coach controls hidden while the saved recordings request is pending', async () => {
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [
+    { ...slot, status: 'scheduled', scheduledDate: '2026-09-22', meetingLink: 'https://teams.example.test/meeting' },
+  ] });
+  vi.mocked(fetchLearnerMeetingRecordings).mockReturnValue(new Promise(() => {}));
+  render(<AssignmentCoachingBooking {...props} meetingKey={slot.eventKey} />);
+  expect(await screen.findByText('Meeting Recording')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Attendance tracking')).not.toBeInTheDocument();
 });
 
 it('books an available appointment after the 5th', async () => {
@@ -308,7 +340,9 @@ it.each(['commercial', 'apprenticeship'] as const)('shares a booked MCM with eac
   expect(props.onSelect).toHaveBeenCalledWith(slot.eventKey);
   expect(screen.queryByRole('button', { name: 'Book 60-minute MCM' })).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Use an existing coaching booking')).not.toBeInTheDocument();
-  expect(await screen.findByText('Recording, Transcript & Attendance')).toBeInTheDocument();
+  expect(await screen.findByText('Meeting Recording')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Attendance tracking')).not.toBeInTheDocument();
   view.rerender(<AssignmentCoachingBooking {...props} kind={kind} assignmentId="COMP-TOPICS" topicId="3" />);
   expect(await screen.findByText('MCM already booked: 2026-09-22 at 09:00 with Coach.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Book 60-minute MCM' })).not.toBeInTheDocument();

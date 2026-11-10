@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { loadRecordingWatch, loadTranscriptCues, recordRecordingWatch, sessionFileUrl, type SessionFile, type SessionLearner, type TranscriptCue, type TranscriptLink } from '@/api/sessionResults';
 import { BunnyRecordingVideo } from './BunnyRecordingVideo';
 import { isBunnyEmbed, type RecordingMedia } from './bunnyRecordingProtocol';
+import { useCaptionTrack } from './captionTrack';
+import { RecordingInsights } from './RecordingInsights';
 
 function cueTime(seconds: number) {
   const value = Math.max(0, Math.floor(seconds));
@@ -140,6 +142,7 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
     return () => controller.abort();
   }, [seriesId, file.id, linksKey, kind, learnerId, retry]);
   const visibleCues = useMemo(() => cues.filter(cue => cue.start < duration), [cues, duration]);
+  const captionSource = useCaptionTrack(visibleCues);
   // Follow the latest phrase reached by the playhead. Overlapping speech must
   // not pin scrolling to an earlier, longer cue; silence keeps the preceding phrase.
   const followIndex = useMemo(() => {
@@ -175,10 +178,13 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
       onSeeking={() => onPlayingChange?.(false)}
       onTimeUpdate={() => { readTime(); watch.onPlayedTime(); }} onSeeked={() => { readTime(); watch.onSeeked(); }}
       onLoadedMetadata={readTime} onPause={() => { readTime(); watch.onStop(); onPlayingChange?.(false); }}
-      onEnded={() => { watch.onStop(); onPlayingChange?.(false); }} />}
+      onEnded={() => { watch.onStop(); onPlayingChange?.(false); }}>
+        {captionSource && <track kind="captions" label="English" srcLang="en" src={captionSource} default />}
+      </video>}
     {trackWatch && (watch.saveError
       ? <p role="status" className="text-xs text-amber-800">{watch.saveError}</p>
       : watch.saved && <p role="status" className="text-xs font-semibold text-primary-700">{watchedText(watch.saved)}</p>)}
+    <RecordingInsights seriesId={seriesId} file={file} learner={learner} />
     <section className="rounded-xl border bg-background-50" aria-label={`${label} transcript`}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b p-3"><h4 className="text-sm font-semibold">Transcript</h4>
         <div className="flex flex-wrap items-center gap-3">

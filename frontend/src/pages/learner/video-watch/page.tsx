@@ -21,6 +21,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
+import { subscribeLearnerReadInvalidation } from '@/api/learnerRead';
 import { markingVerdict } from '@/lib/markingVerdict';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
@@ -198,7 +199,8 @@ export default function ComponentViewPage() {
   useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [timerStorageKey]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
-  const [lectureReflectionSaved, setLectureReflectionSaved] = useState<{ activityKey: string; version: number } | null>(null);
+  const [lectureReflectionSaved, setLectureReflectionSaved] = useState<{ activityKey: string; version: number; addedSeconds: number; timeChoice?: string } | null>(null);
+  const [reflectionInitialTab, setReflectionInitialTab] = useState<'learning' | 'otjh'>('learning');
   const [repeating, setRepeating] = useState(false);
   const [retakeOpen, setRetakeOpen] = useState(false);
   const [timeDecision, setTimeDecision] = useState<{ choice: ActivityTimeChoice; reason: string; previousSeconds: number } | null>(null);
@@ -310,6 +312,27 @@ export default function ComponentViewPage() {
   // a page timer. The signed session still runs invisibly so the server can cap
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
+  useEffect(() => {
+    if ((!recordedEvent && !isLiveSession) || (kind !== 'commercial' && kind !== 'apprenticeship') || !id || !componentId) return;
+    let disposed = false;
+    let sequence = 0;
+    const unsubscribe = subscribeLearnerReadInvalidation(() => {
+      const current = ++sequence;
+      // A saved watch report can complete this activity. Keep the player and
+      // its position mounted while refreshing the server-owned completion.
+      // This is a read responding to invalidation, not another mutation. A
+      // forced read invalidates again and synchronously re-enters this listener.
+      void fetchLearnerDetail(kind, id, { componentId, revalidate: true }).then(updated => {
+        if (!disposed && current === sequence) {
+          setDetail(updated);
+          setRefreshError(null);
+        }
+      }).catch(() => {
+        if (!disposed && current === sequence) setRefreshError('Lecture completion could not refresh. Refresh the page to reload it.');
+      });
+    });
+    return () => { disposed = true; unsubscribe(); };
+  }, [kind, id, componentId, recordedEvent, isLiveSession]);
   const hasActivityPanel = isVideo || isLiveSession;
   // Every assignment uses the eight-step monthly submission, regardless of
   // legacy author flags elsewhere in the learner's plan.
@@ -651,10 +674,11 @@ export default function ComponentViewPage() {
     }, { manualTimeConfirmed: true });
   };
 
-  const finishLectureReflection = async () => {
+  const finishLectureReflection = async (reflection: { additionalReflectionSeconds?: number; reflectionTimeChoice?: string }) => {
     const savedActivityKey = timerStorageKey;
     if (!kind || !id || !componentId || currentTimingKeyRef.current !== savedActivityKey) return;
-    setLectureReflectionSaved(current => ({ activityKey: savedActivityKey, version: (current?.version || 0) + 1 }));
+    setLectureReflectionSaved(current => ({ activityKey: savedActivityKey, version: (current?.version || 0) + 1,
+      addedSeconds: reflection.additionalReflectionSeconds || 0, timeChoice: reflection.reflectionTimeChoice }));
     setPhase('consume');
     setRefreshError(null);
     try {
@@ -875,9 +899,13 @@ export default function ComponentViewPage() {
               learnerKsbs={learnerKsbs}
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
-              selectedTimeSeconds={phase === 'lecture-reflect' ? activityTimeSeconds({ timeTaken: completedTime }) : submittedTimeSeconds}
+              selectedTimeSeconds={phase === 'lecture-reflect' ? completedTime == null ? undefined : activityTimeSeconds({ timeTaken: completedTime }) : submittedTimeSeconds}
               selectedTimeSource={phase === 'lecture-reflect' ? undefined : timeSource}
               readOnlyTime={phase === 'lecture-reflect'}
+              allowAdditionalTime={phase === 'lecture-reflect'}
+              initialTab={phase === 'lecture-reflect' ? reflectionInitialTab : 'learning'}
+              additionalTimeAvailable={completed}
+              workingHoursHolidays={componentAccess.holidays ?? []}
               submitting={submitting}
               submitError={submitError}
               onSubmit={phase === 'lecture-reflect' ? finishLectureReflection : result => finalizeSubmit(result, { manualTimeConfirmed: true })}
@@ -1074,15 +1102,22 @@ export default function ComponentViewPage() {
 
               {(isLiveSession || recordedEvent) && marking?.status !== 'accepted' && <section className="mt-4 rounded-xl border border-background-300 bg-white p-4" aria-label="Lecture reflection">
                 <p className="text-sm text-foreground-700">You can add an optional reflection for this lecture. Your attendance and recorded study time stay unchanged.</p>
-                <button type="button" disabled={!canUseComponent || submitting} onClick={() => setPhase('lecture-reflect')}
+                <button type="button" disabled={!canUseComponent || submitting} onClick={() => { setReflectionInitialTab('learning'); setPhase('lecture-reflect'); }}
                   className="mt-3 rounded-lg border border-primary-300 px-3 py-2 text-sm font-semibold text-primary-700 disabled:opacity-50">
                   {verdict || lectureReflectionSaved?.activityKey === timerStorageKey ? 'Open lecture reflection' : 'Add lecture reflection'}
                 </button>
+                {completed && <button type="button" disabled={!canUseComponent || submitting}
+                  onClick={() => { setReflectionInitialTab('otjh'); setPhase('lecture-reflect'); }}
+                  className="ml-3 mt-3 rounded-lg border border-primary-300 px-3 py-2 text-sm font-semibold text-primary-700">Manage reflection time</button>}
               </section>}
               {lectureReflectionSaved?.activityKey === timerStorageKey && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                <p role="status" className="text-sm text-emerald-900">Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.</p>
+                <p role="status" className="text-sm text-emerald-900">{lectureReflectionSaved.timeChoice && lectureReflectionSaved.timeChoice !== 'add'
+                  ? 'Your reflection time action was recorded. Your lecture time and attendance are kept.' : lectureReflectionSaved.addedSeconds > 0
+                  ? 'Your lecture reflection was submitted for tutor review. Its additional time is recorded; your lecture attendance is unchanged.'
+                  : 'Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.'}</p>
                 {refreshError && <p role="alert" className="mt-2 text-sm text-amber-900">{refreshError}</p>}
               </div>}
+              {refreshError && !completed && lectureReflectionSaved?.activityKey !== timerStorageKey && <p role="alert" className="mt-2 text-sm text-amber-900">{refreshError}</p>}
               {completed && !isAssignment && (
                 <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                   <p role="status" className="flex items-center gap-2 text-sm font-semibold text-emerald-800">

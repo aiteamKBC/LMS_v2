@@ -66,6 +66,6 @@ def session_read(request, context, detail, path, query):
     scoped_request = copy.copy(request)
     scoped_request.GET = request.GET.copy()
     # Bunny player resolution must stay JSON through the personal-course adapter.
-    if query.get('format') in ('txt', 'cues', 'player'):
+    if query.get('format') in ('txt', 'cues', 'player', 'engagement'):
         scoped_request.GET['format'] = query['format']
     return stored_content(scoped_request, series_id, artifact, learner_view=True)

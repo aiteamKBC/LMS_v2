@@ -102,8 +102,9 @@ def assigned_curriculum_module_ids(learner):
         from .student_activity import CURRENT_SUBJECTS_SQL
 
         with connections['enrolment'].cursor() as cursor:
-            cursor.execute(CURRENT_SUBJECTS_SQL, [learner_id])
-            return sorted({str(row[0]).strip() for row in cursor.fetchall() if row and str(row[0]).strip()})
+            from .subject_cache import subject_rows
+            rows = subject_rows(cursor, CURRENT_SUBJECTS_SQL, learner_id)
+            return sorted({str(row[0]).strip() for row in rows if row and str(row[0]).strip()})
     except DatabaseError:
         logger.warning("learner_calendar: module assignment lookup failed", exc_info=True)
         return []
@@ -1356,6 +1357,10 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     if not record:
         return _error("Calendar event not found for this learner.", 404)
     from .imported_meeting_resources import is_imported_meeting, stored_resources
+    if request.GET.get("recordings_only") == "1":
+        # Assignment booking reads saved recordings only. Selecting a booking
+        # must not refresh Teams or reconcile attendance/review status.
+        return stored_resources(record)
     if is_imported_meeting(record):
         return stored_resources(record, include_attendance=True)
     from coach_api.views import (

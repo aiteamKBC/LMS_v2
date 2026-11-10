@@ -2154,8 +2154,12 @@ def caseload_completed_ksb_codes(rows) -> dict[int, set[str]]:
         return {}
     result: dict[int, set[str]] = defaultdict(set)
     alias = get_learner_db_alias()
+    from learner_api.progress_cache import rows_by_learner
     with connections[alias].cursor() as cursor:
-        cursor.execute(
+        # Same statement; each learner's rows come from the shared progress
+        # cache when their version is current (learner_api.progress_cache).
+        by_learner = rows_by_learner(
+            cursor,
             '''SELECT p.learner_id,k.ksb_code
                FROM "Learner".learner_progress_entries p
                JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
@@ -2163,12 +2167,13 @@ def caseload_completed_ksb_codes(rows) -> dict[int, set[str]]:
                  AND p.passed IS NOT FALSE
                  AND btrim(lower(coalesce(p.kind,''))) <> 'activity_event'
                  AND (btrim(lower(coalesce(p.kind,''))) <> 'quiz' OR p.passed IS TRUE)''' + and_not_excluded('k', connections[alias]),
-            [learner_ids],
+            learner_ids, 0,
         )
-        for learner_id, raw_code in cursor.fetchall():
-            code = normalize_ksb_parent_code(raw_code)
-            if code:
-                result[int(learner_id)].add(code)
+        for learner_rows in by_learner.values():
+            for learner_id, raw_code in learner_rows:
+                code = normalize_ksb_parent_code(raw_code)
+                if code:
+                    result[int(learner_id)].add(code)
     return result
 
 
@@ -4407,10 +4412,40 @@ def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
     return lookup
 
 
+def _same_database(first: str, second: str) -> bool:
+    a, b = settings.DATABASES.get(first) or {}, settings.DATABASES.get(second) or {}
+    return all(a.get(key) == b.get(key) for key in ("ENGINE", "NAME", "HOST", "PORT"))
+
+
+def _shared_expected_otjh():
+    """Every component's expected_otjh from the shared curriculum cache, or None.
+
+    Only when both aliases the lookup below tries are the same database: the
+    alias fallback exists for a deployment where they are not, and there the
+    original per-alias reads must decide.
+    """
+    if not _same_database("default", "enrolment"):
+        return None
+    from curriculum_api import content_cache
+    try:
+        with connections["default"].cursor() as cur:
+            return content_cache.expected_otjh_map(cur)
+    except Exception as exc:
+        logger.warning("Shared expected_otjh unavailable; reading by id: %s", exc)
+        return None
+
+
 def curriculum_expected_otjh_by_component_id(component_ids: list[str]) -> dict[str, float]:
     ids = sorted({clean_text(component_id) for component_id in component_ids if clean_text(component_id)})
     if not ids:
         return {}
+    known = _shared_expected_otjh()
+    if known is not None:
+        return {
+            component_id: float(known[component_id])
+            for component_id in ids
+            if component_id in known and known[component_id] is not None
+        }
     for alias in ("default", "enrolment"):
         try:
             with connections[alias].cursor() as cur:
