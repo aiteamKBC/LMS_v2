@@ -29,7 +29,8 @@ it('shows additional lecture reflection time separately from the recorded lectur
   render(<SavedReflection {...identity} />);
   fireEvent.click(screen.getByRole('button', { name: 'View saved reflection' }));
   expect(await screen.findByText('Additional reflection time added')).toBeVisible();
-  expect(screen.getByText('02:00:00')).toBeVisible();
+  expect(screen.getByText('Recorded activity total')).toBeVisible();
+  expect(screen.getByText('02:30:00')).toBeVisible();
   expect(screen.getByText('00:30:00')).toBeVisible();
 });
 

@@ -64,19 +64,43 @@ def add_reflection_time(payload, stored, *, submission_mode):
                     and row.get('passed') is not False for row in history)
     from .live_session_progress import read_live_credits
     credits = read_live_credits(source, module_ids=[module_id])
-    # Watching a recording alone is not a new completion route. Retain the
-    # existing submitted-completion or attendance requirement.
-    matches = [row for row in credits if row['componentId'] == component_id
-               and row.get('timeTrackingSource') != 'verified_recording_watch']
-    credit = matches[0] if len(matches) == 1 else None
+    # Consume the current server completion rules. Linked live/recording cards
+    # can represent one lecture whose hours belong to the recording card.
+    matches = [row for row in credits if row.get('moduleId', module_id) == module_id
+               and component_id in (row.get('creditComponentIds') or [row['componentId']])]
+    positive = [row for row in matches if row['hours'] > 0]
+    own = [row for row in matches if row['componentId'] == component_id]
+    if len(positive) > 1 or len(own) > 1:
+        raise ValueError('The lecture time is ambiguous. Ask your coach to review it before adding time.')
+    credit = positive[0] if positive else own[0] if own else None
     if not completed and credit is None:
         raise ValueError('Complete the lecture or recording before adding reflection time. You can keep the reflection as a draft.')
+    identities = set(credit.get('creditComponentIds') or [credit['componentId']]) if credit else {component_id}
+    previous_ids = {row.get('componentId') for row in history if row.get('componentId') in identities
+                    and row.get('kind') in ('component', 'video') and row.get('passed') is not False}
+    if len(previous_ids) > 1:
+        raise ValueError('This lecture has time on multiple linked activities. Ask your coach to review it before adding time.')
+    target = next(iter(previous_ids)) if previous_ids else credit['componentId'] if credit else component_id
+    if len(identities) > 1:
+        # A protected allocation on either card protects the same lecture.
+        from old_otjh.repository import query
+        protected = query('''SELECT source_system,actual_basis FROM "Learner".learner_progress_entries
+            WHERE learner_id=%s AND component_ref=ANY(%s) AND deleted_at IS NULL''', [learner.pk, sorted(identities)])
+        if any(row.get('source_system') or row.get('actual_basis') == 'staff:module-progress' for row in protected):
+            raise ValueError('This activity has historical or staff-reviewed hours. Ask your coach to review its time.')
+    if target != component_id:
+        with connections['enrolment'].cursor() as cur:
+            cur.execute('SELECT type,settings_json,module_catalogue_id FROM curriculum.components WHERE id=%s', [target])
+            target_meta = cur.fetchone()
+        if not target_meta or target_meta[2] != module_id:
+            raise ValueError('The linked lecture time could not be resolved. No time was added.')
+        component_type = target_meta[0]
     from .working_rules import resolve_completion_instants
     now = timezone.now()
     declared, reason = resolve_completion_instants(payload, now, component_id=component_id)
     record = {
         'kind': 'video' if component_type == 'video' else 'component',
-        'componentType': component_type, 'componentId': component_id,
+        'componentType': component_type, 'componentId': target,
         'reportedTime': f'{seconds / 60:g} minutes', 'claimedSeconds': int(seconds),
         'verifiedSeconds': 0, 'timeTrackingSource': 'lecture_reflection:input',
         'timeTaken': f'{int(seconds) // 60:02d}:{int(seconds) % 60:02d}',
@@ -86,8 +110,23 @@ def add_reflection_time(payload, stored, *, submission_mode):
         'retakeTimeChoice': 'add',
     }
     from .retake_timing import validate_activity_time
-    validate_activity_time(record, history, seconds_for=lambda row: _progress_record_minutes(row) * 60,
-                           initial_seconds=credit['hours'] * 3600 if credit else 0)
+    baseline = round(credit['hours'] * 3600) if credit else 0
+    seconds_for = lambda row: _progress_record_minutes(row) * 60
+    baseline_record = {**record, 'retakeTimeChoice': 'retry', 'reportedTime': f'{baseline / 60:g} minutes',
+        'claimedSeconds': baseline, 'verifiedSeconds': (credit or {}).get('verifiedSeconds', 0),
+        'timeTaken': f'{int(baseline) // 60:02d}:{int(baseline) % 60:02d}',
+        'timeTrackingSource': (credit or {}).get('timeTrackingSource', 'verified_session_credit')}
+    validate_activity_time(baseline_record, history, seconds_for=seconds_for, initial_seconds=baseline)
+    # Existing native time may be less than lecture credit already included in
+    # the read projection. Append that server-owned baseline before adding the
+    # writing time, so the supplement cannot absorb the learner's new minutes.
+    materialize = bool(previous_ids and baseline_record['countedSeconds'] > baseline_record['retakePreviousSeconds'])
+    effective_history = [*history, baseline_record] if materialize else history
+    validate_activity_time(record, effective_history, seconds_for=seconds_for, initial_seconds=baseline)
+    if materialize:
+        save_progress_record(learner, baseline_record, {'kind': 'component',
+            'action': 'Recorded existing verified lecture credit', 'title': 'Lecture credit',
+            'detail': baseline_record['reportedTime'], 'at': baseline_record['submittedAt']})
     progress = save_progress_record(learner, record, {
         'kind': 'component', 'action': 'Added lecture reflection time',
         'title': payload.get('activityTitle') or 'Lecture reflection',

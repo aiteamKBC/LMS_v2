@@ -167,6 +167,10 @@ export async function saveLearningReflectionSubmission(
       (data.validation.reason || '') as WorkingRuleReason | '', data.validation.holidayName || '');
     throw new Error(data.error || `Could not save the reflection (${response.status}).`);
   }
+  if ((input.additionalReflectionSeconds || 0) > 0 && (!data.lectureReflectionTime?.progressEntryId
+    || data.lectureReflectionTime.seconds !== input.additionalReflectionSeconds)) {
+    throw new Error('Your reflection was saved, but its additional time was not confirmed. Refresh the reflection to check its recorded time before trying again.');
+  }
   invalidateWeeklyProgress(input.learnerKind, input.learnerId, input.activityId);
   return { id: data.id || '', status: data.status || '', submissionAttempts: data.submissionAttempts,
     ...(data.lectureReflectionTime ? { lectureReflectionTime: data.lectureReflectionTime } : {}) };

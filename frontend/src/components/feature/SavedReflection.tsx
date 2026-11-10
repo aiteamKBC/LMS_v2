@@ -93,7 +93,9 @@ function SavedReflectionContent({ learnerKind, learnerId, activityType, activity
       {!!saved.selectedBenefits?.length && <p>{saved.selectedBenefits.join(', ')}</p>}
       <dl className="grid gap-3 rounded-lg bg-background-100 p-3 sm:grid-cols-2">
         <Value label="Planned time">{saved.plannedOtjh || 'Not recorded'}</Value>
-        <Value label="Recorded time">{Number.isFinite(hours) && hours >= 0 ? formatClock(Math.round(hours * 3600)) : 'Not recorded'}</Value>
+        <Value label={saved.lectureReflectionTime ? 'Recorded activity total' : 'Recorded time'}>{saved.lectureReflectionTime
+          ? formatClock(saved.lectureReflectionTime.countedSeconds)
+          : Number.isFinite(hours) && hours >= 0 ? formatClock(Math.round(hours * 3600)) : 'Not recorded'}</Value>
         {saved.lectureReflectionTime && <Value label="Additional reflection time added">{formatClock(saved.lectureReflectionTime.seconds)}</Value>}
         <Value label="Date completed">{saved.dateCompleted || 'Not recorded'}</Value>
         <Value label="Completed during paid hours">{saved.completedDuringPaidHours === 'yes' ? 'Yes' : saved.completedDuringPaidHours === 'no' ? 'No' : 'Not recorded'}</Value>
