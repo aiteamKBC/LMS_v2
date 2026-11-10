@@ -11,7 +11,8 @@ quiz-link writers.
 """
 from __future__ import annotations
 
-from django.db import connection
+import os
+from django.db import DatabaseError, connection
 
 from . import schema_gate
 
@@ -152,6 +153,52 @@ def components(*, week_ids=None, programme_id=None, columns=None):
         params=params,
         order_by=("display_order", "title", "id"),
     )
+
+
+def fetch_many(reads):
+    """Read canonical tables together without legacy adapters or provisioning.
+
+    Each internal read is (table, where_sql, params, order_sql, columns).
+    SQL fragments are fixed by callers; all request values remain parameters.
+    PostgreSQL uses the existing batching flag; other backends read sequentially.
+    """
+    reads = list(reads)
+    if not reads:
+        return []
+    queries = []
+    for table, where_sql, params, order_sql, columns in reads:
+        if table not in TABLE_COLUMNS:
+            raise ValueError(f"Unsupported Free Course table: {table}")
+        selected = tuple(columns or TABLE_COLUMNS[table])
+        ordering = tuple(part.strip() for part in order_sql.split(',') if part.strip())
+        unknown = (set(selected) | set(ordering)) - set(TABLE_COLUMNS[table])
+        if unknown:
+            raise ValueError(f"Unsupported columns for {table}: {', '.join(sorted(unknown))}")
+        query = f"select {', '.join(_quote_ident(column) for column in selected)} from {_table_name(table)}"
+        if where_sql:
+            query += f" where {where_sql}"
+        if ordering:
+            query += " order by " + ", ".join(_quote_ident(column) for column in ordering)
+        queries.append((query, list(params or [])))
+    schema_gate.require_tables(*(dict.fromkeys(read[0] for read in reads)))
+    batched = (len(reads) > 1 and connection.vendor == "postgresql"
+               and os.environ.get('CURRICULUM_BATCHED_READS', 'true').lower() not in {'false', '0', 'no'})
+    results = []
+    with connection.cursor() as cursor:
+        if batched:
+            cursor.execute('; '.join(query for query, _params in queries),
+                           [value for _query, params in queries for value in params])
+            while True:
+                results.append(_rows(cursor))
+                if not cursor.nextset():
+                    break
+        else:
+            for query, params in queries:
+                cursor.execute(query, params)
+                results.append(_rows(cursor))
+    if len(results) != len(reads):
+        raise DatabaseError(f"Canonical Free Course reads returned {len(results)} results for {len(reads)} reads.")
+    return results
 
 
 def week_api_identity(row):

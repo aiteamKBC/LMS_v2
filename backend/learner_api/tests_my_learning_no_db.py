@@ -41,11 +41,11 @@ class MyLearningAggregateTests(SimpleTestCase):
         cur = MagicMock()
         cur.fetchall.return_value = [('FREE-1',), ('FREEWEEK-1',)]
 
-        # Old database: the authoring-week mirror columns exist.
-        with patch.object(learning, '_free_week_mirror_exists', return_value=True):
-            excluded = learning.free_course_representation_ids(
-                cur, ['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1'],
-            )
+        # Historical source-week IDs are provenance, never ownership.
+        excluded = learning.free_course_representation_ids(
+            cur, ['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1'],
+        )
+        self.assertEqual(cur.execute.call_count, 1)
 
         self.assertEqual(excluded, {'FREE-1', 'FREEWEEK-1'})
         sql, params = cur.execute.call_args.args
@@ -65,8 +65,8 @@ class MyLearningAggregateTests(SimpleTestCase):
         cur = MagicMock()
         cur.fetchall.return_value = [('FREE-1',)]
 
-        with patch.object(learning, '_free_week_mirror_exists', return_value=False):
-            excluded = learning.free_course_representation_ids(cur, ['FREE-1', 'PROGRAMME-1'])
+        excluded = learning.free_course_representation_ids(cur, ['FREE-1', 'PROGRAMME-1'])
+        self.assertEqual(cur.execute.call_count, 1)
 
         self.assertEqual(excluded, {'FREE-1'})
         sql, _params = cur.execute.call_args.args

@@ -190,13 +190,9 @@ class ReadRelationTests(SimpleTestCase):
         with PostgresVendor():
             relation = sc.read_relation('free_course_weeks', columns)
             extras = sc.legacy_read_columns('free_course_weeks', columns)
-        self.assertNotIn('week_id =', relation)
-        self.assertNotIn('"weeks"', relation)
-        self.assertIn('t.id as "week_id"', relation)
-        self.assertIn('t.title', relation)
-        self.assertIn('as "is_programme_deleted"', relation)
-        self.assertIn('fc.id = t.course_id', relation)
-        self.assertTrue({'week_id', 'week_title', 'is_programme_deleted', 'course_name'} <= set(extras))
+        # Canonical reads use stored fields, never synthetic regular-week ownership.
+        self.assertIsNone(relation)
+        self.assertEqual(extras, [])
 
     def test_linked_free_week_still_reads_through_curriculum_weeks(self):
         columns = {'id', 'course_id', 'week_id', 'display_order', 'updated_at'}

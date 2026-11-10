@@ -1,10 +1,34 @@
 from django.test import SimpleTestCase, override_settings
+from decimal import Decimal
+from unittest.mock import MagicMock
 
 from curriculum_api import free_course_authoring_mutations as mutations
 from curriculum_api.free_course_writer_mode import CANONICAL, FROZEN, FreeCourseWriterDisabled, current_mode, require_mode
 
 
 class FreeCourseMutationValidationTests(SimpleTestCase):
+    def test_sale_metadata_reaches_canonical_update_columns(self):
+        values = mutations._course_values({
+            'courseName': 'Course', 'isForSale': True, 'price': '59.95', 'currency': 'GBP',
+        })
+        self.assertEqual(values['price'], Decimal('59.95'))
+        self.assertTrue(values['is_for_sale'])
+        self.assertEqual(values['currency'], 'GBP')
+        cursor = MagicMock()
+        mutations._update_row(cursor, 'free_courses', 'FREE-1', {}, values)
+        sql, params = cursor.execute.call_args.args
+        for column in ('is_for_sale', 'price', 'currency'):
+            self.assertIn(column, sql)
+        self.assertIn(Decimal('59.95'), params)
+        self.assertEqual(params[-1], 'FREE-1')
+
+    def test_disabling_sale_clears_price_and_invalid_prices_are_rejected(self):
+        values = mutations._course_values({'courseName': 'Course', 'isForSale': False, 'price': '59.95'})
+        self.assertIsNone(values['price'])
+        for price in ('0', '-1', '100000000', 'NaN', 'invalid'):
+            with self.subTest(price=price), self.assertRaises(mutations.MutationError):
+                mutations._course_values({'courseName': 'Course', 'isForSale': True, 'price': price})
+
     def component(self, **overrides):
         return {
             "clientId": "component:one",

@@ -4,12 +4,60 @@ from types import SimpleNamespace
 from unittest import mock
 
 from django.test import RequestFactory, SimpleTestCase
+from django.db import DatabaseError
 
 from curriculum_api import free_course_catalogue as catalogue
 from curriculum_api import views
 
 
 class CanonicalFreeCourseCatalogueTests(SimpleTestCase):
+    def test_batch_uses_one_execute_and_preserves_result_order(self):
+        cursor = mock.MagicMock()
+        cursor.description = [("id",)]
+        cursor.fetchall.side_effect = [[("COURSE",)], [("WEEK",)], [("COMPONENT",)]]
+        cursor.nextset.side_effect = [True, True, False]
+        database = mock.MagicMock(vendor="postgresql")
+        database.cursor.return_value.__enter__.return_value = cursor
+        reads = [(table, 'id = %s', [ident], 'id', ['id']) for table, ident in (
+            ('free_courses', 'COURSE'), ('free_course_weeks', 'WEEK'),
+            ('free_programme_components', 'COMPONENT'),
+        )]
+        with mock.patch.object(catalogue, 'connection', database), \
+             mock.patch.object(catalogue.schema_gate, 'require_tables'), \
+             mock.patch.dict('os.environ', {'CURRICULUM_BATCHED_READS': 'true'}):
+            result = catalogue.fetch_many(reads)
+        self.assertEqual(result, [[{'id': 'COURSE'}], [{'id': 'WEEK'}], [{'id': 'COMPONENT'}]])
+        cursor.execute.assert_called_once()
+        sql, params = cursor.execute.call_args.args
+        self.assertEqual(params, ['COURSE', 'WEEK', 'COMPONENT'])
+        self.assertNotIn('"curriculum"."weeks"', sql)
+        self.assertNotIn(' join ', sql.lower())
+        self.assertNotIn('COURSE', sql)
+
+    def test_batch_rejects_incomplete_results(self):
+        database = mock.MagicMock(vendor='postgresql')
+        cursor = database.cursor.return_value.__enter__.return_value
+        cursor.description = []
+        cursor.fetchall.return_value = []
+        cursor.nextset.return_value = False
+        with mock.patch.object(catalogue, 'connection', database), \
+             mock.patch.object(catalogue.schema_gate, 'require_tables'), \
+             mock.patch.dict('os.environ', {'CURRICULUM_BATCHED_READS': 'true'}):
+            with self.assertRaises(DatabaseError):
+                catalogue.fetch_many([('free_courses', '', [], 'id', ['id'])] * 2)
+
+    def test_batch_disabled_reads_sequentially_without_nextset(self):
+        database = mock.MagicMock(vendor='postgresql')
+        cursor = database.cursor.return_value.__enter__.return_value
+        cursor.description = []
+        cursor.fetchall.return_value = []
+        with mock.patch.object(catalogue, 'connection', database), \
+             mock.patch.object(catalogue.schema_gate, 'require_tables'), \
+             mock.patch.dict('os.environ', {'CURRICULUM_BATCHED_READS': 'false'}):
+            self.assertEqual(catalogue.fetch_many([('free_courses', '', [], 'id', ['id'])] * 2), [[], []])
+        self.assertEqual(cursor.execute.call_count, 2)
+        cursor.nextset.assert_not_called()
+
     def test_selectors_read_only_the_three_canonical_tables(self):
         cursor = mock.MagicMock()
         cursor.description = []
@@ -61,11 +109,9 @@ class CanonicalFreeCourseCatalogueTests(SimpleTestCase):
              "title": "Historical", "status": "inactive", "display_order": 1,
              "legacy_copied_from_week_id": None},
         ]
-        with mock.patch.object(catalogue, "courses", return_value=[
-                 {"id": "FREE-1", "course_name": "Canonical", "description": "Course"},
+        with mock.patch.object(catalogue, "fetch_many", return_value=[
+                 [{"id": "FREE-1", "course_name": "Canonical", "description": "Course"}], weeks, [],
              ]), \
-             mock.patch.object(catalogue, "weeks", return_value=weeks), \
-             mock.patch.object(catalogue, "components", return_value=[]), \
              mock.patch("curriculum_api.legacy_free_course_adoption.adopted_courses", return_value={}):
             with mock.patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role="staff")), \
                  mock.patch("login.permissions._accesses_of", return_value={"curriculum"}):
