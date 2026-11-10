@@ -219,7 +219,7 @@ export function ReviewProgressPanel({
           </button>
         ) : null}
       </div>
-      {showCalculateAction && !canCalculate && <p id={actionHelpId} className="mt-1 text-xs text-foreground-500 sm:text-right">Available to the assigned Coach only.</p>}
+      {showCalculateAction && !canCalculate && <p id={actionHelpId} className="mt-1 text-xs text-foreground-500 sm:text-right">Available when this Progress Review is editable.</p>}
 
       {snapshot ? (
         <div className="mt-5 overflow-hidden border border-[#ccd5df] bg-white">

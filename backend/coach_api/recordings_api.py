@@ -547,8 +547,10 @@ def coaching_recording_session(request):
     selected = [row for row, belongs in zip(reports, verdicts) if belongs]
     tracker = attendance.get('tracker') or []
     if len(selected) != len(reports):
+        from .review_attendance_policy import is_review_event
         tracker = build_coach_meeting_attendance_tracker(attendance.get('expectedAttendees') or [],
-            [row for report in selected for row in report.get('records') or []], has_report=bool(selected))['tracker']
+            [row for report in selected for row in report.get('records') or []], has_report=bool(selected),
+            review=is_review_event(record))['tracker']
     if unavailable or not selected:
         tracker = []
     rows = [{key: row.get(key) for key in ('name', 'displayName', 'email', 'role', 'status', 'totalAttendanceSeconds', 'expected')}

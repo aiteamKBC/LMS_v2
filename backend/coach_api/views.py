@@ -50,6 +50,7 @@ from coach_api.cache.learners import (
     release_caseload_lock,
 )
 from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachDashboardSnapshot, CoachManualAttendance, ImportedReviewInstance
+from coach_api.review_attendance_policy import is_review_event
 from coach_api import imported_booking_state
 from coach_api.migrated_reviews import (
     EDITABLE_STATUSES as MIGRATED_EDITABLE_STATUSES,
@@ -7564,7 +7565,10 @@ def build_coach_meeting_attendance_tracker(
     actual_records: list[dict],
     *,
     has_report: bool,
+    review: bool = False,
 ) -> dict:
+    from .review_attendance_policy import attended_seconds, qualifies
+
     tracker_rows = []
     matched_actual_indexes: set[int] = set()
 
@@ -7576,11 +7580,12 @@ def build_coach_meeting_attendance_tracker(
         ]
         matched_actual_indexes.update(matching_indexes)
         matching_records = [actual_records[index] for index in matching_indexes]
-        attended = any(record.get("attended") for record in matching_records)
-        total_seconds = sum(
+        total_seconds = attended_seconds(matching_records) if review else sum(
             max(parse_int(record.get("totalAttendanceSeconds"), 0), 0)
             for record in matching_records
         )
+        attended = bool(any(record.get("attended") for record in matching_records)
+                        and (qualifies(total_seconds) if review else True))
         actual_display_name = next(
             (clean_text(record.get("displayName")) for record in matching_records if clean_text(record.get("displayName"))),
             "",
@@ -7894,6 +7899,7 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent, *, database=None, 
         expected_attendees,
         [],
         has_report=False,
+        review=is_review_event(record),
     )
     empty_attendance = {
         "reports": [],
@@ -8071,6 +8077,19 @@ def stored_coach_meeting_snapshot(record: CoachCalendarEvent, *, database=None, 
             }
         )
         tracker_rows.append(tracker_row)
+
+    if is_review_event(record):
+        from .review_attendance_policy import attended_seconds, qualifies
+        for row in tracker_rows:
+            if row.get('expected'):
+                ids = set(row.get('actualRecordIds') or [])
+                reports = set(row.get('reportIds') or [])
+                matched = [actual for actual in records if actual.get('id') in ids
+                           and (not reports or actual.get('reportId') in reports)]
+                if ids and ids.issubset({actual.get('id') for actual in matched}):
+                    row['totalAttendanceSeconds'] = attended_seconds(matched)
+                row['attended'] = qualifies(row['totalAttendanceSeconds'])
+                row['status'] = 'attended' if row['attended'] else 'absent' if attendance_reports else 'pending'
 
     extra_rows = [row for row in tracker_rows if not row.get("expected")]
     expected_rows = [row for row in tracker_rows if row.get("expected")]
@@ -9007,6 +9026,7 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent, *, target_err
         expected_attendees,
         attendance_records,
         has_report=bool(attendance_reports),
+        review=is_review_event(record),
     )
     attendance = {
         "reports": attendance_reports,
@@ -11401,7 +11421,7 @@ def persist_calendar_sync_reservation(
                     or record.event_type != candidate.event_type):
                 raise LearnerCalendarConflict('The booking association changed. Reload the Review.')
             if overlay is not None:
-                require_started_reschedule(record, overlay.status)
+                require_started_reschedule(record, overlay.status, overlay=overlay)
             else:
                 if not record.review_instance_id:
                     raise LearnerCalendarConflict('A linked Review is required before rescheduling.')
@@ -15932,8 +15952,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         from coach_api.migrated_summary_generation import summary_binding_response
         from coach_api.migrated_progress import calculation_available
         definition["progressVersion"] = answer_version(saved_instance)
-        definition["canCalculateProgress"] = bool(
-            not preview_only and calculation_available(saved_instance, family, local_programme_key)
+        definition["canCalculateProgress"] = calculation_available(
+            saved_instance, family, local_programme_key,
         )
         definition["summaryBinding"] = summary_binding_response(saved_instance)
         from coach_api.migrated_template_sync import snapshot_state
@@ -17013,6 +17033,7 @@ def coach_review_instance_meeting_summary(request, instance_id):
 
 
 @coach_access_required
+@attributed_write_view
 def coach_review_instance_progress(request, instance_id):
     """Calculate (or recalculate) and FREEZE this Progress Review's learner
     progress figures.
@@ -17026,8 +17047,8 @@ def coach_review_instance_progress(request, instance_id):
     from the resolved plan's authoritative curriculum week dates. A timestamp,
     target date, or scheduled date sent by the browser is never used.
 
-    Authorization is the same gate every other review-instance endpoint uses:
-    the assigned coach only, via _authorized_review_instance.
+    Authorization retains the selected coach's ownership gate. A super-admin
+    using view-as is attributed as the actor of this one explicit write.
     """
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
@@ -17059,16 +17080,21 @@ def coach_review_instance_progress(request, instance_id):
 
     source = commercial_rows.get(int(learner_profile.id)) or enrolment_rows.get(int(learner_profile.id))
     owner_email = authenticated_coach_email(request)
+    actor = owner_email
+    if is_coach_view_as(request):
+        admin = request.coach_view_as_admin
+        admin_identity = clean_text(getattr(admin, "username", "") or getattr(admin, "email", "")) or "Administrator"
+        actor = f"{admin_identity} (for {owner_email})"
     try:
         snapshot = build_progress_snapshot(
             source or learner_profile, learner_profile,
             learner_start_date=learner_start_date,
             # The authoritative calculated_at: this server's clock, taken here.
             calculated_at=timezone.now(),
-            calculated_by=owner_email,
+            calculated_by=actor,
         )
         curriculum_review_instances.save_review_instance_progress_snapshot(
-            instance_row, snapshot, actor=owner_email,
+            instance_row, snapshot, actor=actor,
         )
     except UnresolvedTrainingPlanTarget as exc:
         return JsonResponse({

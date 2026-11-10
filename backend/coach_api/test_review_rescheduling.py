@@ -4,6 +4,7 @@ Run with unittest after selecting settings_sqlite_test and NAME=:memory:.
 This module refuses schema setup on file-backed or PostgreSQL connections.
 """
 from copy import copy, deepcopy
+import json
 from contextlib import ExitStack
 from datetime import date, time
 from inspect import unwrap
@@ -85,17 +86,50 @@ class ReviewRescheduleTests(TestCase):
         self.snapshot['attendance']['tracker'].append(dict(role='coach', expected=True, attended=True, totalAttendanceSeconds=600))
         self.assertIsNone(policy.require_started_reschedule(self.record, 'in-progress'))
 
-    def test_positive_learner_attendance_blocks_even_below_threshold(self):
-        self.snapshot['attendance']['tracker'][0].update(attended=True, totalAttendanceSeconds=1)
+    def test_learner_under_ten_minutes_can_reschedule_started_review(self):
+        self.snapshot['attendance']['tracker'][0].update(attended=False, totalAttendanceSeconds=599)
+        result = self.persist()
+        self.assertEqual(result.status, 'in-progress')
+        self.assertEqual(result.graph_event_id, 'existing-event')
+        self.assertEqual(ReviewBookingReschedule.objects.count(), 1)
+
+    def test_ten_minutes_blocks_reschedule_started_review(self):
+        self.snapshot['attendance']['tracker'][0].update(attended=True, totalAttendanceSeconds=600)
         with self.assertRaises(views.LearnerCalendarConflict):
             self.persist()
         self.assertEqual(ReviewBookingReschedule.objects.count(), 0)
         self.record.refresh_from_db()
         self.assertEqual(self.record.scheduled_date, self.original_slot[0])
 
+    def test_native_attendance_context_reports_reschedule_eligibility(self):
+        from .review_attendance_links import review_attendance_links
+        request = RequestFactory().get('/coach_api/coach/review-attendance/links')
+        with patch('coach_api.review_attendance_links.owned_context', return_value=(self.record, None)):
+            self.snapshot['attendance']['tracker'][0].update(attended=False, totalAttendanceSeconds=599)
+            allowed = json.loads(unwrap(review_attendance_links)(request, self.record.event_key).content)
+            self.assertIs(allowed['canReschedule'], True)
+            self.snapshot['attendance']['tracker'][0].update(attended=True, totalAttendanceSeconds=600)
+            blocked = json.loads(unwrap(review_attendance_links)(request, self.record.event_key).content)
+            self.assertIs(blocked['canReschedule'], False)
+
     def test_saved_attendance_still_blocks_after_email_change(self):
         self.record.learner_email = 'changed@example.invalid'
-        self.snapshot['attendance']['tracker'][0].update(attended=True, totalAttendanceSeconds=60)
+        self.snapshot['attendance']['tracker'][0].update(attended=True, totalAttendanceSeconds=600)
+        self.assertTrue(policy.learner_attended(self.record))
+
+    def test_short_attendance_after_email_change_does_not_block(self):
+        self.record.learner_email = 'changed@example.invalid'
+        self.snapshot['attendance']['tracker'][0].update(attended=False, totalAttendanceSeconds=599)
+        self.assertFalse(policy.learner_attended(self.record))
+
+    def test_two_nonoverlapping_learner_records_reach_threshold(self):
+        self.snapshot['attendance']['tracker'][0].update(attended=False, totalAttendanceSeconds=0)
+        report = self.snapshot['attendanceReports'][0]
+        report['records'] = [dict(id=f'learner-{i}', email='student@example.invalid', attended=True,
+                                  totalAttendanceSeconds=300, intervals=[dict(
+                                      joinDateTime=f'2026-10-27T10:0{i * 5}:00Z',
+                                      leaveDateTime=f'2026-10-27T10:{(i + 1) * 5:02d}:00Z')])
+                             for i in range(2)]
         self.assertTrue(policy.learner_attended(self.record))
 
     def test_explicit_coach_link_to_guest_blocks(self):
@@ -103,6 +137,40 @@ class ReviewRescheduleTests(TestCase):
         link = link_for(self.record, attendance)
         with patch('coach_api.review_attendance_links.saved_links', return_value=[link]):
             self.assertTrue(policy.learner_attended(self.record))
+
+    def test_imported_link_uses_selected_reports_for_reschedule_eligibility(self):
+        from .migrated_rescheduling import can_reschedule
+        from .migrated_session_scope import scope_snapshot
+
+        old = deepcopy(self.snapshot['attendance']['reports'][0])
+        old.update(id='old-report', meetingStartDateTime='2026-10-20T10:00:00Z',
+                   meetingEndDateTime='2026-10-20T11:00:00Z')
+        self.snapshot['attendance']['reports'].append(old)
+        selected = scope_snapshot(self.record, self.snapshot)['attendance']
+        link = link_for(self.record, selected)
+        overlay = SimpleNamespace(status='in-progress', meeting_intelligence={})
+        with patch('coach_api.review_attendance_links.saved_links', return_value=[link]):
+            self.assertFalse(can_reschedule(overlay, self.record, family='MCM'))
+            with self.assertRaises(views.LearnerCalendarConflict):
+                policy.require_started_reschedule(self.record, overlay.status, overlay=overlay)
+
+    def test_short_direct_and_linked_visits_together_block(self):
+        attendance = self.snapshot['attendance']
+        guest = attendance['reports'][0]['records'][0]
+        guest['totalAttendanceSeconds'] = 300
+        guest['intervals'][0].update(joinDateTime='2026-10-27T10:05:00Z',
+                                     leaveDateTime='2026-10-27T10:10:00Z')
+        attendance['tracker'][1]['totalAttendanceSeconds'] = 300
+        attendance['tracker'][0].update(attended=False, totalAttendanceSeconds=300,
+                                         actualRecordIds=['direct'], reportIds=['report-1'])
+        attendance['reports'][0]['records'].append(dict(
+            id='direct', email='student@example.invalid', attended=True,
+            totalAttendanceSeconds=300, intervals=[dict(
+                joinDateTime='2026-10-27T10:00:00Z', leaveDateTime='2026-10-27T10:05:00Z')]))
+        with patch('coach_api.review_attendance_links.saved_links', return_value=[link_for(self.record, attendance)]):
+            with self.assertRaises(views.LearnerCalendarConflict):
+                self.persist()
+        self.assertEqual(ReviewBookingReschedule.objects.count(), 0)
 
     def test_another_learner_link_does_not_count(self):
         link = link_for(self.record, self.snapshot['attendance'], learner_id=22)
@@ -268,7 +336,9 @@ class ReviewRescheduleTests(TestCase):
         from .migrated_rescheduling import can_reschedule
         overlay = SimpleNamespace(status='in-progress')
         self.assertTrue(can_reschedule(overlay, self.record, family='PR'))
-        self.snapshot['attendance']['tracker'][0]['attended'] = True
+        self.snapshot['attendance']['tracker'][0].update(attended=False, totalAttendanceSeconds=599)
+        self.assertTrue(can_reschedule(overlay, self.record, family='PR'))
+        self.snapshot['attendance']['tracker'][0].update(attended=True, totalAttendanceSeconds=600)
         self.assertFalse(can_reschedule(overlay, self.record, family='PR'))
 
     def test_personal_support_plan_policy_is_not_expanded(self):

@@ -53,7 +53,7 @@ describe('ReviewProgressPanel reference visual contract', () => {
     </>);
     const button = screen.getByRole('button', { name: hasSnapshot ? 'Recalculate' : 'Calculate' });
     expect(button).toBeDisabled();
-    expect(button).toHaveAccessibleDescription('Available to the assigned Coach only.');
+    expect(button).toHaveAccessibleDescription('Available when this Progress Review is editable.');
     await user.click(button);
     await user.click(screen.getByRole('button', { name: 'Before progress' }));
     await user.tab();

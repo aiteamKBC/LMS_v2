@@ -1,4 +1,5 @@
 import { CalendarDays, Check, Clock3, Layers, Users } from 'lucide-react';
+import { useLayoutEffect, useRef } from 'react';
 import type { QRLecture } from '@/api/qrAttendance';
 import { attendanceDayMessage, lectureDate, lectureSchedule } from './dates';
 
@@ -12,11 +13,24 @@ interface LectureCardsProps {
 }
 
 export function LectureCards({ lectures, selectedId, timeZone, now, disabled, onSelect }: LectureCardsProps) {
-  return <div role="region" aria-label="Available lectures" tabIndex={0}
+  const listRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef<HTMLLabelElement>(null);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const card = selectedRef.current;
+    if (!selectedId || !list || !card) return;
+    const listBounds = list.getBoundingClientRect();
+    const cardBounds = card.getBoundingClientRect();
+    if (cardBounds.top < listBounds.top) list.scrollTop += cardBounds.top - listBounds.top;
+    else if (cardBounds.bottom > listBounds.bottom) list.scrollTop += cardBounds.bottom - listBounds.bottom;
+  }, [selectedId, lectures]);
+
+  return <div ref={listRef} role="region" aria-label="Available lectures" tabIndex={0}
     className="qr-attendance-lectures overscroll-contain rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400">
     {lectures.map(lecture => {
       const unavailable = attendanceDayMessage(lecture, timeZone, now);
-      return <label key={lecture.id} className={`qr-lecture-card ${disabled ? 'cursor-wait' : unavailable ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+      return <label key={lecture.id} ref={selectedId === lecture.id ? selectedRef : undefined} className={`qr-lecture-card ${disabled ? 'cursor-wait' : unavailable ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
       <input type="radio" name="qr-lecture" value={lecture.id} checked={selectedId === lecture.id}
         aria-label={[lecture.title, lectureDate(lecture, timeZone), lecture.group, lecture.cohort].filter(Boolean).join(', ')}
         aria-describedby={unavailable ? `qr-lecture-unavailable-${lecture.id}` : undefined}

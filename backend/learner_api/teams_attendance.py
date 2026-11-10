@@ -62,10 +62,15 @@ def annotate_attendance_completion(components, learner_profile):
               AND c.reflection_required IS FALSE
               AND c.tutor_validation_required IS FALSE
               AND NOT coalesce(c.workplace_evidence_required,false)
-              AND r.attendance_status='present' AND r.attended_seconds>180
-              AND coalesce(r.attendance_report_id,'')<>''
-              AND r.attendance_report_id=CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
-                  THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END
+              AND r.attendance_status='present'
+              AND (
+                    (r.qr_attendance_id IS NOT NULL
+                     AND r.attendance_basis IN ('qr','teams_qr'))
+                 OR (r.attended_seconds>180
+                     AND coalesce(r.attendance_report_id,'')<>''
+                     AND r.attendance_report_id=CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
+                         THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END)
+              )
               AND o.scheduled_end<=CURRENT_TIMESTAMP
               AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
               AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')

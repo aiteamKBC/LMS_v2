@@ -6,7 +6,7 @@ import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachMeetingDetail from './page';
 
-const { fetchEvents, scheduleEvent, fetchForm, initializeForm, bookForm, rescheduleForm, adoptForm, coach } = vi.hoisted(() => ({
+const { fetchEvents, scheduleEvent, fetchForm, initializeForm, bookForm, rescheduleForm, adoptForm, loadLinks, coach } = vi.hoisted(() => ({
   fetchEvents: vi.fn(),
   scheduleEvent: vi.fn(),
   fetchForm: vi.fn(),
@@ -14,6 +14,7 @@ const { fetchEvents, scheduleEvent, fetchForm, initializeForm, bookForm, resched
   bookForm: vi.fn(),
   rescheduleForm: vi.fn(),
   adoptForm: vi.fn(),
+  loadLinks: vi.fn(),
   coach: { email: 'coach@example.invalid', name: 'Coach Example', isInitialized: true, isViewingAsCoach: false },
 }));
 
@@ -27,7 +28,15 @@ vi.mock('../shared/calendarEvents', async importOriginal => ({
   scheduleCoachCalendarEvent: scheduleEvent,
   runCoachCalendarAction: vi.fn(),
 }));
-vi.mock('../shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => null }));
+vi.mock('../shared/CoachMeetingArtifactsPanel', () => ({
+  CoachMeetingArtifactsPanel: ({ onAttendanceLinkChange }: { onAttendanceLinkChange?: () => void }) =>
+    <button type="button" onClick={onAttendanceLinkChange}>Confirm native email link</button>,
+}));
+vi.mock('../shared/reviewAttendanceLinks', () => ({ reviewAttendanceLinks: loadLinks }));
+vi.mock('../shared/MigratedMeetingIntelligence', () => ({
+  MigratedMeetingIntelligence: ({ onAttendanceLinkChange }: { onAttendanceLinkChange?: () => void }) =>
+    <button type="button" onClick={onAttendanceLinkChange}>Confirm alternate email link</button>,
+}));
 vi.mock('@/api/reviewInstances', () => ({
   fetchReviewInstanceForm: fetchForm,
   initializeMigratedReview: initializeForm,
@@ -88,7 +97,64 @@ function mount(path = `/coach/meetings/${encodeURIComponent(EVENT_KEY)}`) {
   </MemoryRouter>);
 }
 
-describe('imported Aptem booking on the meeting detail page', () => {
+describe('review booking on the meeting detail page', () => {
+  it('removes Reschedule after a linked learner meets the attendance threshold', async () => {
+    const initial = importedDefinition({ localStatus: 'in-progress',
+      template: { ...importedDefinition().template, reviewTypeCode: 'aptem_mcm' },
+      booking: { booked: true, conflict: false, canBook: false, canReschedule: true,
+        eventKey: EVENT_KEY, scheduledDate: '2026-10-29', scheduledTime: '10:00',
+        durationMinutes: 60, meetingLink: 'https://example.invalid/meeting', syncState: 'synced' } });
+    const afterLink = { ...initial, booking: { ...initial.booking!, canReschedule: false } };
+    fetchEvents.mockResolvedValue({ owner: { name: 'Coach Example' }, events: [importedEvent({
+      status: 'in-progress', scheduledDate: '2026-10-29', scheduledTime: '10:00',
+    })] });
+    fetchForm.mockResolvedValueOnce(initial).mockResolvedValueOnce(afterLink);
+    mount();
+    expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm alternate email link' }));
+    await waitFor(() => expect(fetchForm).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument());
+    expect(rescheduleForm).not.toHaveBeenCalled();
+  });
+
+  it.each(['mcr', 'progress-review'] as const)('offers native in-progress %s rescheduling', async source => {
+    const event = importedEvent({ reviewSource: undefined, source, type: source === 'mcr' ? 'coaching' : 'review',
+      status: 'in-progress', reviewInstanceId: 'native-instance', scheduledDate: '2026-10-29',
+      scheduledTime: '10:00', durationMinutes: 60 });
+    fetchEvents.mockResolvedValue({ owner: { name: 'Coach Example' }, events: [event] });
+    scheduleEvent.mockResolvedValue({ event: { ...event, scheduledDate: '2026-11-02' } });
+    mount(source === 'mcr' ? undefined : `/coach/progress-reviews/${encodeURIComponent(EVENT_KEY)}`);
+    fireEvent.click(await screen.findByRole('button', { name: 'Reschedule' }));
+    await waitFor(() => expect(scheduleEvent).toHaveBeenCalledWith(event,
+      expect.objectContaining({ date: '2026-10-29', time: '10:00', durationMinutes: 60 })));
+  });
+
+  it('removes native Reschedule after linking a learner who attended at least ten minutes', async () => {
+    fetchEvents.mockResolvedValue({ owner: { name: 'Coach Example' }, events: [importedEvent({
+      reviewSource: undefined, status: 'in-progress', reviewInstanceId: 'native-instance',
+      scheduledDate: '2026-10-29', scheduledTime: '10:00', meetingLink: 'https://example.invalid/meeting',
+    })] });
+    loadLinks.mockResolvedValueOnce({ canReschedule: true }).mockResolvedValueOnce({ canReschedule: false });
+    mount();
+    expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm native email link' }));
+    await waitFor(() => expect(loadLinks).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument());
+  });
+
+  it('keeps native Reschedule when the linked learner attended less than ten minutes', async () => {
+    fetchEvents.mockResolvedValue({ owner: { name: 'Coach Example' }, events: [importedEvent({
+      reviewSource: undefined, status: 'in-progress', reviewInstanceId: 'native-instance',
+      scheduledDate: '2026-10-29', scheduledTime: '10:00', meetingLink: 'https://example.invalid/meeting',
+    })] });
+    loadLinks.mockResolvedValue({ canReschedule: true });
+    mount();
+    expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm native email link' }));
+    await waitFor(() => expect(loadLinks).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeVisible();
+  });
+
   it.each([false, true])('books a PSP with no form from review details (scheduled=%s)', async scheduled => {
     const initial = importedDefinition({ readOnly: true, migratedForm: false, summaryOnly: true,
       formAvailable: false, canInitialize: false, localStatus: null });
@@ -139,6 +205,7 @@ describe('imported Aptem booking on the meeting detail page', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    loadLinks.mockResolvedValue({ canReschedule: true });
     coach.isViewingAsCoach = false;
     fetchEvents.mockResolvedValue({ events: [importedEvent()], owner: { name: 'Coach Example' } });
     fetchForm.mockResolvedValue(importedDefinition());

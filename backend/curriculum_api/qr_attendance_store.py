@@ -1,4 +1,4 @@
-"""QR evidence storage and read-only curriculum access. Never sync Teams or plans."""
+"""QR evidence storage and final learner-register publication."""
 from types import SimpleNamespace
 
 from django.db import connection, transaction
@@ -77,6 +77,21 @@ def occurrences(module_ids):
                    ORDER BY o.scheduled_start, o.id''', list(module_ids))
 
 
+def occurrences_between(module_ids, start, end):
+    """Read only a business day's occurrences for eligible source modules."""
+    if not module_ids:
+        return []
+    placeholders = ','.join(['%s'] * len(module_ids))
+    return rows(f'''SELECT o.id, o.live_session_id, o.session_number,
+                          o.scheduled_start, o.scheduled_end, o.status,
+                          s.status AS series_status, s.module_catalogue_id AS source_module_id
+                   FROM curriculum.live_session_occurrences o
+                   JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+                   WHERE s.module_catalogue_id IN ({placeholders})
+                     AND o.scheduled_start >= %s AND o.scheduled_start < %s
+                   ORDER BY o.scheduled_start, o.id''', [*module_ids, start, end])
+
+
 def lecture_components(module_ids):
     """Read authored titles and saved identities only; never provision or sync."""
     if not module_ids:
@@ -117,10 +132,50 @@ def insert_evidence(cursor, values):
     return False, existing[0]
 
 
+def register_row(cursor, enrolment_id, module_id, occurrence_id):
+    """Resolve one stable learner profile and the selected delivery occurrence."""
+
+    cursor.execute('''SELECT id,email,full_name FROM "Learner".learners
+                      WHERE enrolment_id=%s ORDER BY id LIMIT 2''', [enrolment_id])
+    profiles = cursor.fetchall()
+    if len(profiles) != 1:
+        return None
+    cursor.execute('''SELECT o.live_session_id
+                      FROM curriculum.live_session_occurrences o
+                      JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+                      WHERE o.id=%s''', [occurrence_id])
+    occurrence = cursor.fetchone()
+    if not occurrence:
+        return None
+    cursor.execute('''SELECT id,confirmed_at FROM curriculum.qr_attendance
+                      WHERE enrolment_id=%s AND occurrence_id=%s''', [enrolment_id, occurrence_id])
+    qr = cursor.fetchone()
+    if not qr:
+        return None
+    profile_id, learner_email, learner_name = profiles[0]
+    return {
+        'occurrence_id': occurrence_id,
+        'live_session_id': occurrence[0],
+        'module_catalogue_id': module_id,
+        'learner_profile_id': profile_id,
+        'learner_email': learner_email,
+        'learner_name': learner_name,
+        'recovery_status': 'none',
+        'attended_seconds': 0,
+        'attendance_report_id': '',
+        'first_join_at': None,
+        'last_leave_at': None,
+        'calculated_at': qr[1],
+        'qr_attendance_id': qr[0],
+        'qr_confirmed_at': qr[1],
+    }
+
+
 def confirm(email, module_id, occurrence_id):
     # Re-resolve every submitted identity inside the transaction. No client
-    # programme/group/cohort field is used. The only write is INSERT_SQL.
+    # programme/group/cohort field is used.
     from .qr_attendance import context, lecture_options, AttendanceError
+    from .live_session_register import upsert_qr_attendance_register
     with transaction.atomic():
         student, programme_id, placement, catalog, eligible = context(email)
         if module_id not in eligible:
@@ -136,6 +191,14 @@ def confirm(email, module_id, occurrence_id):
         # hosted by a module in another programme. Never reassign the student.
         selected = eligible[module_id]
         with connection.cursor() as cursor:
-            return insert_evidence(cursor, [student.id, programme_id, module_id, occurrence_id,
+            result = insert_evidence(cursor, [student.id, programme_id, module_id, occurrence_id,
                 placement['group_id'], selected.get('group_id') or None,
                 placement['cohort_id'], selected.get('cohort_id') or selected.get('group_cohort_id') or None])
+            final_row = register_row(cursor, student.id, module_id, occurrence_id)
+            if final_row is None:
+                raise AttendanceError(
+                    'Your learner attendance profile could not be matched. Nothing was recorded.',
+                    'attendance_profile_unavailable', 409,
+                )
+            upsert_qr_attendance_register(cursor, final_row)
+            return result

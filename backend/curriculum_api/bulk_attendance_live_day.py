@@ -171,6 +171,8 @@ def register_rows(occurrence, session, profiles, attendance, existing, now):
             "first_join_at": prior.get("first_join_at"),
             "last_leave_at": prior.get("last_leave_at"),
             "calculated_at": now,
+            "attendance_basis": "staff",
+            "teams_attendance_status": prior.get("teams_attendance_status"),
         })
     return rows
 
@@ -203,6 +205,7 @@ def bulk_attendance_live_day(request):
                 .values(
                     "learner_profile_id", "recovery_status", "attended_seconds",
                     "attendance_report_id", "first_join_at", "last_leave_at",
+                    "teams_attendance_status",
                 )
             }
             rows = register_rows(

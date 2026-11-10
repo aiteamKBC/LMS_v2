@@ -39,6 +39,7 @@ function MigratedMeetingIntelligenceContent({
   checkBlocked = false,
   onCheckComplete,
   onCheckingChange,
+  onAttendanceLinkChange,
   savedBinding,
   showBoundSummary = false,
 }: {
@@ -52,6 +53,7 @@ function MigratedMeetingIntelligenceContent({
   checkBlocked?: boolean;
   onCheckComplete?: (result: CoachMeetingArtifactsResponse) => void;
   onCheckingChange?: (checking: boolean) => void;
+  onAttendanceLinkChange?: () => void;
   savedBinding?: CoachMeetingArtifactsResponse['summaryBinding'];
   showBoundSummary?: boolean;
   resourceContextKey?: string;
@@ -200,6 +202,7 @@ function MigratedMeetingIntelligenceContent({
         onArtifactsLoaded={onArtifactsLoaded}
         preserveResourcesOnRefreshError
         attendanceLinkKey={!viewAs && !checkBlocked ? instanceId : undefined}
+        onAttendanceLinkChange={onAttendanceLinkChange}
       />
     </section>
   );
