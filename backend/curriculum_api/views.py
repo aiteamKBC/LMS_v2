@@ -5445,6 +5445,16 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
             from .session_bunny import recording_player
             if bunny_recording(artifact.get('metadata')).get('state') != 'ready':
                 return json_error('This Bunny recording is still being prepared. Please try again later.', status=409)
+            if request.GET.get('preview') != '1':
+                # Curriculum's existing Download links use this older endpoint.
+                # Share the staff-authenticated original-file delivery; a DRM
+                # rendition is only a playback source, not a downloadable MP4.
+                from copy import copy
+                from .session_results import admin_content
+                download_request = copy(request)
+                download_request.GET = request.GET.copy()
+                download_request.GET['download'] = '1'
+                return admin_content(download_request, live_session_id, artifact_id)
             try:
                 # Legacy callers expect an MP4, including native video previews.
                 # Serve Bunny's protected rendition without reverting to Microsoft/Azure.
