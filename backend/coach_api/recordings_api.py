@@ -686,6 +686,16 @@ def coaching_recording_content(request):
                                verify_identity, cache_if=lambda value: value is True)
         if not verified:
             return _response({'error': 'Recording occurrence could not be verified.', 'code': 'recording_session_mismatch'}, 409)
+        if request.GET.get('format') == 'captions':
+            from .recordings_transcripts import recording_captions
+            content = recording_captions(record, job, artifact)
+            if not content:
+                return _response({'error': 'English captions are not available for this recording yet.',
+                                  'code': 'captions_pending'}, 404)
+            response = HttpResponse(content, content_type='text/vtt; charset=utf-8')
+            response['Cache-Control'] = 'private, no-store'
+            response['X-Content-Type-Options'] = 'nosniff'
+            return response
         from django.core.handlers.asgi import ASGIRequest
         return recording_response(job.result['base'], artifact_id, preview=request.GET.get('preview') == '1',
             byte_range=request.headers.get('Range'), if_range=request.headers.get('If-Range'),

@@ -115,6 +115,19 @@ class SessionBunnyTests(TestCase):
              patch.object(session_bunny, 'enqueue_recording', side_effect=VideoImportError('Bunny is disabled.')):
             self.assertEqual(archive_series('S', artifact_ids=['A']), ['Bunny is disabled.'])
 
+    def test_existing_worker_attaches_captions_after_video_processing_without_changing_its_endpoint(self):
+        from .session_archive import archive_series
+        transcript = {'id': 'T', 'occurrence_id': 'O', 'artifact_type': 'transcript', 'saved_status': 'ready',
+            'metadata': {'lmsTranscriptTimeline': {'version': 1, 'cues': []}}}
+        artifacts = [self.artifact, transcript]
+        with patch('curriculum_api.session_archive.read', side_effect=[
+                [self.series], [self.module], [self.occurrence], artifacts]), \
+             patch.object(session_bunny, 'enqueue_recording', return_value=Mock(pk='IMPORT')), \
+             patch.object(video_imports, 'process', return_value=Mock(status='ready')), \
+             patch('curriculum_api.session_captions.sync_series_captions') as captions:
+            self.assertEqual(archive_series('S', artifact_ids=['A', 'T']), [])
+        captions.assert_called_once_with('S', artifacts)
+
     def test_separate_occurrence_join_cannot_borrow_series_meeting(self):
         with self.assertRaisesRegex(VideoImportError, 'incomplete'):
             session_bunny.source_identity(self.series, {'join_url': 'https://teams.microsoft.com/meet/different'}, self.artifact)

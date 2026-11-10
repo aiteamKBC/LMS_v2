@@ -6,6 +6,7 @@ import { loadRecordingPlayer, loadRecordingWatch, loadTranscriptCues, recordReco
 vi.mock('@/api/sessionResults', () => ({
   loadRecordingPlayer: vi.fn(), loadRecordingWatch: vi.fn(), loadTranscriptCues: vi.fn(), recordRecordingWatch: vi.fn(), sessionFileUrl: vi.fn(),
 }));
+vi.mock('@/api/recordingInsights', () => ({ loadRecordingInsights: vi.fn(async () => ({ audience: 'learner', highlights: { watched: null, finished: null } })) }));
 const url = 'https://player.mediadelivery.net/embed/798153/c1c2c3c4-1234-5678-abcd-123456789abc?token=synthetic&expires=9999999999';
 const file = { id: 'A', type: 'recording' as const, state: 'ready' as const, playbackProvider: 'bunny' as const };
 const learner = { kind: 'commercial' as const, id: '7' };

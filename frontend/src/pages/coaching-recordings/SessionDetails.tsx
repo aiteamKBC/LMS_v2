@@ -30,6 +30,8 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
   const playbackRequest = useRef<AbortController | null>(null);
   const playbackAttempt = useRef(0);
   const [showTypeReview, setShowTypeReview] = useState(false);
+  const [captionError, setCaptionError] = useState(false);
+  const [captionRetry, setCaptionRetry] = useState(0);
   const [attendancePaused, setAttendancePaused] = useState(false);
   const refresh = () => { invalidateCoachingPdfs(); invalidateCoachingDetails(); setRevision(value => value + 1); };
   useEffect(() => {
@@ -48,7 +50,7 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
     const controller = new AbortController();
     playbackRequest.current = controller;
     const attempt = ++playbackAttempt.current;
-    setPlaying(id); setPlayError(''); setPlayback(null); setPreparing(true);
+    setPlaying(id); setPlayError(''); setPlayback(null); setPreparing(true); setCaptionError(false); setCaptionRetry(0);
     try {
       const result = await prepareRecordingPlayback({ eventKey: data.eventKey, recordingId: id,
         reference, occurrence }, controller.signal);
@@ -116,7 +118,18 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
       {playing && data.media.recordings.some(file => file.id === playing && file.state === 'ready') && <div className="mt-4">
         {preparing && <p role="status" className="text-sm">Preparing recording…</p>}
         {playback && <video key={playback.attempt} aria-label="Coaching recording player" className="aspect-video w-full rounded-lg bg-black" controls autoPlay preload="metadata"
-          src={playback.url} onError={() => setPlayError('This recording could not be played. Retry playback to reload the video.')} />}
+          src={playback.url}
+          onErrorCapture={event => { if ((event.target as HTMLElement).tagName === 'TRACK') setCaptionError(true); }}
+          onError={event => { if (event.target === event.currentTarget) setPlayError('This recording could not be played. Retry playback to reload the video.'); }}>
+          <track key={captionRetry} kind="captions" label="English" srcLang="en" default
+            src={`${playback.url}&format=captions&captionRetry=${captionRetry}`}
+            onError={() => setCaptionError(true)} onLoad={() => setCaptionError(false)} />
+        </video>}
+        {playback && captionError && <p role="status" className="mt-2 text-sm leading-relaxed text-foreground-600">
+          English captions are not available yet. You can continue watching.{' '}
+          <button type="button" className="min-h-11 rounded-md px-2 font-semibold text-primary-700 underline focus-visible:outline focus-visible:outline-2"
+            onClick={() => { setCaptionError(false); setCaptionRetry(value => value + 1); }}>Retry captions</button>
+        </p>}
         {playError && <p role="alert" className="mt-2 text-sm text-rose-800">{playError} <button className="font-semibold underline" onClick={() => void play(playing)}>Retry playback</button></p>}
       </div>}
       <h3 className="mt-6 border-t border-background-200 pt-4 text-sm font-bold">Attendance</h3>

@@ -925,6 +925,25 @@ class CoachingRecordingsApiTests(SimpleTestCase):
             self.assertEqual(self.media_get(api.coaching_recording_content, recordingId='foreign-file').status_code, 404)
         self.azure_sign.assert_not_called()
 
+    def test_english_captions_use_same_recording_endpoint_and_ownership_gate(self):
+        self.source_details.return_value = source_job()
+        with patch.object(api.CoachCalendarEvent.objects, 'filter') as query, \
+                patch.object(views, 'get_graph_settings', return_value={'base_url': 'https://graph.microsoft.com/v1.0'}), \
+                patch.object(views, 'microsoft_graph_request', return_value={'id': 'file', 'createdDateTime': '2026-10-20T09:00:00Z', 'endDateTime': '2026-10-20T10:00:00Z'}), \
+                patch('coach_api.recordings_transcripts.recording_captions', return_value='WEBVTT\n\n') as captions, \
+                patch('coach_api.recordings_transport.recording_response') as video:
+            query.return_value.first.return_value = self.record(graph_event_id='event-1')
+            result = self.media_get(api.coaching_recording_content, recordingId='file', format='captions')
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result['Content-Type'], 'text/vtt; charset=utf-8')
+            self.assertEqual(result['Cache-Control'], 'private, no-store')
+            captions.assert_called_once()
+            video.assert_not_called()
+            self.assertEqual(self.media_get(api.coaching_recording_content, recordingId='foreign', format='captions').status_code, 404)
+            self.staff.email = OTHER
+            self.assertEqual(self.media_get(api.coaching_recording_content, recordingId='file', format='captions').status_code, 404)
+            captions.assert_called_once()
+
     def test_native_preview_and_download_recheck_microsoft_identity_without_any_azure_redirect(self):
         self.source_details.return_value = source_job()
         with patch.object(api.CoachCalendarEvent.objects, 'filter') as query, \

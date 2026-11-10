@@ -38,5 +38,5 @@ def signed_embed(library_id, video_id, *, now=None):
         raise VideoImportError('The saved Bunny video identity is invalid.')
     expires = int(time.time() if now is None else now) + 4 * 60 * 60
     token = hashlib.sha256(f'{key}{video_id}{expires}'.encode()).hexdigest()
-    query = urlencode({'token': token, 'expires': expires, 'autoplay': 'false', 'preload': 'false'})
+    query = urlencode({'token': token, 'expires': expires, 'autoplay': 'false', 'preload': 'false', 'captions': 'en'})
     return f'https://player.mediadelivery.net/embed/{library_id}/{video_id}?{query}'
