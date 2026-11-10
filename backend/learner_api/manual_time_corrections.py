@@ -28,6 +28,9 @@ def revision(record):
 def manual_record(record):
     source = str(record.get('time_tracking_source') or '').lower()
     return (isinstance(record.get('id'), int) and not record.get('deleted_at')
+            # Reflection decisions include a protected lecture baseline. Their
+            # writing time is corrected through Manage reflection time only.
+            and not source.startswith('lecture_reflection:')
             and not record.get('source_system') and record.get('submitted_at') is not None
             and record.get('component_link_source') in {'direct', 'quiz_ref'}
             and record.get('kind') in {'component', 'video', 'quiz'}

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn() }));
 vi.mock('@/api/reflectionSubmission', () => ({
@@ -32,6 +32,56 @@ const completeLecture = {
   benefitExplanation: 'Help the team with everyday work.', dateCompleted: '2026-11-10', completedDuringPaidHours: 'yes',
   otjhConfirmed: true, signedDeclaration: true,
 };
+
+it.each([['correct', 1200, 8400], ['add', 3000, 10200], ['retry', 1800, 9000]] as const)(
+  'offers an explicit %s action on an already submitted reflection and retains lecture hours', async (choice, reflected, total) => {
+    mocks.load.mockResolvedValue({ ...completeLecture, status: 'submitted_for_tutor_review',
+      lectureReflectionTime: { seconds: 1800, progressEntryId: 10, countedSeconds: 9000, addedAt: 'now' } });
+    mocks.save.mockImplementation(async input => ({ status: 'submitted_for_tutor_review', lectureReflectionTime: {
+      seconds: reflected, inputSeconds: 1200, progressEntryId: 11, countedSeconds: total,
+      operationId: input.reflectionTimeOperation?.id, choice, addedAt: 'now' } }));
+    const onSubmit = vi.fn();
+    view({ noun: 'session', selectedTimeSeconds: 9000, readOnlyTime: true, allowAdditionalTime: true, initialTab: 'otjh', onSubmit });
+    await waitFor(() => expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveValue(30));
+    fireEvent.click(screen.getByRole('button', { name: 'Manage reflection time' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('Previously recorded reflection time: 00:30:00');
+    fireEvent.click(within(dialog).getByRole('radio', { name: choice === 'correct' ? /^Correct recorded time/ : choice === 'add' ? /^Add more learning time/ : /^Record another attempt/ }));
+    if (choice === 'correct') fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Correcting the writing duration.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    const minutes = screen.getByLabelText('Additional reflection time (minutes)');
+    expect(minutes).not.toHaveAttribute('readonly');
+    fireEvent.change(minutes, { target: { value: '20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ reflectionTimeChoice: choice, additionalReflectionSeconds: 1200 })));
+    expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ reflectionTimeOperation: expect.objectContaining({
+      id: expect.any(String), choice, expectedReflectionSeconds: 1800, expectedProgressEntryId: 10 }) }));
+    fireEvent.click(screen.getByRole('button', { name: 'OTJH' }));
+    expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveValue(reflected / 60);
+    expect(screen.getByLabelText('Recorded session time (reference)')).toHaveValue(total === 8400 ? '02:20:00' : total === 9000 ? '02:30:00' : '02:50:00');
+  });
+
+it('restores an unsent time action after reopening and discards it when the server revision has changed', async () => {
+  const key = 'reflection-draft:apprenticeship:learner-1:session:quiz-1:time-action';
+  const operation = { id: '00000000-0000-4000-8000-000000000001', choice: 'add', reason: '', expectedReflectionSeconds: 1800, expectedProgressEntryId: 10 };
+  localStorage.setItem(key, JSON.stringify({ operation, minutes: '15' }));
+  mocks.load.mockResolvedValue({ ...completeLecture, status: 'submitted_for_tutor_review',
+    lectureReflectionTime: { seconds: 1800, progressEntryId: 10, countedSeconds: 9000, addedAt: 'now' } });
+  const props = { noun: 'session', selectedTimeSeconds: 9000, readOnlyTime: true, allowAdditionalTime: true, initialTab: 'otjh' as const };
+  const rendered = view(props);
+  await waitFor(() => expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveValue(15));
+  expect(screen.getByLabelText('Additional reflection time (minutes)')).not.toHaveAttribute('readonly');
+  expect(JSON.parse(localStorage.getItem(key)!).operation.id).toBe(operation.id);
+  rendered.unmount();
+  mocks.load.mockResolvedValue({ ...completeLecture, status: 'submitted_for_tutor_review',
+    lectureReflectionTime: { seconds: 2700, progressEntryId: 11, countedSeconds: 9900, addedAt: 'now' } });
+  view(props);
+  await waitFor(() => expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveValue(45));
+  expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveAttribute('readonly');
+  expect(localStorage.getItem(key)).toBeNull();
+});
 
 it('adds only explicitly entered reflection minutes and confirms them without editing lecture time', async () => {
   mocks.load.mockResolvedValue(completeLecture);

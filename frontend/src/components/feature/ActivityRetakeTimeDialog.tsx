@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import { formatClock } from './ReflectionWindow.helpers';
 import type { ActivityTimeChoice } from '@/lib/activityTimeDecision';
 
-export function ActivityRetakeTimeDialog({ previousSeconds, onChoose, onClose, notice, confirmLabel = 'Continue' }: {
+export function ActivityRetakeTimeDialog({ previousSeconds, onChoose, onClose, notice, confirmLabel = 'Continue', timeLabel = 'Previously recorded time' }: {
   previousSeconds: number; onChoose: (choice: ActivityTimeChoice, reason: string) => void; onClose: () => void;
   notice?: string; confirmLabel?: string;
+  timeLabel?: string;
 }) {
   const title = useId(), panel = useRef<HTMLDivElement>(null);
   const [choice, setChoice] = useState<ActivityTimeChoice | null>(null), [reason, setReason] = useState('');
@@ -27,7 +28,7 @@ export function ActivityRetakeTimeDialog({ previousSeconds, onChoose, onClose, n
       }}>
       <h2 id={title} className="text-lg font-bold">How should this time count?</h2>
       {notice && <p role="status" className="text-sm text-amber-800">{notice}</p>}
-      <p className="text-sm">Previously recorded time: <strong>{formatClock(previousSeconds)}</strong>. The activity total cannot exceed 8 hours.</p>
+      <p className="text-sm">{timeLabel}: <strong>{formatClock(previousSeconds)}</strong>. The activity total cannot exceed 8 hours.</p>
       <fieldset className="space-y-3"><legend className="sr-only">Choose how to record time</legend>
         {([
           ['correct', 'Correct recorded time', 'Replace an incorrect duration with the corrected time.'],

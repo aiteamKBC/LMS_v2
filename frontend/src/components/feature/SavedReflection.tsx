@@ -9,6 +9,7 @@ interface SavedReflectionProps {
   learnerId: string;
   activityType: string;
   activityId: string;
+  timeOnly?: boolean;
 }
 
 /** Read the submitted document without starting the editable reflection flow. */
@@ -24,7 +25,7 @@ function SavedReflectionForActivity(props: SavedReflectionProps) {
       <button type="button" aria-expanded={open} aria-controls={contentId}
         onClick={() => setOpen(value => !value)}
         className="rounded-lg text-sm font-semibold text-primary-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400">
-        {open ? 'Hide saved reflection' : 'View saved reflection'}
+        {props.timeOnly ? open ? 'Hide reflection time history' : 'View reflection time history' : open ? 'Hide saved reflection' : 'View saved reflection'}
       </button>
       <div id={contentId}>
         {open && <SavedReflectionContent {...props} />}
@@ -33,7 +34,7 @@ function SavedReflectionForActivity(props: SavedReflectionProps) {
   );
 }
 
-function SavedReflectionContent({ learnerKind, learnerId, activityType, activityId }: SavedReflectionProps) {
+function SavedReflectionContent({ learnerKind, learnerId, activityType, activityId, timeOnly }: SavedReflectionProps) {
   const [state, setState] = useState<{
     loading: boolean; error: string; submission: StoredLearningReflectionSubmission | null;
   }>({ loading: true, error: '', submission: null });
@@ -58,6 +59,7 @@ function SavedReflectionContent({ learnerKind, learnerId, activityType, activity
   </div>;
   const saved = state.submission;
   if (!saved) return <p role="status" className="mt-3 text-sm text-foreground-500">No saved reflection was found for this activity.</p>;
+  if (timeOnly) return <ReflectionTimeHistory saved={saved} />;
   const verdict = markingVerdict(saved.status);
   const hours = saved.actualTimeHours?.trim() ? Number(saved.actualTimeHours) : NaN;
   const confirmed = (value: boolean | undefined) => value == null ? 'Not recorded' : value ? 'Confirmed' : 'Not confirmed';
@@ -104,11 +106,35 @@ function SavedReflectionContent({ learnerKind, learnerId, activityType, activity
         <Value label="Evidence consent">{confirmed(saved.evidenceConsentConfirmed)}</Value>
       </dl>
       <TextSection title="Coach feedback" text={saved.coachFeedback} />
+      <ReflectionTimeHistory saved={saved} />
       {saved.reviewedBy && <p className="text-xs text-foreground-500">Reviewed by {saved.reviewedBy}
         {saved.reviewedAt ? ` · ${formatSystemTimestamp(saved.reviewedAt, { dateStyle: 'medium', timeStyle: 'short' })}` : ''}
       </p>}
     </div>
   );
+}
+
+function ReflectionTimeHistory({ saved }: { saved: StoredLearningReflectionSubmission }) {
+  const rows = saved.lectureReflectionTimeHistory || (saved.lectureReflectionTime ? [saved.lectureReflectionTime] : []);
+  const receipt = saved.lectureReflectionTime;
+  if (!rows.length) return <p className="mt-3 text-sm text-foreground-600">No separate reflection writing time has been recorded.</p>;
+  const stamp = (value?: string) => value && Number.isFinite(Date.parse(value))
+    ? formatSystemTimestamp(value, { dateStyle: 'medium', timeStyle: 'short' }) : 'Not recorded';
+  return <section aria-label="Reflection time history" className="mt-4 space-y-3 text-sm">
+    <h3 className="font-semibold">Reflection time history</h3>
+    {receipt && <p>Lecture time: {formatClock(receipt.lectureSeconds ?? Math.max(0, receipt.countedSeconds - receipt.seconds))}
+      {' · '}Reflection time: {formatClock(receipt.seconds)}{' · '}Activity total: {formatClock(receipt.countedSeconds)}</p>}
+    <ol className="space-y-2">{rows.map((row, index) => <li key={row.operationId || row.progressEntryId || index} className="rounded-lg border p-3">
+      <p className="font-semibold">{index + 1}. {row.choice === 'correct' ? 'Time correction' : row.choice === 'retry' ? 'Another reflection attempt' : 'Additional reflection time'}</p>
+      <p>{stamp(row.addedAt)}{' · '}Entered: {formatClock(row.inputSeconds ?? row.seconds)}{' · '}Reflection total: {formatClock(row.seconds)}</p>
+      {row.reason && <p>Reason: {row.reason}</p>}
+    </li>)}</ol>
+    {saved.lectureReflectionAttempts?.map((attempt, index) => <details key={index} className="rounded-lg border p-3">
+      <summary className="cursor-pointer font-semibold">Previous reflection {index + 1} · {attempt.status} · {stamp(attempt.submittedAt)}</summary>
+      <p className="mt-2 whitespace-pre-wrap">{attempt.content.learningReflection || 'No reflection text recorded.'}</p>
+      {attempt.coachFeedback && <p className="mt-2 whitespace-pre-wrap">Coach feedback: {attempt.coachFeedback}</p>}
+    </details>)}
+  </section>;
 }
 
 function Value({ label, children }: { label: string; children: ReactNode }) {

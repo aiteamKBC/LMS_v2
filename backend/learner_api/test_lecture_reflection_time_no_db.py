@@ -21,7 +21,7 @@ def payload(**changes):
 
 
 class LectureReflectionTimeTests(SimpleTestCase):
-    def add(self, data=None, *, history=None, credits=None, component_type='live_session', assigned=True, protected=False):
+    def add(self, data=None, *, history=None, credits=None, component_type='live_session', assigned=True, protected=False, stored=None, original_missing=False):
         history = history if history is not None else [dict(kind='component', componentId='LECTURE',
             claimedSeconds=7200, reportedTime='120 minutes', timeTrackingSource='signed:input',
             submittedAt='2026-11-09T10:00:00Z')]
@@ -38,13 +38,16 @@ class LectureReflectionTimeTests(SimpleTestCase):
             stack.enter_context(patch('learner_api.active_users.learner_profile_for_source', return_value=learner))
             stack.enter_context(patch('learner_api.learning_plan.effective_training_plan', return_value=[{'moduleId': 'MODULE' if assigned else 'OTHER'}]))
             stack.enter_context(patch('learner_api.live_session_progress.read_live_credits', return_value=credits or []))
-            stack.enter_context(patch('old_otjh.repository.query', return_value=[{'source_system': 'historical'}] if protected else []))
+            known = (stored or {}).get('lectureReflectionTime', {})
+            stack.enter_context(patch('old_otjh.repository.query', side_effect=lambda sql, args: ([] if original_missing else
+                [{'id': args[0], 'claimed_seconds': known.get('ledgerSeconds', known.get('inputSeconds', known.get('seconds')))}]) if 'WHERE id=%s' in sql
+                else [{'source_system': 'historical'}] if protected else []))
             stack.enter_context(patch('learner_api.working_rules.resolve_completion_instants', return_value=(None, '')))
             stack.enter_context(patch('learner_api.lecture_reflection_time.timezone.now', return_value=datetime(2026, 11, 10, 12, tzinfo=timezone.utc)))
             save = stack.enter_context(patch('learner_api.active_users.save_progress_record', return_value=SimpleNamespace(pk=101)))
             body = payload()
             body['activityType'] = {'live_session': 'session', 'recording_placeholder': 'recording', 'video': 'video'}.get(component_type, 'reading')
-            result = add_reflection_time(data or body, {}, submission_mode='submit')
+            result = add_reflection_time(data or body, stored or {}, submission_mode='submit')
             self.saved_records = [deepcopy(call.args[1]) for call in save.call_args_list]
         self.assertEqual(history, before)
         return result, save.call_args.args[1], history
@@ -189,9 +192,62 @@ class LectureReflectionTimeTests(SimpleTestCase):
         with self.assertRaisesMessage(ValueError, 'does not match this lecture'):
             self.add(data)
 
+    def test_quiz_choices_apply_only_to_reflection_time_and_agree_with_reported_hours(self):
+        old_receipt = dict(seconds=1800, progressEntryId=99, countedSeconds=9000, addedAt='2026-11-09T12:00:00Z')
+        history = [dict(kind='component', componentId='LECTURE', claimedSeconds=7200,
+            timeTrackingSource='signed:input', submittedAt='2026-11-09T10:00:00Z'),
+            dict(kind='component', componentId='LECTURE', claimedSeconds=1800, retakeTimeChoice='add',
+            retakePreviousSeconds=7200, timeTrackingSource='lecture_reflection:input', submittedAt='2026-11-09T12:00:00Z')]
+        for mode, seconds, expected in [('correct', 1200, 8400), ('add', 1200, 10200), ('retry', 1200, 9000), ('retry', 2400, 9600)]:
+            with self.subTest(mode=mode, seconds=seconds):
+                body = payload(); body['additionalReflectionSeconds'] = seconds
+                body['reflectionTimeOperation'] = dict(id='00000000-0000-4000-8000-000000000001', choice=mode,
+                    reason='Correcting writing time.', expectedReflectionSeconds=1800, expectedProgressEntryId=99)
+                result, record, _ = self.add(body, stored={'lectureReflectionTime': old_receipt}, history=history)
+                self.assertEqual(result['countedSeconds'], expected)
+                self.assertEqual(result['lectureSeconds'], 7200)
+                self.assertEqual(result['seconds'], expected - 7200)
+                self.assertEqual(result['inputSeconds'], seconds)
+                self.assertEqual(record['retakeTimeChoice'], mode)
+                self.assertAlmostEqual(completed_hours_value_from_progress([*history, record]), expected / 3600)
+                rows = [dict(id=i, learner_id=1, kind=r['kind'], component_ref='LECTURE', component_type='live_session',
+                    component_link_source='direct', submitted_at=r['submittedAt'], claimed_seconds=r['claimedSeconds'],
+                    time_tracking_source=r['timeTrackingSource'], source_payload={k: r[k] for k in ('retakeTimeChoice', 'retakePreviousSeconds') if k in r})
+                    for i, r in enumerate([*history, record], 1)]
+                self.assertEqual(project_current(rows, {})[0]['actual_seconds'], expected)
+
+    def test_new_verified_lecture_credit_is_not_allowed_to_absorb_existing_or_new_writing_time(self):
+        receipt = dict(seconds=1800, progressEntryId=99, countedSeconds=9000)
+        history = [dict(kind='component', componentId='LECTURE', claimedSeconds=1800, retakeTimeChoice='add',
+            retakePreviousSeconds=7200, timeTrackingSource='lecture_reflection:input', submittedAt='2026-11-09T12:00:00Z')]
+        body = payload(); body['additionalReflectionSeconds'] = 1200
+        body['reflectionTimeOperation'] = dict(id='00000000-0000-4000-8000-000000000001', choice='add', reason='',
+            expectedReflectionSeconds=1800, expectedProgressEntryId=99)
+        result, _, _ = self.add(body, stored={'lectureReflectionTime': receipt}, history=history,
+            credits=[dict(componentId='LECTURE', hours=3)])
+        self.assertEqual(result['lectureSeconds'], 10800)
+        self.assertEqual(result['seconds'], 3000)
+        self.assertEqual(result['countedSeconds'], 13800)
+        self.assertEqual(len(self.saved_records), 2)
+        with self.assertRaisesMessage(ValueError, 'original reflection time entry needs a coach review'):
+            self.add(body, stored={'lectureReflectionTime': receipt}, history=history, original_missing=True)
+
+    def test_stale_operation_and_correction_without_reason_never_reach_database(self):
+        body = payload()
+        body['reflectionTimeOperation'] = dict(id='00000000-0000-4000-8000-000000000001', choice='add',
+            reason='', expectedReflectionSeconds=0, expectedProgressEntryId=0)
+        receipt = dict(seconds=1800, progressEntryId=99, countedSeconds=9000)
+        with patch('learner_api.lecture_reflection_time.connections') as db:
+            with self.assertRaisesMessage(ValueError, 'saved reflection time changed'):
+                add_reflection_time(body, {'lectureReflectionTime': receipt}, submission_mode='submit')
+            db.__getitem__.assert_not_called()
+        body['reflectionTimeOperation']['choice'] = 'correct'
+        with self.assertRaisesMessage(ValueError, 'Explain the time correction'):
+            add_reflection_time(body, {}, submission_mode='submit')
+
 
 class ReflectionTimeSubmissionTests(SimpleTestCase):
-    def submit(self, *, existing=None, addition=None, forged=False, old_client=False):
+    def submit(self, *, existing=None, addition=None, forged=False, old_client=False, operation=None):
         from . import reflection_submissions as view
         body = dict(learnerKind='apprenticeship', learnerId='19', activityType='session', activityId='LECTURE',
                     learningReflection='Synthetic reflection', submissionMode='submit', actualTimeHours='2',
@@ -200,6 +256,8 @@ class ReflectionTimeSubmissionTests(SimpleTestCase):
             body['lectureReflectionTime'] = {'progressEntryId': 'FORGED', 'seconds': 99999}
         if old_client:
             body.pop('additionalReflectionSeconds')
+        if operation:
+            body['reflectionTimeOperation'] = operation
         cursor = MagicMock()
         cursor.fetchone.side_effect = [existing, ('SAVED',)]
         connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
@@ -228,6 +286,17 @@ class ReflectionTimeSubmissionTests(SimpleTestCase):
         response, _, add = self.submit(existing=('accepted', {}, None, None, None, None))
         self.assertEqual(response.status_code, 409)
         add.assert_not_called()
+
+    def test_replaying_a_confirmed_action_after_coach_acceptance_does_not_write_or_change_review(self):
+        operation = dict(id='00000000-0000-4000-8000-000000000001', choice='add', reason='',
+            expectedReflectionSeconds=0, expectedProgressEntryId=0)
+        receipt = dict(seconds=1800, inputSeconds=1800, operationId=operation['id'], choice='add', reason='',
+            progressEntryId=101, countedSeconds=9000)
+        response, cursor, add = self.submit(existing=('accepted', {'lectureReflectionTime': receipt}, 'Keep feedback', 'Coach', None, None, 'SAVED'), operation=operation)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(json.loads(response.content)['status'], 'accepted')
+        add.assert_not_called()
+        self.assertFalse(any('insert into' in call.args[0] or 'update ' in call.args[0].lower() for call in cursor.execute.call_args_list))
 
     def test_an_older_open_tab_uses_the_same_lock_and_preserves_the_stored_receipt(self):
         receipt = dict(seconds=1800, progressEntryId=101, addedAt='now', countedSeconds=9000)

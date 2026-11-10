@@ -309,7 +309,7 @@ def _submit_reflection(request):
                     full_submission.update({key: payload[key] for key in ("assignmentTopicId", "assignmentTopicName", "assignmentQuestion", "monthlyAssignment") if key in payload})
                 cur.execute(
                     """
-                    select status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at
+                    select status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at, id
                     from "Learner"."learning_reflection_submissions"
                     where learner_kind = %s
                       and learner_id = %s
@@ -330,6 +330,14 @@ def _submit_reflection(request):
                     except (TypeError, ValueError):
                         stored = {}
                 stored = _dict(stored)
+                from .lecture_reflection_operations import replayed_receipt, preserve_time_history
+                if submission_mode == 'submit':
+                    replay = replayed_receipt(payload, stored)
+                    if replay:
+                        # A lost response may be retried after a later save or
+                        # coach decision. Return the original result, write nothing.
+                        return JsonResponse({'id': str(existing[6]), 'status': existing[0],
+                            'lectureReflectionTime': replay, 'submissionAttempts': []})
                 if stored.get('submissionOrigin') == 'coach' and activity_type == 'extra_activity':
                     return _error('This activity was recorded by your coach and cannot be edited here.', 409)
                 imported = stored.get("submissionOrigin") == "imported_legacy"
@@ -401,6 +409,12 @@ def _submit_reflection(request):
 
                 from .lecture_reflection_time import add_reflection_time
                 time_receipt = add_reflection_time(payload, stored, submission_mode=submission_mode)
+                preserve_time_history(full_submission, stored, time_receipt,
+                    status=existing[0] if existing else None, submitted_at=existing[5] if existing else None,
+                    feedback=existing[2] if existing else None, reviewer=existing[3] if existing else None,
+                    reviewed_at=existing[4] if existing else None)
+                if payload.get('reflectionTimeOperation') and stored.get('ksbReview') and payload.get('ksbCodes') == stored.get('ksbCodes'):
+                    full_submission['ksbReview'] = stored['ksbReview']
                 if time_receipt:
                     full_submission['lectureReflectionTime'] = time_receipt
                     payload['actualTimeHours'] = str(time_receipt['countedSeconds'] / 3600)
