@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 export { StudentActivityPanel } from './SubjectWorkspace';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import { AssignmentsTab } from './AssignmentsTab';
@@ -76,8 +76,10 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const requestedTab = new URLSearchParams(location.search).get('tab');
   const tab = view === 'map' ? 'modules' : requestedTab === 'modules' || requestedTab === 'quizzes' || requestedTab === 'assignments'
     ? requestedTab : defaultTabForPath(location.pathname);
+  const pendingSectionFocus = useRef<TabKey | null>(null);
   const setTab = (next: TabKey) => {
     if (next === tab) return;
+    if (document.activeElement?.closest('nav[aria-label="My Learning section"]')) pendingSectionFocus.current = next;
     const params = new URLSearchParams(location.search);
     params.set('tab', next);
     navigate({ pathname: location.pathname, search: params.toString() });
@@ -92,6 +94,16 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const catalogue = useMyLearningCatalogue(kind as LearnerKind | undefined, id, isInitialized && tab === 'modules' && mode === 'courses');
   const subjectOpen = view === 'catalogue' && mode === 'courses' && tab === 'modules'
     && !!(courseParams.get('subject') || courseParams.get('module') || courseParams.get('activity'));
+  useEffect(() => {
+    if (pendingSectionFocus.current !== tab) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !active.closest('nav[aria-label="My Learning section"]')) {
+      pendingSectionFocus.current = null;
+      return;
+    }
+    document.querySelector<HTMLButtonElement>('nav[aria-label="My Learning section"] button[aria-pressed="true"]')?.focus();
+    if (tab !== 'modules' || catalogue.data) pendingSectionFocus.current = null;
+  }, [tab, catalogue.data]);
   const setMode = (next: string) => {
     if (next === mode) return;
     const params = new URLSearchParams(location.search);
@@ -110,6 +122,9 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
     { value: 'quizzes', label: 'Quizzes' },
     { value: 'assignments', label: 'Assignments' },
   ];
+  const sectionTabs = view === 'catalogue' && !subjectOpen
+    ? <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />
+    : null;
 
   return (
     <WorkspaceShell
@@ -148,10 +163,10 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
           ) : (
             <>
               {view === 'catalogue' && !subjectOpen && <LearningHero />}
-              {view === 'catalogue' && !subjectOpen && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
+              {(tab !== 'modules' || !catalogue.data) && sectionTabs}
 
               {tab === 'modules' ? (
-                <CompactModules key={`${kind}:${id}`} kind={kind as LearnerKind | undefined} id={id} catalogue={catalogue.data} loading={catalogue.loading} error={catalogue.error} refresh={catalogue.refresh} showReadOnlyNotice={showReadOnlyNotice} view={view} canRequestTransfer={auth.account?.role === 'learner' && String(auth.account.subjectId) === id} />
+                <CompactModules key={`${kind}:${id}`} kind={kind as LearnerKind | undefined} id={id} catalogue={catalogue.data} loading={catalogue.loading} error={catalogue.error} refresh={catalogue.refresh} showReadOnlyNotice={showReadOnlyNotice} view={view} sectionTabs={sectionTabs} canRequestTransfer={auth.account?.role === 'learner' && String(auth.account.subjectId) === id} />
               ) : (
                 tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
                 <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />

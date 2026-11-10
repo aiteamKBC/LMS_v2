@@ -72,7 +72,7 @@ def _lecture_titles(rows, occurrences, local_date):
 def read_live_register_records(kbc_id=None):
     rows = list(LiveSessionLearnerAttendance.objects.values(
         'id', 'occurrence_id', 'live_session_id', 'module_catalogue_id',
-        'learner_profile_id', 'attendance_status',
+        'learner_profile_id', 'attendance_status', 'attendance_basis',
     ))
     if not rows:
         return {}
@@ -103,12 +103,10 @@ def read_live_register_records(kbc_id=None):
     aptem_by_profile, _conflicts = resolve_effective_aptem_ids(profiles)
     kbc_id_by_profile = {profile_id: str(aptem_id) for profile_id, aptem_id in aptem_by_profile.items()}
 
-    from .bulk_attendance_live_recovery import parallel_recovery_links
-    covered, guests = parallel_recovery_links(
-        [row for row in rows if row['learner_profile_id'] in kbc_id_by_profile
-         and (kbc_id is None or kbc_id_by_profile[row['learner_profile_id']] == kbc_id)],
-        complete=True,
-    )
+    from .parallel_attendance_register import saved_parallel_links
+    scoped_rows = [row for row in rows if row['learner_profile_id'] in kbc_id_by_profile
+                   and (kbc_id is None or kbc_id_by_profile[row['learner_profile_id']] == kbc_id)]
+    covered, guests = saved_parallel_links(scoped_rows)
 
     lecture_titles = {}
     if kbc_id is not None:
@@ -127,7 +125,7 @@ def read_live_register_records(kbc_id=None):
     for learner_records in records.values():
         for record in learner_records:
             row = by_key[record['recordKey']]
-            key = (row['learner_profile_id'], str(row['occurrence_id']))
+            key = (row['learner_profile_id'], str(row['occurrence_id']), str(row['module_catalogue_id']))
             record.update(covered.get(key, {}))
             record.update(guests.get(key, {}))
     return records
@@ -179,7 +177,7 @@ def save_live_attendance(changes, *, actor=''):
         now = timezone.now()
         for row_id, status in changes.items():
             LiveSessionLearnerAttendance.objects.filter(id=row_id).update(
-                attendance_status=status, updated_at=now,
+                attendance_status=status, attendance_basis='staff', updated_at=now,
             )
         owners = dict(LiveSession.objects.using(database).filter(
             id__in={row['live_session_id'] for row in rows}).values_list('id', 'module_catalogue_id'))
@@ -190,4 +188,6 @@ def save_live_attendance(changes, *, actor=''):
                 defaults={'status': changes[row['id']], 'is_deleted': False,
                           'owner_email': actor, 'updated_by': actor},
             )
+        from .parallel_attendance_register import reconcile_parallel_attendance
+        reconcile_parallel_attendance({row['occurrence_id'] for row in rows}, database=database)
     return sorted(ids)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { readMyLearningUpcoming, useMyLearningSearch, useMyLearningModule, type MyLearningCatalogue } from '@/api/myLearning';
@@ -25,9 +25,10 @@ function LearningReadError({ message, onRetry }: { message: string; onRetry: () 
   </div>;
 }
 
-export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue', canRequestTransfer = false }: {
+export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue', sectionTabs, canRequestTransfer = false }: {
   kind?: LearnerKind; id?: string; catalogue: MyLearningCatalogue | null; loading: boolean; error: string;
   refresh: () => void; showReadOnlyNotice?: boolean; view?: 'catalogue' | 'map';
+  sectionTabs?: ReactNode;
   canRequestTransfer?: boolean;
 }) {
   const location = useLocation();
@@ -130,6 +131,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     <p className="text-sm text-foreground-500">{catalogue.learner.name}</p>
     <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={current}
       moduleActivity={catalogue.moduleActivity}
+      sectionTabs={sectionTabs}
       transferAction={canRequestTransfer && kind && id ? <TransferProgress kind={kind} learnerId={id} onRequested={refresh} /> : undefined}
       total={summary.activityCount} done={summary.completedActivityCount} percent={summary.percent}
       kind={kind} learnerId={id} activityMatches={activitySearch.ids}
