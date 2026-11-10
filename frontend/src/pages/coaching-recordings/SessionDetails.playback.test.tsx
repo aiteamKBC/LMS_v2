@@ -64,3 +64,18 @@ it('cancels playback preparation when the drawer closes', async () => {
   view.unmount();
   expect(signal.aborted).toBe(true);
 });
+
+it('loads English captions through the same authorised endpoint and retries without restarting video', async () => {
+  render(<SessionDetails {...props} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
+  const video = await screen.findByLabelText('Coaching recording player');
+  const track = video.querySelector('track')!;
+  expect(track).toHaveAttribute('srclang', 'en');
+  expect(track).toHaveAttribute('src', '/video?reference=fresh&format=captions&captionRetry=0');
+  fireEvent.error(track);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry captions' }));
+  expect(screen.getByLabelText('Coaching recording player')).toBe(video);
+  expect(video.querySelector('track')).toHaveAttribute('src', expect.stringContaining('captionRetry=1'));
+  expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+});

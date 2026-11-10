@@ -1135,6 +1135,13 @@ def stored_content(request, series_id, artifact_id, *, learner_view=False):
     if not rows or state != 'ready':
         return JsonResponse({'error': 'This file is still being saved. Please try again later.'}, status=409)
     row = rows[0]
+    if row['artifact_type'] == 'recording' and request.GET.get('format') == 'engagement':
+        from .recording_engagement import recording_engagement
+        data = recording_engagement(series_id, row, learner_view=learner_view)
+        response = JsonResponse(data if data is not None else {'error': 'Recording not found.'},
+                                status=200 if data is not None else 404)
+        response['Cache-Control'] = 'private, no-store'
+        return response
     if row['artifact_type'] == 'recording' and bunny:
         from .session_bunny import recording_player
         from .bunny_stream import VideoImportError

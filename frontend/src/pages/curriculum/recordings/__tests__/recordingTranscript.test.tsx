@@ -35,6 +35,20 @@ afterEach(() => cleanup());
 const item = (isPlaying = true, value = recording) => <RecordingItem lecture={lecture} recording={value} isPlaying={isPlaying} onPlay={vi.fn()} />;
 
 describe('Delivery recording transcript', () => {
+  it('uses the same saved Bunny recording and timed transcript in tutor quality without another upload', async () => {
+    const url = 'https://player.mediadelivery.net/embed/798153/c1c2c3c4-1234-5678-abcd-123456789abc?token=synthetic&expires=9999999999';
+    vi.mocked(resolveRecordingUrl).mockResolvedValue(url);
+    vi.mocked(loadSessionResult).mockResolvedValue({ sessions: [{ ...session, artifacts: session.artifacts!.map(file =>
+      file.id === 'R' ? { ...file, playbackProvider: 'bunny' as const } : file) }] });
+    const { container } = render(item(true, { ...recording, source: { ...recording.source, playbackProvider: 'bunny' } }));
+    expect(await screen.findByTitle(lecture.title)).toHaveAttribute('src', url);
+    expect(container.querySelector('video')).toBeNull();
+    expect(resolveRecordingUrl).toHaveBeenCalledWith('S', 'R', false, expect.any(AbortSignal));
+    expect(await screen.findByRole('button', { name: /Saved speech/ })).toBeInTheDocument();
+    expect(loadTranscriptCues).toHaveBeenCalledWith('S', 'T', undefined, expect.any(AbortSignal));
+    expect(screen.queryByText('Unrelated transcript')).not.toBeInTheDocument();
+  });
+
   it('loads saved metadata only on playback and downloads only this recording’s linked transcript', async () => {
     const view = render(item(false));
     expect(loadSessionResult).not.toHaveBeenCalled();
