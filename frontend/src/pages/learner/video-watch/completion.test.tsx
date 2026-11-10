@@ -140,15 +140,16 @@ it.each([
   mount('C1', kind);
   fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
   const time = await screen.findByLabelText('Recorded session time (reference)');
-  await waitFor(() => expect(time).toHaveValue('02:00:00'));
+  await waitFor(() => expect(time).toHaveValue(done ? '00:00:20' : 'Not recorded'));
   expect(time).toHaveAttribute('readonly');
+  expect(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }).hasAttribute('disabled')).toBe(!done);
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   const submit = screen.getByRole('button', { name: 'Submit for tutor review' });
   await waitFor(() => expect(submit).toBeEnabled());
   fireEvent.click(submit);
   await screen.findByText('Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.');
   expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
-    learnerKind: kind, learnerId: '1', activityType: 'session', activityId: 'C1', actualTimeHours: '2', submissionMode: 'submit',
+    learnerKind: kind, learnerId: '1', activityType: 'session', activityId: 'C1', additionalReflectionSeconds: 0, submissionMode: 'submit',
   }));
   expect(submitComponentProgress).not.toHaveBeenCalled();
   expect(submitVideoProgress).not.toHaveBeenCalled();
@@ -168,7 +169,7 @@ it('keeps the lecture reflection open on save failure and retries without a prog
   });
   mount();
   fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
-  await screen.findByDisplayValue('02:00:00');
+  await screen.findByDisplayValue('00:00:20');
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
   expect(await screen.findByText('Synthetic save failure')).toBeVisible();
@@ -187,6 +188,35 @@ it('offers the same reflection action for a dated lecture recording', async () =
   mount();
   fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
   expect(await screen.findByLabelText('Recorded session time (reference)')).toHaveAttribute('readonly');
+  expect(submitVideoProgress).not.toHaveBeenCalled();
+});
+
+it.each(['commercial', 'apprenticeship'])('submits %s lecture reflection minutes through the atomic reflection save and refreshes the total', async kind => {
+  const original = { ...detail(true), components: [first], componentProgress: [{ ...progress, timeTaken: '120:00' }] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(lectureDraft(kind));
+  vi.mocked(saveLearningReflectionSubmission).mockImplementation(async payload => {
+    if (payload.submissionMode !== 'submit') return { id: 'R-LECTURE', status: 'draft' };
+    vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...original, componentProgress: [
+      ...original.componentProgress, { ...progress, timeTaken: '30:00', submittedAt: '2026-11-10T12:00:00Z', retakeTimeChoice: 'add' },
+    ] } as LearnerDetail);
+    return { id: 'R-LECTURE', status: 'submitted_for_tutor_review', lectureReflectionTime: {
+      seconds: 1800, progressEntryId: 10, addedAt: '2026-11-10T12:00:00Z', countedSeconds: 9000,
+    } };
+  });
+  mount('C1', kind);
+  fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
+  fireEvent.click(screen.getByRole('button', { name: 'OTJH' }));
+  await waitFor(() => expect(screen.getByLabelText('Recorded session time (reference)')).toHaveValue('02:00:00'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
+  fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '30' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  expect(await screen.findByText(/Its additional time is recorded/)).toBeVisible();
+  expect(screen.getByText('· 02:30:00')).toBeVisible();
+  expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({ additionalReflectionSeconds: 1800, submissionMode: 'submit' }));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
   expect(submitVideoProgress).not.toHaveBeenCalled();
 });
 

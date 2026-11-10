@@ -1,0 +1,209 @@
+"""Reflection additions use the existing quiz/activity arithmetic without I/O."""
+import json
+from contextlib import ExitStack, nullcontext
+from copy import deepcopy
+from datetime import datetime, timezone
+from inspect import unwrap
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from django.test import RequestFactory, SimpleTestCase
+
+from .lecture_reflection_time import add_reflection_time
+from .active_users import completed_hours_value_from_progress
+from .current_learning import project_current
+
+
+def payload(**changes):
+    return dict(learnerKind='apprenticeship', learnerId='19', activityType='session',
+                activityId='LECTURE', additionalReflectionSeconds=1800,
+                otjhConfirmed=True, signedDeclaration=True, **changes)
+
+
+class LectureReflectionTimeTests(SimpleTestCase):
+    def add(self, data=None, *, history=None, credits=None, component_type='live_session', assigned=True):
+        history = history if history is not None else [dict(kind='component', componentId='LECTURE',
+            claimedSeconds=7200, reportedTime='120 minutes', timeTrackingSource='signed:input',
+            submittedAt='2026-11-09T10:00:00Z')]
+        before = deepcopy(history)
+        source = SimpleNamespace(pk=19)
+        learner = SimpleNamespace(training_plan_progress=history)
+        cursor = MagicMock()
+        settings = dict(recordingSeriesId='SERIES', recordingSessionNumber=1, recordingDate='2026-11-09') if component_type != 'live_session' else {}
+        cursor.fetchone.return_value = (component_type, settings, 'MODULE')
+        with ExitStack() as stack:
+            stack.enter_context(patch('learner_api.lecture_reflection_time.connections'))['enrolment'].cursor.return_value.__enter__.return_value = cursor
+            models = stack.enter_context(patch('learner_api.components.SOURCE_MODELS'))
+            models.__getitem__.return_value.objects.get.return_value = source
+            stack.enter_context(patch('learner_api.active_users.learner_profile_for_source', return_value=learner))
+            stack.enter_context(patch('learner_api.learning_plan.effective_training_plan', return_value=[{'moduleId': 'MODULE' if assigned else 'OTHER'}]))
+            stack.enter_context(patch('learner_api.live_session_progress.read_live_credits', return_value=credits or []))
+            stack.enter_context(patch('learner_api.working_rules.resolve_completion_instants', return_value=(None, '')))
+            stack.enter_context(patch('learner_api.lecture_reflection_time.timezone.now', return_value=datetime(2026, 11, 10, 12, tzinfo=timezone.utc)))
+            save = stack.enter_context(patch('learner_api.active_users.save_progress_record', return_value=SimpleNamespace(pk=101)))
+            body = payload()
+            body['activityType'] = {'live_session': 'session', 'recording_placeholder': 'recording', 'video': 'video'}.get(component_type, 'reading')
+            result = add_reflection_time(data or body, {}, submission_mode='submit')
+        self.assertEqual(history, before)
+        return result, save.call_args.args[1], history
+
+    def test_adds_thirty_minutes_to_two_hours_for_both_learner_types(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                data = payload(); data['learnerKind'] = kind
+                receipt, record, history = self.add(data)
+                self.assertEqual(receipt['seconds'], 1800)
+                self.assertEqual(receipt['countedSeconds'], 9000)
+                self.assertEqual(record['retakeTimeChoice'], 'add')
+                self.assertEqual(record['retakePreviousSeconds'], 7200)
+                self.assertEqual(record['claimedSeconds'], 1800)
+                self.assertEqual(record['verifiedSeconds'], 0)
+                self.assertEqual(completed_hours_value_from_progress([*history, record]), 2.5)
+                rows = [dict(id=i, learner_id=1, kind=r['kind'], component_ref='LECTURE', component_type='live_session',
+                    component_link_source='direct', submitted_at=r['submittedAt'], reported_time=r['reportedTime'],
+                    claimed_seconds=r['claimedSeconds'], time_tracking_source=r['timeTrackingSource'],
+                    source_payload={k: r[k] for k in ('retakeTimeChoice', 'retakePreviousSeconds') if k in r})
+                    for i, r in enumerate([*history, record], 1)]
+                self.assertEqual(project_current(rows, {})[0]['actual_seconds'], 9000)
+
+    def test_preserves_attendance_only_credit_as_the_server_baseline(self):
+        receipt, record, _ = self.add(history=[], credits=[dict(componentId='LECTURE', hours=2)])
+        self.assertEqual(record['retakePreviousSeconds'], 7200)
+        self.assertEqual(receipt['countedSeconds'], 9000)
+
+    def test_dated_video_recordings_use_the_video_history_kind(self):
+        receipt, record, _ = self.add(component_type='video')
+        self.assertEqual(record['kind'], 'video')
+        self.assertEqual(receipt['countedSeconds'], 9000)
+
+    def test_linked_recording_cards_can_add_to_an_existing_submitted_completion(self):
+        receipt, record, _ = self.add(component_type='recording_placeholder')
+        self.assertEqual(record['componentType'], 'recording_placeholder')
+        self.assertEqual(receipt['countedSeconds'], 9000)
+
+    def test_watching_alone_cannot_replace_the_existing_submission_or_attendance_gate(self):
+        with self.assertRaisesMessage(ValueError, 'Complete the lecture'):
+            self.add(history=[], credits=[dict(componentId='LECTURE', hours=2,
+                timeTrackingSource='verified_recording_watch')])
+
+    def test_the_locked_write_resolves_a_dated_video_baseline_without_crediting_ordinary_videos(self):
+        from .activity_time_history import attendance_baseline
+        record = dict(kind='video', componentType='video', componentId='LECTURE', retakeTimeChoice='add')
+        for settings, expected in (({}, 0), (dict(recordingSeriesId='SERIES', recordingSessionNumber=1,
+                                                    recordingDate='2026-11-09'), 7200)):
+            with self.subTest(settings=bool(settings)), \
+                 patch('learner_api.activity_time_history.connections') as db, \
+                 patch('learner_api.live_session_progress.read_live_credits', return_value=[dict(componentId='LECTURE', hours=2)]) as read:
+                db['enrolment'].cursor.return_value.__enter__.return_value.fetchone.return_value = ('MODULE', settings)
+                self.assertEqual(attendance_baseline(record, [], source=SimpleNamespace(id=19)), expected)
+                self.assertEqual(read.called, bool(settings))
+
+    def test_drafts_zero_and_ordinary_reflections_never_touch_progress(self):
+        with patch('learner_api.lecture_reflection_time.connections') as db:
+            self.assertIsNone(add_reflection_time(payload(), {}, submission_mode='draft'))
+            data = payload(); data['additionalReflectionSeconds'] = 0
+            self.assertIsNone(add_reflection_time(data, {}, submission_mode='submit'))
+            self.assertIsNone(add_reflection_time({}, {}, submission_mode='submit'))
+            db.__getitem__.assert_not_called()
+
+    def test_retries_and_text_edits_keep_the_server_receipt_without_a_second_write(self):
+        receipt = dict(seconds=1800, progressEntryId=101, addedAt='2026-11-10T12:00:00Z', countedSeconds=9000)
+        with patch('learner_api.lecture_reflection_time.connections') as db:
+            for mode in ('submit', 'draft'):
+                self.assertEqual(add_reflection_time(payload(), {'lectureReflectionTime': receipt}, submission_mode=mode), receipt)
+            self.assertEqual(add_reflection_time({}, {'lectureReflectionTime': receipt}, submission_mode='submit'), receipt)
+            db.__getitem__.assert_not_called()
+        changed = payload(); changed['additionalReflectionSeconds'] = 2700
+        with self.assertRaisesMessage(ValueError, 'already been added'):
+            add_reflection_time(changed, {'lectureReflectionTime': receipt}, submission_mode='submit')
+
+    def test_invalid_and_excessive_times_are_rejected(self):
+        for value in (-1, True, '30', float('nan'), float('inf'), 1.2, 28801):
+            data = payload(); data['additionalReflectionSeconds'] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                add_reflection_time(data, {}, submission_mode='submit')
+        data = payload(); data['additionalReflectionSeconds'] = 7 * 3600
+        with self.assertRaisesMessage(ValueError, '8-hour limit'):
+            self.add(data)
+
+    def test_does_not_complete_an_unfinished_lecture_or_credit_another_plan(self):
+        with self.assertRaisesMessage(ValueError, 'Complete the lecture'):
+            self.add(history=[])
+        with self.assertRaisesMessage(ValueError, 'not in your learning plan'):
+            self.add(assigned=False)
+
+    def test_non_lecture_components_cannot_claim_time_through_this_flow(self):
+        # No recording association on a normal reading.
+        with patch('learner_api.lecture_reflection_time.connections') as db:
+            db['enrolment'].cursor.return_value.__enter__.return_value.fetchone.return_value = ('reading', {}, 'MODULE')
+            with self.assertRaisesMessage(ValueError, 'only available for lectures'):
+                add_reflection_time(payload(), {}, submission_mode='submit')
+
+    def test_a_time_addition_requires_the_learner_declarations(self):
+        for field in ('otjhConfirmed', 'signedDeclaration'):
+            data = payload(); data[field] = False
+            with self.subTest(field=field), self.assertRaisesMessage(ValueError, 'Confirm the OTJH'):
+                add_reflection_time(data, {}, submission_mode='submit')
+
+    def test_the_activity_type_cannot_be_changed_to_create_another_credit_identity(self):
+        data = payload(); data['activityType'] = 'video'
+        with self.assertRaisesMessage(ValueError, 'does not match this lecture'):
+            self.add(data)
+
+
+class ReflectionTimeSubmissionTests(SimpleTestCase):
+    def submit(self, *, existing=None, addition=None, forged=False, old_client=False):
+        from . import reflection_submissions as view
+        body = dict(learnerKind='apprenticeship', learnerId='19', activityType='session', activityId='LECTURE',
+                    learningReflection='Synthetic reflection', submissionMode='submit', actualTimeHours='2',
+                    additionalReflectionSeconds=1800)
+        if forged:
+            body['lectureReflectionTime'] = {'progressEntryId': 'FORGED', 'seconds': 99999}
+        if old_client:
+            body.pop('additionalReflectionSeconds')
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [existing, ('SAVED',)]
+        connection = MagicMock(); connection.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(view, 'connections', {'enrolment': connection}), \
+             patch.object(view.transaction, 'atomic', return_value=nullcontext()), \
+             patch('learner_api.programme_access.submission_refusal', return_value=None), \
+             patch.object(view, '_reflection_lineage', return_value={}), \
+             patch.object(view, 'record_submission_row'), \
+             patch('learner_api.lecture_reflection_time.add_reflection_time',
+                   **({'side_effect': addition} if isinstance(addition, Exception) else {'return_value': addition})) as add:
+            response = unwrap(view._submit_reflection)(RequestFactory().post('/reflection', data=json.dumps(body), content_type='application/json'))
+        return response, cursor, add
+
+    def test_locks_before_first_upsert_and_stores_only_the_server_receipt(self):
+        receipt = dict(seconds=1800, progressEntryId=101, addedAt='now', countedSeconds=9000)
+        response, cursor, _ = self.submit(addition=receipt, forged=True)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertIn('FOR UPDATE', cursor.execute.call_args_list[0].args[0])
+        write = next(call for call in cursor.execute.call_args_list if 'insert into' in call.args[0])
+        full = next(json.loads(value) for value in write.args[1] if isinstance(value, str) and value.startswith('{') and 'learningReflection' in value)
+        self.assertEqual(full['lectureReflectionTime'], receipt)
+        self.assertEqual(json.loads(response.content)['lectureReflectionTime'], receipt)
+
+    def test_an_accepted_reflection_refuses_the_time_change(self):
+        response, _, add = self.submit(existing=('accepted', {}, None, None, None, None))
+        self.assertEqual(response.status_code, 409)
+        add.assert_not_called()
+
+    def test_an_older_open_tab_uses_the_same_lock_and_preserves_the_stored_receipt(self):
+        receipt = dict(seconds=1800, progressEntryId=101, addedAt='now', countedSeconds=9000)
+        document = {'lectureReflectionTime': receipt}
+        response, cursor, add = self.submit(existing=('submitted_for_tutor_review', document, None, None, None, None),
+            addition=receipt, old_client=True)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertIn('Created_users', cursor.execute.call_args_list[0].args[0])
+        self.assertIn('FOR UPDATE', cursor.execute.call_args_list[0].args[0])
+        self.assertEqual(add.call_args.args[1], document)
+        self.assertNotIn('additionalReflectionSeconds', add.call_args.args[0])
+        self.assertEqual(json.loads(response.content)['lectureReflectionTime'], receipt)
+
+    def test_working_time_refusal_returns_the_existing_dialog_contract_without_upserting(self):
+        from .working_rules import DeclaredCompletionError
+        response, cursor, _ = self.submit(addition=DeclaredCompletionError('Confirm the working instant.', reason='weekend'))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.content)['validation']['reason'], 'weekend')
+        self.assertFalse(any('insert into' in call.args[0] for call in cursor.execute.call_args_list))

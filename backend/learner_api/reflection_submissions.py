@@ -280,6 +280,8 @@ def _submit_reflection(request):
     # KSB review requests and corrections are staff-owned audit metadata.
     full_submission.pop('ksbReview', None)
     full_submission.pop('coachCreation', None)
+    # The receipt for credited lecture time is server-owned, including on drafts.
+    full_submission.pop('lectureReflectionTime', None)
     full_submission.pop("selectAssignmentTopic", None)
     lineage = _reflection_lineage(learner_id, activity_id)
     if assignment_topic and submission_mode == "draft":
@@ -293,6 +295,11 @@ def _submit_reflection(request):
     try:
         with transaction.atomic(using="enrolment"):
             with connections["enrolment"].cursor() as cur:
+                if activity_type in {'session', 'recording', 'video'} or 'additionalReflectionSeconds' in payload:
+                    # Serialize the first save too, when no submission row exists.
+                    # Older open tabs omit the new field but must take this same
+                    # lock so their first upsert cannot erase a new time receipt.
+                    cur.execute('SELECT id FROM enrolment."Created_users" WHERE id::text=%s FOR UPDATE', [learner_id])
                 if activity_type == "assignment":
                     from .assignment_hours import lock_assignment_hours
                     lock_assignment_hours(cur, learner_kind, learner_id)
@@ -391,6 +398,11 @@ def _submit_reflection(request):
                     quality_score = 100
                     full_submission["qualityScore"] = quality_score
                     full_submission["qualityChecks"] = checks
+
+                from .lecture_reflection_time import add_reflection_time
+                time_receipt = add_reflection_time(payload, stored, submission_mode=submission_mode)
+                if time_receipt:
+                    full_submission['lectureReflectionTime'] = time_receipt
 
                 cur.execute(
                 """
@@ -508,6 +520,9 @@ def _submit_reflection(request):
                 stored_id = stored[0]
                 record_submission_row(stored)
     except ValueError as exc:
+        from .working_rules import DeclaredCompletionError, validation_response_payload
+        if isinstance(exc, DeclaredCompletionError):
+            return JsonResponse(validation_response_payload(exc), status=409)
         return _error(str(exc), 409)
     except DatabaseError:
         logger.exception("Could not save learner reflection submission.")
@@ -517,6 +532,7 @@ def _submit_reflection(request):
         {
             "id": str(stored_id),
             "status": submission_status,
+            **({'lectureReflectionTime': time_receipt} if time_receipt else {}),
             "submissionAttempts": submission_attempts(full_submission, submission_status) if is_assignment_form else [],
         },
         status=201,

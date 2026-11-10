@@ -3,8 +3,8 @@ from django.db import connections
 
 
 def attendance_baseline(record, history, *, source=None, learner=None):
-    if (record.get('kind') != 'component'
-            or str(record.get('componentType') or '').replace('-', '_').lower() != 'live_session'
+    if (record.get('kind') not in {'component', 'video'}
+            or str(record.get('componentType') or '').replace('-', '_').lower() not in {'live_session', 'recording_placeholder', 'video'}
             or record.get('retakeTimeChoice') not in ('correct', 'add', 'retry')):
         return 0
     component_id = record.get('componentId')
@@ -18,9 +18,12 @@ def attendance_baseline(record, history, *, source=None, learner=None):
             return 0
         source = model.objects.get(pk=learner.enrolment_id)
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('SELECT module_catalogue_id FROM curriculum.components WHERE id=%s', [component_id])
+        cursor.execute('SELECT module_catalogue_id,settings_json FROM curriculum.components WHERE id=%s', [component_id])
         row = cursor.fetchone()
     if not row:
+        return 0
+    if record.get('componentType') == 'video' and not all(
+            (row[1] or {}).get(key) for key in ('recordingSeriesId', 'recordingSessionNumber', 'recordingDate')):
         return 0
     # Read the whole module so another card for the same occurrence cannot be
     # hidden by a single-component request. Existing attendance rules own credit.
