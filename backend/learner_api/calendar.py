@@ -1356,6 +1356,10 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     if not record:
         return _error("Calendar event not found for this learner.", 404)
     from .imported_meeting_resources import is_imported_meeting, stored_resources
+    if request.GET.get("recordings_only") == "1":
+        # Assignment booking reads saved recordings only. Selecting a booking
+        # must not refresh Teams or reconcile attendance/review status.
+        return stored_resources(record)
     if is_imported_meeting(record):
         return stored_resources(record, include_attendance=True)
     from coach_api.views import (
