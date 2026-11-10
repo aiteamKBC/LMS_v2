@@ -1,4 +1,5 @@
-import { occupiesBookingSlot } from '@/pages/learner/reviews/meetingBooking';
+import { meetingCalendarHref, occupiesBookingSlot } from '@/pages/learner/reviews/meetingBooking';
+import { Link } from 'react-router-dom';
 import { loadAssignmentTopicStates, type AssignmentTopicState } from '@/api/assignmentTopics';
 import { BookingDatePicker } from './BookingDatePicker';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
@@ -7,9 +8,9 @@ import { Loader2 } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, fetchReviewSlots, learnerMeetingArtifactContentUrl, type LearnerCalendarResponse } from '@/api/learnerCalendar';
 import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
-import { mcmBookingDateRestrictionMessage } from '../reviews/bookingDates';
 
 const CLOSED_REVIEW_STATUSES = ['completed', 'cancelled', 'awaiting-signature'];
+const BOOKED_REVIEW_STATUSES = ['scheduled', 'in-progress', 'completed', 'awaiting-signature'];
 
 export function AssignmentCoachingBooking({ kind, learnerId, month, title, meetingKey, assignmentId, topicId, disabled, onSave, onSelect }: {
   kind: LearnerKind; learnerId: string; month: string; title: string; meetingKey: string; disabled: boolean;
@@ -22,6 +23,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   const [importedMcms, setImportedMcms] = useState<ImportedReview[]>([]);
   const [topicStates, setTopicStates] = useState<AssignmentTopicState[]>([]);
   const [bookedHere, setBookedHere] = useState('');
+  const [changingMeeting, setChangingMeeting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -40,22 +42,24 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   latest.current = { kind, learnerId, month, assignmentId, topicId, onSelect };
   const [reload, setReload] = useState(0);
   const [availabilityRetry, setAvailabilityRetry] = useState(0);
-  // MCM appointments run from the 20th through the following 5th, subject to
-  // the server's weekday, UK bank-holiday and past-date rules.
+  // MCMs are available throughout the month, subject to the server's weekday,
+  // UK bank-holiday and past-date rules and the coach's availability.
   const today = calendar?.bookingCalendar?.today || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/London' });
   const lastYear = Math.max(Number(today.slice(0, 4)), ...(calendar?.bookingCalendar?.coveredYears || []));
   const selectableDates: string[] = [];
   for (const day = new Date(`${today}T12:00:00Z`); day.getUTCFullYear() <= lastYear; day.setUTCDate(day.getUTCDate() + 1)) {
     const value = day.toISOString().slice(0, 10);
-    if (mcmBookingDateRestrictionMessage(value)) continue;
     if ([0, 6].includes(day.getUTCDay())) continue;
     if (calendar?.bookingCalendar?.bankHolidays.some(holiday => holiday.date === value)) continue;
     if (calendar?.bookingCalendar && !calendar.bookingCalendar.coveredYears.includes(day.getUTCFullYear())) continue;
     selectableDates.push(value);
   }
   const events = calendar?.events || [];
-  const booked = events.filter(e => e.source === 'mcr' && (occupiesBookingSlot(e)
-    || (['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(e.status) && e.scheduledDate)));
+  // A reserved slot can still be awaiting reconciliation. Match the assignment
+  // check's booking states rather than treating occupancy as confirmation.
+  const booked = events.filter(e => e.source === 'mcr' && e.scheduledDate
+    && BOOKED_REVIEW_STATUSES.includes(e.calendarEventKey ? e.bookingStatus || e.status : e.status)
+    && (e.reviewSource !== 'aptem' || e.calendarEventKey || BOOKED_REVIEW_STATUSES.includes(e.sourceStatus || e.status)));
   // Learners with imported Aptem MCMs get no Curriculum MCMs on their coach's
   // timetable, so only their Aptem MCMs can be booked here.
   const aptemSourced = importedMcms.some(review => review.aptemReviewId);
@@ -71,17 +75,18 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
       .map(e => ({ key: e.eventKey, eventKey: e.eventKey, label: `MCM ${(e.targetDate || e.date || '').slice(0, 7)} | ${e.coachName}` }));
   const slot = slots.find(e => e.key === slotKey);
   const needsSlot = slots.length > 0 || aptemSourced;
-  const shared = topicId && !disabled ? topicStates
-    .filter(state => state.topicId && state.topicId !== topicId && state.month === month)
-    .map(state => booked.find(event => event.eventKey === state.meetingKey)).find(Boolean) : undefined;
-  const selected = shared || booked.find(e => e.eventKey === (topicId ? bookedHere || meetingKey : meetingKey));
+  const selectedKey = topicId ? bookedHere || meetingKey : meetingKey;
+  const shared = topicId && !disabled && !selectedKey ? topicStates
+    .filter(state => state.topicId && state.topicId !== topicId && state.month === month && state.meetingKey)
+    .map(state => booked.find(event => event.eventKey === state.meetingKey || event.calendarEventKey === state.meetingKey)).find(Boolean) : undefined;
+  const selected = selectedKey ? booked.find(e => e.eventKey === selectedKey || e.calendarEventKey === selectedKey) : shared;
   const topicBooked = Boolean(topicId && selected);
   useEffect(() => {
-    if (shared && shared.eventKey !== meetingKey) latest.current.onSelect(shared.eventKey);
-  }, [shared, meetingKey]);
+    if (shared && !selectedKey) latest.current.onSelect(shared.eventKey);
+  }, [shared, selectedKey]);
   useEffect(() => {
     let active = true;
-    setLoading(true); setTopicStates([]); setBookedHere(''); setCalendar(null); setImportedMcms([]); setSlotKey(''); setDate(''); setDuration(60); setError(''); setNotice('');
+    setLoading(true); setTopicStates([]); setBookedHere(''); setChangingMeeting(false); setCalendar(null); setImportedMcms([]); setSlotKey(''); setDate(''); setDuration(60); setError(''); setNotice('');
     Promise.all([
       fetchLearnerCalendarEvents(kind, learnerId, { force: true }),
       fetchReviewHistory(kind, learnerId, 'monthly-coaching'),
@@ -103,7 +108,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     const holiday = calendar?.bookingCalendar?.bankHolidays.find(h => h.date === date);
     if (holiday) return `Sessions cannot be booked on UK bank holidays (${holiday.title}).`;
     if (calendar?.bookingCalendar && !calendar.bookingCalendar.coveredYears.includes(parsed.getFullYear())) return 'The bank-holiday calendar is not available for this year.';
-    return mcmBookingDateRestrictionMessage(date);
+    return '';
   };
   const dateError = restriction();
   const bookingOffset = date ? (12 - Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', hourCycle: 'h23' }).format(new Date(`${date}T12:00:00Z`)))) * 60 : 0;
@@ -142,9 +147,15 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     <div><h4 className="text-base font-semibold">Arrange your Monthly Coaching Meeting</h4><p className="mt-2 text-sm leading-6 text-slate-600">Use a booked MCM or book a monthly session with your assigned coach below. The same booking appears in your calendar and your coach's calendar.</p></div>
     {loading && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />Loading coaching meetings...</p>}
     {!loading && <>
-      {!topicBooked && <label className="block">Use an existing coaching booking<select className={input} value={meetingKey} disabled={disabled || busy} onChange={e => { setBookedHere(e.target.value); onSelect(e.target.value); }}><option value="">Select a booked meeting</option>{booked.map(e => <option key={e.eventKey} value={e.eventKey}>{e.scheduledDate} {e.scheduledTime} ? {e.coachName}</option>)}</select></label>}
+      {(!topicBooked || changingMeeting) && <label className="block">Use an existing coaching booking<select className={input} value={selected?.eventKey || ''} disabled={disabled || busy} onChange={e => { setBookedHere(e.target.value); onSelect(e.target.value); setChangingMeeting(false); }}><option value="">Select a booked meeting</option>{booked.map(e => <option key={e.eventKey} value={e.eventKey}>{e.scheduledDate} {e.scheduledTime} ? {e.coachName}</option>)}</select></label>}
+      {!disabled && !error && selectedKey && !selected && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">The meeting linked to this draft is no longer available. Choose an existing coaching booking or arrange a new MCM, then run the quality checks again.</p>}
       {!booked.length && <p className="text-sm text-slate-500">You have no booked MCM yet.</p>}
-      {selected && <div className="rounded-xl bg-blue-50 p-4 text-sm"><p>{topicBooked ? "MCM already booked" : "Linked meeting"}: {selected.scheduledDate} at {selected.scheduledTime} with {selected.coachName}.</p>{topicBooked && <p className="mt-2">This meeting is shared across all three topics. You only need to book once.</p>}{selected.invited === false && <p className="mt-2 text-amber-800">The meeting is saved, but the calendar invitation has not been sent. Contact your coach.</p>}</div>}
+      {selected && <div className="rounded-xl bg-blue-50 p-4 text-sm"><p>{topicBooked ? "MCM already booked" : "Linked meeting"}: {selected.scheduledDate} at {selected.scheduledTime} with {selected.coachName}.</p>{topicBooked && <p className="mt-2">You can reuse this booking for the other topics. Changing the linked meeting here keeps earlier submissions unchanged.</p>}{selected.invited === false && <p className="mt-2 text-amber-800">The meeting is saved, but the calendar invitation has not been sent. Contact your coach.</p>}
+        {!disabled && <div className="mt-3 flex flex-wrap gap-4">
+          {topicBooked && <button type="button" disabled={busy} className="font-medium text-blue-700 underline" onClick={() => setChangingMeeting(current => !current)}>{changingMeeting ? 'Keep linked meeting' : 'Change linked meeting'}</button>}
+          {selected.status === 'scheduled' && <Link className="font-medium text-blue-700 underline" to={meetingCalendarHref(selected, { kind, id: learnerId }, 'reschedule')}>Change meeting date or time</Link>}
+        </div>}
+      </div>}
       {selected && <div className="space-y-3">
         <p className="text-sm leading-6 text-slate-600">Recording and transcription are enabled automatically using the live-session settings. The recording, transcript and attendance appear here once Teams has processed them after the meeting.</p>
         <CoachMeetingArtifactsPanel event={selected} storedOnly={selected.reviewSource === 'aptem'} fetchArtifacts={loadArtifacts} contentUrl={contentUrl} showAttendance />
@@ -154,7 +165,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
         <>
           {slots.length > 0 && <label className="block">Monthly Coaching Meeting slot<select className={input} value={slotKey} onChange={e => setSlotKey(e.target.value)}><option value="">Select your programme MCM</option>{slots.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}</select></label>}
           {aptemSourced && !slots.length && <p role="status" className="text-sm text-slate-600">No open Monthly Coaching Meeting is left in your programme plan. Contact your coach to arrange it.</p>}
-          <p className="text-sm leading-6 text-slate-600">Choose an upcoming weekday from the 20th of a month through the 5th of the following month. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
+          <p className="text-sm leading-6 text-slate-600">Choose any upcoming weekday throughout the month. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
           <div className="grid gap-4 sm:grid-cols-2"><BookingDatePicker value={date} onChange={setDate} dates={selectableDates} /><label>Time<select className={input} value={time} disabled={availabilityLoading || !availableTimes.length} onChange={e => setTime(e.target.value)}><option value="">{availabilityLoading ? 'Loading available times...' : 'Select an available time'}</option>{availableTimes.map(value => <option key={value} value={value}>{value}</option>)}</select></label></div>
           <label className="block">Duration<select className={input} value={duration} onChange={e => { setDuration(Number(e.target.value)); setTime(''); }}>{[30, 45, 60, 90, 120].map(minutes => <option key={minutes} value={minutes}>{minutes === 60 ? '1 hour' : `${minutes} minutes`}</option>)}</select></label>
           {availabilityError && <p role="alert" className="text-sm text-red-700">{availabilityError} <button type="button" onClick={() => setAvailabilityRetry(value => value + 1)} className="underline">Retry availability</button></p>}

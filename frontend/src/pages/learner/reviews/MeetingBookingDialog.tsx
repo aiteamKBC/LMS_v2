@@ -9,7 +9,7 @@ import {
   fetchReviewSlots, rescheduleLearnerCalendarSession, ukOffsetForDate, type BookingCalendarRules, type BookSessionResponse,
   type CalendarBusySlot, type LearnerCalendarEvent, type PersonalCalendarConnection,
 } from '@/api/learnerCalendar';
-import { bookingDateRestrictionMessage, bookingInstant, bookingToday, firstAvailableBookingDate, mcmBookingDateRestrictionMessage, parseBookingDay } from './bookingDates';
+import { bookingDateRestrictionMessage, bookingInstant, bookingToday, firstAvailableBookingDate, parseBookingDay } from './bookingDates';
 import { aptemBookingSnapshot, editableBookingNotes, isAptemReview, occupiesBookingSlot } from './meetingBooking';
 import styles from './meetingBooking.module.css';
 
@@ -100,7 +100,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [revision, setRevision] = useState(0);
-  const [date, setDate] = useState(hasExistingBooking(session, attendance) ? session.scheduledDate! : firstAvailableBookingDate(session.scheduledDate || session.targetDate || session.date, rules, session.source === 'mcr'));
+  const [date, setDate] = useState(hasExistingBooking(session, attendance) ? session.scheduledDate! : firstAvailableBookingDate(session.scheduledDate || session.targetDate || session.date, rules));
   const [time, setTime] = useState(session.scheduledTime || '09:00');
   const [duration, setDuration] = useState(String(hasExistingBooking(session, attendance) ? session.durationMinutes || 60 : 60));
   const [notes, setNotes] = useState(editableBookingNotes(session));
@@ -123,7 +123,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const meetingType = monthly ? 'monthly coaching' : curriculumReview ? 'review' : 'progress review';
   const rescheduling = Boolean(target && hasExistingBooking(target, attendance));
   const isExisting = target ? rescheduling : hasExistingBooking(session, attendance);
-  const dateRestriction = (!date && !loading ? 'No permitted date is available in the supported booking calendar. Choose a supported date or contact your programme team.' : '') || bookingDateRestrictionMessage(date, calendarRules) || (monthly ? mcmBookingDateRestrictionMessage(date) : '');
+  const dateRestriction = (!date && !loading ? 'No permitted date is available in the supported booking calendar. Choose a supported date or contact your programme team.' : '') || bookingDateRestrictionMessage(date, calendarRules);
 
   useEffect(() => {
     mounted.current = true;
@@ -170,7 +170,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       setCalendarRules(nextRules);
       setCalendarEvents(calendar.events);
       setConnections(Array.isArray(calendarConnections?.connections) ? calendarConnections.connections : []);
-      if (!edited.current.date) setDate(hasExistingBooking(resolved, attendance) ? resolved.scheduledDate! : firstAvailableBookingDate(resolved.scheduledDate || resolved.targetDate || resolved.date, nextRules, resolved.source === 'mcr'));
+      if (!edited.current.date) setDate(hasExistingBooking(resolved, attendance) ? resolved.scheduledDate! : firstAvailableBookingDate(resolved.scheduledDate || resolved.targetDate || resolved.date, nextRules));
       if (!edited.current.time) setTime(resolved.scheduledTime || '09:00');
       if (!edited.current.duration) setDuration(String(hasExistingBooking(resolved, attendance) ? resolved.durationMinutes || 60 : 60));
       if (!edited.current.notes) setNotes(editableBookingNotes(resolved));

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
 import { nativeHref, subjectWeeks } from './subjectLearning';
 import type { Subject, SubjectEntry } from './learningSummary';
@@ -26,7 +26,9 @@ const entries: SubjectEntry[] = [
 const subject: Subject = { id: 'current:M1', title: 'Synthetic module', source: 'current', activities: entries };
 
 describe('session-anchored material navigation', () => {
-  it.each(['commercial', 'apprenticeship'])('retains original activity/recording links, point membership and an open draft (%s)', kind => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-02T12:00:00Z')); });
+  afterEach(() => vi.useRealTimers());
+  it.each(['commercial', 'apprenticeship'])('retains original activity/recording links and an open draft in the flat week (%s)', kind => {
     const weeks = subjectWeeks(subject);
     const before = JSON.stringify(subject);
     const view = (requestedActivity: string, requestedWeek = '2026-11-02') => <MemoryRouter><SubjectActivityWorkspace
@@ -40,8 +42,9 @@ describe('session-anchored material navigation', () => {
     expect(screen.getByRole('region', { name: 'Week 5 materials' })).toHaveTextContent('October 2026');
     expect(screen.getByRole('region', { name: 'Week 5 materials' })).toHaveTextContent('30 Oct 2026 – 5 Nov 2026');
     expect(screen.getByRole('link', { name: 'Original READ' })).toHaveAttribute('href', `/learner/component/${kind}/synthetic/READ?week=Week%205`);
-    const point = screen.getByRole('list', { name: 'Point 1 activities' });
-    expect(within(point).getAllByRole('button').map(button => button.textContent)).toEqual(['ReadingLinked reading', 'RecordingLinked recording']);
+    expect(screen.queryByRole('list', { name: 'Point 1 activities' })).not.toBeInTheDocument();
+    const weekActivities = screen.getByRole('button', { name: /Linked reading/ }).closest('ul')!;
+    expect(within(weekActivities).getByRole('button', { name: /Linked recording/ })).toBeVisible();
     fireEvent.change(screen.getByRole('textbox', { name: 'READ draft' }), { target: { value: 'Keep my unfinished answer' } });
     rerender(view('RECORDING'));
     expect(screen.getByRole('link', { name: 'Original RECORDING' })).toHaveAttribute('href', `/learner/component/${kind}/synthetic/RECORDING?week=Week%205`);

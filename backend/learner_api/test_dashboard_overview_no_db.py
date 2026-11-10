@@ -313,7 +313,7 @@ class OverviewProjectionTests(SimpleTestCase):
     def test_chart_months_preserve_log_precedence_future_fallback_and_negative_clamp(self):
         records = [
             {'reporting_month': '2026-09', 'actual_seconds': 3600, 'accepted': True},
-            {'reporting_month': '2026-09', 'actual_seconds': 7200, 'accepted': False},
+            {'reporting_month': '2026-09', 'actual_seconds': 7200, 'accepted': False, 'activity_status': 'submitted'},
             {'reporting_month': '2026-10', 'actual_seconds': -3600, 'accepted': True},
             {'reporting_month': '2026-11', 'actual_seconds': 1800, 'accepted': True},
         ]
@@ -335,6 +335,12 @@ class OverviewProjectionTests(SimpleTestCase):
         self.assertEqual(reused, rows)
         self.assertEqual(overview.hour_rows([], {'2099-01': 99}, {}, [], '2026-10'), [])
         self.assertEqual(overview.hour_rows([], {'2026-00': 2}, {'2026-99': {}}, [], '2026-10'), [])
+
+    def test_completed_unapproved_hours_have_their_own_chart_category(self):
+        records = [{'reporting_month': '2026-09', 'actual_seconds': 7200,
+                    'accepted': False, 'activity_status': 'completed'}]
+        self.assertEqual(overview.hour_rows(records, {}, {}, [], '2026-10'), [
+            {'key': '2026-09', 'target': None, 'submitted': 0, 'completed': 0, 'verification': 2}])
 
     def test_review_count_uses_due_target_dedup_and_excludes_support_cancelled_future(self):
         reviews = [{'eventKey': '1', 'source': 'progress-review', 'status': 'completed', 'targetDate': '2026-10-01'},
@@ -362,7 +368,8 @@ class OverviewProjectionTests(SimpleTestCase):
         metrics = {'programme': {'completed': 1, 'total': 2, 'percent': 50, 'status': 'ready'},
                    'ksb': {'completed': 1, 'total': 3, 'percent': 33.33, 'points': [{'secret': 'unused'}]},
                    'otjh': {'actual': 7, 'planned': 100, 'historical': 7, 'new': 0}}
-        with patch.object(overview.canonical, 'entries_for', return_value=records) as entries, \
+        with patch.object(overview, 'saved_attendance_hours', return_value=[]), \
+             patch.object(overview.canonical, 'entries_for', return_value=records) as entries, \
              patch.object(overview.canonical, 'targets_for', return_value={'2026-10': 10}), \
              patch.object(overview.canonical, 'query', return_value=[]), \
              patch.object(overview.canonical, 'metrics_bulk', return_value={265: metrics}) as totals, \

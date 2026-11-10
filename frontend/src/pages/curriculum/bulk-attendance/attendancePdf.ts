@@ -4,6 +4,7 @@ import type { AttendanceStatus, Learner } from "@/types/bulkAttendance";
 import { formatDateLabel } from "@/utils/bulkAttendance";
 import { slugify } from "@/utils/bulkCsv";
 import type { LearnerHistoryRecord } from "./components/LearnerHistoryModal";
+import { attendanceStatusLabel, isAttendancePresent } from "@/utils/bulkAttendanceOutcome";
 
 type Color = [number, number, number];
 
@@ -49,12 +50,11 @@ function font(doc: jsPDF, size: number, bold = false, color = colors.ink) {
 }
 
 function statusLabel(status: AttendanceStatus): string {
-  if (status === "present") return "Present";
-  if (status === "absent") return "Absent";
-  return "Unmarked";
+  return attendanceStatusLabel(status);
 }
 
 function statusColor(status: AttendanceStatus): Color {
+  if (status === 'recorded' || status === 'awaiting_recording') return [157, 23, 77];
   if (status === "present") return colors.green;
   if (status === "absent") return colors.red;
   return colors.muted;
@@ -110,9 +110,9 @@ function learnerStats(
   getStatus: (learnerId: string, day: string) => AttendanceStatus,
 ) {
   const statuses = dayIsos.map((day) => getStatus(learner.id, day));
-  const present = statuses.filter((status) => status === "present").length;
+  const present = statuses.filter(isAttendancePresent).length;
   const absent = statuses.filter((status) => status === "absent").length;
-  const unmarked = statuses.length - present - absent;
+  const unmarked = statuses.filter((status) => status === "unmarked").length;
   const marked = present + absent;
   return {
     present,
@@ -248,9 +248,9 @@ export function downloadLearnerAttendancePdf({
   doc.text(`Module: ${clean(moduleLabel || "All modules")}`, 108, 48);
 
   const countedHistory = history.filter((entry) => entry.countsAsSession !== false);
-  const present = countedHistory.filter((entry) => entry.attendance === "present").length;
+  const present = countedHistory.filter((entry) => isAttendancePresent(entry.attendance)).length;
   const absent = countedHistory.filter((entry) => entry.attendance === "absent").length;
-  const unmarked = countedHistory.length - present - absent;
+  const unmarked = countedHistory.filter((entry) => entry.attendance === "unmarked").length;
   const marked = present + absent;
   statCards(doc, [
     { label: "Present", value: String(present), color: colors.green },

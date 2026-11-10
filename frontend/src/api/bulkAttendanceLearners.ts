@@ -27,7 +27,8 @@ export interface BulkAttendanceKbcHistoryRecord {
   attendance: 'present' | 'absent' | null;
   occurrenceId?: string;
   /** Display credit from an equivalent group delivery; raw attendance remains editable. */
-  effectiveAttendance?: 'present';
+  effectiveAttendance?: 'present' | 'awaiting_recording';
+  attendanceBasis?: 'recorded' | 'awaiting_recording';
   recoveryOccurrenceId?: string;
   makeupForOccurrenceId?: string;
   makeupForDate?: string;
@@ -98,7 +99,8 @@ export interface BulkAttendanceLiveDayRecord {
   moduleCatalogueId: string;
   occurrenceId: string;
   attendance: 'present' | 'absent';
-  effectiveAttendance?: 'present';
+  effectiveAttendance?: 'present' | 'awaiting_recording';
+  attendanceBasis?: 'recorded' | 'awaiting_recording';
   countsAsSession?: boolean;
 }
 
@@ -116,7 +118,8 @@ export interface BulkAttendanceMonthRecord {
   moduleCatalogueId: string;
   learnerId: string;
   attendance: 'present' | 'absent';
-  effectiveAttendance?: 'present';
+  effectiveAttendance?: 'present' | 'awaiting_recording';
+  attendanceBasis?: 'recorded' | 'awaiting_recording';
   countsAsSession?: boolean;
 }
 

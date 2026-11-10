@@ -34,6 +34,7 @@ import {
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { SavedReflection } from '@/components/feature/SavedReflection';
 import { formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow.helpers';
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
@@ -82,7 +83,7 @@ import {
 
 const learnerNav = roleNavMap.learner;
 
-type Phase = 'consume' | 'time-entry' | 'reflection-choice' | 'reflect' | 'confirm';
+type Phase = 'consume' | 'time-entry' | 'reflection-choice' | 'reflect' | 'lecture-reflect' | 'confirm';
 type TimeSource = 'timer' | 'input';
 
 interface DoneRecord { activityKey: string; componentId: string; timeTaken: string | null }
@@ -197,6 +198,7 @@ export default function ComponentViewPage() {
   useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [timerStorageKey]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
+  const [lectureReflectionSaved, setLectureReflectionSaved] = useState<{ activityKey: string; version: number } | null>(null);
   const [repeating, setRepeating] = useState(false);
   const [retakeOpen, setRetakeOpen] = useState(false);
   const [timeDecision, setTimeDecision] = useState<{ choice: ActivityTimeChoice; reason: string; previousSeconds: number } | null>(null);
@@ -649,6 +651,22 @@ export default function ComponentViewPage() {
     }, { manualTimeConfirmed: true });
   };
 
+  const finishLectureReflection = async () => {
+    const savedActivityKey = timerStorageKey;
+    if (!kind || !id || !componentId || currentTimingKeyRef.current !== savedActivityKey) return;
+    setLectureReflectionSaved(current => ({ activityKey: savedActivityKey, version: (current?.version || 0) + 1 }));
+    setPhase('consume');
+    setRefreshError(null);
+    try {
+      const refreshed = await fetchLearnerDetail(kind as LearnerKind, id, { componentId, force: true });
+      if (currentTimingKeyRef.current === savedActivityKey) setDetail(refreshed);
+    } catch {
+      if (currentTimingKeyRef.current === savedActivityKey) {
+        setRefreshError('Your reflection was submitted. Refresh the page to reload its review status.');
+      }
+    }
+  };
+
   const finalizeSubmit = async (
     reflection: { ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string; timeTakenSeconds?: number; timeEntrySource?: 'timer' | 'input' },
     options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string; manualTimeConfirmed?: boolean } = {},
@@ -789,7 +807,7 @@ export default function ComponentViewPage() {
         ) : component.durationMinutes != null && (
           <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
         )}
-        <ActivityPlanDetails hours={component.expectedOtjh} />
+        <ActivityPlanDetails hours={component.expectedOtjh} componentType={component.type} kind={kind} learnerId={id} />
         {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
       </div>
     </div>
@@ -848,7 +866,7 @@ export default function ComponentViewPage() {
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This component can't be completed here yet." /></div>
         ) : isVideo && !parsed && !recordedEvent ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
-        ) : phase === 'reflect' ? (
+        ) : phase === 'reflect' || phase === 'lecture-reflect' ? (
           <div className="space-y-4">
             <ReflectionWindow
               noun={noun}
@@ -857,11 +875,12 @@ export default function ComponentViewPage() {
               learnerKsbs={learnerKsbs}
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
-              selectedTimeSeconds={submittedTimeSeconds}
-              selectedTimeSource={timeSource}
+              selectedTimeSeconds={phase === 'lecture-reflect' ? activityTimeSeconds({ timeTaken: completedTime }) : submittedTimeSeconds}
+              selectedTimeSource={phase === 'lecture-reflect' ? undefined : timeSource}
+              readOnlyTime={phase === 'lecture-reflect'}
               submitting={submitting}
               submitError={submitError}
-              onSubmit={result => finalizeSubmit(result, { manualTimeConfirmed: true })}
+              onSubmit={phase === 'lecture-reflect' ? finishLectureReflection : result => finalizeSubmit(result, { manualTimeConfirmed: true })}
               activityTitle={pageTitle}
               weekLabel={weekTitle}
               moduleLabel={moduleTitle}
@@ -1053,6 +1072,17 @@ export default function ComponentViewPage() {
                 </div>}
               </div>
 
+              {(isLiveSession || recordedEvent) && marking?.status !== 'accepted' && <section className="mt-4 rounded-xl border border-background-300 bg-white p-4" aria-label="Lecture reflection">
+                <p className="text-sm text-foreground-700">You can add an optional reflection for this lecture. Your attendance and recorded study time stay unchanged.</p>
+                <button type="button" disabled={!canUseComponent || submitting} onClick={() => setPhase('lecture-reflect')}
+                  className="mt-3 rounded-lg border border-primary-300 px-3 py-2 text-sm font-semibold text-primary-700 disabled:opacity-50">
+                  {verdict || lectureReflectionSaved?.activityKey === timerStorageKey ? 'Open lecture reflection' : 'Add lecture reflection'}
+                </button>
+              </section>}
+              {lectureReflectionSaved?.activityKey === timerStorageKey && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <p role="status" className="text-sm text-emerald-900">Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.</p>
+                {refreshError && <p role="alert" className="mt-2 text-sm text-amber-900">{refreshError}</p>}
+              </div>}
               {completed && !isAssignment && (
                 <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                   <p role="status" className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
@@ -1069,6 +1099,10 @@ export default function ComponentViewPage() {
                     {!repeating && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
                   </div>
                 </div>
+              )}
+
+              {!isAssignment && (completed || verdict || lectureReflectionSaved?.activityKey === timerStorageKey) && kind && id && componentId && (
+                <SavedReflection key={`${componentId}:${lectureReflectionSaved?.version || 0}`} learnerKind={kind as LearnerKind} learnerId={id} activityType={noun} activityId={componentId} />
               )}
 
               {component.description && (

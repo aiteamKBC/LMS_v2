@@ -142,7 +142,7 @@ export default function CoachAttendanceProfile() {
           <BackButton fallback="/coach/attendance">Back</BackButton>
         </div>
       </section>
-      <section className={styles.summary} aria-label="Attendance summary"><Summary title="Coach" lines={[detail.coach?.name || coach.name, detail.coach?.email || coach.email || '--', 'Phone not available']} /><Summary title="Tutor" lines={[detail.tutor?.name || 'Not assigned', detail.tutor?.email || '--']} /><Summary title="Attendance" lines={[formatAttendancePercentage(learner.attendance), `${learner.present ?? 0} present out of ${learner.sessions ?? 0}`, `${learner.absent ?? 0} absent`, ...(awaitingRecording ? [`${awaitingRecording} awaiting recording — counted as absent until completed in this view and PDF report`] : [])]} accent /></section>
+      <section className={styles.summary} aria-label="Attendance summary"><Summary title="Coach" lines={[detail.coach?.name || coach.name, detail.coach?.email || coach.email || '--', 'Phone not available']} /><Summary title="Tutor" lines={[detail.tutor?.name || 'Not assigned', detail.tutor?.email || '--']} /><Summary title="Attendance" lines={[formatAttendancePercentage(learner.attendance), `${learner.present ?? 0} present out of ${learner.sessions ?? 0}`, `${learner.absent ?? 0} absent`, ...(awaitingRecording ? [`${awaitingRecording} awaiting recording — excluded from attendance totals until completed`] : [])]} accent /></section>
       <section className={`${styles.card} ${styles.tableCard}`}>
         <header className={styles.sectionHeader}>
           <div><h2>Attendance history</h2><p>Review sessions and manage attendance records.</p></div>
@@ -175,7 +175,7 @@ export default function CoachAttendanceProfile() {
               <td>{show(formatRecordDate(row.date))}</td>
               <td>{show(row.module)}</td>
               <td><strong>{show(row.title)}</strong>{Boolean(row.legacyAmbiguity?.length) && <small>Ambiguous legacy match: records kept separate</small>}{(row.status === 'absent' || Boolean(row.absenceReport)) && <small className={styles.report}>Absent report: {row.absenceReport ? 'Uploaded' : 'Not uploaded'}{row.absenceReport?.url && <a href={row.absenceReport.url}>View report</a>}</small>}</td>
-              <td><span className={styles.status} data-status={row.status}>{titleCase(row.status)}</span>{row.status === 'awaiting_recording' && <small>Counts as absent until recording is completed</small>}</td>
+              <td><span className={styles.status} data-status={row.attendanceBasis || row.status}>{row.attendanceBasis === 'recorded' ? 'Recording completed' : titleCase(row.status)}</span>{row.status === 'awaiting_recording' && <small>Excluded from attendance totals until recording is completed</small>}</td>
               <td><span className={styles.rowActions}><button type="button" onClick={() => editRecord(row)}>Edit</button><button type="button" onClick={() => void removeRecord(row)}>Delete</button></span></td>
             </tr>) : <tr><td colSpan={5}><EmptyState size="sm" title="No attendance records found for this learner." /></td></tr>}</tbody>
           </table>
@@ -222,11 +222,11 @@ function AttendancePrintReport({ learner, coachName, tutorName, rows, awaitingRe
       <PrintStat label="Absent" value={learner.absent || 0} />
       <PrintStat label="Attendance rate" value={attendanceRate} />
     </section>
-    {awaitingRecording > 0 && <p className={styles.printNote}>{awaitingRecording} awaiting recording. In this report and Coach View, these sessions count as absent until the recording is completed.</p>}
+    {awaitingRecording > 0 && <p className={styles.printNote}>{awaitingRecording} awaiting recording. These sessions are excluded from attendance totals until the recording is completed.</p>}
     <table className={styles.printTable}>
       <colgroup><col className={styles.numberColumn} /><col className={styles.dateColumn} /><col className={styles.moduleColumn} /><col className={styles.lectureColumn} /><col className={styles.statusColumn} /></colgroup>
       <thead><tr><th>#</th><th>Date</th><th>Module</th><th>Lecture Name</th><th>Status</th></tr></thead>
-      <tbody>{rows.length ? rows.map((row, index) => <tr key={`print-${row.id}-${row.date}-${index}`}><td>{index + 1}</td><td>{show(row.date)}</td><td>{show(row.module)}</td><td>{show(row.title)}</td><td data-status={row.status}>{titleCase(row.status)}</td></tr>) : <tr><td colSpan={5}>No attendance records found for this learner.</td></tr>}</tbody>
+      <tbody>{rows.length ? rows.map((row, index) => <tr key={`print-${row.id}-${row.date}-${index}`}><td>{index + 1}</td><td>{show(row.date)}</td><td>{show(row.module)}</td><td>{show(row.title)}</td><td data-status={row.attendanceBasis || row.status}>{row.attendanceBasis === 'recorded' ? 'Recording completed' : titleCase(row.status)}</td></tr>) : <tr><td colSpan={5}>No attendance records found for this learner.</td></tr>}</tbody>
     </table>
     <footer className={styles.printFooter}><span>KBC LearningOS · Confidential attendance record</span><span className={styles.pageNumber}>Page </span></footer>
   </article>;

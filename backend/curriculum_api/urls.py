@@ -11,6 +11,7 @@ from .free_course_conversion import convert_free_course
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from .module_uploads import module_uploaded_files
+from .web_week_points import week_points
 from . import learner_directory
 from . import learner_directory_details
 from .teams_attendee_compare import teams_meeting_attendee_comparison
@@ -48,11 +49,13 @@ from . import recordings_library, session_results, tutor_notifications, recordin
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 from .home_summary import curriculum_home_summary
+from .teaching_quality import teaching_review
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
 
 
 urlpatterns = [
+    path('curriculum/modules/<str:module_id>/weeks/<str:week_id>/web-points/', week_points, name='web-week-points'),
     path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
     path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),
     path('curriculum/learner-directory/counts/', learner_directory.counts),
@@ -85,6 +88,7 @@ urlpatterns = [
     path('curriculum/modules/tutor-email/', tutor_notifications.modules_tutor_email, name='curriculum-modules-tutor-email'),
     # Every saved recording across modules, for the Recordings page. Read only.
     path('curriculum/session-recordings/calendar-matches/', recordings_calendar.calendar_matches),
+    path('curriculum/session-recordings/quality/', teaching_review, name='teaching-quality-review'),
     path('curriculum/session-recordings/external-recordings/', recordings_external.external_recordings),
     path('curriculum/session-recordings/', recordings_library.recordings_library, name='curriculum-session-recordings'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),

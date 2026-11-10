@@ -311,7 +311,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time" data-quality-target="hours" tabIndex={-1}>
         <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
         {disabled && !data.timeEntries?.length ? <fieldset disabled>{timeControl}</fieldset> :
-          <AssignmentTimeEntries kind={kind} learnerId={learnerId} dailyLimit={payload().activityType !== 'extra_activity' && !parsePersonalLearning(learnerId)} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
+          <AssignmentTimeEntries kind={kind} learnerId={learnerId} showInitialTopic={payload().activityType !== 'extra_activity'} dailyLimit={payload().activityType !== 'extra_activity' && !parsePersonalLearning(learnerId)} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
         {check('paidHours', 'This learning was completed during paid working hours.')}
       </section>
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">
@@ -449,7 +449,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {!personal && revisingRejected && <p className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">You do not need a new MCM booking when your rejected submission already has a verified booking for this submission month. The final quality checks verify this automatically.</p>}
         <h3 data-quality-target="meeting" tabIndex={-1} className="text-lg font-semibold">{personalStudy ? 'Presentation' : 'Coaching & presentation'}</h3>
       {personal ? <p role="note" className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">{personalStudy ? 'Coaching booking is not required for personal learning. Complete your presentation and all other submission requirements.' : 'Preview does not create coaching bookings. You can review the presentation and quality checks without booking a real meeting.'}</p> : <>
-        <p className="text-sm text-slate-600">Book coaching from the 20th of a month through the 5th of the following month. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
+        <p className="text-sm text-slate-600">Book coaching throughout the month at an available time offered by your coach. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
         <AssignmentCoachingBooking assignmentId={activityId} topicId={payload().assignmentTopicId} kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
       </>}
       <section data-quality-target="presentation" tabIndex={-1} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">

@@ -25,7 +25,9 @@ export interface QualityForm {
 }
 export interface QualityReview {
   id: string; version: number; templateId: string; identity: string; reviewType?: QualityReviewType | ''; status: 'draft' | 'completed'; form: QualityForm;
-  coach: { email: string; name: string }; learner: { id: string; name: string; email?: string };
+  coach: { email: string; name: string }; learner: { id: string; name: string; email?: string } | null;
+  scope?: 'teaching';
+  lecture?: { moduleId: string; seriesId: string; occurrenceId: string; tutorKey: string; programme: string; cohort: string; group: string };
   meeting: { eventId: string; onlineMeetingId?: string; startsAt: string; endsAt: string; title: string };
   reviewer: { id: string; name: string; email: string }; updatedAt: string; updatedBy: string;
   definition?: QualityTemplate;
@@ -34,7 +36,7 @@ export interface QualityReview {
 }
 export interface QualityContext {
   template: QualityTemplate; learners: { id: string; name: string }[]; review: QualityReview | null;
-  snapshot: Pick<QualityReview, 'coach' | 'meeting' | 'reviewType'> & { learner: QualityReview['learner'] | null };
+  snapshot: Pick<QualityReview, 'coach' | 'meeting' | 'reviewType' | 'lecture' | 'scope'> & { learner: QualityReview['learner'] };
   observer: QualityReview['reviewer'];
 }
 export interface QualitySummary {

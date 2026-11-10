@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { AttendanceStatus, Learner } from "@/types/bulkAttendance";
+import { isAttendancePresent } from "@/utils/bulkAttendanceOutcome";
 
 interface UseAttendanceParams {
   learners: Learner[];
@@ -106,14 +107,14 @@ export function useAttendance({ learners, date }: UseAttendanceParams): UseAtten
   ), [date, getStatus, learners]);
 
   const presentCount = useMemo(
-    () => Object.values(statuses).filter((status) => status === "present").length,
+    () => Object.values(statuses).filter(isAttendancePresent).length,
     [statuses],
   );
   const absentCount = useMemo(
     () => Object.values(statuses).filter((status) => status === "absent").length,
     [statuses],
   );
-  const unmarkedCount = learners.length - presentCount - absentCount;
+  const unmarkedCount = Object.values(statuses).filter((status) => status === "unmarked").length;
   const attendanceRate = presentCount + absentCount
     ? Math.round((presentCount / (presentCount + absentCount)) * 100)
     : 0;
