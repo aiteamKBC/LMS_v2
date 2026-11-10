@@ -56,7 +56,7 @@ class EndpointTests(unittest.TestCase):
             'DatabaseError': type('DatabaseError', (Exception,), {}), 'unavailable': lambda: {'status': 503},
             'JsonResponse': lambda data, status=200: {'data': data, 'status': status}, 'URLError': URLError,
             'HTTPRedirectHandler': HTTPRedirectHandler, 'Request': Request, 'build_opener': Mock(),
-            'StreamingHttpResponse': Mock()}
+            'StreamingHttpResponse': Mock(), 'ASGIRequest': type('ASGIRequest', (), {})}
         for name in ['resolve_recordings', 'RecordingRedirect', 'recording_stream', 'external_recordings']:
             node = next(item for item in tree.body if isinstance(item, (ast.FunctionDef, ast.ClassDef)) and item.name == name)
             node.decorator_list = []
@@ -132,7 +132,14 @@ class EndpointTests(unittest.TestCase):
         self.ns['recording_stream'] = Mock(return_value='stream')
         self.assertEqual(self.call(self.request(recording='R1')), 'stream')
         self.assertEqual(self.call(self.request(recording='OTHER'))['status'], 404)
-        self.ns['recording_stream'].assert_called_once_with('users/OWNER/onlineMeetings/MEETING/recordings/R1')
+        self.ns['recording_stream'].assert_called_once_with('users/OWNER/onlineMeetings/MEETING/recordings/R1', asynchronous=False)
+
+    def test_asgi_download_keeps_occurrence_validation_and_uses_async_streaming(self):
+        self.ns['recording_stream'] = Mock(return_value={'stream': True})
+        request = self.ns['ASGIRequest']()
+        request.__dict__.update(self.request(recording='R1').__dict__)
+        self.call(request)
+        self.ns['recording_stream'].assert_called_once_with('users/OWNER/onlineMeetings/MEETING/recordings/R1', asynchronous=True)
 
     def test_cross_host_redirect_drops_bearer_and_rejects_untrusted_hosts(self):
         handler = self.ns['RecordingRedirect']()

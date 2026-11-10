@@ -1,5 +1,6 @@
 """Original lecture downloads: scope, permissions, preflight and bounded delivery."""
 from io import BytesIO
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -113,3 +114,55 @@ class OriginalRecordingDownloadTests(SimpleTestCase):
         self.assertJSONEqual(response.content, {'url': 'https://saved.invalid/attachment'})
         self.assertTrue(sas.call_args.kwargs['content_disposition'].startswith('attachment'))
         self.probe.assert_not_called()
+
+    def legacy(self, request):
+        from . import views
+        with patch.object(views, 'ensure_live_session_tracking_tables'), \
+                patch.object(views, 'authoring_fetch_all', side_effect=[
+                    [{'id': 'S'}], [{'id': 'O'}], [{**self.saved, 'id': 'R'}]]):
+            return views.curriculum_teams_meeting_artifact_content(request, 'S', 'R')
+
+    def test_curriculum_download_uses_the_same_staff_original_delivery(self):
+        self.read.side_effect = [[self.saved], [], [self.source]]
+        request = RequestFactory().get('/curriculum/teams-meetings/S/artifacts/R/content/')
+        with patch.object(permissions, 'authenticate_request', return_value=SimpleNamespace(role='staff')):
+            response = self.legacy(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response['Content-Disposition'].startswith('attachment'))
+        self.delivery.assert_called_once()
+        self.player.assert_not_called()
+        self.assertNotIn('download', request.GET)
+
+    def test_curriculum_download_cannot_bypass_the_staff_role_gate(self):
+        with patch.object(permissions, 'authenticate_request', return_value=SimpleNamespace(role='learner')):
+            response = self.legacy(RequestFactory().get('/curriculum/teams-meetings/S/artifacts/R/content/'))
+        self.assertEqual(response.status_code, 403)
+        self.delivery.assert_not_called()
+        self.read.assert_not_called()
+
+    def test_curriculum_preview_does_not_switch_to_a_download(self):
+        self.player.return_value = 'https://example.b-cdn.net/synthetic-preview'
+        response = self.legacy(RequestFactory().get('/curriculum/teams-meetings/S/artifacts/R/content/', {'preview': '1'}))
+        self.assertEqual(response.status_code, 302)
+        self.player.assert_called_once()
+        self.delivery.assert_not_called()
+
+    def test_unlinked_quality_recording_also_streams_first_chunk_under_asgi(self):
+        from . import recordings_external
+        source = BytesIO(b'x' * (2 * 1024 * 1024))
+        source.status = 200
+        source.headers = {'Content-Type': 'video/mp4', 'Content-Length': str(2 * 1024 * 1024)}
+        with patch('coach_api.views.get_graph_settings', return_value={'base_url': 'https://graph.microsoft.com/v1.0'}), \
+                patch('coach_api.views.microsoft_graph_token', return_value='synthetic'), \
+                patch.object(recordings_external, 'build_opener') as opener:
+            opener.return_value.open.return_value = source
+            response = recordings_external.recording_stream('users/owner/onlineMeetings/M/recordings/R', asynchronous=True)
+        self.assertTrue(response.is_async)
+        async def first_chunk():
+            iterator = response.streaming_content
+            self.assertEqual(len(await anext(iterator)), 256 * 1024)
+            self.assertEqual(source.tell(), 256 * 1024)
+            await iterator.aclose()
+        asyncio.run(first_chunk())
+        response.close()
+        self.assertTrue(source.closed)
