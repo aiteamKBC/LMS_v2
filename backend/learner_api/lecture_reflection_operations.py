@@ -6,6 +6,7 @@ RECEIPT = 'lectureReflectionTime'
 HISTORY = 'lectureReflectionTimeHistory'
 ATTEMPTS = 'lectureReflectionAttempts'
 OPERATION = 'reflectionTimeOperation'
+PENDING = 'lectureReflectionPendingTime'
 
 
 def requested_operation(payload):
@@ -57,22 +58,30 @@ def replayed_receipt(payload, stored):
 def preserve_time_history(incoming, stored, receipt, *, status=None, submitted_at=None,
                           feedback=None, reviewer=None, reviewed_at=None):
     """A draft or old client cannot clear history, receipts or snapshots."""
-    for key in (HISTORY, ATTEMPTS, OPERATION):
+    pending = requested_operation(incoming)
+    leaving_submission = status and status != 'draft' and incoming.get('submissionMode') == 'draft' and (pending or stored.get(RECEIPT))
+    for key in (HISTORY, ATTEMPTS, OPERATION, PENDING):
         incoming.pop(key, None)
+    if pending and incoming.get('submissionMode') == 'draft':
+        seconds = incoming.get('additionalReflectionSeconds', 0)
+        if type(seconds) not in (int, float) or not 0 <= seconds <= 8 * 3600 or int(seconds) != seconds:
+            raise ValueError('Enter reflection time as whole seconds, up to 8 hours.')
+        incoming[PENDING] = {'operation': pending, 'seconds': int(seconds)}
     history = receipts(stored)
     attempts = deepcopy(stored.get(ATTEMPTS, []))
     if not isinstance(attempts, list):
         raise ValueError('The reflection attempt history needs a coach review.')
     is_new = receipt and not any(row.get('progressEntryId') == receipt['progressEntryId'] for row in history)
-    if is_new:
+    if is_new or leaving_submission:
         if status and status != 'draft':
             content = deepcopy(stored)
-            for key in (ATTEMPTS, HISTORY, OPERATION):
+            for key in (ATTEMPTS, HISTORY, OPERATION, PENDING):
                 content.pop(key, None)
             stamp = lambda value: value.isoformat() if hasattr(value, 'isoformat') else value
             attempts.append({'status': status, 'submittedAt': stamp(submitted_at),
                 'coachFeedback': feedback, 'reviewedBy': reviewer, 'reviewedAt': stamp(reviewed_at), 'content': content})
-        history.append(deepcopy(receipt))
+        if is_new:
+            history.append(deepcopy(receipt))
     if history:
         incoming[HISTORY] = history
     if attempts:

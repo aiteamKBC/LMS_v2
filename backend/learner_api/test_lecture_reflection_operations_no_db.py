@@ -59,3 +59,19 @@ class ReflectionOperationTests(TestCase):
             claimed_seconds=8400, time_tracking_source='lecture_reflection:input')
         self.assertFalse(manual_record(record))
         self.assertTrue(manual_record({**record, 'time_tracking_source': 'signed:input'}))
+
+    def test_saving_a_time_action_as_draft_preserves_the_previous_submission_without_crediting_or_duplicating_it(self):
+        stored = {'learningReflection': 'Original submitted work', 'lectureReflectionTime': {'seconds': 1800, 'progressEntryId': 10}}
+        incoming = {**self.body(), 'submissionMode': 'draft', 'learningReflection': 'New draft'}
+        preserve_time_history(incoming, stored, stored['lectureReflectionTime'], status='submitted_for_tutor_review')
+        self.assertEqual(len(incoming['lectureReflectionAttempts']), 1)
+        self.assertEqual(incoming['lectureReflectionAttempts'][0]['content']['learningReflection'], 'Original submitted work')
+        self.assertEqual(incoming['lectureReflectionPendingTime']['seconds'], 1200)
+        self.assertEqual(len(incoming['lectureReflectionTimeHistory']), 1)
+        again = {**self.body(), 'submissionMode': 'draft'}
+        preserve_time_history(again, incoming, stored['lectureReflectionTime'], status='draft')
+        self.assertEqual(again['lectureReflectionAttempts'], incoming['lectureReflectionAttempts'])
+        submitted = {**self.body(), 'submissionMode': 'submit'}
+        preserve_time_history(submitted, incoming, self.receipt(), status='draft')
+        self.assertNotIn('lectureReflectionPendingTime', submitted)
+        self.assertEqual(len(submitted['lectureReflectionTimeHistory']), 2)

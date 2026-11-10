@@ -94,6 +94,7 @@ export interface HistoricalAssignmentContent {
 }
 
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
+  lectureReflectionPendingTime?: { operation: ReflectionTimeOperation; seconds: number };
   submissionAttempts?: SubmissionAttempt[];
   /** Server-owned provenance; learners cannot request the import exemption. */
   submissionOrigin?: 'learner' | 'imported_legacy' | 'classified_legacy' | 'coach';

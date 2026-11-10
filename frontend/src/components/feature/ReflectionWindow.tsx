@@ -449,9 +449,12 @@ function ReflectionWindowForm({
         setAdditionalMinutes(seconds > 0 ? String(seconds / 60) : '');
         try {
           const raw = draftKey ? localStorage.getItem(`${draftKey}:time-action`) : null;
-          const pending = raw ? JSON.parse(raw) as { operation: ReflectionTimeOperation; minutes: string } : null;
-          if (pending?.operation && pending.operation.expectedProgressEntryId === (receipt?.progressEntryId || 0)
-              && pending.operation.expectedReflectionSeconds === (receipt?.seconds || 0)) {
+          const local = raw ? JSON.parse(raw) as { operation: ReflectionTimeOperation; minutes: string } : null;
+          const server = saved.lectureReflectionPendingTime;
+          const pending = [local, server ? { operation: server.operation, minutes: server.seconds > 0 ? String(server.seconds / 60) : '' } : null]
+            .find(value => value?.operation && value.operation.expectedProgressEntryId === (receipt?.progressEntryId || 0)
+              && value.operation.expectedReflectionSeconds === (receipt?.seconds || 0));
+          if (pending && saved.status !== 'accepted') {
             setTimeOperation(pending.operation); setAddTime(true); setAdditionalMinutes(pending.minutes);
           }
         } catch { /* The server record remains authoritative if recovery storage is unavailable. */ }

@@ -83,6 +83,19 @@ it('restores an unsent time action after reopening and discards it when the serv
   expect(localStorage.getItem(key)).toBeNull();
 });
 
+it('restores a server-saved time-action draft without relying on browser recovery', async () => {
+  mocks.load.mockResolvedValue({ ...completeLecture, status: 'draft',
+    lectureReflectionTime: { seconds: 1800, progressEntryId: 10, countedSeconds: 9000, addedAt: 'now' },
+    lectureReflectionPendingTime: { seconds: 1200, operation: { id: '00000000-0000-4000-8000-000000000001',
+      choice: 'correct', reason: 'Correcting writing time.', expectedReflectionSeconds: 1800, expectedProgressEntryId: 10 } } });
+  view({ noun: 'session', readOnlyTime: true, allowAdditionalTime: true, initialTab: 'otjh' });
+  await waitFor(() => expect(screen.getByLabelText('Reflection time for this action (minutes)')).toHaveValue(20));
+  expect(screen.getByRole('checkbox', { name: 'Correct recorded reflection time' })).toBeChecked();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel time action' }));
+  expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveValue(30);
+  expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveAttribute('readonly');
+});
+
 it('adds only explicitly entered reflection minutes and confirms them without editing lecture time', async () => {
   mocks.load.mockResolvedValue(completeLecture);
   const receipt = { seconds: 1800, progressEntryId: 10, addedAt: '2026-11-10T12:00:00Z', countedSeconds: 9000 };
