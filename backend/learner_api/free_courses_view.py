@@ -35,9 +35,10 @@ from curriculum_api.views import (
     FREE_PROGRAMME_MODULES_TABLE,
     active_component_rows,
     active_week_rows,
+    authoring_table_name,
     clean_str,
     free_programme_component_response,
-    free_programme_fetch_all,
+    free_programme_fetch_many,
     programme_deleted_row,
     truthy,
 )
@@ -94,27 +95,21 @@ def _active_course_rows(rows):
     ]
 
 
-def _catalogue_rows(stage, table, where_sql, params, order_sql, columns):
-    """Run one curriculum read and retain only safe failure diagnostics.
+def _catalogue_batch(reads):
+    """Several curriculum reads in one round trip, with the same safe logging.
 
-    Query parameters and exception text can contain learner/catalogue values or
-    connection details, so neither is logged.  The fixed stage and table label,
-    wrapper class and SQLSTATE are sufficient to correlate a failed read with
-    the exact query shape in this module.
+    ``reads`` is ``[(stage, table, where_sql, params, order_sql, columns), ...]``.
     """
     try:
-        return free_programme_fetch_all(
-            table,
-            where_sql,
-            params,
-            order_sql,
-            columns=columns,
-        )
+        return free_programme_fetch_many([
+            (table, where_sql, params, order_sql, columns)
+            for _stage, table, where_sql, params, order_sql, columns in reads
+        ])
     except DatabaseError as exc:
         logger.error(
             "free_course_catalogue_query_failed stage=%s table=%s type=%s sqlstate=%s",
-            stage,
-            table,
+            "+".join(read[0] for read in reads),
+            "+".join(read[1] for read in reads),
             type(exc).__name__,
             safe_sqlstate(exc),
         )
@@ -192,34 +187,32 @@ def _scoped_rows(assigned_ids, *, include_component_settings=True):
     include those columns for one assigned course only.
     """
     course_where, course_params = _in_clause("id", assigned_ids)
-    courses_by_id = {
-        clean_str(row.get("id")): row
-        for row in _active_course_rows(_catalogue_rows(
-            "courses", FREE_COURSES_TABLE, course_where, course_params,
-            "display_order, course_name, id", COURSE_COLUMNS,
-        ))
-    }
-
     week_where, week_params = _in_clause("course_id", assigned_ids)
-    week_rows = active_week_rows(_catalogue_rows(
-        "weeks", FREE_PROGRAMME_MODULES_TABLE, week_where, week_params,
-        "display_order, week_number, id", WEEK_COLUMNS,
-    ))
+    # Components of the assigned courses' weeks, selected by course so all
+    # three reads go to the database together (one round trip). Rows of an
+    # archived or orphaned week are dropped below with the week itself.
+    component_where = (
+        f"free_module_id in (select id from {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} "
+        f"where {week_where})"
+    )
+    course_rows, week_rows, component_rows = _catalogue_batch([
+        ("courses", FREE_COURSES_TABLE, course_where, course_params,
+         "display_order, course_name, id", COURSE_COLUMNS),
+        ("weeks", FREE_PROGRAMME_MODULES_TABLE, week_where, week_params,
+         "display_order, week_number, id", WEEK_COLUMNS),
+        ("components", FREE_PROGRAMME_COMPONENTS_TABLE, component_where, week_params,
+         "display_order, title",
+         COMPONENT_DETAIL_COLUMNS if include_component_settings else COMPONENT_SUMMARY_COLUMNS),
+    ])
+    courses_by_id = {clean_str(row.get("id")): row for row in _active_course_rows(course_rows)}
+    week_rows = active_week_rows(week_rows)
     # A legacy/orphan week must not resurrect a missing or archived course.
     week_rows = [week for week in week_rows if clean_str(week.get("course_id")) in courses_by_id]
-    week_ids = [clean_str(week.get("id")) for week in week_rows if clean_str(week.get("id"))]
-
-    component_rows = []
-    if week_ids:
-        module_in, module_params = _in_clause("free_module_id", week_ids)
-        component_rows = active_component_rows(_catalogue_rows(
-            "components",
-            FREE_PROGRAMME_COMPONENTS_TABLE,
-            module_in,
-            module_params,
-            "display_order, title",
-            COMPONENT_DETAIL_COLUMNS if include_component_settings else COMPONENT_SUMMARY_COLUMNS,
-        ))
+    week_ids = {clean_str(week.get("id")) for week in week_rows if clean_str(week.get("id"))}
+    component_rows = [
+        row for row in active_component_rows(component_rows)
+        if clean_str(row.get("free_module_id")) in week_ids
+    ]
     return courses_by_id, week_rows, component_rows
 
 

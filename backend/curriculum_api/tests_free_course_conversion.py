@@ -41,7 +41,7 @@ class FreeCourseConversionTests(CurriculumPersistenceTransactionHarness):
                                         content_type='application/json')
         return conversion.convert_free_course(request, module_id or self.module_id)
 
-    def test_price_survives_conversion_and_ordinary_module_edits(self):
+    def test_a_converted_module_is_not_for_sale_and_ordinary_edits_keep_hours(self):
         v.save_module_authoring_structure(self.module_id, {
             'title': 'Independent study', 'isForSale': True, 'price': '149.95', 'currency': 'GBP',
         }, repair_links=False)
@@ -50,9 +50,11 @@ class FreeCourseConversionTests(CurriculumPersistenceTransactionHarness):
         saved = v.save_module_authoring_structure(self.module_id, {
             'title': 'Placed course',
         }, repair_links=False)
+        # Only a free course is ever for sale: once placed, the module is not.
+        # The price stays on the free course row it came from (free_course_pricing).
         self.assertFalse(saved['isFreeCourse'])
-        self.assertTrue(saved['isForSale'])
-        self.assertEqual(saved['price'], '149.95')
+        self.assertFalse(saved['isForSale'])
+        self.assertIsNone(saved['price'])
         self.assertEqual(saved['currency'], 'GBP')
         self.assertEqual(saved['totalOtjh'], 7)
 

@@ -50,7 +50,6 @@ function impact(overrides: Partial<CurriculumScopeLearnerKsbImpactResponse> = {}
     structure: { moduleCount: 2, weekCount: 4, componentCount: 6, ksbMappingCount: 5, groupCount: 2 },
     assignedLearnerCount: 2,
     assignedLearners: [],
-    programmeCoverage: {} as CurriculumScopeLearnerKsbImpactResponse['coverage'],
     coverage: {} as CurriculumScopeLearnerKsbImpactResponse['coverage'],
     otjhAchievement: {
       componentCount: 6,
@@ -150,7 +149,7 @@ function impact(overrides: Partial<CurriculumScopeLearnerKsbImpactResponse> = {}
     consumptionSources: {
       progress: [],
       learningReflectionSubmissions: [],
-      outOfScopeProgress: [{}, {}],
+      outOfScopeProgressCount: 2,
     },
     ...overrides,
   } as unknown as CurriculumScopeLearnerKsbImpactResponse;

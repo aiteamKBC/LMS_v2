@@ -39,6 +39,21 @@ def percent(done, total):
     return floor(done / total * 10000 + .5) / 100 if total else 0
 
 
+_FREE_WEEK_MIRROR = []
+
+
+def _free_week_mirror_exists(cur):
+    """Both mirror columns present (checked once per process)."""
+    if not _FREE_WEEK_MIRROR:
+        cur.execute('''SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='curriculum' AND (
+                (table_name='free_course_weeks' AND column_name='week_id')
+             OR (table_name='weeks' AND column_name='free_course_id'))''')
+        row = cur.fetchone()
+        _FREE_WEEK_MIRROR.append(bool(row) and row[0] == 2)
+    return _FREE_WEEK_MIRROR[0]
+
+
 def free_course_representation_ids(cur, candidate_ids):
     """Return unambiguous canonical Free Course identities from ``candidate_ids``.
 
@@ -55,6 +70,16 @@ def free_course_representation_ids(cur, candidate_ids):
     requested = list(dict.fromkeys(str(value) for value in candidate_ids if value))
     if not requested:
         return set()
+    # The authoring-week mirror (free_course_weeks.week_id -> weeks.free_course_id)
+    # exists only on the old database; on the new one a free week is its own row.
+    mirror = '''
+            UNION
+            SELECT authoring_week.id FROM curriculum.free_course_weeks free_week
+            JOIN curriculum.free_courses course ON course.id=free_week.course_id
+            JOIN curriculum.weeks authoring_week
+              ON authoring_week.id=free_week.week_id
+             AND authoring_week.free_course_id=course.id
+            JOIN requested ON requested.id=authoring_week.id''' if _free_week_mirror_exists(cur) else ''
     cur.execute('''WITH requested(id) AS (SELECT unnest(%s::text[])),
         free_identities(id) AS (
             SELECT course.id FROM curriculum.free_courses course
@@ -62,14 +87,7 @@ def free_course_representation_ids(cur, candidate_ids):
             UNION
             SELECT free_week.id FROM curriculum.free_course_weeks free_week
             JOIN curriculum.free_courses course ON course.id=free_week.course_id
-            JOIN requested ON requested.id=free_week.id
-            UNION
-            SELECT authoring_week.id FROM curriculum.free_course_weeks free_week
-            JOIN curriculum.free_courses course ON course.id=free_week.course_id
-            JOIN curriculum.weeks authoring_week
-              ON authoring_week.id=free_week.week_id
-             AND authoring_week.free_course_id=course.id
-            JOIN requested ON requested.id=authoring_week.id
+            JOIN requested ON requested.id=free_week.id''' + mirror + '''
         )
         SELECT free_identities.id FROM free_identities
         LEFT JOIN curriculum.modules module

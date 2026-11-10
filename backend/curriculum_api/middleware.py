@@ -96,10 +96,25 @@ class SchemaNotProvisionedMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        return self.get_response(request)
+        from . import curriculum_names
+        curriculum_names.begin_request()
+        try:
+            return self.get_response(request)
+        finally:
+            curriculum_names.end_request()
 
     def process_exception(self, request, exception):
+        from .progress_errors import LearnerProgressUnavailable
         from .schema_compat import UnsupportedOnNormalisedSchema
+        if isinstance(exception, LearnerProgressUnavailable):
+            # Never a 200 with empty totals: that read as "no learner has
+            # achieved anything". Say the figures are missing and why.
+            logger.warning('Learner progress unavailable while serving %s: %s',
+                           request.path, exception.__cause__ or exception)
+            return JsonResponse(
+                {'error': str(exception), 'code': 'learner_progress_unavailable'},
+                status=503,
+            )
         if isinstance(exception, UnsupportedOnNormalisedSchema):
             # A legacy-only write (detaching weeks/components into the reuse
             # library) asked of the normalised database. The view's atomic

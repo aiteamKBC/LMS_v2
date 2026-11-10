@@ -292,7 +292,7 @@ export default function KSBMapping() {
     // coverage figures have a real denominator. Asking for actual mappings only
     // would return the mapped KSBs alone and make every programme look 100%
     // covered. Unmapped KSBs are kept in the table and flagged as such.
-    fetchCurriculumProgrammeKsbCoverage(programmeId, {}, controller.signal)
+    fetchCurriculumProgrammeKsbCoverage(programmeId, { view: 'items' }, controller.signal)
       .then(result => {
         if (controller.signal.aborted) return;
         setRows(buildRows(result?.items || []));
