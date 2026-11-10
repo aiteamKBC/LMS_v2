@@ -49,7 +49,7 @@ it.each([['correct', 1200, 8400], ['add', 3000, 10200], ['retry', 1800, 9000]] a
     fireEvent.click(within(dialog).getByRole('radio', { name: choice === 'correct' ? /^Correct recorded time/ : choice === 'add' ? /^Add more learning time/ : /^Record another attempt/ }));
     if (choice === 'correct') fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Correcting the writing duration.' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
-    const minutes = screen.getByLabelText('Additional reflection time (minutes)');
+    const minutes = screen.getByLabelText(choice === 'add' ? 'Additional reflection time (minutes)' : 'Reflection time for this action (minutes)');
     expect(minutes).not.toHaveAttribute('readonly');
     fireEvent.change(minutes, { target: { value: '20' } });
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));

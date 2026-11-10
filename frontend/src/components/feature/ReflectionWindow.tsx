@@ -816,7 +816,8 @@ function ReflectionWindowForm({
             if (event.target.checked && !timeOperation) setTimeOperation({ id: crypto.randomUUID(), choice: 'add', reason: '',
               expectedReflectionSeconds: timeReceipt?.seconds || 0, expectedProgressEntryId: timeReceipt?.progressEntryId || 0 });
           }} />
-          Add more learning time for this reflection
+          {timeOperation?.choice === 'correct' ? 'Correct recorded reflection time' : timeOperation?.choice === 'retry'
+            ? 'Record another reflection attempt' : 'Add more learning time for this reflection'}
         </label>
         <p className="text-xs text-foreground-600">Enter only reflection writing time. Your lecture time and attendance are kept. Each confirmed time action is recorded once.</p>
         {!submissionLocked && additionalTimeAvailable && <button type="button" disabled={reflectionSaving || submitting || !serverLoaded}
@@ -826,7 +827,7 @@ function ReflectionWindowForm({
         }} className="ml-2 text-sm font-semibold underline">Cancel time action</button>}
         {submissionLocked && <p className="text-sm text-foreground-700">This reflection is accepted. Ask your coach to review any time correction.</p>}
         {!additionalTimeAvailable && !timeReceipt && <p className="text-sm text-foreground-700">Complete the lecture through the existing submission or attendance process before adding reflection time. You can still save this reflection without adding time.</p>}
-        {addTime && <Field label="Additional reflection time (minutes)">
+        {addTime && <Field label={timeOperation && timeOperation.choice !== 'add' ? 'Reflection time for this action (minutes)' : 'Additional reflection time (minutes)'}>
           <input type="number" min="1" max="480" step="1" value={additionalMinutes} readOnly={submissionLocked || Boolean(timeReceipt && !timeOperation) || !additionalTimeAvailable}
             onChange={event => { if ((!timeReceipt || timeOperation) && additionalTimeAvailable) setAdditionalMinutes(event.target.value); }}
             aria-invalid={!validAdditionalTime} className="h-11 w-full rounded-xl border px-3 font-mono text-sm" />
