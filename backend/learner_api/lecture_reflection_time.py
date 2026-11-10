@@ -17,11 +17,15 @@ SECONDS = 'additionalReflectionSeconds'
 def add_reflection_time(payload, stored, *, submission_mode):
     receipt = stored.get(RECEIPT)
     operation = requested_operation(payload)
-    if submission_mode == 'draft':
-        return receipt if isinstance(receipt, dict) and receipt.get('progressEntryId') else None
     replay = replayed_receipt(payload, stored)
     if replay:
         return replay
+    previous_reflection = receipt['seconds'] if isinstance(receipt, dict) and receipt.get('progressEntryId') else 0
+    if operation and (operation['expectedReflectionSeconds'] != previous_reflection or
+            operation['expectedProgressEntryId'] != (receipt or {}).get('progressEntryId', 0)):
+        raise ValueError('The saved reflection time changed. Reload the reflection and choose again. Your entered time is kept.')
+    if submission_mode == 'draft':
+        return receipt if isinstance(receipt, dict) and receipt.get('progressEntryId') else None
     if isinstance(receipt, dict) and receipt.get('progressEntryId') and operation is None:
         # A client cannot replace the receipt or credit the same writing twice.
         requested = payload.get(SECONDS, receipt['seconds'])
@@ -41,10 +45,6 @@ def add_reflection_time(payload, stored, *, submission_mode):
         raise ValueError('Enter reflection time greater than zero.')
     if seconds == 0:
         return None
-    previous_reflection = receipt['seconds'] if isinstance(receipt, dict) and receipt.get('progressEntryId') else 0
-    if operation and (operation['expectedReflectionSeconds'] != previous_reflection or
-            operation['expectedProgressEntryId'] != (receipt or {}).get('progressEntryId', 0)):
-        raise ValueError('The saved reflection time changed. Reload the reflection and choose again. Your entered time is kept.')
     if not payload.get('otjhConfirmed') or not payload.get('signedDeclaration'):
         raise ValueError('Confirm the OTJH record and learner declaration before adding reflection time.')
     component_id = str(payload.get('activityId') or '')

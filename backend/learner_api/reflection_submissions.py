@@ -331,13 +331,12 @@ def _submit_reflection(request):
                         stored = {}
                 stored = _dict(stored)
                 from .lecture_reflection_operations import replayed_receipt, preserve_time_history
-                if submission_mode == 'submit':
-                    replay = replayed_receipt(payload, stored)
-                    if replay:
-                        # A lost response may be retried after a later save or
-                        # coach decision. Return the original result, write nothing.
-                        return JsonResponse({'id': str(existing[6]), 'status': existing[0],
-                            'lectureReflectionTime': replay, 'submissionAttempts': []})
+                replay = replayed_receipt(payload, stored)
+                if replay:
+                    # A lost response or delayed draft may arrive after a later
+                    # save/coach decision. Never downgrade or overwrite that work.
+                    return JsonResponse({'id': str(existing[6]), 'status': existing[0],
+                        'lectureReflectionTime': replay, 'submissionAttempts': []})
                 if stored.get('submissionOrigin') == 'coach' and activity_type == 'extra_activity':
                     return _error('This activity was recorded by your coach and cannot be edited here.', 409)
                 imported = stored.get("submissionOrigin") == "imported_legacy"

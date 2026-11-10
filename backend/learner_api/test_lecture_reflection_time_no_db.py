@@ -238,8 +238,9 @@ class LectureReflectionTimeTests(SimpleTestCase):
             reason='', expectedReflectionSeconds=0, expectedProgressEntryId=0)
         receipt = dict(seconds=1800, progressEntryId=99, countedSeconds=9000)
         with patch('learner_api.lecture_reflection_time.connections') as db:
-            with self.assertRaisesMessage(ValueError, 'saved reflection time changed'):
-                add_reflection_time(body, {'lectureReflectionTime': receipt}, submission_mode='submit')
+            for mode in ('submit', 'draft'):
+                with self.subTest(mode=mode), self.assertRaisesMessage(ValueError, 'saved reflection time changed'):
+                    add_reflection_time(body, {'lectureReflectionTime': receipt}, submission_mode=mode)
             db.__getitem__.assert_not_called()
         body['reflectionTimeOperation']['choice'] = 'correct'
         with self.assertRaisesMessage(ValueError, 'Explain the time correction'):
@@ -247,10 +248,10 @@ class LectureReflectionTimeTests(SimpleTestCase):
 
 
 class ReflectionTimeSubmissionTests(SimpleTestCase):
-    def submit(self, *, existing=None, addition=None, forged=False, old_client=False, operation=None):
+    def submit(self, *, existing=None, addition=None, forged=False, old_client=False, operation=None, mode='submit'):
         from . import reflection_submissions as view
         body = dict(learnerKind='apprenticeship', learnerId='19', activityType='session', activityId='LECTURE',
-                    learningReflection='Synthetic reflection', submissionMode='submit', actualTimeHours='2',
+                    learningReflection='Synthetic reflection', submissionMode=mode, actualTimeHours='2',
                     additionalReflectionSeconds=1800)
         if forged:
             body['lectureReflectionTime'] = {'progressEntryId': 'FORGED', 'seconds': 99999}
@@ -297,6 +298,18 @@ class ReflectionTimeSubmissionTests(SimpleTestCase):
         self.assertEqual(json.loads(response.content)['status'], 'accepted')
         add.assert_not_called()
         self.assertFalse(any('insert into' in call.args[0] or 'update ' in call.args[0].lower() for call in cursor.execute.call_args_list))
+
+    def test_a_delayed_draft_of_a_confirmed_action_cannot_downgrade_the_submission(self):
+        operation = dict(id='00000000-0000-4000-8000-000000000001', choice='add', reason='',
+            expectedReflectionSeconds=0, expectedProgressEntryId=0)
+        receipt = dict(seconds=1800, inputSeconds=1800, operationId=operation['id'], choice='add', reason='',
+            progressEntryId=101, countedSeconds=9000)
+        response, cursor, add = self.submit(existing=('submitted_for_tutor_review', {'lectureReflectionTime': receipt}, None, None, None, None, 'SAVED'),
+            operation=operation, mode='draft')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(json.loads(response.content)['status'], 'submitted_for_tutor_review')
+        add.assert_not_called()
+        self.assertFalse(any('insert into' in call.args[0] for call in cursor.execute.call_args_list))
 
     def test_an_older_open_tab_uses_the_same_lock_and_preserves_the_stored_receipt(self):
         receipt = dict(seconds=1800, progressEntryId=101, addedAt='now', countedSeconds=9000)
