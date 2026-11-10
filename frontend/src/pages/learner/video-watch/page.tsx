@@ -198,7 +198,7 @@ export default function ComponentViewPage() {
   useEffect(() => { setExpiredTiming(false); setTimingNotice(''); }, [timerStorageKey]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
-  const [lectureReflectionSaved, setLectureReflectionSaved] = useState<{ activityKey: string; version: number } | null>(null);
+  const [lectureReflectionSaved, setLectureReflectionSaved] = useState<{ activityKey: string; version: number; addedSeconds: number } | null>(null);
   const [repeating, setRepeating] = useState(false);
   const [retakeOpen, setRetakeOpen] = useState(false);
   const [timeDecision, setTimeDecision] = useState<{ choice: ActivityTimeChoice; reason: string; previousSeconds: number } | null>(null);
@@ -651,10 +651,11 @@ export default function ComponentViewPage() {
     }, { manualTimeConfirmed: true });
   };
 
-  const finishLectureReflection = async () => {
+  const finishLectureReflection = async (reflection: { additionalReflectionSeconds?: number }) => {
     const savedActivityKey = timerStorageKey;
     if (!kind || !id || !componentId || currentTimingKeyRef.current !== savedActivityKey) return;
-    setLectureReflectionSaved(current => ({ activityKey: savedActivityKey, version: (current?.version || 0) + 1 }));
+    setLectureReflectionSaved(current => ({ activityKey: savedActivityKey, version: (current?.version || 0) + 1,
+      addedSeconds: reflection.additionalReflectionSeconds || 0 }));
     setPhase('consume');
     setRefreshError(null);
     try {
@@ -875,9 +876,12 @@ export default function ComponentViewPage() {
               learnerKsbs={learnerKsbs}
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
-              selectedTimeSeconds={phase === 'lecture-reflect' ? activityTimeSeconds({ timeTaken: completedTime }) : submittedTimeSeconds}
+              selectedTimeSeconds={phase === 'lecture-reflect' ? completedTime == null ? undefined : activityTimeSeconds({ timeTaken: completedTime }) : submittedTimeSeconds}
               selectedTimeSource={phase === 'lecture-reflect' ? undefined : timeSource}
               readOnlyTime={phase === 'lecture-reflect'}
+              allowAdditionalTime={phase === 'lecture-reflect'}
+              additionalTimeAvailable={completed}
+              workingHoursHolidays={componentAccess.holidays ?? []}
               submitting={submitting}
               submitError={submitError}
               onSubmit={phase === 'lecture-reflect' ? finishLectureReflection : result => finalizeSubmit(result, { manualTimeConfirmed: true })}
@@ -1080,7 +1084,9 @@ export default function ComponentViewPage() {
                 </button>
               </section>}
               {lectureReflectionSaved?.activityKey === timerStorageKey && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                <p role="status" className="text-sm text-emerald-900">Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.</p>
+                <p role="status" className="text-sm text-emerald-900">{lectureReflectionSaved.addedSeconds > 0
+                  ? 'Your lecture reflection was submitted for tutor review. Its additional time is recorded; your lecture attendance is unchanged.'
+                  : 'Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.'}</p>
                 {refreshError && <p role="alert" className="mt-2 text-sm text-amber-900">{refreshError}</p>}
               </div>}
               {completed && !isAssignment && (

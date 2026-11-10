@@ -1,9 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { loadLearningReflectionStatuses } from './reflectionSubmission';
+import { loadLearningReflectionStatuses, saveLearningReflectionSubmission, type LearningReflectionSubmissionInput } from './reflectionSubmission';
+import { CompletionValidationError } from '@/lib/completionValidation';
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+it('retains the server receipt for an added lecture duration', async () => {
+  const lectureReflectionTime = { seconds: 1800, progressEntryId: 10, addedAt: 'now', countedSeconds: 9000 };
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'R', status: 'submitted_for_tutor_review', lectureReflectionTime }), { status: 201 }));
+  const result = await saveLearningReflectionSubmission({ learnerKind: 'apprenticeship', learnerId: '19', activityId: 'LECTURE' } as LearningReflectionSubmissionInput);
+  expect(result.lectureReflectionTime).toEqual(lectureReflectionTime);
+});
+
+it('opens the existing correction flow for a working-time refusal instead of reporting success', async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ error: 'Confirm when the reflection was written.', validation: { reason: 'weekend', holidayName: '' } }), { status: 409 }));
+  await expect(saveLearningReflectionSubmission({ learnerKind: 'apprenticeship', learnerId: '19' } as LearningReflectionSubmissionInput)).rejects.toBeInstanceOf(CompletionValidationError);
 });
 
 describe('reflection submission API', () => {

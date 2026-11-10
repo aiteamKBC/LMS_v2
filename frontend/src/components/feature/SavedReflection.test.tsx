@@ -23,6 +23,16 @@ const saved: StoredLearningReflectionSubmission = {
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(saved); });
 afterEach(cleanup);
 
+it('shows additional lecture reflection time separately from the recorded lecture duration', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ ...saved, actualTimeHours: '2',
+    lectureReflectionTime: { seconds: 1800, progressEntryId: 10, addedAt: 'now', countedSeconds: 9000 } });
+  render(<SavedReflection {...identity} />);
+  fireEvent.click(screen.getByRole('button', { name: 'View saved reflection' }));
+  expect(await screen.findByText('Additional reflection time added')).toBeVisible();
+  expect(screen.getByText('02:00:00')).toBeVisible();
+  expect(screen.getByText('00:30:00')).toBeVisible();
+});
+
 it.each([
   ['submitted_for_tutor_review', 'Pending coach review'], ['accepted', 'Accepted'],
   ['referred', 'Rejected'], ['rejected', 'Rejected'], ['escalated', 'Pending coach review'],

@@ -7,9 +7,13 @@ import {
   loadLearningReflectionSubmission,
   type LearningReflectionSubmissionInput,
   type StoredLearningReflectionSubmission,
+  type LectureReflectionTime,
 } from '@/api/reflectionSubmission';
 import { useReflectionAutosave } from './useReflectionAutosave';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
+import { CompletionTimeDialog } from './CompletionTimeDialog';
+import { CompletionValidationError } from '@/lib/completionValidation';
+import type { WorkingHoursHoliday } from '@/lib/componentAccessWindow';
 
 
 /** Normalise stored completion clocks. Older records use MM:SS (and may have
@@ -81,6 +85,7 @@ interface ReflectionSubmission {
   signedDeclaration?: boolean;
   timeTakenSeconds?: number;
   timeEntrySource?: 'input';
+  additionalReflectionSeconds?: number;
 }
 
 export function ReflectionWindow(props: Parameters<typeof ReflectionWindowForm>[0]) {
@@ -95,6 +100,9 @@ function ReflectionWindowForm({
   selectedTimeSeconds,
   selectedTimeSource,
   readOnlyTime = false,
+  allowAdditionalTime = false,
+  additionalTimeAvailable = true,
+  workingHoursHolidays = [],
   noun = 'quiz',
   submitting,
   submitError,
@@ -139,6 +147,10 @@ function ReflectionWindowForm({
   selectedTimeSource?: 'timer' | 'input';
   /** A reflection added separately must not edit or re-submit session time. */
   readOnlyTime?: boolean;
+  allowAdditionalTime?: boolean;
+  /** Additional time follows an existing completion or attendance credit. */
+  additionalTimeAvailable?: boolean;
+  workingHoursHolidays?: WorkingHoursHoliday[];
   noun?: string;
   submitting: boolean;
   submitError: string | null;
@@ -179,7 +191,7 @@ function ReflectionWindowForm({
   const [coachVisibilityConfirmed, setCoachVisibilityConfirmed] = useState(false);
   const [selectedBenefits, setSelectedBenefits] = useState<string[]>([]);
   const [benefitExplanation, setBenefitExplanation] = useState('');
-  const [actualTime, setActualTime] = useState(plannedHours);
+  const [actualTime, setActualTime] = useState(readOnlyTime && allowAdditionalTime ? '' : plannedHours);
   const [dateCompleted, setDateCompleted] = useState(new Date().toISOString().split('T')[0]);
   const [paidHours, setPaidHours] = useState('yes');
   const [otjhConfirmed, setOtjhConfirmed] = useState(false);
@@ -187,6 +199,10 @@ function ReflectionWindowForm({
   const [aiChecked, setAiChecked] = useState(false);
   const [editedClock, setEditedClock] = useState<string | null>(null);
   const [timeEdited, setTimeEdited] = useState(false);
+  const [addTime, setAddTime] = useState(false);
+  const [additionalMinutes, setAdditionalMinutes] = useState('');
+  const [timeReceipt, setTimeReceipt] = useState<LectureReflectionTime | null>(null);
+  const [timeCorrection, setTimeCorrection] = useState<CompletionValidationError | null>(null);
   const [recording, setRecording] = useState(false);
   const [voiceProcessing, setVoiceProcessing] = useState(false);
   const [voiceError, setVoiceError] = useState('');
@@ -202,7 +218,8 @@ function ReflectionWindowForm({
     && selectedTimeSeconds != null && Number.isFinite(selectedTimeSeconds)
     ? Math.max(0, Math.floor(selectedTimeSeconds)) : null;
   const usesClock = initialSelectedSeconds != null;
-  const clockValue = editedClock ?? (usesClock ? formatClock(initialSelectedSeconds) : '');
+  const clockValue = readOnlyTime && allowAdditionalTime && usesClock ? formatClock(initialSelectedSeconds)
+    : editedClock ?? (usesClock ? formatClock(initialSelectedSeconds) : '');
   const selectedSeconds = usesClock && /^\d+:[0-5]\d:[0-5]\d$/.test(clockValue)
     ? parseClockSeconds(clockValue) : null;
   const actualTimeHours = () => {
@@ -292,11 +309,14 @@ function ReflectionWindowForm({
   ];
   const evidenceReady = allEvidenceFileNames.length === 0 || coachVisibilityConfirmed;
   const benefitReady = selectedBenefits.length > 0 && Boolean(benefitExplanation.trim());
-  const validTime = usesClock ? selectedSeconds != null
+  const validTime = readOnlyTime && allowAdditionalTime ? true : usesClock ? selectedSeconds != null
     : actualTime.trim() !== '' && Number.isFinite(Number(actualTime)) && Number(actualTime) >= 0;
-  const otjhReady = Boolean(validTime && dateCompleted && paidHours && otjhConfirmed);
+  const additionalSeconds = addTime ? Math.round(Number(additionalMinutes) * 60) : 0;
+  const validAdditionalTime = !allowAdditionalTime || !addTime || Boolean((additionalTimeAvailable || timeReceipt) && additionalMinutes.trim()
+    && Number.isFinite(Number(additionalMinutes)) && Number(additionalMinutes) > 0 && additionalSeconds <= 8 * 3600);
+  const otjhReady = Boolean(validTime && dateCompleted && paidHours && otjhConfirmed && validAdditionalTime);
   const canSubmit = learningReady && ksbReady && applicationReady && evidenceReady
-    && benefitReady && otjhReady && signedDeclaration;
+    && benefitReady && otjhReady && signedDeclaration && validAdditionalTime;
 
   const readiness: Record<TabId, boolean> = {
     learning: learningReady,
@@ -372,6 +392,7 @@ function ReflectionWindowForm({
     evidenceFiles: allEvidenceFileNames, evidenceConsentConfirmed: coachVisibilityConfirmed,
     selectedBenefits, benefitExplanation, actualTimeHours: actualTimeHours(), reflectionTimeEdited: timeEdited,
     completedDuringPaidHours: paidHours, dateCompleted, otjhConfirmed, signedDeclaration, qualityScore,
+    ...(allowAdditionalTime ? { additionalReflectionSeconds: additionalSeconds } : {}),
   } : null;
   const draftSerialized = JSON.stringify(draftPayload);
   const editableDraft = !submissionLocked && submissionStatus !== 'submitted_for_tutor_review';
@@ -407,8 +428,15 @@ function ReflectionWindowForm({
       setCoachVisibilityConfirmed(Boolean(saved.evidenceConsentConfirmed));
       setSelectedBenefits(Array.isArray(saved.selectedBenefits) ? saved.selectedBenefits : []);
       setBenefitExplanation(saved.benefitExplanation || '');
-      setActualTime(savedActualTime(saved.actualTimeHours || '', inMinutes) || plannedHours);
+      setActualTime(savedActualTime(saved.actualTimeHours || '', inMinutes) || (readOnlyTime && allowAdditionalTime ? '' : plannedHours));
       setTimeEdited(Boolean(saved.reflectionTimeEdited));
+      if (allowAdditionalTime) {
+        const receipt = saved.lectureReflectionTime || null;
+        const seconds = receipt?.seconds ?? saved.additionalReflectionSeconds ?? 0;
+        setTimeReceipt(receipt);
+        setAddTime(seconds > 0);
+        setAdditionalMinutes(seconds > 0 ? String(seconds / 60) : '');
+      }
       setEditedClock((readOnlyTime || saved.reflectionTimeEdited) && saved.actualTimeHours?.trim() && Number.isFinite(Number(saved.actualTimeHours))
         ? formatClock(Math.round(Number(saved.actualTimeHours) * 3600)) : null);
       setPaidHours(saved.completedDuringPaidHours || 'yes');
@@ -458,7 +486,7 @@ function ReflectionWindowForm({
     return () => {
       cancelled = true;
     };
-  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes, draftKey, loadAttempt, readOnlyTime]);
+  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes, draftKey, loadAttempt, readOnlyTime, allowAdditionalTime]);
 
   // Persist each edit locally so leaving the activity does not lose progress.
   // Files themselves are uploaded by the evidence flow; only uploaded names are stored.
@@ -483,7 +511,7 @@ function ReflectionWindowForm({
     if (nextTab) setTab(nextTab.id);
   };
 
-  const handleSubmit = async (mode: 'draft' | 'submit' = 'submit') => {
+  const handleSubmit = async (mode: 'draft' | 'submit' = 'submit', declaredAt?: string) => {
     if (submissionInFlightRef.current) return;
     if (submissionLocked) {
       setReflectionSaveError('This reflection has already been accepted and can no longer be changed.');
@@ -521,9 +549,16 @@ function ReflectionWindowForm({
       completedDuringPaidHours: paidHours,
       dateCompleted,
       signedDeclaration,
+      ...(allowAdditionalTime ? { additionalReflectionSeconds: additionalSeconds } : {}),
     };
 
     submissionInFlightRef.current = true;
+    if (mode === 'submit' && allowAdditionalTime && addTime && !timeReceipt && !declaredAt
+      && !await confirmTime(additionalSeconds)) {
+      submissionInFlightRef.current = false;
+      setTab('otjh');
+      return;
+    }
     if (mode === 'submit' && !readOnlyTime && (timeEdited || selectedTimeSource === 'input' || !usesClock)
       && !await confirmTime(selectedSeconds ?? Math.round(Number(actualTimeHours()) * 3600))) {
       submissionInFlightRef.current = false;
@@ -536,11 +571,14 @@ function ReflectionWindowForm({
     setReflectionSaveError('');
     try {
       const saved = await autosave.save({ ...draftPayload, submissionMode: mode,
+        ...(declaredAt ? { declaredCompletedAt: declaredAt } : {}),
         ...(mode === 'submit' ? {
           learningReflection: reflection.trim(), applicationText: applicationText.trim(), benefitExplanation: benefitExplanation.trim(),
         } : {}),
       });
       if (mode === 'submit') {
+        if (saved.lectureReflectionTime) setTimeReceipt(saved.lectureReflectionTime);
+        setTimeCorrection(null);
         setSubmissionStatus(saved.status || 'submitted_for_tutor_review');
         try { if (draftKey) localStorage.removeItem(draftKey); } catch { /* Storage unavailable. */ }
         await onSubmit(result);
@@ -549,6 +587,7 @@ function ReflectionWindowForm({
       // Draft failures are displayed by autosave and cleared by its next
       // successful retry. Completion failures also need to remain visible.
       if (mode === 'submit') {
+        if (error instanceof CompletionValidationError) setTimeCorrection(error);
         setReflectionSaveError(error instanceof Error ? error.message : 'Could not save the reflection for tutor review.');
         autosave.resume();
       }
@@ -706,10 +745,10 @@ function ReflectionWindowForm({
       <Field label={readOnlyTime ? 'Recorded session time (reference)' : usesClock ? 'Selected activity time' : `Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
         <input
           ref={timeInputRef}
-          type={usesClock ? 'text' : 'number'}
+          type={usesClock || (readOnlyTime && allowAdditionalTime) ? 'text' : 'number'}
           min={usesClock ? undefined : '0'}
           step={usesClock ? undefined : inMinutes ? '1' : '0.25'}
-          value={usesClock ? clockValue : actualTime}
+          value={readOnlyTime && allowAdditionalTime ? usesClock ? clockValue : 'Not recorded' : usesClock ? clockValue : actualTime}
           readOnly={readOnlyTime}
           onChange={event => {
             if (readOnlyTime) return;
@@ -724,7 +763,7 @@ function ReflectionWindowForm({
         />
       </Field>
       <p id={`${timeHelpId}-${location}`} className="mt-2 text-sm text-foreground-700">
-        {readOnlyTime ? 'Your session time and attendance stay unchanged. This reflection does not add study hours.'
+        {readOnlyTime ? allowAdditionalTime ? 'Your existing lecture time is kept. You can add reflection time separately below.' : 'Your session time and attendance stay unchanged. This reflection does not add study hours.'
           : usesClock ? 'Format: hours : minutes : seconds. For 30 minutes, enter 00:30:00.'
           : inMinutes ? 'Enter minutes. For 30 minutes, enter 30.'
           : 'Enter hours. For 30 minutes, enter 0.5; for 1 hour 30 minutes, enter 1.5.'}
@@ -733,12 +772,30 @@ function ReflectionWindowForm({
         {usesClock && !validTime ? 'Enter hours, minutes and seconds, for example 00:30:00.'
           : 'You can increase or reduce this time. Your final value will be saved.'}
       </p>}
+      {allowAdditionalTime && <div className="mt-4 space-y-2 rounded-xl border border-primary-200 bg-white p-3">
+        <label className="flex items-center gap-2 text-sm font-semibold">
+          <input type="checkbox" checked={addTime} disabled={Boolean(timeReceipt) || (!additionalTimeAvailable && !addTime)} onChange={event => setAddTime(event.target.checked)} />
+          Add more learning time for this reflection
+        </label>
+        <p className="text-xs text-foreground-600">Enter only the time spent writing this reflection. It will be added to your existing lecture time once when you submit. Your lecture attendance stays unchanged.</p>
+        {!additionalTimeAvailable && !timeReceipt && <p className="text-sm text-foreground-700">Complete the lecture through the existing submission or attendance process before adding reflection time. You can still save this reflection without adding time.</p>}
+        {addTime && <Field label="Additional reflection time (minutes)">
+          <input type="number" min="1" max="480" step="1" value={additionalMinutes} readOnly={Boolean(timeReceipt) || !additionalTimeAvailable}
+            onChange={event => { if (!timeReceipt && additionalTimeAvailable) setAdditionalMinutes(event.target.value); }}
+            aria-invalid={!validAdditionalTime} className="h-11 w-full rounded-xl border px-3 font-mono text-sm" />
+        </Field>}
+        {addTime && additionalTimeAvailable && !validAdditionalTime && <p role="alert" className="text-sm text-red-700">Enter a reflection duration greater than zero, up to 480 minutes. The combined activity total cannot exceed 8 hours.</p>}
+        {timeReceipt && <p role="status" className="text-sm text-emerald-800">{timeReceipt.seconds / 60} minutes of reflection time have already been added. Saving this reflection again will not add them twice.</p>}
+      </div>}
     </div>
   );
 
   return (
     <div className="w-full bg-[#f7fbff] rounded-2xl border border-[#bcc6d1] shadow-xl overflow-hidden">
       {timeConfirmation}
+      {timeCorrection && <CompletionTimeDialog reason={timeCorrection.reason} holidayName={timeCorrection.holidayName}
+        holidays={workingHoursHolidays} submitting={reflectionSaving} serverError={reflectionSaveError}
+        onSubmit={declaredAt => { void handleSubmit('submit', declaredAt); }} onClose={() => setTimeCorrection(null)} />}
       <div className="p-5 md:px-8 md:pt-7 md:pb-5">
         <div className="flex items-start justify-between gap-4">
           <div>

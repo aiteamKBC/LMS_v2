@@ -10,6 +10,7 @@ vi.mock('@/api/evidence', () => ({ uploadEvidence: vi.fn() }));
 vi.mock('@/api/reflectionVoice', () => ({ proofreadLearningReflection: vi.fn(), transcribeVoiceReflection: vi.fn() }));
 
 import { ReflectionWindow } from '../ReflectionWindow';
+import { CompletionValidationError } from '@/lib/completionValidation';
 
 // AppIcon is a global auto-import in the app build; supply it for tests.
 (globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
@@ -24,6 +25,80 @@ const view = (props: Partial<Parameters<typeof ReflectionWindow>[0]> = {}) => re
   />,
 );
 const openOtjh = () => fireEvent.click(screen.getByRole('button', { name: 'OTJH' }));
+
+const completeLecture = {
+  status: 'draft', actualTimeHours: '2', learningReflection: 'Learning '.repeat(100),
+  applicationType: 'apply_now', applicationText: 'Apply this learning at work.', selectedBenefits: ['Improved productivity'],
+  benefitExplanation: 'Help the team with everyday work.', dateCompleted: '2026-11-10', completedDuringPaidHours: 'yes',
+  otjhConfirmed: true, signedDeclaration: true,
+};
+
+it('adds only explicitly entered reflection minutes and confirms them without editing lecture time', async () => {
+  mocks.load.mockResolvedValue(completeLecture);
+  const receipt = { seconds: 1800, progressEntryId: 10, addedAt: '2026-11-10T12:00:00Z', countedSeconds: 9000 };
+  mocks.save.mockImplementation(async payload => ({ status: payload.submissionMode === 'submit' ? 'submitted_for_tutor_review' : 'draft', lectureReflectionTime: payload.submissionMode === 'submit' ? receipt : undefined }));
+  const onSubmit = vi.fn();
+  view({ noun: 'session', selectedTimeSeconds: 7200, readOnlyTime: true, allowAdditionalTime: true, onSubmit });
+  openOtjh();
+  const reference = await screen.findByLabelText('Recorded session time (reference)');
+  await waitFor(() => expect(reference).toHaveValue('02:00:00'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
+  fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '30' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('0 hours and 30 minutes');
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ additionalReflectionSeconds: 1800 })));
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ submissionMode: 'submit', additionalReflectionSeconds: 1800, actualTimeHours: '2' }));
+  fireEvent.click(screen.getByRole('button', { name: 'OTJH' }));
+  expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveAttribute('readonly');
+  expect(screen.getByText(/Saving this reflection again will not add them twice/)).toBeVisible();
+});
+
+it('restores credited reflection time as read only and does not confuse it with lecture time', async () => {
+  mocks.load.mockResolvedValue({ ...completeLecture, status: 'submitted_for_tutor_review',
+    additionalReflectionSeconds: 1800, lectureReflectionTime: { seconds: 1800, progressEntryId: 10, countedSeconds: 9000, addedAt: 'now' } });
+  view({ noun: 'session', selectedTimeSeconds: 9000, readOnlyTime: true, allowAdditionalTime: true });
+  openOtjh();
+  await waitFor(() => expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveValue(30));
+  expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveAttribute('readonly');
+  expect(screen.getByLabelText('Recorded session time (reference)')).toHaveValue('02:30:00');
+  expect(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' })).toBeDisabled();
+  expect(mocks.save).not.toHaveBeenCalled();
+});
+
+it('keeps an unavailable lecture duration distinct from zero and blocks invalid additional time', async () => {
+  mocks.load.mockResolvedValue(completeLecture);
+  view({ noun: 'session', readOnlyTime: true, allowAdditionalTime: true });
+  openOtjh();
+  await waitFor(() => expect(screen.getByLabelText('Recorded session time (reference)')).toHaveValue('Not recorded'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
+  fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '481' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  expect(screen.getByRole('button', { name: 'Submit for tutor review' })).toBeDisabled();
+  expect(screen.getByRole('alert')).toHaveTextContent('480 minutes');
+});
+
+it('keeps the reflection and added minutes when the server requests the existing working-time dialog', async () => {
+  mocks.load.mockResolvedValue(completeLecture);
+  mocks.save.mockImplementation(async payload => {
+    if (payload.submissionMode === 'submit') throw new CompletionValidationError('Confirm the working time.', 'outside_working_hours');
+    return { status: 'draft' };
+  });
+  const onSubmit = vi.fn();
+  view({ noun: 'session', selectedTimeSeconds: 7200, readOnlyTime: true, allowAdditionalTime: true, onSubmit });
+  openOtjh();
+  await waitFor(() => expect(screen.getByLabelText('Recorded session time (reference)')).toHaveValue('02:00:00'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add more learning time for this reflection' }));
+  fireEvent.change(screen.getByLabelText('Additional reflection time (minutes)'), { target: { value: '30' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+  expect(await screen.findByRole('dialog')).toBeVisible();
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ additionalReflectionSeconds: 1800 }));
+});
 
 it.each(['commercial', 'apprenticeship'] as const)('lets a %s learner review 49 hours and submit 4.9 without losing reflection text', async learnerKind => {
   mocks.load.mockResolvedValue({ status: 'draft', actualTimeHours: '49', learningReflection: 'Learning '.repeat(100),
