@@ -237,11 +237,16 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
             ],
         }
 
-        def fetch(table, _where, _params, _order, columns):
-            self.assertEqual(set(columns) - canonical[table], set())
-            return rows[table]
+        def fetch_many(reads):
+            # The three reads go to the database together (one round trip).
+            self.assertEqual(len(reads), 3)
+            results = []
+            for table, _where, _params, _order, columns in reads:
+                self.assertEqual(set(columns) - canonical[table], set())
+                results.append(rows[table])
+            return results
 
-        with patch.object(view, "free_programme_fetch_all", side_effect=fetch):
+        with patch.object(view, "free_programme_fetch_many", side_effect=fetch_many):
             courses, weeks, components = view._scoped_rows(["FREE-1"])
         self.assertEqual(set(courses), {"FREE-1"})
         self.assertEqual([row["id"] for row in weeks], ["W-1"])
@@ -253,7 +258,7 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
         error = DatabaseError("private SQL and connection detail")
         error.__cause__ = driver
 
-        with patch.object(view, "free_programme_fetch_all", side_effect=error), \
+        with patch.object(view, "free_programme_fetch_many", side_effect=error), \
              self.assertLogs(view.logger.name, level="ERROR") as logs, \
              self.assertRaises(DatabaseError):
             view._scoped_rows(["FREE-1"])
@@ -267,17 +272,20 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
         self.assertNotIn("private SQL and connection detail", diagnostic)
 
     def test_summary_query_omits_component_settings_and_media(self):
-        fetch = Mock(side_effect=[
+        fetch = Mock(return_value=[
             [{"id": "FREE-1", "course_name": "Course"}],
             [{"id": "W-1", "course_id": "FREE-1"}],
             [{"id": "C-1", "free_module_id": "W-1", "type": "reading"}],
         ])
-        with patch.object(view, "free_programme_fetch_all", fetch):
+        with patch.object(view, "free_programme_fetch_many", fetch):
             view._scoped_rows(["FREE-1"], include_component_settings=False)
-        component_columns = fetch.call_args_list[2].kwargs["columns"]
+        _table, component_where, component_params, _order, component_columns = fetch.call_args.args[0][2]
         self.assertNotIn("settings_json", component_columns)
         self.assertNotIn("cover_image_url", component_columns)
-        self.assertEqual(fetch.call_args_list[2].args[1], "free_module_id in (%s)")
+        # Components are selected through the assigned courses' weeks.
+        self.assertIn("free_module_id in (select id from", component_where)
+        self.assertIn("course_id in (%s)", component_where)
+        self.assertEqual(component_params, ["FREE-1"])
 
 
 class CanonicalAssignmentSelectorTests(SimpleTestCase):

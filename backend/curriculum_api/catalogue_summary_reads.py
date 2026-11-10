@@ -1,5 +1,5 @@
 """Lossless grouped inputs for the compact module catalogue only."""
-from . import views
+from . import archive_state, ksb_mapping_placement, views
 
 
 def grouped_catalogue_content_rows():
@@ -27,14 +27,19 @@ def grouped_catalogue_content_rows():
     components = views.active_component_rows(views.fetch_all(query, params))
 
     table = views.AUTHORING_KSB_MAPPINGS_TABLE
-    fields = [field for field in (
-        'module_catalogue_id', 'ksb_code', 'deleted_at', 'is_programme_deleted',
-        'is_deleted', 'isDeleted', 'isProgrammeDeleted',
-    ) if views.has_column(table, field)]
+    candidates = ('module_catalogue_id', 'ksb_code', 'deleted_at', 'is_programme_deleted',
+                  'is_deleted', 'isDeleted', 'isProgrammeDeleted')
+    # On the current database a mapping stores neither its module nor its code:
+    # both come through the mapping relation (its component's module, its
+    # standard KSB's code), and 'status' is the archive flag the deletion
+    # columns stood for -- the same read ksb_stats_reads makes.
+    if archive_state.uses_status(table):
+        candidates = (*candidates, 'status')
+    fields = [field for field in candidates if ksb_mapping_placement.can_select(table, field)]
     # Distinct raw keys first; the existing trim/deletion logic still runs in
     # Python, preserving optional legacy flags without SQL truthiness changes.
     mappings = views.active_mapping_rows(views.fetch_all(
         f'select distinct {", ".join(views.quote_ident(field) for field in fields)} '
-        f'from {views.authoring_table_name(table)}',
+        f'from {ksb_mapping_placement.read_source(table)}',
     ))
     return components, mappings

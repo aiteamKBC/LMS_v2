@@ -803,6 +803,19 @@ export interface CurriculumKsbCoverageSource {
 export interface CurriculumKsbCoverageResponse {
   scope: string;
   identifier: string;
+  /** Set when a programme read asked for one half (`view` on fetchCurriculumProgrammeKsbCoverage). */
+  view?: 'heatmap' | 'items';
+  /** `view: 'heatmap'`: every item's `mappings` is `[]` (`occurrence_count` still counts them). */
+  mappingsOmitted?: boolean;
+  /** `view: 'items'`: `heatmap.rows` is `[]`; `heatmap.modules` is kept. */
+  heatmapOmitted?: boolean;
+  /**
+   * Set on either half: each placement it keeps (`items[].mappings`, `heatmap.rows[].modules[].mappings`)
+   * carries only mapping_id, module_name, week_name, component_name, component_type, component_otjh,
+   * mapping_level, classification, group_name, groups and weight, under the snake_case key; a heatmap
+   * cell carries module_id, weight and mappings (names are in `heatmap.modules`).
+   */
+  placementFieldsOnly?: boolean;
   source?: CurriculumKsbCoverageSource;
   summary: {
     overall: CurriculumKsbCoverageSummaryBucket;
@@ -1386,8 +1399,6 @@ export interface CurriculumScopeLearnerKsbImpactResponse {
   structure: CurriculumScopeStructureCounts;
   assignedLearnerCount: number;
   assignedLearners: CurriculumProgrammeAssignedLearner[];
-  /** Retained name; `coverage` is the scope-neutral alias for the same payload. */
-  programmeCoverage: CurriculumKsbCoverageResponse;
   coverage: CurriculumKsbCoverageResponse;
   /** Hours actually achieved in this scope — the OTJH roll-up. */
   otjhAchievement: CurriculumScopeOtjhAchievement;
@@ -1427,8 +1438,9 @@ export interface CurriculumScopeLearnerKsbImpactResponse {
     unlinkedLearningReflectionSubmissions?: Array<Record<string, unknown>>;
     // Achieved activity belonging to a different scope in the same programme.
     // Reported so the gap between this scope's total and the learner's programme
-    // total is inspectable rather than an unexplained shortfall.
-    outOfScopeProgress?: Array<Record<string, unknown>>;
+    // total is inspectable rather than an unexplained shortfall. Sent as a
+    // count; the rows themselves were most of the response and never shown.
+    outOfScopeProgressCount?: number;
     evidenceByProgressEntry?: Record<string, CurriculumLearnerActivityEvidence[]>;
   };
 }
@@ -2432,6 +2444,10 @@ export interface FreeProgrammeModule {
   description: string;
   coverImageUrl?: string;
   weekBuilderWeekIds?: string[];
+  /** The course's sale metadata, stored on curriculum.free_courses (only a free course is ever for sale). */
+  isForSale?: boolean;
+  price?: string | null;
+  currency?: 'GBP';
   displayOrder: number;
   componentCount: number;
   totalOtjh: number;
@@ -3443,11 +3459,16 @@ export function fetchCurriculumKsbCoverage(params: { sourceType?: string; source
   return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
 }
 
-export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean; revalidate?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+// `view` asks for one half of the document: 'heatmap' (the heatmap's cells,
+// without each item's mapping list) or 'items' (the items with their mappings,
+// without the heatmap's cells). They are the same placements filed two ways --
+// 17 MB each for the largest programme -- and a page reads only one.
+export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean; revalidate?: boolean; view?: 'heatmap' | 'items' } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
   const query = new URLSearchParams();
   if (params.sourceType) query.set('source_type', params.sourceType);
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.actualMappings) query.set('actual_mappings', '1');
+  if (params.view) query.set('view', params.view);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal, revalidate: params.revalidate, timeoutMs: 60000 });
 }
@@ -4354,6 +4375,10 @@ export type FreeProgrammeModuleInput = {
   title: string;
   description?: string;
   coverImageUrl?: string;
+  /** Omitted: the stored sale values are kept. `isForSale: false` clears the price. */
+  isForSale?: boolean;
+  price?: string | null;
+  currency?: 'GBP';
   components?: FreeProgrammeComponentInput[];
 };
 

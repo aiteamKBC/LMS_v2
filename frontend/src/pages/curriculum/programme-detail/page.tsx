@@ -2751,8 +2751,11 @@ function ProgrammeDetailContent() {
       let lastError: unknown = null;
       for (const programmeId of coverageProgrammeIds) {
         try {
-          const fetchCoverage = summaryCoverageOnly ? fetchCurriculumProgrammeKsbCoverageSummary : fetchCurriculumProgrammeKsbCoverage;
-          return await fetchCoverage(programmeId, { ...coverageKsbSource, revalidate: readRevision > 0 }, signal);
+          const params = { ...coverageKsbSource, revalidate: readRevision > 0 };
+          // The coverage tab draws the heatmap only; it never reads the items' mappings.
+          return summaryCoverageOnly
+            ? await fetchCurriculumProgrammeKsbCoverageSummary(programmeId, params, signal)
+            : await fetchCurriculumProgrammeKsbCoverage(programmeId, { ...params, view: 'heatmap' }, signal);
         } catch (error) {
           if (signal?.aborted) throw error;
           lastError = error;

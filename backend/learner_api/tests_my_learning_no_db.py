@@ -41,9 +41,11 @@ class MyLearningAggregateTests(SimpleTestCase):
         cur = MagicMock()
         cur.fetchall.return_value = [('FREE-1',), ('FREEWEEK-1',), ('WEEK-1',)]
 
-        excluded = learning.free_course_representation_ids(
-            cur, ['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1'],
-        )
+        # Old database: the authoring-week mirror columns exist.
+        with patch.object(learning, '_free_week_mirror_exists', return_value=True):
+            excluded = learning.free_course_representation_ids(
+                cur, ['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1'],
+            )
 
         self.assertEqual(excluded, {'FREE-1', 'FREEWEEK-1', 'WEEK-1'})
         sql, params = cur.execute.call_args.args
@@ -54,6 +56,22 @@ class MyLearningAggregateTests(SimpleTestCase):
         self.assertIn('module.module_catalogue_id IS NULL', sql)
         self.assertNotIn('title', sql.lower())
         self.assertEqual(params, [['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1']])
+
+    def test_free_course_identity_query_skips_the_week_mirror_on_the_new_database(self):
+        # New database: free_course_weeks has no week_id and weeks no
+        # free_course_id, so naming them fails the whole My Learning read.
+        cur = MagicMock()
+        cur.fetchall.return_value = [('FREE-1',)]
+
+        with patch.object(learning, '_free_week_mirror_exists', return_value=False):
+            excluded = learning.free_course_representation_ids(cur, ['FREE-1', 'PROGRAMME-1'])
+
+        self.assertEqual(excluded, {'FREE-1'})
+        sql, _params = cur.execute.call_args.args
+        self.assertIn('curriculum.free_course_weeks', sql)
+        self.assertNotIn('week_id', sql)
+        self.assertNotIn('free_course_id', sql)
+        self.assertIn('module.module_catalogue_id IS NULL', sql)
 
     def test_my_courses_excludes_only_id_verified_free_course_plan_entries(self):
         plan = [

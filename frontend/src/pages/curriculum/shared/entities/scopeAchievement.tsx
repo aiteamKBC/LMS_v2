@@ -1782,7 +1782,7 @@ export function ScopeAchievementPanel({
       .some(value => normaliseText(value).includes(query)));
   }, [data, expandedLearner, search, selectedCode]);
 
-  const outOfScopeCount = data?.consumptionSources?.outOfScopeProgress?.length || 0;
+  const outOfScopeCount = data?.consumptionSources?.outOfScopeProgressCount || 0;
 
   const standingFilters: Array<{ key: '' | KsbStanding; label: string; count: number }> = [
     { key: '', label: 'All KSBs', count: ksb?.rows?.length || 0 },

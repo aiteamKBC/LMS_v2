@@ -1,10 +1,15 @@
-"""Prices are metadata: content, assignments and historical hours stay intact."""
+"""Prices are metadata: content, assignments and historical hours stay intact.
+
+A free course's price is stored on its curriculum.free_courses row (joined on
+module_catalogue_id), never on the module (free_course_pricing).
+"""
 import json
 from decimal import Decimal
 
 from django.db import IntegrityError, connection, transaction
 from django.test import RequestFactory
 
+from . import free_course_pricing
 from . import views as v
 from .tests import CurriculumPersistenceHarness
 from . import tests_standalone_courses as standalone
@@ -18,6 +23,10 @@ class CoursePricingTests(CurriculumPersistenceHarness):
         }), content_type='application/json')
         return v.curriculum_module_collection(request)
 
+    def sale(self, module_id='MOD-FREE'):
+        """The stored sale values of a module's free course (``{}`` when it has none)."""
+        return free_course_pricing.stored({'module_catalogue_id': module_id, 'source_type': 'free_course'})
+
     def edit(self, **values):
         return v.curriculum_module_detail(RequestFactory().patch(
             '/', json.dumps(values), content_type='application/json'), 'MOD-FREE')
@@ -26,7 +35,7 @@ class CoursePricingTests(CurriculumPersistenceHarness):
         response = self.create(isForSale=True, price='49.99', currency='GBP')
         self.assertEqual(response.status_code, 201, response.content)
         stored = v.authoring_module_exists('MOD-FREE')
-        self.assertEqual(stored['price'], Decimal('49.99'))
+        self.assertEqual(self.sale()['price'], Decimal('49.99'))
         summary = v.authoring_catalogue_summaries()['MOD-FREE']
         compact = v.compact_module_list_rows([v.authoring_summary_catalogue_item(summary)])[0]
         for result in (json.loads(response.content)['module'], summary, compact):
@@ -38,7 +47,7 @@ class CoursePricingTests(CurriculumPersistenceHarness):
     def test_defaults_and_existing_courses_can_be_priced(self):
         response = self.create()
         self.assertFalse(json.loads(response.content)['module']['isForSale'])
-        self.assertIsNone(v.authoring_module_exists('MOD-FREE')['price'])
+        self.assertIsNone(self.sale().get('price'))
         response = self.edit(isForSale=True, price='125', currency='GBP')
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(json.loads(response.content)['module']['price'], '125.00')
@@ -55,7 +64,7 @@ class CoursePricingTests(CurriculumPersistenceHarness):
         saved = v.save_module_authoring_structure('MOD-FREE', payload, repair_links=False)
         self.assertEqual(saved['price'], '49.99')
         self.assertEqual(saved['totalOtjh'], 2)
-        self.assertIsNone(v.authoring_module_exists('MOD-OTHER')['price'])
+        self.assertIsNone(self.sale('MOD-OTHER').get('price'))
 
     def test_price_update_and_sale_disable_do_not_change_content(self):
         self.create(isForSale=True, price='49.99')
@@ -65,23 +74,23 @@ class CoursePricingTests(CurriculumPersistenceHarness):
         self.assertEqual(v.get_authoring_structure_payload('MOD-FREE')['price'], '75.50')
         response = self.edit(isForSale=False)
         self.assertEqual(response.status_code, 200, response.content)
-        stored = v.authoring_module_exists('MOD-FREE')
+        stored = self.sale()
         self.assertFalse(stored['is_for_sale'])
         self.assertIsNone(stored['price'])
         self.assertEqual(v.get_authoring_structure_payload('MOD-FREE')['weekStructure'], before)
 
     def test_invalid_price_is_rejected_without_changes(self):
         self.create(isForSale=True, price='49.99')
-        before = v.authoring_module_exists('MOD-FREE')
+        before = (v.authoring_module_exists('MOD-FREE'), self.sale())
         for value in (None, '', '0', '-1', '1.001', 'NaN', 'Infinity', True, '1e2', '100000000', {}, []):
             with self.subTest(price=value):
                 response = self.edit(price=value)
                 self.assertEqual(response.status_code, 400, response.content)
-                self.assertEqual(v.authoring_module_exists('MOD-FREE'), before)
+                self.assertEqual((v.authoring_module_exists('MOD-FREE'), self.sale()), before)
         for values in ({'currency': 'USD'}, {'currency': None}, {'isForSale': 'true'}, {'isForSale': None}):
             response = self.edit(**values)
             self.assertEqual(response.status_code, 400, response.content)
-            self.assertEqual(v.authoring_module_exists('MOD-FREE'), before)
+            self.assertEqual((v.authoring_module_exists('MOD-FREE'), self.sale()), before)
 
     def test_sale_requires_price_and_price_bounds_roundtrip(self):
         self.assertEqual(self.create(isForSale=True).status_code, 400)
@@ -92,7 +101,7 @@ class CoursePricingTests(CurriculumPersistenceHarness):
 
     def test_database_rejects_inconsistent_sale_metadata(self):
         self.create()
-        table = v.authoring_table_name(v.AUTHORING_MODULES_TABLE)
+        table = v.authoring_table_name(v.FREE_COURSES_TABLE)
         for update in ('is_for_sale = true', 'price = 1', "currency = 'USD'"):
             with self.subTest(update=update), self.assertRaises(IntegrityError), transaction.atomic():
                 with connection.cursor() as cursor:
