@@ -33,7 +33,9 @@ def linked_materials(owner, records, *, content=False):
                 if str(record.get('id', '')).isdigit() and reference(record) is not None}
     if not expected:
         return {}
-    columns = '''m.payload AS material_payload,m.content_type AS material_content_type,
+    columns = '''m.payload AS material_payload,
+        s.source_payload->'recovered_content'->'material_snapshot' AS recovered_snapshot,
+        m.content_type AS material_content_type,
         m.video_iframe_url AS material_video_url,m.reading_iframe_url AS material_reading_url,
         m.audio_iframe_url AS material_audio_url,m.source_url AS material_source_url,
         m.backup_status AS material_backup_status,m.blob_container AS material_blob_container,
@@ -85,10 +87,66 @@ def safe_url(value):
     return None
 
 
+def content_payload(material):
+    """Use a reviewed original schema only for missing content of the same quiz."""
+    payload = dict(decoded(material.get('material_payload'), {}) or {})
+    snapshot = decoded(material.get('recovered_snapshot'), {})
+    if (not isinstance(snapshot, dict) or snapshot.get('version') != 1
+            or snapshot.get('source') != 'old-lms-material-schema'
+            or snapshot.get('material_id') != material['material_id']):
+        return payload
+    quiz = payload.get('quiz') if isinstance(payload.get('quiz'), dict) else {}
+    quiz_id = quiz.get('quiz_id') or payload.get('quiz_id')
+    if not snapshot.get('quiz_id') or (quiz_id and str(quiz_id) != str(snapshot['quiz_id'])):
+        return payload
+    if not material_quiz_definition(payload):
+        payload['quiz_questions'] = snapshot.get('quiz_questions') or []
+        payload['quiz_body'] = payload.get('quiz_body') or snapshot.get('quiz_body') or ''
+    if not any(payload.get(key) for key in ('reading_text_body', 'text_body', 'html_body')):
+        payload['reading_text_body'] = snapshot.get('reading_text_body') or ''
+    return payload
+
+
+def saved_question_html(owner, material_id):
+    """Recover question text from one owned, unambiguous group/attempt only.
+
+    This is content review: no scores, grading keys or reconstructed answers
+    become a new attempt. Multiple groups require explicit historical routing.
+    """
+    rows = query('''SELECT DISTINCT history.group_id,history.quiz_answers,
+            history.quiz_score,history.quiz_maximum_score,history.quiz_attempt_number
+        FROM "Learner".learner_external_identities identity
+        JOIN "Last_audit".activity_results history
+          ON history.learner_id::text=identity.source_learner_id AND history.activity_id=%s
+        WHERE identity.learner_id=%s AND identity.source_system='old_lms'
+          AND identity.deleted_at IS NULL
+        ORDER BY history.quiz_score DESC NULLS LAST,history.quiz_attempt_number DESC NULLS LAST''',
+        [material_id, owner['id']])
+    if not rows or any(row.get('group_id') is None for row in rows) or len({row['group_id'] for row in rows}) != 1:
+        return None
+    # Retain one source attempt; never combine questions from different attempts.
+    rows.sort(key=lambda row: (
+        float(row.get('quiz_score') or 0) / float(row.get('quiz_maximum_score') or 1),
+        int(row.get('quiz_attempt_number') or 0)), reverse=True)
+    for row in rows:
+        answers = decoded(row.get('quiz_answers'), [])
+        if not isinstance(answers, list):
+            continue
+        bodies = [answer.get('question_body') or answer.get('question_text') for answer in answers
+                  if isinstance(answer, dict)]
+        bodies = [body for body in bodies if isinstance(body, str) and body.strip()]
+        if bodies:
+            # The shared HTML viewer sanitizes this authored HTML in a sandbox.
+            return '<h2>Original questions from the saved activity</h2><ol>' + ''.join(
+                '<li>' + body + '</li>' for body in bodies) + '</ol>'
+    return None
+
+
 def material_parts(item, owner, record):
     material = linked_materials(owner, [record], content=True).get(str(record.get('id')))
     if material is None:
         return []
+    material = {**material, 'material_payload': content_payload(material)}
     hydrated = hydrate_material(dict(material))
     definition = material_quiz_definition(material['material_payload'])
     reading = hydrated.get('reading_text_body') or None
@@ -99,6 +157,10 @@ def material_parts(item, owner, record):
         else:
             reading = (reading or '') + '<h2>Original quiz description</h2>' + description
             reading += '<p>The original quiz questions are not currently available.</p>'
+    if not definition and record.get('kind') == 'reading_quiz':
+        saved_questions = saved_question_html(owner, material['material_id'])
+        if saved_questions:
+            reading = (hydrated.get('reading_text_body') or '') + (description or '') + saved_questions
     url = next((safe_url(hydrated.get(key)) for key in ('video_iframe_url', 'audio_url', 'reading_iframe_url')
                 if safe_url(hydrated.get(key))), None)
     content_type = None

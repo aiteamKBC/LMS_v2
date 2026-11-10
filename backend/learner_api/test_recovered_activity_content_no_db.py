@@ -98,6 +98,42 @@ class RecoveredActivityContentTests(SimpleTestCase):
                       'https://example.test/\nfile', '<iframe src="https://example.test"></iframe>'):
             self.assertIsNone(recovery.safe_url(value))
 
+    def test_saved_questions_require_exact_owner_and_one_group_without_regrading(self):
+        attempt = {'group_id': 60, 'quiz_score': 80, 'quiz_maximum_score': 100, 'quiz_attempt_number': 1,
+                   'quiz_answers': [{'question_body': '<p>Original question?</p>', 'learner_answer': 'Private answer',
+                                     'correct_answer': 'Grading key'}]}
+        before = deepcopy(attempt)
+        with patch.object(recovery, 'query', return_value=[attempt]) as query:
+            html = recovery.saved_question_html(self.owner, 30)
+        self.assertEqual(query.call_args.args[1], [30, 7])
+        self.assertIn('identity.learner_id=%s', query.call_args.args[0])
+        self.assertIn('history.activity_id=%s', query.call_args.args[0])
+        self.assertIn('Original question?', html)
+        self.assertNotIn('Private answer', html)
+        self.assertNotIn('Grading key', html)
+        self.assertEqual(attempt, before)
+        with patch.object(recovery, 'query', return_value=[attempt, {**attempt, 'group_id': 61}]):
+            self.assertIsNone(recovery.saved_question_html(self.owner, 30))
+
+    def test_question_recovery_does_not_merge_distinct_attempts(self):
+        first = {'group_id': 60, 'quiz_score': 50, 'quiz_maximum_score': 100, 'quiz_attempt_number': 1,
+                 'quiz_answers': [{'question_body': 'First attempt question'}]}
+        best = {**first, 'quiz_score': 90, 'quiz_attempt_number': 2,
+                'quiz_answers': [{'question_body': 'Retained attempt question'}]}
+        with patch.object(recovery, 'query', return_value=[first, best]):
+            html = recovery.saved_question_html(self.owner, 30)
+        self.assertIn('Retained attempt question', html)
+        self.assertNotIn('First attempt question', html)
+
+    def test_saved_questions_replace_missing_question_notice_without_fake_attempt(self):
+        material = {**self.material, 'material_payload': {'quiz_questions': [], 'quiz_body': 'Description'}}
+        with patch.object(recovery, 'query', return_value=[material]), \
+             patch.object(recovery, 'saved_question_html', return_value='<h2>Original questions</h2><p>Question?</p>'):
+            part = recovery.material_parts(self.item, self.owner, self.record)[0]
+        self.assertIn('Question?', part['html'])
+        self.assertNotIn('questions are not currently available', part['html'])
+        self.assertIsNone(part['quiz'])
+
     def test_private_backup_reuses_existing_storage_signer(self):
         material = {**self.material, 'material_backup_status': 'available',
             'material_blob_container': 'private', 'material_blob_name': 'test.pdf',
@@ -108,6 +144,24 @@ class RecoveredActivityContentTests(SimpleTestCase):
         self.assertEqual(part['url'], 'https://example.test/signed')
         self.assertEqual(part['content_type'], 'application/pdf')
         signer.assert_called_once()
+
+    def test_reviewed_source_schema_restores_only_the_original_material_and_quiz(self):
+        snapshot = {'version': 1, 'source': 'old-lms-material-schema', 'material_id': 30, 'quiz_id': 70,
+                    'quiz_questions': [{'question_text': 'Recovered original question?', 'answer_options': []}]}
+        material = {**self.material, 'material_payload': {'quiz_id': 70, 'quiz_questions': []}, 'recovered_snapshot': snapshot}
+        with patch.object(recovery, 'query', return_value=[material]):
+            part = recovery.material_parts(self.item, self.owner, self.record)[0]
+        self.assertEqual(part['quiz']['definition']['questions'][0]['question_text'], 'Recovered original question?')
+        self.assertFalse(part['quiz']['answers_available'])
+        self.assertIsNone(part['quiz']['attempt'])
+        for changed in ({'material_id': 31}, {'quiz_id': 71}, {'source': 'unknown'}, {'version': 2}):
+            other = {**material, 'recovered_snapshot': {**snapshot, **changed}}
+            self.assertEqual(recovery.content_payload(other), material['material_payload'])
+
+    def test_newer_available_material_definition_is_not_replaced_by_recovery_snapshot(self):
+        material = {**self.material, 'recovered_snapshot': {'version': 1, 'source': 'old-lms-material-schema',
+            'material_id': 30, 'quiz_id': 70, 'quiz_questions': [{'question_text': 'Older recovered question'}]}}
+        self.assertEqual(recovery.content_payload(material)['quiz_questions'], self.material['material_payload']['quiz_questions'])
 
     def test_monthly_display_changes_title_only_preserving_signed_learning_facts(self):
         before = deepcopy(self.record)
