@@ -105,6 +105,7 @@ class LiveAttendanceDayTests(unittest.TestCase):
                 12: {
                     "recovery_status": "requested", "attended_seconds": 1800,
                     "attendance_report_id": "report-1", "first_join_at": "first", "last_leave_at": "last",
+                    "teams_attendance_status": "present",
                 }
             }, "now",
         )
@@ -113,6 +114,7 @@ class LiveAttendanceDayTests(unittest.TestCase):
             "learner_profile_id": 12, "learner_email": "learner@example.invalid", "learner_name": "Learner Example",
             "attendance_status": "absent", "recovery_status": "requested", "attended_seconds": 1800,
             "attendance_report_id": "report-1", "first_join_at": "first", "last_leave_at": "last", "calculated_at": "now",
+            "attendance_basis": "staff", "teams_attendance_status": "present",
         })
 
     def test_endpoint_source_targets_only_the_normalized_live_register(self):

@@ -261,18 +261,25 @@ class MigratedProgressCalculatorTests(SimpleTestCase):
                 self.assertEqual(response.status_code, expected)
                 calculator.assert_not_called()
 
-    def test_admin_view_as_post_is_forbidden(self):
+    def test_admin_view_as_can_calculate_with_own_attribution_and_read_only_response(self):
         account = SimpleNamespace(role="admin", subject_type="staff", subject_id=1)
-        request = RequestFactory().post("/?viewAsCoach=" + OWNER, "{}", content_type="application/json")
+        request = RequestFactory().post("/?viewAsCoach=" + OWNER,
+            json.dumps({"progressVersion": "v1"}), content_type="application/json")
         request.login_account = account
         with patch("login.permissions.authenticate_request", return_value=account), \
              patch("coach_api.auth.StaffUser.objects.filter") as staff, \
              patch("coach_api.auth._staff_access", return_value="super-admin"), \
-             patch.object(endpoint, "calculate_snapshot") as calculator:
-            staff.return_value.only.return_value.first.return_value = SimpleNamespace(access="super-admin")
+             patch("coach_api.auth._find_coach_staff", return_value=SimpleNamespace(email=OWNER, id=2)), \
+             patch.object(endpoint, "resolve_context", return_value=SimpleNamespace(version="v1")), \
+             patch.object(endpoint, "calculate_snapshot", return_value=SNAPSHOT) as calculator, \
+             patch.object(endpoint, "persist_snapshot", return_value={"readOnly": True, "progressSnapshot": SNAPSHOT}) as persist:
+            staff.return_value.only.return_value.first.return_value = SimpleNamespace(
+                id=1, username="Test Admin", email="admin@example.invalid", access="super-admin")
             response = endpoint.migrated_review_progress(request, "imported-review:test")
-            self.assertEqual(response.status_code, 403)
-            calculator.assert_not_called()
+            self.assertEqual(response.status_code, 200)
+            calculator.assert_called_once_with(SimpleNamespace(version="v1"), f"Test Admin (for {OWNER})")
+            self.assertEqual(persist.call_args.kwargs, {"preview_only": True})
+            self.assertTrue(json.loads(response.content)["readOnly"])
 
 
 def saved_progress_overlay(template, *, status="in-progress", **changes):
@@ -292,6 +299,16 @@ class MigratedProgressReadTests(SimpleTestCase):
     _patch = reader_fixtures.MigratedPreviewTests._patch
     _set_source_status = reader_fixtures.MigratedPreviewTests._set_source_status
     _get = reader_fixtures.MigratedPreviewTests._get
+
+    def test_admin_view_as_get_offers_only_progress_calculation_on_initialized_review(self):
+        self.view_as.return_value = True
+        self.overlays.return_value.first.return_value = saved_progress_overlay(self.definition_json)
+        with patch.object(service, "calculation_available", return_value=True):
+            result = self._get()
+        self.assertTrue(result["migratedForm"])
+        self.assertTrue(result["readOnly"])
+        self.assertTrue(result["canCalculateProgress"])
+        self.assertFalse(result["canInitialize"])
 
     def test_initialized_get_is_null_or_exact_snapshot_without_calculation(self):
         self.view_as.return_value = False

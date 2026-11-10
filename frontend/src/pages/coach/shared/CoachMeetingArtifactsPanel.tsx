@@ -518,8 +518,7 @@ function AttendanceTracker({ attendance, controls }: { attendance: CoachMeetingA
   const pendingExpected = attendance?.expectedPendingCount ?? expectedRows.filter(row => row.status === 'pending').length;
   const extraCount = attendance?.extraCount ?? trackerRows.filter(row => !row.expected && row.status === 'extra').length;
   const totalDuration = trackerRows.reduce(
-    (sum, row) => sum + (row.attended ? Math.max(0, Number(row.totalAttendanceSeconds || 0)) : 0),
-    0,
+    (sum, row) => sum + Math.max(0, Number(row.totalAttendanceSeconds || 0)), 0,
   );
 
   return (
@@ -585,9 +584,15 @@ function AttendanceTracker({ attendance, controls }: { attendance: CoachMeetingA
                 'rounded-full px-2 py-1 text-[11px] font-bold',
                 trackerStatusClass(row.status),
               )}>
-                {row.coachVerification ? 'Present · Coach verified' : trackerStatusLabel(row.status)}
+                {row.coachVerification && row.status === 'attended' ? 'Present · Coach verified'
+                  : row.expected && row.status === 'absent' && row.totalAttendanceSeconds > 0 && row.totalAttendanceSeconds < 600
+                    ? 'Under 10 min' : trackerStatusLabel(row.status)}
               </span>
-              <span className="text-[11px] font-semibold text-foreground-500">{durationLabel(row.totalAttendanceSeconds)}</span>
+              <span className="text-[11px] font-semibold text-foreground-500">
+                {row.expected && row.status === 'absent' && row.totalAttendanceSeconds > 0 && row.totalAttendanceSeconds < 600
+                  ? `${Math.floor(row.totalAttendanceSeconds / 60)}m ${row.totalAttendanceSeconds % 60}s`
+                  : durationLabel(row.totalAttendanceSeconds)}
+              </span>
               {controls?.(row)}
             </div>
           ))}
@@ -649,6 +654,7 @@ export function CoachMeetingArtifactsPanel({
   storedOnly = false,
   preserveResourcesOnRefreshError = false,
   attendanceLinkKey,
+  onAttendanceLinkChange,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -672,6 +678,7 @@ export function CoachMeetingArtifactsPanel({
   preserveResourcesOnRefreshError?: boolean;
   /** Explicit Coach-only entry point; never enabled by Learner/Employer reuse. */
   attendanceLinkKey?: string;
+  onAttendanceLinkChange?: () => void;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = hasTeamsMeeting || Boolean(event.meetingLink || event.graphWebLink);
@@ -816,7 +823,7 @@ export function CoachMeetingArtifactsPanel({
       ) : null}
 
       {state.status === 'ready' && showAttendance ? attendanceLinkKey
-        ? <ReviewAttendanceEditor key={attendanceLinkKey} eventKey={attendanceLinkKey} attendance={attendance}>
+        ? <ReviewAttendanceEditor key={attendanceLinkKey} eventKey={attendanceLinkKey} attendance={attendance} onLinkChange={onAttendanceLinkChange}>
           {(value, controls) => <AttendanceTracker attendance={value} controls={controls} />}
         </ReviewAttendanceEditor>
         : <AttendanceTracker attendance={attendance} /> : null}

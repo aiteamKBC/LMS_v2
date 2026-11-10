@@ -466,7 +466,9 @@ def scope_snapshot(record, snapshot, *, session=None, meeting_scoped=False, meet
         artifacts, selection_error = select_artifacts(record, snapshot, session=session)
     expected = (snapshot.get('attendance') or {}).get('expectedAttendees') or []
     records = [row for report in reports for row in report.get('records', [])]
-    tracker = build_coach_meeting_attendance_tracker(expected, records, has_report=bool(reports))
+    from .review_attendance_policy import is_review_event
+    tracker = build_coach_meeting_attendance_tracker(expected, records, has_report=bool(reports),
+        review=is_review_event(record))
     attendance = {
         'reports': reports, 'records': records, 'expectedAttendees': expected,
         'reportCount': len(reports),

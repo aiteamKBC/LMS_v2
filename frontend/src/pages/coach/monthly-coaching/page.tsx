@@ -622,7 +622,7 @@ export default function CoachMonthlyCoaching() {
                       <td onClick={(clickEvent) => clickEvent.stopPropagation()}>
                         <div className={styles.actions}>
                           {actions.viewForm ? <button type="button" onClick={() => { void openForm(event); }} className={cn(styles.control, styles.primary, styles.formButton)}>View form</button> : null}
-                          <MeetingActionsMenu learner={event.learner || 'Unknown learner'} actions={[
+                          <MeetingActionsMenu learner={event.learner || 'Unknown learner'} event={event} actions={[
                             ...(actions.view ? [{ label: 'View details', icon: 'ri-eye-line', onSelect: () => openDetails(event) }] : []),
                             ...(actions.presentation && eventDisplayDate(event) ? [{ label: 'View slides', icon: 'ri-file-text-line', onSelect: () => viewSlides(event) }] : []),
                             ...(actions.schedule ? [{ label: actions.schedule, icon: 'ri-calendar-line', onSelect: () => scheduleMeeting(event) }] : []),

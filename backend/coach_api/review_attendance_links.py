@@ -151,9 +151,27 @@ def project_attendance(record, attendance, links):
             result['linkWarning'] = 'Linked Teams evidence changed. Review or undo the previous attendance link.'
             continue
         actual, evidence = candidates[0]
-        target.update(attended=True, status='attended', totalAttendanceSeconds=evidence['seconds'],
-                      actualDisplayName=actual.get('displayName'), actualRecordIds=actual.get('actualRecordIds'),
-                      reportIds=actual.get('reportIds'), coachVerification=public_link(link),
+        from .review_attendance_policy import qualifies
+        combined = evidence['records']
+        direct_ids = list(target.get('actualRecordIds') or [])
+        direct_reports = list(target.get('reportIds') or [])
+        if direct_ids:
+            try:
+                direct = participant_evidence(attendance, target)
+                combined = direct['records'] + evidence['records']
+                seconds = attendance_seconds(combined)
+            except LinkConflict:
+                result['linkWarning'] = 'Learner attendance intervals could not be combined. Review the Teams evidence.'
+                continue
+        else:
+            seconds = evidence['seconds']
+        target.update(attended=qualifies(seconds),
+                      status='attended' if qualifies(seconds) else 'absent',
+                      totalAttendanceSeconds=seconds,
+                      actualDisplayName=actual.get('displayName'),
+                      actualRecordIds=list(dict.fromkeys(direct_ids + list(actual.get('actualRecordIds') or []))),
+                      reportIds=list(dict.fromkeys(direct_reports + list(actual.get('reportIds') or []))),
+                      coachVerification=public_link(link),
                       linkedEmail=actual.get('email'))
         rows.remove(actual)
     expected = [r for r in rows if r.get('expected')]
@@ -276,6 +294,14 @@ def review_attendance_links(request, event_key):
         db = record._state.db or 'default'
         if request.method == 'GET':
             result = context_payload(record, scoped_snapshot(record, overlay), saved_links(record))
+            if overlay is None and record.status == 'in-progress':
+                from .review_rescheduling import require_started_reschedule
+                from .views import LearnerCalendarConflict
+                try:
+                    require_started_reschedule(record, record.status)
+                    result['canReschedule'] = True
+                except LearnerCalendarConflict:
+                    result['canReschedule'] = False
         else:
             try:
                 payload = json.loads(request.body)

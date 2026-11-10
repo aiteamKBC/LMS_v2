@@ -90,7 +90,7 @@ def calculate_snapshot(context, owner):
     )
 
 
-def persist_snapshot(owner, review_id, context, snapshot):
+def persist_snapshot(owner, review_id, context, snapshot, *, preview_only=False):
     with transaction.atomic():
         # Lock before repeating the source/family/ownership gates. Submit,
         # signatures and summary writes already lock this same overlay row.
@@ -106,7 +106,7 @@ def persist_snapshot(owner, review_id, context, snapshot):
         # model's answers, template, intelligence, signatures or documents.
         locked.save(update_fields=["progress_snapshot", "updated_at"])
         from .views import _imported_review_definition
-        definition = _imported_review_definition(owner, review_id)
+        definition = _imported_review_definition(owner, review_id, preview_only=preview_only)
         if not definition:
             raise ProgressError("Migrated review is no longer available for this coach.", status=404)
         return definition

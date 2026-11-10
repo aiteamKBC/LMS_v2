@@ -15,7 +15,7 @@ from django.db import DatabaseError
 from django.test import Client, RequestFactory, SimpleTestCase, override_settings
 from django.urls import path
 
-from . import qr_attendance as qr, qr_attendance_store as store
+from . import live_session_register as register, qr_attendance as qr, qr_attendance_store as store
 
 urlpatterns = [path('curriculum_api/qr-attendance/', qr.attendance)]
 NOW = datetime(2026, 11, 7, 11, tzinfo=utc.utc)
@@ -61,7 +61,18 @@ class QRPolicyTests(SimpleTestCase):
         ):
             self.enterContext(mock.patch.object(store, name, return_value=result))
         self.enterContext(mock.patch.object(store, 'occurrences', side_effect=lambda ids: [o for o in self.occs if o['source_module_id'] in ids]))
+        self.enterContext(mock.patch.object(store, 'occurrences_between', side_effect=lambda ids, start, end: [
+            o for o in self.occs if o['source_module_id'] in ids and start <= o['scheduled_start'] < end]))
         self.enterContext(mock.patch.object(store, 'lecture_components', side_effect=lambda ids: [c for c in self.components if c['module_catalogue_id'] in ids]))
+        self.register_row = self.enterContext(mock.patch.object(store, 'register_row', return_value={
+            'occurrence_id': 'O1', 'live_session_id': 'S1', 'module_catalogue_id': 'M1',
+            'learner_profile_id': 70, 'learner_email': 'student@example.test',
+            'learner_name': 'Synthetic learner', 'recovery_status': 'none',
+            'attended_seconds': 0, 'attendance_report_id': '', 'first_join_at': None,
+            'last_leave_at': None, 'calculated_at': NOW, 'qr_attendance_id': 1,
+            'qr_confirmed_at': NOW,
+        }))
+        self.register_write = self.enterContext(mock.patch.object(register, 'upsert_qr_attendance_register'))
         self.enterContext(mock.patch.object(qr.timezone, 'now', return_value=NOW))
 
     def lectures(self, module_id='M1'):
@@ -285,6 +296,25 @@ class QRPolicyTests(SimpleTestCase):
                 mock.patch.object(store, 'insert_evidence', return_value=(True, NOW)):
             self.assertEqual(store.confirm('student@example.test', 'M1', 'O1'), (True, NOW))
 
+    def test_confirmation_publishes_the_final_register_in_the_same_flow(self):
+        cursor = mock.MagicMock()
+        with mock.patch.object(store.transaction, 'atomic'), \
+                mock.patch.object(store.connection, 'cursor') as open_cursor, \
+                mock.patch.object(store, 'insert_evidence', return_value=(True, NOW)):
+            open_cursor.return_value.__enter__.return_value = cursor
+            self.assertEqual(store.confirm('student@example.test', 'M1', 'O1'), (True, NOW))
+        self.register_row.assert_called_once_with(cursor, 17, 'M1', 'O1')
+        self.register_write.assert_called_once_with(cursor, self.register_row.return_value)
+
+    def test_confirmation_fails_instead_of_claiming_attendance_without_a_unique_profile(self):
+        self.register_row.return_value = None
+        with mock.patch.object(store.transaction, 'atomic'), mock.patch.object(store.connection, 'cursor'), \
+                mock.patch.object(store, 'insert_evidence', return_value=(True, NOW)):
+            with self.assertRaises(qr.AttendanceError) as error:
+                store.confirm('student@example.test', 'M1', 'O1')
+        self.assertEqual(error.exception.code, 'attendance_profile_unavailable')
+        self.register_write.assert_not_called()
+
     def test_invalid_occurrences_and_series_are_excluded_but_completed_is_allowed(self):
         for field in ('status', 'series_status'):
             for status in qr.INVALID:
@@ -325,7 +355,7 @@ class QRPolicyTests(SimpleTestCase):
         result = self.request({'action': 'lookup', 'email': 'Student@example.test'})
         body = json.loads(result.content)
         self.assertEqual(result.status_code, 200)
-        self.assertEqual(set(body), {'modules', 'suggestions', 'moduleCandidates', 'selection'})
+        self.assertEqual(set(body), {'modules', 'suggestions', 'moduleCandidates', 'selection', 'otherGroupLectures'})
         self.assertNotIn('email', result.content.decode())
         self.assertNotIn('join_url', result.content.decode())
         store.students.assert_called_with('student@example.test')
@@ -404,6 +434,62 @@ class QRPolicyTests(SimpleTestCase):
         self.occs[0] = occurrence(offset=4)
         # A running assigned lecture outranks a later normal lecture today.
         self.assertEqual(qr.lookup('student@example.test')['selection']['moduleId'], 'M2')
+
+    def test_assigned_other_group_today_is_suggested_even_before_or_after_session(self):
+        self.mods[1] = module('M2', group='G2', cohort='C1')
+        self.student.learning_plan = [{'moduleId': 'M2', 'assignmentMode': 'explicit'}]
+        for offset in (-4, 4):
+            with self.subTest(offset=offset):
+                self.occs[1] = occurrence('O2', 'M2', offset=offset)
+                self.assertEqual(qr.lookup('student@example.test')['selection'],
+                                 {'moduleId': 'M2', 'occurrenceId': 'O2'})
+                body = json.loads(self.request({'action': 'lectures',
+                    'email': 'student@example.test', 'moduleId': 'M2'}).content)
+                self.assertEqual(body['suggestedOccurrenceId'], 'O2')
+
+    def test_equal_other_group_lectures_today_require_manual_choice(self):
+        self.mods[1] = module('M2', group='G2', cohort='C1')
+        self.student.learning_plan = [{'moduleId': 'M2', 'assignmentMode': 'explicit'}]
+        self.occs[1] = occurrence('O2', 'M2', offset=4)
+        self.occs.append(occurrence('O3', 'M2', offset=5))
+        result = qr.lookup('student@example.test')
+        self.assertEqual(result['selection'], {'moduleId': 'M2', 'occurrenceId': None})
+        self.assertEqual({item['id'] for item in result['suggestions']}, {'O2', 'O3'})
+
+    def test_own_group_today_is_preferred_to_other_group_today(self):
+        self.mods[1] = module('M2', group='G2', cohort='C1')
+        self.student.learning_plan.append({'moduleId': 'M2', 'assignmentMode': 'explicit'})
+        self.occs[0] = occurrence(offset=4)
+        self.occs[1] = occurrence('O2', 'M2', offset=4)
+        self.assertEqual(qr.lookup('student@example.test')['selection'],
+                         {'moduleId': 'M1', 'occurrenceId': 'O1'})
+
+    def test_other_group_suggestions_include_unassigned_eligible_today_only(self):
+        self.mods[1]['title'] = self.mods[0]['title'] + ' - Fri'
+        self.occs[1] = occurrence('O2', 'M2', offset=4)
+        self.occs.append(occurrence('FUTURE', 'M2', offset=48))
+        self.occs.append(occurrence('CANCELLED', 'M2', status='cancelled'))
+        result = qr.lookup('student@example.test')
+        self.assertEqual([(item['moduleId'], item['id']) for item in result['otherGroupLectures']], [('M2', 'O2')])
+        self.assertEqual(result['otherGroupLectures'][0]['matchingModuleIds'], ['M1', 'M2'])
+        self.assertEqual(result['selection'], {'moduleId': 'M1', 'occurrenceId': 'O1'})
+        self.assertEqual(store.occurrences_between.call_count, 1)
+
+    def test_other_group_suggestions_require_known_original_group(self):
+        self.occs[1] = occurrence('O2', 'M2')
+        self.assertEqual(qr.other_group_lectures({'group_id': None}, {}, {}), [])
+        store.occurrences_between.assert_not_called()
+
+    def test_other_group_shared_delivery_uses_its_eligible_module(self):
+        self.mods[1]['shared_source'] = 'M1'
+        result = qr.lookup('student@example.test')
+        self.assertEqual([(item['moduleId'], item['id']) for item in result['otherGroupLectures']], [('M2', 'O1')])
+        self.assertEqual(result['selection'], {'moduleId': 'M1', 'occurrenceId': 'O1'})
+
+    def test_other_group_module_matching_excludes_unrelated_titles(self):
+        self.occs[1] = occurrence('O2', 'M2')
+        result = qr.lookup('student@example.test')
+        self.assertEqual(result['otherGroupLectures'][0]['matchingModuleIds'], ['M2'])
 
     def test_explicit_and_empty_plans_do_not_inherit_unassigned_group_suggestions(self):
         self.student.learning_plan = [{'moduleId': 'M2', 'assignmentMode': 'explicit'}]

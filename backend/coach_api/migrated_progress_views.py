@@ -8,7 +8,7 @@ from django.views.decorators.http import require_POST
 
 from learner_api.review_progress_snapshot import UnresolvedTrainingPlanTarget
 
-from .auth import authenticated_coach_email, coach_access_required
+from .auth import attributed_write_view, authenticated_coach_email, coach_access_required, is_coach_view_as
 from .migrated_progress import (
     ProgressError, calculate_snapshot, persist_snapshot, require_version, resolve_context,
 )
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @coach_access_required
+@attributed_write_view
 @require_POST
 def migrated_review_progress(request, review_id):
     try:
@@ -27,11 +28,16 @@ def migrated_review_progress(request, review_id):
     except (ValueError, UnicodeDecodeError):
         return JsonResponse({"detail": "A JSON object is required."}, status=400)
     owner = authenticated_coach_email(request).strip().casefold()
+    actor = owner
+    if is_coach_view_as(request):
+        admin = request.coach_view_as_admin
+        admin_identity = (getattr(admin, "username", "") or getattr(admin, "email", "") or "").strip() or "Administrator"
+        actor = f"{admin_identity} (for {owner})"
     try:
         context = resolve_context(owner, review_id)
         require_version(payload.get("progressVersion"), context.version)
-        snapshot = calculate_snapshot(context, owner)
-        definition = persist_snapshot(owner, review_id, context, snapshot)
+        snapshot = calculate_snapshot(context, actor)
+        definition = persist_snapshot(owner, review_id, context, snapshot, preview_only=is_coach_view_as(request))
     except ProgressError as exc:
         return JsonResponse({
             "detail": str(exc),

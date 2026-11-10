@@ -8,7 +8,7 @@ from collections import defaultdict
 
 from django.db import DatabaseError, connections, router
 
-from .meeting_outcomes import LEARNER_ATTENDED_SECONDS, _ended_at, _parse_time
+from .meeting_outcomes import _ended_at, _parse_time
 from .models import CoachCalendarEvent, ReviewAttendanceLink
 
 logger = logging.getLogger(__name__)
@@ -104,13 +104,12 @@ def outcome(record, reports, links, *, native=False):
     actual = [row for report in reports for row in report['records']]
     if any(not isinstance(row, dict) for row in actual):
         return 'unavailable'
-    tracker = build_coach_meeting_attendance_tracker(expected, actual, has_report=True)
+    tracker = build_coach_meeting_attendance_tracker(expected, actual, has_report=True, review=True)
     attendance = project_attendance(record, {'reports': reports, **tracker}, links)
     if attendance.get('linkWarning'):
         return 'unavailable'
     learner = next(row for row in attendance['tracker'] if row['expected'] and row['role'] == 'learner')
-    # Preserve the existing display threshold; do not change attendance credits.
-    return 'attended' if learner['totalAttendanceSeconds'] > LEARNER_ATTENDED_SECONDS else 'missed'
+    return 'attended' if learner['status'] == 'attended' else 'missed'
 
 
 def annotate_review_attendance(events, *, now_local):
