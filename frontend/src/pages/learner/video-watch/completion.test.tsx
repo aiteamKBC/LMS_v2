@@ -14,6 +14,7 @@ import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, typ
 import ComponentViewPage, { ComponentBody } from './page';
 import { LearnerProgrammeGate } from '@/components/feature/LearnerProgrammeGate';
 import { downloadReadingPdf } from './readingDownloads';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 const readingPdf = vi.hoisted(() => ({ getPage: vi.fn(), cleanup: vi.fn() }));
 const programmeRead = vi.hoisted(() => ({
   real: {}, loading: false, loadError: '', refresh: vi.fn(),
@@ -130,6 +131,49 @@ const lectureDraft = (kind = 'apprenticeship') => ({
   completedDuringPaidHours: 'yes', dateCompleted: '2026-10-22', otjhConfirmed: true, signedDeclaration: true,
 } as StoredLearningReflectionSubmission);
 
+it.each(['commercial', 'apprenticeship'])('keeps a confirmed %s reflection submitted through real read invalidation', async kind => {
+  const reads = await vi.importActual<typeof import('@/api/learnerDetail')>('@/api/learnerDetail');
+  const reflections = await vi.importActual<typeof import('@/api/reflectionSubmission')>('@/api/reflectionSubmission');
+  clearAllCachedResources();
+  let status = 'draft';
+  const writes: Array<{ submissionMode?: string }> = [];
+  const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === '/learner_api/reflection/submissions/' && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as { submissionMode?: string };
+      writes.push(body);
+      status = body.submissionMode === 'draft' ? 'draft' : 'submitted_for_tutor_review';
+      return new Response(JSON.stringify({ id: 'R-LECTURE', status }), { status: 201 });
+    }
+    if (url.startsWith('/learner_api/learner-detail/')) return new Response(JSON.stringify({
+      ...detail(true), id: '1', components: [first],
+      componentMarkingStatus: status === 'draft' ? {} : { C1: { status } },
+    }));
+    throw new Error(`Unexpected synthetic request: ${url}`);
+  });
+  vi.stubGlobal('fetch', transport);
+  vi.mocked(fetchLearnerDetail).mockImplementation(reads.fetchLearnerDetail);
+  vi.mocked(saveLearningReflectionSubmission).mockImplementation(reflections.saveLearningReflectionSubmission);
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(lectureDraft(kind));
+  try {
+    mount('C1', kind);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add lecture reflection' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+    await screen.findByText('Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.');
+    expect(status).toBe('submitted_for_tutor_review');
+    expect(writes).toHaveLength(1);
+    expect(writes[0].submissionMode).toBe('submit');
+    expect(transport.mock.calls.filter(([url]) => String(url).startsWith('/learner_api/learner-detail/')).length).toBeLessThanOrEqual(3);
+    expect(screen.queryByText('Maximum call stack size exceeded')).not.toBeInTheDocument();
+    expect(submitComponentProgress).not.toHaveBeenCalled();
+    expect(submitVideoProgress).not.toHaveBeenCalled();
+  } finally {
+    cleanup(); clearAllCachedResources(); vi.unstubAllGlobals();
+  }
+});
+
 it.each(['commercial', 'apprenticeship'])('refreshes the %s recording chip after saved watch evidence without resubmitting or remounting playback', async kind => {
   const recording = { ...first, type: 'recording_placeholder', recordingSeriesId: 'SERIES',
     recordingSessionNumber: 1, recordingDate: '2026-10-22' };
@@ -142,11 +186,11 @@ it.each(['commercial', 'apprenticeship'])('refreshes the %s recording chip after
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...original, componentProgress: [{ ...progress,
     timeTaken: null, reportedTime: '150 minutes', timeTrackingSource: 'verified_recording_watch' }] } as LearnerDetail);
   act(() => invalidateLearnerReads());
-  await waitFor(() => expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', force: true }));
+  await waitFor(() => expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', revalidate: true }));
   expect(await screen.findByText('Completed')).toBeVisible();
   expect(player.isConnected).toBe(true);
   expect(screen.getByRole('button', { name: 'Simulate recording watch' })).toBe(player);
-  expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', force: true });
+  expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', revalidate: true });
   expect(submitComponentProgress).not.toHaveBeenCalled();
   expect(submitVideoProgress).not.toHaveBeenCalled();
 });

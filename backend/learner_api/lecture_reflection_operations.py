@@ -59,8 +59,10 @@ def preserve_time_history(incoming, stored, receipt, *, status=None, submitted_a
                           feedback=None, reviewer=None, reviewed_at=None):
     """A draft or old client cannot clear history, receipts or snapshots."""
     pending = requested_operation(incoming)
-    leaving_submission = status and status != 'draft' and incoming.get('submissionMode') == 'draft' and (pending or stored.get(RECEIPT))
-    for key in (HISTORY, ATTEMPTS, OPERATION, PENDING):
+    leaving_submission = status and status != 'draft' and incoming.get('submissionMode') == 'draft' and (
+        pending or stored.get(RECEIPT) or (incoming.get('reflectionDraftIntent') == 'manual'
+            and incoming.get('activityType') in {'session', 'recording', 'video'}))
+    for key in (HISTORY, ATTEMPTS, OPERATION, PENDING, 'reflectionDraftIntent'):
         incoming.pop(key, None)
     if pending and incoming.get('submissionMode') == 'draft':
         seconds = incoming.get('additionalReflectionSeconds', 0)

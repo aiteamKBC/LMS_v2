@@ -68,6 +68,8 @@ export interface LearningReflectionSubmissionInput {
   qualityScore: number;
   /** Assignment wizard fields. Other reflection flows omit these. */
   submissionMode?: 'draft' | 'submit';
+  /** A deliberate Save draft click; background autosaves omit this intent. */
+  reflectionDraftIntent?: 'manual';
   assignmentAnswer?: string;
   whatYouLearned?: string;
   businessImpact?: string;

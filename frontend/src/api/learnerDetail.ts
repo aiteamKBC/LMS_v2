@@ -356,7 +356,7 @@ export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string, sc
 export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string; quizView?: boolean } = {}): Promise<LearnerDetail> {
   if (options.force) invalidateLearnerDetailCache(kind, id);
   if (options.quizView) return quizDetailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
-  if (options.componentId) return componentResource.read(JSON.stringify([kind, id, options.componentId]));
+  if (options.componentId) return componentResource.read(JSON.stringify([kind, id, options.componentId]), { revalidate: options.revalidate });
   return detailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
 }
 

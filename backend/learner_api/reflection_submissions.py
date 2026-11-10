@@ -337,6 +337,10 @@ def _submit_reflection(request):
                     # save/coach decision. Never downgrade or overwrite that work.
                     return JsonResponse({'id': str(existing[6]), 'status': existing[0],
                         'lectureReflectionTime': replay, 'submissionAttempts': []})
+                if (activity_type in {'session', 'recording', 'video'} and existing
+                        and existing[0] == 'submitted_for_tutor_review' and submission_mode == 'draft'
+                        and not payload.get('reflectionTimeOperation') and payload.get('reflectionDraftIntent') != 'manual'):
+                    return _error('This reflection is already submitted for tutor review. Refresh to view its saved status before editing.', 409)
                 if stored.get('submissionOrigin') == 'coach' and activity_type == 'extra_activity':
                     return _error('This activity was recorded by your coach and cannot be edited here.', 409)
                 imported = stored.get("submissionOrigin") == "imported_legacy"

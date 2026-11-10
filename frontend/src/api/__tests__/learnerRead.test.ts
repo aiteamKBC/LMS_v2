@@ -262,6 +262,23 @@ describe('learner data transport', () => {
     expect(peekLearnerDetail('commercial', '125')).toBeUndefined();
   });
 
+  it('revalidates the current activity without broadcasting another invalidation', async () => {
+    const { subscribeLearnerReadInvalidation } = await import('../learnerRead');
+    const notices = vi.fn();
+    const unsubscribe = subscribeLearnerReadInvalidation(notices);
+    const activity = (version: number, id = '125', componentId = 'C1') => ({ id, components: [{ componentId }], version });
+    vi.mocked(fetch).mockResolvedValueOnce(reply(activity(1))).mockResolvedValueOnce(reply(activity(2)));
+    try {
+      expect(await fetchLearnerDetail('commercial', '125', { componentId: 'C1' })).toMatchObject({ version: 1 });
+      expect(await fetchLearnerDetail('commercial', '125', { componentId: 'C1' })).toMatchObject({ version: 1 });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(await fetchLearnerDetail('commercial', '125', { componentId: 'C1', revalidate: true })).toMatchObject({ version: 2 });
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(notices).not.toHaveBeenCalled();
+      expect(await fetchLearnerDetail('commercial', '125', { componentId: 'C1' })).toMatchObject({ version: 2 });
+    } finally { unsubscribe(); }
+  });
+
   it('retries malformed activity data without reusing the invalid snapshot', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(reply({ activities: null })).mockResolvedValueOnce(reply({ activities: [] }));
     await expect(fetchStudentActivity('commercial', '125')).rejects.toThrow(/invalid student activity/);
