@@ -20,7 +20,14 @@ if os.environ.get("NEON_PARENT_BRANCH_ID"):
 print(json.dumps({"branch": branch, "endpoints": [{"type": "read_write"}]}))
 PY
 )
-    resp=$(curl -sf "${AUTH[@]}" -H "Content-Type: application/json" -X POST "$API/branches" -d "$body")
+    # Neon's own error message (no key or password in it) when it refuses
+    code=$(curl -sS -o /tmp/neon_resp.json -w '%{http_code}' "${AUTH[@]}" \
+      -H "Content-Type: application/json" -X POST "$API/branches" -d "$body")
+    if [ "${code:0:1}" != 2 ]; then
+      echo "::error::Neon refused to create the test branch: HTTP $code $(head -c 500 /tmp/neon_resp.json)"
+      exit 1
+    fi
+    resp=$(cat /tmp/neon_resp.json); rm -f /tmp/neon_resp.json
     id=$(python3 -c 'import json,sys;print(json.load(sys.stdin)["branch"]["id"])' <<<"$resp")
     echo "id=$id" >> "$GITHUB_OUTPUT"
     echo "Created Neon branch $id (schema only)"
