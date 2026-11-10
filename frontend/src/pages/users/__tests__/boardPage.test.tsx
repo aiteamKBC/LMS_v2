@@ -159,6 +159,54 @@ describe('the enrolment board', () => {
     expect(screen.queryByRole('region', { name: 'Subscription' })).not.toBeInTheDocument();
   });
 
+  it.each(['/users/20', '/users/20?source=commercial'])(
+    'hides the onboarding header badge for Active learners without changing their onboarding details (%s)',
+    async (path) => {
+      const board = makeBoard();
+      board.programme = {
+        ...board.programme,
+        status: 'Active',
+        onboardingStatus: 'Not started',
+        onboardingCompletedAt: '01/08/2026',
+      };
+      api.fetchEnrolmentBoard.mockResolvedValue(board);
+      api.fetchCommercialBoard.mockResolvedValue(board);
+      renderBoard(path);
+
+      const header = await screen.findByRole('region', { name: 'Learner overview' });
+      expect(within(header).queryByText(/^Onboarding:/)).not.toBeInTheDocument();
+      expect(within(header).getByText('Enrolment complete')).toBeVisible();
+      const programme = screen.getByRole('region', { name: 'Programme' });
+      expect(within(programme).getByText('Not started')).toBeVisible();
+      expect(within(programme).getByText('01/08/2026')).toBeVisible();
+      expect(board.programme.onboardingStatus).toBe('Not started');
+      expect(api.updateEnrolmentUser).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['Fresh user', 'Onboarding', 'Delivery', 'Ready to enrol', 'On break', 'Withdrawn', 'Completed'])(
+    'keeps the onboarding header badge for the %s programme status',
+    async (status) => {
+      const board = makeBoard();
+      board.programme.status = status;
+      api.fetchEnrolmentBoard.mockResolvedValue(board);
+      renderBoard();
+
+      const header = await screen.findByRole('region', { name: 'Learner overview' });
+      expect(within(header).getByText('Onboarding: In progress')).toBeVisible();
+    },
+  );
+
+  it('recognizes Active regardless of whitespace and letter case', async () => {
+    const board = makeBoard();
+    board.programme.status = '  aCtIvE  ';
+    api.fetchEnrolmentBoard.mockResolvedValue(board);
+    renderBoard();
+
+    const header = await screen.findByRole('region', { name: 'Learner overview' });
+    expect(within(header).queryByText(/^Onboarding:/)).not.toBeInTheDocument();
+  });
+
   it('switches tabs from the keyboard and keeps the tab in the address', async () => {
     renderBoard();
     await screen.findByRole('heading', { name: 'Sam Example' });
@@ -202,6 +250,7 @@ describe('the enrolment board', () => {
     await screen.findByRole('heading', { name: 'Sam Example' });
     expect(api.fetchCommercialBoard).toHaveBeenCalledWith('20');
     expect(screen.queryByRole('tab', { name: /Documents/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Onboarding: In progress')).toBeVisible();
   });
 
   it('filters the activity timeline', async () => {
