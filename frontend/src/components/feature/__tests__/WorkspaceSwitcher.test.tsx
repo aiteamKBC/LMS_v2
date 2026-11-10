@@ -144,6 +144,19 @@ describe('WorkspaceSwitcher', () => {
     expect(switchRole).not.toHaveBeenCalled();
   });
 
+  it('opens My Courses from Enrolment and marks it current without switching roles', async () => {
+    signedIn();
+    const user = userEvent.setup();
+    renderAt('/users');
+    await user.click(trigger());
+    await user.click(screen.getByRole('menuitem', { name: /My Courses/ }));
+    expect(path()).toBe('/my-courses');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(switchRole).not.toHaveBeenCalled();
+    await user.click(trigger());
+    expect(screen.getByRole('menuitem', { name: /My Courses/ })).toHaveAttribute('aria-current', 'true');
+  });
+
   it('ticks the section you are in rather than offering it as a move', async () => {
     signedIn();
     const user = userEvent.setup();

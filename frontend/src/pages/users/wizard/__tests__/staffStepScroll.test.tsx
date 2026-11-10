@@ -8,8 +8,8 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 
-vi.mock('@/components/feature/WorkspaceShell', () => ({
-  WorkspaceShell: ({ children }: { children: ReactNode }) => (
+vi.mock('@/pages/users/presentation/EnrolmentWorkspaceShell', () => ({
+  EnrolmentWorkspaceShell: ({ children }: { children: ReactNode }) => (
     <div data-testid="scroller" className="workspace-main">{children}</div>
   ),
 }));

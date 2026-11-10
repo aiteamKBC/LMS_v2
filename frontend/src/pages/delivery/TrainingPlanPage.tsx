@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { EnrolmentWorkspaceShell as WorkspaceShell } from '@/pages/users/presentation/EnrolmentWorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from '@/hooks/useToast';
 import { Hero, inputClass, btnPrimary, btnSecondary, EmptyState } from '@/pages/users/components/ui';

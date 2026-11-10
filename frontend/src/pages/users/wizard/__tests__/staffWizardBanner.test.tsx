@@ -13,8 +13,8 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 
-vi.mock('@/components/feature/WorkspaceShell', () => ({
-  WorkspaceShell: ({ children }: { children: ReactNode }) => <div className="workspace-main">{children}</div>,
+vi.mock('@/pages/users/presentation/EnrolmentWorkspaceShell', () => ({
+  EnrolmentWorkspaceShell: ({ children }: { children: ReactNode }) => <div className="workspace-main">{children}</div>,
 }));
 vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/api/enrolmentUsers', () => ({
@@ -27,7 +27,7 @@ vi.mock('@/api/commercialUsers', () => ({ fetchCommercialBoard: vi.fn(), updateC
 vi.mock('../WizardShell', () => ({ WizardShell: ({ header }: { header: ReactNode }) => <>{header}</> }));
 vi.mock('../WizardContext', () => ({
   WizardProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  useWizard: () => ({ userId: '41', isCommercial: false, board: { user: { name: 'Test enrolment student', reference: 'Test org' } }, draft: {}, saveIlr: vi.fn() }),
+  useWizard: () => ({ userId: '41', isCommercial: false, board: { user: { name: 'Test enrolment student', reference: 'Test org' }, contact: { email: 'student@example.test' }, programme: { name: 'Test programme' } }, draft: {}, saveIlr: vi.fn() }),
 }));
 
 import WizardPage from '../WizardPage';
@@ -53,7 +53,9 @@ describe('staff wizard banner', () => {
 
     expect(banner).toHaveClass('bg-primary-800');
     expect(banner.getAttribute('style') ?? '').not.toMatch(/primary-9[05]0|gradient/);
-    expect(banner).toHaveTextContent('You are viewing: Test enrolment student (Test org)');
+    expect(screen.getByRole('heading', { level: 1, name: 'Test enrolment student' })).toBeInTheDocument();
+    expect(banner).toHaveTextContent('student@example.test · Test programme');
+    expect(banner).toHaveTextContent('Test org · Enrolment Wizard');
   });
 
   it('has an outlined Close wizard button that leaves the wizard', async () => {

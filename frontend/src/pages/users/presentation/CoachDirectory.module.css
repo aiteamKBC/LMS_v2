@@ -1,0 +1,164 @@
+.directory { display: grid; gap: 1.25rem; color: #2d2237; }
+.panel { min-width: 0; padding: 0; border: 1px solid #ded4eb; border-radius: 1rem; background: #fcfbfd; overflow: hidden; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .75rem 1rem; border-bottom: 1px solid #ded4eb; }
+.resultCount { flex: 1; margin: 0 0 0 auto; color: #635a64; font-size: .75rem; text-align: right; }
+.infoStrip { display: flex; align-items: flex-start; gap: .5rem; margin: 0; padding: .5rem 1rem; border-bottom: 1px solid #e8e1ef; background: #f3f0f7; color: #5e565e; font-size: .75rem; line-height: 1.4; }
+.infoStrip svg { flex-shrink: 0; margin-top: .0625rem; color: #46636a; }
+.errorState { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .625rem; min-height: 15rem; margin: 1rem; padding: 2.5rem 1rem; border: 1px dashed #d5c5e6; border-radius: 1rem; background: #fff; text-align: center; }
+.errorState h3 { margin: 0; color: #201a23; font-size: 1rem; font-weight: 600; }
+.errorState p { max-width: 100%; margin: 0 0 .5rem; color: #6a6069; font-size: .875rem; overflow-wrap: anywhere; }
+.sectionTitle, .editorHeading { display: flex; align-items: center; gap: .75rem; }
+.headingIcon { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; flex-shrink: 0; border-radius: .75rem; color: #62378a; background: #efe6fa; }
+.sectionTitle h2, .editor h2 { margin: 0; color: #2e2238; font-size: 1rem; font-weight: 600; }
+.sectionTitle p { margin: .25rem 0 0; color: #7b6f84; font-size: .75rem; }
+.search { display: flex; align-items: center; gap: .5rem; width: 18rem; max-width: 100%; padding: 0 .875rem; border: 1px solid #ded4eb; border-radius: 999px; background: white; color: #9986a7; }
+/* The enclosing search label owns the frame and keyboard focus indicator. */
+:global(.dashboard-theme .workspace-main) .directory .search input { min-width: 0; width: 100%; min-height: 2.25rem; padding: .375rem 0; border: 0 !important; border-radius: 0; background: transparent !important; box-shadow: none !important; outline: none !important; font-size: .8125rem; }
+.search:focus-within { outline: 3px solid var(--action-primary-focus); outline-offset: 2px; }
+.grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .75rem; padding: 1rem; }
+.grid:empty { display: none; }
+.panel:has(.moreActions[open]) { overflow: visible; }
+.coachCard:has(.moreActions[open]) { z-index: var(--enrolment-z-menu, 10); }
+.viewToggle { display: flex; gap: .25rem; padding: .25rem; border: 1px solid #ded4eb; border-radius: .875rem; background: #f7f3fb; }
+.viewToggle button { display: inline-flex; align-items: center; justify-content: center; gap: .375rem; min-height: 2rem; padding: .375rem .625rem; border-radius: .625rem; color: #796987; font-size: .75rem; }
+.viewToggle button[aria-pressed="true"] { border: 1px solid #d5c5e6; background: #fcfbfd; color: #201a23; }
+.viewToggle button:focus-visible { outline: 3px solid var(--action-primary-focus); outline-offset: 2px; }
+.card { display: flex; flex-direction: column; min-width: 0; padding: 1.25rem; border: 1px solid #ded4eb; border-radius: 1rem; background: white; }
+.cardHeading { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.avatar { display: grid; place-items: center; width: 2.75rem; height: 2.75rem; flex-shrink: 0; border: 1px solid #dfd0ed; border-radius: 999px; background: #efe5fa; color: #5d2e88; font-size: .875rem; font-weight: 600; }
+.cardHeading > div { min-width: 0; flex: 1; }
+.card h3 { margin: 0; color: #302039; font-size: 1rem; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.cardHeading p { margin: .25rem 0 0; color: #81758a; font-size: .6875rem; }
+.publicBadge { padding: .25rem .5rem; border: 1px solid #cee9dd; border-radius: 999px; background: #f0faf5; color: #2f765b; font-size: .625rem; font-weight: 500; }
+.pageAddress { display: flex; align-items: flex-start; gap: .5rem; margin: 1rem 0; padding: .625rem .75rem; border: 1px solid #e7dff0; border-radius: .75rem; background: #f8f4fc; color: #76548d; font-size: .6875rem; }
+.pageAddress svg { flex-shrink: 0; }
+.pageAddress span { min-width: 0; overflow-wrap: anywhere; }
+.sessions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .75rem .5rem; margin: 0 0 1.25rem; padding: 0; list-style: none; }
+.sessions li { display: flex; align-items: flex-start; gap: .375rem; color: #9b90a4; font-size: .6875rem; line-height: 1.5; }
+.sessions li > span:first-child { display: grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; border-radius: 999px; background: #f0edf4; }
+.sessions li[data-available="true"] { color: #66546f; }
+.sessions li[data-available="true"] > span:first-child { background: #e5f5ee; color: #2e8662; }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2.25rem; padding: .5rem .75rem; border: 1px solid #ded4eb; border-radius: 999px; background: white; color: #5d2e88; font: 500 .75rem/1.5 var(--font-body); text-decoration: none; cursor: pointer; }
+.button:hover:not(:disabled) { background: #f5edfc; border-color: #b99bd4; }
+.primary { background: #5d2e88; border-color: #5d2e88; color: white; }
+.primary:hover:not(:disabled) { background: #492366; border-color: #492366; }
+.button:disabled { opacity: .55; cursor: not-allowed; }
+.button:focus-visible { outline: 3px solid var(--action-primary-focus); outline-offset: 3px; }
+.openPage { justify-content: space-between; margin-top: auto; }
+.cardActions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .875rem; padding-top: .875rem; border-top: 1px solid #e7dff0; }
+.cardActions .button { flex: 1 0 auto; font-size: .6875rem; }
+.button.remove { border-color: #f0d7dc; background: #fff7f8; color: #a3394a; }
+.button.remove:hover:not(:disabled) { border-color: #dd9aa6; background: #ffedf0; }
+.editor { display: flex; flex-direction: column; gap: 1.25rem; height: 100%; overflow-y: auto; padding: 0; background: transparent; color: #302437; font-family: var(--font-body); }
+.editorHeading { position: sticky; top: 0; z-index: 1; min-height: 4.625rem; padding: .75rem 4rem .75rem 1rem; border-bottom: 1px solid #ded4eb; background: #faf7ff; }
+.editor .editorHeading h2 { font-size: .9375rem; }
+.editorHeading .headingIcon { width: 2.25rem; height: 2.25rem; border-radius: 50%; background: #5d2e88; color: white; }
+.editor > p, .editor > label { margin: 0 1rem; }
+.editor > div:not(.editorHeading):not(:last-child) { grid-template-columns: minmax(0,1fr); gap: 1rem; padding: 0 1rem; }
+.editor > div:last-child { position: sticky; bottom: 0; margin-top: auto; padding: .875rem 1rem; border-top: 1px solid #ded4eb; background: #faf7ff; }
+.editor input { min-height: 2.25rem; padding: .375rem .75rem; border-color: #ded4eb; border-radius: 1rem; background: #ffffffd9; font-size: .875rem; font-weight: 400; }
+.editorError { display: grid; gap: .5rem; padding: .75rem; border: 1px solid #ecc3cc; border-radius: .75rem; background: #fff4f5; color: #9a2e45; font-size: .8125rem; }
+.editorError .button { justify-self: start; }
+.editor label { color: #5c476c; }
+.directory .editor input { border-color: #ded4eb; border-radius: .875rem; background: white; font-weight: 400; }
+.editor input:focus-visible { outline: 3px solid var(--action-primary-focus); outline-offset: 2px; }
+.empty { margin: 1rem; padding: 2.5rem 1rem; border: 1px dashed #ded4eb; border-radius: 1rem; background: #fff; color: #81718d; text-align: center; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 1279px) { .grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (min-width: 1024px) {
+  .grid[data-view="list"] { grid-template-columns: minmax(0,1fr); }
+  .grid[data-view="list"] .card { display: grid; grid-template-columns: minmax(10rem,1fr) minmax(13rem,1.5fr) minmax(12rem,1fr); gap: .75rem 1.25rem; align-items: start; }
+  .grid[data-view="list"] .cardHeading { grid-column: 1; grid-row: 1 / 3; }
+  .grid[data-view="list"] .publicBadge { margin-left: 0; }
+  .grid[data-view="list"] .pageAddress { grid-column: 2; grid-row: 1; margin: 0; }
+  .grid[data-view="list"] .sessions { grid-column: 2; grid-row: 2; margin: 0; }
+  .grid[data-view="list"] .openPage { grid-column: 3; grid-row: 1; }
+  .grid[data-view="list"] .cardActions { grid-column: 3; grid-row: 2; margin: 0; padding: 0; border: 0; }
+}
+@media (max-width: 760px) { .grid { grid-template-columns: minmax(0,1fr); padding: .75rem; } .search { width: 100%; } .sectionTitle { align-items: flex-start; } .button { min-height: 2.75rem; } .resultCount { margin-left: 0; text-align: left; } .toolbar { padding: .75rem; } .editor input { min-height: 2.75rem; } }
+
+/* Enrollment directory: compact rows and the matching card view. */
+header.hero::before { background-image: url('/assets/enrolment-coach-directory-banner.png'); }
+.panel { container-type: inline-size; }
+.toolbar { gap: .5rem; padding: .75rem 1rem; }
+.search { width: 16.5rem; border-radius: 1rem; }
+.selectControl { display: inline-flex; align-items: center; gap: .5rem; max-width: 100%; min-width: 0; padding: 0 .75rem; border: 1px solid #ded4eb; border-radius: 1rem; background: #fff; color: #8b8179; }
+:global(.dashboard-theme .workspace-main) .directory .selectControl select { width: 100%; min-width: 0; min-height: 2.25rem; padding: .375rem 1.25rem .375rem 0; border: 0 !important; border-radius: 0; background: transparent; box-shadow: none; color: #443b3e; font: 400 .8125rem var(--font-body); cursor: pointer; }
+.selectControl > svg { flex-shrink: 0; }
+.selectControl:focus-within { outline: 3px solid var(--action-primary-focus); outline-offset: 2px; }
+.selectControl select:focus-visible { outline: none; }
+.resultCount { white-space: nowrap; font-size: .75rem; }
+.grid { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 1rem; gap: .75rem; }
+.grid[data-view="list"] { grid-template-columns: minmax(0, 1fr); }
+.coachCard { position: relative; display: grid; align-content: start; gap: .875rem; min-width: 0; padding: 1rem; border: 1px solid #e6d5ff; border-radius: 1rem; background: linear-gradient(135deg, #f2eaff, #faf6fd 62%, #fffcf3); color: #615958; }
+.coachIdentity { display: flex; align-items: center; gap: .75rem; min-width: 0; padding-right: .75rem; }
+.coachIdentity > div { min-width: 0; }
+.directory .coachCard .coachIdentity h3 { margin: 0; color: #2f282c; font-size: .875rem; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.coachIdentity p { margin: .125rem 0 0; color: #847973; font-size: .75rem; }
+.coachAvatar { display: grid; place-items: center; width: 2.75rem; height: 2.75rem; flex-shrink: 0; border: 1px solid #e4d2fa; border-radius: 50%; background: #f0e7ff; box-shadow: inset 0 0 0 .375rem #faf6ff; color: #5c3677; font-size: .6875rem; font-weight: 700; }
+.publicDot { position: absolute; top: 1.25rem; right: 1rem; width: .5rem; height: .5rem; border-radius: 50%; background: #0cba8a; box-shadow: 0 0 0 .25rem #0cba8a26; }
+.fieldLabel { margin: 0 0 .5rem; color: #796f69; font-size: .625rem; font-weight: 700; letter-spacing: .035em; line-height: 1.4; text-transform: uppercase; }
+.bookingSummary { min-width: 0; padding-top: .875rem; border-top: 1px solid #e8dafa; }
+.enabledCount { display: flex; align-items: center; gap: .375rem; margin: 0 0 .5rem; color: #958985; font-size: .75rem; font-weight: 600; }
+.enabledCount > span { width: .5rem; height: .5rem; flex-shrink: 0; border-radius: 50%; background: currentColor; }
+.enabledCount[data-enabled="true"] { color: #008e72; }
+.bookingDescription { display: flex; flex-wrap: wrap; align-items: baseline; gap: .375rem .5rem; min-width: 0; font-size: .75rem; line-height: 1.5; }
+.bookingDescription > span { min-width: 0; overflow-wrap: anywhere; }
+.bookingDetails { min-width: 0; }
+.bookingDetails > summary { width: fit-content; color: #36565d; font-size: .6875rem; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; list-style: none; }
+.bookingDetails > summary::-webkit-details-marker { display: none; }
+.bookingDetails[open] { flex-basis: 100%; }
+.bookingDetails ul { display: grid; gap: .375rem; margin: .625rem 0 0; padding: .625rem .75rem; border: 1px solid #e2d6ed; border-radius: .625rem; background: #fffc; list-style: none; }
+.bookingDetails li { color: #92868d; font-size: .75rem; }
+.bookingDetails a { color: #5d2e88; text-decoration: underline; text-underline-offset: 2px; }
+.bookingAddress { min-width: 0; }
+.bookingAddress > div { display: flex; align-items: center; gap: .5rem; min-width: 0; color: #7c746e; }
+.bookingAddress > div > svg { flex-shrink: 0; }
+.bookingAddress a { min-width: 0; color: #365158; font: .6875rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; text-decoration: none; }
+.bookingAddress a:hover { text-decoration: underline; }
+.copyButton { display: grid; place-items: center; width: 1.75rem; height: 1.75rem; flex-shrink: 0; border-radius: .5rem; color: #8b8179; cursor: pointer; }
+.copyButton:hover { background: #ece2f6; color: #5d2e88; }
+.coachActions { display: flex; align-items: center; justify-content: flex-end; gap: .375rem; min-width: 0; margin-top: .125rem; padding-top: .75rem; border-top: 1px solid #e8dafa; }
+.coachActions .button { min-height: 2.25rem; padding: .375rem .75rem; background: #fffdf9; color: #554a48; }
+.coachActions .iconButton { width: 2.25rem; padding: 0; border-radius: 50%; }
+.coachActions .preview { gap: .375rem; font-size: .75rem; }
+.moreActions { position: relative; }
+.moreActions > summary { list-style: none; cursor: pointer; }
+.moreActions > summary::-webkit-details-marker { display: none; }
+.moreActions > div { position: absolute; z-index: var(--enrolment-z-menu, 10); right: 0; bottom: calc(100% + .5rem); display: grid; gap: .25rem; width: max-content; max-width: min(17rem, 70vw); padding: .5rem; border: 1px solid #dcd0e7; border-radius: .75rem; background: #fff; box-shadow: 0 8px 24px #35204420; }
+.moreActions button { display: flex; align-items: center; gap: .5rem; min-height: 2.25rem; padding: .5rem .625rem; border-radius: .5rem; color: #5d2e88; font-size: .75rem; text-align: left; cursor: pointer; }
+.moreActions button:last-child { color: #ad394d; }
+.moreActions button:hover { background: #f6effb; }
+.moreActions button:disabled { opacity: .5; cursor: not-allowed; }
+.grid[data-view="list"] .coachCard { grid-template-columns: minmax(10rem, 1fr) minmax(11rem, 1fr) minmax(13rem, 2fr) auto; align-items: center; gap: .75rem 1rem; min-height: 5.5rem; border-color: #e2d9ec; background: #fefcff; }
+.grid[data-view="list"] .bookingSummary { padding: 0; border: 0; }
+.grid[data-view="list"] .bookingDescription { flex-wrap: wrap; }
+.grid[data-view="list"] .bookingDescription > span { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid[data-view="list"] .coachActions { margin: 0; padding: 0 0 0 .25rem; border: 0; }
+.grid[data-view="list"] .coachActions .preview { border-color: #5d2e88; background: #5d2e88; color: #fff; }
+.grid[data-view="list"] .coachAvatar { width: 2.5rem; height: 2.5rem; box-shadow: none; }
+.grid[data-view="list"] .coachAvatar[data-color="1"] { border-color: #ffe0a2; background: #fff2d6; color: #87631b; }
+.grid[data-view="list"] .coachAvatar[data-color="2"] { border-color: #c7e4e8; background: #e0f1f3; color: #3e6067; }
+:is(.coachCard, .toolbar) :is(a, button, summary):focus-visible { outline: 3px solid var(--action-primary-focus); outline-offset: 3px; }
+@container (max-width: 56rem) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid[data-view="list"] .coachCard { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+  .grid[data-view="list"] .bookingAddress { grid-column: 1 / -1; }
+  .grid[data-view="list"] .coachActions { grid-column: 1 / -1; padding-top: .75rem; border-top: 1px solid #e8dafa; }
+  .toolbar .resultCount { flex: 1; }
+}
+@container (max-width: 38rem) {
+  .grid { grid-template-columns: minmax(0, 1fr); padding: .75rem; }
+  .toolbar { padding: .75rem; }
+  .search { width: 100%; }
+  .selectControl { flex: 1; padding-inline: .625rem; }
+  .selectControl > svg { display: none; }
+  .toolbar .resultCount { flex-basis: 100%; margin: .25rem 0; text-align: left; }
+  .viewToggle { width: 100%; }
+  .viewToggle button { flex: 1; min-height: 2.75rem; }
+  .coachActions .button, .coachActions .iconButton { min-height: 2.75rem; }
+  .coachActions .iconButton { width: 2.75rem; }
+  .copyButton { width: 2.75rem; height: 2.75rem; }
+  :global(.dashboard-theme .workspace-main) .directory .selectControl select { min-height: 2.75rem; padding-right: .25rem; font-size: .75rem; }
+}
+@media (max-width: 639px) { .hero::after { background: linear-gradient(90deg, #241032ed, #32104bbb 70%, #32104b88); } }

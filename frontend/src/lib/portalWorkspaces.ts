@@ -60,6 +60,14 @@ export const PORTAL_WORKSPACES: PortalWorkspace[] = [
     blurb: 'Accounts, access control and platform health',
   },
   {
+    slug: 'my-courses',
+    label: 'My Courses',
+    icon: 'ri-graduation-cap-line',
+    path: '/my-courses',
+    demoEmail: null,
+    blurb: 'Your personal courses, learning and progress',
+  },
+  {
     slug: 'coach',
     label: 'Coach',
     icon: 'ri-user-heart-line',

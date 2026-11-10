@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { EnrolmentWorkspaceShell as WorkspaceShell } from '../presentation/EnrolmentWorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
 import { useToast } from '@/hooks/useToast';

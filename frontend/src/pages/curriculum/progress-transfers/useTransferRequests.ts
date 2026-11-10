@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { approveTransferRequest, getTransferRequests, type AdminTransfers, type TransferDecisions } from '@/api/progressTransfer';
 
-/** Keep the service's paginated order and identities; names never join requests. */
+/** Read every offset before filtering locally; request IDs remain the identity. */
 export function useTransferRequests() {
   const [data, setData] = useState<AdminTransfers | null>(null);
   const [reading, setReading] = useState<'refresh' | 'more' | null>('refresh');
@@ -29,15 +29,33 @@ export function useTransferRequests() {
     setReading(append ? 'more' : 'refresh');
     setError('');
     try {
-      const next = await getTransferRequests(offset, controller.signal);
-      if (controller.signal.aborted || !mounted.current) return;
-      if (!Array.isArray(next.requests)) throw new Error('The transfer request list could not be verified.');
       const requests = new Map((append ? current.current?.requests ?? [] : []).map(row => [row.requestId, row]));
-      next.requests.forEach(row => requests.set(row.requestId, row));
-      update({ ...next, requests: [...requests.values()] });
-      if (!append) setNeedsRefresh(false);
+      const visited = new Set<number>();
+      let cursor: number | null = offset;
+      while (cursor !== null) {
+        if (!Number.isSafeInteger(cursor) || cursor < 0 || visited.has(cursor)) {
+          throw new Error('The remaining requests could not be verified. Refresh to try again.');
+        }
+        visited.add(cursor);
+        const next: AdminTransfers = await getTransferRequests(cursor, controller.signal);
+        if (controller.signal.aborted || !mounted.current) return;
+        if (!Array.isArray(next.requests) || !(next.nextOffset === null || (Number.isSafeInteger(next.nextOffset) && next.nextOffset > cursor))) {
+          throw new Error('The transfer request list could not be verified.');
+        }
+        next.requests.forEach(row => requests.set(row.requestId, row));
+        // Keep the previous complete list during refresh until its replacement
+        // is complete. Initial/continued reads can expose their progress.
+        if (!current.current || append || current.current.nextOffset !== null || next.nextOffset === null) {
+          update({ ...next, requests: [...requests.values()] });
+        }
+        cursor = next.nextOffset;
+      }
+      setNeedsRefresh(false);
     } catch (reason) {
-      if (!controller.signal.aborted && mounted.current) setError(reason instanceof Error ? reason.message : 'Could not load transfer requests.');
+      if (!controller.signal.aborted && mounted.current) {
+        setNeedsRefresh(true);
+        setError(reason instanceof Error ? reason.message : 'Could not load transfer requests.');
+      }
     } finally {
       if (!controller.signal.aborted && mounted.current) {
         readingRef.current = false;
@@ -57,7 +75,7 @@ export function useTransferRequests() {
   };
   const more = () => {
     const offset = current.current?.nextOffset;
-    if (offset != null && !readingRef.current && !savingRef.current && !needsRefresh) void read(offset, true);
+    if (offset != null && !readingRef.current && !savingRef.current) void read(offset, true);
   };
 
   /** `decisions` and `reviewCsrfToken` come from the component-matching review the admin confirmed. */

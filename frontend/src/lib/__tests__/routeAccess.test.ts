@@ -69,7 +69,7 @@ describe('mayAccessRoute', () => {
   });
 
   it('admits only the super-admin to the admin console', () => {
-    for (const path of ['/admin/users', '/workspace/admin', '/workspace/admin/employers', '/internal-panel']) {
+    for (const path of ['/admin/users', '/workspace/admin', '/workspace/admin/employers', '/internal-panel', '/users/my-courses']) {
       expect(mayAccessRoute(path, as('admin')), path).toBe(true);
       expect(mayAccessRoute(path, as('staff')), path).toBe(false);
       expect(mayAccessRoute(path, as('learner')), path).toBe(false);

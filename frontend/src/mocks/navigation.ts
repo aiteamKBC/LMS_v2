@@ -378,6 +378,7 @@ export const apprenticeNavItems: SidebarNavItem[] = [
   { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
+  { id: 'enrolment-courses', label: 'My Courses', icon: 'ri-book-open-line', href: '/users/my-courses' },
 ];
 
 /**
@@ -389,6 +390,7 @@ export const enrolmentNavItems: SidebarNavItem[] = [
   { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
+  { id: 'enrolment-courses', label: 'My Courses', icon: 'ri-book-open-line', href: '/users/my-courses' },
 ];
 
 // ============================================================================

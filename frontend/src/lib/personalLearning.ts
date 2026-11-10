@@ -38,7 +38,7 @@ export function rememberPersonalLearning(id: string, returnTo?: string): void {
   const context = parsePersonalLearning(id);
   if (!context) return;
   const previous = readPersonalLearning();
-  const destination = returnTo?.startsWith('/curriculum/') || returnTo === '/my-courses'
+  const destination = returnTo?.startsWith('/curriculum/') || returnTo === '/my-courses' || returnTo === '/users/my-courses'
     ? returnTo : previous?.returnTo || '/my-courses';
   sessionStorage.setItem(KEY, JSON.stringify({ ...context, returnTo: destination }));
 }
@@ -48,7 +48,7 @@ export function readPersonalLearning(): PersonalLearningContext | null {
     const stored = JSON.parse(sessionStorage.getItem(KEY) || 'null');
     const context = parsePersonalLearning(stored?.id);
     if (!context) return null;
-    const returnTo = typeof stored.returnTo === 'string' && (stored.returnTo.startsWith('/curriculum/') || stored.returnTo === '/my-courses')
+    const returnTo = typeof stored.returnTo === 'string' && (stored.returnTo.startsWith('/curriculum/') || stored.returnTo === '/my-courses' || stored.returnTo === '/users/my-courses')
       ? stored.returnTo : '/my-courses';
     return { ...context, returnTo };
   } catch { return null; }

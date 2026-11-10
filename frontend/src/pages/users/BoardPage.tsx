@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { EnrolmentWorkspaceShell as WorkspaceShell } from './presentation/EnrolmentWorkspaceShell';
+import design from './presentation/EnrolmentWorkspace.module.css';
+import { EnrolmentBreadcrumbs } from './presentation/EnrolmentBreadcrumbs';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser, deleteEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
@@ -105,10 +107,6 @@ function downloadCsv(filename: string, headers: string[], rows: (string | number
   URL.revokeObjectURL(url);
 }
 
-function initials(name: string) {
-  return name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-}
-
 /** A labelled fact in the learner summary. */
 function MetaItem({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
@@ -147,15 +145,12 @@ function LearnerHeader({
   actions: ReactNode;
 }) {
   return (
-    <section aria-label="Learner overview" className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
+    <section aria-label="Learner overview" className={design.learnerOverview}>
       <div className="p-5 sm:p-6">
+        <EnrolmentBreadcrumbs current={name} people />
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-center gap-4">
-            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary-100 text-lg font-bold text-primary-700 ring-1 ring-inset ring-primary-200">
-              {initials(name) || <i className="ri-user-3-line text-xl" aria-hidden="true" />}
-            </span>
             <div className="min-w-0">
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-foreground-400">Enrolment</p>
               <h2 className="break-words text-2xl font-heading font-bold leading-tight tracking-tight text-foreground-900">{name}</h2>
               {reference && <p className="mt-1 break-all text-[12px] text-foreground-500">{reference}</p>}
             </div>
@@ -1606,8 +1601,8 @@ function BoardView({
     || board.subProgrammes.length > 0 || board.managedJobs.length > 0 || hasFunctionalSkills || board.milestones.length > 0;
 
   return (
-    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle={board.user.name} userName="Enrolment Officer" userRole="Enrolment Officer">
-      <div className="mx-auto max-w-6xl space-y-4 p-3 sm:p-6">
+    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle={board.user.name} userName="Enrolment Officer" userRole="Enrolment Officer" hideBreadcrumbs showBackButton={false}>
+      <div className={design.profile}>
         <div className="animate-fade-in-up">
           <LearnerHeader
             name={board.user.name}
