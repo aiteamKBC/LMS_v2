@@ -27,7 +27,7 @@ from login.permissions import require_role
 
 from .bunny_stream import BunnyStream, FREE_COURSE_COLLECTION, VideoImportError, is_bunny_url, playback_url
 from .models import CurriculumVideoImport
-from .video_sources import download_url, download_video, source_url, validate_video
+from .video_sources import download_url, download_video, source_url, validate_video, youtube_url
 from .video_uploads import save_mp4, stored_video, stored_video_path
 
 logger = logging.getLogger(__name__)
@@ -236,7 +236,10 @@ def process(import_id, file_obj=None, *, session_lease_id=None):
             source_stream = (nullcontext(file_obj) if file_obj is not None else
                              stored_video(asset.source_url) if local_source else download_video(asset.source_url))
             with source_stream as stream:
-                validate_video(stream)
+                # YouTube imports have no byte cap. Device uploads and other
+                # sources retain their existing size checks, including retries.
+                youtube_source = file_obj is None and not local_source and bool(youtube_url(asset.source_url))
+                validate_video(stream, enforce_size_limit=not youtube_source)
                 if not asset.video_id:
                     # Verify/download the source before creating a remote object.
                     # Persist its ID before sending bytes so retries reuse it.

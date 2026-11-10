@@ -132,10 +132,14 @@ and [SKIP LOCKED for concurrent queue consumers](https://www.postgresql.org/docs
   `YOUTUBE_COOKIES_FILE` on a server, or `YOUTUBE_COOKIES_TEXT` injected from an
   ECS secret; see the session setup sections below. Browser profiles and account
   passwords are never read by the application.
-- YouTube temporary media are removed after upload, including when downloading
-  or uploading fails. The downloader has a 20-minute timeout, the same 300 MB
-  limit, bounded retries and no database/Bunny/Microsoft credentials in its
-  environment. It downloads only the canonical YouTube video URL.
+- YouTube imports have no application file-size limit, for both programme
+  modules and free courses. They retain the highest available quality selection;
+  they are not reduced to fit the 300 MB limit used for device uploads and other
+  file sources. Temporary media are removed after upload, including when
+  downloading or uploading fails. The downloader retains its 20-minute timeout,
+  bounded retries and isolated environment without database/Bunny/Microsoft
+  credentials. It downloads only the canonical YouTube video URL. Actual
+  transfers still depend on available temporary disk space and provider limits.
 - Requests pin validated public IP addresses and validate every redirect. Local,
   private and credential-bearing URLs are refused. Downloads are bounded in size
   and time, and HTML is never treated as an uploaded video.

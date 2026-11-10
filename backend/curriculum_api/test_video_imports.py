@@ -64,6 +64,58 @@ class VideoImportTests(TestCase):
         self.assertEqual(result.status, 'failed')
         self.client.create.assert_not_called()
 
+    def test_large_youtube_video_reaches_bunny_for_programme_and_free_course(self):
+        from .video_sources import MAX_VIDEO_BYTES, download_video
+
+        source = 'https://www.youtube.com/watch?v=abcdefghijk'
+        self.component['settings_json']['videoUrl'] = source
+        free_scope = {'free_course_module_id': 'MOD1', 'free_course_name': 'Independent study',
+                      'course_type': 'free_course', 'collection_name': 'Free course'}
+        self.client.free_course_collection.return_value = 'free-collection'
+        for scope, collection in ((SCOPE, 'collection'), (free_scope, 'free-collection')):
+            with self.subTest(free=bool(scope.get('free_course_module_id'))):
+                # Simulate a large seekable video without allocating hundreds of MB.
+                stream = Mock(wraps=io.BytesIO(MP4))
+                stream.tell.return_value = MAX_VIDEO_BYTES + 1
+                with patch.object(imports, 'BunnyStream', return_value=self.client), \
+                     patch.object(imports, 'download_video', side_effect=download_video), \
+                     patch('curriculum_api.youtube_download.download_youtube', return_value=nullcontext(stream)), \
+                     patch.object(imports, '_matches_current_source', return_value=True):
+                    asset = imports.enqueue('module', 'MOD1', self.component, scope)
+                    result = imports.process(asset.pk)
+                self.assertEqual((result.status, result.error), ('ready', ''))
+                self.assertEqual(result.collection_id, collection)
+                self.client.upload.assert_called_once_with(VIDEO_ID, stream)
+                self.assertEqual(self.component['settings_json']['videoUrl'], source)
+                self.client.reset_mock()
+
+    def test_large_non_youtube_video_remains_subject_to_upload_limit(self):
+        from .video_sources import MAX_VIDEO_BYTES
+
+        stream = Mock(wraps=io.BytesIO(MP4))
+        stream.tell.return_value = MAX_VIDEO_BYTES + 1
+        with patch.object(imports, 'BunnyStream', return_value=self.client), \
+             patch.object(imports, 'download_video', return_value=nullcontext(stream)):
+            result = imports.process(self.asset().pk)
+        self.assertEqual(result.status, 'failed')
+        self.assertIn('300 MB', result.error)
+        self.client.create.assert_not_called()
+        self.client.upload.assert_not_called()
+
+    def test_empty_or_non_video_youtube_download_never_reaches_bunny(self):
+        from .video_sources import download_video
+
+        self.component['settings_json']['videoUrl'] = 'https://www.youtube.com/watch?v=abcdefghijk'
+        for content in (b'', b'<html>sign in</html>'):
+            with self.subTest(content=content), \
+                 patch.object(imports, 'BunnyStream', return_value=self.client), \
+                 patch.object(imports, 'download_video', side_effect=download_video), \
+                 patch('curriculum_api.youtube_download.download_youtube', return_value=nullcontext(io.BytesIO(content))):
+                result = imports.process(self.asset().pk)
+                self.assertEqual(result.status, 'failed')
+                self.client.create.assert_not_called()
+                self.client.upload.assert_not_called()
+
     def test_empty_or_already_bunny_source_is_not_queued(self):
         for source in ('', playback_url('798153', VIDEO_ID)):
             self.assertIsNone(imports.enqueue('module', 'MOD1', {**self.component, 'settings_json': {'videoUrl': source}}, SCOPE))

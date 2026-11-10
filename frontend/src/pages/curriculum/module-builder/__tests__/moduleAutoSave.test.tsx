@@ -411,15 +411,16 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     expect(saveModuleStructure).toHaveBeenCalledOnce();
   });
 
-  it('saves an independent reorder while retaining a reserved title and unsaved navigation guard', async () => {
+  it.each([false, true])('saves an independent reorder while retaining a reserved title and navigation guard (free course: %s)', async (isFreeCourse) => {
     collaborationTest.enabled = true;
-    const title = await openWorkspace();
+    const title = await openWorkspace('', { ...storedStructure(), isFreeCourse } as ReturnType<typeof storedStructure>);
     await userEvent.type(title, '!');
     await userEvent.click(screen.getByRole('button', { name: 'Reorder components' }));
     await userEvent.click(screen.getByTestId('module-builder-save'));
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
     expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one');
     expect(saveCalls()[0][1].weekStructure[0].components.map(c => c.id)).toEqual(['COMPONENT-2', 'COMPONENT-1']);
+    expect(saveModuleStructure.mock.calls[0][1].isFreeCourse).toBe(isFreeCourse);
     await waitFor(() => expect(title).toHaveValue('Week one!'));
     expect(saveState()).toBe('Unsaved changes - press Save');
     await userEvent.click(screen.getByRole('button', { name: 'Back to modules' }));
