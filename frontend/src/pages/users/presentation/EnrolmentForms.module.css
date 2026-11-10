@@ -1,11 +1,11 @@
-.page { display: grid; gap: 1.25rem; min-width: 0; max-width: none; padding: 0; color: #51474b; }
-.page .hero { min-height: 17.5rem; padding: 1.75rem; }
+.page { display: grid; grid-template-columns: minmax(0,1fr); gap: 1.25rem; min-width: 0; max-width: none; padding: 0; color: #51474b; }
+.page .hero { min-width: 0; min-height: 17.5rem; padding: 1.75rem; }
 .page .hero::before { mask-image: none; }
 .hero > div { max-width: 68%; }
 .page .hero p { max-width: 42rem; font-size: .8125rem; line-height: 1.6; }
 .page .hero h1 { font-size: 1.75rem; }
 .page .hero :is(button,a) { font-size: .75rem; }
-.page .hero nav { flex-wrap: nowrap; }
+.page .hero nav { min-width: 0; flex-wrap: nowrap; }
 .page .hero nav > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editorColumns { display: grid; grid-template-columns: minmax(14rem,17.5rem) minmax(0,1fr); align-items: start; gap: 1rem; min-width: 0; }
 .rail,.editorPanel { min-width: 0; overflow: hidden; border: 1px solid #ded4eb; border-radius: 1rem; background: #fcfbfd; box-shadow: none; }
@@ -59,6 +59,9 @@
   .rail > ol { display: flex; gap: .375rem; overflow-x: auto; scroll-snap-type: x proximity; }
   .rail > ol > li { flex: 0 0 min(19rem,100%); scroll-snap-align: start; }
   .page .editorPanel label { min-width: 0; max-width: 100%; }
+  .editorPanel > div:first-child > label:first-child { flex-basis: 100%; }
+  .editorPanel > ol > li > div > div:first-child > div:first-child { flex-basis: 100%; }
+  .editorPanel > ol > li > div > div:first-child > div:first-child > p { white-space: normal; overflow-wrap: anywhere; }
   .page .hero :is(button,a),.editorPanel button,.rail button,.formFooter button { min-height: 2.75rem; }
   .page.plan > :global(.card-premium) { padding: 1rem; }
   .stepper button { flex-direction: column; gap: .375rem; }
