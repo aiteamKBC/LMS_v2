@@ -4,6 +4,8 @@ import { useToast } from '@/hooks/useToast';
 import { useResetWorkspaceScroll } from '@/hooks/useResetWorkspaceScroll';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from '../presentation/EnrolmentWorkspaceShell';
 import design from '../presentation/EnrolmentWorkspace.module.css';
+import styles from '../presentation/EnrolmentForms.module.css';
+import motion from '../presentation/EnrolmentMotion.module.css';
 import { EnrolmentBreadcrumbs } from '../presentation/EnrolmentBreadcrumbs';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
@@ -73,10 +75,8 @@ function WizardInner({ stepSlug }: { stepSlug: string }) {
       onNavigateStep={goTo}
       onFinish={finish}
       header={
-        // Solid purple via a class, not an inline gradient: index.css replaces any
-        // workspace surface whose inline style names primary-950/900 with the
-        // shared hero gradient, which fades to near-white on the right and left
-        // the white text and Close button unreadable.
+        // Keep the purple fallback and scope the banner image to staff mode.
+        // The close action needs the same contrast when the image is unavailable.
         <div data-testid="staff-wizard-banner" className={`${design.wizardHero} bg-primary-800`}>
           <EnrolmentBreadcrumbs current={board.user.name} people />
           <div className={design.wizardHeadline}>
@@ -162,8 +162,8 @@ export default function WizardPage() {
   const topRef = useResetWorkspaceScroll<HTMLDivElement>(stepSlug);
   return (
     <WorkspaceShell role="compliance" roleLabel={config.label} navItems={config.items}
-      workspaceLabel="Enrolment" pageTitle="Enrolment Wizard" hideBreadcrumbs showBackButton={false}>
-      <div ref={topRef} className={design.wizard}>
+      workspaceLabel="Enrolment" pageTitle="Enrolment Wizard" hideBreadcrumbs showBackButton={false} directoryLayout>
+      <div ref={topRef} className={`${design.wizard} ${styles.page} ${styles.staffWizard} ${motion.page}`}>
         <WizardPageContent />
       </div>
     </WorkspaceShell>

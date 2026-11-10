@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from '../presentation/EnrolmentWorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
+import { EnrolmentHero as AdminPageHeader } from '../presentation/EnrolmentPage';
+import styles from '../presentation/EnrolmentForms.module.css';
+import motion from '../presentation/EnrolmentMotion.module.css';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchWizardLayout, publishWizardLayout } from '@/api/wizardLayout';
@@ -128,13 +130,14 @@ export default function WizardBuilderPage() {
   const step = layout?.steps.find((s) => s.slug === selected) ?? null;
 
   return (
-    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Apprenticeship wizard" pageSubtitle="Edit the enrolment wizard learners complete at onboarding">
-      <div className="admin-console-page min-w-0 space-y-4 p-3 md:space-y-5 md:p-6">
+    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Apprenticeship wizard" pageSubtitle="Edit the enrolment wizard learners complete at onboarding" hideBreadcrumbs showBackButton={false} directoryLayout>
+      <div className={`admin-console-page ${styles.page} ${styles.editor} ${motion.page}`}>
         <AdminPageHeader
           title="Apprenticeship enrolment wizard"
           description="Add, remove, reorder and require the questions learners answer during onboarding. Published changes apply to every learner who has not yet submitted their enrolment."
           icon="ri-magic-line"
           eyebrow="Enrolment"
+          className={`${styles.hero} ${motion.cardEnter}`}
           actions={
             <div className="flex flex-wrap items-start gap-2">
               <button type="button" className={btnSecondary} onClick={leave}>
@@ -169,7 +172,7 @@ export default function WizardBuilderPage() {
                 'Showing the standard wizard — nothing has been published from the builder yet.'
               )}
             </p>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+            <div className={styles.editorColumns}>
               <StepList
                 layout={layout}
                 selected={selected}
@@ -219,7 +222,7 @@ function StepList({
 }) {
   let number = 0;
   return (
-    <nav aria-label="Wizard steps" className="shrink-0 overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm lg:w-72">
+    <nav aria-label="Wizard steps" className={styles.rail}>
       <div className="border-b border-foreground-100 px-4 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Steps</p>
       </div>
@@ -299,7 +302,7 @@ function StepEditor({
   };
 
   return (
-    <section aria-label={`${step.label} step`} className="min-w-0 flex-1 overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
+    <section aria-label={`${step.label} step`} className={styles.editorPanel}>
       <div className="flex flex-wrap items-end gap-3 border-b border-foreground-100 px-5 py-4">
         <label className="min-w-[220px] flex-1 text-[12px] font-medium text-foreground-600" htmlFor="builder-step-name">
           Step name

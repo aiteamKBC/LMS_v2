@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from '../presentation/EnrolmentWorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
+import { EnrolmentHero as AdminPageHeader } from '../presentation/EnrolmentPage';
+import styles from '../presentation/EnrolmentForms.module.css';
+import motion from '../presentation/EnrolmentMotion.module.css';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEligibilityLayout, publishEligibilityLayout } from '@/api/eligibilityFormLayout';
@@ -133,13 +135,14 @@ export default function EligibilityBuilderPage() {
   const section = layout?.sections.find((s) => s.slug === selected) ?? null;
 
   return (
-    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Eligibility form" pageSubtitle="Edit the public apprenticeship eligibility form">
-      <div className="admin-console-page min-w-0 space-y-4 p-3 md:space-y-5 md:p-6">
+    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Eligibility form" pageSubtitle="Edit the public apprenticeship eligibility form" hideBreadcrumbs showBackButton={false} directoryLayout>
+      <div className={`admin-console-page ${styles.page} ${styles.editor} ${motion.page}`}>
         <AdminPageHeader
           title="Apprenticeship eligibility form"
           description="Add, remove, reorder and require the questions applicants answer on the public eligibility form, and edit their wording and answer lists. Published changes apply to everyone who opens the form afterwards."
           icon="ri-task-line"
           eyebrow="Enrolment"
+          className={`${styles.hero} ${motion.cardEnter}`}
           actions={
             <div className="flex flex-wrap items-start gap-2">
               <button type="button" className={btnSecondary} onClick={leave}>
@@ -177,7 +180,7 @@ export default function EligibilityBuilderPage() {
                 'Showing the standard form — nothing has been published from the builder yet.'
               )}
             </p>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+            <div className={styles.editorColumns}>
               <SectionList
                 layout={layout}
                 selected={selected}
@@ -232,7 +235,7 @@ function SectionList({
   let number = 0;
   const pageActive = selected === PAGE;
   return (
-    <nav aria-label="Form sections" className="shrink-0 overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm lg:w-72">
+    <nav aria-label="Form sections" className={styles.rail}>
       <div className="border-b border-foreground-100 px-4 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Sections</p>
       </div>
@@ -294,7 +297,7 @@ function SectionList({
 
 function PageEditor({ layout, edit }: { layout: EligibilityLayout; edit: (fn: (l: EligibilityLayout) => EligibilityLayout) => void }) {
   return (
-    <section aria-label="Form heading" className="min-w-0 flex-1 space-y-4 overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 p-5 shadow-sm">
+    <section aria-label="Form heading" className={`${styles.editorPanel} space-y-4 p-5`}>
       <p className="text-[12px] text-foreground-500">The purple banner at the top of the form.</p>
       {PAGE_TEXT_SLOTS.map((slot) => (
         <TextEditor key={slot.key} slot={slot} texts={layout.texts} onChange={(v) => edit((l) => setText(l, slot.key, v))} />
@@ -333,7 +336,7 @@ function SectionEditor({
   };
 
   return (
-    <section aria-label={`${section.title || 'Untitled'} section`} className="min-w-0 flex-1 overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
+    <section aria-label={`${section.title || 'Untitled'} section`} className={styles.editorPanel}>
       <div className="grid gap-3 border-b border-foreground-100 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-end">
         <label className="min-w-[220px] text-[12px] font-medium text-foreground-600" htmlFor="eligibility-section-name">
           Section name
