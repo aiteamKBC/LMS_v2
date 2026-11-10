@@ -9,6 +9,7 @@ import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
 import { readWebPointPlan } from '@/api/webWeekPoints';
 import { readLearnerAttendanceMode } from '@/api/learnerAttendanceMode';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
 import { LearnerProgrammeGate } from '@/components/feature/LearnerProgrammeGate';
@@ -128,6 +129,70 @@ const lectureDraft = (kind = 'apprenticeship') => ({
   selectedBenefits: ['Improved quality'], benefitExplanation: 'Reduce errors in the project.',
   completedDuringPaidHours: 'yes', dateCompleted: '2026-10-22', otjhConfirmed: true, signedDeclaration: true,
 } as StoredLearningReflectionSubmission);
+
+it.each(['commercial', 'apprenticeship'])('refreshes the %s recording chip after saved watch evidence without resubmitting or remounting playback', async kind => {
+  const recording = { ...first, type: 'recording_placeholder', recordingSeriesId: 'SERIES',
+    recordingSessionNumber: 1, recordingDate: '2026-10-22' };
+  const original = { ...detail(), components: [recording] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  vi.mocked(readLearnerAttendanceMode).mockResolvedValue('lazy');
+  await act(async () => { mount('C1', kind); });
+  const player = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  expect(screen.queryByText('Completed')).not.toBeInTheDocument();
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...original, componentProgress: [{ ...progress,
+    timeTaken: null, reportedTime: '150 minutes', timeTrackingSource: 'verified_recording_watch' }] } as LearnerDetail);
+  act(() => invalidateLearnerReads());
+  await waitFor(() => expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', force: true }));
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(player.isConnected).toBe(true);
+  expect(screen.getByRole('button', { name: 'Simulate recording watch' })).toBe(player);
+  expect(fetchLearnerDetail).toHaveBeenLastCalledWith(kind, '1', { componentId: 'C1', force: true });
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  expect(submitVideoProgress).not.toHaveBeenCalled();
+});
+
+it('keeps an unwatched recording incomplete when a watch report only saves partial progress', async () => {
+  const original = { ...detail(), components: [{ ...first, type: 'recording_placeholder',
+    recordingSeriesId: 'SERIES', recordingSessionNumber: 1, recordingDate: '2026-10-22' }] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  await act(async () => { mount(); });
+  const player = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  act(() => invalidateLearnerReads());
+  await waitFor(() => expect(fetchLearnerDetail).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText('Completed')).not.toBeInTheDocument();
+  expect(player.isConnected).toBe(true);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('keeps playback and the incomplete chip when its completion refresh fails, and shows the failure', async () => {
+  const original = { ...detail(), components: [{ ...first, type: 'recording_placeholder',
+    recordingSeriesId: 'SERIES', recordingSessionNumber: 1, recordingDate: '2026-10-22' }] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  await act(async () => { mount(); });
+  const player = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  vi.mocked(fetchLearnerDetail).mockRejectedValue(new Error('Synthetic refresh failure'));
+  act(() => invalidateLearnerReads());
+  expect(await screen.findByRole('alert')).toHaveTextContent('Lecture completion could not refresh.');
+  expect(screen.queryByText('Completed')).not.toBeInTheDocument();
+  expect(player.isConnected).toBe(true);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('keeps the latest recording completion when an older refresh finishes afterwards', async () => {
+  const original = { ...detail(), components: [{ ...first, type: 'recording_placeholder',
+    recordingSeriesId: 'SERIES', recordingSessionNumber: 1, recordingDate: '2026-10-22' }] } as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValue(original);
+  await act(async () => { mount(); });
+  await screen.findByRole('button', { name: 'Simulate recording watch' });
+  let finishOlder!: (value: LearnerDetail) => void;
+  vi.mocked(fetchLearnerDetail).mockImplementationOnce(() => new Promise(resolve => { finishOlder = resolve; }))
+    .mockResolvedValueOnce({ ...original, componentProgress: [{ ...progress, kind: 'component' as const, componentType: 'recording_placeholder', startedAt: null }] });
+  act(() => invalidateLearnerReads());
+  act(() => invalidateLearnerReads());
+  expect(await screen.findByText('Completed')).toBeVisible();
+  await act(async () => { finishOlder(original); });
+  expect(screen.getByText('Completed')).toBeVisible();
+});
 
 it.each([
   ['commercial', false], ['commercial', true], ['apprenticeship', false], ['apprenticeship', true],

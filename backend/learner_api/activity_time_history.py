@@ -1,4 +1,4 @@
-"""Server-owned attendance baseline for the first live-session reflection."""
+"""Server-owned session credit baseline for the first native time decision."""
 from django.db import connections
 
 
