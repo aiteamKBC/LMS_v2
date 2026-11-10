@@ -21,16 +21,16 @@ def payload(**changes):
 
 
 class LectureReflectionTimeTests(SimpleTestCase):
-    def add(self, data=None, *, history=None, credits=None, component_type='live_session', assigned=True):
+    def add(self, data=None, *, history=None, credits=None, component_type='live_session', assigned=True, protected=False):
         history = history if history is not None else [dict(kind='component', componentId='LECTURE',
             claimedSeconds=7200, reportedTime='120 minutes', timeTrackingSource='signed:input',
             submittedAt='2026-11-09T10:00:00Z')]
         before = deepcopy(history)
         source = SimpleNamespace(pk=19)
-        learner = SimpleNamespace(training_plan_progress=history)
+        learner = SimpleNamespace(pk=1, training_plan_progress=history)
         cursor = MagicMock()
         settings = dict(recordingSeriesId='SERIES', recordingSessionNumber=1, recordingDate='2026-11-09') if component_type != 'live_session' else {}
-        cursor.fetchone.return_value = (component_type, settings, 'MODULE')
+        cursor.fetchone.side_effect = [(component_type, settings, 'MODULE'), ('recording_placeholder', {}, 'MODULE')]
         with ExitStack() as stack:
             stack.enter_context(patch('learner_api.lecture_reflection_time.connections'))['enrolment'].cursor.return_value.__enter__.return_value = cursor
             models = stack.enter_context(patch('learner_api.components.SOURCE_MODELS'))
@@ -38,12 +38,14 @@ class LectureReflectionTimeTests(SimpleTestCase):
             stack.enter_context(patch('learner_api.active_users.learner_profile_for_source', return_value=learner))
             stack.enter_context(patch('learner_api.learning_plan.effective_training_plan', return_value=[{'moduleId': 'MODULE' if assigned else 'OTHER'}]))
             stack.enter_context(patch('learner_api.live_session_progress.read_live_credits', return_value=credits or []))
+            stack.enter_context(patch('old_otjh.repository.query', return_value=[{'source_system': 'historical'}] if protected else []))
             stack.enter_context(patch('learner_api.working_rules.resolve_completion_instants', return_value=(None, '')))
             stack.enter_context(patch('learner_api.lecture_reflection_time.timezone.now', return_value=datetime(2026, 11, 10, 12, tzinfo=timezone.utc)))
             save = stack.enter_context(patch('learner_api.active_users.save_progress_record', return_value=SimpleNamespace(pk=101)))
             body = payload()
             body['activityType'] = {'live_session': 'session', 'recording_placeholder': 'recording', 'video': 'video'}.get(component_type, 'reading')
             result = add_reflection_time(data or body, {}, submission_mode='submit')
+            self.saved_records = [deepcopy(call.args[1]) for call in save.call_args_list]
         self.assertEqual(history, before)
         return result, save.call_args.args[1], history
 
@@ -81,10 +83,47 @@ class LectureReflectionTimeTests(SimpleTestCase):
         self.assertEqual(record['componentType'], 'recording_placeholder')
         self.assertEqual(receipt['countedSeconds'], 9000)
 
-    def test_watching_alone_cannot_replace_the_existing_submission_or_attendance_gate(self):
-        with self.assertRaisesMessage(ValueError, 'Complete the lecture'):
-            self.add(history=[], credits=[dict(componentId='LECTURE', hours=2,
-                timeTrackingSource='verified_recording_watch')])
+    def test_uses_recording_completion_already_approved_by_the_current_read_model(self):
+        receipt, record, _ = self.add(history=[], credits=[dict(componentId='LECTURE', hours=2,
+            timeTrackingSource='verified_recording_watch')])
+        self.assertEqual(receipt['countedSeconds'], 9000)
+        self.assertEqual(record['retakePreviousSeconds'], 7200)
+
+    def linked_credits(self):
+        shared = dict(moduleId='MODULE', creditComponentIds=['LECTURE', 'REC'], timeTrackingSource='verified_recording_watch')
+        return [dict(shared, componentId='REC', hours=2.5), dict(shared, componentId='LECTURE', hours=0)]
+
+    def test_linked_recording_credit_is_retained_when_reflection_is_added_from_either_card(self):
+        from .live_session_progress import supplement_module_hours
+        for old_id, old_seconds, target, writes in ((None, 0, 'REC', 1), ('LECTURE', 0, 'LECTURE', 2),
+                ('LECTURE', 7200, 'LECTURE', 2), ('REC', 9000, 'REC', 1), ('REC', 14400, 'REC', 1)):
+            with self.subTest(identity=old_id, seconds=old_seconds):
+                history = [] if old_id is None else [dict(kind='component', componentId=old_id,
+                    claimedSeconds=old_seconds, reportedTime=f'{old_seconds / 60:g} minutes',
+                    timeTrackingSource='signed:input', submittedAt='2026-11-09T10:00:00Z')]
+                credits = self.linked_credits()
+                receipt, record, _ = self.add(history=history, credits=credits)
+                self.assertEqual(record['componentId'], target)
+                self.assertEqual(len(self.saved_records), writes)
+                expected = max(old_seconds, 9000) + 1800
+                self.assertEqual(receipt['countedSeconds'], expected)
+                rows = [dict(id=i, learner_id=1, kind=r['kind'], component_ref=r['componentId'],
+                    component_type='live_session', component_link_source='direct', submitted_at=r['submittedAt'],
+                    reported_time=r['reportedTime'], claimed_seconds=r['claimedSeconds'],
+                    verified_seconds=r.get('verifiedSeconds'), time_tracking_source=r['timeTrackingSource'],
+                    source_payload={k: r[k] for k in ('retakeTimeChoice', 'retakePreviousSeconds') if k in r})
+                    for i, r in enumerate([*history, *self.saved_records], 1)]
+                current = project_current(rows, {})
+                actual = sum(r['actual_seconds'] for r in current) / 3600
+                updated = supplement_module_hours({'MODULE': {'hours': {'actual': actual}}}, current, credits)
+                self.assertEqual(updated['MODULE']['hours']['actual'], expected / 3600)
+
+    def test_linked_protected_or_ambiguous_history_cannot_be_overridden(self):
+        with self.assertRaisesMessage(ValueError, 'historical or staff-reviewed'):
+            self.add(history=[], credits=self.linked_credits(), protected=True)
+        history = [dict(kind='component', componentId=identity) for identity in ('LECTURE', 'REC')]
+        with self.assertRaisesMessage(ValueError, 'multiple linked activities'):
+            self.add(history=history, credits=self.linked_credits())
 
     def test_the_locked_write_resolves_a_dated_video_baseline_without_crediting_ordinary_videos(self):
         from .activity_time_history import attendance_baseline
@@ -182,6 +221,7 @@ class ReflectionTimeSubmissionTests(SimpleTestCase):
         write = next(call for call in cursor.execute.call_args_list if 'insert into' in call.args[0])
         full = next(json.loads(value) for value in write.args[1] if isinstance(value, str) and value.startswith('{') and 'learningReflection' in value)
         self.assertEqual(full['lectureReflectionTime'], receipt)
+        self.assertEqual(full['actualTimeHours'], '2.5')
         self.assertEqual(json.loads(response.content)['lectureReflectionTime'], receipt)
 
     def test_an_accepted_reflection_refuses_the_time_change(self):

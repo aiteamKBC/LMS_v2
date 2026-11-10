@@ -19,6 +19,12 @@ it('opens the existing correction flow for a working-time refusal instead of rep
   await expect(saveLearningReflectionSubmission({ learnerKind: 'apprenticeship', learnerId: '19' } as LearningReflectionSubmissionInput)).rejects.toBeInstanceOf(CompletionValidationError);
 });
 
+it.each([undefined, { seconds: 1800, progressEntryId: 0 }, { seconds: 900, progressEntryId: 10 }])('does not confirm an addition without the matching server receipt (%s)', async lectureReflectionTime => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'R', status: 'submitted_for_tutor_review', lectureReflectionTime }), { status: 201 }));
+  await expect(saveLearningReflectionSubmission({ learnerKind: 'apprenticeship', learnerId: '19', additionalReflectionSeconds: 1800 } as LearningReflectionSubmissionInput))
+    .rejects.toThrow('Your reflection was saved, but its additional time was not confirmed.');
+});
+
 describe('reflection submission API', () => {
   it('loads all learner reflection statuses with one request', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({

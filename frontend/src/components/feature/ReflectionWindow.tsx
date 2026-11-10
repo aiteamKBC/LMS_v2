@@ -748,7 +748,7 @@ function ReflectionWindowForm({
           type={usesClock || (readOnlyTime && allowAdditionalTime) ? 'text' : 'number'}
           min={usesClock ? undefined : '0'}
           step={usesClock ? undefined : inMinutes ? '1' : '0.25'}
-          value={readOnlyTime && allowAdditionalTime ? usesClock ? clockValue : 'Not recorded' : usesClock ? clockValue : actualTime}
+          value={readOnlyTime && allowAdditionalTime ? timeReceipt ? formatClock(timeReceipt.countedSeconds) : usesClock ? clockValue : 'Not recorded' : usesClock ? clockValue : actualTime}
           readOnly={readOnlyTime}
           onChange={event => {
             if (readOnlyTime) return;

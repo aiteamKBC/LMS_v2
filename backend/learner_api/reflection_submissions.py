@@ -403,6 +403,8 @@ def _submit_reflection(request):
                 time_receipt = add_reflection_time(payload, stored, submission_mode=submission_mode)
                 if time_receipt:
                     full_submission['lectureReflectionTime'] = time_receipt
+                    payload['actualTimeHours'] = str(time_receipt['countedSeconds'] / 3600)
+                    full_submission['actualTimeHours'] = payload['actualTimeHours']
 
                 cur.execute(
                 """

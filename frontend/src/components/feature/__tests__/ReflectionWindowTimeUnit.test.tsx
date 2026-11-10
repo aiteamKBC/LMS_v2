@@ -68,6 +68,16 @@ it('restores credited reflection time as read only and does not confuse it with 
   expect(mocks.save).not.toHaveBeenCalled();
 });
 
+it('shows the confirmed total when a linked live card carries zero session hours', async () => {
+  mocks.load.mockResolvedValue({ ...completeLecture, status: 'submitted_for_tutor_review', actualTimeHours: '0',
+    additionalReflectionSeconds: 1800, lectureReflectionTime: { seconds: 1800, progressEntryId: 10, countedSeconds: 10800, addedAt: 'now' } });
+  view({ noun: 'session', selectedTimeSeconds: 0, readOnlyTime: true, allowAdditionalTime: true });
+  openOtjh();
+  await waitFor(() => expect(screen.getByLabelText('Recorded session time (reference)')).toHaveValue('03:00:00'));
+  expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveValue(30);
+  expect(screen.getByLabelText('Additional reflection time (minutes)')).toHaveAttribute('readonly');
+});
+
 it('keeps an unavailable lecture duration distinct from zero and blocks invalid additional time', async () => {
   mocks.load.mockResolvedValue(completeLecture);
   view({ noun: 'session', readOnlyTime: true, allowAdditionalTime: true });
