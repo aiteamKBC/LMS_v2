@@ -171,14 +171,58 @@ class MonthlyLogsTests(SimpleTestCase):
     def test_canonical_summary_exposes_one_programme_accepted_and_plan_total(self):
         owner = {'id': 70, 'enrolment_id': 7, 'programme_id': 'P1'}
         record = {'id': 1, 'accepted': True, 'actual_seconds': 186300, 'ksbs': [], 'segments': []}
-        with patch.object(logs.canonical, 'entries_for', return_value=[record]), \
+        with patch.object(logs.canonical, 'entries_for', return_value=[record]) as entries, \
              patch.object(logs.canonical, 'signatures_for', return_value=[]), \
              patch.object(logs.canonical, 'targets_for', return_value={'2026-08': 12, '2026-09': 15}), \
              patch.object(logs.canonical, 'rows_for', return_value=[self.row]):
             summary = logs.summary_data({**self.learner, '_canonical_profile': owner})
+        entries.assert_called_once_with(owner, monthly_summary=True)
         self.assertEqual(summary['training_plan_totals'], {
             'accepted_hours': 51.75, 'planned_hours': 27,
         })
+
+    def test_monthly_projection_keeps_signed_row_digest_fields_without_progress_star(self):
+        with patch.object(logs.canonical, 'query', return_value=[]) as query, \
+             patch.object(logs.canonical, 'current_records', return_value=[]), \
+             patch.object(logs.canonical, '_ksb_not_excluded', return_value='true'):
+            logs.canonical.entries_for({'id': 70}, monthly_summary=True)
+
+        sql, params = query.call_args.args
+        self.assertEqual(params, [70])
+        self.assertNotIn('SELECT progress.*', sql)
+        for field in ('feedback', 'group_title', 'reporting_timestamp_label'):
+            self.assertIn('progress.' + field, sql)
+        for key in ('completion_note', 'planned_hours', 'timestamp_label',
+                    'staff_time_entry'):
+            self.assertIn("'" + key + "',progress.source_payload", sql)
+        self.assertIn("'reconciliation',CASE", sql)
+        self.assertIn("THEN jsonb_build_object('reporting_allocation'", sql)
+        self.assertIn("progress.source_payload->'reconciliation'->'reporting_allocation'->>'estimated'='true'", sql)
+        self.assertIn("coalesce(s.source_system,'') IN ('','old_lms')", sql)
+        self.assertIn('activity_documents AS (', sql)
+        self.assertIn("coalesce(doc.payload,'[]'::jsonb) AS activity_documents", sql)
+        self.assertIn("'[{}]'::jsonb AS payload", sql)
+        self.assertIn("'source_activity_id',h.source_activity_id", sql)
+        self.assertNotIn('to_jsonb(s) ORDER BY s.segment_order', sql)
+        self.assertNotIn('to_jsonb(h) ORDER BY h.id', sql)
+        self.assertNotIn("'course_title',c.source_course_title", sql)
+
+    def test_monthly_projection_reuses_preloaded_documents_without_an_extra_query(self):
+        record = {
+            'id': 1, 'kind': 'material', 'component_title': 'Reading',
+            'component_type': 'reading', 'actual_seconds': 3600, 'expected_otjh': 1,
+            'source_payload': {}, 'module_title': 'Module', 'ksbs': [],
+            'reporting_started_at': '2026-09-12T10:00:00Z', 'reporting_month': '2026-09',
+            'accepted': True, 'source_system': 'new_lms', 'activity_status': 'Completed',
+            '_monthly_documents_loaded': True,
+            '_monthly_documents': [{'id': 9, 'display_name': 'evidence.pdf', 'content_type': 'application/pdf'}],
+        }
+        with patch.object(logs.canonical, 'query', side_effect=AssertionError('documents were already loaded')):
+            rows = logs.canonical.rows_for({'id': 70, 'enrolment_id': 7}, [record])
+        self.assertEqual(rows[0]['documents'], [{
+            'id': 9, 'display_name': 'evidence.pdf', 'content_type': 'application/pdf',
+            'url': '/learner_api/monthly-logs/7/canonical-documents/9/',
+        }])
 
     def test_reporting_segments_count_as_one_activity_in_a_month(self):
         split = [{**self.row, 'progress_id': 90, 'source_ref': 'canonical:90:segment:1'},

@@ -83,6 +83,7 @@ class FreeCourseQuizReadAccessTests(SimpleTestCase):
             "_resolve_source": lambda *_: (source(), None),
             "assigned_course_ids": lambda *_: ["FREE-1"],
             "_scoped_rows": lambda *_: scoped_rows(),
+            "_quiz_owner_is_valid": lambda *_: True,
             "_fetch_quiz": lambda *_: QUIZ,
             "_scrub_answer_key": lambda quiz: quiz,
         }
@@ -148,6 +149,7 @@ class FreeCourseQuizReadAccessTests(SimpleTestCase):
             _resolve_source=lambda *_: (source(), None),
             assigned_course_ids=lambda *_: ["FREE-1"],
             _scoped_rows=lambda *_: scoped_rows(),
+            _quiz_owner_is_valid=lambda *_: True,
             _fetch_quiz=lambda *_: (_ for _ in ()).throw(DatabaseError("secret-host")),
         )
         self.assertEqual(response.status_code, 503)
@@ -372,6 +374,7 @@ class FreeCourseQuizSubmissionTests(SimpleTestCase):
                  return_value=["FREE-1"] if assigned else [],
              ), \
              patch.object(free_courses_view, "_scoped_rows", return_value=scoped_rows()), \
+             patch.object(free_courses_view, "_quiz_owner_is_valid", return_value=True), \
              patch.object(free_courses_view, "_fetch_quiz", return_value=GRADEABLE_QUIZ), \
              patch.object(
                  free_courses_view.LearnerFreeCourseProgress.objects,

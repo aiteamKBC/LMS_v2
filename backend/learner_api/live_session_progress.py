@@ -102,6 +102,122 @@ def read_live_credits(source, *, components=None, module_ids=None, register=None
             if (str(credit['componentId']), str(credit['moduleId'])) not in states] + manual
 
 
+def read_catalogue_live_credits(source, components):
+    """Read initial My Learning credits from the saved canonical register.
+
+    The full lecture register also reconciles raw provider evidence, recovery,
+    catch-up and display metadata.  Rebuilding all of that for every module on
+    the catalogue made this small completion/hour projection execute dozens of
+    queries.  The initial catalogue only needs already verified saved outcomes,
+    including rows saved against a shared delivery module.  One set-based read
+    preserves strict component ownership and unique occurrence matching; staff
+    corrections still replace provider credit through the existing manual
+    evidence reader below.
+    """
+    from .models import LearnerProfile
+    from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+
+    live = [c for c in components if _live(c) and c.get('componentId') and c.get('moduleId')]
+    if not live:
+        return []
+    enrolment_id = getattr(source, 'pk', None) or getattr(source, 'id', None)
+    profile = getattr(source, '_case_file_profile', None)
+    owner = getattr(source, '_canonical_profile', None)
+    if (profile is None or str(profile.enrolment_id) != str(enrolment_id)
+            or (owner is not None and str(owner['id']) != str(profile.pk))):
+        profiles = list(LearnerProfile.objects.filter(enrolment_id=enrolment_id).only(
+            'id', 'enrolment_id', 'email')[:2])
+        if len(profiles) != 1:
+            return []
+        profile = profiles[0]
+
+    component_ids = sorted({str(component['componentId']) for component in live})
+    module_ids = sorted({str(component['moduleId']) for component in live})
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(f'''WITH RECURSIVE requested_components AS (
+            SELECT c.id,c.module_catalogue_id,c.title,c.settings_json
+            FROM curriculum.components c
+            JOIN curriculum.weeks w ON w.id=c.week_id
+             AND w.module_catalogue_id=c.module_catalogue_id
+            WHERE c.id=ANY(%s) AND c.module_catalogue_id=ANY(%s)
+              AND lower(replace(btrim(c.type),'-','_'))='live_session'
+              AND {visible_child_sql('c')} AND {visible_week_sql('w')}
+        ), module_chain(target_module_id,owner_module_id,path,depth) AS (
+            SELECT DISTINCT c.module_catalogue_id,c.module_catalogue_id,
+                   ARRAY[c.module_catalogue_id]::text[],0
+            FROM requested_components c
+            UNION ALL
+            SELECT chain.target_module_id,m.teams_shared_source_module_id,
+                   chain.path || m.teams_shared_source_module_id,chain.depth+1
+            FROM module_chain chain
+            JOIN curriculum.modules m ON m.module_catalogue_id=chain.owner_module_id
+            WHERE chain.depth<5
+              AND nullif(btrim(m.teams_shared_source_module_id),'') IS NOT NULL
+              AND NOT m.teams_shared_source_module_id=ANY(chain.path)
+        ), candidates AS (
+            SELECT DISTINCT c.id AS component_id,c.module_catalogue_id AS module_id,
+                   c.title,o.id AS occurrence_id,o.scheduled_end,r.attended_seconds
+            FROM requested_components c
+            JOIN module_chain chain ON chain.target_module_id=c.module_catalogue_id
+            JOIN curriculum.live_sessions s ON s.module_catalogue_id=chain.owner_module_id
+            JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
+            JOIN curriculum.live_session_learner_attendance r
+              ON r.occurrence_id=o.id
+             AND r.module_catalogue_id=c.module_catalogue_id
+             AND r.learner_profile_id=%s
+            WHERE (
+                nullif(btrim(c.settings_json->>'teamsOccurrenceId'),'')=o.id
+                OR (
+                    nullif(btrim(c.settings_json->>'teamsOccurrenceId'),'') IS NULL
+                    AND nullif(btrim(c.settings_json->>'teamsLiveSessionId'),'')=s.id
+                    AND c.settings_json->>'teamsSessionNumber'=o.session_number::text
+                ) OR (
+                    nullif(btrim(c.settings_json->>'teamsOccurrenceId'),'') IS NULL
+                    AND NOT (
+                        nullif(btrim(c.settings_json->>'teamsLiveSessionId'),'') IS NOT NULL
+                        AND nullif(btrim(c.settings_json->>'teamsSessionNumber'),'') IS NOT NULL
+                    )
+                    AND nullif(btrim(c.settings_json->>'sessionDate'),'')=
+                        timezone('Europe/London',o.scheduled_start)::date::text
+                    AND (nullif(btrim(c.settings_json->>'teamsLiveSessionId'),'') IS NULL
+                         OR c.settings_json->>'teamsLiveSessionId'=s.id)
+                )
+            )
+              AND r.attendance_status='present' AND r.attended_seconds>180
+              AND coalesce(r.attendance_report_id,'')<>''
+              AND r.attendance_report_id=o.attendance_report_id
+              AND o.scheduled_end<=CURRENT_TIMESTAMP
+              AND lower(btrim(o.status)) NOT IN
+                  ('cancelled','canceled','deleted','failed','superseded')
+              AND lower(btrim(s.status)) NOT IN
+                  ('cancelled','canceled','deleted','failed','superseded')
+        ), unique_candidates AS (
+            SELECT component_id,module_id
+            FROM candidates
+            GROUP BY component_id,module_id
+            HAVING count(*)=1
+        )
+        SELECT candidate.component_id,candidate.module_id,candidate.title,
+               candidate.occurrence_id,candidate.scheduled_end,candidate.attended_seconds
+        FROM candidates candidate
+        JOIN unique_candidates unique_candidate
+          ON unique_candidate.component_id=candidate.component_id
+         AND unique_candidate.module_id=candidate.module_id
+        ORDER BY candidate.component_id,candidate.module_id''', [
+            component_ids, module_ids, profile.pk,
+        ])
+        verified = [{
+            'componentId': str(component_id), 'moduleId': str(module_id),
+            'title': title or 'Live session', 'occurrenceId': str(occurrence_id),
+            'hours': 2, 'verifiedSeconds': max(0, float(seconds or 0)),
+            'submittedAt': ended.isoformat(),
+        } for component_id, module_id, title, occurrence_id, ended, seconds in cur.fetchall()]
+
+    states, manual = read_manual_live_credits(source, live)
+    return [credit for credit in verified
+            if (credit['componentId'], credit['moduleId']) not in states] + manual
+
+
 def read_manual_live_credits(source, components):
     from .models import LearnerProfile
     from .manual_attendance_completion import read_manual_credit_evidence

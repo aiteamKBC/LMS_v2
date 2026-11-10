@@ -50,7 +50,12 @@ def large_facts(replacements=False):
 
 class CataloguePerformanceTests(SimpleTestCase):
     def test_multi_placement_records_compute_completion_and_hours_once(self):
-        definitions=[{'source_course_ref':'50','source_activity_id':kind+':7'} for kind in ('material','quiz')]
+        definitions=[{'source_course_id':3,'source_activity_id':kind+':7',
+            'source_activity_title':kind,'source_activity_type':kind,
+            'source_section_ref':'1','source_section_title':'Week 1','position':1,
+            'quiz_id':None,'activity_id':None,'parent_activity_id':None,
+            'payload_section_title':'Week 1','section_order':1,'component_order':1,
+            'created_at':None,'created_at_utc':None} for kind in ('material','quiz')]
         record={'id':1,'accepted':True,'actual_seconds':3600,'sources':[
             {'source_system':'old_lms','source_course_ref':'50','source_activity_id':kind+':7'} for kind in ('material','quiz')]}
         with patch.object(canonical,'query',return_value=definitions),patch.object(canonical,'counts_as_completed',wraps=canonical.counts_as_completed) as completion,patch.object(canonical,'counts_as_actual',wraps=canonical.counts_as_actual) as actual:
@@ -62,7 +67,8 @@ class CataloguePerformanceTests(SimpleTestCase):
     def test_large_mixed_and_replacement_counts_and_one_attribution_index(self):
         for replacements in (False,True):
             facts=large_facts(replacements)
-            with patch.object(display,'read_export_placements',return_value=[]),patch.object(schedule,'module_record_index',wraps=schedule.module_record_index) as index:
+            with patch.object(display,'read_export_placements',return_value=[]), \
+                 patch.object(schedule,'module_record_index',wraps=schedule.module_record_index) as index:
                 cards,summary=learning.assemble_cards(*facts[:11])
             self.assertEqual(index.call_count,1)
             self.assertEqual(summary['current']['subjects'],0 if replacements else 4)
@@ -115,17 +121,25 @@ class CataloguePerformanceTests(SimpleTestCase):
 
     def test_card_metadata_does_not_plan_holidays_or_read_group_settings(self):
         cur=MagicMock()
-        cur.description=[(key,) for key in ('id','title','cover_image_url','start_date','end_date','tutor_name','programme_id','programme_name','cohort_name','group_name','total_otjh','sessions_number','source_type','source_id')]
-        module_row=('M1','Module','https://assets.example.test/cover.png',date(2026,1,1),date(2026,12,31),'Tutor','P','Programme','C','G',12,2,'mba-legacy','00050')
+        module_columns=('id','title','cover_image_url','start_date','end_date','tutor_name','programme_id','programme_name',
+            'cohort_name','group_name','total_otjh','sessions_number','source_type','source_id','session_week_day',
+            'session_start_time','session_end_time','cohort_id','session_overrides')
+        module_row=('M1','Module','https://assets.example.test/cover.png',date(2026,1,1),date(2026,12,31),
+            'Tutor','P','Programme','C','G',12,2,'mba-legacy','00050',None,None,None,None,None)
         def execute(sql,params):
-            if 'WITH live_counts' in sql:
-                cur.description=[(key,) for key in ('id','module_catalogue_id','week_number','title','display_order','live_session_count')]
-                cur.fetchall.return_value=[('W1','M1',1,'Week 1',1,2),('W0','M1',0,'Introduction',0,5)]
-            else:cur.fetchall.return_value=[module_row]
+            if 'FROM curriculum.weeks w' in sql:
+                cur.description=[(key,) for key in ('id','module_catalogue_id','week_number','title','display_order')]
+                cur.fetchall.return_value=[('W1','M1',1,'Week 1',1),('W0','M1',0,'Introduction',0)]
+            else:
+                cur.description=[(key,) for key in module_columns]
+                cur.fetchall.return_value=[module_row]
         cur.execute.side_effect=execute
         resolved={}
         with patch.object(schedule,'attach_curriculum_slots',side_effect=AssertionError('Unused timetable')):
             modules=learning.catalogue_module_rows(cur,['M1'],identity_metadata=resolved)
+        learning.apply_catalogue_session_counts(modules,
+            [{'moduleId':'M1','weekId':'W1','type':'live_session'} for _ in range(2)]
+            + [{'moduleId':'M1','weekId':'W0','type':'live_session'} for _ in range(5)], resolved['weeks'])
         self.assertEqual(cur.execute.call_count,2)
         self.assertEqual(modules['M1']['educational_session_count'],2)
         self.assertEqual(modules['M1']['start_date'],'2026-01-01')
@@ -133,7 +147,11 @@ class CataloguePerformanceTests(SimpleTestCase):
         self.assertEqual(resolved['live_credit_components'],[])
         self.assertEqual(resolved['imported_courses'],{'current:M1':'legacy:50'})
         self.assertNotIn('curriculumSlots',modules['M1'])
-        self.assertTrue(all('curriculum.groups' not in call.args[0] for call in cur.execute.call_args_list))
+        module_sql=cur.execute.call_args_list[0].args[0]
+        week_sql=cur.execute.call_args_list[1].args[0]
+        self.assertIn('WHERE EXISTS (SELECT 1 FROM requested',module_sql)
+        self.assertNotIn('(SELECT CASE WHEN count(*)=1',module_sql)
+        self.assertNotIn('curriculum.components',week_sql)
 
     def test_native_identity_read_reuses_raw_live_credit_keys_and_skips_empty_quiz_lookup(self):
         from . import learner_detail
@@ -148,6 +166,10 @@ class CataloguePerformanceTests(SimpleTestCase):
             _,_,components=learner_detail._resolve_from_master([],[],[],assigned_modules=[{'moduleId':'M1'}],
                 compact=True,identities_only=True,catalogue_facts=True,live_session_ids=False,resolved_metadata=resolved,strict=True)
         self.assertEqual(cur.execute.call_count,1)
+        sql,params=cur.execute.call_args.args
+        self.assertIn('week_id = ANY(%s)',sql)
+        self.assertNotIn('EXISTS (SELECT 1 FROM curriculum.weeks',sql)
+        self.assertEqual(params,[['M1'],['W1']])
         self.assertEqual(components[0]['teamsLiveSessionId'],'EXTRA')
         self.assertEqual(resolved['live_credit_components'],[{'componentId':'L1','moduleId':'M1','title':'Lecture',
             'type':'live_session','teamsOccurrenceId':'OCC','teamsLiveSessionId':'SERIES','teamsSessionNumber':'2','sessionDate':'2026-01-01'}])
@@ -165,6 +187,30 @@ class CataloguePerformanceTests(SimpleTestCase):
         self.assertEqual(cur.execute.call_count,3)
         self.assertFalse(any('FROM curriculum.modules' in call.args[0] for call in cur.execute.call_args_list))
         self.assertNotIn('FOREIGN',str(cur.execute.call_args_list))
+
+    def test_catalogue_quiz_ownership_is_one_set_based_read(self):
+        from . import learner_detail
+        cur=MagicMock()
+        cur.fetchall.return_value=[
+            (10,'W1','Final test',None,None,None,'P','Programme','Module','M1','W1'),
+        ]
+        conn=MagicMock();conn.cursor.return_value.__enter__.return_value=cur
+        weeks=[{'moduleId':'M1','module':'Module','weekId':'W1','week':'Week 1'}]
+        components=[{'moduleId':'M1','module':'Module','weekId':'W1','week':'Week 1',
+                     'componentId':'C1','component':'Final test','isQuiz':True,
+                     'quizMeta':{'quizId':10}}]
+        resolved={'quiz_modules':{'M1':{'module':'Module','programmeId':'P','programme':'Programme'}}}
+        with patch.object(learner_detail,'connections',{'enrolment':conn}):
+            actual=learner_detail._append_week_quizzes(
+                weeks,components,assigned_modules=[{'moduleId':'M1'}],
+                native_week_ids=True,resolved_metadata=resolved,
+                catalogue_facts=True,strict=True)
+        self.assertEqual(actual,(weeks,components))
+        self.assertEqual(cur.execute.call_count,1)
+        sql,params=cur.execute.call_args.args
+        self.assertIn('WITH links AS',sql)
+        self.assertIn('LEFT JOIN links',sql)
+        self.assertEqual(params,[['M1'],['W1'],['module']])
 
     def test_section_dates_are_parsed_once_per_section_not_once_per_activity(self):
         exports=[{'course_id':50,'section_id':'s1','section_order':'1','section_title':'Week 1',

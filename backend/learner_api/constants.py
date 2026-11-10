@@ -83,6 +83,7 @@ ACCESS_SUPER_ADMIN = "super-admin"
 ACCESS_ADVANCED_ADMIN = "advanced-admin"
 ACCESS_RECORD_MONITOR = "record-monitor"
 ACCESS_SUPPORT = "support"
+ACCESS_FREE_COURSE_AUTHORING = "free-course-authoring"
 
 #: Canonical order — also the order the console offers them in.
 ACCESS_CHOICES = [
@@ -95,6 +96,13 @@ ACCESS_CHOICES = [
     ACCESS_ADVANCED_ADMIN,
     ACCESS_SUPER_ADMIN,
 ]
+
+# Extra-only capabilities are stored in ``Access_extra`` but never act as a
+# workspace or landing-page choice.  Keep this separate from ACCESS_CHOICES so
+# the SPA workspace switcher cannot accidentally expose a capability as a
+# navigation destination.
+ACCESS_CAPABILITY_CHOICES = [ACCESS_FREE_COURSE_AUTHORING]
+ACCESS_GRANT_CHOICES = [*ACCESS_CHOICES, *ACCESS_CAPABILITY_CHOICES]
 
 #: Human labels for the console. Kept beside the values so the two cannot drift.
 ACCESS_LABELS = {

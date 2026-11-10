@@ -49,12 +49,14 @@ class RemainingLatencyTests(SimpleTestCase):
         fallback.assert_not_called()
 
     def native(self, batched, duplicate=False, cached=None):
-        component = ('C1','W1','M1','quiz','Final test','',{'linkedQuizId':10},None,0,None,False,None,False)
+        settings = ({'_ambiguousQuizLink':True} if duplicate else
+                    {'linkedQuizId':10,'_normalizedQuizLink':True}) if batched else {'linkedQuizId':10}
+        component = ('C1','W1','M1','quiz','Final test','',settings,None,0,None,False,None,False)
         cursor = MagicMock()
         metadata = ('C1',10,10,'Final test',5,20,'minutes')
         if batched:
-            cursor.fetchall.side_effect = [[component], [metadata, metadata] if duplicate else [metadata]] + (
-                [[('C1',10)], [(10,'Final test',5,20,'minutes')]] if duplicate else [])
+            cursor.fetchall.side_effect = [[component]] + (
+                [[('C1',10),('C1',10)], [('C1',10)]] if duplicate else [])
         else:
             cursor.fetchall.side_effect = [[component], [('C1',10)], [(10,'Final test',5,20,'minutes')]]
         connection = MagicMock()
@@ -67,14 +69,28 @@ class RemainingLatencyTests(SimpleTestCase):
                 identities_only=True,catalogue_facts=batched,live_session_ids=False,resolved_metadata=resolved,strict=True)
         return components, cursor
 
-    def test_native_quiz_links_and_metadata_use_two_selects_instead_of_three(self):
+    def test_native_quiz_links_and_metadata_use_one_select_instead_of_three(self):
         before, old = self.native(False)
         after, new = self.native(True)
         self.assertEqual(old.execute.call_count, 3)
-        self.assertEqual(new.execute.call_count, 2)
-        for key in ('componentId','isQuiz','quizMeta','moduleId','weekId'):
+        self.assertEqual(new.execute.call_count, 1)
+        for key in ('componentId','isQuiz','moduleId','weekId'):
             self.assertEqual(before[0][key], after[0][key])
-        self.assertEqual(after[0]['quizMeta']['questions'], 5)
+        self.assertEqual(after[0]['quizMeta'], {'quizId':10})
+        component_sql, component_params = new.execute.call_args_list[0].args
+        self.assertIn('week_id = ANY(%s)', component_sql)
+        self.assertNotIn('EXISTS (SELECT 1 FROM curriculum.weeks', component_sql)
+        self.assertEqual(component_params, [['M1'], ['W1']])
+        self.assertIn('FROM curriculum.quiz_component_links normalized', component_sql)
+
+    def test_catalogue_identity_sql_does_not_transfer_activity_detail_fallbacks(self):
+        _, cursor = self.native(True)
+        sql = cursor.execute.call_args_list[0].args[0]
+        self.assertNotIn('_pointLegacySettings', sql)
+        self.assertNotIn('_audioAlternativeLegacy', sql)
+        self.assertNotIn('linkedLiveSessionComponentId', sql)
+        self.assertIn("'_cataloguePlayable'", sql)
+        self.assertNotIn("'resourceUrl',settings_json->'resourceUrl'", sql)
 
     def test_joined_quiz_read_retains_already_resolved_request_metadata(self):
         cached = {10:{'quizId':10,'title':'Request-local title','questions':99,'duration':20,'timeUnit':'minutes'}}
@@ -82,10 +98,9 @@ class RemainingLatencyTests(SimpleTestCase):
         self.assertEqual(actual[0]['quizMeta'], cached[10])
 
     def test_duplicate_quiz_links_keep_original_reader_and_metadata(self):
-        expected, _ = self.native(False)
         actual, cursor = self.native(True, duplicate=True)
-        self.assertEqual(actual[0]['quizMeta'], expected[0]['quizMeta'])
-        self.assertEqual(cursor.execute.call_count, 4)  # Probe plus unchanged fallback.
+        self.assertEqual(actual[0]['quizMeta'], {'quizId':10})
+        self.assertEqual(cursor.execute.call_count, 3)  # Ambiguity probe plus unchanged link fallback.
         self.assertIn('SELECT link.component_id, link.quiz_id', cursor.execute.call_args_list[2].args[0])
 
     def test_segment_presence_preserves_direct_save_and_accepted_hour_rules(self):

@@ -460,6 +460,7 @@ def _serialize_quiz(quiz):
         "defaultQuestionType": quiz.default_question_type,
         "assessmentType": quiz.assessment_type,
         "weekId": quiz.week_id,
+        "freeCourseWeekId": quiz.free_course_week_id or None,
         "status": quiz.status,
         "packageType": quiz.package_type,
         "fileName": quiz.file_name,
@@ -3334,6 +3335,7 @@ def quizzes(request):
         if query:
             queryset = queryset.filter(title__icontains=query)
         if request.GET.get('view') == 'picker':
+            queryset = queryset.filter(free_course_week_id__isnull=True)
             # The authoring picker only links a quiz and displays its summary.
             # It does not use assignment counts, uploaded content or settings;
             # computing those here reads every linked curriculum component.
@@ -3680,6 +3682,12 @@ def _quiz_detail_locked(request, pk):
     except QuizPackage.DoesNotExist:
         raise Http404
 
+    if quiz.free_course_week_id:
+        return JsonResponse({
+            "error": "Canonical Free Course quizzes must be changed from Free Courses authoring.",
+            "code": "canonical_free_course_quiz_endpoint_required",
+        }, status=409)
+
     if request.method == "DELETE":
         quiz.delete()
         return JsonResponse({"deleted": True})
@@ -3759,6 +3767,12 @@ def quiz_course_links(request, pk):
         quiz = QuizPackage.objects.get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
+
+    if request.method == "PATCH" and quiz.free_course_week_id:
+        return JsonResponse({
+            "error": "Canonical Free Course quiz ownership cannot be changed through Programme links.",
+            "code": "canonical_free_course_quiz_endpoint_required",
+        }, status=409)
 
     try:
         _ensure_quiz_course_links_table()
@@ -4509,6 +4523,12 @@ def _quiz_questions_locked(request, pk):
         quiz = quiz_manager.get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
+
+    if request.method != "GET" and quiz.free_course_week_id and not getattr(request, "_canonical_free_course_quiz", False):
+        return JsonResponse({
+            "error": "Canonical Free Course quizzes must be changed from Free Courses authoring.",
+            "code": "canonical_free_course_quiz_endpoint_required",
+        }, status=409)
 
     if request.method == "GET":
         return JsonResponse(_quiz_preview_payload(quiz, include_archived=True))

@@ -57,6 +57,19 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
             self.assertNotIn('r.session_date', sql)
             # SQLite has no AT TIME ZONE; exercise the equivalent Python fallback.
             sql = sql.replace(projection, 'NULL AS session_date')
+        if 'FROM "Learner".learner_progress_entries p' in sql:
+            # Production deliberately transfers only the identity fields used
+            # by represented(). SQLite fixtures retain the raw JSON columns so
+            # the same matching rules can be exercised without PostgreSQL JSONB.
+            self.assertIn("'original_source_ref',p.source_payload->'original_source_ref'", sql)
+            self.assertIn("'teamsOccurrenceId',c.settings_json->'teamsOccurrenceId'", sql)
+            start = sql.index('SELECT') + len('SELECT')
+            marker = '\n        FROM "Learner".learner_progress_entries p'
+            end = sql.index(marker)
+            sql = (sql[:start]
+                   + ' p.source_payload,p.time_tracking_session_ref,p.module_ref,'
+                     'a.source_key AS kbc_attendance_key,c.settings_json '
+                   + sql[end:])
         return [dict(record) for record in self.db.execute(sql.replace('%s', '?'), params)]
 
     def lecture(self, occurrence='O1', *, owner=70, status='present', start='2026-10-15T09:00:00+00:00',

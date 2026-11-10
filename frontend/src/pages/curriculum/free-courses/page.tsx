@@ -9,7 +9,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
-import { fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeProgrammeModules, importModuleToFreeCourses, injectFreeCourseIntoGroup, saveFreeProgrammeModules, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
+import { CurriculumApiError, cloneModuleToFreeCourseAuthoring, createFreeCourseAuthoring, createFreeCourseQuiz, deleteFreeCourseAuthoring, fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeCourseAuthoringCatalogue, fetchFreeCourseAuthoringCourse, injectFreeCourseIntoGroup, unlinkFreeCourseQuiz, updateFreeCourseAuthoring, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeCourseAuthoringDocument, type FreeProgrammeModule } from '@/lib/curriculumApi';
 import {
   fetchWeekTemplateDetail,
   fetchWeekTemplates,
@@ -32,6 +32,8 @@ interface FreeCourseComponent {
   sourceWeekTitle?: string;
   manualUnlock?: boolean;
   locked?: boolean;
+  persistedId?: string;
+  legacyCopiedFromWeekId?: string | null;
 }
 
 interface FreeCourse {
@@ -55,6 +57,7 @@ interface SavedFreeCourseCard {
   weeks: FreeProgrammeModule[];
   componentCount: number;
   totalOtjh: number;
+  revision: string;
 }
 
 const COMPONENT_META: Record<ComponentKind, { label: string; icon: string; color: string }> = {
@@ -66,19 +69,11 @@ const COMPONENT_META: Record<ComponentKind, { label: string; icon: string; color
   assignment: { label: 'Assignment', icon: 'ri-file-edit-line', color: 'text-fuchsia-600 bg-fuchsia-50 border-fuchsia-100' },
 };
 
-function createFreeCourseId() {
-  const now = new Date();
-  const pad = (value: number, size = 2) => String(value).padStart(size, '0');
-  const timestamp = [
-    now.getUTCFullYear(),
-    pad(now.getUTCMonth() + 1),
-    pad(now.getUTCDate()),
-    pad(now.getUTCHours()),
-    pad(now.getUTCMinutes()),
-    pad(now.getUTCSeconds()),
-    pad(now.getUTCMilliseconds(), 3),
-  ].join('');
-  return `FREECOURSE-${timestamp}${pad(Math.floor(Math.random() * 1000), 3)}`;
+function requestKey(prefix = 'free-course') {
+  const value = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}:${value}`;
 }
 
 function nextComponentCode(kind: ComponentKind, count: number) {
@@ -117,12 +112,9 @@ function weekComponentToFreeComponent(component: ModuleComponent, week: WeekTemp
   };
 }
 
-function freeModuleComponentToCourseComponent(component: FreeProgrammeModule['components'][number], week: FreeProgrammeModule, index: number, templates: WeekTemplate[] = []): FreeCourseComponent {
+function freeModuleComponentToCourseComponent(component: FreeProgrammeModule['components'][number], week: FreeProgrammeModule, index: number): FreeCourseComponent {
   const type = component.type as ModuleComponent['type'];
-  const sourceWeekTemplateId = typeof component.settings?.sourceWeekTemplateId === 'string' ? component.settings.sourceWeekTemplateId : '';
-  const sourceWeekTitle = typeof component.settings?.sourceWeekTitle === 'string' ? component.settings.sourceWeekTitle : '';
-  const matchedTemplate = templates.find(template => template.id === week.weekId || template.title === week.weekTitle || template.title === sourceWeekTitle);
-  const sourceWeekId = sourceWeekTemplateId || matchedTemplate?.id || week.weekId || week.id;
+  const sourceWeekId = week.freeCourseWeekId || week.id;
   const rawComponent: ModuleComponent = {
     id: component.id,
     weekId: sourceWeekId,
@@ -149,7 +141,7 @@ function freeModuleComponentToCourseComponent(component: FreeProgrammeModule['co
     ? `${Math.max(1, Number(component.points) || 10)} points`
     : component.expectedOtjh ? formatHoursMinutes(component.expectedOtjh) : `${Math.max(1, Number(component.points) || 5)} pts`;
   return {
-    id: `${sourceWeekId}-${component.id}-${index}`,
+    id: component.id,
     kind,
     code: nextComponentCode(kind, index),
     title: component.title || meta.label,
@@ -158,10 +150,42 @@ function freeModuleComponentToCourseComponent(component: FreeProgrammeModule['co
     details: component.description || `${meta.label} imported from "${week.weekTitle || 'week'}".`,
     rawComponent,
     sourceWeekId,
-    sourceWeekTitle: sourceWeekTitle || matchedTemplate?.title || week.weekTitle || 'Untitled week',
+    sourceWeekTitle: week.weekTitle || 'Untitled week',
     manualUnlock: Boolean(component.settings?.manualUnlock),
     locked: kind === 'quiz',
+    persistedId: component.id,
+    legacyCopiedFromWeekId: week.legacyCopiedFromWeekId,
   };
+}
+
+function authoringDocumentToModules(document: FreeCourseAuthoringDocument): FreeProgrammeModule[] {
+  return document.weeks.map(week => ({
+    id: week.freeCourseWeekId,
+    freeCourseWeekId: week.freeCourseWeekId,
+    legacyCopiedFromWeekId: week.legacyCopiedFromWeekId,
+    weekId: week.legacyCopiedFromWeekId || '',
+    courseId: document.course.courseId,
+    weekNumber: week.weekNumber,
+    weekTitle: week.title,
+    courseName: document.course.courseName,
+    title: document.course.courseName,
+    description: document.course.description,
+    coverImageUrl: document.course.coverImageUrl,
+    displayOrder: week.displayOrder,
+    componentCount: week.components.length,
+    totalOtjh: week.components.reduce((sum, component) => sum + Number(component.expectedOtjh || 0), 0),
+    components: week.components.map(component => ({
+      ...component,
+      expectedOtjh: Number(component.expectedOtjh || 0),
+      weekId: week.legacyCopiedFromWeekId || '',
+    })),
+  }));
+}
+
+async function loadCanonicalFreeCourses(signal?: AbortSignal) {
+  const catalogue = await fetchFreeCourseAuthoringCatalogue(signal);
+  const documents = await Promise.all(catalogue.courses.map(course => fetchFreeCourseAuthoringCourse(course.courseId, signal)));
+  return { catalogue, documents };
 }
 
 export default function FreeCoursesPage() {
@@ -187,12 +211,16 @@ export default function FreeCoursesPage() {
   const [openingWeekId, setOpeningWeekId] = useState<string | null>(null);
   const [savingCourse, setSavingCourse] = useState(false);
   const [savedModules, setSavedModules] = useState<FreeProgrammeModule[]>([]);
+  const [catalogueRevision, setCatalogueRevision] = useState('');
+  const [documentsByCourse, setDocumentsByCourse] = useState<Record<string, FreeCourseAuthoringDocument>>({});
+  const [removedWeekIds, setRemovedWeekIds] = useState<Set<string>>(() => new Set());
+  const [weekTitleOverrides, setWeekTitleOverrides] = useState<Record<string, string>>({});
+  const [weekOrderIds, setWeekOrderIds] = useState<string[]>([]);
   const [savedCoursesLoading, setSavedCoursesLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingCourseKey, setEditingCourseKey] = useState<string | null>(null);
   const navigate = useNavigate();
   const [convertCard, setConvertCard] = useState<SavedFreeCourseCard | null>(null);
-  const [convertMode, setConvertMode] = useState<'clone' | 'move'>('clone');
   const [convertProgrammes, setConvertProgrammes] = useState<CurriculumProgramme[]>([]);
   const [convertProgrammesLoading, setConvertProgrammesLoading] = useState(false);
   const [convertProgrammeId, setConvertProgrammeId] = useState('');
@@ -220,7 +248,6 @@ export default function FreeCoursesPage() {
   // cohort or group — the scoped list no longer contains it, the selection does.
   const [importSelected, setImportSelected] = useState<CurriculumModule[]>([]);
   const [importSelectionOpen, setImportSelectionOpen] = useState(false);
-  const [importMode, setImportMode] = useState<'clone' | 'move'>('clone');
   const [importing, setImporting] = useState(false);
   const moduleKey = (module: CurriculumModule) => module.moduleCatalogueId || module.id;
   const importCohorts = importDetail?.cohorts ?? [];
@@ -268,6 +295,23 @@ export default function FreeCoursesPage() {
   const firstLockedIndex = course.components.findIndex(component => component.kind === 'quiz');
   const learnerCompletedCount = course.components.filter(component => completedPreviewIds.has(component.id)).length;
   const selectedWeekIds = useMemo(() => new Set(course.components.map(component => component.sourceWeekId).filter(Boolean)), [course.components]);
+  const draftWeeks = useMemo(() => {
+    const weeks: Array<{ id: string; title: string; count: number }> = [];
+    course.components.forEach(component => {
+      const id = component.sourceWeekId || 'manual-week';
+      const existing = weeks.find(week => week.id === id);
+      if (existing) existing.count += 1;
+      else weeks.push({ id, title: component.sourceWeekTitle || `Week ${weeks.length + 1}`, count: 1 });
+    });
+    const stored = course.id ? documentsByCourse[course.id] : undefined;
+    stored?.weeks.forEach(week => {
+      if (!removedWeekIds.has(week.freeCourseWeekId) && !weeks.some(item => item.id === week.freeCourseWeekId)) {
+        weeks.push({ id: week.freeCourseWeekId, title: weekTitleOverrides[week.freeCourseWeekId] ?? week.title, count: 0 });
+      }
+    });
+    const order = new Map(weekOrderIds.map((id, index) => [id, index]));
+    return weeks.sort((left, right) => (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER));
+  }, [course.components, course.id, documentsByCourse, removedWeekIds, weekTitleOverrides, weekOrderIds]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -295,8 +339,12 @@ export default function FreeCoursesPage() {
   useEffect(() => {
     const controller = new AbortController();
     setSavedCoursesLoading(true);
-    fetchFreeProgrammeModules('FREE-COURSES', controller.signal)
-      .then(modules => setSavedModules(modules))
+    loadCanonicalFreeCourses(controller.signal)
+      .then(({ catalogue, documents }) => {
+        setCatalogueRevision(catalogue.revision);
+        setDocumentsByCourse(Object.fromEntries(documents.map(document => [document.course.courseId, document])));
+        setSavedModules(documents.flatMap(authoringDocumentToModules));
+      })
       .catch(() => {
         if (!controller.signal.aborted) setSavedModules([]);
       })
@@ -366,7 +414,14 @@ export default function FreeCoursesPage() {
     quizzes: course.components.filter(item => item.kind === 'quiz').length,
   }), [course.components, selectedWeekIds.size]);
 
-  const savedCourseCards = useMemo(() => groupSavedFreeCourses(savedModules), [savedModules]);
+  const savedCourseCards = useMemo(() => groupSavedFreeCourses(savedModules, documentsByCourse), [savedModules, documentsByCourse]);
+
+  const refreshSavedCourses = async () => {
+    const { catalogue, documents } = await loadCanonicalFreeCourses();
+    setCatalogueRevision(catalogue.revision);
+    setDocumentsByCourse(Object.fromEntries(documents.map(document => [document.course.courseId, document])));
+    setSavedModules(documents.flatMap(authoringDocumentToModules));
+  };
 
   const handleCoverImageUpload = async (file?: File) => {
     if (!file) return;
@@ -378,10 +433,10 @@ export default function FreeCoursesPage() {
       });
       return;
     }
-    if (file.size > 3 * 1024 * 1024) {
+    if (file.size > 1024 * 1024) {
       await showCurriculumAlert({
         title: 'Image is too large',
-        text: 'Please choose an image under 3 MB so it saves quickly.',
+        text: 'Please choose an image under 1 MB so the full course stays within the 2 MiB save limit.',
         icon: 'warning',
       });
       return;
@@ -408,6 +463,9 @@ export default function FreeCoursesPage() {
     setSelectedComponentId('');
     setCompletedPreviewIds(new Set());
     setEditingCourseKey(null);
+    setRemovedWeekIds(new Set());
+    setWeekTitleOverrides({});
+    setWeekOrderIds([]);
   };
 
   const openAddWizard = () => {
@@ -417,7 +475,7 @@ export default function FreeCoursesPage() {
 
   const openEditWizard = (card: SavedFreeCourseCard) => {
     const components = card.weeks.flatMap((week, weekIndex) =>
-      (week.components || []).map((component, componentIndex) => freeModuleComponentToCourseComponent(component, week, weekIndex + componentIndex, weekTemplates)),
+      (week.components || []).map((component, componentIndex) => freeModuleComponentToCourseComponent(component, week, weekIndex + componentIndex)),
     );
     setCourse(previous => ({
       ...previous,
@@ -430,6 +488,7 @@ export default function FreeCoursesPage() {
     setSelectedComponentId(components[0]?.id || '');
     setCompletedPreviewIds(new Set());
     setEditingCourseKey(card.key);
+    setWeekOrderIds(card.weeks.map(week => week.freeCourseWeekId || week.id));
     setWizardOpen(true);
   };
 
@@ -465,6 +524,12 @@ export default function FreeCoursesPage() {
         const existing = previous.components.filter(component => component.sourceWeekId !== detail.id);
         return { ...previous, components: [...existing, ...importedComponents] };
       });
+      setRemovedWeekIds(previous => {
+        const next = new Set(previous);
+        next.delete(detail.id);
+        return next;
+      });
+      setWeekOrderIds(previous => previous.includes(detail.id) ? previous : [...previous, detail.id]);
       setSelectedComponentId(importedComponents[0].id);
       setCompletedPreviewIds(new Set());
     } catch (err) {
@@ -476,7 +541,67 @@ export default function FreeCoursesPage() {
 
   const removeWeekFromCourse = (weekId: string) => {
     setCourse(previous => ({ ...previous, components: previous.components.filter(component => component.sourceWeekId !== weekId) }));
+    setRemovedWeekIds(previous => new Set(previous).add(weekId));
+    setWeekOrderIds(previous => previous.filter(id => id !== weekId));
     setCompletedPreviewIds(new Set());
+  };
+
+  const renameWeek = (weekId: string, title: string) => {
+    setWeekTitleOverrides(previous => ({ ...previous, [weekId]: title }));
+    setCourse(previous => ({
+      ...previous,
+      components: previous.components.map(component => component.sourceWeekId === weekId
+        ? { ...component, sourceWeekTitle: title }
+        : component),
+    }));
+  };
+
+  const moveWeek = (weekId: string, direction: -1 | 1) => {
+    setWeekOrderIds(() => {
+      const ids = draftWeeks.map(week => week.id);
+      const index = ids.indexOf(weekId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= ids.length) return ids;
+      [ids[index], ids[target]] = [ids[target], ids[index]];
+      return ids;
+    });
+    setCourse(previous => {
+      const ids = Array.from(new Set(previous.components.map(component => component.sourceWeekId || 'manual-week')));
+      const index = ids.indexOf(weekId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= ids.length) return previous;
+      [ids[index], ids[target]] = [ids[target], ids[index]];
+      return {
+        ...previous,
+        components: ids.flatMap(id => previous.components.filter(component => (component.sourceWeekId || 'manual-week') === id)),
+      };
+    });
+  };
+
+  const confirmRemoveDraftWeek = async (week: { id: string; title: string; count: number }) => {
+    await showCurriculumConfirm({
+      title: 'Remove week?',
+      text: `"${week.title || 'This week'}" and its ${week.count} activit${week.count === 1 ? 'y' : 'ies'} will be removed when you save.`,
+      confirmButtonText: 'Remove week',
+      cancelButtonText: 'Keep it',
+      onConfirm: async () => removeWeekFromCourse(week.id),
+    });
+  };
+
+  const updateSelectedComponent = (patch: { title?: string; details?: string }) => {
+    if (!selectedComponent) return;
+    setCourse(previous => ({
+      ...previous,
+      components: previous.components.map(component => component.id === selectedComponent.id ? {
+        ...component,
+        ...patch,
+        rawComponent: {
+          ...component.rawComponent,
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.details !== undefined ? { description: patch.details } : {}),
+        },
+      } : component),
+    }));
   };
 
   const confirmRemoveWeekFromCourse = async (template: WeekTemplate) => {
@@ -542,6 +667,76 @@ export default function FreeCoursesPage() {
     }));
   };
 
+  const openQuizEditor = async (component: FreeCourseComponent) => {
+    if (!course.id || !component.persistedId || !component.sourceWeekId) {
+      await showCurriculumAlert({
+        title: 'Save the course first',
+        text: 'Quiz ownership needs the saved Free Course, Free Week and activity IDs.',
+        icon: 'warning',
+      });
+      return;
+    }
+    const document = documentsByCourse[course.id];
+    if (!document) return;
+    try {
+      let quizId = Number(component.rawComponent.settings?.linkedQuizId || 0);
+      let revision = document.revision;
+      if (!quizId) {
+        const result = await createFreeCourseQuiz(course.id, {
+          expectedRevision: revision,
+          freeCourseWeekId: component.sourceWeekId,
+          componentId: component.persistedId,
+          title: component.title,
+        });
+        quizId = result.quiz.quiz.id;
+        revision = result.course.revision;
+        await refreshSavedCourses();
+      }
+      const params = new URLSearchParams({
+        freeCourseId: course.id,
+        componentId: component.persistedId,
+        expectedRevision: revision,
+      });
+      navigate(`/curriculum/quiz-xml/${quizId}/edit?${params.toString()}`);
+    } catch (err) {
+      await showCurriculumAlert({
+        title: 'Could not open quiz',
+        text: err instanceof Error ? err.message : 'Please reload the Free Course and try again.',
+        icon: 'error',
+      });
+    }
+  };
+
+  const unlinkQuiz = async (component: FreeCourseComponent) => {
+    const quizId = Number(component.rawComponent.settings?.linkedQuizId || 0);
+    const document = course.id ? documentsByCourse[course.id] : undefined;
+    if (!quizId || !course.id || !component.persistedId || !document) return;
+    await showCurriculumConfirm({
+      title: 'Unlink quiz?',
+      text: 'The quiz record is preserved. This activity will no longer open it for learners.',
+      confirmButtonText: 'Unlink quiz',
+      cancelButtonText: 'Keep linked',
+      onConfirm: async () => {
+        await unlinkFreeCourseQuiz(course.id, quizId, {
+          expectedRevision: document.revision,
+          componentId: component.persistedId!,
+        });
+        await refreshSavedCourses();
+        setCourse(previous => ({
+          ...previous,
+          components: previous.components.map(item => {
+            if (item.persistedId !== component.persistedId) return item;
+            const settings = { ...(item.rawComponent.settings || {}) };
+            delete settings.linkedQuizId;
+            return { ...item, rawComponent: { ...item.rawComponent, settings } };
+          }),
+        }));
+      },
+      successTitle: 'Quiz unlinked',
+      successText: 'The quiz record was preserved.',
+    });
+  };
+
   const handleComponentDragEnd = (event: DragEndEvent) => {
     const activeId = String(event.active.id);
     const overId = event.over ? String(event.over.id) : '';
@@ -555,56 +750,28 @@ export default function FreeCoursesPage() {
     setSelectedComponentId(activeId);
   };
 
-  const savedModuleInput = (module: FreeProgrammeModule): FreeProgrammeModuleInput => ({
-    id: module.id,
-    courseId: module.courseId,
-    weekId: module.weekId,
-    weekNumber: module.weekNumber,
-    weekTitle: module.weekTitle,
-    courseName: module.courseName || module.title,
-    title: module.courseName || module.title,
-    description: module.description,
-    coverImageUrl: module.coverImageUrl || '',
-    components: (module.components || []).map(component => ({
-      id: component.id,
-      weekId: component.weekId,
-      displayOrder: component.displayOrder,
-      type: component.type,
-      title: component.title,
-      description: component.description,
-      expectedOtjh: component.expectedOtjh,
-      points: component.points,
-      reflectionRequired: component.reflectionRequired,
-      workplaceEvidenceRequired: component.workplaceEvidenceRequired,
-      tutorValidationRequired: component.tutorValidationRequired,
-      settings: component.settings || {},
-    })),
-  });
-
-  const draftWeekInputs = (courseName: string): FreeProgrammeModuleInput[] => {
-    const courseId = course.id || createFreeCourseId();
-    const orderedWeeks: Array<{ id: string; title: string; components: FreeCourseComponent[] }> = [];
-    course.components.forEach(component => {
-      const weekId = component.sourceWeekId || 'manual-week';
-      let entry = orderedWeeks.find(item => item.id === weekId);
-      if (!entry) {
-        entry = { id: weekId, title: component.sourceWeekTitle || `Week ${orderedWeeks.length + 1}`, components: [] };
-        orderedWeeks.push(entry);
-      }
-      entry.components.push(component);
-    });
-    return orderedWeeks.map((week, weekIndex): FreeProgrammeModuleInput => ({
-      courseId,
-      courseName,
-      title: courseName,
-      description: course.subtitle,
-      coverImageUrl: course.coverImageUrl,
-      weekId: week.id,
+  const draftWeekInputs = () => {
+    const storedDocument = course.id ? documentsByCourse[course.id] : undefined;
+    const orderedWeeks = draftWeeks.map(week => ({
+      id: week.id,
+      title: week.title,
+      components: course.components.filter(component => (component.sourceWeekId || 'manual-week') === week.id),
+    }));
+    return orderedWeeks.map((week, weekIndex) => {
+      const storedWeek = storedDocument?.weeks.find(item => item.freeCourseWeekId === week.id);
+      return ({
+      ...(storedWeek ? { freeCourseWeekId: storedWeek.freeCourseWeekId } : { clientId: `week:${weekIndex}:${week.id}` }),
+      legacyCopiedFromWeekId: storedWeek?.legacyCopiedFromWeekId || (!storedWeek ? week.id : null),
       weekNumber: weekIndex + 1,
-      weekTitle: week.title,
-      components: week.components.map((component, componentIndex): FreeProgrammeComponentInput => ({
-        id: component.rawComponent.id || component.id,
-        weekId: week.id,
+      title: week.title,
+      summary: storedWeek?.summary || '',
+      learningOutcomes: storedWeek?.learningOutcomes || [],
+      status: storedWeek?.status || 'active',
+      holidayNoteEnabled: storedWeek?.holidayNoteEnabled || false,
+      holidayNote: storedWeek?.holidayNote || '',
+      displayOrder: weekIndex,
+      components: week.components.map((component, componentIndex) => ({
+        ...(component.persistedId ? { id: component.persistedId } : { clientId: `component:${weekIndex}:${componentIndex}:${component.id}` }),
         displayOrder: componentIndex,
         type: component.rawComponent.type,
         title: component.rawComponent.title || component.title,
@@ -616,12 +783,11 @@ export default function FreeCoursesPage() {
         tutorValidationRequired: component.rawComponent.tutorValidationRequired,
         settings: {
           ...(component.rawComponent.settings || {}),
-          sourceWeekTemplateId: week.id,
-          sourceWeekTitle: week.title,
           manualUnlock: component.manualUnlock || false,
         },
       })),
-    }));
+    });
+    });
   };
 
   const createFreeCourse = async () => {
@@ -629,27 +795,41 @@ export default function FreeCoursesPage() {
     if (!courseName || !course.components.length || savingCourse || savedCoursesLoading) return;
     setSavingCourse(true);
     try {
-      const newModules = draftWeekInputs(courseName);
-      const retainedModules = editingCourseKey
-        ? savedModules.filter(module => (module.courseId || `${module.courseName || module.title || 'Untitled free course'}::${module.description || ''}`) !== editingCourseKey)
-        : savedModules;
-      const response = await saveFreeProgrammeModules('FREE-COURSES', {
-        programmeName: 'Free Courses',
-        modules: [...retainedModules.map(savedModuleInput), ...newModules],
-      });
-      setSavedModules(response.modules || []);
+      const weeks = draftWeekInputs();
+      if (course.id) {
+        const stored = documentsByCourse[course.id];
+        if (!stored) throw new Error('Reload this Free Course before saving.');
+        const currentWeekIds = new Set(weeks.flatMap(week => 'freeCourseWeekId' in week && week.freeCourseWeekId ? [week.freeCourseWeekId] : []));
+        const currentComponentIds = new Set(weeks.flatMap(week => week.components.flatMap(component => 'id' in component && component.id ? [component.id] : [])));
+        await updateFreeCourseAuthoring(course.id, {
+          expectedRevision: stored.revision,
+          course: { courseName, description: course.subtitle, coverImageUrl: course.coverImageUrl },
+          weeks,
+          deletedWeekIds: stored.weeks.filter(week => !currentWeekIds.has(week.freeCourseWeekId)).map(week => week.freeCourseWeekId),
+          deletedComponentIds: stored.weeks.flatMap(week => week.components).filter(component => !currentComponentIds.has(component.id)).map(component => component.id),
+        });
+      } else {
+        await createFreeCourseAuthoring({
+          expectedRevision: catalogueRevision,
+          clientId: requestKey('course-client'),
+          course: { courseName, description: course.subtitle, coverImageUrl: course.coverImageUrl, courseType: 'free' },
+          weeks,
+        }, requestKey('create'));
+      }
+      await refreshSavedCourses();
       resetDraftCourse();
       setWizardOpen(false);
       await showCurriculumAlert({
         title: editingCourseKey ? 'Free course updated' : 'Free course created',
-        text: `${courseName} was saved with ${newModules.length} week${newModules.length === 1 ? '' : 's'}.`,
+        text: `${courseName} was saved with ${weeks.length} week${weeks.length === 1 ? '' : 's'}.`,
         icon: 'success',
         timer: 1800,
       });
     } catch (err) {
+      const stale = err instanceof CurriculumApiError && err.status === 409;
       await showCurriculumAlert({
-        title: 'Could not create free course',
-        text: err instanceof Error ? err.message : 'Please try again.',
+        title: stale ? 'This Free Course changed' : 'Could not save free course',
+        text: stale ? 'Reload the course before applying your changes again.' : err instanceof Error ? err.message : 'Please try again.',
         icon: 'error',
       });
     } finally {
@@ -664,13 +844,8 @@ export default function FreeCoursesPage() {
       confirmButtonText: 'Delete',
       cancelButtonText: 'Keep it',
       onConfirm: async () => {
-        const weekIds = new Set(card.weeks.map(week => week.id));
-        const retainedModules = savedModules.filter(module => !weekIds.has(module.id));
-        const response = await saveFreeProgrammeModules('FREE-COURSES', {
-          programmeName: 'Free Courses',
-          modules: retainedModules.map(savedModuleInput),
-        });
-        setSavedModules(response.modules || []);
+        await deleteFreeCourseAuthoring(card.courseId, card.revision);
+        await refreshSavedCourses();
         if (editingCourseKey === card.key) resetDraftCourse();
       },
       successTitle: 'Free course deleted',
@@ -680,7 +855,6 @@ export default function FreeCoursesPage() {
 
   const openConvertWizard = (card: SavedFreeCourseCard) => {
     setConvertCard(card);
-    setConvertMode('clone');
     setConvertProgrammeId('');
     setConvertDetail(null);
     setConvertCohortId('');
@@ -704,7 +878,6 @@ export default function FreeCoursesPage() {
       });
       return;
     }
-    const isMove = convertMode === 'move';
     const programme = convertProgrammeOptions.find(item => (item.sourceId || item.id) === convertProgrammeId);
     const groupLabel = convertGroups.find(group => group.id === groupId)?.name || 'the selected group';
     const programmeLabel = programme?.name || 'the programme';
@@ -712,27 +885,20 @@ export default function FreeCoursesPage() {
     setConverting(true);
     try {
       await showCurriculumConfirm({
-        title: isMove ? 'Move into this group?' : 'Add to this group?',
-        text: isMove
-          ? `"${card.title}" will be added to "${groupLabel}" in ${programmeLabel}, then DELETED as a free course — and removed from any learner currently assigned it.`
-          : `"${card.title}" will be added as a module to "${groupLabel}" in ${programmeLabel}. The free course stays exactly as it is.`,
-        icon: isMove ? 'warning' : 'question',
-        confirmButtonText: isMove ? 'Move it' : 'Add module',
+        title: 'Add to this group?',
+        text: `"${card.title}" will be added as a module to "${groupLabel}" in ${programmeLabel}. The free course stays exactly as it is.`,
+        icon: 'question',
+        confirmButtonText: 'Add module',
         cancelButtonText: 'Cancel',
         onConfirm: async () => {
           result = await injectFreeCourseIntoGroup('FREE-COURSES', {
             courseId: card.courseId,
-            mode: convertMode,
+            mode: 'clone',
             groupId,
           });
-          if (isMove) {
-            // The free course has gone; refresh the list from the source of truth.
-            const modules = await fetchFreeProgrammeModules('FREE-COURSES');
-            setSavedModules(modules);
-            if (editingCourseKey === card.key) resetDraftCourse();
-          }
+          await refreshSavedCourses();
         },
-        successTitle: isMove ? 'Free course moved' : 'Module added',
+        successTitle: 'Module added',
         successText: 'Opening the Module Builder to add KSBs and hours.',
       });
     } finally {
@@ -754,7 +920,6 @@ export default function FreeCoursesPage() {
     setImportSearch('');
     setImportSelected([]);
     setImportSelectionOpen(false);
-    setImportMode('clone');
   };
 
   const closeImportPicker = () => {
@@ -765,7 +930,6 @@ export default function FreeCoursesPage() {
   const submitImport = async () => {
     const modules = importSelected;
     if (!modules.length || importing) return;
-    const isMove = importMode === 'move';
     const count = modules.length;
     const subject = count === 1 ? `"${modules[0].name}"` : `${count} modules`;
     const sourceLabel = count === 1 ? modules[0].programme || 'its programme' : 'their programmes';
@@ -773,12 +937,10 @@ export default function FreeCoursesPage() {
     setImporting(true);
     try {
       await showCurriculumConfirm({
-        title: isMove ? 'Move to free courses?' : 'Copy to free courses?',
-        text: isMove
-          ? `${subject} will each be copied into a new free course, then ARCHIVED from ${sourceLabel}. KSB mappings and hours are not carried over.`
-          : `${subject} will each be copied into a new free course. ${count === 1 ? 'The module stays' : 'The modules stay'} in ${sourceLabel}. KSB mappings and hours are not carried over.`,
-        icon: isMove ? 'warning' : 'question',
-        confirmButtonText: isMove ? 'Move' : count === 1 ? 'Create free course' : `Create ${count} free courses`,
+        title: 'Copy to free courses?',
+        text: `${subject} will each be copied into a new free course. ${count === 1 ? 'The module stays' : 'The modules stay'} in ${sourceLabel}. KSB mappings and hours are not carried over.`,
+        icon: 'question',
+        confirmButtonText: count === 1 ? 'Create free course' : `Create ${count} free courses`,
         cancelButtonText: 'Cancel',
         onConfirm: async () => {
           // One request per module, in order. Each done module leaves the
@@ -786,8 +948,13 @@ export default function FreeCoursesPage() {
           let done = 0;
           try {
             for (const module of modules) {
-              const result = await importModuleToFreeCourses('FREE-COURSES', { moduleCatalogueId: moduleKey(module), mode: importMode });
-              setSavedModules(result.modules || []);
+              const result = await cloneModuleToFreeCourseAuthoring({
+                moduleCatalogueId: moduleKey(module),
+                mode: 'clone',
+                expectedRevision: (await fetchFreeCourseAuthoringCatalogue()).revision,
+                clientId: `module:${moduleKey(module)}`,
+              }, requestKey('clone'));
+              setDocumentsByCourse(previous => ({ ...previous, [result.course.courseId]: result }));
               done += 1;
             }
           } catch (err) {
@@ -797,16 +964,16 @@ export default function FreeCoursesPage() {
           }
           imported = true;
         },
-        successTitle: isMove ? 'Moved to free courses' : count === 1 ? 'Free course created' : 'Free courses created',
+        successTitle: count === 1 ? 'Free course created' : 'Free courses created',
         successText: `${subject} ${count === 1 ? 'is' : 'are'} now available under Free courses.`,
       });
     } finally {
       setImporting(false);
     }
     if (imported) {
+      await refreshSavedCourses();
       setImportOpen(false);
-      // Drop the loaded programme so the next open refetches it: a move archives
-      // the source module, and the cached list would still offer it.
+      // Drop the loaded programme so the next open sees newly available source content.
       setImportProgrammeId('');
     }
   };
@@ -1010,6 +1177,26 @@ export default function FreeCoursesPage() {
                       Sequential unlock
                     </span>
                   </div>
+                  {draftWeeks.length > 0 && (
+                    <div className="mb-4 space-y-2 rounded-lg border border-background-200 bg-background-50 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">Weeks</p>
+                      {draftWeeks.map((week, index) => (
+                        <div key={week.id} className="flex items-center gap-2">
+                          <span className="w-14 text-xs font-bold text-foreground-500">Week {index + 1}</span>
+                          <input
+                            value={week.title}
+                            onChange={event => renameWeek(week.id, event.target.value)}
+                            className="h-9 min-w-0 flex-1 rounded-lg border border-background-200 bg-white px-3 text-sm font-semibold outline-none focus:border-primary-300"
+                            aria-label={`Week ${index + 1} title`}
+                          />
+                          <span className="text-[10px] font-bold text-foreground-400">{week.count}</span>
+                          <button type="button" disabled={index === 0} onClick={() => moveWeek(week.id, -1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 hover:bg-white disabled:opacity-30" aria-label={`Move ${week.title} up`}><AppIcon name="ri-arrow-up-line" size={14} /></button>
+                          <button type="button" disabled={index === draftWeeks.length - 1} onClick={() => moveWeek(week.id, 1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 hover:bg-white disabled:opacity-30" aria-label={`Move ${week.title} down`}><AppIcon name="ri-arrow-down-line" size={14} /></button>
+                          <button type="button" onClick={() => { void confirmRemoveDraftWeek(week); }} className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 hover:bg-red-50" aria-label={`Remove ${week.title}`}><AppIcon name="ri-delete-bin-line" size={14} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="overflow-hidden rounded-lg border border-background-200">
                     {course.components.length === 0 && (
                       <div className="px-4 py-10 text-center">
@@ -1029,11 +1216,26 @@ export default function FreeCoursesPage() {
                             onSelect={() => setSelectedComponentId(component.id)}
                             onRemove={() => { void confirmRemoveComponent(component); }}
                             onToggleManualUnlock={() => toggleQuizManualUnlock(component.id)}
+                            onOpenQuiz={() => { void openQuizEditor(component); }}
+                            onUnlinkQuiz={() => { void unlinkQuiz(component); }}
                           />
                         ))}
                       </SortableContext>
                     </DndContext>
                   </div>
+                  {selectedComponent && (
+                    <div className="mt-4 grid gap-3 rounded-lg border border-background-200 bg-background-50 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">Selected activity</p>
+                      <label className="grid gap-1 text-xs font-bold text-foreground-600">
+                        Title
+                        <input value={selectedComponent.title} onChange={event => updateSelectedComponent({ title: event.target.value })} className="h-9 rounded-lg border border-background-200 bg-white px-3 text-sm font-semibold outline-none focus:border-primary-300" />
+                      </label>
+                      <label className="grid gap-1 text-xs font-bold text-foreground-600">
+                        Description
+                        <textarea value={selectedComponent.details} onChange={event => updateSelectedComponent({ details: event.target.value })} rows={3} className="rounded-lg border border-background-200 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-primary-300" />
+                      </label>
+                    </div>
+                  )}
                 </div>
               </section>
             </div>
@@ -1255,37 +1457,15 @@ export default function FreeCoursesPage() {
                 <div className="space-y-5 px-5 py-5">
                   <div>
                     <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-foreground-500">Mode</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      {([
-                        { value: 'clone', title: 'Clone', hint: 'Keep the free course as-is' },
-                        { value: 'move', title: 'Move', hint: 'Delete the free course after' },
-                      ] as const).map(option => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => setConvertMode(option.value)}
-                          className={`rounded-lg border px-3 py-2.5 text-left transition ${
-                            convertMode === option.value
-                              ? option.value === 'move'
-                                ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
-                                : 'border-primary-300 bg-primary-50 ring-1 ring-primary-200'
-                              : 'border-background-300 bg-white hover:border-background-400'
-                          }`}
-                        >
-                          <span className={`flex items-center gap-1.5 text-sm font-bold ${convertMode === option.value && option.value === 'move' ? 'text-red-700' : 'text-foreground-900'}`}>
-                            <AppIcon name={option.value === 'move' ? 'ri-scissors-cut-line' : 'ri-file-copy-line'} size={15} />
-                            {option.title}
-                          </span>
-                          <span className="mt-0.5 block text-[11px] text-foreground-500">{option.hint}</span>
-                        </button>
-                      ))}
+                    <div className="grid grid-cols-1 gap-2">
+                      <div className="rounded-lg border border-primary-300 bg-primary-50 px-3 py-2.5 ring-1 ring-primary-200">
+                        <span className="flex items-center gap-1.5 text-sm font-bold text-foreground-900">
+                          <AppIcon name="ri-file-copy-line" size={15} />
+                          Clone
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-foreground-500">Keep the canonical free course as-is</span>
+                      </div>
                     </div>
-                    {convertMode === 'move' && (
-                      <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-5 text-red-700">
-                        <AppIcon name="ri-alert-line" size={14} className="mt-0.5 shrink-0" />
-                        The free course will be deleted and removed from any learner currently assigned it.
-                      </p>
-                    )}
                   </div>
 
                   <label className="block">
@@ -1355,7 +1535,7 @@ export default function FreeCoursesPage() {
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
                   >
                     <AppIcon name={converting ? 'ri-loader-4-line' : 'ri-exchange-line'} className={converting ? 'animate-spin' : ''} size={15} />
-                    {convertMode === 'move' ? 'Move into group' : 'Add module'}
+                    Add module
                   </button>
                 </div>
               </div>
@@ -1535,37 +1715,22 @@ export default function FreeCoursesPage() {
 
                 <div className="border-t border-background-200 px-5 py-4">
                   <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-foreground-500">Mode</span>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2">
                     {([
                       { value: 'clone', title: 'Clone', hint: 'Keep the module in its programme' },
-                      { value: 'move', title: 'Move', hint: 'Archive the module after' },
                     ] as const).map(option => (
-                      <button
+                      <div
                         key={option.value}
-                        type="button"
-                        onClick={() => setImportMode(option.value)}
-                        className={`rounded-lg border px-3 py-2.5 text-left transition ${
-                          importMode === option.value
-                            ? option.value === 'move'
-                              ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
-                              : 'border-primary-300 bg-primary-50 ring-1 ring-primary-200'
-                            : 'border-background-300 bg-white hover:border-background-400'
-                        }`}
+                        className="rounded-lg border border-primary-300 bg-primary-50 px-3 py-2.5 text-left ring-1 ring-primary-200"
                       >
-                        <span className={`flex items-center gap-1.5 text-sm font-bold ${importMode === option.value && option.value === 'move' ? 'text-red-700' : 'text-foreground-900'}`}>
-                          <AppIcon name={option.value === 'move' ? 'ri-scissors-cut-line' : 'ri-file-copy-line'} size={15} />
+                        <span className="flex items-center gap-1.5 text-sm font-bold text-foreground-900">
+                          <AppIcon name="ri-file-copy-line" size={15} />
                           {option.title}
                         </span>
                         <span className="mt-0.5 block text-[11px] text-foreground-500">{option.hint}</span>
-                      </button>
+                      </div>
                     ))}
                   </div>
-                  {importMode === 'move' && (
-                    <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-5 text-red-700">
-                      <AppIcon name="ri-alert-line" size={14} className="mt-0.5 shrink-0" />
-                      The module will be archived from its programme (reversible). Enrolled learners’ saved training plans are not changed.
-                    </p>
-                  )}
                   <div className="mt-4 flex items-center justify-end gap-3">
                     <button
                       type="button"
@@ -1582,7 +1747,7 @@ export default function FreeCoursesPage() {
                       className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
                     >
                       <AppIcon name={importing ? 'ri-loader-4-line' : 'ri-download-2-line'} className={importing ? 'animate-spin' : ''} size={15} />
-                      {importMode === 'move' ? 'Move to free courses' : 'Convert to free courses'}
+                      Convert to free courses
                       {importSelected.length > 1 && ` (${importSelected.length})`}
                     </button>
                   </div>
@@ -1596,7 +1761,7 @@ export default function FreeCoursesPage() {
   );
 }
 
-function groupSavedFreeCourses(modules: FreeProgrammeModule[]): SavedFreeCourseCard[] {
+function groupSavedFreeCourses(modules: FreeProgrammeModule[], documents: Record<string, FreeCourseAuthoringDocument>): SavedFreeCourseCard[] {
   const groups = new Map<string, SavedFreeCourseCard>();
   modules.forEach(module => {
     const title = module.courseName || module.title || 'Untitled free course';
@@ -1619,6 +1784,7 @@ function groupSavedFreeCourses(modules: FreeProgrammeModule[]): SavedFreeCourseC
       weeks: [module],
       componentCount: module.componentCount || module.components?.length || 0,
       totalOtjh: Number(module.totalOtjh || 0),
+      revision: documents[module.courseId || module.id]?.revision || '',
     });
   });
   return Array.from(groups.values()).map(card => ({
@@ -1732,6 +1898,8 @@ function SortableCourseComponentRow({
   onSelect,
   onRemove,
   onToggleManualUnlock,
+  onOpenQuiz,
+  onUnlinkQuiz,
 }: {
   component: FreeCourseComponent;
   index: number;
@@ -1739,6 +1907,8 @@ function SortableCourseComponentRow({
   onSelect: () => void;
   onRemove: () => void;
   onToggleManualUnlock: () => void;
+  onOpenQuiz: () => void;
+  onUnlinkQuiz: () => void;
 }) {
   const meta = COMPONENT_META[component.kind];
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: component.id });
@@ -1786,6 +1956,34 @@ function SortableCourseComponentRow({
         </p>
       </div>
       <div className="flex items-center gap-2">
+        {component.kind === 'quiz' && (
+          <button
+            type="button"
+            onClick={event => {
+              event.stopPropagation();
+              onOpenQuiz();
+            }}
+            className="flex h-8 items-center justify-center gap-1 rounded-lg bg-primary-50 px-2 text-xs font-bold text-primary-700 transition hover:bg-primary-100"
+            title="Create or edit the canonical Free Course quiz"
+          >
+            <AppIcon name="ri-questionnaire-line" size={15} />
+            Quiz
+          </button>
+        )}
+        {component.kind === 'quiz' && Boolean(component.rawComponent.settings?.linkedQuizId) && (
+          <button
+            type="button"
+            onClick={event => {
+              event.stopPropagation();
+              onUnlinkQuiz();
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50"
+            title="Unlink quiz without deleting its record"
+            aria-label={`Unlink quiz from ${component.title}`}
+          >
+            <AppIcon name="ri-link-unlink" size={15} />
+          </button>
+        )}
         {component.kind === 'quiz' && (
           <button
             type="button"

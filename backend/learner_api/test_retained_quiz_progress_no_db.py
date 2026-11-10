@@ -87,6 +87,12 @@ class RetainedQuizProgressTests(unittest.TestCase):
         reader.assert_called_once_with(['MOD-A'], ['100'])
         self.assertEqual(passed['componentId'], 'COMP-1')
 
+    def test_history_sql_uses_indexable_entity_lookup_per_candidate(self):
+        sql = ' '.join(retained.SLOTS_SQL.split())
+        self.assertIn('WITH candidates AS MATERIALIZED', sql)
+        self.assertIn('CROSS JOIN LATERAL', sql)
+        self.assertIn("r.entity_type = 'component' AND r.entity_id = c.id", sql)
+
 
 if __name__ == '__main__':
     unittest.main()

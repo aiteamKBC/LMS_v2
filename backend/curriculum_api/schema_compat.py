@@ -30,7 +30,7 @@ rows by key; the chosen tutor/coach written as its id), ``calendar_holidays``
 ``ksb_mapping_placement`` (mappings scoped and read through their component).
 Placement labels are also projected by FK for SQL filtering and ordering.
 What remains: the lifecycle columns derived from ``status``, the KSB mapping /
-component / free-course-week read shapes, and ``adapt_sql`` -- which hand-written
+component read shapes, and ``adapt_sql`` -- which hand-written
 statements still need, chiefly the Learner team's code curriculum calls.
 """
 from __future__ import annotations
@@ -63,7 +63,7 @@ NULLABLE_FOREIGN_KEYS = {
     'cohorts': ('programme_id',),
     'groups': ('coach_id',),
     'modules': ('programme_id', 'cohort_id', 'group_id', 'tutor_id'),
-    'weeks': ('module_catalogue_id', 'free_course_id'),
+    'weeks': ('module_catalogue_id',),
     'ksb_mappings': ('component_id',),
 }
 REQUIRED_FOREIGN_KEYS = {
@@ -74,15 +74,14 @@ REQUIRED_FOREIGN_KEYS = {
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 # Columns the normalised schema derives instead of storing, per table.
-# Tables the read relation covers: the lifecycle tables plus free-course
-# weeks, whose title/number/description now live on the week itself.
+# Tables the read relation covers. Free Course weeks are deliberately absent:
+# they now store their own canonical fields and are read by free_course_catalogue.
 DERIVED_COLUMNS = {
     # SQL filters and ordering need these labels before Python row projection.
     # They remain FK reads, never copied storage.
     'cohorts': ('programme_name',),
     'groups': ('programme_name', 'cohort_name'),
     'modules': ('programme_name', 'cohort_name', 'group_name'),
-    'free_course_weeks': ('week_title', 'week_number', 'description', 'course_name', 'cover_image_url'),
     # Staff names (tutor_name ...), child lists (module_ids,
     # group_ids, assigned_*_ids ...) and a cohort's holiday choices are not
     # here: curriculum_names puts them on the rows natively, by key
@@ -95,7 +94,7 @@ DERIVED_COLUMNS = {
 }
 
 
-RELATION_TABLES = LIFECYCLE_TABLES | {'free_course_weeks'}
+RELATION_TABLES = LIFECYCLE_TABLES
 
 
 class UnsupportedOnNormalisedSchema(ValueError):
@@ -454,18 +453,11 @@ def read_relation(table, columns, alias=True):
         add('week_id', 'cc.week_id')
         add('ksb_code', "coalesce(sk.ksb_code, '')::varchar")
         add('ksb_description', 'sk.ksb_description')
-    elif table == 'free_course_weeks':
-        joins.append(f'left join {q("weeks")} fw on fw.id = {t}.week_id')
-        joins.append(f'left join {q("free_courses")} fc on fc.id = {t}.course_id')
-        add('week_title', "coalesce(fw.title, '')::text")
-        add('week_number', 'coalesce(fw.week_number, 1)')
-        add('description', 'fw.summary')
-        add('course_name', "coalesce(fc.course_name, '')::text")
-        add('cover_image_url', 'fc.cover_image_url')
     elif table in {'weeks', 'components'}:
         if table == 'weeks':
-            add('library_state', f"(case when coalesce({t}.module_catalogue_id, '') = '' and {t}.free_course_id is not null "
-                                 f"then 'library' else '' end)::varchar")
+            # Canonical weeks always belong to a normal module. Free Course
+            # weeks have their own table and never imply a reusable-library row.
+            add('library_state', "''::varchar")
         else:
             add('library_state', "''::varchar")
         add('detached_at', 'null::timestamptz')
@@ -547,8 +539,7 @@ def project_rows(table, rows, columns, *, requested=None, excluded=None):
         for row in rows:
             for key in derived:
                 if key == 'library_state':
-                    # Former library weeks became free-course weeks: no module.
-                    row.setdefault(key, 'library' if not row.get('module_catalogue_id') and row.get('free_course_id') else '')
+                    row.setdefault(key, '')
                 else:
                     row.setdefault(key, None if key == 'detached_at' else '')
     return rows

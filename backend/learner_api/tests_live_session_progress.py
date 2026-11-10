@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from .live_session_progress import (project_live_credits, read_live_credits,
+from .live_session_progress import (project_live_credits, read_catalogue_live_credits, read_live_credits,
     supplement_component_progress, supplement_module_hours)
 from .module_progress import aggregate_module_progress
 
@@ -129,6 +129,48 @@ class LiveSessionProgressTests(SimpleTestCase):
         with patch('learner_api.attendance_lectures.lecture_register') as register:
             self.assertEqual(read_live_credits(SimpleNamespace(id=7), components=[component(type='video')]), [])
         register.assert_not_called()
+
+    def test_catalogue_reader_batches_saved_shared_register_without_full_lecture_register(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [('C1', 'M1', 'Synthetic live session', 'O1', NOW, 7200)]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        source = SimpleNamespace(
+            id=7,
+            _case_file_profile=SimpleNamespace(pk=70, enrolment_id=7),
+            _canonical_profile={'id': 70},
+        )
+        with patch('learner_api.live_session_progress.connections', {'enrolment': connection}), \
+             patch('learner_api.live_session_progress.read_manual_live_credits', return_value=({}, [])), \
+             patch('learner_api.attendance_lectures.lecture_register') as register:
+            credits = read_catalogue_live_credits(source, [component()])
+
+        self.assertEqual(credits, [{
+            'componentId': 'C1', 'moduleId': 'M1', 'title': 'Synthetic live session',
+            'occurrenceId': 'O1', 'hours': 2, 'verifiedSeconds': 7200,
+            'submittedAt': NOW.isoformat(),
+        }])
+        register.assert_not_called()
+        self.assertEqual(cursor.execute.call_count, 1)
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn('WITH RECURSIVE requested_components', sql)
+        self.assertIn('teams_shared_source_module_id', sql)
+        self.assertIn('r.module_catalogue_id=c.module_catalogue_id', sql)
+        self.assertIn('HAVING count(*)=1', sql)
+
+    def test_catalogue_reader_keeps_manual_override_and_rejects_ambiguous_profile(self):
+        manual = {'componentId': 'C1', 'moduleId': 'M1', 'hours': 2.5, 'title': 'Live',
+                  'submittedAt': NOW.isoformat(), 'timeTrackingSource': 'manual_attendance'}
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [('C1', 'M1', 'Synthetic live session', 'O1', NOW, 7200)]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        source = SimpleNamespace(id=7, _case_file_profile=SimpleNamespace(pk=70, enrolment_id=7),
+                                 _canonical_profile={'id': 70})
+        with patch('learner_api.live_session_progress.connections', {'enrolment': connection}), \
+             patch('learner_api.live_session_progress.read_manual_live_credits',
+                   return_value=({('C1', 'M1'): (True, NOW)}, [manual])):
+            self.assertEqual(read_catalogue_live_credits(source, [component()]), [manual])
 
     def test_supplied_register_is_reused_even_when_empty(self):
         with patch('learner_api.attendance_lectures.lecture_register') as register, \

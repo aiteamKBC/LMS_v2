@@ -16,6 +16,7 @@ from django.db import transaction
 
 from learner_api.constants import (
     ACCESS_CHOICES,
+    ACCESS_GRANT_CHOICES,
     ACCESS_HOME_ROUTES,
     ACCESS_NAV_ROLES,
     ACCESS_SUPER_ADMIN,
@@ -120,7 +121,7 @@ def accesses_for_staff(subject):
     values = set(parse_access_list(getattr(subject, "access_extra", "")))
     if primary:
         values.add(primary)
-    values = {value for value in values if value in ACCESS_CHOICES}
+    values = {value for value in values if value in ACCESS_GRANT_CHOICES}
     if ACCESS_SUPER_ADMIN in values:
         return frozenset({ACCESS_SUPER_ADMIN})
     return frozenset(values)

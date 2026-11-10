@@ -194,10 +194,9 @@ class ModuleAuthoringModule(StatusLifecycleModel):
 
 
 class ModuleAuthoringWeek(StatusLifecycleModel):
-    """``curriculum.weeks``: a module's week, or (module empty) a free course's."""
+    """``curriculum.weeks``: a normal Programme Module week."""
     id = models.CharField(max_length=128, primary_key=True)
     module_catalogue_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
-    free_course_id = models.CharField(max_length=128, blank=True, null=True)
     week_number = models.IntegerField(default=1)
     title = models.TextField(blank=True, default='')
     summary = models.TextField(blank=True, null=True)

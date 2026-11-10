@@ -44,9 +44,10 @@ class SourceFieldTests(SimpleTestCase):
         self.assertTrue({'programme_id', 'cohort_id', 'group_id'} <= set(learning.SOURCE_FIELDS))
         self.assertTrue({'programme', 'cohort', 'group'}.isdisjoint(learning.SOURCE_FIELDS))
 
-    def test_every_other_previous_field_is_kept(self):
-        kept = set(OLD_FIELDS) - {'programme', 'cohort', 'group'}
+    def test_structured_projection_does_not_load_wide_csv_plan_snapshots(self):
+        kept = set(OLD_FIELDS) - {'programme', 'cohort', 'group', 'modules', 'weeks', 'components'}
         self.assertEqual(set(learning.SOURCE_FIELDS), kept | {'programme_id', 'cohort_id', 'group_id'})
+        self.assertTrue({'modules', 'weeks', 'components'}.isdisjoint(learning.SOURCE_FIELDS))
 
     def test_the_real_queryset_compiles(self):
         sql = str(EnrolmentUser.all_learners.only(*learning.SOURCE_FIELDS).filter(pk=PK).query)
@@ -66,6 +67,20 @@ class SourceFieldTests(SimpleTestCase):
         # import SOURCE_FIELDS; both querysets must compile with the corrected tuple.
         str(EnrolmentUser.all_learners.only(*learning.SOURCE_FIELDS).filter(pk=PK).query)
         str(EnrolmentUser.all_learners.only(*learning.SOURCE_FIELDS).filter(pk__in=[PK, PK + 1]).query)
+
+    def test_legacy_plan_columns_are_hydrated_in_one_fallback_query(self):
+        source = loaded_row()
+        source.training_plan = None
+        source.learning_plan = None
+        queryset = EnrolmentUser.all_learners
+        with patch.object(queryset, 'filter') as filtered:
+            filtered.return_value.values.return_value.get.return_value = {
+                'modules':'M1', 'weeks':'Week 1', 'components':'Lesson 1',
+            }
+            learning.hydrate_legacy_plan_fields(source, SimpleNamespace(all_learners=queryset))
+        filtered.return_value.values.assert_called_once_with('modules', 'weeks', 'components')
+        self.assertEqual((source.modules, source.weeks, source.components),
+                         ('M1', 'Week 1', 'Lesson 1'))
 
 
 class MyLearningViewTests(SimpleTestCase):

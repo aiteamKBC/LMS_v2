@@ -20,7 +20,7 @@ here, in-process, and only the learner's *assigned* courses are ever returned.
 import json
 import logging
 
-from django.db import DatabaseError
+from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -29,15 +29,12 @@ from django.views.decorators.http import require_GET, require_POST
 from login.permissions import learner_self_only, learner_self_or_staff
 from login.errors import safe_sqlstate
 
+from curriculum_api import free_course_catalogue
 from curriculum_api.views import (
-    FREE_COURSES_TABLE,
-    FREE_PROGRAMME_COMPONENTS_TABLE,
-    FREE_PROGRAMME_MODULES_TABLE,
     active_component_rows,
     active_week_rows,
     clean_str,
     free_programme_component_response,
-    free_programme_fetch_all,
     programme_deleted_row,
     truthy,
 )
@@ -63,8 +60,9 @@ COURSE_COLUMNS = [
     "week_count", "component_count",
 ]
 WEEK_COLUMNS = [
-    "id", "course_id", "week_id", "week_number", "week_title",
-    "display_order",
+    "id", "course_id", "week_number", "title", "summary",
+    "learning_outcomes", "status", "holiday_note_enabled", "holiday_note",
+    "legacy_copied_from_week_id", "display_order",
 ]
 COMPONENT_SUMMARY_COLUMNS = [
     "id", "free_module_id", "type", "display_order",
@@ -78,12 +76,6 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
-def _in_clause(column, values):
-    """A portable ``column IN (...)`` fragment with its ordered params."""
-    placeholders = ", ".join(["%s"] * len(values))
-    return f"{column} in ({placeholders})", list(values)
-
-
 def _active_course_rows(rows):
     """Current catalogue courses only, including legacy lifecycle columns."""
     return [
@@ -94,7 +86,7 @@ def _active_course_rows(rows):
     ]
 
 
-def _catalogue_rows(stage, table, where_sql, params, order_sql, columns):
+def _catalogue_rows(stage, table, reader, **kwargs):
     """Run one curriculum read and retain only safe failure diagnostics.
 
     Query parameters and exception text can contain learner/catalogue values or
@@ -103,13 +95,7 @@ def _catalogue_rows(stage, table, where_sql, params, order_sql, columns):
     the exact query shape in this module.
     """
     try:
-        return free_programme_fetch_all(
-            table,
-            where_sql,
-            params,
-            order_sql,
-            columns=columns,
-        )
+        return reader(**kwargs)
     except DatabaseError as exc:
         logger.error(
             "free_course_catalogue_query_failed stage=%s table=%s type=%s sqlstate=%s",
@@ -191,19 +177,19 @@ def _scoped_rows(assigned_ids, *, include_component_settings=True):
     The list path deliberately omits component settings and media. Detail reads
     include those columns for one assigned course only.
     """
-    course_where, course_params = _in_clause("id", assigned_ids)
     courses_by_id = {
         clean_str(row.get("id")): row
         for row in _active_course_rows(_catalogue_rows(
-            "courses", FREE_COURSES_TABLE, course_where, course_params,
-            "display_order, course_name, id", COURSE_COLUMNS,
+            "courses", free_course_catalogue.FREE_COURSES_TABLE,
+            free_course_catalogue.courses,
+            course_ids=assigned_ids, columns=COURSE_COLUMNS,
         ))
     }
 
-    week_where, week_params = _in_clause("course_id", assigned_ids)
     week_rows = active_week_rows(_catalogue_rows(
-        "weeks", FREE_PROGRAMME_MODULES_TABLE, week_where, week_params,
-        "display_order, week_number, id", WEEK_COLUMNS,
+        "weeks", free_course_catalogue.FREE_COURSE_WEEKS_TABLE,
+        free_course_catalogue.weeks,
+        course_ids=assigned_ids, columns=WEEK_COLUMNS,
     ))
     # A legacy/orphan week must not resurrect a missing or archived course.
     week_rows = [week for week in week_rows if clean_str(week.get("course_id")) in courses_by_id]
@@ -211,14 +197,13 @@ def _scoped_rows(assigned_ids, *, include_component_settings=True):
 
     component_rows = []
     if week_ids:
-        module_in, module_params = _in_clause("free_module_id", week_ids)
         component_rows = active_component_rows(_catalogue_rows(
             "components",
-            FREE_PROGRAMME_COMPONENTS_TABLE,
-            module_in,
-            module_params,
-            "display_order, title",
-            COMPONENT_DETAIL_COLUMNS if include_component_settings else COMPONENT_SUMMARY_COLUMNS,
+            free_course_catalogue.FREE_COMPONENTS_TABLE,
+            free_course_catalogue.components,
+            week_ids=week_ids,
+            columns=(COMPONENT_DETAIL_COLUMNS if include_component_settings
+                     else COMPONENT_SUMMARY_COLUMNS),
         ))
     return courses_by_id, week_rows, component_rows
 
@@ -236,10 +221,17 @@ def _course_detail(course_id, course_row, week_rows, component_rows, completed_r
         if clean_str(week.get("course_id")) != course_id:
             continue
         week_id = clean_str(week.get("id"))
+        identity = free_course_catalogue.week_api_identity(week)
         weeks.append({
-            "weekId": week_id,
+            **identity,
             "weekNumber": week.get("week_number") if isinstance(week.get("week_number"), int) else 0,
-            "weekTitle": clean_str(week.get("week_title")),
+            "weekTitle": clean_str(week.get("title")),
+            "weekSummary": clean_str(week.get("summary")),
+            "summary": clean_str(week.get("summary")),
+            "status": clean_str(week.get("status")),
+            "learningOutcomes": week.get("learning_outcomes") if isinstance(week.get("learning_outcomes"), list) else [],
+            "holidayNoteEnabled": bool(week.get("holiday_note_enabled")),
+            "holidayNote": clean_str(week.get("holiday_note")),
             "displayOrder": week.get("display_order") if isinstance(week.get("display_order"), int) else 0,
             "activities": activities_by_week.get(week_id, []),
         })
@@ -472,8 +464,33 @@ def _resolve_quiz_component(source, component_id):
             quiz_id = int(str(mapped["quizId"]).strip())
         except (TypeError, ValueError):
             return None, None, _error("No quiz is linked to this activity.", 400)
+        if not _quiz_owner_is_valid(quiz_id, free_course_ref, clean_str(row.get("free_module_id"))):
+            return None, None, _error("This quiz is not available for this Free Course activity.", 409)
         return quiz_id, free_course_ref, None
     return None, None, _error("Activity not found.", 404)
+
+
+def _quiz_owner_is_valid(quiz_id, course_id, week_id):
+    """Accept exact canonical ownership or an unchanged legacy normal owner."""
+    with connections["enrolment"].cursor() as cursor:
+        cursor.execute(
+            "select q.free_course_week_id,q.week_id,"
+            "count(l.id) filter (where l.free_course_id=%s and l.free_course_week_id=%s "
+            "and l.module_catalogue_id is null and l.week_id is null),"
+            "count(l.id) filter (where l.free_course_id is not null or l.free_course_week_id is not null) "
+            "from curriculum.quizzes q left join curriculum.quiz_course_links l on l.quiz_id=q.id "
+            "where q.id=%s group by q.id,q.free_course_week_id,q.week_id",
+            [course_id, week_id, quiz_id],
+        )
+        row = cursor.fetchone()
+    if not row:
+        return False
+    canonical_week, normal_week, exact_links, canonical_links = row
+    if canonical_week:
+        return str(canonical_week) == week_id and not normal_week and exact_links == 1 and canonical_links == 1
+    # The 110 legacy references remain read-only and usable only while they
+    # still have an explicit normal Curriculum owner and no canonical link.
+    return bool(normal_week) and canonical_links == 0
 
 
 @require_GET

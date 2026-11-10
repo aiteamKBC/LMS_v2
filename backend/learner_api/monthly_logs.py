@@ -369,7 +369,10 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
     unallocated = []
     if canonical_owner is not None:
         retained = {'months': []}
-        records = canonical.entries_for(canonical_owner)
+        # Monthly Logs needs complete allocation/source history, but not the
+        # full progress row document. This projection keeps the signed row
+        # digest fields explicitly and avoids serialising unrelated columns.
+        records = canonical.entries_for(canonical_owner, monthly_summary=True)
         attendance = attendance_rows(learner)
         signs = canonical.signatures_for(canonical_owner)
         targets = canonical.targets_for(canonical_owner)
@@ -464,7 +467,7 @@ def detail_data(learner, month, *, include_open=False, include_future=False, dem
     if consolidated:
         # The journal header uses the same recorded learner date as the
         # workspace, without changing programme dates used for calculations.
-        rows_for_date = old_repo.query('''SELECT "Learner_start_date" AS learner_start_date
+        rows_for_date = old_repo.query('''SELECT learner_start_date AS learner_start_date
             FROM enrolment."Created_users" WHERE id = %s''', [learner['id']])
         report_profile['start_date'] = (str(rows_for_date[0].get('learner_start_date') or '').strip() or None) if rows_for_date else None
     target = canonical.targets(learner['id']).get(month, 0 if journal_sources.enabled() else None) if consolidated else sources.monthly_target(learner, month)

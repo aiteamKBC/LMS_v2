@@ -140,7 +140,7 @@ class LocalProjectionDiagnosticsTests(SimpleTestCase):
 
 
 class SafeCatalogueReductionTests(SimpleTestCase):
-    def load_replacement_context(self, transfers=None, components=None):
+    def load_replacement_context(self, transfers=None, components=None, *, transfer_review=False):
         from . import models,weekly_learning,subject_origins,previous_learning_groups,builder_activity_dates,teams_attendance
         from .tests_my_learning_no_db import native,component
         source=SimpleNamespace(pk=7,id=7,aptem_id=7,programme='Programme',cohort='',group='')
@@ -166,25 +166,35 @@ class SafeCatalogueReductionTests(SimpleTestCase):
             stack.enter_context(patch.object(teams_attendance,'annotate_attendance_completion',side_effect=lambda rows,*args:rows))
             stack.enter_context(patch.object(live,'read_live_credits',return_value=[]))
             state=stack.enter_context(patch('learner_api.progress_transfer_store.read_state',return_value={'items':transfers or []}))
-            context=learning.load_context(source,{'id':9,'progress_transfer_active':transfers is not None})
+            context=learning.load_context(source,{'id':9,'progress_transfer_active':transfers is not None},
+                                          include_personal_replacements=transfer_review)
         self.assertEqual(state.call_count, int(transfers is not None))
         imports.assert_not_called()
         return context,cur
 
     def test_cached_imports_and_scoped_replacement_settings_avoid_repeated_metadata_reads(self):
-        context,cur=self.load_replacement_context()
-        self.assertEqual(cur.execute.call_count,1)
-        sql,params=cur.execute.call_args.args
+        context,cur=self.load_replacement_context(transfer_review=True)
+        settings_calls = [call for call in cur.execute.call_args_list
+                          if 'legacySettings' in call.args[0]]
+        self.assertEqual(len(settings_calls),1)
+        sql,params=settings_calls[0].args
         self.assertIn('AND id=ANY(%s)',sql)
         self.assertIn("'sourceMaterialKey'",sql)
         self.assertIn("ELSE settings_json->'legacySettings' END",sql)
         self.assertEqual(params,[['M1'],['C1']])
         self.assertEqual(context[9]['imported_courses'],{'current:M1':'legacy:50'})
 
+    def test_standard_catalogue_skips_unused_import_provenance(self):
+        context,cur=self.load_replacement_context()
+        self.assertFalse(any('legacySettings' in call.args[0]
+                             for call in cur.execute.call_args_list))
+        self.assertEqual(context[9]['replacement_settings'],{})
+
     def test_percentage_only_approval_skips_lineage_without_losing_transfer_credit(self):
         transfer={'moduleId':'M1','status':'approved','matchedComponents':{},'percent':40}
         context,cur=self.load_replacement_context([transfer])
-        cur.execute.assert_not_called()
+        self.assertFalse(any('legacySettings' in call.args[0]
+                             for call in cur.execute.call_args_list))
         self.assertEqual(context[9]['progress_transfers'],[transfer])
         self.assertEqual(context[9]['replacement_settings'],{})
 

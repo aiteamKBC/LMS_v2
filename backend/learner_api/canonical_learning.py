@@ -165,6 +165,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     # unsynchronised saves; historical source identities still match attempts.
     if catalogue_summary:
         training_summary = True
+    monthly_log_summary = monthly_summary and not dashboard_metadata and not catalogue_summary
     # Optional caller-owned selection is applied before the evidence/lineage
     # joins. The learner predicate always remains mandatory.
     selection = '' if entry_ids is None else ' AND progress.id=ANY(%s)'
@@ -209,13 +210,54 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"""
             payload = 'to_jsonb(p)'
         elif training_summary or monthly_summary:
-            columns += ",progress.source_payload,progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"
+            if monthly_log_summary:
+                columns += ''',CASE WHEN jsonb_typeof(progress.source_payload)='object'
+                    THEN jsonb_strip_nulls(jsonb_build_object(
+                        'retakeTimeChoice',progress.source_payload->'retakeTimeChoice',
+                        'original_source_ref',progress.source_payload->'original_source_ref',
+                        'completion_note',progress.source_payload->'completion_note',
+                        'planned_hours',progress.source_payload->'planned_hours',
+                        'timestamp_label',progress.source_payload->'timestamp_label',
+                        'staff_time_entry',progress.source_payload->'staff_time_entry',
+                        'reconciliation',CASE
+                            WHEN progress.source_payload->'reconciliation'->'reporting_allocation'->>'estimated'='true'
+                            THEN jsonb_build_object('reporting_allocation',jsonb_build_object('estimated',true))
+                            ELSE NULL END))
+                    ELSE progress.source_payload END AS source_payload,
+                    progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis'''
+                # Monthly Logs signs the rendered row digest. Keep only the
+                # presentation facts that rows_for uses in that digest while
+                # avoiding the remaining wide progress.* document.
+                columns += ''',progress.feedback,progress.group_title,
+                    progress.reporting_timestamp_label'''
+            else:
+                columns += ",progress.source_payload,progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"
         else:
             columns += ",jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
     segment_payload = "jsonb_build_object('id',s.id)" if training_summary else 'to_jsonb(s)'
     historical_payload = ("jsonb_build_object('source_system',h.source_system,"
         "'source_course_ref',h.source_course_ref,'source_activity_id',h.source_activity_id)"
-        if training_summary else 'to_jsonb(h)')
+        if training_summary or monthly_log_summary else 'to_jsonb(h)')
+    source_payload = ('''jsonb_build_object(
+                'source_system',s.source_system,'source_activity_id',s.source_activity_id,
+                'completed',s.completed,'source_course_ref',c.source_course_ref,
+                'activity_status',s.activity_status)''' if monthly_log_summary else '''jsonb_build_object(
+                'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
+                'completed',s.completed,
+                'source_course_ref',c.source_course_ref,'source_course_id',c.id,
+                'course_title',c.source_course_title,'catalogue_id',a.id,
+                'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
+                'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
+                'activity_status',s.activity_status,
+                'source_activity_kind',a.source_activity_kind)''')
+    document_cte = ''' , activity_documents AS (
+            SELECT d.progress_id,jsonb_agg(jsonb_build_object(
+                'id',d.id,'display_name',d.display_name,'content_type',d.content_type) ORDER BY d.id) AS payload
+            FROM "Learner".learner_activity_documents d
+            JOIN canonical p ON p.id=d.progress_id AND p.learner_id=d.learner_id
+            WHERE d.deleted_at IS NULL
+            GROUP BY d.progress_id
+        )''' if monthly_log_summary else ''
     ksb_cte = '' if catalogue_summary else f''', progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
@@ -229,25 +271,19 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             FROM "Learner".learner_progress_entries progress
             WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
         ){ksb_cte}, reporting_segments AS (
-            SELECT s.progress_id,{"'[{}]'::jsonb" if catalogue_summary else f"jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id)"} AS payload
+            SELECT s.progress_id,{"'[{}]'::jsonb" if catalogue_summary or monthly_log_summary else f"jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id)"} AS payload
             FROM "Learner".learner_activity_reporting_segments s
             JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
             GROUP BY s.progress_id
         ), activity_sources AS (
-            SELECT s.canonical_progress_id AS progress_id,jsonb_agg(jsonb_build_object(
-                'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
-                'completed',s.completed,
-                'source_course_ref',c.source_course_ref,'source_course_id',c.id,
-                'course_title',c.source_course_title,'catalogue_id',a.id,
-                'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
-                'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
-                'activity_status',s.activity_status,
-                'source_activity_kind',a.source_activity_kind) ORDER BY s.id) AS payload
+            SELECT s.canonical_progress_id AS progress_id,
+                jsonb_agg({source_payload} ORDER BY s.id) AS payload
             FROM "Learner".learner_activity_sources s
             JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
             LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
             LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
             WHERE s.deleted_at IS NULL
+              {"AND coalesce(s.source_system,'') IN ('','old_lms')" if monthly_log_summary else ''}
             GROUP BY s.canonical_progress_id
         ), journal_routes AS (
             SELECT j.progress_id,jsonb_agg(jsonb_build_object(
@@ -267,7 +303,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
               AND h.deleted_at IS NULL AND h.historical_only=true
             GROUP BY link.progress_id
-        )
+        ){document_cte}
             SELECT {payload} AS payload,
               {"'[]'::jsonb" if catalogue_summary else "coalesce(k.payload,'[]'::jsonb)"} AS ksbs,
               coalesce(seg.payload,'[]'::jsonb) AS segments,
@@ -275,12 +311,14 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
               coalesce(j.payload,'[]'::jsonb) AS journal_routes,
               j.planned AS journal_planned_hours,
               coalesce(h.payload,'[]'::jsonb) AS historical_components
+              {",coalesce(doc.payload,'[]'::jsonb) AS activity_documents" if monthly_log_summary else ''}
             FROM canonical p
             {'' if catalogue_summary else 'LEFT JOIN progress_ksbs k ON k.progress_id=p.id'}
             LEFT JOIN reporting_segments seg ON seg.progress_id=p.id
             LEFT JOIN activity_sources src ON src.progress_id=p.id
             LEFT JOIN journal_routes j ON j.progress_id=p.id
             LEFT JOIN historical_components h ON h.progress_id=p.id
+            {"LEFT JOIN activity_documents doc ON doc.progress_id=p.id" if monthly_log_summary else ''}
             ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
             params)
     from learner_api import journal_sources
@@ -290,6 +328,9 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         item = {**decoded(record['payload'], {}), **{
             field: decoded(record.get(field), [])
             for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}}
+        if monthly_log_summary:
+            item['_monthly_documents'] = decoded(record.get('activity_documents'), [])
+            item['_monthly_documents_loaded'] = True
         if journal_enabled and record.get('journal_planned_hours') is not None:
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])
@@ -513,9 +554,16 @@ def input_activity_date(entry):
 
 def rows_for(owner, records=None):
     result = []
+    record_set = list(records if records is not None else entries_for(owner))
+    # Reconciled completion-only attempt rows have no progress document of
+    # their own, so they do not carry the marker. One marked canonical row is
+    # sufficient to show this Monthly Logs snapshot preloaded its documents.
+    documents_loaded = records is not None and (
+        not record_set or any(entry.get('_monthly_documents_loaded') is True for entry in record_set)
+    )
     # Untimed completions belong in the activity log for review. They still
     # contribute no allocations/hours to metrics or the monthly charts.
-    for entry in (part for record in (records if records is not None else entries_for(owner))
+    for entry in (part for record in record_set
                   for part in ([record] if record.get('completion_only') else allocations(record))):
         source = source_payload_metadata(entry.get('source_payload'))
         at = local_instant(entry.get('reporting_started_at') or entry.get('reporting_ended_at'))
@@ -550,7 +598,16 @@ def rows_for(owner, records=None):
                     actual_status_label='Estimated — approval required' if is_time_estimated(entry)
                     else ('Accepted' if entry.get('accepted') is True else 'Not accepted'),
                     progress_id=entry['id'])
+        if documents_loaded:
+            item['documents'] = [{
+                'id': document['id'], 'display_name': document['display_name'],
+                'content_type': document['content_type'],
+                'url': f"/learner_api/monthly-logs/{owner['enrolment_id']}/canonical-documents/{document['id']}/"
+                    if owner.get('enrolment_id') else None,
+            } for document in entry.get('_monthly_documents') or []]
         result.append(item)
+    if documents_loaded:
+        return result
     by_id = {}
     for item in result:
         by_id.setdefault(item['progress_id'], []).append(item)

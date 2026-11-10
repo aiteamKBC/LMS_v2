@@ -42,7 +42,7 @@ twice would mean fixing it twice.
 from django.core.management.base import BaseCommand
 from django.db import connections, transaction
 
-from ...constants import ACCESS_CHOICES
+from ...constants import ACCESS_GRANT_CHOICES
 
 CONN = "enrolment"
 TABLE = "Staff_users"
@@ -85,7 +85,7 @@ class Command(BaseCommand):
         whole expression: Postgres rewrites a CHECK when it stores it, so the
         text never comes back in the form it went in.
         """
-        return [value for value in ACCESS_CHOICES if f"'{value}'" not in definition]
+        return [value for value in ACCESS_GRANT_CHOICES if f"'{value}'" not in definition]
 
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
@@ -111,7 +111,7 @@ class Command(BaseCommand):
                 # over unnest(): PostgreSQL refuses a subquery in a CHECK, and
                 # `<@` says the same thing — every element of the split list is
                 # one of the allowed grants — as a plain expression.
-                allowed = ", ".join(f"'{value}'" for value in ACCESS_CHOICES)
+                allowed = ", ".join(f"'{value}'" for value in ACCESS_GRANT_CHOICES)
                 check = (
                     f'CHECK ("{COLUMN}" IS NULL OR btrim("{COLUMN}") = \'\' OR '
                     f'string_to_array(replace(lower(btrim("{COLUMN}")), \' \', \'\'), \',\') '

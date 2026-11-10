@@ -6,8 +6,8 @@ at once (a learner's own tabs, refreshes, a coach and the learner together) and
 each one repeated the whole build, so they queued on the database together.
 
 ``cached_learner_read`` stores a successful JSON response for
-``LEARNER_RESPONSE_CACHE_SECONDS`` seconds (unset or 0 = off; AWS sets 30) in the
-shared cache (Valkey on AWS, per-process memory elsewhere). Only one request
+``LEARNER_RESPONSE_CACHE_SECONDS`` seconds (unset or 0 = off) in the configured
+cache (shared in deployed environments, per-process memory in local development). Only one request
 per key builds at a time: the others wait up to ``WAIT_SECONDS`` for its result
 instead of starting their own build, then build it themselves.
 
@@ -27,6 +27,7 @@ import hashlib
 import logging
 import os
 import re
+import sys
 import time
 
 from django.core.cache import cache
@@ -34,7 +35,11 @@ from django.http import HttpResponse
 
 log = logging.getLogger(__name__)
 
-WAIT_SECONDS = 10  # a waiting request holds one of the worker's view threads
+# My Learning can legitimately take tens of seconds for unusually large legacy
+# catalogues.  Giving up after ten seconds made every duplicate browser fetch
+# start the same projection again, queueing several 30-60 second reads.  Keep
+# the wait below the build lock while allowing the original request to finish.
+WAIT_SECONDS = 60
 LOCK_SECONDS = 90
 POLL_SECONDS = 0.1
 _LEARNER_PATH = re.compile(r'^/learner_api/(?:[^/]+/)+?(?P<kind>[a-z_-]+)/(?P<pk>\d+)(?:/|$)')
@@ -42,7 +47,12 @@ _LEARNER_PATH = re.compile(r'^/learner_api/(?:[^/]+/)+?(?P<kind>[a-z_-]+)/(?P<pk
 
 def ttl_seconds():
     try:
-        return max(0, int(os.environ.get('LEARNER_RESPONSE_CACHE_SECONDS', '0')))
+        # Match the deployed app's short cache window while using runserver.
+        # Successful learner writes still invalidate the versioned key below.
+        # A local process has no shared cache warmer. Keep a successful read for
+        # five minutes; learner writes still bump the version immediately.
+        default = '300' if 'runserver' in sys.argv else '0'
+        return max(0, int(os.environ.get('LEARNER_RESPONSE_CACHE_SECONDS', default)))
     except ValueError:
         return 0
 
@@ -112,7 +122,19 @@ def cached_learner_read(name):
                         break
                     if stored is not None:
                         return _restore(stored)
-                return view(request, *args, **kwargs)
+                    # A failed builder stores no response but releases its lock
+                    # in ``finally``.  Notice that release immediately and let
+                    # exactly one waiter take over.  Previously every waiter
+                    # slept for the full minute even after the 503, then rebuilt
+                    # the same large catalogue independently.
+                    try:
+                        if cache.get(lock) is None and cache.add(lock, 1, timeout=LOCK_SECONDS):
+                            building = False
+                            break
+                    except Exception:
+                        break
+                if building:
+                    return view(request, *args, **kwargs)
 
             try:
                 response = view(request, *args, **kwargs)

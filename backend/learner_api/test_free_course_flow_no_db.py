@@ -32,8 +32,10 @@ def catalogue_rows():
         },
     }
     weeks = [
-        {"id": "W-1", "course_id": "FREE-1", "week_number": 1, "week_title": "Start", "display_order": 0},
-        {"id": "W-2", "course_id": "FREE-1", "week_number": 2, "week_title": "Next", "display_order": 1},
+        {"id": "W-1", "course_id": "FREE-1", "week_number": 1, "title": "Start", "display_order": 0,
+         "status": "active", "legacy_copied_from_week_id": "NORMAL-WEEK-1"},
+        {"id": "W-2", "course_id": "FREE-1", "week_number": 2, "title": "Next", "display_order": 1,
+         "status": "active", "legacy_copied_from_week_id": None},
     ]
     components = [
         {"id": "C-1", "free_module_id": "W-1", "type": "reading", "title": "Read", "display_order": 0,
@@ -78,6 +80,52 @@ class AssignedFreeCourseReadTests(SimpleTestCase):
         self.assertNotIn("weeks", payload["freeCourses"][0])
         self.assertFalse(scoped.call_args.kwargs["include_component_settings"])
 
+    def test_commercial_learner_125_returns_nine_courses_and_126_completions(self):
+        activity_counts = [24, 24, 9, 24, 24, 16, 32, 24, 24]
+        completed_counts = [0, 18, 7, 18, 15, 8, 24, 18, 18]
+        course_ids = [f"FREE-{index}" for index in range(1, 10)]
+        courses = {
+            course_id: {"id": course_id, "course_name": f"Course {index}"}
+            for index, course_id in enumerate(course_ids, 1)
+        }
+        weeks = [
+            {"id": f"W-{index}", "course_id": course_id}
+            for index, course_id in enumerate(course_ids, 1)
+        ]
+        components = []
+        completed = set()
+        for index, (course_id, activity_count, completed_count) in enumerate(
+            zip(course_ids, activity_counts, completed_counts, strict=True), 1,
+        ):
+            for component_number in range(activity_count):
+                component_id = f"C-{index}-{component_number}"
+                components.append({
+                    "id": component_id,
+                    "free_module_id": f"W-{index}",
+                    "type": "reading",
+                    "display_order": component_number,
+                })
+                if component_number < completed_count:
+                    completed.add((course_id, component_id))
+
+        learner_125 = SimpleNamespace(pk=125, enrolment_id=125, learner_type="commercial")
+        with patch.object(view, "_resolve_source", return_value=(learner_125, None)), \
+             patch.object(view, "assigned_course_ids", return_value=course_ids), \
+             patch.object(view, "_scoped_rows", return_value=(courses, weeks, components)), \
+             patch.object(view, "_completed_refs", return_value=completed):
+            response = self.call(
+                view.free_courses,
+                self.factory.get("/learner_api/free-courses/commercial/125/"),
+                account=SimpleNamespace(role="learner", subject_id=125, subject_type="learner"),
+                kind="commercial", pk=125,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        cards = json.loads(response.content)["freeCourses"]
+        self.assertEqual(len(cards), 9)
+        self.assertEqual(sum(card["completedActivities"] for card in cards), 126)
+        self.assertEqual(sum(card["activityCount"] for card in cards), 201)
+
     def test_apprenticeship_assigned_summary_uses_canonical_identity_and_progress(self):
         courses, weeks, components = catalogue_rows()
         summary_components = [
@@ -116,7 +164,9 @@ class AssignedFreeCourseReadTests(SimpleTestCase):
             )
         self.assertEqual(response.status_code, 200)
         course = json.loads(response.content)["freeCourse"]
-        self.assertEqual([week["weekId"] for week in course["weeks"]], ["W-1", "W-2"])
+        self.assertEqual([week["freeCourseWeekId"] for week in course["weeks"]], ["W-1", "W-2"])
+        self.assertEqual([week["weekId"] for week in course["weeks"]], ["NORMAL-WEEK-1", ""])
+        self.assertEqual(course["weeks"][0]["legacyCopiedFromWeekId"], "NORMAL-WEEK-1")
         self.assertTrue(course["weeks"][0]["activities"][0]["completed"])
         self.assertFalse(course["weeks"][1]["activities"][0]["completed"])
 
@@ -216,32 +266,37 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
     def test_scoped_queries_only_request_canonical_free_course_columns(self):
         """Guard the 42703 regression from legacy lifecycle column reads."""
         canonical = {
-            view.FREE_COURSES_TABLE: {
+            view.free_course_catalogue.FREE_COURSES_TABLE: {
                 "id", "course_name", "description", "cover_image_url",
                 "display_order", "week_count", "component_count",
             },
-            view.FREE_PROGRAMME_MODULES_TABLE: {
-                "id", "course_id", "week_id", "week_number", "week_title",
-                "display_order",
+            view.free_course_catalogue.FREE_COURSE_WEEKS_TABLE: {
+                "id", "course_id", "week_number", "title", "summary",
+                "learning_outcomes", "status", "holiday_note_enabled", "holiday_note",
+                "legacy_copied_from_week_id", "display_order",
             },
-            view.FREE_PROGRAMME_COMPONENTS_TABLE: {
+            view.free_course_catalogue.FREE_COMPONENTS_TABLE: {
                 "id", "free_module_id", "type", "title", "description",
                 "display_order", "settings_json",
             },
         }
         rows = {
-            view.FREE_COURSES_TABLE: [{"id": "FREE-1", "course_name": "Course"}],
-            view.FREE_PROGRAMME_MODULES_TABLE: [{"id": "W-1", "course_id": "FREE-1"}],
-            view.FREE_PROGRAMME_COMPONENTS_TABLE: [
+            view.free_course_catalogue.FREE_COURSES_TABLE: [{"id": "FREE-1", "course_name": "Course"}],
+            view.free_course_catalogue.FREE_COURSE_WEEKS_TABLE: [{"id": "W-1", "course_id": "FREE-1"}],
+            view.free_course_catalogue.FREE_COMPONENTS_TABLE: [
                 {"id": "C-1", "free_module_id": "W-1", "type": "reading"},
             ],
         }
 
-        def fetch(table, _where, _params, _order, columns):
-            self.assertEqual(set(columns) - canonical[table], set())
-            return rows[table]
+        def fetch_for(table):
+            def fetch(**kwargs):
+                self.assertEqual(set(kwargs["columns"]) - canonical[table], set())
+                return rows[table]
+            return fetch
 
-        with patch.object(view, "free_programme_fetch_all", side_effect=fetch):
+        with patch.object(view.free_course_catalogue, "courses", side_effect=fetch_for("free_courses")), \
+             patch.object(view.free_course_catalogue, "weeks", side_effect=fetch_for("free_course_weeks")), \
+             patch.object(view.free_course_catalogue, "components", side_effect=fetch_for("free_programme_components")):
             courses, weeks, components = view._scoped_rows(["FREE-1"])
         self.assertEqual(set(courses), {"FREE-1"})
         self.assertEqual([row["id"] for row in weeks], ["W-1"])
@@ -253,7 +308,7 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
         error = DatabaseError("private SQL and connection detail")
         error.__cause__ = driver
 
-        with patch.object(view, "free_programme_fetch_all", side_effect=error), \
+        with patch.object(view.free_course_catalogue, "courses", side_effect=error), \
              self.assertLogs(view.logger.name, level="ERROR") as logs, \
              self.assertRaises(DatabaseError):
             view._scoped_rows(["FREE-1"])
@@ -267,17 +322,31 @@ class FreeCourseQueryShapeTests(SimpleTestCase):
         self.assertNotIn("private SQL and connection detail", diagnostic)
 
     def test_summary_query_omits_component_settings_and_media(self):
-        fetch = Mock(side_effect=[
-            [{"id": "FREE-1", "course_name": "Course"}],
-            [{"id": "W-1", "course_id": "FREE-1"}],
-            [{"id": "C-1", "free_module_id": "W-1", "type": "reading"}],
-        ])
-        with patch.object(view, "free_programme_fetch_all", fetch):
+        courses = Mock(return_value=[{"id": "FREE-1", "course_name": "Course"}])
+        weeks = Mock(return_value=[{"id": "W-1", "course_id": "FREE-1"}])
+        components = Mock(return_value=[{"id": "C-1", "free_module_id": "W-1", "type": "reading"}])
+        with patch.object(view.free_course_catalogue, "courses", courses), \
+             patch.object(view.free_course_catalogue, "weeks", weeks), \
+             patch.object(view.free_course_catalogue, "components", components):
             view._scoped_rows(["FREE-1"], include_component_settings=False)
-        component_columns = fetch.call_args_list[2].kwargs["columns"]
+        component_columns = components.call_args.kwargs["columns"]
         self.assertNotIn("settings_json", component_columns)
         self.assertNotIn("cover_image_url", component_columns)
-        self.assertEqual(fetch.call_args_list[2].args[1], "free_module_id in (%s)")
+        self.assertEqual(components.call_args.kwargs["week_ids"], ["W-1"])
+
+    def test_inactive_week_is_hidden_without_touching_historical_progress(self):
+        course_rows, week_rows, component_rows = catalogue_rows()
+        week_rows[1]["status"] = "inactive"
+        completed = {("FREE-1", "C-1"), ("FREE-1", "C-2")}
+        with patch.object(view.free_course_catalogue, "courses", return_value=list(course_rows.values())), \
+             patch.object(view.free_course_catalogue, "weeks", return_value=week_rows), \
+             patch.object(view.free_course_catalogue, "components", return_value=component_rows):
+            courses, visible_weeks, visible_components = view._scoped_rows(["FREE-1"])
+
+        detail = view._course_detail("FREE-1", courses["FREE-1"], visible_weeks, visible_components, completed)
+        self.assertEqual([week["freeCourseWeekId"] for week in detail["weeks"]], ["W-1"])
+        self.assertTrue(detail["weeks"][0]["activities"][0]["completed"])
+        self.assertIn(("FREE-1", "C-2"), completed)
 
 
 class CanonicalAssignmentSelectorTests(SimpleTestCase):
@@ -330,7 +399,7 @@ class LearningPlanCanonicalFreeCourseReadTests(SimpleTestCase):
         )
         with patch.object(learning_plan_module, "canonical_learner", return_value=source()), \
              patch.object(learning_plan_module, "assigned_course_ids", return_value=["FREE-2", "FREE-1"]), \
-             patch("curriculum_api.views.free_programme_fetch_all", return_value=[
+             patch("curriculum_api.free_course_catalogue.courses", return_value=[
                  {"id": "FREE-1", "course_name": "Canonical one"},
                  {"id": "FREE-2", "course_name": "Canonical two"},
              ]):
@@ -345,7 +414,7 @@ class LearningPlanCanonicalFreeCourseReadTests(SimpleTestCase):
         enrolment = SimpleNamespace(pk=19, learner_type="commercial")
         with patch.object(learning_plan_module, "canonical_learner", return_value=source()), \
              patch.object(learning_plan_module, "assigned_course_ids", return_value=["MISSING"]), \
-             patch("curriculum_api.views.free_programme_fetch_all", return_value=[]):
+             patch("curriculum_api.free_course_catalogue.courses", return_value=[]):
             result = learning_plan_module._canonical_free_course_assignments(enrolment)
         self.assertEqual(result, [{
             "freeCourseId": "MISSING",

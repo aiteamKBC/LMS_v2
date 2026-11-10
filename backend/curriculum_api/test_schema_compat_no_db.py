@@ -20,7 +20,7 @@ NORMALISED_KSB = {'id', 'component_id', 'ksb_id', 'standard_ksb_id', 'status', '
 NORMALISED = {
     'modules': NORMALISED_MODULES,
     'groups': {'group_id', 'group_name', 'cohort_id', 'programme_id', 'coach_id', 'status', 'updated_at'},
-    'weeks': {'id', 'module_catalogue_id', 'free_course_id', 'status', 'updated_at'},
+    'weeks': {'id', 'module_catalogue_id', 'status', 'updated_at'},
     'components': {'id', 'week_id', 'module_catalogue_id', 'status', 'updated_at'},
     'ksb_mappings': NORMALISED_KSB,
 }
@@ -142,6 +142,18 @@ class TranslateWriteTests(SimpleTestCase):
 
 
 class ReadRelationTests(SimpleTestCase):
+    def test_normal_weeks_never_infer_free_course_ownership(self):
+        with PostgresVendor():
+            relation = sc.read_relation('weeks', NORMALISED['weeks'])
+        self.assertIn("''::varchar as \"library_state\"", relation)
+        self.assertNotIn('free_course_id', relation)
+
+    def test_free_course_weeks_have_no_legacy_join_relation(self):
+        with PostgresVendor():
+            self.assertIsNone(sc.read_relation('free_course_weeks', {
+                'id', 'course_id', 'title', 'legacy_copied_from_week_id',
+            }))
+
     def test_modules_relation_exposes_legacy_columns(self):
         with PostgresVendor():
             relation = sc.read_relation('modules', NORMALISED_MODULES)

@@ -5,6 +5,7 @@ student-activity or dashboard responses. Global identity/lineage reconciliation
 is deliberately separate from selected-module content loading.
 """
 from collections import Counter, defaultdict
+import logging
 import re
 from copy import copy
 from datetime import date, datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from urllib.parse import quote
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
+from login.errors import safe_sqlstate
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
@@ -23,6 +25,7 @@ from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
 from .learning_plan import effective_training_plan, request_preset_cache
+from .mappers import stored_training_plan
 from .progress_rules import progress_counts_as_achieved
 from .projection_performance import projection_stage, local_catalogue_trace
 
@@ -30,8 +33,32 @@ from .projection_performance import projection_stage, local_catalogue_trace
 # EnrolmentUser properties resolved from the pk (_learner_placement_names), so
 # they cannot be listed in .only(); load the concrete ids that placement_ids reads.
 SOURCE_FIELDS = ('id', 'aptem_id', 'email', 'programme_id', 'cohort_id', 'group_id',
-                 'learning_plan', 'training_plan', 'modules', 'weeks', 'components', 'learner_type', 'username')
+                 'learning_plan', 'training_plan', 'learner_type', 'username')
 UK = ZoneInfo('Europe/London')
+logger = logging.getLogger(__name__)
+
+
+def hydrate_legacy_plan_fields(source, model):
+    """Fetch the three wide CSV-era plan columns only for an actual legacy row.
+
+    Structured learners already carry their complete assignment in
+    ``training_plan``/``learning_plan``. Selecting the old modules, weeks and
+    components snapshots for every catalogue request transferred a second,
+    unused curriculum tree before the canonical set-based projection ran.
+    """
+    # Focused view tests and compatibility callers may provide a deliberately
+    # minimal source object after mocking the reader. A real EnrolmentUser
+    # always exposes both concrete plan attributes (loaded or deferred).
+    if not hasattr(source, 'training_plan') and not hasattr(source, 'learning_plan'):
+        return source
+    if stored_training_plan(source) is not None:
+        return source
+    legacy = model.all_learners.filter(pk=source.pk).values(
+        'modules', 'weeks', 'components',
+    ).get()
+    for field, value in legacy.items():
+        setattr(source, field, value)
+    return source
 
 
 def percent(done, total):
@@ -43,9 +70,9 @@ def free_course_representation_ids(cur, candidate_ids):
     """Return unambiguous canonical Free Course identities from ``candidate_ids``.
 
     My Courses receives ids from several generations of the learning-plan
-    payload.  A Free Course can therefore be represented by its course id, its
-    split free-week row id, or the authoring week linked by that row.  Those are
-    stable catalogue relationships; titles are deliberately not considered.
+    payload. A Free Course can therefore be represented by its course id or its
+    canonical Free Course week id. The optional source-week provenance is not
+    an operational identity, and titles are deliberately not considered.
 
     If an id also names a real ``curriculum.modules`` row, keep it in My
     Courses.  That fail-open-on-ambiguity rule prevents a legitimate programme
@@ -63,13 +90,6 @@ def free_course_representation_ids(cur, candidate_ids):
             SELECT free_week.id FROM curriculum.free_course_weeks free_week
             JOIN curriculum.free_courses course ON course.id=free_week.course_id
             JOIN requested ON requested.id=free_week.id
-            UNION
-            SELECT authoring_week.id FROM curriculum.free_course_weeks free_week
-            JOIN curriculum.free_courses course ON course.id=free_week.course_id
-            JOIN curriculum.weeks authoring_week
-              ON authoring_week.id=free_week.week_id
-             AND authoring_week.free_course_id=course.id
-            JOIN requested ON requested.id=authoring_week.id
         )
         SELECT free_identities.id FROM free_identities
         LEFT JOIN curriculum.modules module
@@ -83,19 +103,22 @@ def legacy_free_course_source_refs(cur, candidate_refs):
     """Return Old LMS course refs with verified Free Course import lineage.
 
     The MBA import owns the stable ``course_id -> module_id`` relationship.
-    Legacy Free Courses created from that import retain the exact canonical id
-    ``FREECOURSE-MM-<module_id>``.  Both links must exist and the source-course
-    mapping must have been explicitly retired.  A still-live programme module
-    on either recorded identity makes the relationship ambiguous, so it remains
-    visible in My Courses for review.
+    Legacy Free Courses created from that import retain one of the two exact
+    canonical ids ``FREECOURSE-MM-<module_id>`` or
+    ``FREECOURSE-MBA-<module_id>``. Both links must exist and the source-course
+    mapping must have been explicitly retired. A still-live programme module
+    on the recorded, imported or canonical identity makes the relationship
+    ambiguous, so it remains visible in My Courses for review. Multiple module
+    or Free Course matches also fail open instead of hiding history.
 
     Titles are intentionally absent: equal names never establish lineage.
     """
     requested = list(dict.fromkeys(str(value) for value in candidate_refs if value))
     if not requested:
         return set()
-    cur.execute('''WITH requested(source_course_ref) AS (SELECT unnest(%s::text[]))
-        SELECT DISTINCT requested.source_course_ref
+    cur.execute('''WITH requested(source_course_ref) AS (SELECT unnest(%s::text[])),
+        verified_lineage AS (
+        SELECT requested.source_course_ref,legacy.module_id,course.id AS free_course_id
         FROM requested
         JOIN curriculum.source_courses source_course
           ON source_course.source_course_ref=requested.source_course_ref
@@ -104,18 +127,109 @@ def legacy_free_course_source_refs(cur, candidate_refs):
         JOIN "MBA".course_curriculum legacy
           ON legacy.course_id::text=requested.source_course_ref
         JOIN curriculum.free_courses course
-          ON course.id='FREECOURSE-MM-' || legacy.module_id
+          ON course.id IN (
+            'FREECOURSE-MM-' || legacy.module_id,
+            'FREECOURSE-MBA-' || legacy.module_id
+          )
         LEFT JOIN curriculum.modules recorded_module
           ON recorded_module.module_catalogue_id=source_course.curriculum_module_ref
         LEFT JOIN curriculum.modules imported_module
           ON imported_module.module_catalogue_id=legacy.module_id
+        LEFT JOIN curriculum.modules canonical_module
+          ON canonical_module.module_catalogue_id=course.id
         WHERE source_course.mapping_status='retired'
           AND source_course.mapping_method IN
             ('mapped_activity_consensus','exact_legacy_module_source_id')
           AND recorded_module.module_catalogue_id IS NULL
           AND imported_module.module_catalogue_id IS NULL
-        ORDER BY requested.source_course_ref''', [requested])
+          AND canonical_module.module_catalogue_id IS NULL
+        )
+        SELECT source_course_ref
+        FROM verified_lineage
+        GROUP BY source_course_ref
+        HAVING count(DISTINCT module_id)=1
+           AND count(DISTINCT free_course_id)=1
+        ORDER BY source_course_ref''', [requested])
     return {str(row[0]) for row in cur.fetchall()}
+
+
+def free_course_exclusions(cur, identity_candidates, legacy_source_candidates):
+    """Resolve every Free Course representation in one canonical read.
+
+    The initial catalogue previously made three separate database round trips:
+    one for plan identities, then two more after loading historical courses.
+    Keep the same fail-open identity and stable MBA-lineage rules, but evaluate
+    both candidate populations in one set-based statement.
+    """
+    identities = list(dict.fromkeys(
+        str(value) for value in identity_candidates if value
+    ))
+    source_refs = list(dict.fromkeys(
+        str(value) for value in legacy_source_candidates if value
+    ))
+    if not identities and not source_refs:
+        return set(), set()
+    cur.execute('''WITH requested_identity(id) AS (SELECT unnest(%s::text[])),
+        free_identities(id) AS (
+            SELECT course.id FROM curriculum.free_courses course
+            JOIN requested_identity requested ON requested.id=course.id
+            UNION
+            SELECT free_week.id FROM curriculum.free_course_weeks free_week
+            JOIN curriculum.free_courses course ON course.id=free_week.course_id
+            JOIN requested_identity requested ON requested.id=free_week.id
+        ),
+        safe_identities AS (
+            SELECT free_identities.id
+            FROM free_identities
+            LEFT JOIN curriculum.modules module
+              ON module.module_catalogue_id=free_identities.id
+            WHERE module.module_catalogue_id IS NULL
+        ),
+        requested_source(source_course_ref) AS (SELECT unnest(%s::text[])),
+        verified_lineage AS (
+            SELECT requested_source.source_course_ref,legacy.module_id,
+                course.id AS free_course_id
+            FROM requested_source
+            JOIN curriculum.source_courses source_course
+              ON source_course.source_course_ref=requested_source.source_course_ref
+             AND source_course.source_system='old_lms'
+             AND source_course.deleted_at IS NULL
+            JOIN "MBA".course_curriculum legacy
+              ON legacy.course_id::text=requested_source.source_course_ref
+            JOIN curriculum.free_courses course
+              ON course.id IN (
+                'FREECOURSE-MM-' || legacy.module_id,
+                'FREECOURSE-MBA-' || legacy.module_id
+              )
+            LEFT JOIN curriculum.modules recorded_module
+              ON recorded_module.module_catalogue_id=source_course.curriculum_module_ref
+            LEFT JOIN curriculum.modules imported_module
+              ON imported_module.module_catalogue_id=legacy.module_id
+            LEFT JOIN curriculum.modules canonical_module
+              ON canonical_module.module_catalogue_id=course.id
+            WHERE source_course.mapping_status='retired'
+              AND source_course.mapping_method IN
+                ('mapped_activity_consensus','exact_legacy_module_source_id')
+              AND recorded_module.module_catalogue_id IS NULL
+              AND imported_module.module_catalogue_id IS NULL
+              AND canonical_module.module_catalogue_id IS NULL
+        ),
+        safe_source_refs AS (
+            SELECT source_course_ref
+            FROM verified_lineage
+            GROUP BY source_course_ref
+            HAVING count(DISTINCT module_id)=1
+               AND count(DISTINCT free_course_id)=1
+        )
+        SELECT 'identity',id FROM safe_identities
+        UNION ALL
+        SELECT 'source',source_course_ref FROM safe_source_refs
+        ORDER BY 1,2''', [identities, source_refs])
+    excluded_identities, excluded_sources = set(), set()
+    for kind, value in cur.fetchall():
+        target = excluded_identities if kind == 'identity' else excluded_sources
+        target.add(str(value))
+    return excluded_identities, excluded_sources
 
 
 def without_free_course_plan_entries(plan, free_course_ids):
@@ -140,39 +254,67 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     Keep the same stored dates, visibility and educational-session rule as
     dashboard_training.module_rows. Holiday slots/outcomes are not card inputs.
     """
-    from .training_plan_dashboard import rows, plan_module, is_educational_live_session_week
+    from .training_plan_dashboard import rows, plan_module
     from .student_activity import _builder_cover_url
     from .subject_origins import imported_course_links
-    from .module_placement_sql import module_placement_names_sql, module_tutor_name_sql
     # curriculum.modules no longer stores placement names or a deletion
     # marker: names come through the ids, and every requested module resolves.
-    cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
-        m.start_date,m.end_date,{module_tutor_name_sql('m')} AS tutor_name,m.programme_id,{module_placement_names_sql('m')},
+    cur.execute('''WITH requested AS (
+        SELECT * FROM curriculum.modules WHERE module_catalogue_id=ANY(%s)
+    ), programme_names AS (
+        SELECT placement.programme_id,
+            CASE WHEN count(*)=1 THEN min(placement.name) END AS name
+        FROM curriculum.programmes placement
+        WHERE EXISTS (SELECT 1 FROM requested
+            WHERE requested.programme_id=placement.programme_id
+              AND btrim(coalesce(requested.programme_id,''))<>'')
+        GROUP BY placement.programme_id
+    ), cohort_names AS (
+        SELECT placement.cohort_id,
+            CASE WHEN count(*)=1 THEN min(placement.cohort_name) END AS name
+        FROM curriculum.cohorts placement
+        WHERE EXISTS (SELECT 1 FROM requested
+            WHERE requested.cohort_id=placement.cohort_id
+              AND btrim(coalesce(requested.cohort_id,''))<>'')
+        GROUP BY placement.cohort_id
+    ), group_names AS (
+        SELECT placement.group_id,
+            CASE WHEN count(*)=1 THEN min(placement.group_name) END AS name
+        FROM curriculum.groups placement
+        WHERE EXISTS (SELECT 1 FROM requested
+            WHERE requested.group_id=placement.group_id
+              AND btrim(coalesce(requested.group_id,''))<>'')
+        GROUP BY placement.group_id
+    ), tutor_names AS (
+        SELECT tutor.id,min(tutor.name) AS name
+        FROM curriculum.tutors tutor
+        WHERE EXISTS (SELECT 1 FROM requested
+            WHERE requested.tutor_id=tutor.id
+              AND btrim(coalesce(requested.tutor_id,''))<>'')
+        GROUP BY tutor.id
+    )
+        SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
+        m.start_date,m.end_date,coalesce(tutor_names.name,'') AS tutor_name,
+        m.programme_id,coalesce(programme_names.name,'') AS programme_name,
+        coalesce(cohort_names.name,'') AS cohort_name,
+        coalesce(group_names.name,'') AS group_name,
         m.total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
         to_jsonb(m)->'session_overrides' AS session_overrides
-        FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
+        FROM requested m
+        LEFT JOIN programme_names ON programme_names.programme_id=m.programme_id
+        LEFT JOIN cohort_names ON cohort_names.cohort_id=m.cohort_id
+        LEFT JOIN group_names ON group_names.group_id=m.group_id
+        LEFT JOIN tutor_names ON tutor_names.id=m.tutor_id
         ORDER BY m.title''',[ids])
     found = rows(cur)
     modules = {r['id']:plan_module({**r,'weeks_number':None}) for r in found}
-    cur.execute(f'''WITH live_counts AS (
-        SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
-        FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
-          AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
-          AND {visible_child_sql('c')}
-        GROUP BY c.module_catalogue_id,c.week_id
-    ) SELECT w.id,w.module_catalogue_id,w.week_number,w.title,w.display_order,
-        coalesce(live_counts.live_session_count,0) AS live_session_count
-        FROM curriculum.weeks w LEFT JOIN live_counts
-          ON live_counts.module_catalogue_id=w.module_catalogue_id AND live_counts.week_id=w.id
+    cur.execute(f'''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,w.display_order
+        FROM curriculum.weeks w
         WHERE w.module_catalogue_id=ANY(%s)
           AND {visible_week_sql('w')}
-        ORDER BY w.display_order,w.week_number,w.id''',[ids,ids])
+        ORDER BY w.display_order,w.week_number,w.id''',[ids])
     weeks = rows(cur)
-    for week in weeks:
-        module = modules.get(week['module_catalogue_id'])
-        if module and is_educational_live_session_week(week['title']):
-            module['educational_session_count'] += max(0,int(week['live_session_count'] or 0))
     identity_metadata.update(module_titles={r['id']:r['title'] for r in found},
         weeks=[(r['id'],r['module_catalogue_id'],r['title'],r['week_number'],r['display_order']) for r in weeks],
         covers={f"current:{r['id']}":_builder_cover_url(r.get('cover_image_url')) for r in found},
@@ -185,6 +327,31 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
             if r.get('source_type')=='mba-legacy' and re.fullmatch(r'[0-9]+',str(r.get('source_id') or ''))],
             [{'id':r['id']} for r in found]))
     return modules
+
+
+def apply_catalogue_session_counts(modules, components, weeks):
+    """Count authored educational sessions from the canonical component read.
+
+    ``catalogue_module_rows`` already resolves the visible week FK set and the
+    native projection reads the visible components in those weeks. Reusing
+    that result avoids a second scan/group of ``curriculum.components`` while
+    preserving the exact week-title rule used by the former SQL count.
+    """
+    from .training_plan_dashboard import is_educational_live_session_week
+
+    educational = {
+        (str(module_id), str(week_id))
+        for week_id, module_id, title, _number, _order in weeks
+        if is_educational_live_session_week(title)
+    }
+    for module in modules.values():
+        module['educational_session_count'] = 0
+    for component in components:
+        if str(component.get('type') or '').strip().lower().replace('-', '_') != 'live_session':
+            continue
+        module_id = str(component.get('moduleId') or '')
+        if (module_id, str(component.get('weekId') or '')) in educational and module_id in modules:
+            modules[module_id]['educational_session_count'] += 1
 
 
 def session_instant(value):
@@ -204,18 +371,36 @@ def course_facts(owner, records, courses):
     membership exclusions. One canonical row contributes hours once per course.
     """
     from .course_catalogue_display import retain_learner_schedule
-    definitions = canonical.query('''SELECT a.source_activity_id,a.source_activity_title,a.source_activity_type,
-        a.source_section_ref,a.source_section_title,a.source_position AS position,
-        c.source_course_ref,
-        jsonb_build_object('quiz_id',a.source_payload->'quiz_id','activity_id',a.source_payload->'activity_id',
-            'parent_activity_id',a.source_payload->'parent_activity_id','section_title',a.source_payload->'section_title',
-            'section_order',coalesce(a.source_payload->'section_order',a.source_payload#>'{live_catalogue_recovery,section_order}'),
-            'component_order',coalesce(a.source_payload->'component_order',a.source_payload#>'{live_catalogue_recovery,component_order}'),
-            'created_at',a.source_payload->'created_at','created_at_utc',a.source_payload->'created_at_utc') AS source_payload
+    course_refs = {str(course['id']): str(course['source_course_ref']) for course in courses}
+    rows = canonical.query('''SELECT a.source_course_id,a.source_activity_id,
+        a.source_activity_title,a.source_activity_type,a.source_section_ref,
+        a.source_section_title,a.source_position AS position,
+        a.source_payload->'quiz_id' AS quiz_id,
+        a.source_payload->'activity_id' AS activity_id,
+        a.source_payload->'parent_activity_id' AS parent_activity_id,
+        a.source_payload->'section_title' AS payload_section_title,
+        coalesce(a.source_payload->'section_order',
+                 a.source_payload#>'{live_catalogue_recovery,section_order}') AS section_order,
+        coalesce(a.source_payload->'component_order',
+                 a.source_payload#>'{live_catalogue_recovery,component_order}') AS component_order,
+        a.source_payload->'created_at' AS created_at,
+        a.source_payload->'created_at_utc' AS created_at_utc
         FROM curriculum.source_activities a
-        JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
-        WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL AND a.source_system='old_lms'
-        ORDER BY c.id,a.source_position NULLS LAST,a.id''', [[c['id'] for c in courses]]) if courses else []
+        WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL
+          AND a.source_system='old_lms'
+        ORDER BY a.source_course_id,a.source_position NULLS LAST,a.id''',
+        [list(course_refs)]) if courses else []
+    definitions = []
+    payload_fields = ('quiz_id', 'activity_id', 'parent_activity_id',
+                      'section_order', 'component_order', 'created_at', 'created_at_utc')
+    for raw in rows:
+        definition = dict(raw)
+        source_course_id = str(definition.pop('source_course_id'))
+        payload_section_title = definition.pop('payload_section_title')
+        payload = {field: definition.pop(field) for field in payload_fields}
+        payload['section_title'] = payload_section_title
+        definition.update(source_course_ref=course_refs[source_course_id], source_payload=payload)
+        definitions.append(definition)
     from .progress_demo import catalogue as demo_catalogue
     definitions = demo_catalogue(courses, [dict(d) for d in canonical.learner_course_catalogue(courses, definitions)])
     by_key = {(str(d['source_course_ref']), d['source_activity_id']): d for d in definitions}
@@ -309,7 +494,9 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
     # placement metadata; no course curriculum JSON is transferred to Python.
     if search is None:
         with projection_stage('historical_placements'):
-            definitions = catalogue_display_context(definitions, read_export_placements(canonical.query, courses))
+            definitions = catalogue_display_context(
+                definitions, read_export_placements(canonical.query, courses),
+            )
     legacy = defaultdict(list)
     for d in definitions:
         course, ref = str(d['source_course_ref']), d['source_activity_id']
@@ -488,8 +675,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     from .previous_learning_groups import read_previous_learning_groups
     from .builder_activity_dates import read_builder_activity_dates
     from .models import LearnerProfile
-    from .teams_attendance import annotate_attendance_completion
-    from .live_session_progress import read_live_credits, supplement_component_progress
+    from .live_session_progress import read_catalogue_live_credits, supplement_component_progress
     install_request_caches(source)
     source._canonical_profile = owner
     with projection_stage('profile'):
@@ -499,11 +685,28 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     source._case_file_profile = profile
     with projection_stage('assignments'):
         assigned = effective_training_plan(source, request_preset_cache(source))
-    candidate_ids = [entry.get('moduleId') for entry in assigned if isinstance(entry, dict)]
+    from .student_activity_access import student_activity_available
+    with projection_stage('memberships'):
+        if student_activity_available(source.aptem_id):
+            courses = canonical.owned_source_courses(owner)
+        else:
+            from .progress_demo import courses_for
+            courses = courses_for(owner)
+    candidate_ids = [entry.get('moduleId') for entry in assigned
+                     if isinstance(entry, dict)]
+    legacy_candidates = [course.get('curriculum_module_ref') for course in courses]
+    legacy_source_candidates = [course.get('source_course_ref') for course in courses]
     with projection_stage('free_course_separation'):
         with connections['enrolment'].cursor() as cur:
-            free_course_ids = free_course_representation_ids(cur, candidate_ids)
+            free_course_ids, legacy_free_course_refs = free_course_exclusions(
+                cur,
+                [*candidate_ids, *legacy_candidates],
+                legacy_source_candidates,
+            )
     assigned = without_free_course_plan_entries(assigned, free_course_ids)
+    courses = without_free_course_legacy_courses(
+        courses, free_course_ids, legacy_free_course_refs,
+    )
     ids = list(dict.fromkeys(str(m['moduleId']) for m in assigned if m.get('moduleId')))
     record_options = dict(lineage_only=True,monthly_summary=True)
     if subject_id is None:
@@ -538,29 +741,13 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     with projection_stage('native_learning'):
         native = build_learning_content_summary(content_source, source.pk, learning_summary=True, assigned_modules=content_plan,
             identities_only=True, preserve_legacy=True, strict=True, resolved_metadata=resolved)
-    if subject_id is None and purpose == 'catalogue':
-        with projection_stage('attendance_completion'):
-            native['components'] = annotate_attendance_completion(native['components'], profile)
-    credit_options = {'components':sorted(resolved['live_credit_components'],key=lambda c:c['componentId'])} if resolved is not None and 'live_credit_components' in resolved else {'module_ids':ids}
+    if resolved is not None:
+        apply_catalogue_session_counts(modules, native['components'], resolved['weeks'])
     with projection_stage('live_credits'):
-        credits = read_live_credits(source, **credit_options) if subject_id is None and purpose == 'catalogue' else []
+        credits = read_catalogue_live_credits(
+            source, sorted(resolved['live_credit_components'], key=lambda c:c['componentId']),
+        ) if subject_id is None and purpose == 'catalogue' else []
     native['componentProgress'] = supplement_component_progress(native['componentProgress'], credits)
-    from .student_activity_access import student_activity_available
-    with projection_stage('memberships'):
-        if student_activity_available(source.aptem_id):
-            courses = canonical.owned_source_courses(owner)
-        else:
-            from .progress_demo import courses_for
-            courses = courses_for(owner)
-    legacy_candidates = [course.get('curriculum_module_ref') for course in courses]
-    legacy_source_candidates = [course.get('source_course_ref') for course in courses]
-    with projection_stage('free_course_legacy_separation'):
-        with connections['enrolment'].cursor() as cur:
-            legacy_free_course_ids = free_course_representation_ids(cur, legacy_candidates)
-            legacy_free_course_refs = legacy_free_course_source_refs(cur, legacy_source_candidates)
-    courses = without_free_course_legacy_courses(
-        courses, legacy_free_course_ids, legacy_free_course_refs,
-    )
     from .progress_transfer_store import read_state
     transfers = read_state(source.pk)['items'] if owner.get('progress_transfer_active') else []
     # Percentage-only approvals have no component lineage to revalidate. Keep
@@ -593,10 +780,15 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         # Approved lineage belongs to its saved destination even if the current
         # source-course mapping is later removed; keep checking that component's
         # identity against the same settings used by the activity reader.
+        # The ordinary catalogue never uses mutable import provenance unless a
+        # transfer exists.  Loading it for every imported component can pull
+        # thousands of legacy settings documents even when the learner has no
+        # pending/approved transfer.  Transfer review opts in explicitly so a
+        # new request can still calculate candidate matches.
         settings_modules = sorted((
-            {key[8:] for key in {**imports, **replacements} if key[8:] not in approved_modules}
-            | matched_modules
-        ) & set(ids))
+            ({key[8:] for key in {**imports, **replacements} if key[8:] not in approved_modules}
+             | matched_modules) & set(ids)
+        )) if transfers or include_personal_replacements else []
         settings_ids = list(dict.fromkeys(c['componentId']
             for c in [*native['components'], *native.get('retiredQuizComponents', [])]
             if c.get('componentId') and c.get('moduleId') in settings_modules))
@@ -916,6 +1108,7 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
     try:
         with projection_stage('source'):
             source=model.all_learners.only(*SOURCE_FIELDS).get(pk=pk)
+            hydrate_legacy_plan_fields(source, model)
         with projection_stage('owner'):
             owner=canonical.require_profile(pk)
         if resource == 'search':
@@ -935,7 +1128,14 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
         return JsonResponse({'error':'Learner not found.'},status=404)
     except ServiceError as error:
         return JsonResponse({'error':str(error)},status=error.status)
-    except DatabaseError:
+    except DatabaseError as exc:
+        logger.error(
+            "my_learning_query_failed kind=%s resource=%s type=%s sqlstate=%s",
+            kind,
+            resource or "catalogue",
+            type(exc).__name__,
+            safe_sqlstate(exc),
+        )
         return JsonResponse({'error':'Could not load your learning. Please try again.'},status=503)
     with projection_stage('serialize'):
         response=JsonResponse(payload)

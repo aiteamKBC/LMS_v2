@@ -10,6 +10,7 @@ class QuizPackage(models.Model):
     default_question_type = models.CharField(max_length=40, default="single_choice")
     assessment_type = models.CharField(max_length=40, default="quiz")
     week_id = models.CharField(max_length=128, blank=True, default="")
+    free_course_week_id = models.CharField(max_length=128, blank=True, null=True, default=None)
     status = models.CharField(max_length=20, default="draft")
     package_type = models.CharField(max_length=20, default="xml")
     uploaded_file = models.FileField(upload_to="quiz_packages/", max_length=500, blank=True, null=True)
