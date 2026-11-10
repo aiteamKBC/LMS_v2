@@ -5,6 +5,7 @@ import {
   lectureReadyCount,
 } from "@/pages/curriculum/recordings/utils";
 import LectureAttendance from './LectureAttendance';
+import LectureTranscript from './LectureTranscript';
 import RecordingItem from "@/pages/curriculum/recordings/components/RecordingItem";
 import { lazy, Suspense, useMemo, useState } from 'react';
 const QualityReviewDialog = lazy(() => import('@/pages/coaching-recordings/QualityReviewDialog'));
@@ -107,6 +108,8 @@ export default function LectureDetailsPanel({
             ))
           )}
         </div>
+
+        {teachingLecture && <LectureTranscript key={`${teachingLecture.moduleId}:${teachingLecture.seriesId}:${teachingLecture.occurrenceId}`} scope={teachingLecture} />}
 
         <div className="mt-5"><LectureAttendance key={`${lecture.id}:${timeZone}`} lecture={lecture} timeZone={timeZone} /></div>
 
