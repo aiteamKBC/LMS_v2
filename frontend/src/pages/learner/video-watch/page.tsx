@@ -21,6 +21,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
+import { subscribeLearnerReadInvalidation } from '@/api/learnerRead';
 import { markingVerdict } from '@/lib/markingVerdict';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
@@ -310,6 +311,25 @@ export default function ComponentViewPage() {
   // a page timer. The signed session still runs invisibly so the server can cap
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
+  useEffect(() => {
+    if ((!recordedEvent && !isLiveSession) || (kind !== 'commercial' && kind !== 'apprenticeship') || !id || !componentId) return;
+    let disposed = false;
+    let sequence = 0;
+    const unsubscribe = subscribeLearnerReadInvalidation(() => {
+      const current = ++sequence;
+      // A saved watch report can complete this activity. Keep the player and
+      // its position mounted while refreshing the server-owned completion.
+      void fetchLearnerDetail(kind, id, { componentId, force: true }).then(updated => {
+        if (!disposed && current === sequence) {
+          setDetail(updated);
+          setRefreshError(null);
+        }
+      }).catch(() => {
+        if (!disposed && current === sequence) setRefreshError('Lecture completion could not refresh. Refresh the page to reload it.');
+      });
+    });
+    return () => { disposed = true; unsubscribe(); };
+  }, [kind, id, componentId, recordedEvent, isLiveSession]);
   const hasActivityPanel = isVideo || isLiveSession;
   // Every assignment uses the eight-step monthly submission, regardless of
   // legacy author flags elsewhere in the learner's plan.
@@ -1089,6 +1109,7 @@ export default function ComponentViewPage() {
                   : 'Your lecture reflection was submitted for tutor review. Your attendance and recorded study time are unchanged.'}</p>
                 {refreshError && <p role="alert" className="mt-2 text-sm text-amber-900">{refreshError}</p>}
               </div>}
+              {refreshError && !completed && lectureReflectionSaved?.activityKey !== timerStorageKey && <p role="alert" className="mt-2 text-sm text-amber-900">{refreshError}</p>}
               {completed && !isAssignment && (
                 <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                   <p role="status" className="flex items-center gap-2 text-sm font-semibold text-emerald-800">

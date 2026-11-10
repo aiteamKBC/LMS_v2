@@ -140,11 +140,17 @@ FULL_WATCH_SLACK_RATIO = 0.02
 
 def fully_watched_occurrences(kind, learner_id, occurrence_ids):
     """Occurrences whose every recording the learner can play was watched to the end."""
+    return {key for key, value in recording_completion_evidence(kind, learner_id, occurrence_ids).items()
+            if value['completed']}
+
+
+def recording_completion_evidence(kind, learner_id, occurrence_ids):
+    """Saved availability and watch evidence; never contact a media provider."""
     from .session_bunny_policy import bunny_recording, recording_uses_bunny
     ids = sorted({str(value) for value in occurrence_ids if value})
     if not ids:
-        return set()
-    artifacts = read('''SELECT a.*, r.status AS archive_status,o.scheduled_start
+        return {}
+    artifacts = read('''SELECT a.*, r.status AS archive_status,r.updated_at AS archive_updated_at,o.scheduled_start
         FROM curriculum.live_session_artifacts a
         JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
         LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
@@ -152,7 +158,7 @@ def fully_watched_occurrences(kind, learner_id, occurrence_ids):
     by_occurrence = {}
     for row in artifacts:
         by_occurrence.setdefault(row['occurrence_id'], []).append(row)
-    views = {row['artifact_id']: row for row in read(f'''SELECT artifact_id, watched_seconds, duration_seconds
+    views = {row['artifact_id']: row for row in read(f'''SELECT artifact_id, watched_seconds, duration_seconds,last_heartbeat_at
         FROM {VIEWS_TABLE} WHERE learner_kind=%s AND learner_id=%s AND occurrence_id = ANY(%s)''',
         [kind, learner_id, ids])}
 
@@ -164,7 +170,7 @@ def fully_watched_occurrences(kind, learner_id, occurrence_ids):
         slack = max(FULL_WATCH_SLACK_SECONDS, duration * FULL_WATCH_SLACK_RATIO)
         return int(view['watched_seconds'] or 0) + slack >= duration
 
-    complete = set()
+    evidence = {}
     for occurrence_id, rows in by_occurrence.items():
         hidden = hidden_artifact_ids(rows)
         aliases = {}
@@ -182,9 +188,17 @@ def fully_watched_occurrences(kind, learner_id, occurrence_ids):
             if ready:
                 copies[identity] = [row['id'] for row in group]
         # Teams can return one recording twice under different ids: watching either copy counts.
-        if copies and all(any(watched_to_end(artifact_id) for artifact_id in ids) for ids in copies.values()):
-            complete.add(occurrence_id)
-    return complete
+        completed = bool(copies) and all(any(watched_to_end(artifact_id) for artifact_id in ids) for ids in copies.values())
+        visible_ids = {artifact_id for ids in copies.values() for artifact_id in ids}
+        from .session_results_policy import instant
+        available = [instant(row.get('archive_updated_at') or row.get('created_at')) for row in rows
+                     if row['id'] in visible_ids]
+        finished = [instant(view.get('last_heartbeat_at')) for key, view in views.items()
+                    if key in visible_ids and watched_to_end(key)]
+        evidence[occurrence_id] = {'ready': bool(copies), 'completed': completed,
+            'availableAt': max((value for value in available if value), default=None),
+            'completedAt': max((value for value in finished if value), default=None)}
+    return evidence
 
 
 def _recording_identity(row):
