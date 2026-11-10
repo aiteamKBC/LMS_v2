@@ -1,4 +1,4 @@
-"""Saved session results. GET never calls Graph, provisions tables or starts jobs."""
+"""Saved results; only explicit original-file download requests read Microsoft."""
 import json
 import logging
 import re
@@ -1147,8 +1147,10 @@ def stored_content(request, series_id, artifact_id, *, learner_view=False):
         from .bunny_stream import VideoImportError
         try:
             download = not learner_view and request.GET.get('download') == '1'
-            url = recording_player(row, download=download,
-                                   referrer=request.build_absolute_uri('/') if download else '')
+            if download:
+                from .session_downloads import original_recording_download
+                return original_recording_download(request, series_id, row, filename=recording_download_name(row))
+            url = recording_player(row)
             if request.GET.get('format') == 'player' or (not learner_view and request.GET.get('resolve') == '1'):
                 response = JsonResponse({'url': url, 'provider': 'bunny'})
             else:
