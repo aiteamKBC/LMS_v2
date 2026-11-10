@@ -1267,6 +1267,8 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                     WHERE id=%s AND learner_id=%s''', [json.dumps({'retakeTimeChoice': selected,
                         **({'retakePreviousSeconds': record['retakePreviousSeconds']} if 'countedSeconds' in record else {}),
                         **({'retakeTimeReason': record['retakeTimeReason'].strip()} if record.get('retakeTimeReason') else {})}), progress.pk, learner.pk])
+            from .progress_cache import bump_learners
+            bump_learners([learner.pk])
         LearnerProgressKsb.objects.bulk_create(
             [
                 LearnerProgressKsb(

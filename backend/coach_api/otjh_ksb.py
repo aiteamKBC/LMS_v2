@@ -52,8 +52,8 @@ def read_chart_plan(context):
     )
     progress = _direct_progress_records(context.profile.enrolment_id, profile=context.profile)
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [context.profile.enrolment_id])
-        module_ids = [row[0] for row in cursor.fetchall()]
+        from learner_api.subject_cache import subject_rows
+        module_ids = [row[0] for row in subject_rows(cursor, CURRENT_SUBJECTS_SQL, context.profile.enrolment_id)]
         cursor.execute('''SELECT c.id,c.module_catalogue_id AS module_id,
             c.title,c.expected_otjh AS expected_hours,w.title AS section_title
             FROM curriculum.components c

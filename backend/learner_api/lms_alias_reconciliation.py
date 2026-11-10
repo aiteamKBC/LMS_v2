@@ -607,6 +607,9 @@ def apply(cursor, expected_branch_id):
                 next_orders[learner_id] = int(cursor.fetchone()[0])
             next_orders[learner_id] += 1
             payload = _source_payload(action)
+            # Raw INSERT below: retire this learner's cached KSB progress.
+            from .progress_cache import bump_learners
+            bump_learners([learner_id])
             cursor.execute('''INSERT INTO "Learner".learner_progress_entries (
                 id,learner_id,entry_order,kind,module_ref,module_title,component_ref,
                 component_title,component_type,quiz_ref,attempt,achieved_score,total_score,

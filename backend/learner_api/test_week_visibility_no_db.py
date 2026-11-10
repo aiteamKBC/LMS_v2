@@ -54,7 +54,7 @@ CHILD_READER_PATHS = {
     'learner_api/dashboard_header.py': 1,
     'learner_api/dashboard_metrics.py': 4,
     'learner_api/dashboard_training.py': 1,
-    'learner_api/learner_detail.py': 7,
+    'learner_api/learner_detail.py': 9,  # +2: the shared ksb_mappings read (content_cache)
     'learner_api/live_session_progress.py': 1,
     'learner_api/mobile.py': 2,
     'learner_api/module_shift.py': 2,

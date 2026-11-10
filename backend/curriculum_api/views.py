@@ -108,12 +108,11 @@ CURRICULUM_LEARNER_DATA_TTL_SECONDS = 60
 # load -- it asks for `?visibility=all` and the default in the same burst, and
 # each used to pay for its own full read.
 #
-# The TTL is deliberately short. The win is entirely within one page load, so a
-# minute covers it, while keeping the window in which a write from another
-# worker could be missed far below the payload TTL. A write in this process
-# clears the rows with everything else; a write in another one bumps the shared
-# epoch, which invalidates them here too whenever Redis is configured.
-CURRICULUM_ROWS_CACHE_TTL_SECONDS = 60
+# Shared between processes (Valkey) and compressed, with the payload TTL: the
+# shared epoch is what retires them after a write, in this process or another,
+# so the TTL only bounds how long an unused generation lingers. It used to be a
+# 60 s process-local copy, which every worker re-read from Neon each minute.
+CURRICULUM_ROWS_CACHE_TTL_SECONDS = CURRICULUM_CACHE_TTL_SECONDS
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
 # One lock per payload key, so concurrent misses on the same key rebuild once
@@ -741,7 +740,7 @@ def curriculum_build_lock(key):
         return lock
 
 
-def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None):
+def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None, compress=False):
     """The cached payload for ``key``, rebuilding it when it is not there.
 
     ``force`` skips both cache layers and rebuilds from the database, then stores
@@ -754,11 +753,11 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
     new group or programme that does not appear until the page is reloaded enough
     times to land on the worker that took the write.
 
-    ``shared=False`` keeps a value in this process only, for one that is large
-    and cheap to reassemble but expensive to fetch -- the raw curriculum rows.
-    Round-tripping those through Redis costs more in pickling than the read it
-    saves, and every worker warms its own copy in a second anyway. The shared
-    epoch is still honoured, so a write elsewhere still invalidates it.
+    ``shared=False`` keeps a value in this process only. The shared epoch is
+    still honoured, so a write elsewhere still invalidates it.
+
+    ``compress`` stores the shared copy zlib-compressed (the process copy stays
+    as built), for a large value such as the raw curriculum rows.
 
     ``scope`` is a programme id for a payload about that programme alone. Its
     generation is then the programme's own counter plus the unscoped one (see
@@ -822,6 +821,8 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
     shared_key = shared_curriculum_cache_key(key, shared_epoch)
     try:
         shared_value = None if (force or not shared) else cache.get(shared_key)
+        if shared_value is not None and compress:
+            shared_value = _unpack_shared(shared_value)
     except Exception:
         logger.warning('Unable to read shared curriculum payload cache.', exc_info=True)
         shared_value = None
@@ -873,6 +874,12 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                 if acquired:
                     break
                 waited, holder_gone = shared_build.wait_for_value(cache, shared_key)
+                if waited is not None and compress:
+                    try:
+                        waited = _unpack_shared(waited)
+                    except Exception:
+                        logger.warning('Discarding an unreadable shared curriculum payload.', exc_info=True)
+                        waited, holder_gone = None, True
                 if waited is not None:
                     with _CURRICULUM_CACHE_LOCK:
                         _CURRICULUM_CACHE[key] = {
@@ -917,7 +924,7 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                 # This key includes the generation: a concurrent invalidation
                 # retires it even if this network write finishes afterwards.
                 try:
-                    cache.set(shared_key, value, timeout=ttl)
+                    cache.set(shared_key, _pack_shared(value) if compress else value, timeout=ttl)
                 except Exception:
                     logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
         finally:
@@ -925,6 +932,18 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
             # value already there.
             shared_build.release(cache, shared_key, build_token)
     return value
+
+
+def _pack_shared(value):
+    import pickle
+    import zlib
+    return zlib.compress(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL), 1)
+
+
+def _unpack_shared(blob):
+    import pickle
+    import zlib
+    return pickle.loads(zlib.decompress(blob))
 
 
 def request_bypasses_curriculum_cache(request):
@@ -12874,7 +12893,8 @@ def get_cached_curriculum_rows(compact=False, force=False):
         lambda: get_curriculum_rows(compact=compact),
         force=force,
         ttl=CURRICULUM_ROWS_CACHE_TTL_SECONDS,
-        shared=False,
+        shared=True,
+        compress=True,
     )
 
 

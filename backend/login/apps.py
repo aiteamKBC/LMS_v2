@@ -8,3 +8,7 @@ class LoginConfig(AppConfig):
     # or with the "auth" PostgreSQL schema its tables live in.
     label = 'login'
     verbose_name = 'Platform login'
+
+    def ready(self):
+        from .session_cache import connect_signals
+        connect_signals()
