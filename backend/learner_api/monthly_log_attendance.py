@@ -120,7 +120,24 @@ def read_rows(owner, *, now):
 
     # Keep existing recorded decisions, including zero-hour staff corrections.
     # Evidence-only attendance events do not represent an hour allocation.
-    records = query('''SELECT p.source_payload,p.time_tracking_session_ref,p.module_ref,a.source_key AS kbc_attendance_key,c.settings_json
+    records = query('''SELECT
+        CASE WHEN jsonb_typeof(p.source_payload)='object' THEN jsonb_build_object(
+            'original_source_ref',p.source_payload->'original_source_ref',
+            'staff_time_entry',p.source_payload->'staff_time_entry',
+            'kbc_attendance',p.source_payload->'kbc_attendance')
+          ELSE p.source_payload END AS source_payload,
+        p.time_tracking_session_ref,p.module_ref,a.source_key AS kbc_attendance_key,
+        CASE WHEN jsonb_typeof(c.settings_json)='object' THEN jsonb_build_object(
+            'teamsOccurrenceId',c.settings_json->'teamsOccurrenceId',
+            'teamsLiveSessionId',c.settings_json->'teamsLiveSessionId',
+            'teamsSessionNumber',c.settings_json->'teamsSessionNumber',
+            'sessionDate',c.settings_json->'sessionDate',
+            'legacySettings',CASE WHEN jsonb_typeof(c.settings_json->'legacySettings')='object'
+              THEN jsonb_build_object(
+                'teamsOccurrenceId',c.settings_json->'legacySettings'->'teamsOccurrenceId',
+                'sessionDate',c.settings_json->'legacySettings'->'sessionDate')
+              ELSE c.settings_json->'legacySettings' END)
+          ELSE c.settings_json END AS settings_json
         FROM "Learner".learner_progress_entries p
         JOIN "Learner".learners l ON l.id=p.learner_id
         LEFT JOIN "Learner".source_lms_attendance a ON a.aptem_id=l.aptem_id

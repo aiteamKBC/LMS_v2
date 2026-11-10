@@ -77,6 +77,22 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it('does not start overlapping background reads while a monthly log remains open', async () => {
+  vi.useFakeTimers();
+  try {
+    page('/learner/monthly-logs/2026-09');
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(getLogSummary).toHaveBeenCalledTimes(1);
+    expect(getLogMonth).toHaveBeenCalledTimes(1);
+
+    await act(async () => { vi.advanceTimersByTime(30_000); await Promise.resolve(); });
+    expect(getLogSummary).toHaveBeenCalledTimes(1);
+    expect(getLogMonth).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it.each(['learner', 'coach'] as const)('keeps undated activities visible for %s review without inventing a month', async role => {
   Object.assign(account, { role, access: role });
   vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [], unallocated_activities: [

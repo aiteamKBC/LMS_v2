@@ -36,6 +36,9 @@ class MonthlyLogLearnerStartTests(unittest.TestCase):
                     self.assertEqual(report['student_signature'], {'saved': True})
                     self.assertEqual(owner['start_date'], '2026-10-01')
                     self.assertEqual(namespace['old_repo'].query.call_args.args[1], [learner_id])
+                    sql = namespace['old_repo'].query.call_args.args[0]
+                    self.assertIn('SELECT learner_start_date AS learner_start_date', sql)
+                    self.assertNotIn('"Learner_start_date"', sql)
 
 
 if __name__ == '__main__':

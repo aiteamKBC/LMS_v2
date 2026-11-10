@@ -202,7 +202,9 @@ class BottleneckReadParityTests(SimpleTestCase):
         self.assertEqual(metadata['live_credit_components'][0]['teamsSessionNumber'], '2')
         sql = cursor.execute.call_args.args[0]
         self.assertIn("settings_json->>'dueTiming'", sql)
-        self.assertIn('visible_parent.module_catalogue_id=components.module_catalogue_id', sql)
+        self.assertIn('week_id = ANY(%s)', sql)
+        self.assertNotIn('visible_parent.module_catalogue_id=components.module_catalogue_id', sql)
+        self.assertEqual(cursor.execute.call_args.args[1], [['M1'], ['W1']])
 
     def test_register_reuses_canonical_owner_but_keeps_corrections(self):
         from . import attendance_lectures as lectures

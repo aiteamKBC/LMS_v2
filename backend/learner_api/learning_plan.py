@@ -96,13 +96,10 @@ def _canonical_free_course_assignments(learner, course_ids=None):
         course_ids = _canonical_free_course_assignment_ids(learner)
     if not course_ids:
         return []
-    from curriculum_api.views import FREE_COURSES_TABLE, free_programme_fetch_all
+    from curriculum_api import free_course_catalogue
 
-    placeholders = ", ".join(["%s"] * len(course_ids))
-    rows = free_programme_fetch_all(
-        FREE_COURSES_TABLE,
-        f"id in ({placeholders})",
-        course_ids,
+    rows = free_course_catalogue.courses(
+        course_ids=course_ids,
         columns=["id", "course_name"],
     )
     names = {_s(row.get("id")): _s(row.get("course_name")) for row in rows}

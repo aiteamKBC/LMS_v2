@@ -195,6 +195,8 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
         components = _apply_programme_assignment_template(components, getattr(source, "programme", ""))
         _annotate_otjh([c for c in components if "expectedOtjh" not in c])
     quiz_options = {"native_week_ids": True} if identities_only or week_ids is not None else {}
+    if identities_only and preserve_legacy:
+        quiz_options['catalogue_facts'] = True
     if resolved_metadata is not None and 'quiz_modules' in resolved_metadata:
         quiz_options['resolved_metadata'] = resolved_metadata
     with projection_stage('native_quizzes'):

@@ -33,14 +33,14 @@ from django.db import DatabaseError, IntegrityError, connection, connections, tr
 from django.core.serializers.json import DjangoJSONEncoder
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModified, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils.text import get_valid_filename
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
-from login.permissions import require_role
+from login.permissions import require_role, require_access, require_all_access
 from . import archive_state
 from . import curriculum_names
-from . import calendar_holidays, ksb_mapping_placement, schema_compat
+from . import calendar_holidays, free_course_catalogue, ksb_mapping_placement, schema_compat
 from . import group_coaches
 from .free_course_catalogue_store import FreeCourseInUse
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
@@ -63,7 +63,12 @@ from learner_api.progress_rules import (
     progress_counts_as_achieved,
 )
 from learner_api.models import LearnerProfile, LearnerTrainingPlanModule
-from learner_api.constants import PROGRAMME_STATUS_CHOICES
+from learner_api.constants import (
+    ACCESS_CURRICULUM,
+    ACCESS_FREE_COURSE_AUTHORING,
+    PROGRAMME_STATUS_CHOICES,
+)
+from .free_course_writer_mode import LEGACY, current_mode, require_mode
 
 from . import pptx_slides
 from . import schema_gate
@@ -16464,6 +16469,7 @@ def authoring_delete(table, where_sql='1 = 1', params=None):
 
 
 def free_programme_delete(table, where_sql, params=None):
+    require_mode(LEGACY)
     ensure_free_programme_tables()
     with connection.cursor() as cursor:
         cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])
@@ -16615,6 +16621,7 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
 
 
 def free_programme_upsert(table, key_columns, payload):
+    require_mode(LEGACY)
     ensure_free_programme_tables()
     return authoring_upsert(table, key_columns, payload)
 
@@ -24467,11 +24474,25 @@ def free_programme_component_payload(component, index):
     }
 
 
-def free_programme_component_response(row):
+def free_programme_component_response(row, week=None):
+    """Return a component with canonical and compatibility week identities.
+
+    ``freeCourseWeekId`` owns the relationship. ``weekId`` is retained only as
+    the optional legacy source-week provenance expected by older consumers.
+    """
+    week = week or {}
+    # Canonical rows do not contain ``week_id``.  The fallback exists only for
+    # old import/export payloads that explicitly carried the source week.
+    provenance = (week.get('legacy_copied_from_week_id')
+                  or row.get('legacy_copied_from_week_id')
+                  or row.get('week_id')
+                  or '')
     return {
         'id': row.get('id'),
         'moduleId': row.get('free_module_id'),
-        'weekId': row.get('week_id') or '',
+        'freeCourseWeekId': row.get('free_module_id') or '',
+        'weekId': provenance,
+        'legacyCopiedFromWeekId': provenance or None,
         'type': frontend_component_type(row.get('type')),
         'title': row.get('title') or '',
         'description': row.get('description') or '',
@@ -24486,10 +24507,20 @@ def free_programme_component_response(row):
 
 
 def free_programme_module_response(row, components, course=None):
+    """Return one canonical Free Course week without joining normal weeks.
+
+    ``id`` and ``freeCourseWeekId`` identify the Free Course week. ``weekId``
+    remains a backwards-compatible provenance alias and may be empty.
+    """
     module_id = row.get('id')
     course = course or {}
+    identity = free_course_catalogue.week_api_identity(row)
+    # Old import/export payloads used ``week_id`` for the same provenance role.
+    if not identity['weekId'] and row.get('week_id'):
+        identity['weekId'] = row.get('week_id')
+        identity['legacyCopiedFromWeekId'] = row.get('week_id')
     module_components = [
-        free_programme_component_response(component)
+        free_programme_component_response(component, row)
         for component in components
         if clean_str(component.get('free_module_id')) == clean_str(module_id)
         and not is_retired_component_type(component.get('type'))
@@ -24497,11 +24528,17 @@ def free_programme_module_response(row, components, course=None):
     return {
         'id': module_id,
         'courseId': row.get('course_id') or course.get('id') or module_id,
-        'weekId': row.get('week_id') or '',
+        **identity,
         'weekNumber': parse_int(row.get('week_number'), 1),
-        'weekTitle': row.get('week_title') or '',
-        'courseName': course.get('course_name') or row.get('course_name') or row.get('title') or '',
-        'title': course.get('course_name') or row.get('course_name') or row.get('title') or '',
+        'weekTitle': row.get('title') or row.get('week_title') or '',
+        'weekSummary': row.get('summary') or '',
+        'summary': row.get('summary') or '',
+        'status': row.get('status') or '',
+        'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),
+        'holidayNoteEnabled': bool(row.get('holiday_note_enabled')),
+        'holidayNote': row.get('holiday_note') or '',
+        'courseName': course.get('course_name') or row.get('course_name') or '',
+        'title': course.get('course_name') or row.get('course_name') or '',
         'description': course.get('description') if course.get('description') is not None else row.get('description') or '',
         'coverImageUrl': course.get('cover_image_url') if course.get('cover_image_url') is not None else row.get('cover_image_url') or '',
         'weekBuilderWeekIds': as_json_value(course.get('week_builder_week_ids'), []),
@@ -24516,16 +24553,16 @@ def free_programme_module_response(row, components, course=None):
 
 def get_free_programme_modules_payload(programme_id):
     programme_id = clean_str(programme_id)
-    # One round trip for the three reads (free_programme_fetch_many).
-    course_rows, week_rows, component_rows = free_programme_fetch_many([
+    # One round trip for the three reads (free_course_catalogue.fetch_many).
+    course_rows, week_rows, component_rows = free_course_catalogue.fetch_many([
         (FREE_COURSES_TABLE, '', [], 'display_order, course_name, id', None),
-        (FREE_PROGRAMME_MODULES_TABLE, '', [], 'display_order, course_name, week_number, id', None),
-        (FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id], 'display_order, title', None),
+        (FREE_PROGRAMME_MODULES_TABLE, '', [], 'display_order, week_number, id', None),
+        (FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id], 'display_order, title, id', None),
     ])
     courses = {clean_str(course.get('id')): course for course in course_rows}
-    # Archived weeks (status inactive on the new database) are not part of the
-    # catalogue; the save leaves them untouched.
-    modules = active_week_rows(week_rows)
+    # Staff consumers retain inactive weeks and their explicit status.
+    # Learner reads apply visibility separately; never erase historical weeks.
+    modules = week_rows
     components_by_week = {}
     for component in active_component_rows(component_rows):
         components_by_week.setdefault(clean_str(component.get('free_module_id')), []).append(component)
@@ -24587,6 +24624,7 @@ def delete_free_programme_data(programme_id):
     Fails safe: with no usable programme id nothing is deleted, rather than
     falling back to a global wipe.
     """
+    require_mode(LEGACY)
     programme_id = clean_str(programme_id)
     if not programme_id:
         logger.warning('Refusing to delete free programme data without a programme id.')
@@ -24619,6 +24657,7 @@ def delete_free_programme_data(programme_id):
 
 
 def save_free_programme_modules(programme_id, payload):
+    require_mode(LEGACY)
     programme_id = clean_str(programme_id or payload.get('programmeId') or payload.get('programme_id'))
     if not programme_id:
         raise ValueError('programmeId is required.')
@@ -25124,10 +25163,11 @@ def delete_programme_authoring_structure(identifier, programme=None, config=None
         # which programme was targeted.
         existing_free_course_ids = []
         existing_free_week_ids = []
-        for candidate in programme_id_candidates:
-            week_ids, course_ids = delete_free_programme_data(candidate)
-            existing_free_week_ids.extend(week_ids)
-            existing_free_course_ids.extend(course_ids)
+        if current_mode() == LEGACY:
+            for candidate in programme_id_candidates:
+                week_ids, course_ids = delete_free_programme_data(candidate)
+                existing_free_week_ids.extend(week_ids)
+                existing_free_course_ids.extend(course_ids)
         existing_free_authoring_ids = unique([*existing_free_course_ids, *existing_free_week_ids])
         if existing_free_authoring_ids:
             placeholders = ', '.join(['%s'] * len(existing_free_authoring_ids))
@@ -27913,7 +27953,13 @@ def module_merge_conflict_response(expected_revision, current_revision, conflict
     )
 
 
-@csrf_exempt
+@require_all_access(ACCESS_CURRICULUM, ACCESS_FREE_COURSE_AUTHORING)
+def _legacy_free_writer_access(request):
+    return None
+
+
+@csrf_protect
+@require_access(ACCESS_CURRICULUM)
 def curriculum_free_programme_modules(request, programme_id):
     programme_id = clean_str(programme_id)
     if request.method == 'GET':
@@ -27938,6 +27984,9 @@ def curriculum_free_programme_modules(request, programme_id):
 
     if request.method != 'PATCH':
         return json_error('Method not allowed.', status=405)
+    denied = _legacy_free_writer_access(request)
+    if denied is not None:
+        return denied
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
@@ -28149,7 +28198,8 @@ def inject_free_course_into_group(course_id, group_id, *, free_programme_id='FRE
     }
 
 
-@csrf_exempt
+@csrf_protect
+@require_all_access(ACCESS_CURRICULUM, ACCESS_FREE_COURSE_AUTHORING)
 def curriculum_free_programme_convert(request, programme_id):
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
@@ -28301,7 +28351,8 @@ def convert_module_to_free_course(module_catalogue_id, *, free_programme_id='FRE
     }
 
 
-@csrf_exempt
+@csrf_protect
+@require_all_access(ACCESS_CURRICULUM, ACCESS_FREE_COURSE_AUTHORING)
 def curriculum_free_programme_import_module(request, programme_id):
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)

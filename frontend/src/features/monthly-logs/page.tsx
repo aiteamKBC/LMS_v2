@@ -84,7 +84,7 @@ export function LearnerLogs({ id, month, base, perspective, workflow, embedded =
   const workflowKey = workflow ?? new URLSearchParams(search).get('workflow') ?? undefined;
   const mcmMonth = workflowKey === 'mcm' ? month : undefined;
   const query = useQuery({ queryKey: ['monthly-logs', auth.account?.id, perspective, perspective === 'coach' ? coachViewAs()?.email : null, id, 'summary', mcmMonth, workflowKey],
-    queryFn: ({ signal }) => mcmMonth ? getLogSummary(id, signal, perspective, mcmMonth, workflowKey) : getLogSummary(id, signal, perspective), refetchInterval: 7000 });
+    queryFn: ({ signal }) => mcmMonth ? getLogSummary(id, signal, perspective, mcmMonth, workflowKey) : getLogSummary(id, signal, perspective) });
   if (query.isPending) return <MonthIndexSkeleton perspective={perspective} />;
   if (query.error && !query.data) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   if (!query.data) return null;
@@ -125,7 +125,7 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
   const loadMonth = (selected: string, signal?: AbortSignal) => reader ? reader.month(selected, signal)
     : mcmWorkflow ? getLogMonth(id, selected, signal, perspective, false, workflowKey) : getLogMonth(id, selected, signal, perspective);
   const selectMonth = (selected: string) => onMonthChange ? onMonthChange(selected) : navigate(`${base}/${selected}`);
-  const query = useQuery({ queryKey: [...key, workflowKey], queryFn: ({ signal }) => loadMonth(month, signal), refetchInterval: loadedDetail ? false : 7000, enabled: !futureMonth && !loadedDetail, initialData: loadedDetail });
+  const query = useQuery({ queryKey: [...key, workflowKey], queryFn: ({ signal }) => loadMonth(month, signal), enabled: !futureMonth && !loadedDetail, initialData: loadedDetail });
   const [correctionRow, setCorrectionRow] = useState<Activity | null>(null);
   const [correctedDetail, setCorrectedDetail] = useState<LogDetail | null>(null);
   const correctionScope = `${id}:${month}:${perspective}`;

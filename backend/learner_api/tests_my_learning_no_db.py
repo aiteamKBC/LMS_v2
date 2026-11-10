@@ -39,19 +39,21 @@ def fake_connections():
 class MyLearningAggregateTests(SimpleTestCase):
     def test_free_course_identity_query_uses_catalogue_relationships_and_preserves_module_collisions(self):
         cur = MagicMock()
-        cur.fetchall.return_value = [('FREE-1',), ('FREEWEEK-1',), ('WEEK-1',)]
+        cur.fetchall.return_value = [('FREE-1',), ('FREEWEEK-1',)]
 
-        # Old database: the authoring-week mirror columns exist.
-        with patch.object(learning, '_free_week_mirror_exists', return_value=True):
-            excluded = learning.free_course_representation_ids(
-                cur, ['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1'],
-            )
+        # Historical source-week IDs are provenance, never ownership.
+        excluded = learning.free_course_representation_ids(
+            cur, ['FREE-1', 'FREEWEEK-1', 'WEEK-1', 'PROGRAMME-1'],
+        )
+        self.assertEqual(cur.execute.call_count, 1)
 
-        self.assertEqual(excluded, {'FREE-1', 'FREEWEEK-1', 'WEEK-1'})
+        self.assertEqual(excluded, {'FREE-1', 'FREEWEEK-1'})
         sql, params = cur.execute.call_args.args
         self.assertIn('curriculum.free_courses', sql)
         self.assertIn('curriculum.free_course_weeks', sql)
-        self.assertIn('authoring_week.free_course_id=course.id', sql)
+        self.assertNotIn('curriculum.weeks', sql)
+        self.assertNotIn('legacy_copied_from_week_id', sql)
+        self.assertNotIn('free_course_id', sql)
         self.assertIn('LEFT JOIN curriculum.modules', sql)
         self.assertIn('module.module_catalogue_id IS NULL', sql)
         self.assertNotIn('title', sql.lower())
@@ -63,8 +65,8 @@ class MyLearningAggregateTests(SimpleTestCase):
         cur = MagicMock()
         cur.fetchall.return_value = [('FREE-1',)]
 
-        with patch.object(learning, '_free_week_mirror_exists', return_value=False):
-            excluded = learning.free_course_representation_ids(cur, ['FREE-1', 'PROGRAMME-1'])
+        excluded = learning.free_course_representation_ids(cur, ['FREE-1', 'PROGRAMME-1'])
+        self.assertEqual(cur.execute.call_count, 1)
 
         self.assertEqual(excluded, {'FREE-1'})
         sql, _params = cur.execute.call_args.args
@@ -112,16 +114,71 @@ class MyLearningAggregateTests(SimpleTestCase):
         self.assertEqual(excluded, {'89537'})
         sql, params = cur.execute.call_args.args
         self.assertIn('"MBA".course_curriculum', sql)
-        self.assertIn("course.id='FREECOURSE-MM-' || legacy.module_id", sql)
+        self.assertIn("'FREECOURSE-MM-' || legacy.module_id", sql)
+        self.assertIn("'FREECOURSE-MBA-' || legacy.module_id", sql)
         self.assertIn("source_course.mapping_status='retired'", sql)
         self.assertIn("'mapped_activity_consensus'", sql)
         self.assertIn("'exact_legacy_module_source_id'", sql)
         self.assertIn('LEFT JOIN curriculum.modules recorded_module', sql)
         self.assertIn('LEFT JOIN curriculum.modules imported_module', sql)
+        self.assertIn('LEFT JOIN curriculum.modules canonical_module', sql)
         self.assertIn('recorded_module.module_catalogue_id IS NULL', sql)
         self.assertIn('imported_module.module_catalogue_id IS NULL', sql)
+        self.assertIn('canonical_module.module_catalogue_id IS NULL', sql)
+        self.assertIn('count(DISTINCT module_id)=1', sql)
+        self.assertIn('count(DISTINCT free_course_id)=1', sql)
         self.assertNotIn('title', sql.lower())
         self.assertEqual(params, [['89537', 'same-title-but-unrelated']])
+
+    def test_all_confirmed_mba_legacy_duplicates_use_verified_lineage(self):
+        refs = ['120291', '124553', '89379', '88465']
+        cur = MagicMock()
+        cur.fetchall.return_value = [(ref,) for ref in refs]
+
+        excluded = learning.legacy_free_course_source_refs(
+            cur, [*refs, '87435', 'programme-course'],
+        )
+
+        self.assertEqual(excluded, set(refs))
+        sql, params = cur.execute.call_args.args
+        self.assertIn('JOIN curriculum.source_courses source_course', sql)
+        self.assertIn('JOIN "MBA".course_curriculum legacy', sql)
+        self.assertIn('JOIN curriculum.free_courses course', sql)
+        self.assertIn("'FREECOURSE-MBA-' || legacy.module_id", sql)
+        self.assertNotIn('source_course_title', sql)
+        self.assertEqual(params, [[*refs, '87435', 'programme-course']])
+
+    def test_plan_and_legacy_free_course_exclusions_use_one_canonical_query(self):
+        cur = MagicMock()
+        cur.fetchall.return_value = [
+            ('identity', 'FREE-1'),
+            ('identity', 'FREEWEEK-1'),
+            ('source', '120291'),
+        ]
+
+        identities, source_refs = learning.free_course_exclusions(
+            cur,
+            ['PROGRAMME-1', 'FREE-1', 'FREEWEEK-1', 'FREE-1'],
+            ['120291', 'programme-course', '120291'],
+        )
+
+        self.assertEqual(identities, {'FREE-1', 'FREEWEEK-1'})
+        self.assertEqual(source_refs, {'120291'})
+        self.assertEqual(cur.execute.call_count, 1)
+        sql, params = cur.execute.call_args.args
+        self.assertIn('curriculum.free_courses', sql)
+        self.assertIn('curriculum.free_course_weeks', sql)
+        self.assertIn('JOIN "MBA".course_curriculum', sql)
+        self.assertIn("'FREECOURSE-MBA-' || legacy.module_id", sql)
+        self.assertIn('LEFT JOIN curriculum.modules module', sql)
+        self.assertIn('count(DISTINCT free_course_id)=1', sql)
+        self.assertNotIn('curriculum.weeks', sql)
+        self.assertNotIn('legacy_copied_from_week_id', sql)
+        self.assertNotIn('title', sql.lower())
+        self.assertEqual(params, [
+            ['PROGRAMME-1', 'FREE-1', 'FREEWEEK-1'],
+            ['120291', 'programme-course'],
+        ])
 
     def test_verified_legacy_free_course_is_hidden_for_both_learner_kinds(self):
         for kind in ('commercial', 'apprenticeship'):
@@ -129,6 +186,23 @@ class MyLearningAggregateTests(SimpleTestCase):
                 courses = [
                     {'source_course_ref': '89537',
                      'source_course_title': 'Safeguarding For Learners',
+                     'curriculum_module_ref': None, 'learner_kind': kind},
+                    {'source_course_ref': '120291',
+                     'source_course_title': 'Equality, diversity and inclusion',
+                     'curriculum_module_ref': None, 'learner_kind': kind},
+                    {'source_course_ref': '124553',
+                     'source_course_title': 'British Values in the Apprenticeship',
+                     'curriculum_module_ref': None, 'learner_kind': kind},
+                    {'source_course_ref': '89379',
+                     'source_course_title': 'Cyper Security',
+                     'curriculum_module_ref': None, 'learner_kind': kind},
+                    {'source_course_ref': '88465',
+                     'source_course_title': 'GDPR',
+                     'curriculum_module_ref': None, 'learner_kind': kind},
+                    # Similar wording has no verified canonical identity and
+                    # must remain visible for review.
+                    {'source_course_ref': '87435',
+                     'source_course_title': 'Mental Wellbeing',
                      'curriculum_module_ref': None, 'learner_kind': kind},
                     # The same title is insufficient: this programme-linked
                     # course remains visible because neither stable identity
@@ -140,10 +214,10 @@ class MyLearningAggregateTests(SimpleTestCase):
                 original = deepcopy(courses)
 
                 visible = learning.without_free_course_legacy_courses(
-                    courses, set(), {'89537'},
+                    courses, set(), {'89537', '120291', '124553', '89379', '88465'},
                 )
 
-                self.assertEqual(visible, [courses[1]])
+                self.assertEqual(visible, [courses[5], courses[6]])
                 self.assertEqual(courses, original)  # historical facts are read-only
 
     def test_next_title_uses_the_whole_delivery_week_not_an_individual_material_date(self):
@@ -163,10 +237,17 @@ class MyLearningAggregateTests(SimpleTestCase):
             'source_activity_id': f'material:{ident}', 'source_activity_title': title,
             'source_section_title': section, 'source_payload': {}}
             for ident, title, section in [(7, 'Undated lesson', ''), (8, 'June lesson', 'June 2026')]]
+        db_rows = [{'source_course_id':3,'source_activity_id':row['source_activity_id'],
+            'source_activity_title':row['source_activity_title'],'source_activity_type':'material',
+            'source_course_title':'Old',
+            'source_section_ref':None,'source_section_title':row['source_section_title'],'position':index,
+            'quiz_id':None,'activity_id':None,'parent_activity_id':None,
+            'payload_section_title':None,'section_order':None,'component_order':None,
+            'created_at':None,'created_at_utc':None} for index,row in enumerate(definitions)]
         record = {'id': 1, 'accepted': False, 'actual_seconds': 0, 'activity_status': 'in_progress',
             'reporting_month': '2026-03', 'sources': [{'source_system': 'old_lms',
                 'source_course_ref': '50', 'source_activity_id': 'material:7'}]}
-        with patch.object(canonical, 'query', return_value=definitions):
+        with patch.object(canonical, 'query', return_value=db_rows):
             rows, done, started, hours, _ = learning.course_facts({'id': 9}, [record], [course])
         self.assertNotIn('_learner_schedule', definitions[0])
         projected = catalogue_display_context(rows, [])
@@ -256,7 +337,11 @@ class MyLearningAggregateTests(SimpleTestCase):
     def test_course_facts_preserve_verified_exclusions_and_typed_identity(self):
         course={'id':3,'source_course_ref':'50','verified_catalogue_scope':{'version':1,
             'basis':'verified-legacy-account-inventory','course_ref':'50','excluded_activity_refs':['material:8']}}
-        definitions=[{'source_course_ref':'50','source_activity_id':ref,'source_activity_title':ref} for ref in ('material:7','quiz:7','material:8')]
+        definitions=[{'source_course_id':3,'source_activity_id':ref,'source_activity_title':ref,
+            'source_activity_type':ref.partition(':')[0],'source_section_ref':'1','source_section_title':'Week 1',
+            'position':1,'quiz_id':None,'activity_id':None,'parent_activity_id':None,
+            'payload_section_title':'Week 1','section_order':1,'component_order':1,
+            'created_at':None,'created_at_utc':None} for ref in ('material:7','quiz:7','material:8')]
         record={'id':1,'accepted':True,'actual_seconds':3600,'sources':[
             {'source_system':'old_lms','source_course_ref':'50','source_activity_id':'material:7'},
             {'source_system':'old_lms','source_course_ref':'50','source_activity_id':'quiz:7'}]}
@@ -297,6 +382,8 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
         self.assertEqual(rows[-1]['component'],'Legacy lesson')
         sql=cursor.execute.call_args.args[0]
         self.assertIn("'extraTeamsLiveSessionId'",sql)
+        self.assertIn('week_id = ANY(%s)',sql)
+        self.assertEqual(cursor.execute.call_args.args[1],[['M1'],['W1']])
         self.assertNotIn('ksb_descriptions',sql)
         self.assertEqual(cursor.execute.call_count,1)
 
@@ -321,7 +408,7 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
                 module_read=stack.enter_context(patch.object(learning,'catalogue_module_rows',side_effect=modules))
                 builder=stack.enter_context(patch.object(student_activity,'_builder_subject_metadata',return_value=({}, {'current:M1':{'id':'M1','title':'One'}})))
                 stack.enter_context(patch.object(teams_attendance,'annotate_attendance_completion',side_effect=lambda rows,*args:rows))
-                credits=stack.enter_context(patch.object(live_session_progress,'read_live_credits',return_value=[]))
+                credits=stack.enter_context(patch.object(live_session_progress,'read_catalogue_live_credits',return_value=[]))
                 dates=stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
                 import_read=stack.enter_context(patch.object(subject_origins,'read_imported_courses',return_value={}))
                 replacements=stack.enter_context(patch.object(subject_origins,'read_replacement_courses',return_value={}))
@@ -334,7 +421,7 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
             if selected is None:
                 module_read.assert_called_once();builder.assert_not_called()
                 import_read.assert_not_called()
-                credits.assert_called_once_with(source,components=[])
+                credits.assert_called_once_with(source,[])
                 self.assertEqual(read.call_args.kwargs['resolved_metadata']['module_titles'],{'M1':'One'})
             else:
                 module_read.assert_not_called();dates.assert_not_called();credits.assert_not_called();query.assert_not_called()
@@ -418,6 +505,47 @@ class MyLearningModuleTests(SimpleTestCase):
 
 
 class MyLearningEndpointTests(SimpleTestCase):
+    def test_commercial_learner_125_catalogue_returns_programme_learning(self):
+        model=Mock();model.DoesNotExist=type('Missing',(Exception,),{})
+        source=SimpleNamespace(pk=125)
+        model.all_learners.only.return_value.get.return_value=source
+        catalogue={'modules':[{'id':'current:PROGRAMME-1','title':'Programme module'}]}
+        with patch.dict(learning.SOURCE_MODELS,{'commercial':model}), \
+             patch.object(canonical,'require_profile',return_value={'id':125}), \
+             patch.object(learning,'read_catalogue',return_value=catalogue) as read:
+            response=learning.my_learning.__wrapped__.__wrapped__.__wrapped__(
+                RequestFactory().get('/learner_api/my-learning/commercial/125/'),
+                'commercial',125,
+            )
+
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(json.loads(response.content),catalogue)
+        read.assert_called_once_with(source,'commercial',{'id':125})
+
+    def test_database_failure_logs_safe_sqlstate_without_sql_or_learner_id(self):
+        model=Mock();model.DoesNotExist=type('Missing',(Exception,),{})
+        model.all_learners.only.return_value.get.return_value=SimpleNamespace(pk=125)
+        driver=RuntimeError('private SQL and connection detail')
+        driver.sqlstate='42703'
+        error=learning.DatabaseError('select secret from private_table')
+        error.__cause__=driver
+        with patch.dict(learning.SOURCE_MODELS,{'commercial':model}), \
+             patch.object(canonical,'require_profile',return_value={'id':125}), \
+             patch.object(learning,'read_catalogue',side_effect=error), \
+             self.assertLogs(learning.logger.name,level='ERROR') as logs:
+            response=learning.my_learning.__wrapped__.__wrapped__.__wrapped__(
+                RequestFactory().get('/learner_api/my-learning/commercial/125/'),
+                'commercial',125,
+            )
+
+        self.assertEqual(response.status_code,503)
+        diagnostic='\n'.join(logs.output)
+        self.assertIn('kind=commercial',diagnostic)
+        self.assertIn('resource=catalogue',diagnostic)
+        self.assertIn('sqlstate=42703',diagnostic)
+        self.assertNotIn('private SQL',diagnostic)
+        self.assertNotIn('125',diagnostic)
+
     def test_search_and_upcoming_reject_foreign_learners_before_loading(self):
         for resource in ('search','upcoming'):
             with patch('login.permissions._auth_gate_enabled',return_value=True), patch('login.permissions.authenticate_request',return_value=SimpleNamespace(role='learner',subject_id=8)), patch.object(learning,'load_context') as load:
@@ -565,7 +693,10 @@ class MyLearningSearchTests(SimpleTestCase):
         meta=metadata();meta['modules']={'M1':{'id':'M1','title':'One'}}
         meta['activity_dates']={'TASK':{'due_timing':'End of week','week_end':'2099-01-02'}}
         context=([],[],[],content,[],[],set(),set(),{},meta,[])
-        with patch.object(learning,'load_context',return_value=context),patch.object(course_catalogue_display,'read_export_placements',return_value=[]),patch.object(subject_store,'covers_for') as covers,patch.object(canonical,'programme_planned_hours') as planned:
+        with patch.object(learning,'load_context',return_value=context), \
+             patch.object(course_catalogue_display,'read_export_placements',return_value=[]), \
+             patch.object(subject_store,'covers_for') as covers, \
+             patch.object(canonical,'programme_planned_hours') as planned:
             result=learning.read_catalogue(SimpleNamespace(pk=7),'commercial',{'id':9},upcoming_only=True)
         self.assertEqual(len(result['upcoming']),1)
         self.assertEqual(result['upcoming'][0]['href'],'/learner/component/commercial/7/TASK')

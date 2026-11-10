@@ -16,19 +16,23 @@ from django.db import DatabaseError, connections
 logger = logging.getLogger(__name__)
 
 SLOTS_SQL = '''
-    WITH candidates AS (
+    WITH candidates AS MATERIALIZED (
         SELECT c.id, c.week_id, c.title, c.module_catalogue_id,
                c.settings_json->>'linkedQuizId' AS current_quiz
         FROM curriculum.components c
         WHERE c.module_catalogue_id = ANY(%s) AND c.type = 'quiz'
     ), links AS (
-        SELECT id, current_quiz AS quiz_id FROM candidates WHERE current_quiz = ANY(%s)
-        UNION
-        SELECT r.entity_id, r.snapshot->'settings_json'->>'linkedQuizId'
-        FROM curriculum.record_revisions r
-        JOIN candidates c ON c.id = r.entity_id
-        WHERE r.entity_type = 'component'
-          AND r.snapshot->'settings_json'->>'linkedQuizId' = ANY(%s)
+        SELECT c.id, matched.quiz_id
+        FROM candidates c
+        CROSS JOIN LATERAL (
+            SELECT c.current_quiz AS quiz_id
+            WHERE c.current_quiz = ANY(%s)
+            UNION
+            SELECT r.snapshot->'settings_json'->>'linkedQuizId'
+            FROM curriculum.record_revisions r
+            WHERE r.entity_type = 'component' AND r.entity_id = c.id
+              AND r.snapshot->'settings_json'->>'linkedQuizId' = ANY(%s)
+        ) matched
     )
     SELECT c.id, c.module_catalogue_id, c.week_id, w.title, c.title, links.quiz_id
     FROM links

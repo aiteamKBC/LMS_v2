@@ -1039,6 +1039,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(30 * 1024 * 1024)))
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', str(12 * 1024 * 1024)))
 
+# Free Course catalogue mutations are dark-launched.  Missing or malformed
+# values fail closed in curriculum_api.free_course_writer_mode; no request or
+# privileged role can override this process-wide setting.
+FREE_COURSE_AUTHORING_WRITE_MODE = os.environ.get(
+    'FREE_COURSE_AUTHORING_WRITE_MODE', 'frozen'
+)
+
 # Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).
 AZURE_STORAGE_ACCOUNT = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
 AZURE_STORAGE_KEY = os.environ.get("AZURE_STORAGE_KEY", "")

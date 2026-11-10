@@ -367,7 +367,26 @@ function normaliseCourseLinks(payload: CourseLinksState | null): CourseLinksStat
   };
 }
 
-export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string | number | undefined; onClose?: () => void; onSaved?: () => void }) {
+export interface FreeCourseQuizEditorContext {
+  courseId: string;
+  componentId: string;
+  expectedRevision: string;
+}
+
+function csrfHeader() {
+  const token = document.cookie.split(';').map(value => value.trim()).find(value => value.startsWith('csrftoken='))?.slice('csrftoken='.length);
+  return token ? { 'X-CSRFToken': decodeURIComponent(token) } : {};
+}
+
+export function QuizEditorPanel({ quizId, onClose, onSaved, freeCourseContext }: { quizId: string | number | undefined; onClose?: () => void; onSaved?: () => void; freeCourseContext?: FreeCourseQuizEditorContext }) {
+  const [freeCourseRevision, setFreeCourseRevision] = useState(freeCourseContext?.expectedRevision || '');
+  const freeCourseQuizUrl = freeCourseContext && quizId
+    ? `/curriculum_api/curriculum/free-courses/${encodeURIComponent(freeCourseContext.courseId)}/quizzes/${encodeURIComponent(String(quizId))}/`
+    : '';
+  const absorbFreeCoursePayload = (payload: any): QuizEditorData => {
+    if (payload?.course?.revision) setFreeCourseRevision(payload.course.revision);
+    return (payload?.course && payload?.quiz?.quiz ? payload.quiz : payload) as QuizEditorData;
+  };
   const { success, error: toastError } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -444,11 +463,11 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
     setLoading(true);
     setPageError('');
     try {
-      const response = await fetch(`/quiz_api/quizzes/${quizId}/questions/`);
+      const response = await fetch(freeCourseQuizUrl || `/quiz_api/quizzes/${quizId}/questions/`);
       if (!response.ok) throw new Error('Could not load quiz editor');
-      const nextData: QuizEditorData = await response.json();
-      const courseLinksResponse = await fetch(`/quiz_api/quizzes/${nextData.quiz.id}/course-links/`);
-      const nextCourseLinks = normaliseCourseLinks(courseLinksResponse.ok ? await courseLinksResponse.json() : null);
+      const nextData: QuizEditorData = absorbFreeCoursePayload(await response.json());
+      const courseLinksResponse = freeCourseContext ? null : await fetch(`/quiz_api/quizzes/${nextData.quiz.id}/course-links/`);
+      const nextCourseLinks = normaliseCourseLinks(courseLinksResponse?.ok ? await courseLinksResponse.json() : null);
       const nextSettings = settingsFromQuiz(nextData.quiz);
       setData(nextData);
       setSettings(nextSettings);
@@ -462,7 +481,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
     } finally {
       setLoading(false);
     }
-  }, [quizId]);
+  }, [quizId, freeCourseQuizUrl, freeCourseContext]);
 
   useEffect(() => {
     void loadQuiz();
@@ -633,16 +652,18 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
     if (!data || savingQuestions || readingQuestionImage) return;
     setSavingQuestions(true);
     try {
-      const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/questions/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questions, removeMissing: true }),
+      const response = await fetch(freeCourseQuizUrl || `/quiz_api/quizzes/${data.quiz.id}/questions/`, {
+        method: freeCourseContext ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify(freeCourseContext
+          ? { expectedRevision: freeCourseRevision, componentId: freeCourseContext.componentId, questions, removeMissing: true }
+          : { questions, removeMissing: true }),
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(errorData?.error || 'Could not save questions');
       }
-      const nextData: QuizEditorData = await response.json();
+      const nextData: QuizEditorData = absorbFreeCoursePayload(await response.json());
       setData(nextData);
       setActiveQuestionId(nextActiveQuestionId ?? nextData.questions.find(question => !question.isArchived)?.id ?? null);
       setQuestionBaseline(serializeQuestions(nextData.questions));
@@ -751,13 +772,18 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
     if (!data || !settings) return;
     setSavingSettings(true);
     try {
-      const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/`, {
+      const response = await fetch(freeCourseQuizUrl || `/quiz_api/quizzes/${data.quiz.id}/`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify(freeCourseContext
+          ? { ...settings, expectedRevision: freeCourseRevision, componentId: freeCourseContext.componentId }
+          : settings),
       });
-      if (!response.ok) throw new Error('Could not save settings');
-      const updatedQuiz: QuizPackage = await response.json();
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || 'Could not save settings');
+      }
+      const updatedQuiz: QuizPackage = absorbFreeCoursePayload(await response.json()).quiz;
       const nextSettings = settingsFromQuiz(updatedQuiz);
       setData(prev => prev ? { ...prev, quiz: updatedQuiz } : prev);
       setSettings(nextSettings);
@@ -888,16 +914,18 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
     if (!data || data.quiz.status === nextStatus || savingStatus) return;
     setSavingStatus(true);
     try {
-      const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/`, {
+      const response = await fetch(freeCourseQuizUrl || `/quiz_api/quizzes/${data.quiz.id}/`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus }),
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify(freeCourseContext
+          ? { status: nextStatus, expectedRevision: freeCourseRevision, componentId: freeCourseContext.componentId }
+          : { status: nextStatus }),
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(errorData?.error || 'Could not update quiz status');
       }
-      const updatedQuiz: QuizPackage = await response.json();
+      const updatedQuiz: QuizPackage = absorbFreeCoursePayload(await response.json()).quiz;
       setData(prev => prev ? { ...prev, quiz: updatedQuiz } : prev);
       success('Status updated', `Quiz is now ${statusLabel(nextStatus).toLowerCase()}.`);
       onSaved?.();

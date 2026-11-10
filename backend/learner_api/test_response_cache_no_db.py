@@ -84,6 +84,11 @@ class ResponseCacheTests(unittest.TestCase):
             self.view(request(), kind='commercial', pk=7)
         self.assertEqual(self.calls, 2)
 
+    def test_local_runserver_defaults_to_five_minute_cache(self):
+        with mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(response_cache.sys, 'argv', ['manage.py', 'runserver']):
+            self.assertEqual(response_cache.ttl_seconds(), 300)
+
     def test_concurrent_requests_wait_for_one_build(self):
         @response_cache.cached_learner_read('test')
         def slow(req, kind, pk):
@@ -98,6 +103,40 @@ class ResponseCacheTests(unittest.TestCase):
         for t in threads:
             t.join()
         self.assertEqual(self.calls, 1)
+
+    def test_waiter_takes_over_immediately_when_builder_fails(self):
+        first_started = threading.Event()
+        release_first = threading.Event()
+        results = []
+
+        @response_cache.cached_learner_read('test')
+        def fail_once(req, kind, pk):
+            self.calls += 1
+            if self.calls == 1:
+                first_started.set()
+                release_first.wait(timeout=1)
+                return JsonResponse({'error': 'temporary'}, status=503)
+            return JsonResponse({'ok': True})
+
+        def run():
+            results.append(fail_once(request(), kind='commercial', pk=7))
+
+        with mock.patch.object(response_cache, 'WAIT_SECONDS', 5), \
+             mock.patch.object(response_cache, 'POLL_SECONDS', 0.01):
+            builder = threading.Thread(target=run)
+            waiter = threading.Thread(target=run)
+            builder.start()
+            self.assertTrue(first_started.wait(timeout=1))
+            waiter.start()
+            time.sleep(0.05)
+            release_first.set()
+            builder.join(timeout=1)
+            waiter.join(timeout=1)
+
+        self.assertFalse(builder.is_alive())
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(self.calls, 2)
+        self.assertEqual(sorted(response.status_code for response in results), [200, 503])
 
 
 if __name__ == '__main__':

@@ -52,9 +52,35 @@ from .home_summary import curriculum_home_summary
 from .teaching_quality import teaching_review
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
+from . import free_course_authoring_views, free_course_quiz_views
 
 
 urlpatterns = [
+    path(
+        'curriculum/free-courses/authoring/',
+        free_course_authoring_views.catalogue,
+        name='free-course-authoring-catalogue',
+    ),
+    path(
+        'curriculum/free-courses/authoring/import-module/',
+        free_course_authoring_views.import_module,
+        name='free-course-authoring-import-module',
+    ),
+    path(
+        'curriculum/free-courses/<str:course_id>/authoring/',
+        free_course_authoring_views.course,
+        name='free-course-authoring-course',
+    ),
+    path(
+        'curriculum/free-courses/<str:course_id>/quizzes/',
+        free_course_quiz_views.collection,
+        name='free-course-quiz-collection',
+    ),
+    path(
+        'curriculum/free-courses/<str:course_id>/quizzes/<int:quiz_id>/',
+        free_course_quiz_views.detail,
+        name='free-course-quiz-detail',
+    ),
     path('curriculum/modules/<str:module_id>/weeks/<str:week_id>/web-points/', week_points, name='web-week-points'),
     path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
     path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),

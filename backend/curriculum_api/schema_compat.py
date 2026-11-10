@@ -30,7 +30,7 @@ rows by key; the chosen tutor/coach written as its id), ``calendar_holidays``
 ``ksb_mapping_placement`` (mappings scoped and read through their component).
 Placement labels are also projected by FK for SQL filtering and ordering.
 What remains: the lifecycle columns derived from ``status``, the KSB mapping /
-component / free-course-week read shapes, and ``adapt_sql`` -- which hand-written
+component read shapes, and ``adapt_sql`` -- which hand-written
 statements still need, chiefly the Learner team's code curriculum calls.
 """
 from __future__ import annotations
@@ -67,6 +67,7 @@ NULLABLE_FOREIGN_KEYS = {
     'groups': ('coach_id',),
     'modules': ('programme_id', 'cohort_id', 'group_id', 'tutor_id'),
     'weeks': ('module_catalogue_id', 'free_course_id'),
+    'ksb_mappings': ('component_id',),
 }
 REQUIRED_FOREIGN_KEYS = {
     'groups': ('programme_id', 'cohort_id'),
@@ -77,15 +78,14 @@ REQUIRED_FOREIGN_KEYS = {
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 # Columns the normalised schema derives instead of storing, per table.
-# Tables the read relation covers: the lifecycle tables plus free-course
-# weeks, whose title/number/description now live on the week itself.
+# Tables the read relation covers. Free Course weeks are deliberately absent:
+# they now store their own canonical fields and are read by free_course_catalogue.
 DERIVED_COLUMNS = {
     # SQL filters and ordering need these labels before Python row projection.
     # They remain FK reads, never copied storage.
     'cohorts': ('programme_name',),
     'groups': ('programme_name', 'cohort_name'),
     'modules': ('programme_name', 'cohort_name', 'group_name'),
-    'free_course_weeks': ('week_title', 'week_number', 'description', 'course_name', 'cover_image_url'),
     # Staff names (tutor_name ...), child lists (module_ids,
     # group_ids, assigned_*_ids ...) and a cohort's holiday choices are not
     # here: curriculum_names puts them on the rows natively, by key
@@ -98,7 +98,7 @@ DERIVED_COLUMNS = {
 }
 
 
-RELATION_TABLES = LIFECYCLE_TABLES | {'free_course_weeks'}
+RELATION_TABLES = LIFECYCLE_TABLES
 
 
 class UnsupportedOnNormalisedSchema(ValueError):
@@ -198,6 +198,8 @@ def _lifecycle_select(table, columns, alias='t'):
 def legacy_read_columns(table, columns):
     """Legacy column names the read relation adds for ``table`` (absent from ``columns``)."""
     columns = set(columns or ())
+    if connection.vendor == 'postgresql' and _linked_free_week_shape(table, columns):
+        return [name for name in _LINKED_FREE_WEEK_FIELDS if name not in columns]
     if connection.vendor != 'postgresql' or table not in RELATION_TABLES or not is_normalised(table, columns):
         return []
     keep = []
@@ -206,24 +208,23 @@ def legacy_read_columns(table, columns):
         if name not in columns:
             keep.append(name)
     keep += [key for key in DERIVED_COLUMNS.get(table, ()) if key not in columns and key != 'ksb_mappings']
-    if table == 'free_course_weeks' and free_weeks_self_contained(columns):
-        keep += [key for key in FREE_WEEK_SELF_CONTAINED_EXTRAS if key not in columns]
     return keep
 
 
-# Read-relation columns added for a self-contained free-course week.
-FREE_WEEK_SELF_CONTAINED_EXTRAS = ('week_id', 'is_programme_deleted', 'deleted_at')
+_LINKED_FREE_WEEK_FIELDS = {
+    'week_title': "coalesce(fw.title, '')::text",
+    'week_number': 'coalesce(fw.week_number, 1)',
+    'description': 'fw.summary',
+    'course_name': "coalesce(fc.course_name, '')::text",
+    'cover_image_url': 'fc.cover_image_url',
+}
 
 
-def free_weeks_self_contained(columns):
-    """True when curriculum.free_course_weeks stores its own title/summary/status.
-
-    The new database has no ``week_id`` link to curriculum.weeks: a free-course
-    week is a row of its own (title, summary, learning_outcomes, status), and
-    its components reference it directly.
-    """
-    columns = set(columns or ())
-    return 'title' in columns and 'week_id' not in columns
+def _linked_free_week_shape(table, columns):
+    # Compatibility for the historical schema only. Canonical rows must never
+    # acquire regular-week ownership, even if a provenance column survives.
+    return (table == 'free_course_weeks' and {'id', 'course_id', 'week_id'} <= set(columns)
+            and 'title' not in columns and 'legacy_copied_from_week_id' not in columns)
 
 
 _COLUMNS_CACHE = {}
@@ -459,6 +460,14 @@ def read_relation(table, columns, alias=True, defer=()):
     the caller derives them after the fetch.
     """
     columns = set(columns or ())
+    if connection.vendor == 'postgresql' and _linked_free_week_shape(table, columns):
+        extra = [f'{expression} as "{name}"' for name, expression in _LINKED_FREE_WEEK_FIELDS.items()
+                 if name not in columns and name not in defer]
+        selection = ', '.join(['t.*', *extra])
+        result = (f'(select {selection} from {_internal(table)} t '
+                  f'left join {_internal("free_courses")} fc on fc.id = t.course_id '
+                  f'left join {_internal("weeks")} fw on fw.id = t.week_id)')
+        return result + (f' as "{table}"' if alias else '')
     if connection.vendor != 'postgresql' or table not in RELATION_TABLES or not is_normalised(table, columns):
         return None
     q = _internal
@@ -487,31 +496,11 @@ def read_relation(table, columns, alias=True, defer=()):
         add('week_id', 'cc.week_id')
         add('ksb_code', "coalesce(sk.ksb_code, '')::varchar")
         add('ksb_description', 'sk.ksb_description')
-    elif table == 'free_course_weeks':
-        joins.append(f'left join {q("free_courses")} fc on fc.id = {t}.course_id')
-        if free_weeks_self_contained(columns):
-            # The week carries its own text and status; there is no
-            # curriculum.weeks mirror to join (and no week_id column).
-            add('week_id', f'{t}.id')
-            add('week_title', f"coalesce({t}.title, '')::text")
-            add('description', f'{t}.summary')
-            add('is_programme_deleted', f'({inactive_condition(t)})')
-            add('deleted_at', f'case when {inactive_condition(t)} then coalesce({t}."updated_at", now()) end')
-        else:
-            joins.append(f'left join {q("weeks")} fw on fw.id = {t}.week_id')
-            add('week_title', "coalesce(fw.title, '')::text")
-            add('week_number', 'coalesce(fw.week_number, 1)')
-            add('description', 'fw.summary')
-        add('course_name', "coalesce(fc.course_name, '')::text")
-        add('cover_image_url', 'fc.cover_image_url')
     elif table in {'weeks', 'components'}:
-        if table == 'weeks' and 'free_course_id' not in columns:
-            # Free-course weeks moved to curriculum.free_course_weeks: every
-            # row here belongs to a module, so none is a library week.
+        if table == 'weeks':
+            # Canonical weeks always belong to a normal module. Free Course
+            # weeks have their own table and never imply a reusable-library row.
             add('library_state', "''::varchar")
-        elif table == 'weeks':
-            add('library_state', f"(case when coalesce({t}.module_catalogue_id, '') = '' and {t}.free_course_id is not null "
-                                 f"then 'library' else '' end)::varchar")
         else:
             add('library_state', "''::varchar")
         add('detached_at', 'null::timestamptz')
@@ -593,8 +582,7 @@ def project_rows(table, rows, columns, *, requested=None, excluded=None):
         for row in rows:
             for key in derived:
                 if key == 'library_state':
-                    # Former library weeks became free-course weeks: no module.
-                    row.setdefault(key, 'library' if not row.get('module_catalogue_id') and row.get('free_course_id') else '')
+                    row.setdefault(key, '')
                 else:
                     row.setdefault(key, None if key == 'detached_at' else '')
     return rows

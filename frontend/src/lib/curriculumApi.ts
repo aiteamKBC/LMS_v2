@@ -2418,6 +2418,7 @@ export interface CurriculumOverview {
 export interface FreeProgrammeComponent {
   id: string;
   moduleId?: string;
+  freeCourseWeekId?: string;
   weekId?: string;
   displayOrder: number;
   type: string;
@@ -2435,6 +2436,8 @@ export interface FreeProgrammeModule {
   id: string;
   courseId?: string;
   weekId?: string;
+  freeCourseWeekId?: string;
+  legacyCopiedFromWeekId?: string | null;
   weekNumber?: number;
   weekTitle?: string;
   programmeId?: string;
@@ -3191,6 +3194,10 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
     ? anySignal([callerSignal, timeoutController.signal])
     : callerSignal || timeoutController?.signal;
   try {
+  const unsafe = new Set(['POST', 'PUT', 'PATCH', 'DELETE']).has((fetchInit.method || 'GET').toUpperCase());
+  const csrfToken = unsafe && typeof document !== 'undefined'
+    ? document.cookie.split('; ').find(value => value.startsWith('csrftoken='))?.split('=').slice(1).join('=')
+    : undefined;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...fetchInit,
     ...(init?.skipCache ? { cache: 'no-store' as const } : {}),
@@ -3198,6 +3205,7 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
     headers: {
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...(init?.skipCache ? { 'Cache-Control': 'no-cache' } : {}),
+      ...(csrfToken ? { 'X-CSRFToken': decodeURIComponent(csrfToken) } : {}),
       ...(init?.headers || {}),
     },
   });
@@ -4843,6 +4851,117 @@ export function permanentlyDeleteCurriculumModule(id: string) {
 
 export function fetchFreeProgrammeModules(programmeId: string, signal?: AbortSignal): Promise<FreeProgrammeModule[]> {
   return fetchCollection<FreeProgrammeModule>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/modules/`, { signal });
+}
+
+export interface FreeCourseAuthoringComponent {
+  id: string;
+  freeCourseWeekId: string;
+  type: string;
+  title: string;
+  description: string;
+  expectedOtjh: number | string;
+  points: number;
+  reflectionRequired: boolean;
+  workplaceEvidenceRequired: boolean;
+  tutorValidationRequired: boolean;
+  displayOrder: number;
+  settings: Record<string, unknown>;
+  quizReference?: { quizId: string | null; classification: string; quizStatus: string | null } | null;
+}
+
+export interface FreeCourseAuthoringWeek {
+  freeCourseWeekId: string;
+  legacyCopiedFromWeekId: string | null;
+  weekNumber: number;
+  title: string;
+  summary: string;
+  learningOutcomes: unknown;
+  status: 'active' | 'inactive';
+  holidayNoteEnabled: boolean;
+  holidayNote: string;
+  displayOrder: number;
+  components: FreeCourseAuthoringComponent[];
+}
+
+export interface FreeCourseAuthoringDocument {
+  schemaVersion: string;
+  scope: 'course';
+  revision: string;
+  course: {
+    courseId: string; courseName: string; description: string; coverImageUrl: string;
+    displayOrder: number; courseType: string; isForSale: boolean; price: string | null; currency: string;
+  };
+  weeks: FreeCourseAuthoringWeek[];
+  integrity: { status: 'ok' | 'warning' | 'blocked'; issues: Array<Record<string, unknown>>; legacyQuizReferenceCount: number };
+  clientIdMap?: Record<string, unknown>;
+}
+
+export interface FreeCourseAuthoringCatalogue {
+  schemaVersion: string;
+  scope: 'catalogue';
+  revision: string;
+  courses: Array<FreeCourseAuthoringDocument['course'] & {
+    weekCount: number; componentCount: number; totalOtjh: number | string; authoringHref: string;
+  }>;
+}
+
+export function fetchFreeCourseAuthoringCatalogue(signal?: AbortSignal) {
+  return fetchJson<FreeCourseAuthoringCatalogue>('/curriculum/free-courses/authoring/', { signal, revalidate: true });
+}
+
+export function fetchFreeCourseAuthoringCourse(courseId: string, signal?: AbortSignal) {
+  return fetchJson<FreeCourseAuthoringDocument>(`/curriculum/free-courses/${encodeURIComponent(courseId)}/authoring/`, { signal, revalidate: true });
+}
+
+export function createFreeCourseAuthoring(input: Record<string, unknown>, idempotencyKey: string) {
+  return fetchJson<FreeCourseAuthoringDocument>('/curriculum/free-courses/authoring/', {
+    method: 'POST', body: JSON.stringify(input), headers: { 'Idempotency-Key': idempotencyKey },
+  });
+}
+
+export function updateFreeCourseAuthoring(courseId: string, input: Record<string, unknown>) {
+  return patchJson<FreeCourseAuthoringDocument>(`/curriculum/free-courses/${encodeURIComponent(courseId)}/authoring/`, input);
+}
+
+export function deleteFreeCourseAuthoring(courseId: string, expectedRevision: string) {
+  return fetchJson<{ deleted: boolean; courseId: string; catalogueRevision: string }>(
+    `/curriculum/free-courses/${encodeURIComponent(courseId)}/authoring/`,
+    { method: 'DELETE', body: JSON.stringify({ expectedRevision }) },
+  );
+}
+
+export function cloneModuleToFreeCourseAuthoring(input: Record<string, unknown>, idempotencyKey: string) {
+  return fetchJson<FreeCourseAuthoringDocument>('/curriculum/free-courses/authoring/import-module/', {
+    method: 'POST', body: JSON.stringify(input), headers: { 'Idempotency-Key': idempotencyKey },
+  });
+}
+
+export interface FreeCourseQuizMutationResult {
+  quiz: { quiz: { id: number; title: string; status: string }; questions: unknown[] };
+  course: FreeCourseAuthoringDocument;
+}
+
+export function createFreeCourseQuiz(courseId: string, input: {
+  expectedRevision: string;
+  freeCourseWeekId: string;
+  componentId: string;
+  title?: string;
+  quizId?: number;
+}) {
+  return postJson<FreeCourseQuizMutationResult>(
+    `/curriculum/free-courses/${encodeURIComponent(courseId)}/quizzes/`,
+    input,
+  );
+}
+
+export function unlinkFreeCourseQuiz(courseId: string, quizId: number, input: {
+  expectedRevision: string;
+  componentId: string;
+}) {
+  return fetchJson<{ unlinked: true; quizId: number; course: FreeCourseAuthoringDocument }>(
+    `/curriculum/free-courses/${encodeURIComponent(courseId)}/quizzes/${encodeURIComponent(String(quizId))}/`,
+    { method: 'DELETE', body: JSON.stringify(input) },
+  );
 }
 
 export function saveFreeProgrammeModules(programmeId: string, input: { programmeName?: string; modules: FreeProgrammeModuleInput[] }) {

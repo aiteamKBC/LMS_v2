@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
@@ -34,7 +34,10 @@ class QuizPickerTests(SimpleTestCase):
         sync.assert_not_called()
         single_sync.assert_not_called()
         self.queryset.exclude.assert_called_once_with(status='trash')
-        self.queryset.filter.assert_called_once_with(assessment_type='quiz')
+        self.assertEqual(self.queryset.filter.call_args_list, [
+            call(assessment_type='quiz'),
+            call(free_course_week_id__isnull=True),
+        ])
 
     def test_picker_keeps_search_and_status_filters(self):
         with patch.object(views, '_ensure_quiz_assessment_type_column'), \
@@ -44,6 +47,7 @@ class QuizPickerTests(SimpleTestCase):
         self.queryset.exclude.assert_called_once_with(assessment_type='checkpoint')
         self.queryset.filter.assert_any_call(status__in=['pending', 'validating'])
         self.queryset.filter.assert_any_call(title__icontains='A quiz')
+        self.queryset.filter.assert_any_call(free_course_week_id__isnull=True)
         sync.assert_not_called()
 
     def test_default_list_keeps_full_editor_fields_and_assignment_counts(self):

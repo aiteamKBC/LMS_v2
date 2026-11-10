@@ -607,7 +607,8 @@ def _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_mo
     return []
 
 
-def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False, resolved_metadata=None):
+def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False,
+                         resolved_metadata=None, catalogue_facts=False):
     """Append published quizzes for the learner's weeks/modules.
 
     Visibility now honours explicit module assignments (curriculum.quiz_course_links)
@@ -678,6 +679,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
 
     try:
         with connections["enrolment"].cursor() as cur:
+            quiz_detail_columns = "NULL, NULL, NULL" if catalogue_facts else "questions, duration, time_unit"
             cached_modules = (resolved_metadata or {}).get('quiz_modules')
             if module_order and cached_modules is not None:
                 modules_by_id = {mid:{key:_s(value) for key,value in meta.items()}
@@ -706,10 +708,44 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                         "programme": _s(programme_name),
                     }
                 module_order = [module_id for module_id in module_order if module_id in modules_by_id]
-            if resolved_week_ids:
+            module_titles = sorted({
+                _normalise_quiz_scope_value(meta.get("module"))
+                for meta in modules_by_id.values()
+                if _normalise_quiz_scope_value(meta.get("module"))
+            })
+            if catalogue_facts and strict:
+                # The aggregate catalogue needs the union of week, explicit
+                # course-link and legacy module-title ownership, but not four
+                # separate round trips. Return link placement beside each quiz
+                # so the same Python ambiguity/placement rules remain in force.
                 cur.execute(
-                    """
-                    SELECT id, week_id, title, questions, duration, time_unit,
+                    f"""WITH links AS (
+                        SELECT quiz_id,module_catalogue_id,COALESCE(week_id,'') AS week_id
+                        FROM curriculum.quiz_course_links
+                        WHERE module_catalogue_id=ANY(%s)
+                    )
+                    SELECT quiz.id,quiz.week_id,quiz.title,{quiz_detail_columns},
+                           COALESCE(quiz.programme_id,''),COALESCE(quiz.programme,''),
+                           COALESCE(quiz.module,''),links.module_catalogue_id,links.week_id
+                    FROM curriculum.quizzes quiz
+                    LEFT JOIN links ON links.quiz_id=quiz.id
+                    WHERE lower(COALESCE(quiz.status,''))='published'
+                      AND (quiz.week_id=ANY(%s)
+                           OR lower(COALESCE(quiz.module,''))=ANY(%s)
+                           OR links.quiz_id IS NOT NULL)""",
+                    [module_order, resolved_week_ids, module_titles],
+                )
+                joined_quizzes = cur.fetchall()
+                store_quiz_rows([row[:9] for row in joined_quizzes])
+                for row in joined_quizzes:
+                    quiz_id, module_id, week_id = row[0], _s(row[9]), _s(row[10])
+                    if module_id:
+                        explicit_module_ids_by_quiz.setdefault(quiz_id, set()).add(module_id)
+                        explicit_week_ids_by_quiz_module.setdefault(quiz_id, {})[module_id] = week_id
+            elif resolved_week_ids:
+                cur.execute(
+                    f"""
+                    SELECT id, week_id, title, {quiz_detail_columns},
                            COALESCE(programme_id, ''), COALESCE(programme, ''), COALESCE(module, '')
                     FROM curriculum.quizzes
                     WHERE lower(COALESCE(status, '')) = 'published'
@@ -718,7 +754,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     [resolved_week_ids],
                 )
                 store_quiz_rows(cur.fetchall())
-            if module_order:
+            if module_order and not (catalogue_facts and strict):
                 try:
                     cur.execute(
                         """
@@ -742,8 +778,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                 explicit_quiz_ids = sorted(explicit_module_ids_by_quiz)
                 if explicit_quiz_ids:
                     cur.execute(
-                        """
-                        SELECT id, week_id, title, questions, duration, time_unit,
+                        f"""
+                        SELECT id, week_id, title, {quiz_detail_columns},
                                COALESCE(programme_id, ''), COALESCE(programme, ''), COALESCE(module, '')
                         FROM curriculum.quizzes
                         WHERE lower(COALESCE(status, '')) = 'published'
@@ -753,15 +789,10 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     )
                     store_quiz_rows(cur.fetchall())
 
-                module_titles = sorted({
-                    _normalise_quiz_scope_value(meta.get("module"))
-                    for meta in modules_by_id.values()
-                    if _normalise_quiz_scope_value(meta.get("module"))
-                })
                 if module_titles:
                     cur.execute(
-                        """
-                        SELECT id, week_id, title, questions, duration, time_unit,
+                        f"""
+                        SELECT id, week_id, title, {quiz_detail_columns},
                                COALESCE(programme_id, ''), COALESCE(programme, ''), COALESCE(module, '')
                         FROM curriculum.quizzes
                         WHERE lower(COALESCE(status, '')) = 'published'
@@ -1638,6 +1669,37 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 if catalogue_facts:
                     # My Learning's aggregate read needs live-session action
                     # identities, not lesson bodies or KSB/assignment metadata.
+                    # Collapse resource settings to the one membership boolean
+                    # consumed by the removed-video rule. The catalogue never
+                    # returns these settings, so transferring every URL key for
+                    # thousands of rows only adds JSON work and network bytes.
+                    playable_keys = tuple(dict.fromkeys((*_RESOURCE_URL_KEYS, 'videoUrl',
+                        'podcastUrl', 'audioUrl', 'uploadedFileUrl',
+                        'liveSessionUrl', 'teamsMeetingUrl')))
+                    playable = ' OR '.join(
+                        f"coalesce(btrim(settings_json->>'{key}','{strip_chars}'),'')<>''"
+                        for key in playable_keys)
+                    playable += (
+                        " OR coalesce(settings_json->>'embedCode','') ~* "
+                        "$$<iframe[^>]+src=[\"'][^\"']+[\"']$$"
+                        f" OR coalesce(btrim(settings_json->>'readingContent','{strip_chars}'),'')<>''"
+                        " OR (coalesce(btrim(settings_json->>'recordingSeriesId'),'')<>''"
+                        " AND settings_json->'recordingSessionNumber' IS NOT NULL"
+                        " AND coalesce(btrim(settings_json->>'recordingDate'),'')<>'')")
+                    catalogue_quiz_settings_sql = (
+                        "CASE WHEN settings_json::jsonb ? 'linkedQuizId' THEN "
+                        "jsonb_build_object('linkedQuizId',settings_json->'linkedQuizId') "
+                        "ELSE coalesce((SELECT CASE count(*) "
+                        "WHEN 0 THEN '{}'::jsonb "
+                        "WHEN 1 THEN jsonb_build_object('linkedQuizId',min(normalized.quiz_id),"
+                        "'_normalizedQuizLink',true) "
+                        "ELSE jsonb_build_object('_ambiguousQuizLink',true) END "
+                        "FROM curriculum.quiz_component_links normalized "
+                        "WHERE normalized.component_id=curriculum.components.id),'{}'::jsonb) END")
+                    settings_sql = catalogue_quiz_settings_sql + (
+                        " || CASE WHEN lower(replace(btrim(type),'-','_'))='video' "
+                        f"THEN jsonb_build_object('_cataloguePlayable',({playable})) "
+                        "ELSE '{}'::jsonb END")
                     keys = ('sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'teamsLiveSessionId',
                             'teamsSessionNumber', 'teamsOccurrenceId', 'extraTeamsMeetingUrl', 'extraTeamsLiveSessionId')
                     settings_sql += " || CASE WHEN lower(replace(btrim(type),'-','_'))='live_session' THEN jsonb_build_object(" + ','.join(
@@ -1687,8 +1749,16 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "'readingReflectionPrompts','learnerGuidance','legacySettings'] "
                     f"ELSE ({settings_sql}) END")
 
-            # Presentation metadata survives all compact/identity paths.
-            settings_sql = f"({settings_sql}) || {POINT_SETTINGS_SQL} || {AUDIO_ALTERNATIVE_SETTINGS_SQL} || {LINKED_RECORDING_SETTINGS_SQL}"
+            # Point labels, playable audio alternatives and recording links are
+            # activity-detail facts.  The initial My Learning catalogue never
+            # returns component rows, and only uses this projection to count
+            # identities, completion and upcoming dates.  In particular, the
+            # legacy fallbacks below may carry the component's entire imported
+            # settings document; projecting them for thousands of catalogue
+            # rows made a four-card response transfer megabytes internally.
+            if not (identities_only and catalogue_facts):
+                settings_sql = (f"({settings_sql}) || {POINT_SETTINGS_SQL} || "
+                                f"{AUDIO_ALTERNATIVE_SETTINGS_SQL} || {LINKED_RECORDING_SETTINGS_SQL}")
 
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
@@ -1700,6 +1770,19 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 # Keep ->> text semantics for dates independent of the native
                 # identity projection's JSON types and display overrides.
                 schedule_column = ', ' + COMPONENT_SCHEDULE_SETTINGS.replace('c.settings_json', 'settings_json')
+            visible_week_ids = [row[0] for row in master_weeks]
+            component_week_scope = ''
+            component_params = [module_ids]
+            if week_ids is not None:
+                component_week_scope = 'AND week_id = ANY(%s) '
+                component_params.append(week_ids)
+            elif catalogue_facts:
+                # The aggregate catalogue consumes components only when their
+                # already-resolved visible week FK is present in ``master_weeks``.
+                # Constrain directly by that set instead of running a correlated
+                # visible-parent EXISTS for every component candidate.
+                component_week_scope = 'AND week_id = ANY(%s) '
+                component_params.append(visible_week_ids)
             cur.execute(
                 "SELECT id, week_id, module_catalogue_id, type, title, "
                 f"{description_sql} AS description, "
@@ -1707,14 +1790,10 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 f"{detail_columns}"
                 f"{', expected_otjh' if expected_otjh else ''}{schedule_column} "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
-                f"{'AND week_id = ANY(%s) ' if week_ids is not None else ''}"
+                f"{component_week_scope}"
                 f"AND {visible_child_sql('components')} "
-                + (f"AND (week_id IS NULL OR EXISTS (SELECT 1 FROM curriculum.weeks visible_parent "
-                   f"WHERE visible_parent.id=components.week_id "
-                   f"AND visible_parent.module_catalogue_id=components.module_catalogue_id "
-                   f"AND {visible_week_sql('visible_parent')})) " if catalogue_facts else '') +
                 "ORDER BY week_id, display_order, id",
-                [module_ids, *([week_ids] if week_ids is not None else [])],
+                component_params,
             )
             master_components = cur.fetchall()
             if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
@@ -1731,6 +1810,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # of treating a linked quiz as an ordinary generic component.
             quiz_id_by_component = {}
             authored_quiz_component_ids = set()
+            ambiguous_quiz_component_ids = set()
             fallback_module_ids = set()
             component_ids = [row[0] for row in master_components]
             for comp_id, _week_id, mid, ctype, _ctitle, _cdesc, settings, _live_link, _order, _ksb_mappings, _reflection_required, _reflection_question, _tutor_validation, *_otjh in master_components:
@@ -1741,8 +1821,10 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         settings = {}
                 if not isinstance(settings, dict):
                     settings = {}
-                if 'linkedQuizId' in settings:
+                if 'linkedQuizId' in settings and settings.get('_normalizedQuizLink') is not True:
                     authored_quiz_component_ids.add(comp_id)
+                if settings.get('_ambiguousQuizLink') is True:
+                    ambiguous_quiz_component_ids.add(comp_id)
                 linked_quiz_id = settings.get("linkedQuizId")
                 try:
                     if linked_quiz_id not in (None, ""):
@@ -1761,23 +1843,27 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
 
             quiz_meta_by_id = dict((resolved_metadata or {}).get('quiz_meta', {}))
             batched_links = None
+            quiz_component_ids = [row[0] for row in master_components
+                                  if _s(row[3]).strip().lower().replace('-', '_') == 'quiz']
             if (catalogue_facts and not (resolved_metadata is not None and 'quiz_links' in resolved_metadata)
-                    and any(row[3] == 'quiz' for row in master_components)):
+                    and ambiguous_quiz_component_ids):
                 # The normalized links and their small quiz metadata formerly
-                # required two remote SELECTs. Keep the original reader for
-                # ambiguous multiply-linked components, with its tie behavior.
-                cur.execute("SELECT link.component_id,link.quiz_id,q.id,q.title,q.questions,q.duration,q.time_unit "
+                # required two remote SELECTs.  Component ownership, type and
+                # visibility have already been established by the master read;
+                # asking Postgres to join and re-filter every catalogue
+                # component made this tiny link projection dominate large
+                # learner catalogues. Keep the original reader only for the
+                # ambiguous multiply-linked fallback, with its tie behavior.
+                cur.execute("SELECT link.component_id,link.quiz_id "
                     "FROM curriculum.quiz_component_links link "
-                    "JOIN curriculum.components component ON component.id=link.component_id "
-                    "LEFT JOIN curriculum.quizzes q ON q.id=link.quiz_id "
-                    "WHERE component.module_catalogue_id=ANY(%s) AND component.id=ANY(%s) "
-                    f"AND component.type='quiz' AND {visible_child_sql('component')}", [module_ids, component_ids])
+                    "WHERE link.component_id=ANY(%s)", [sorted(ambiguous_quiz_component_ids)])
                 joined = cur.fetchall()
                 if len({row[0] for row in joined}) == len(joined):
                     batched_links = [(row[0], row[1]) for row in joined]
-                    quiz_meta_by_id.update({row[2]: {'quizId':row[2], 'title':row[3], 'questions':row[4],
-                        'duration':row[5], 'timeUnit':row[6]} for row in joined
-                        if row[2] is not None and row[2] not in quiz_meta_by_id})
+                    quiz_meta_by_id.update({row[1]: {'quizId':row[1]} for row in joined
+                        if row[1] is not None and row[1] not in quiz_meta_by_id})
+            elif catalogue_facts:
+                batched_links = []
             if batched_links is not None:
                 quiz_id_by_component.update((cid, qid) for cid, qid in batched_links
                                             if cid not in authored_quiz_component_ids)
@@ -1822,7 +1908,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
 
             linked_quiz_ids = sorted(set(quiz_id_by_component.values()))
             missing_quiz_ids = [qid for qid in linked_quiz_ids if qid not in quiz_meta_by_id]
-            if missing_quiz_ids:
+            if missing_quiz_ids and catalogue_facts:
+                quiz_meta_by_id.update({qid: {'quizId': qid} for qid in missing_quiz_ids})
+            elif missing_quiz_ids:
                 cur.execute(
                     "SELECT id, title, questions, duration, time_unit FROM curriculum.quizzes "
                     "WHERE id = ANY(%s)",
@@ -1863,12 +1951,14 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                                for key in ('teamsOccurrenceId','teamsLiveSessionId','teamsSessionNumber','sessionDate')
                                for value in [settings.get(key)]}})
                     quiz = quiz_meta_by_id.get(quiz_id_by_component.get(cid))
-                    if _s(ctype).strip().lower().replace('-', '_') == 'video' and not (
-                        _video_url_from_settings(settings) or quiz or _s(settings.get('readingContent'))
+                    playable = (settings.get('_cataloguePlayable') is True) if catalogue_facts else (
+                        _video_url_from_settings(settings) or _s(settings.get('readingContent'))
                         or _component_resource_url(settings) or component_audio_url(settings, ctype)
-                        or _s(link) or _s(settings.get('liveSessionUrl')) or _s(settings.get('teamsMeetingUrl'))
+                        or _s(settings.get('liveSessionUrl')) or _s(settings.get('teamsMeetingUrl'))
                         or (_s(settings.get('recordingSeriesId')) and settings.get('recordingSessionNumber')
-                            and _s(settings.get('recordingDate')))):
+                            and _s(settings.get('recordingDate'))))
+                    if _s(ctype).strip().lower().replace('-', '_') == 'video' and not (
+                            playable or quiz or _s(link)):
                         continue
                     week = week_lookup[(mid, wid)]
                     out_components.append({**week, 'componentId': cid, 'isQuiz': bool(quiz),

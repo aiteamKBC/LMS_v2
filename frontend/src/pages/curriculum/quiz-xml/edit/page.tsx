@@ -1,7 +1,8 @@
 // Route wrapper for /curriculum/quiz-xml/:id/edit — just supplies the
 // curriculum WorkspaceShell chrome around the shared QuizEditorPanel, which
 // holds the entire editor. The Week Builder renders the same panel inline.
-import { useParams } from 'react-router-dom';
+import { useMemo } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { QuizEditorPanel } from './QuizEditorPanel';
@@ -10,6 +11,13 @@ const curriculumNav = roleNavMap.curriculum;
 
 export default function QuizEditPage() {
   const { quizId } = useParams();
+  const [searchParams] = useSearchParams();
+  const courseId = searchParams.get('freeCourseId') || '';
+  const componentId = searchParams.get('componentId') || '';
+  const expectedRevision = searchParams.get('expectedRevision') || '';
+  const freeCourseContext = useMemo(() => courseId && componentId && expectedRevision
+    ? { courseId, componentId, expectedRevision }
+    : undefined, [courseId, componentId, expectedRevision]);
   return (
     <WorkspaceShell
       role="curriculum"
@@ -21,7 +29,7 @@ export default function QuizEditPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <QuizEditorPanel quizId={quizId} />
+      <QuizEditorPanel quizId={quizId} freeCourseContext={freeCourseContext} />
     </WorkspaceShell>
   );
 }

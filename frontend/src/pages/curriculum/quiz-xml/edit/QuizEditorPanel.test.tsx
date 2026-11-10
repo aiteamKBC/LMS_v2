@@ -40,3 +40,32 @@ describe('question diagrams in the quiz editor', () => {
     await waitFor(() => expect(saved?.questions[0]).toEqual({ ...questions[0], imageUrl: '' }));
   });
 });
+
+describe('canonical Free Course quiz editing', () => {
+  it('uses the ownership-scoped endpoint and carries the latest revision', async () => {
+    vi.stubGlobal('AppIcon', AppIcon);
+    const quiz = { id: 7, title: 'Free quiz', packageType: 'xml', status: 'draft', quizStyle: 'default', duration: 10 };
+    const questions = [{ id: 31, text: 'Question', questionType: 'single_choice', explanation: '', isArchived: false,
+      answers: [{ id: 41, text: 'Yes', isCorrect: true }, { id: 42, text: 'No', isCorrect: false }] }];
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      requests.push({ url, init });
+      if (init?.method === 'PATCH') {
+        return new Response(JSON.stringify({ quiz: { quiz, questions }, course: { revision: 'fcv1:next' } }));
+      }
+      return new Response(JSON.stringify({ quiz, questions }));
+    }));
+    render(<MemoryRouter><QuizEditorPanel quizId={7} freeCourseContext={{ courseId: 'FREE-1', componentId: 'FREECOMP-1', expectedRevision: 'fcv1:first' }} /></MemoryRouter>);
+    const save = await screen.findByRole('button', { name: 'Save question changes' });
+    fireEvent.change(screen.getByLabelText('Question image'), { target: { files: [new File(['x'], 'x.png', { type: 'image/png' })] } });
+    await screen.findByAltText('Question diagram');
+    fireEvent.click(save);
+    await waitFor(() => expect(requests.some(request => request.init?.method === 'PATCH')).toBe(true));
+    expect(requests.some(request => request.url.endsWith('/course-links/'))).toBe(false);
+    const mutation = requests.find(request => request.init?.method === 'PATCH');
+    expect(mutation?.url).toBe('/curriculum_api/curriculum/free-courses/FREE-1/quizzes/7/');
+    expect(JSON.parse(String(mutation?.init?.body))).toMatchObject({
+      expectedRevision: 'fcv1:first', componentId: 'FREECOMP-1', removeMissing: true,
+    });
+  });
+});

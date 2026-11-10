@@ -1,6 +1,7 @@
 """Read-only delivery dates for every component in assigned Builder modules."""
 
 import json
+from bisect import bisect_right
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -12,7 +13,7 @@ def _dated_schedule(day, source):
     return {**activity_schedule('', day), 'date_source': source, 'date_needs_review': False}
 
 
-def _component_schedule(component, week_title):
+def _component_schedule(component, week_title, fallback_cache=None):
     settings = component['settings']
     # Teams timestamps name an instant; the course calendar uses UK dates.
     for key in ('sessionDateTimeUtc', 'teamsStartDateTimeUtc'):
@@ -26,8 +27,14 @@ def _component_schedule(component, week_title):
     day = as_date(settings.get('sessionDate'))
     if day:
         return _dated_schedule(day, 'builder_session')
-    return activity_schedule(component['title'], section_title=week_title,
-                             section_source='builder_section_title')
+    key = (component['title'], week_title)
+    if fallback_cache is not None and key in fallback_cache:
+        return dict(fallback_cache[key])
+    schedule = activity_schedule(component['title'], section_title=week_title,
+                                 section_source='builder_section_title')
+    if fallback_cache is not None:
+        fallback_cache[key] = dict(schedule)
+    return schedule
 
 
 def _with_due_timing(schedule, settings):
@@ -118,6 +125,7 @@ def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved
     else:
         components = [row for row in components if str(row[1]) in modules]
     dates = {}
+    fallback_schedule_cache = {}
     for component_id, module_id, week_id, title, component_type, settings in components:
         week = weeks.get((str(module_id), str(week_id)))
         if week_id and week is None:
@@ -128,7 +136,7 @@ def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved
                      'type': str(component_type or '').replace('_', '-'),
                      'settings': settings if isinstance(settings, dict) else {}}
         dates[component['id']] = _with_due_timing(
-            _component_schedule(component, week['title'] if week else ''),
+            _component_schedule(component, week['title'] if week else '', fallback_schedule_cache),
             component['settings'],
         )
         if week is not None:
@@ -145,7 +153,8 @@ def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved
                              dates[component['id']]['date_source'] not in ('introduction', 'extra_activity')
                              for component in week['components']))})
         for placement in placements:
-            following = next((start for start in starts if placement['start'] and start > placement['start']), None)
+            offset = bisect_right(starts, placement['start']) if placement['start'] else len(starts)
+            following = starts[offset] if offset < len(starts) else None
             if following and placement['end'] and following <= placement['end']:
                 placement['end'] = (as_date(following) - timedelta(days=1)).isoformat()
         for week, placement in zip(module_weeks, placements):

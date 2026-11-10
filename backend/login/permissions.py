@@ -303,6 +303,36 @@ def require_access(*accesses):
     return decorator
 
 
+def require_all_access(*accesses):
+    """Gate a staff endpoint on every named workspace/capability grant.
+
+    ``require_access`` intentionally implements any-of semantics for workspace
+    routes.  Mutating Free Courses is narrower: the caller must hold the
+    Curriculum workspace *and* the extra authoring capability.  Super Admin
+    retains the existing explicit bypass.
+    """
+    required = frozenset(accesses)
+
+    def decorator(view):
+        @functools.wraps(view)
+        def wrapped(request, *args, **kwargs):
+            from learner_api.constants import ACCESS_SUPER_ADMIN
+
+            account = authenticate_request(request)
+            if account is None:
+                return _unauthenticated(request)
+            if account.role not in {"admin", "staff"}:
+                return _forbidden(required)
+            granted = _accesses_of(account)
+            if ACCESS_SUPER_ADMIN in granted or required.issubset(granted):
+                return view(request, *args, **kwargs)
+            return _forbidden(required)
+
+        return wrapped
+
+    return decorator
+
+
 def _accesses_of(account):
     """Every access grant on a staff account, or an empty set for anyone else.
 

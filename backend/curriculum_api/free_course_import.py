@@ -9,6 +9,7 @@ from copy import deepcopy
 from django.db import connection, transaction
 
 from .legacy_free_course_migration import adopted_id, course_payload
+from .free_course_writer_mode import LEGACY, require_mode
 
 
 def import_payloads(export):
@@ -90,6 +91,7 @@ def import_plan(export):
 
 
 def import_content(export):
+    require_mode(LEGACY)
     from . import views as v
     if connection.vendor != 'postgresql' or not v.has_column(v.FREE_COURSES_TABLE, 'module_catalogue_id'):
         raise ValueError('Apply migration 0080 before importing free-course content.')
