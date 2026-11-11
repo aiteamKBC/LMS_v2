@@ -317,6 +317,8 @@ class Command(BaseCommand):
             # The components above were written with raw SQL. Inside the
             # transaction, so the shared epoch moves only if the link commits;
             # every cached curriculum payload and content row is then retired.
+            from curriculum_api import content_cache
+            content_cache.note_modules([module_id])  # components updated by raw SQL
             v.invalidate_curriculum_cache()
         linked_count = len(linked_ids)
         self.stdout.write(f'LINKED module={module_id} series={series_id} '
