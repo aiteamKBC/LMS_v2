@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { readMyLearningUpcoming, useMyLearningSearch, useMyLearningModule, type MyLearningCatalogue } from '@/api/myLearning';
@@ -14,6 +13,7 @@ import styles from './SubjectWorkspace.module.css';
 import { TransferProgress } from './TransferProgress';
 import { moduleTeachingActive } from './teachingActivity';
 import { learningToday } from './subjectLearning';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 
 const tones = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 
