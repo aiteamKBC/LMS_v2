@@ -395,7 +395,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, addedInvitees, updateDrawer, pushDates, resendSchedule,
     selectedScopeRows, chooseMeetingScope, reattach, externalCalendar, calendarLinksLoading, calendarLinksError,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
-    originalCalendar, originalCalendarBlocked, refreshOriginalCalendar,
+    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar,
   } = workspace;
   const actionBlockedReason = blockedReason
     || (!graphConfigured ? 'Microsoft Teams is not connected. Check the Microsoft connection, then try again.' : '')
@@ -962,7 +962,11 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <ImportedParticipantsPanel key={originalCalendar.id} liveSessionId={originalCalendar.id}
                       savedOrganizer={selected.summary.organizerEmail} />
                   </>}
-                  <fieldset disabled={originalCalendarBlocked} className="grid gap-4 sm:grid-cols-2 disabled:opacity-60">
+                  {originalRolesBlocked && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    Microsoft meeting roles are not verified. The saved people below may be incomplete; their Teams permissions have not been removed.
+                    {' '}<button type="button" onClick={refreshOriginalCalendar} className="font-bold underline">Retry role check</button>
+                  </p>}
+                  <fieldset disabled={originalCalendarBlocked || originalRolesBlocked} className="grid gap-4 sm:grid-cols-2 disabled:opacity-60">
                     <FormField label="Organizer Microsoft 365 email" hint="This organizer owns the existing calendar.">
                       <input aria-label="Organizer" readOnly value={updateDrawer.form.organizerEmail}
                         className="h-11 w-full rounded-lg border border-background-200 bg-background-100 px-3 text-[13px]" />
@@ -1030,7 +1034,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <button
                       type="button"
                       onClick={() => void saveInvitations(selected)}
-                      disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
+                      disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked || originalRolesBlocked) || detailLoading || !graphConfigured}
                       title="Save people and settings without an LMS email. Microsoft may send a calendar update. Session dates and join links stay unchanged."
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -1041,7 +1045,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       <button
                         type="button"
                         onClick={() => void saveInvitations(selected, { invite: true })}
-                        disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || !graphConfigured}
+                        disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked || originalRolesBlocked) || detailLoading || !graphConfigured}
                         title="Save these changes, then send the Teams invitation and the schedule email to the people you added. Nobody already invited is contacted, and no session date moves."
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >

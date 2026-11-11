@@ -946,6 +946,57 @@ describe('Teams Meetings page', () => {
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
+  it('loads Teams co-organizers into their role field and preserves them when promoting an invited person', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
+      ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ status: 'editable', message: 'Verified', sourceToken: 'SOURCE-1',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com', 'original.co@example.com', 'invited.staff@example.com'],
+      presenters: [], coOrganizers: ['original.co@example.com'], rolesEditable: true });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const co = dialog.getByRole('combobox', { name: 'Co-organizers' });
+    await waitFor(() => expect(within(co.parentElement!).getByRole('button', { name: 'Remove original.co@example.com' })).toBeVisible());
+    const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+    expect(within(attendees.parentElement!).queryByRole('button', { name: 'Remove original.co@example.com' })).not.toBeInTheDocument();
+    fireEvent.change(co, { target: { value: 'invited.staff@example.com' } });
+    fireEvent.keyDown(co, { key: 'Enter' });
+    await userEvent.click(dialog.getByRole('button', { name: 'Save without notifying' }));
+    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledExactlyOnceWith('LIVE-1', expect.objectContaining({
+      peopleOnly: true, invitationsOnly: true, originalSourceToken: 'SOURCE-1',
+      coOrganizers: ['original.co@example.com', 'invited.staff@example.com'],
+    }), expect.anything()));
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    expect(finishTeamsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('blocks unverified meeting roles and recovers their actual lists after retry', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
+      ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
+    vi.mocked(readImportedMeetingEditor).mockResolvedValueOnce({ status: 'editable', message: 'Calendar only', sourceToken: 'SOURCE-1',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com', 'original.co@example.com'],
+      presenters: [], coOrganizers: [], rolesEditable: false });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(await dialog.findByText(/Microsoft meeting roles are not verified/)).toBeVisible();
+    for (const name of ['Attendees', 'Presenters', 'Co-organizers']) expect(dialog.getByRole('combobox', { name })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    vi.mocked(readImportedMeetingEditor).mockResolvedValueOnce({ status: 'editable', message: 'Verified', sourceToken: 'SOURCE-2',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com', 'original.co@example.com'],
+      presenters: [], coOrganizers: ['original.co@example.com'], rolesEditable: true });
+    await userEvent.click(dialog.getByRole('button', { name: 'Retry role check' }));
+    await waitFor(() => expect(dialog.getByRole('combobox', { name: 'Co-organizers' })).toBeEnabled());
+    expect(dialog.getByRole('button', { name: 'Remove original.co@example.com' })).toBeVisible();
+    expect(dialog.queryByText(/Microsoft meeting roles are not verified/)).not.toBeInTheDocument();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('saves verified linked calendar participants through the standard API (invite added: %s)', async invite => {
     window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
     fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
