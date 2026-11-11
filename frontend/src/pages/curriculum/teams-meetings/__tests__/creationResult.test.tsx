@@ -31,6 +31,9 @@ it('emails only added people after an explicitly confirmed LMS email choice', as
   expect(submitAddedPeopleEmails).toHaveBeenCalledTimes(1);
   expect(submitAddedPeopleEmails).toHaveBeenCalledWith('LIVE-ONE', ['new@example.invalid'], expect.objectContaining({ addedKey: 'ADDED' }));
   expect(submitChangeEmails).not.toHaveBeenCalled();
+  expect(screen.getByText(/Only the LMS email you requested is handled by this action/)).toBeVisible();
+  expect(screen.queryByText(/No LMS email was requested/)).not.toBeInTheDocument();
+  expect(screen.getByText(/without details about other learners/)).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
   await pending;
 });
