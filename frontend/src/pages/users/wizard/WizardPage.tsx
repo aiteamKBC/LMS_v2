@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useToast } from "@/hooks/useToast";
 import { useResetWorkspaceScroll } from '@/hooks/useResetWorkspaceScroll';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { EnrolmentWorkspaceShell as WorkspaceShell } from '../presentation/EnrolmentWorkspaceShell';
+import design from '../presentation/EnrolmentWorkspace.module.css';
+import styles from '../presentation/EnrolmentForms.module.css';
+import motion from '../presentation/EnrolmentMotion.module.css';
+import { EnrolmentBreadcrumbs } from '../presentation/EnrolmentBreadcrumbs';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard, updateCommercialBoard } from '@/api/commercialUsers';
@@ -72,19 +76,15 @@ function WizardInner({ stepSlug }: { stepSlug: string }) {
       onNavigateStep={goTo}
       onFinish={finish}
       header={
-        // Solid purple via a class, not an inline gradient: index.css replaces any
-        // workspace surface whose inline style names primary-950/900 with the
-        // shared hero gradient, which fades to near-white on the right and left
-        // the white text and Close button unreadable.
-        <div data-testid="staff-wizard-banner" className="relative rounded-2xl overflow-hidden mb-4 animate-fade-in-up bg-primary-800">
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="relative px-6 py-5 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-magic-line text-white text-xl" /></span>
-              <div className="min-w-0">
-                <p className="text-[11px] text-white/60 uppercase tracking-wide">Enrolment Wizard</p>
-                <p className="text-[15px] font-heading font-semibold text-white truncate">You are viewing: {board.user.name}{board.user.reference ? <span className="text-white/60 font-normal"> ({board.user.reference})</span> : null}</p>
-              </div>
+        // Keep the purple fallback and scope the banner image to staff mode.
+        // The close action needs the same contrast when the image is unavailable.
+        <div data-testid="staff-wizard-banner" className={`${design.wizardHero} bg-primary-800`}>
+          <EnrolmentBreadcrumbs current={board.user.name} people />
+          <div className={design.wizardHeadline}>
+            <div className="min-w-0">
+              <h1>{board.user.name}</h1>
+              <p>{[board.contact.email, board.programme.name].filter(Boolean).join(' · ')}</p>
+              <p className={design.wizardReference}>{board.user.reference}{board.user.reference ? ' · ' : ''}Enrolment Wizard</p>
             </div>
             <button onClick={() => navigate(profileHref)} className="inline-flex items-center gap-1.5 px-3 py-2 border border-white/70 bg-transparent text-white rounded-lg text-[12px] font-medium hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white transition-smooth cursor-pointer shrink-0"><AppIcon className="ri-close-line" />Close wizard</button>
           </div>
@@ -159,12 +159,12 @@ export default function WizardPage() {
   const config = roleNavMap.compliance;
   const { stepSlug } = useParams();
   // Each step opens at its top rather than at the previous step's position.
-  // `contents`, so the anchor adds no box to the layout.
+  // The Enrollment wrapper also scopes the wizard's presentation.
   const topRef = useResetWorkspaceScroll<HTMLDivElement>(stepSlug);
   return (
     <WorkspaceShell role="compliance" roleLabel={config.label} navItems={config.items}
-      workspaceLabel={config.workspaceLabel} pageTitle="Enrolment Wizard">
-      <div ref={topRef} className="contents">
+      workspaceLabel="Enrolment" pageTitle="Enrolment Wizard" hideBreadcrumbs showBackButton={false} directoryLayout>
+      <div ref={topRef} className={`${design.wizard} ${styles.page} ${styles.staffWizard} ${motion.page}`}>
         <WizardPageContent />
       </div>
     </WorkspaceShell>

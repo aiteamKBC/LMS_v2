@@ -15,6 +15,9 @@ interface DatePickerFieldProps {
   helper?: string;
   /** Non-blocking notice — shown in place of `helper` without disabling the picked date. */
   warning?: string;
+  /** Optional presentation hooks; defaults retain the shared field styling. */
+  className?: string;
+  panelClassName?: string;
 }
 
 type PanelView = 'days' | 'months' | 'years';
@@ -39,6 +42,8 @@ export function DatePickerField({
   error,
   helper,
   warning,
+  className = '',
+  panelClassName = '',
 }: DatePickerFieldProps) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<PanelView>('days');
@@ -315,7 +320,7 @@ export function DatePickerField({
       ref={panelRef}
       role="dialog"
       aria-label={`Choose ${label.toLowerCase()}`}
-      className="fixed z-[10050] overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200"
+      className={`fixed z-[10050] overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200 ${panelClassName}`}
       style={panelStyle}
     >
       <div className="border-b border-background-200 px-3 py-2">
@@ -479,7 +484,7 @@ export function DatePickerField({
   const shownError = typedError || error;
 
   return (
-    <div className="block">
+    <div className={`block ${className}`}>
       <span className="text-[10px] font-bold uppercase text-foreground-400">{label}{required ? ' *' : ''}</span>
       <div
         ref={fieldRef}
