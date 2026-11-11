@@ -207,8 +207,10 @@ class SharedSeriesRetryTests(Harness):
         self.assertEqual(self.announced(), [])
         self.assertEqual(result['microsoftUpdate'], 'not_needed')
         self.assertFalse(result['announced'])
-        # ... and the learner who joined is reached on their own.
-        self.assertEqual(self.forwards, [('event-1', ['joined@example.invalid'])])
+        # Explicit Microsoft forwarding is disabled, including this unchanged-date path.
+        self.assertEqual(self.forwards, [])
+        self.assertTrue(any(warning.get('code') == 'teams_calendar_mail_disabled'
+                            for warning in result['warnings']))
 
 
 # --------------------------------------------------------------------------- 2/3
