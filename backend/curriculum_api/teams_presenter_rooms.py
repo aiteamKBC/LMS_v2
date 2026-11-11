@@ -87,6 +87,12 @@ def prepare_room_promotion(target, meeting, event, accounts, co_organizers):
         if _text(updated[index]['role']) != 'coorganizer':
             changes.append({'id': account_id, 'email': account['email'], 'previousRole': updated[index]['role']})
             updated[index]['role'] = 'coorganizer'
+    # A live role-only PATCH changed Microsoft's read-only meetingType from
+    # recurring to scheduled while its calendar recurrence stayed intact.
+    # Leave such conferences untouched until that behavior is understood;
+    # never discover it by mutating every series in a bulk repair.
+    if changes and meeting.get('meetingType') != 'scheduled':
+        raise UnsafeRoomPromotion('meeting_type_role_update_requires_review')
     if sum(_text(item.get('role')) == 'coorganizer' for item in updated) > 10:
         raise UnsafeRoomPromotion('coorganizer_limit')
     try:
