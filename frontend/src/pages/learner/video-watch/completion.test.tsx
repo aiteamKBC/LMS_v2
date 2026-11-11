@@ -708,6 +708,18 @@ it.each([
   expect(within(nextAttempt).getByRole('button', { name: 'Continue' })).toBeDisabled();
 });
 
+it.each(['commercial', 'apprenticeship'])('hides retakes after verified Teams attendance for %s Live Teams sessions', async kind => {
+  const attended = { ...first, attendanceCompleted: true };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({
+    ...detail(true), components: [attended, empty, second],
+  } as unknown as LearnerDetail);
+  mount('C1', kind);
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
+});
+
 it('retains live-session time on cancelling the prompt and restores keyboard focus', async () => {
   mount();
   const finishButton = await screen.findByRole('button', { name: 'Finish' });

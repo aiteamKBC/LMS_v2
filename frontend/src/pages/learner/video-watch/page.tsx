@@ -1120,7 +1120,7 @@ export default function ComponentViewPage() {
                     {nextActivity && <button type="button" onClick={() => navigate(nextActivity.href)} className="rounded-lg bg-emerald-700 px-3 py-2 text-left text-xs font-semibold text-white hover:bg-emerald-800">
                       Next activity: {nextActivity.label}
                     </button>}
-                    {!repeating && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
+                    {!repeating && !(isLiveSession && component?.attendanceCompleted) && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
                   </div>
                 </div>
               )}
