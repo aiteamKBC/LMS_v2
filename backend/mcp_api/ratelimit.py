@@ -17,6 +17,7 @@ BUCKETS = {
     "calls": (60, 60, "tool calls", "a minute"),
     "write_applies": (20, 3600, "confirmed changes", "an hour"),
     "video_uploads": (20, 3600, "video upload previews", "an hour"),
+    "file_uploads": (30, 3600, "file upload previews", "an hour"),
     # Book search embeds the query (OpenAI cost, SECURITY_AUDIT A11).
     "book_searches": (10, 60, "book searches", "a minute"),
 }

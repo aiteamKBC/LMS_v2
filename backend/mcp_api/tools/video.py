@@ -32,6 +32,7 @@ from ..dispatch import call_api
 from ..models import McpPendingChange
 from ..settings import public_base_url, video_uploads_enabled
 from . import ToolError, ToolResult, tool
+from .components import FREE_COURSE_PROGRAMME, LiveModuleWarning, is_free_course
 from .read import CURRICULUM, _archived, _programme_by_id
 
 logger = logging.getLogger("mcp_api")
@@ -59,17 +60,23 @@ def _id(value):
 def _destination(request, arguments, *, for_write=True):
     _enabled()
     module_id, component_id = _id(arguments.get("module_id")), _id(arguments.get("component_id"))
-    programme = _programme_by_id(request, arguments.get("programme_id"))
-    if _archived(programme):
-        raise ToolError("The programme is archived. Choose an active programme.")
     _, module = call_api(request, "GET", f"{CURRICULUM}/modules/{module_id}/structure/")
     if (not isinstance(module, dict) or module.get("isProgrammeDeleted") or _archived(module)
             or (for_write and module.get("status") != "draft")):
         raise ToolError("Videos can only be saved into an existing draft module in an active programme.")
-    if str(module.get("programmeId") or "") not in {
-        str(programme.get("id") or ""), str(programme.get("sourceId") or ""),
-    } - {""}:
-        raise ToolError("That module does not belong to the selected programme. Look up the destination again.")
+    if is_free_course(module):
+        # A free course is a standalone module in no programme.
+        if str(arguments.get("programme_id") or "").strip():
+            raise ToolError("That module is a free course and belongs to no programme. Leave programme_id out.")
+        programme = dict(FREE_COURSE_PROGRAMME)
+    else:
+        programme = _programme_by_id(request, arguments.get("programme_id"))
+        if _archived(programme):
+            raise ToolError("The programme is archived. Choose an active programme.")
+        if str(module.get("programmeId") or "") not in {
+            str(programme.get("id") or ""), str(programme.get("sourceId") or ""),
+        } - {""}:
+            raise ToolError("That module does not belong to the selected programme. Look up the destination again.")
     found = next(((w, c) for w in module.get("weekStructure") or [] for c in w.get("components") or []
                   if c.get("id") == component_id), None)
     week, component = found if found else ({}, None)
@@ -207,7 +214,7 @@ def _stage_link(url, request):
         raise ToolError("The video link could not be downloaded. Check it is shared publicly, or attach the MP4.") from None
 
 
-class SaveVideo(WriteTool):
+class SaveVideo(LiveModuleWarning, WriteTool):
     name = NAME
     description = ("Prepare an MP4 save into an existing video component of a draft module. Look up its programme, "
                    "module and component first. Supply the video EITHER as an attached file (file) OR as a pasted "
@@ -224,7 +231,7 @@ class SaveVideo(WriteTool):
             "mime_type": {"type": "string", "maxLength": 100},
         }, "required": ["download_url", "file_id"], "additionalProperties": False},
         "video_url": {"type": "string", "minLength": 1, "maxLength": 2048},
-    }, "required": list(DESTINATION), "additionalProperties": False}
+    }, "required": ["module_id", "component_id"], "additionalProperties": False}
     file_params = ("file",)
     rate_bucket = "video_uploads"
 
@@ -315,7 +322,7 @@ def _latest_import(module_id, component_id):
 
 @tool("get_video_import_status", "Read the latest Bunny import state for an existing video component. "
       "A saved LMS video and a completed Bunny copy are different states. Does not start or retry transfers.",
-      {"type": "object", "properties": DESTINATION, "required": list(DESTINATION), "additionalProperties": False})
+      {"type": "object", "properties": DESTINATION, "required": ["module_id", "component_id"], "additionalProperties": False})
 def get_video_import_status(request, arguments):
     _, module, component, _snapshot = _destination(request, arguments, for_write=False)
     module_id = _id(module.get("moduleCatalogueId") or arguments["module_id"])

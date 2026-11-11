@@ -58,3 +58,28 @@ at 7.10 reported correctly; result visible via `get_module_structure`; revisions
 ## Acceptance checklist
 - [ ] On branch, from Claude: "Create a 5-question quiz on <topic> from <book> for <module> week 2" → preview →
       confirm → quiz appears as draft, linked, KSBs visible in the Module Builder.
+
+## Implementation notes (2026-11-09)
+
+Implemented as `mcp_api/tools/quizzes.py`, behind `MCP_QUIZ_CREATION_ENABLED` (default off).
+Tests: `mcp_api/tests/test_quizzes.py`. It differs from the spec above in these ways:
+
+- **Existing quiz component only.** `component_id` is required; there is no `new_component`. The assistant
+  creates the component first with `create_curriculum_component` (type `quiz`), which has its own preview.
+- **No per-question points.** The create endpoint saves every question at 1 point, so `points` is not offered.
+- **Pass mark, duration and randomisation** are set with `PATCH /quiz_api/quizzes/<id>/`, because the
+  create endpoint ignores them.
+- **Linking** sets the Module Builder's `applyQuiz` settings (`linkedQuizId`, `linkedActivity`,
+  `quizWeekId`, `numberOfQuestions`, `passMarkPercentage`, `quizDuration`, `quizStatus`) with
+  `PATCH curriculum/components/<id>/`. `quiz_component_links` is legacy and is not written.
+- **KSB codes are optional per question.** A programme with no applied standard is refused only when codes
+  are given.
+- **Question-bank duplicate warning: not implemented.** `/quiz_api/question-bank/` has no pagination, and one
+  search per question would load the whole bank each time. Duplicates within the quiz are refused.
+- **One transaction.** The quiz, its settings, the component link and the KSB mappings are saved together in
+  one default-DB transaction, so a failure at any step saves nothing.
+- **Revision checks.** The component `PATCH` and the mapping `POST` send the module's current
+  `structureRevision`, so a concurrent Module Builder edit is refused with a 409, not overwritten.
+- **Programme id.** Numeric (legacy) programme ids are refused. The quiz endpoint would treat them as a
+  training-plan id and guess the programme.
+- [ ] Acceptance: not yet run against a real database.

@@ -231,7 +231,7 @@ def extract_file_text(content_type, filename, data):
     return ""
 
 
-def collect_evidence_files(learner_kind, learner_id, activity_id):
+def collect_evidence_files(learner_kind, learner_id, activity_id, selected_file_ids=None):
     """Approved evidence for this submission, with text where we can read it.
 
     Use the same database and section_ref as the upload and evidence-list APIs.
@@ -241,19 +241,29 @@ def collect_evidence_files(learner_kind, learner_id, activity_id):
     before it has would defeat the point of the quarantine.
     """
     files = []
+    params = [_s(learner_kind), _s(learner_id)]
+    if selected_file_ids is None:
+        selection = 'AND section_ref = %s'
+        params.append(_s(activity_id))
+    else:
+        ids = sorted(set(str(value) for value in selected_file_ids if value))
+        if not ids:
+            return []
+        selection = 'AND cast(id as text) IN (' + ', '.join(['%s'] * len(ids)) + ')'
+        params.extend(ids)
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT container, blob_name, original_filename, content_type, size_bytes
                   FROM "Learner"."evidence_files"
                  WHERE learner_kind = %s
                    AND learner_id = %s
-                   AND section_ref = %s
+                   {selection}
                    AND status = 'approved'
                  ORDER BY uploaded_at
                 """,
-                [_s(learner_kind), _s(learner_id), _s(activity_id)],
+                params,
             )
             rows = cur.fetchall()
     except DatabaseError as exc:
@@ -785,8 +795,17 @@ def generate_marking_feedback(submission, prompt=None):
     produced, so the caller can turn it into one clear error rather than a
     stack trace in the UI.
     """
+    monthly = submission.get('monthlyAssignment')
+    selected_file_ids = None
+    if isinstance(monthly, dict) and isinstance(monthly.get('evidence'), list):
+        selected_file_ids = [entry.get('id') for entry in monthly['evidence']
+                             if isinstance(entry, dict) and not entry.get('url')]
+        presentation = monthly.get('uploadedPresentation')
+        if isinstance(presentation, dict):
+            selected_file_ids.append(presentation.get('id'))
     evidence_files = collect_evidence_files(
         submission.get("learnerKind"), submission.get("learnerId"), submission.get("activityId"),
+        selected_file_ids=selected_file_ids,
     )
     evidence_text = build_evidence_text(submission, evidence_files)
     if not evidence_text.strip():

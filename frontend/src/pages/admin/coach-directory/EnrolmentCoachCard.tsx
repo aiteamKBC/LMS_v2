@@ -1,7 +1,9 @@
 import { Copy, Eye, Link2, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bookingTypes, coachPagePath, type DirectoryCoach } from '@/api/coachBookingDirectory';
+import { FloatingMenu } from '@/components/ui/FloatingMenu';
 import styles from '@/pages/users/presentation/CoachDirectory.module.css';
+import design from '@/pages/users/presentation/EnrolmentWorkspace.module.css';
 
 export function EnrolmentCoachCard({ coach, busy, onEdit, onCopy, onRemove }: {
   coach: DirectoryCoach; busy: boolean; onEdit: (trigger: HTMLButtonElement) => void;
@@ -37,11 +39,12 @@ export function EnrolmentCoachCard({ coach, busy, onEdit, onCopy, onRemove }: {
     <div className={styles.coachActions}>
       <Link className={`${styles.button} ${styles.preview}`} to={path} target="_blank" rel="noopener noreferrer" aria-label={`Preview booking page for ${coach.name}`}><Eye size={15} aria-hidden="true" />Preview</Link>
       <button type="button" className={`${styles.button} ${styles.iconButton}`} disabled={busy} onClick={event => onEdit(event.currentTarget)} aria-label={`Edit ${coach.name}`} title="Edit coach"><Pencil size={15} aria-hidden="true" /></button>
-      <details className={styles.moreActions}>
-        <summary className={`${styles.button} ${styles.iconButton}`} aria-label={`More actions for ${coach.name}`} title="More actions"><MoreVertical size={17} aria-hidden="true" /></summary>
-        <div><button type="button" onClick={onCopy}><Copy size={14} aria-hidden="true" />Copy page link</button>
-          <button type="button" disabled={busy} onClick={onRemove}><Trash2 size={14} aria-hidden="true" />Remove coach</button></div>
-      </details>
+      <FloatingMenu label={`More actions for ${coach.name}`} panelLabel={`Actions for ${coach.name}`}
+        trigger={<MoreVertical size={17} aria-hidden="true" />} triggerClassName={`${styles.button} ${styles.iconButton}`}
+        panelClassName={`${design.shellFont} ${styles.moreMenu}`}>{close => <>
+        <button type="button" onClick={() => { close(); onCopy(); }}><Copy size={14} aria-hidden="true" />Copy page link</button>
+        <button type="button" disabled={busy} onClick={() => { close({ restoreFocus: false }); onRemove(); }}><Trash2 size={14} aria-hidden="true" />Remove coach</button>
+      </>}</FloatingMenu>
     </div>
   </article>;
 }

@@ -5,7 +5,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { formatSystemTimestamp } from '@/lib/format';
 import { EntraPeopleInput } from '../teams-meetings/EntraPeopleInput';
 import { TeamsMeetingOptionFields, TeamsPeopleFields, type TeamsCalendarForm } from '../teams-meetings/createCalendarForm';
-import { calendarLabel } from "../teams-meetings/createCalendarForm.helpers";
+import { calendarLabel, presenterCoOrganizers } from "../teams-meetings/createCalendarForm.helpers";
 import { emailList } from "./EmailChipsInput.helpers";
 import { cleanText, formatDateLabel } from '../shared/entities/model';
 import { bookedOnModuleSeries, reservedForModuleCalendar } from '../shared/entities/liveSessionMeetingScope';
@@ -462,7 +462,7 @@ export function WeekTeamsMeetingPanel({
         organizerEmail: cleanText(form.organizerEmail),
         attendees: emailList(form.attendees),
         presenters: emailList(form.presenters),
-        coOrganizers: emailList(form.coOrganizers),
+        coOrganizers: presenterCoOrganizers(form.presenters, form.coOrganizers, form.organizerEmail),
         localStartDateTime: naive,
         startDateTimeUtc: zonedNaiveToUtcIso(naive, form.scheduleTimeZone),
         durationMinutes: Math.max(15, Number(form.durationMinutes) || 60),

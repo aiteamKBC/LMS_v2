@@ -1,0 +1,29 @@
+# Teams trigger list (AGENTS.md section 5). A change to any of these paths
+# runs the expanded Teams backend checks in CI. Keep in step with AGENTS.md.
+# One extended regex per line, matched against the repo-relative path.
+# The frontend Teams baseline runs on every frontend change instead (15 s),
+# which also covers the "indirect" case: a change to something a Teams file
+# imports.
+^backend/curriculum_api/views\.py$
+^backend/coach_api/views\.py$
+^backend/learner_api/teams_attendance\.py$
+^backend/learner_api/attendance\.py$
+^backend/learner_api/calendar_connections\.py$
+^backend/curriculum_api/management/commands/(reapply_teams_meeting_options|sync_teams_meeting_artifacts|backfill_mcm_meeting_summary_fields|map_mcm_meeting_summary_field)\.py$
+^backend/learner_api/management/commands/(sync_teams_attendance_reporting|apply_graph_organizer_column)\.py$
+# The backend Teams test suites themselves
+^backend/curriculum_api/tests\.py$
+^backend/coach_api/tests(_calendar_race|_errors|_security)?\.py$
+^backend/learner_api/tests(_attendance_lectures|_booking_calendar|_cohort_schedule|_dashboard_metrics)?\.py$
+# Frontend Teams files: listed so the summary can name them
+^frontend/src/pages/curriculum/teams-meetings/
+^frontend/src/pages/curriculum/module-builder/(TeamsMeetingModal|WeekTeamsMeetingForm|LiveSessionScheduleEditor|PlaceWeekDrawer)\.tsx$
+^frontend/src/pages/curriculum/module-builder/moduleAuthoringData\.ts$
+^frontend/src/pages/curriculum/module-workspace/ModuleSessions\.tsx$
+^frontend/src/pages/curriculum/session-calendar/
+^frontend/src/pages/curriculum/shared/entities/(teamsCalendarPush\.ts|teamsCalendarNotice\.ts|sessionShiftPreview\.tsx)$
+^frontend/src/pages/coach/shared/calendarEvents\.ts$
+^frontend/src/api/learnerCalendar\.ts$
+^frontend/src/lib/curriculumApi\.ts$
+^frontend/src/lib/format\.ts$
+^frontend/package\.json$

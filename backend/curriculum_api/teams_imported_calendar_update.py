@@ -105,8 +105,8 @@ class CalendarClient:
     def __exit__(self, *args):
         self.client.close()
 
-    def read(self, path):
-        response = self.client.get(path)
+    def read(self, path, *, prefer=''):
+        response = self.client.get(path, **({'headers': {'Prefer': prefer}} if prefer else {}))
         if response.status_code != 200:
             raise GraphRefusal(response.status_code)
         data = response.json()
@@ -587,6 +587,9 @@ def persist_verified(live_id, operation_id, events):
                         [v.json_db_value(merged), operation['joinUrl'], datetime.now(timezone.utc), component['id'], module['module_catalogue_id']])
                     changed = v.rows_as_dicts(cursor)
                 v.versioning.record_rows(v.AUTHORING_COMPONENTS_TABLE, changed, before_rows=[component], reason='Verified imported Teams date')
+                # Raw SQL, so no helper reported it: retire this module's learner content.
+                from . import content_cache
+                content_cache.note_modules([module['module_catalogue_id']])
         if missing:
             with connection.cursor() as cursor:
                 cursor.execute('UPDATE curriculum.live_sessions SET repeat_occurrences=%s,updated_at=%s WHERE id=%s RETURNING *',

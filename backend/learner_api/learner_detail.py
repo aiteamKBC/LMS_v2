@@ -310,9 +310,9 @@ def _display_component_title(type_, title):
     return f"{type_label} · {title}" if show_title else (type_label or title)
 
 
-def _cached_expected_otjh(cur):
+def _cached_expected_otjh(cur, ids):
     try:
-        return content_cache.expected_otjh_map(cur)
+        return content_cache.expected_otjh(cur, ids)
     except DatabaseError:
         raise
     except Exception:
@@ -328,9 +328,9 @@ def _otjh_by_component_id(components):
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
-            # Every component's value, shared per curriculum generation; None
+            # Per-module cached values (content_cache.expected_otjh); None
             # when the cache is off, and then the by-id read below as before.
-            known = _cached_expected_otjh(cur)
+            known = _cached_expected_otjh(cur, ids)
             if known is not None:
                 return {cid: (float(known[cid]) if known[cid] is not None else None)
                         for cid in ids if cid in known}

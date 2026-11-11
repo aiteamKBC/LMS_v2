@@ -202,8 +202,12 @@ class ContentCachePostgresCases(unittest.TestCase):
             # the old rows are still served.
             self.assertEqual(resolve(('MOD-b',)), before)
             self.assertEqual(learner_detail._otjh_by_component_id([{'componentId': 'c-b1'}]), {'c-b1': 1.5})
+            # A non-content invalidation (activity status, reviews...) moves the
+            # global epoch but leaves learner content cached.
             views.invalidate_curriculum_cache()
-            views._SHARED_EPOCH_STATE['checked_at'] = 0.0  # another process after its poll window
+            self.assertEqual(resolve(('MOD-b',)), before)
+            # What a raw-SQL writer must do: name the module it wrote.
+            content_cache.note_modules(['MOD-b'])
             after = resolve(('MOD-b',))
             self.assertIn('Renamed', after)
             self.assertIn('Changed', after)
@@ -213,7 +217,58 @@ class ContentCachePostgresCases(unittest.TestCase):
         with connections['enrolment'].cursor() as cur:
             cur.execute("UPDATE curriculum.components SET title='Read me', expected_otjh=1.5 WHERE id='c-b1'")
             cur.execute("UPDATE curriculum.ksb_mappings SET ksb_description='Knowledge' WHERE ksb_code='K1'")
-        views.invalidate_curriculum_cache()
+        content_cache.note_modules(['MOD-b'])
+
+    def counted_reads(self, modules):
+        calls = []
+        original = content_cache._build
+
+        def build(cursor, sql, missing, *args, **kwargs):
+            calls.extend(missing)
+            return original(cursor, sql, missing, *args, **kwargs)
+        with patch.object(content_cache, '_build', side_effect=build), cache_switch(True):
+            resolve(modules)
+        return sorted(set(calls))
+
+    def test_a_helper_write_retires_only_its_module(self):
+        from curriculum_api import views
+        self.counted_reads(self.ALL)
+        views.update_rows('components', 'id = %s', ['c-a1'], {'title': 'Listen again'})
+        self.assertEqual(self.counted_reads(self.ALL), ['MOD-A'])
+        with cache_switch(True):
+            self.assertIn('Listen again', resolve(('MOD-A',)))
+        views.update_rows('components', 'id = %s', ['c-a1'], {'title': 'Listen'})
+
+    def test_moving_a_component_retires_both_modules(self):
+        from curriculum_api import views
+        self.counted_reads(self.ALL)
+        views.update_rows('components', 'id = %s', ['c-z1'], {'module_catalogue_id': 'MOD-A', 'week_id': 'w-a1'})
+        self.assertEqual(self.counted_reads(self.ALL), ['MOD-A', 'MOD_Z'])
+        with cache_switch(True):
+            self.assertNotIn('Zed reading', resolve(('MOD_Z',)))
+        views.update_rows('components', 'id = %s', ['c-z1'], {'module_catalogue_id': 'MOD_Z', 'week_id': 'w-z1'})
+
+    def test_a_request_scope_bumps_once_after_the_view(self):
+        from curriculum_api import views
+        self.counted_reads(self.ALL)
+        views.begin_curriculum_write_scope()
+        try:
+            for title in ('One', 'Two', 'Three'):
+                views.update_rows('weeks', 'id = %s', ['w-b2'], {'title': title})
+            # Not yet: the bump waits for the end of the request.
+            self.assertEqual(self.counted_reads(self.ALL), [])
+        finally:
+            with patch.object(views, 'write_shared_curriculum_epoch_bump'):
+                views.end_curriculum_write_scope()
+        self.assertEqual(self.counted_reads(self.ALL), ['MOD-b'])
+        views.update_rows('weeks', 'id = %s', ['w-b2'], {'title': 'Week two'})
+
+    def test_non_content_write_keeps_learner_content(self):
+        from curriculum_api import views
+        self.counted_reads(self.ALL)
+        views.note_live_rows('groups', [{'group_id': 'G1', 'module_catalogue_id': 'MOD-A'}])
+        views.note_live_rows('live_sessions', [{'id': 'S1', 'module_catalogue_id': 'MOD-A'}])
+        self.assertEqual(self.counted_reads(self.ALL), [])
 
     def test_learners_share_rows_but_never_each_others_tree(self):
         legacy_week = {'module': 'Legacy', 'week': 'Week 1'}
@@ -232,7 +287,7 @@ class ContentCachePostgresCases(unittest.TestCase):
         self.assertNotIn('Old task', again_first_modules_no_snapshot)
         # Nothing learner-supplied reached the cache.
         import pickle
-        stored = [content_cache._unpack(pickle.loads(blob)) for key, blob in cache._cache.items() if ':cmc:v1:' in key]
+        stored = [content_cache._unpack(pickle.loads(blob)) for key, blob in cache._cache.items() if ':cmc:v2:' in key]
         self.assertTrue(stored)
         self.assertNotIn('Old task', repr(stored))
 
@@ -251,5 +306,5 @@ class ContentCachePostgresCases(unittest.TestCase):
         with cache_switch(True):
             for flags in VARIANTS.values():
                 resolve(self.ALL, **flags)
-        keys = [key for key in cache._cache if ':cmc:v1:' in key]
+        keys = [key for key in cache._cache if ':cmc:v2:' in key]
         self.assertTrue(keys)

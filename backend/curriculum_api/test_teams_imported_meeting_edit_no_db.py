@@ -14,6 +14,7 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from test_teams_imported_calendar_update_no_db import fixture_namespace, event, JOIN
+from curriculum_api.teams_meeting_options_policy import stored_email_list
 
 
 class OriginalMeetingEditTests(unittest.TestCase):
@@ -30,7 +31,7 @@ class OriginalMeetingEditTests(unittest.TestCase):
                                                      dumps=lambda value, **_: copy.deepcopy(value)),
                        eligible=lambda row: row['status'] == 'scheduled' and not row.get('participant_count'),
                        join_context_oid=lambda _: 'OWNER', load_module=Mock(return_value={}),
-                       persist_move=Mock())
+                       persist_move=Mock(), stored_email_list=stored_email_list)
         tree = ast.parse((Path(__file__).parent / 'teams_imported_meeting_edit.py').read_text(encoding='utf-8'))
         tree.body = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.Assign))]
         exec(compile(tree, 'original-meeting-edit', 'exec'), self.ns)
@@ -74,7 +75,7 @@ class OriginalMeetingEditTests(unittest.TestCase):
         self.calendar.CalendarClient = Mock(return_value=self.client)
         self.objects = {'users/OWNER/events/MASTER': copy.deepcopy(self.master),
                         'users/OWNER/onlineMeetings/ONLINE': copy.deepcopy(self.meeting)}
-        self.client.read.side_effect = lambda path: copy.deepcopy(self.objects[path.split('?')[0]])
+        self.client.read.side_effect = lambda path, **_kwargs: copy.deepcopy(self.objects[path.split('?')[0]])
         self.writes = []
 
         def graph_patch(path, *, json, headers):
@@ -172,6 +173,7 @@ class OriginalMeetingEditTests(unittest.TestCase):
 
     def test_online_identity_and_organizer_are_verified(self):
         self.assertEqual(self.ns['read_online'](self.client, self.series, 'users/OWNER/onlineMeetings/ONLINE')['id'], 'ONLINE')
+        self.client.read.assert_called_with('users/OWNER/onlineMeetings/ONLINE', prefer='include-unknown-enum-members')
         self.objects['users/OWNER/onlineMeetings/ONLINE']['joinWebUrl'] = 'different'
         with self.assertRaises(self.calendar.Blocked):
             self.ns['read_online'](self.client, self.series, 'users/OWNER/onlineMeetings/ONLINE')

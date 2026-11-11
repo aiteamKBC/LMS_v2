@@ -202,7 +202,7 @@ class AdditionalUpdateLeavesMainTests(unittest.TestCase):
             authoring_fetch_all=fetch, active_component_rows=lambda rows: rows,
             component_builder_settings=lambda item: item['settings'],
             teams_schedule_settings=lambda settings, *_a, **_k: settings,
-            teams_event_payload=lambda single, _settings: (
+            teams_event_payload=lambda single, _settings, **_role_policy: (
                 {'subject': 'Guest panel', 'body': {}, 'start': {}, 'end': {}, 'responseRequested': True,
                  'allowNewTimeProposals': True, 'attendees': []}, [], [], [], [], start, 60, 'none', 1),
             calendar_targets=lambda *a, **k: [{'session_number': 1, 'start': start, 'end': start + timedelta(hours=1)}],

@@ -48,12 +48,39 @@ class MonthlyV2ProjectionTests(SimpleTestCase):
         self.assertEqual(result['summary']['difference'], 'Not available')
         self.assertEqual([result[key] for key in ('reviews', 'lectures', 'assignments')], [[], [], []])
 
-    def test_midnight_and_session_end_refresh_deadline(self):
+    def test_session_end_precedes_periodic_refresh(self):
         now = datetime(2026, 10, 15, 9, tzinfo=display.UK)
         with patch.object(monthly.timezone, 'now', return_value=now):
             result, *_ = self.fixture('?month=2026-10&version=2', sessions=[{'id': 1, 'moduleId': 'M1',
-                'start': '2026-10-15T08:00:00Z', 'end': '2026-10-15T09:00:00Z', 'minutes': 60}])
-        self.assertEqual(result['refreshAt'], '2026-10-15T09:00:00+00:00')
+                'start': '2026-10-15T08:00:00Z', 'end': '2026-10-15T08:00:30Z', 'minutes': 60}])
+        self.assertEqual(result['refreshAt'], '2026-10-15T08:00:30+00:00')
+
+    def test_late_attendance_report_is_picked_up_without_a_progress_submission(self):
+        now = datetime(2026, 10, 15, 12, tzinfo=display.UK)
+        with patch.object(monthly.timezone, 'now', return_value=now):
+            before, *_ = self.fixture('?month=2026-10&version=2')
+        self.assertEqual(before['summary']['achievedHours'], '0 hrs')
+        self.assertEqual(before['refreshAt'], '2026-10-15T12:01:00+01:00')
+        with patch.object(monthly.timezone, 'now', return_value=datetime.fromisoformat(before['refreshAt'])):
+            after, *_ = self.fixture('?month=2026-10&version=2', attendance_hours=[
+                {'reporting_month': '2026-10', 'actual_hours': 2},
+                {'reporting_month': '2026-09', 'actual_hours': 9}])
+        self.assertEqual(after['summary']['achievedHours'], '2 hrs')
+        self.assertEqual(after['summary']['difference'], '-48 hrs')
+
+    def test_business_midnight_precedes_periodic_refresh(self):
+        now = datetime(2026, 10, 15, 23, 59, 45, tzinfo=display.UK)
+        with patch.object(monthly.timezone, 'now', return_value=now):
+            result, *_ = self.fixture('?month=2026-10&version=2')
+        self.assertEqual(result['refreshAt'], '2026-10-16T00:00:00+01:00')
+
+    def test_periodic_refresh_uses_elapsed_seconds_across_dst(self):
+        now = datetime(2026, 10, 25, 1, 59, 45, tzinfo=display.UK)
+        with patch.object(monthly.timezone, 'now', return_value=now):
+            result, *_ = self.fixture('?month=2026-10&version=2')
+        deadline = datetime.fromisoformat(result['refreshAt'])
+        self.assertEqual(deadline.timestamp() - now.timestamp(), 60)
+        self.assertEqual(result['refreshAt'], '2026-10-25T01:00:45+00:00')
 
     def test_attendance_projection_filters_after_register_normalization(self):
         from . import attendance_lectures as attendance

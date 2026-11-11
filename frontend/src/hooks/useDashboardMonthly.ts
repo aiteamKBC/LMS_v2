@@ -30,5 +30,7 @@ export function useDashboardMonthly(kind: LearnerKind, id: string, month: string
   const current = enabled && state?.identity === identity ? state : null;
   const data = enabled ? current?.data ?? peekDashboardMonthly(kind, id, month, subject, bounds) ?? null : null;
   return { data, error: current?.error || '', loading: enabled && !data && !current?.error,
-    refreshing: enabled && (!!current?.refreshing || !peekDashboardMonthly(kind, id, month, subject, bounds)), refresh };
+    // Cache expiry is not an in-flight read. Reporting it as one would pause
+    // the board's next automatic refresh while retaining stale hours.
+    refreshing: enabled && !!current?.refreshing, refresh };
 }
