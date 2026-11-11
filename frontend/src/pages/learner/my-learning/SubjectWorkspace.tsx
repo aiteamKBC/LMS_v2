@@ -1,4 +1,6 @@
 import { useEffect, useId, useMemo, useState, type MouseEvent } from 'react';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
+import { Notice } from '@/components/ui/Notice';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Award, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
 import type { LearnerDetail } from '@/api/learnerDetail';
@@ -428,7 +430,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const total = summary.activityCount;
   const done = summary.completedActivityCount;
   const percent = summary.percent;
-  if (!displayed && (error || imageError)) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error || imageError}</p><button onClick={error ? onRetry : retryMetadata} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
+  if (!displayed && (error || imageError)) return <LearnerLoadError title="Could not load your subjects" error={error || imageError} onRetry={error ? onRetry : retryMetadata} />;
   if (!displayed) return <SubjectCardsSkeleton />;
   if (resume && active && !requestedActivity && !loading && !error && !imageError) {
     const target = nextIncompleteActivity(active);
@@ -451,9 +453,9 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {active && view === 'catalogue' && <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary-600">My learning</p><h2 className="mt-1 text-2xl font-bold text-foreground-900">{active.title}</h2></div>
       <label className={`${styles.search} w-full min-w-0 sm:max-w-xs`}><Search size={17} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects or activities" /></label>
     </header>}
-    {imageError && <p role="alert" className="text-sm text-amber-800">{imageError} <button onClick={retryMetadata} className="font-semibold underline">Try again</button></p>}
-    {error && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{error} <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
-    {data?.source_status === 'historical' && data.verification_status !== 'verified' && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Showing saved previous learning. The latest results could not be verified. <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
+    {imageError && <LearnerLoadError title="Some subject details could not be refreshed" error={imageError} onRetry={retryMetadata} />}
+    {error && <LearnerLoadError title="Your learning information could not be refreshed" error={error} onRetry={onRetry} />}
+    {data?.source_status === 'historical' && data.verification_status !== 'verified' && <Notice tone="attention" role="status" title="Showing saved previous learning" actions={<button type="button" onClick={onRetry} className="min-h-11 rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700">Try again</button>}>The latest results could not be verified.</Notice>}
     {selected && !active && <p role="alert" className={styles.empty}>This module is not available in your learning plan. <button onClick={() => select()}>Show your modules</button></p>}
     {view === 'map' && <div className={styles.mapToolbar}>
       <label className={styles.selectLabel}>Module<select aria-label="Filter by module" value={active?.id || ''} onChange={event => { setSearch(''); select(event.target.value); }}><option value="" disabled>{scheduleLoading ? 'Finding your current module…' : 'Choose a module'}</option>{subjects.map(subject => <option key={subject.id} value={subject.id}>{subject.title}{planSelection.entries.some(entry => entry.subject.id === subject.id) ? ` · ${planLabel}` : ''}</option>)}</select></label>

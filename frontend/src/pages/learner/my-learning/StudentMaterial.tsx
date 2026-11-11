@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import DOMPurify from 'dompurify';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
@@ -278,7 +279,7 @@ function StudentMaterialContent({ kind, learnerId, groupId, activityId, complete
     }
     finally { requestPending.current = false; if (mounted.current && currentIdentity.current === timerKey) setBusy(false); }
   };
-  if (!data && error) return <div role="alert" className="rounded-xl border border-red-200 p-4">{error} <button onClick={() => setRetry((v) => v + 1)} className="font-semibold underline">Try again</button></div>;
+  if (!data && error) return <LearnerLoadError title="Could not load this learning activity" error={error} onRetry={() => setRetry((v) => v + 1)} />;
   if (!data) return <p role="status" className="p-5">Loading activity…</p>;
   const quiz = data.quiz;
   const displayedAnswers = attemptId ? answers : previousSelections(data);

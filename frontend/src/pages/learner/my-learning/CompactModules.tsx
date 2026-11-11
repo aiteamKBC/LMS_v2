@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { readMyLearningUpcoming, useMyLearningSearch, useMyLearningModule, type MyLearningCatalogue } from '@/api/myLearning';
@@ -17,13 +18,7 @@ import { learningToday } from './subjectLearning';
 const tones = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 
 function LearningReadError({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return <div role="alert" className="flex flex-col items-start gap-4 rounded-2xl border border-primary-100 bg-white p-6">
-    <p className="text-sm leading-relaxed text-primary-800">{message}</p>
-    <button type="button" onClick={onRetry}
-      className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600">
-      Try again
-    </button>
-  </div>;
+  return <LearnerLoadError error={message} onRetry={onRetry} title="Could not load your subjects" />;
 }
 
 export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading, error, refresh, showReadOnlyNotice, view = 'catalogue', canRequestTransfer = false }: {
@@ -114,6 +109,17 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
   }, [view, requestedWeek, selected, current, location.pathname, location.search, navigate, resume]);
   const subjectTones = new Map([...subjects].sort((a,b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
     .map((subject,index) => [subject.id, tones[index % tones.length]]));
+  const loadUpcoming = () => {
+    if (!kind || !id || !incomingCatalogue || upcomingLoading) return;
+    setUpcomingLoading(true); setUpcomingError('');
+    void readMyLearningUpcoming(kind,id).then(result => {
+      if (upcomingOwner.current === incomingCatalogue) setUpcomingState({ catalogue: incomingCatalogue, links: result.upcoming });
+    }).catch(() => {
+      if (upcomingOwner.current === incomingCatalogue) setUpcomingError('Could not load upcoming learning. Close and reopen View all to try again.');
+    }).finally(() => {
+      if (upcomingOwner.current === incomingCatalogue) setUpcomingLoading(false);
+    });
+  };
   if (selected) {
     if (!module.data && !module.error) return <SubjectCardsSkeleton />;
     if (!module.data) return <LearningReadError message={module.error} onRetry={module.refresh} />;
@@ -133,10 +139,10 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
       <p className="text-[12px] leading-snug text-foreground-600"><span className="font-semibold text-foreground-800">Viewing read-only.</span>{' '}
         The learner or an administrator can complete activities, upload evidence or submit reflections.</p>
     </div>}
-    {error && <p role="alert">{error} <button onClick={refresh}>Try again</button></p>}
-    {activitySearch.error && <p role="alert">{activitySearch.error} <button onClick={activitySearch.retry}>Try again</button></p>}
+    {error && <LearnerLoadError error={error} onRetry={refresh} title="Your subjects could not be refreshed" />}
+    {activitySearch.error && <LearnerLoadError error={activitySearch.error} onRetry={activitySearch.retry} title="The activity search could not be completed" />}
     {activitySearch.loading && search.trim() && <p role="status">Searching activities…</p>}
-    {upcomingError && <p role="alert">{upcomingError}</p>}
+    {upcomingError && <LearnerLoadError error={upcomingError} onRetry={loadUpcoming} title="Upcoming learning could not be loaded" />}
     {upcomingLoading && <p role="status">Loading upcoming learning…</p>}
     <p className="text-sm text-foreground-500">{catalogue.learner.name}</p>
     <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={current}
@@ -145,17 +151,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
       total={summary.activityCount} done={summary.completedActivityCount} percent={summary.percent}
       kind={kind} learnerId={id} activityMatches={activitySearch.ids}
       upcomingLinks={upcomingState?.catalogue === incomingCatalogue ? upcomingState.links : catalogue.upcoming}
-      hasMoreUpcoming={catalogue.hasMoreUpcoming} onLoadUpcoming={() => {
-        if (!kind || !id || !incomingCatalogue || upcomingLoading) return;
-        setUpcomingLoading(true); setUpcomingError('');
-        void readMyLearningUpcoming(kind,id).then(result => {
-          if (upcomingOwner.current === incomingCatalogue) setUpcomingState({ catalogue: incomingCatalogue, links: result.upcoming });
-        }).catch(() => {
-          if (upcomingOwner.current === incomingCatalogue) setUpcomingError('Could not load upcoming learning. Close and reopen View all to try again.');
-        }).finally(() => {
-          if (upcomingOwner.current === incomingCatalogue) setUpcomingLoading(false);
-        });
-      }}
+      hasMoreUpcoming={catalogue.hasMoreUpcoming} onLoadUpcoming={loadUpcoming}
       covers={Object.fromEntries(catalogue.modules.flatMap(card => card.cover ? [[card.id, card.cover]] : []))}
       moduleStartDate={subject => catalogue.modules.find(card => card.id === subject.id)?.planModule?.start_date}
       onContinue={subject => open(subject, true)} renderCard={subject => {

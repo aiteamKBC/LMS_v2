@@ -549,16 +549,19 @@ describe('Teams Meetings page', () => {
   // Rewritten with the clash rule: there is no cascade left to spell out. What
   // the note has to say now is the opposite — a holiday is here, and it costs
   // the plan nothing.
-  it('names the holiday above the dates, and says it changes nothing', async () => {
+  it('keeps holiday dates in an accessible foldout and leaves the schedule unchanged', async () => {
     await renderPage();
     expect(await screen.findByText('Risk Management')).toBeInTheDocument();
     await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText(/inside this module/))
-      .toHaveTextContent('Autumn closure falls on 17 Sept 2026');
-    expect(within(dialog).getByText(/Every session keeps its own date/))
-      .toHaveTextContent('none is moved or dropped');
+    expect(within(dialog).getByText('Holidays in this plan')).toBeVisible();
+    expect(within(dialog).getByText(/Sessions keep their scheduled dates/)).toBeVisible();
+    // Informational holiday detail is intentionally collapsed by default.
+    const holidayDates = within(dialog).getByText('Autumn closure · 17 Sept 2026');
+    expect(holidayDates).not.toBeVisible();
+    await userEvent.click(within(dialog).getByText('View holiday dates'));
+    expect(holidayDates).toBeVisible();
     // The badge counts dates a holiday lands on, not sessions it displaced.
     expect(within(dialog).getByText('1 session on a holiday')).toBeInTheDocument();
     // The parked cascade is not stated anywhere.

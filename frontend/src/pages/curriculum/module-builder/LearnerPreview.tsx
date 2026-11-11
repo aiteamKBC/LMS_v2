@@ -76,7 +76,7 @@ export function LearnerPreview({ module, initialComponentId, onClose }: {
             <ComponentBody component={component} contentKind={componentContentKind(component.type)} parsed={component.videoUrl ? parseVideoUrl(component.videoUrl) : null} title={component.title} preview onDuration={noop} onProgress={noop} onPlayingChange={noop} onEnded={noop} onUnsupported={noop} />
             {component.type === 'live_session' && (component.teamsLiveSessionId && component.teamsSessionNumber
               ? <SessionResults seriesId={component.teamsLiveSessionId} sessionNumber={component.teamsSessionNumber} preview />
-              : <p className="rounded-xl border bg-amber-50 p-4 text-sm">Link this component to a Teams session to preview its saved recording and transcript.</p>)}
+              : <p className="rounded-xl border border-background-200 bg-background-50 p-4 text-sm leading-6 text-foreground-700">Link this component to a Teams session to preview its saved recording and transcript.</p>)}
             {component.reflectionRequired && <label className="block rounded-xl border bg-white p-4 text-sm font-semibold">{component.reflectionQuestion || 'Your reflection'}<textarea className="mt-3 min-h-28 w-full rounded-lg border p-3 font-normal" placeholder="Try the learner reflection field…" /></label>}
           </>}</div>}</Suspense></main>
       </div>

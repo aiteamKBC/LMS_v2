@@ -127,7 +127,9 @@ describe('compact My Learning route', () => {
         : reply(makeCatalogue()));
     route();
     const alert = await screen.findByRole('alert');
-    expect(within(alert).getByText('Could not load your learning. Please try again.')).toBeVisible();
+    // Failed reads remain visible, with learner-facing copy rather than API text.
+    expect(within(alert).getByText('Could not load your subjects')).toBeVisible();
+    expect(alert).toHaveTextContent('contact your tutor or the support team');
     failed = false;
     fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('heading', { name: 'One' })).toBeVisible();
@@ -182,7 +184,7 @@ describe('compact My Learning route', () => {
     await screen.findByRole('heading', { name: 'One' });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: 'Catalogue refresh unavailable' }), { status: 400 }));
     act(() => invalidateLearnerReads());
-    expect(await screen.findByRole('alert')).toHaveTextContent('Catalogue refresh unavailable');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your subjects could not be refreshed');
     expect(screen.getByRole('heading', { name: 'One' })).toBeVisible();
     expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
   });
@@ -328,6 +330,35 @@ it('preserves upcoming actions and fetches the remaining navigation links only o
   fireEvent.click(screen.getByRole('button',{name:'View all'}));
   expect(await screen.findByRole('link',{name:/Later assignment/})).toBeVisible();
   expect(urls().filter(url => url.includes('/upcoming/'))).toHaveLength(1);
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('retries upcoming learning directly and keeps the %s catalogue visible', async kind => {
+  const fixture = makeCatalogue(kind);
+  fixture.hasMoreUpcoming = true;
+  let attempts = 0;
+  vi.mocked(fetch).mockImplementation(async input => {
+    if (String(input).includes('/certificates/')) return reply({ template: null });
+    if (String(input).includes('/upcoming/')) {
+      attempts += 1;
+      // The transport already retries transient reads once before surfacing a failure.
+      return attempts <= 2 ? new Response('{}', { status: 503 }) : reply({ upcoming: [
+        { id: 'deadline:1', title: 'Later assignment', type: 'assignment', date: '2099-02-01', href: `/learner/component/${kind}/7/LATER`, online: false },
+      ] });
+    }
+    return reply(fixture);
+  });
+  route(`/learner/my-learning/${kind}/7`);
+  await screen.findByRole('heading', { name: 'One' });
+  const catalogueReads = urls().filter(url => url.endsWith('/7/')).length;
+  fireEvent.click(screen.getByRole('button', { name: 'View all' }));
+  expect(await screen.findByRole('alert', {}, { timeout: 3000 })).toHaveTextContent('Upcoming learning could not be loaded');
+  expect(screen.getByRole('heading', { name: 'One' })).toBeVisible();
+  expect(urls().filter(url => url.includes('/upcoming/'))).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByRole('link', { name: /Later assignment/ })).toHaveAttribute('href', `/learner/component/${kind}/7/LATER`);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(urls().filter(url => url.includes('/upcoming/'))).toHaveLength(3);
+  expect(urls().filter(url => url.endsWith('/7/'))).toHaveLength(catalogueReads);
 });
 
 it('retains the frontend current/previous canonical summary fixture', () => {

@@ -29,8 +29,9 @@ describe('a Teams call on a session link that was not the session', () => {
   it('names a later use and a check of the room for what they are', () => {
     expect(offScheduleRunSentence({ ...early, reason: 'after_session' }, when)).toContain('more than 12 hours after this session');
     expect(offScheduleRunSentence({ ...early, reason: 'test_open' }, when)).toContain('a check of the room');
-    expect(offScheduleRunLabel([early])).toBe('A Teams call on another day was ignored');
-    expect(offScheduleRunLabel([early, early])).toBe('2 Teams calls on other days were ignored');
+    // Link activity can happen on the lesson's own day, outside its time.
+    expect(offScheduleRunLabel([early])).toBe('1 link use outside this session');
+    expect(offScheduleRunLabel([early, early])).toBe('2 link uses outside this session');
     expect(offScheduleRunLabel([])).toBe('');
   });
 
