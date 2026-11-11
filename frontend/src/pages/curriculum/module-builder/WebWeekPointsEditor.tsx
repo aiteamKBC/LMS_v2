@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { authoredWeekPoints, type WebPoint } from '@/api/webWeekPoints';
 
 import type { WeekPointDrafts } from './useWeekPointDrafts';
+import { componentAuthoringDefinitions } from './componentAuthoringModel';
 
 export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: {
   moduleId: string; weekId: string; drafts: WeekPointDrafts; busy?: boolean;
@@ -67,11 +68,17 @@ export function WebWeekPointsEditor({ moduleId, weekId, drafts, busy = false }: 
         <div className="max-h-64 space-y-2 overflow-y-auto">
           {data.activities.map(activity => {
             const elsewhere = points.some(other => other.id !== point.id && other.componentIds.includes(activity.id));
+            const typeLabel = componentAuthoringDefinitions.find(item => item.type === activity.type)?.label || activity.type || 'Activity';
+            const typeId = `point-${point.id}-activity-${activity.id}-type`;
             return <label key={activity.id} className="flex cursor-pointer items-start gap-2 py-1 text-sm">
-              <input type="checkbox" className="mt-0.5 !h-4 !min-h-0 !w-4 shrink-0 !rounded !p-0 accent-primary-600" disabled={elsewhere} checked={point.componentIds.includes(activity.id)}
+              <input type="checkbox" aria-label={`${activity.title || activity.type}${elsewhere ? ' (in another Point)' : ''}`} aria-describedby={typeId} className="mt-0.5 !h-4 !min-h-0 !w-4 shrink-0 !rounded !p-0 accent-primary-600" disabled={elsewhere} checked={point.componentIds.includes(activity.id)}
                 onChange={event => change(index, { componentIds: event.target.checked
                   ? [...point.componentIds, activity.id] : point.componentIds.filter(id => id !== activity.id) })} />
-              <span>{activity.title || activity.type}{elsewhere && <span className="ml-1 text-xs text-foreground-500">(in another Point)</span>}</span>
+              <span className="min-w-0 flex-1">
+                <span className="break-words">{activity.title || activity.type}</span>
+                <span id={typeId} className="ml-2 inline-block rounded-md bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700">{typeLabel}</span>
+                {elsewhere && <span className="ml-1 text-xs text-foreground-500">(in another Point)</span>}
+              </span>
             </label>;
           })}
           {point.componentIds.filter(id => !data.activities.some(activity => activity.id === id)).map(id =>
