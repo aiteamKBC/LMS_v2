@@ -52,6 +52,8 @@ export interface TeamsUpdateOutcome {
    * changed who is invited, or how the meeting runs, is not.
    */
   notifyAttendees?: boolean;
+  /** Explicit server-confirmed choice to send optional LMS email. */
+  lmsEmailRequested?: boolean;
   /** The change emails the server already sent with the update. */
   scheduleEmail?: TeamsMeetingResult['scheduleEmail'];
   /** Who the server found this save added, read from the stored roster. */
@@ -66,23 +68,7 @@ export interface TeamsUpdateOutcome {
   addedEmailKey?: string;
 }
 
-/**
- * What an update did, once Microsoft has confirmed it.
- *
- * Separate from `finishTeamsCreation` because the two finish differently. A
- * create always submits one schedule email per learner, organiser, co-organiser and presenter. An update emails
- * about the change only when the calendar actually moved, and then sends the
- * change email -- each learner their own copy with what their
- * dates were and are now, the organiser, co-organisers and presenters a copy
- * that also lists the invited learners; Microsoft mails its own change notice
- * to everyone invited alongside it. A save that only changed who is invited announces
- * nothing to the people already on the meeting, in Teams or here: the people it
- * added are forwarded the meeting, the learners among them are sent the full
- * schedule, and they are the only ones who hear about it.
- *
- * Until this existed, a successful update closed the dialog and said nothing at
- * all, which read exactly like an update that had not happened.
- */
+/** Display a verified update; LMS delivery requires an explicit server-confirmed email choice. */
 export async function finishTeamsUpdate(
   result: TeamsUpdateOutcome,
   input: UpdatedCalendar,
@@ -93,10 +79,10 @@ export async function finishTeamsUpdate(
   const liveSessionId = String(result.meeting?.liveSessionId || input.liveSessionId || '');
   const notice = String(result.changeNotice || '');
   const notify = Boolean(result.notifyAttendees);
-  const canSend = notify && Boolean(notice && liveSessionId);
+  const canSend = result.lmsEmailRequested === true && notify && Boolean(notice && liveSessionId);
   // The server's own reading of who was added wins over the form's.
   const added = result.addedPeople?.length ? result.addedPeople : input.addedPeople || [];
-  const canWelcome = Boolean(added.length && liveSessionId);
+  const canWelcome = result.lmsEmailRequested === true && Boolean(added.length && liveSessionId);
   const span = sessionSpan(input);
   // The server sends both as part of the update, so closing the browser cannot
   // lose them. The browser only sends what the server left queued, or what an
@@ -166,8 +152,8 @@ export async function finishTeamsUpdate(
         ${welcomeError ? `<p class="teams-calendar-result-note" role="alert">${htmlText(welcomeError)}</p>` : ''}
         ${warnings.map(warning => `<p class="teams-calendar-result-note" role="alert">${htmlText(warning)}</p>`).join('')}
         ${email?.uncertain || welcome?.uncertain ? '<p class="teams-calendar-result-note">Emails with an uncertain result will not be sent again automatically. An administrator can check their status.</p>' : ''}
-        <p class="teams-calendar-result-help">${notify ? 'Microsoft notifies everyone already invited when a meeting moves. The change email is a separate message: each learner receives their own copy with their previous and new dates only; the organiser, co-organisers and presenters receive a copy that also lists the invited learners.' : 'No session moved, so Microsoft was asked not to announce this save: nobody already invited was emailed, by Teams or by the LMS.'}</p>
-        ${canWelcome ? '<p class="teams-calendar-result-help">Everyone you added is sent the meeting invitation by Microsoft. Each of them is also sent the full schedule email from the LMS: learners their own copy, presenters and co-organisers the copy that also lists the meeting settings and the invited learners. Nobody already on the calendar is emailed again.</p>' : ''}
+        <p class="teams-calendar-result-help">${notify ? 'Microsoft may send calendar notifications when a meeting moves. An optional LMS change email is a separate message: each learner receives their own copy with their previous and new dates only; the organiser, co-organisers and presenters receive a copy that also lists the invited learners.' : 'No LMS email was requested. Microsoft calendar notifications are separate from LMS email.'}</p>
+        ${canWelcome ? '<p class="teams-calendar-result-help">Only the people you added receive the optional LMS schedule email. Each learner receives an individual copy without other learners? details. No Microsoft invitation was requested by this action.</p>' : ''}
         <p class="teams-calendar-result-help">Done closes this message. It does not save or send anything else.</p>`,
       width: 560, buttonsStyling: false, customClass: classes,
       showCloseButton: true, closeButtonAriaLabel: 'Close result',

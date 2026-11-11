@@ -1071,11 +1071,26 @@ class ServerSentUpdateEmailTests(unittest.TestCase):
     def saved_update(self):
         return types.SimpleNamespace(status_code=200, content=b'{"updated": true}')
 
+    def email_request(self):
+        return types.SimpleNamespace(body=b'{"sendLmsEmails":true}')
+
+    def test_an_update_without_explicit_email_choice_sends_no_lms_mail(self):
+        before = {'organizer_email': 'organizer@example.invalid', 'attendees': ['one@example.invalid'],
+                  'presenters': [], 'co_organizers': []}
+        saved = {**before, 'attendees': ['one@example.invalid', 'new@example.invalid']}
+        ns, modules, delivery = self.update_namespace(saved)
+        with patch.dict(sys.modules, modules):
+            body = ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [],
+                request=types.SimpleNamespace(body=b'{"notifyAttendees":true}'), notify=True, series_before=before)
+        self.assertFalse(body['lmsEmailRequested'])
+        delivery.send_creation_emails.assert_not_called()
+        delivery.send_change_emails.assert_not_called()
+
     def test_a_date_update_sends_the_change_email_from_the_server(self):
         before = {'organizer_email': 'organizer@example.invalid', 'attendees': ['one@example.invalid'], 'presenters': [], 'co_organizers': []}
         ns, modules, delivery = self.update_namespace(before)
         with patch.dict(sys.modules, modules):
-            body = ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [], request=object(), notify=True, series_before=before)
+            body = ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [], request=self.email_request(), notify=True, series_before=before)
         delivery.send_change_emails.assert_called_once_with('LIVE-ONE', 'TOKEN', exclude=[])
         self.assertEqual(body['scheduleEmail']['total'], 5)
         # Nobody was added, so nobody is sent the full schedule.
@@ -1087,7 +1102,7 @@ class ServerSentUpdateEmailTests(unittest.TestCase):
         saved = {**before, 'attendees': ['one@example.invalid', 'New@example.invalid'], 'presenters': ['tutor@example.invalid']}
         ns, modules, delivery = self.update_namespace(saved)
         with patch.dict(sys.modules, modules):
-            body = ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [], request=object(), notify=False, series_before=before)
+            body = ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [], request=self.email_request(), notify=False, series_before=before)
         # Quiet for everyone already invited: no change email.
         delivery.send_change_emails.assert_not_called()
         # Under this save's own key, never the calendar's creation key: see the
@@ -1104,7 +1119,7 @@ class ServerSentUpdateEmailTests(unittest.TestCase):
                  'presenters': ['tutor@example.invalid'], 'co_organizers': ['co@example.invalid']}
         ns, modules, delivery = self.update_namespace(saved)
         with patch.dict(sys.modules, modules):
-            ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [], request=object(), notify=True,
+            ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [], request=self.email_request(), notify=True,
                                               series_before=before)
         # The learner, presenter and co-organiser this save added were never told
         # the old dates: the full schedule only, and never the "was / now".
@@ -1118,7 +1133,7 @@ class ServerSentUpdateEmailTests(unittest.TestCase):
         ns, modules, delivery = self.update_namespace(before)
         unchanged = types.SimpleNamespace(status_code=200, content=b'{"updated": true, "announced": false, "changeId": "c1"}')
         with patch.dict(sys.modules, modules):
-            body = ns['with_schedule_change_notice'](unchanged, 'LIVE-ONE', [], request=object(), notify=True,
+            body = ns['with_schedule_change_notice'](unchanged, 'LIVE-ONE', [], request=self.email_request(), notify=True,
                                                      series_before=before)
         # A retry of an update that already landed: no second "was / now".
         delivery.send_change_emails.assert_not_called()
@@ -1132,15 +1147,15 @@ class ServerSentUpdateEmailTests(unittest.TestCase):
         ns, modules, _delivery = self.update_namespace(before)
         moved = types.SimpleNamespace(status_code=200, content=b'{"updated": true, "announced": true, "changeId": "c1"}')
         with patch.dict(sys.modules, modules):
-            ns['with_schedule_change_notice'](moved, 'LIVE-ONE', [], request=object(), notify=True, series_before=before)
-            ns['with_schedule_change_notice'](moved, 'LIVE-ONE', [], request=object(), notify=True, series_before=before)
+            ns['with_schedule_change_notice'](moved, 'LIVE-ONE', [], request=self.email_request(), notify=True, series_before=before)
+            ns['with_schedule_change_notice'](moved, 'LIVE-ONE', [], request=self.email_request(), notify=True, series_before=before)
         self.assertEqual(self.notice_ids, ['c1', 'c1'])
 
     def test_a_caller_who_may_not_send_mail_gets_the_notice_and_no_email(self):
         before = {'organizer_email': 'organizer@example.invalid', 'attendees': [], 'presenters': [], 'co_organizers': []}
         ns, modules, delivery = self.update_namespace({**before, 'attendees': ['new@example.invalid']}, may_send=False)
         with patch.dict(sys.modules, modules):
-            body = ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [], request=object(), notify=True, series_before=before)
+            body = ns['with_schedule_change_notice'](self.saved_update(), 'LIVE-ONE', [], request=self.email_request(), notify=True, series_before=before)
         self.assertEqual(body['changeNotice'], 'TOKEN')
         delivery.send_change_emails.assert_not_called()
         delivery.send_creation_emails.assert_not_called()

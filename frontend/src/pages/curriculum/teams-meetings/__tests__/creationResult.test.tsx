@@ -2,16 +2,38 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Swal from 'sweetalert2';
-import { finishTeamsCreation } from '../creationResult';
-import { sendScheduleEmailBatch } from '../scheduleEmail';
+import { finishTeamsCreation, finishTeamsUpdate } from '../creationResult';
+import { sendScheduleEmailBatch, submitAddedPeopleEmails, submitChangeEmails } from '../scheduleEmail';
 import type { TeamsMeetingInput, TeamsMeetingResult } from '../../module-builder/moduleAuthoringData';
 
-vi.mock('../scheduleEmail', () => ({ sendScheduleEmailBatch: vi.fn() }));
+vi.mock('../scheduleEmail', () => ({ sendScheduleEmailBatch: vi.fn(), submitAddedPeopleEmails: vi.fn(), submitChangeEmails: vi.fn() }));
 const input = { title: 'Synthetic module', scheduledOccurrences: [{ sessionNumber: 1, startDateTimeUtc: '2026-09-17T11:00:00Z', durationMinutes: 120 }] } as TeamsMeetingInput;
 const result = { created: true, warnings: [], meeting: { liveSessionId: 'LIVE-ONE', settingsApplied: true } } as unknown as TeamsMeetingResult;
 const complete = { total: 2, accepted: 2, queued: 0, failed: 0, uncertain: 0, status: 'complete' as const };
 beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('scrollTo', vi.fn()); vi.mocked(sendScheduleEmailBatch).mockResolvedValue(complete); });
 afterEach(() => { Swal.close(); vi.unstubAllGlobals(); });
+
+it('does not automatically email after an update without the explicit LMS email choice', async () => {
+  const pending = finishTeamsUpdate({ meeting: { liveSessionId: 'LIVE-ONE' }, notifyAttendees: true,
+    changeNotice: 'CHANGE', addedPeople: ['new@example.invalid'], lmsEmailRequested: false }, input);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Done' })).toBeVisible());
+  expect(submitAddedPeopleEmails).not.toHaveBeenCalled();
+  expect(submitChangeEmails).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+});
+
+it('emails only added people after an explicitly confirmed LMS email choice', async () => {
+  vi.mocked(submitAddedPeopleEmails).mockResolvedValueOnce(complete);
+  const pending = finishTeamsUpdate({ meeting: { liveSessionId: 'LIVE-ONE' }, notifyAttendees: false,
+    addedPeople: ['new@example.invalid'], lmsEmailRequested: true, addedEmailKey: 'ADDED' }, input);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Done' })).toBeVisible());
+  expect(submitAddedPeopleEmails).toHaveBeenCalledTimes(1);
+  expect(submitAddedPeopleEmails).toHaveBeenCalledWith('LIVE-ONE', ['new@example.invalid'], expect.objectContaining({ addedKey: 'ADDED' }));
+  expect(submitChangeEmails).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+});
 
 it('keeps the saved result open until Done, which makes no further request', async () => {
   let closed = false;

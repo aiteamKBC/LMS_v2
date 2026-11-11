@@ -3800,6 +3800,7 @@ function ModuleBuilderContent() {
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
+                    onSelectComponent={componentId => { void requestSelectionChange({ kind: 'component', weekId: selectedWeek.id, componentId }); }}
                     selfStudyOnly={workingModule.isFreeCourse}
                     displayWeek={selectedWeek}
                     onChange={updates => updateWorkingModule(module =>

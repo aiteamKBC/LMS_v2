@@ -263,13 +263,13 @@ class WeekdayCalendarTests(Harness):
         # Already on the announced write: never forwarded it a second time.
         self.assertFalse(self.forwards)
 
-    def test_an_added_person_alone_is_forwarded_and_nobody_else_hears(self):
+    def test_an_added_person_never_requests_microsoft_forwarding(self):
         self.payload.update(notifyAttendees=True, attendees=['learner@example.invalid', 'joined@example.invalid'])
         result = self.update()
         self.assertEqual(result.status_code, 200, result)
         self.assertEqual(self.announced(), [])
-        self.assertEqual(sorted(self.forwards), [('event-1', ['joined@example.invalid']),
-                                                 ('event-2', ['joined@example.invalid'])])
+        # Microsoft forwarding is disabled; a separate LMS email requires opt-in.
+        self.assertFalse(self.forwards)
 
     def test_a_removed_person_is_taken_off_silently_before_a_date_is_announced(self):
         self.payload['attendees'] = ['learner@example.invalid', 'second@example.invalid']

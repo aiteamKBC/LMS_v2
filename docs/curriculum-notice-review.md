@@ -1,5 +1,7 @@
 # Curriculum notice review — 11 November 2026
 
+This is the original notice-work audit. At the owner's request, [PR #678](https://github.com/aiteamKBC/LMS_v2/pull/678) is being consolidated with session/recording presentation and calendar email/privacy controls. Its PR description records the combined scope, validation and unresolved release gates. Earlier exclusions and check counts below describe the earlier notice-only revision.
+
 The review covers yellow notice and warning markup across `frontend/src/pages/curriculum`, its shared schedule components, and the connected learner curriculum views. The initial static search found 366 colour/alert references, including ordinary status badges and content-type colours; these are not 366 errors. This is a source review and automated regression review, not a live check of every curriculum screen or Microsoft integration.
 
 The requested outcome is a calmer, readable interface for learners and staff, with important next steps still visible. Familiar navigation, form values, access windows, dates, meeting identities, attendance, recordings, progress and published learner notes remain governed by the existing code.

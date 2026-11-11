@@ -1017,10 +1017,10 @@ describe('Teams Meetings page', () => {
     const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
     fireEvent.change(attendees, { target: { value: 'new.learner@example.com' } });
     fireEvent.keyDown(attendees, { key: 'Enter' });
-    await userEvent.click(dialog.getByRole('button', { name: invite ? 'Save and invite added people' : 'Save without notifying' }));
+    await userEvent.click(dialog.getByRole('button', { name: invite ? 'Save and email added people' : 'Save without notifying' }));
     await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
     expect(updateTeamsMeetingSchedule).toHaveBeenCalledWith('LIVE-1', expect.objectContaining({ peopleOnly: true,
-      originalSourceToken: 'SOURCE-1', attendees: ['learner@example.com', 'new.learner@example.com'], ...(invite ? {} : { invitationsOnly: true }),
+      sendLmsEmails: invite, originalSourceToken: 'SOURCE-1', attendees: ['learner@example.com', 'new.learner@example.com'], ...(invite ? {} : { invitationsOnly: true }),
       eventId: summaries[0].eventId, startDateTimeUtc: new Date(summaries[0].occurrenceDates![0]).toISOString(),
     }), expect.anything());
     const input = (updateTeamsMeetingSchedule.mock.calls[0] as unknown as [string, { scheduledOccurrences?: { startDateTimeUtc: string }[] }])[1];

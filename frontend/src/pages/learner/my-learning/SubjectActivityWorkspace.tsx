@@ -61,9 +61,18 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
   const mounted = new Set([...visited, ...(activity ? [activity.id] : [])]);
   // Completion comes from the unified catalogue, including historical quiz
   // results. Do not fabricate native quiz attempts to paint a completion tick.
+  const nativeEntryIds = new Map<string, string | null>();
+  combined.activities.forEach(entry => {
+    if (!entry.native?.componentId) return;
+    const key = JSON.stringify([entry.native.moduleId, entry.native.weekId, entry.native.componentId]);
+    nativeEntryIds.set(key, nativeEntryIds.has(key) ? null : entry.id);
+  });
   const component = (entry: SubjectEntry): JourneyComponent => ({
     componentId: entry.id, title: entry.title, type: entry.category, expectedOtjh: subjectActivityHours(entry),
     pointNumber: entry.native?.pointNumber, moduleId: entry.native?.moduleId, weekId: entry.native?.weekId,
+    linkedSessionComponentId: entry.native?.linkedSessionComponentId
+      ? nativeEntryIds.get(JSON.stringify([entry.native.moduleId, entry.native.weekId, entry.native.linkedSessionComponentId])) ?? undefined
+      : undefined,
   });
   const weekTitle = (item: LearningWeek) => item.title.toLocaleLowerCase().startsWith(item.label.toLocaleLowerCase())
     ? item.title : `${item.label} · ${item.title}`;
