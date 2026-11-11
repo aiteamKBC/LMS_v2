@@ -1215,6 +1215,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const update = invitationEdits(row);
     if (!update) return;
     if (blockedReason) { updateDrawer.setError(blockedReason); return; }
+    if (originalRolesBlocked) { updateDrawer.setError('Microsoft meeting roles are not verified. Retry the role check before changing people or settings.'); return; }
     const refusal = calendarWriteBlockReason(row);
     if (refusal) { updateDrawer.setError(refusal); return; }
     updateDrawer.setSaving(true);
@@ -2061,6 +2062,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const originalId = externalCalendar?.originalSeriesId || '';
   const originalCalendar = originalId && originalRead.id === originalId ? originalRead : undefined;
   const originalCalendarBlocked = Boolean(originalId && (!originalCalendar || originalCalendar.loading || originalCalendar.data?.status !== 'editable'));
+  const originalRolesBlocked = Boolean(originalCalendar?.data?.status === 'editable' && originalCalendar.data.rolesEditable !== true);
   useEffect(() => {
     if (!originalId) return;
     let active = true;
@@ -2068,7 +2070,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     void readImportedMeetingEditor(originalId, { standard: true }).then(data => {
       if (!active || selectedLiveId.current !== originalId) return;
       setOriginalRead({ id: originalId, loading: false, data });
-      if (data.status !== 'editable' || updateDrawer.dirty) return;
+      if (data.status !== 'editable' || data.rolesEditable !== true || updateDrawer.dirty) return;
       const roles = new Set([...(data.presenters || []), ...(data.coOrganizers || [])].map(value => value.toLowerCase()));
       const form = { ...emptyTeamsCalendarForm(), organizerEmail: data.organizer || selected?.summary?.organizerEmail || '',
         attendees: (data.attendees || []).filter(value => !roles.has(value.toLowerCase())).join('\n'),
@@ -2211,7 +2213,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
     selectedScopeRows, chooseMeetingScope, refreshMeetingScopes,
     externalCalendar, calendarLinksLoading, calendarLinksError,
-    originalCalendar, originalCalendarBlocked, refreshOriginalCalendar,
+    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };
 }

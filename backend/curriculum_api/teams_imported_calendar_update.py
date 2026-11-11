@@ -105,8 +105,8 @@ class CalendarClient:
     def __exit__(self, *args):
         self.client.close()
 
-    def read(self, path):
-        response = self.client.get(path)
+    def read(self, path, *, prefer=''):
+        response = self.client.get(path, **({'headers': {'Prefer': prefer}} if prefer else {}))
         if response.status_code != 200:
             raise GraphRefusal(response.status_code)
         data = response.json()
