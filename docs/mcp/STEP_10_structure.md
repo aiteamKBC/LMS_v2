@@ -49,3 +49,41 @@ draft with weeks; no removal flags ever sent (dispatcher scrubber test).
 ## Acceptance checklist
 - [ ] From Claude: "Create a new cohort Jan-27 for Digital Marketing L3 with two groups on Tue and Thu, coach X"
       → one preview listing cohort + 2 groups → apply → visible in curriculum UI as planned.
+
+## Implementation notes (2026-11-11)
+
+Implemented in `mcp_api/tools/structure.py`, behind `MCP_STRUCTURE_CREATION_ENABLED` (default off).
+Tests: `mcp_api/tests/test_structure.py`.
+
+The tools are `list_ksb_standards` (read-only), `create_programme`, `create_cohort`, `create_group` and
+`create_module`.
+
+**Upsert guard.** The programme, cohort and group creates silently UPDATE an existing record with the same
+name; a cohort upsert even blanks its start date. The module create returns an existing module with the same
+title, and can create a programme by name. So every tool:
+- refuses a name already used in its scope, using the LMS's own key (lower case, letters and digits only);
+- re-checks that at apply time, to catch a race;
+- sends explicit parent ids and names, and never client ids;
+- accepts only `201 created: true`. Anything else raises inside the default-DB transaction and is rolled back.
+
+**Per entity**
+- **Programme.** Programmes have no not-live state: the LMS maps draft and planned to active. The preview says
+  so. A standard from `list_ksb_standards` is sent as `ksbProfileSourceId: "standard:<id>"` in the create
+  itself, so no programme PATCH is allowlisted.
+- **Cohort.** The preview end date comes from `cohort_practical_end_date`, the LMS's own rule, and the
+  response must match it. A start date more than a year ago gives a warning. Status follows the dates.
+- **Group.** The coach must match exactly one name in `curriculum/coaches/` (case and spacing ignored);
+  otherwise the tool refuses and lists candidates by name. The LMS itself would store any text. Times are
+  HH:MM, and the end must be after the start. New groups are `planned`.
+- **Module.** Uses the authoring branch: `moduleType: authoring`, `status: draft`, roster `inherited`, empty
+  weeks. A cohort and group are optional but must be given together. If one is given, the preview warns that
+  the group's learners will see the module.
+
+**10.5 `assign_module_to_cohort_group` is not built.** Placing a module in a group changes what that group's
+learners see, so it stays a reviewed action in the LMS.
+
+**Allowlist**
+- Added: POST `programmes/`, `programmes/<id>/cohorts/`, `cohorts/<id>/groups/`, `modules/`; GET
+  `standards/`, `standards/<id>/`, `coaches/`.
+- Still never allowed: `programmes/tree/` and any PATCH or DELETE on these entities.
+- [ ] Acceptance: not yet run against a real database.

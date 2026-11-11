@@ -128,3 +128,18 @@ Component regressions cover all ten types, current Module Builder defaults, actu
 payloads with fake storage, zero-hour videos, scope/flag/role refusals, duplicate/stale previews, parent-lock
 checks, replay and the create-to-MP4 handoff. They do not prove live PostgreSQL concurrency, client file
 handoff, external storage or Bunny encoding. No Teams implementation file is changed by this feature.
+
+## Free courses
+
+Free courses are now standalone modules in `curriculum.modules`, with `source_type = 'free_course'`
+and ids like `MOD-FREE-…`. They belong to no programme.
+
+- **Finding them.** `find_free_courses` lists them by module id.
+- **Which tools work.** The module tools work on them, with `programme_id` left out:
+  `create_curriculum_component`, `create_week`, `create_quiz_draft`, `add_lesson_content`,
+  `save_curriculum_video` and `list_module_weeks`. Sending a `programme_id` for a free course is refused.
+- **`create_week` template.** For a free course it adds Reading Material, Video and Reflection only.
+  The LMS refuses live sessions in free courses ("self-study content only").
+- **KSBs.** Free courses have no KSB standard. `map_ksbs`, and KSB codes in `create_quiz_draft`, are refused.
+- **The legacy library save.** `PATCH free-programmes/FREE-COURSES/modules/` deletes and rewrites the whole
+  library. It is not on the MCP allowlist.
