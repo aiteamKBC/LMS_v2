@@ -44,7 +44,7 @@ describe('Enrollment navigation presentation', () => {
     open('/users/coach-directory');
     const navigation = screen.getByRole('navigation', { name: /primary navigation/ });
     expect(within(navigation).getAllByRole('link').map(link => link.getAttribute('href')))
-      .toEqual(['/users', '/users/first-sessions', '/users/coach-directory', '/users/progress-transfers', '/users/my-courses']);
+      .toEqual(['/users', '/users/first-sessions', '/users/coach-directory', '/users/progress-transfers']);
     expect(within(navigation).getByRole('link', { name: 'Coach directory' })).toHaveAttribute('aria-current', 'page');
     expect(within(navigation).getByRole('link', { name: 'Users' })).not.toHaveAttribute('aria-current');
     expect(screen.getByText('Existing page content')).toBeInTheDocument();
@@ -52,11 +52,20 @@ describe('Enrollment navigation presentation', () => {
 
   it('does not expose a navigation item denied by the existing permission check', () => {
     state.denied.add('enrolment-progress-transfers');
-    state.denied.add('enrolment-courses');
+    state.denied.add('apprenticeNavItems-first-sessions');
     open();
     expect(screen.queryByRole('link', { name: 'Transfer Progress' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'My Courses' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'First sessions' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Coach directory' })).toBeInTheDocument();
+  });
+
+  // Personal courses are their own workspace, reached from the switcher. The
+  // enrolment sidebar listed them too, which made one page look like two
+  // sections; the duplicate entry is gone and must not come back here.
+  it('leaves personal courses to the My Courses workspace', () => {
+    open('/users/my-courses', true);
+    expect(screen.queryByRole('link', { name: 'My Courses' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Users' })).toBeInTheDocument();
   });
 
   it.each([
