@@ -1639,12 +1639,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             else:
                 module_sql = (
                     "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
-                    "WHERE m.module_catalogue_id = ANY(%s) "
-                    # An assignment is a learner-owned snapshot. Keep content that
-                    # was cascade-hidden with its parent programme available to an
-                    # already-assigned learner; a row deleted on its own remains
-                    # excluded. ``deleted_via_parent`` distinguishes the two cases.
-                    "AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')"
+                    "WHERE m.module_catalogue_id = ANY(%s)"
                 )
                 week_sql = (
                     "SELECT id, module_catalogue_id, title, week_number, display_order "
