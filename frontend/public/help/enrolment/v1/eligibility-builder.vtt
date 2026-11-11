@@ -1,0 +1,21 @@
+WEBVTT
+
+1
+00:00:01.600 --> 00:00:09.200
+Manage the application form
+This editor controls the public apprenticeship eligibility form. Page text, sections and questions are edited in a draft before publication.
+
+2
+00:00:09.200 --> 00:00:16.800
+Organise sections
+Select a section to review its questions and guidance. Use the available controls to edit or reorder sections and the questions within them.
+
+3
+00:00:16.800 --> 00:00:24.300
+Edit questions and choices
+Configure supported question types, labels, choices and conditions. Review required questions and dependencies. Built-in questions may have additional restrictions.
+
+4
+00:00:24.300 --> 00:00:32.001
+Publish the reviewed draft
+Check the draft and publish confirmation before updating the public form. Removing a published question preserves its stored answers. Resolve validation messages before publishing.

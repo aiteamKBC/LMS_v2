@@ -2,7 +2,7 @@ import { DELIVERY_STATUS, PLAN_EDITABLE_STATUSES, isLearnerRow, combinedType, fi
 import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useId, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Bookmark, Building2, Columns2, ListFilter, MoreVertical, ShieldUser, Upload } from 'lucide-react';
+import { Building2, Columns2, ListFilter, MoreVertical, ShieldUser, Upload } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from './presentation/EnrolmentWorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -573,7 +573,6 @@ export default function UsersListPage() {
           <div className={design.filterBar}>
             <button type="button" className={design.filterToggle} aria-expanded={filtersOpen} aria-controls="users-filter-fields" onClick={() => setFiltersOpen(value => !value)}><ListFilter size={16} aria-hidden="true" />Filters</button>
             <p>Showing {filtered.length} of {rows.length} users</p>
-            <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><Bookmark size={14} aria-hidden="true" />Save view</button>
           </div>
           <div id="users-filter-fields" hidden={!filtersOpen} className="border-t border-foreground-100 p-4 md:p-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -821,10 +820,10 @@ export default function UsersListPage() {
                           <button
                             onClick={openInPlace}
                             title={isEmployer ? `Open ${row.name}'s employer page` : `Edit ${row.name}'s details`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                            className={`${isEmployer ? design.viewAction : ''} inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap`}
                           >
                             {isEmployer
-                              ? <><AppIcon name="ri-eye-line" aria-hidden="true" /><span className="sr-only">View</span></>
+                              ? 'View'
                               : <><AppIcon name="ri-pencil-line" aria-hidden="true" /><span className="sr-only">Edit</span></>}
                           </button>
                           {/* An employer's own details are still editable — the
@@ -845,9 +844,9 @@ export default function UsersListPage() {
                           <button
                             onClick={() => openLearnerPage(row)}
                             title={`Open ${row.name}'s learner page`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                            className={`${design.viewAction} inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap`}
                           >
-                            <AppIcon name="ri-eye-line" aria-hidden="true" /><span className="sr-only">View</span>
+                            View
                           </button>
                           {/* The columns of this table — group, programme and
                               both statuses — are fields on the learner record,
