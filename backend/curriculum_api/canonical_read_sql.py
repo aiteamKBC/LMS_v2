@@ -15,6 +15,31 @@ def current_status_sql(alias):
     return f"lower(btrim(coalesce({alias}.status, ''))) <> 'inactive'"
 
 
+def module_expected_otjh_sql(module_alias='m'):
+    """Correlated expression returning active-component expected OTJH for one module row.
+
+    Matches the Python helpers: each component's hours are rounded to the nearest whole
+    minute before summing (otjh_rounded_minutes), then the total is converted back to
+    hours at two decimal places (otjh_hours_from_minutes).
+
+    Internal aliases use the module_alias as a prefix to avoid collisions with the
+    outer query.  The ``status <> 'inactive'`` predicate mirrors current_status_sql.
+    """
+    w = f"{module_alias}_w"
+    c = f"{module_alias}_c"
+    return (
+        f"COALESCE(ROUND("
+        f"COALESCE(("
+        f"SELECT SUM(ROUND({c}.expected_otjh::numeric * 60)::bigint)"
+        f" FROM curriculum.weeks {w}"
+        f" JOIN curriculum.components {c} ON {c}.week_id = {w}.id"
+        f" WHERE {w}.module_catalogue_id = {module_alias}.module_catalogue_id"
+        f" AND lower(btrim(coalesce({c}.status, ''))) <> 'inactive'"
+        f" AND lower(btrim(coalesce({w}.status, ''))) <> 'inactive'"
+        f"), 0)::numeric / 60.0, 2), 0.00)"
+    )
+
+
 def standard_ksb_join_sql(mapping_alias='mapping', standard_alias='standard_ksb'):
     """Canonical mapping -> Skills England KSB relationship."""
     return (f"JOIN curriculum.standard_ksbs {standard_alias} "

@@ -63,6 +63,7 @@ from django.db import connection, transaction
 from django.http import JsonResponse
 
 from login.permissions import require_role
+from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 
 from login import email_azure
 
@@ -226,6 +227,7 @@ def current_assignments():
     views = _views()
     tutor_rows = views.get_staff_profile_rows('tutor')
     module_rows = views.safe_authoring_module_rows()
+    _annotate_module_otjh(module_rows)
     if not tutor_rows or not module_rows:
         return {}
 
@@ -290,6 +292,22 @@ def current_assignments():
     return assignments
 
 
+def _annotate_module_otjh(module_rows):
+    """Add computed_total_otjh to each module row using a single batch query."""
+    ids = [r.get('module_catalogue_id') for r in module_rows if r.get('module_catalogue_id')]
+    if not ids:
+        return
+    with connection.cursor() as cur:
+        cur.execute(
+            f"SELECT m.module_catalogue_id, {module_expected_otjh_sql('m')} AS otjh"
+            f" FROM curriculum.modules m WHERE m.module_catalogue_id = ANY(%s)",
+            [ids],
+        )
+        otjh_map = {row[0]: row[1] for row in cur.fetchall()}
+    for row in module_rows:
+        row['computed_total_otjh'] = otjh_map.get(row.get('module_catalogue_id'))
+
+
 def float_or_zero(value):
     try:
         return float(value)
@@ -336,7 +354,12 @@ def describe_module(module_row, group_row=None, cohort_row=None):
                 dates = f'cohort runs {cohort_start} to {cohort_end}'
 
     sessions = views.clean_str(module_row.get('sessions_number'))
-    otjh = views.clean_str(module_row.get('total_otjh'))
+    if 'computed_total_otjh' not in (module_row or {}):
+        raise AssertionError(
+            'Call _annotate_module_otjh(module_rows) before describe_module(); '
+            'computed_total_otjh key is missing from module_row'
+        )
+    otjh = views.clean_str(module_row.get('computed_total_otjh'))
     return {
         'name': views.clean_str(module_row.get('title')),
         'code': views.clean_str(module_row.get('module_catalogue_id')),

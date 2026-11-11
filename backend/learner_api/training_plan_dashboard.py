@@ -28,6 +28,7 @@ from .upcoming_503_diagnostic import capture_upcoming_database_error
 from . import canonical_learning
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 
 log = logging.getLogger(__name__)
 
@@ -395,8 +396,14 @@ def plan_planned_hours(source, owner, *, ids=None):
             ids, _ = plan_module_ids(cur, source, owner)
         if not ids:
             return None
-        cur.execute('''SELECT sum(total_otjh) FROM curriculum.modules
-            WHERE module_catalogue_id=ANY(%s)''', [ids])
+        cur.execute(f'''
+            SELECT COALESCE(SUM(per_mod.otjh), 0.00) FROM (
+                SELECT m.module_catalogue_id,
+                    {module_expected_otjh_sql('m')} AS otjh
+                FROM curriculum.modules m
+                WHERE m.module_catalogue_id = ANY(%s)
+            ) per_mod
+        ''', [ids])
         total = cur.fetchone()[0]
     total = number(total)
     return round(total, 2) if total else None
@@ -635,7 +642,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
             cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,{description_column},m.start_date,m.end_date,
                 {module_tutor_name_sql('m')} AS tutor_name,
                 {group_coach_name_sql('g')} AS coach_name,
-                {module_placement_names_sql('m')},m.total_otjh,m.weeks_number,m.sessions_number,
+                {module_placement_names_sql('m')},{module_expected_otjh_sql('m')} AS total_otjh,(SELECT COUNT(*) FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id AND {visible_week_sql('w')}) AS weeks_number,m.sessions_number,
                 m.cohort_id,
                 coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
                 coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,

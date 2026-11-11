@@ -69,7 +69,7 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
         self.assertEqual(response.status_code, 200, response.content)
         module_id = response.json()['created'][0]['catalogueId']
         row = self.stored_row(module_id)
-        self.assertEqual(row['weeks_number'], 4)
+        self.assertEqual(len(views.authoring_catalogue_summaries()[module_id]['weekStructure']), 4)
         self.assertEqual(row['sessions_number'], 8)
         self.assertEqual(row['session_week_day'], 'Monday, Thursday')
         # Editing from the catalogue must receive the override, not group Wednesday.
@@ -108,7 +108,7 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
         catalogue_id = self.create_module(weeks=5, sessions=10)
         row = self.stored_row(catalogue_id)
 
-        self.assertEqual(views.parse_int(row.get('weeks_number'), 0), 5)
+        self.assertEqual(views.get_authoring_structure_payload(catalogue_id)['weeks'], 5)
         self.assertEqual(views.parse_int(row.get('sessions_number'), 0), 10)
 
     def test_editing_the_weeks_does_not_multiply_them_on_the_way_back(self):
@@ -160,12 +160,12 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
 
         after = views.get_authoring_structure_payload(catalogue_id)
         # The six shells are dropped, the six authored weeks stay, and the
-        # stored count agrees with the rows that survived.
+        # displayed count agrees with the rows that survived.
         self.assertEqual(len(after['weekStructure']), 6)
         self.assertEqual(
             sum(len(week.get('components') or []) for week in after['weekStructure']), 6,
         )
-        self.assertEqual(views.parse_int(self.stored_row(catalogue_id).get('weeks_number'), 0), 6)
+        self.assertEqual(after['weeks'], 6)
 
     def test_a_patch_that_only_renames_leaves_both_counts_alone(self):
         catalogue_id = self.create_module(weeks=6, sessions=12)
@@ -178,7 +178,7 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
         self.assertEqual(response.status_code, 200, response.content)
 
         row = self.stored_row(catalogue_id)
-        self.assertEqual(views.parse_int(row.get('weeks_number'), 0), 6)
+        self.assertEqual(views.get_authoring_structure_payload(catalogue_id)['weeks'], 6)
         self.assertEqual(views.parse_int(row.get('sessions_number'), 0), 12)
 
     def test_the_session_plan_runs_to_the_sessions_not_the_weeks(self):
@@ -264,3 +264,51 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
             visible_dates,
             ['2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16'],
         )
+
+    def test_week_count_is_derived_from_live_rows_not_stored_column(self):
+        """Adding week rows directly changes the displayed count without a PATCH save.
+
+        weeks_number is no longer written at save time, so the count must come from
+        actual curriculum.weeks rows.  An import that inserts week rows without going
+        through the module PATCH endpoint must still produce the correct count.
+        """
+        module_id = 'MOD-LIVE-COUNT-REGRESSION'
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': module_id,
+            'programme_id': 'PROG-SPLIT',
+            'programme_name': 'Split Programme',
+            'title': 'Live Count Module',
+            'sessions_number': 3,
+            'start_date': '2026-09-07',
+            'session_week_day': 'Monday',
+        })
+        # With no week rows, the count falls back to the sessions-derived estimate.
+        payload = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(payload['weeks'], 3)  # 3 sessions / 1 day per week
+        self.assertEqual(len(payload['weekStructure']), 0)
+
+        # Insert 5 week rows directly, bypassing the PATCH endpoint.
+        for i in range(1, 6):
+            views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], {
+                'id': f'WEEK-REGR-{i}',
+                'module_catalogue_id': module_id,
+                'week_number': i,
+                'display_order': i,
+                'title': f'Week {i}',
+            })
+
+        # The displayed count is now live from the actual rows — no PATCH needed.
+        payload = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(payload['weeks'], 5, 'live week rows must drive the displayed count')
+        self.assertEqual(len(payload['weekStructure']), 5)
+
+        # Adding one more updates the count immediately.
+        views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], {
+            'id': 'WEEK-REGR-6',
+            'module_catalogue_id': module_id,
+            'week_number': 6,
+            'display_order': 6,
+            'title': 'Week 6',
+        })
+        payload = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(payload['weeks'], 6)

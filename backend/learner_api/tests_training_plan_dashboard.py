@@ -289,7 +289,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         # Group display names never supply a missing learner assignment.
         self.assertEqual(result['coach'], {'name': '', 'bookingUrl': None})
         week_sql = next(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list
-                        if 'FROM curriculum.weeks w' in str(call.args[0]))
+                        if 'SELECT w.id,w.module_catalogue_id,w.week_number' in str(call.args[0]))
         self.assertIn("lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'", week_sql)
 
     def test_overview_exposes_review_form_links_from_learner_calendar(self):
@@ -306,7 +306,6 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.effective_plan.return_value = []
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
-             patch('learner_api.training_plan_dashboard.stored_training_plan', return_value=[]), \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=events), \
              patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):

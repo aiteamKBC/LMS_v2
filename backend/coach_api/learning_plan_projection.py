@@ -365,8 +365,8 @@ def read_timeline(context):
     owner = canonical_learning.require_profile(context.source.pk)
     ids = list(dict.fromkeys([*_effective_plan_ids(context.source, {}), *canonical_learning.curriculum_module_ids_for(owner)]))
     with connections['enrolment'].cursor() as cur:
-        cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
-            m.weeks_number,m.sessions_number,m.cohort_id,
+        cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
+            (SELECT COUNT(*) FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id AND {visible_week_sql('w')}) AS weeks_number,m.sessions_number,m.cohort_id,
             coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
             coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
             coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time

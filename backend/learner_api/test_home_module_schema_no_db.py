@@ -124,7 +124,10 @@ class DashboardModulesTests(SimpleTestCase):
 class TrainingPlanModuleRowsTests(SimpleTestCase):
     def test_module_rows_read_names_through_ids(self):
         source = inspect.getsource(training_plan_dashboard.read_dashboard)
-        self.assertIn("{module_placement_names_sql('m')},m.total_otjh,m.weeks_number,m.sessions_number", source)
+        self.assertIn("{module_expected_otjh_sql('m')} AS total_otjh", source)
+        self.assertNotIn("m.total_otjh", source)
+        self.assertIn(") AS weeks_number,m.sessions_number", source)
+        self.assertNotIn("m.weeks_number", source)
         self.assertNotRegex(source, r'\bm\.(?:programme_name|cohort_name|group_name|deleted_at|deleted_via_parent)\b')
         self.assertIn('FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id', source)
 

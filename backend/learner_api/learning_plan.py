@@ -11,7 +11,7 @@ true, and it is why every module carries its programme through to the plan and
 the picker: the combination is now allowed but never hidden, so whoever assembles
 the plan can see when they have crossed a programme boundary.
 
-Hours come from curriculum.modules.total_otjh (off-the-job hours), summed for
+Hours come from active Curriculum Components (off-the-job hours), summed for
 the plan total so staff can see the commitment while editing.
 
 Each row also shows the module's delivery window (curriculum.modules
@@ -40,6 +40,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 
 from curriculum_api.programme_name_sql import programme_name_sql
+from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 
 from .module_placement_sql import module_placement_names_sql
 
@@ -223,9 +224,10 @@ def _module_payload(row):
 #: and is_programme_deleted were removed) and stores placement names only by
 #: id, so every module row is offerable and names are read through the ids.
 _LIVE_MODULE_SQL = f"""
-    SELECT module_catalogue_id, title, programme_id, {module_placement_names_sql('modules')},
-           total_otjh, start_date, end_date, learner_roster_mode
-    FROM curriculum.modules
+    SELECT m.module_catalogue_id, m.title, m.programme_id, {module_placement_names_sql('m')},
+           {module_expected_otjh_sql('m')} AS total_otjh,
+           m.start_date, m.end_date, m.learner_roster_mode
+    FROM curriculum.modules m
     WHERE TRUE
 """
 

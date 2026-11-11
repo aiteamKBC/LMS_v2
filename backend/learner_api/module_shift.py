@@ -49,6 +49,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 from login.permissions import learner_self_or_staff
 
 from .active_users import (
@@ -88,7 +89,7 @@ from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
 logger = logging.getLogger(__name__)
 
 MODULE_COLUMNS = """
-    module_catalogue_id, title, group_name, programme_id, programme_name, total_otjh,
+    module_catalogue_id, title, group_name, programme_id, programme_name,
     start_date, end_date
 """
 
@@ -110,9 +111,11 @@ def _id_list(value):
 def _module_row(module_id):
     rows = _rows(
         f"""
-        SELECT {MODULE_COLUMNS}, cohort_id, cohort_name, group_id
-        FROM curriculum.modules
-        WHERE module_catalogue_id = %s
+        SELECT m.module_catalogue_id, m.title, m.group_name, m.programme_id, m.programme_name,
+               {module_expected_otjh_sql('m')} AS total_otjh,
+               m.start_date, m.end_date, m.cohort_id, m.cohort_name, m.group_id
+        FROM curriculum.modules m
+        WHERE m.module_catalogue_id = %s
         LIMIT 1
         """,
         [module_id],
@@ -206,9 +209,11 @@ def _programme_shift_modules(programme, groups, cohorts):
     listed_ids = sorted({i for g in programme_groups for i in _id_list(g.get("module_ids"))})
     rows = _rows(
         f"""
-        SELECT {MODULE_COLUMNS}, cohort_id, cohort_name, group_id
-        FROM curriculum.modules
-        WHERE deleted_at IS NULL
+        SELECT {MODULE_COLUMNS},
+               {module_expected_otjh_sql('m')} AS total_otjh,
+               cohort_id, cohort_name, group_id
+        FROM curriculum.modules m
+        WHERE m.deleted_at IS NULL
           AND COALESCE(is_programme_deleted, FALSE) = FALSE
           AND (
                (programme_id = %s AND programme_id <> '')

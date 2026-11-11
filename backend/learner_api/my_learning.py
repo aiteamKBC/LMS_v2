@@ -19,6 +19,7 @@ from login.errors import safe_sqlstate
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 
 from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
@@ -298,7 +299,7 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
         m.programme_id,coalesce(programme_names.name,'') AS programme_name,
         coalesce(cohort_names.name,'') AS cohort_name,
         coalesce(group_names.name,'') AS group_name,
-        m.total_otjh,m.sessions_number,m.source_type,m.source_id,
+        {module_expected_otjh_sql('m')} AS total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
         to_jsonb(m)->'session_overrides' AS session_overrides
         FROM requested m

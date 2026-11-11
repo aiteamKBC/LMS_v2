@@ -114,8 +114,8 @@ SNAPSHOT_COLUMNS = {
     # answered while the snapshot stopped at the description.
     'module': (
         'module_catalogue_id', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
-        'group_id', 'group_name', 'title', 'description', 'total_otjh', 'quality_score',
-        'status', 'tutor_name', 'tutor_email', 'coach_name', 'sessions_number', 'weeks_number',
+        'group_id', 'group_name', 'title', 'description', 'quality_score',
+        'status', 'tutor_name', 'tutor_email', 'coach_name', 'sessions_number',
         'start_date', 'end_date', 'session_week_day', 'session_start_time', 'session_end_time',
         'weekly_schedule', 'session_holidays', 'session_overrides', 'ksb_profile_source_id',
         'color', 'cover_image_url', 'deleted_at', 'deleted_by',

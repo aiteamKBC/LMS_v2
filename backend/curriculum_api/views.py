@@ -40,6 +40,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role, require_access, require_all_access
 from . import archive_state
+from .canonical_read_sql import module_expected_otjh_sql
 from . import curriculum_names
 from . import calendar_holidays, free_course_catalogue, ksb_mapping_placement, schema_compat
 from . import group_coaches
@@ -12201,18 +12202,14 @@ def module_week_delivery_days(module_row, week_count=0):
 
 
 def module_stored_week_count(module_row, week_count=0):
-    """How many WEEKS a module is authored as -- the week builder's number.
+    """How many WEEKS a module is authored as -- derived from live curriculum.weeks rows.
 
-    Distinct from ``module_stored_session_count``: a module delivered twice a
-    week runs 10 calendar sessions across 5 authored weeks. ``weeks_number`` is
-    the column that owns this; rows written before it existed carry NULL, so
-    they fall back to the weeks actually authored and finally to the session
-    count (correct for the one-day-a-week case those rows were written under).
+    ``week_count`` is the live count passed in by callers that have already
+    fetched the week rows (the structure endpoint and the catalogue summaries).
+    For the resync path the caller queries the week table first.
+    The sessions fallback is kept only for the rare case where weeks have not
+    been authored yet and the caller passes no live count.
     """
-    stored = (module_row or {}).get('weeks_number')
-    explicit = parse_int(stored, 0)
-    if stored is not None and explicit > 0:
-        return explicit
     authored = max(0, parse_int(week_count, 0))
     if authored:
         return authored
@@ -15249,7 +15246,6 @@ def provision_module_authoring_tables():
                 color varchar(32),
                 cover_image_url text,
                 sessions_number integer not null default 0,
-                weeks_number integer,
                 start_date date,
                 end_date date,
                 total_otjh numeric(8,2) not null default 0,
@@ -15267,7 +15263,6 @@ def provision_module_authoring_tables():
         ''')
         if connection.vendor == 'postgresql':
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists sessions_number integer not null default 0')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists weeks_number integer')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists start_date date')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists end_date date')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists cohort_id varchar(255)')
@@ -15293,8 +15288,6 @@ def provision_module_authoring_tables():
             columns = {row[1] for row in cursor.fetchall()}
             if 'sessions_number' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column sessions_number integer not null default 0')
-            if 'weeks_number' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column weeks_number integer')
             if 'start_date' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column start_date date')
             if 'end_date' not in columns:
@@ -22092,8 +22085,12 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'endTime': delivery_module.get('session_end_time') or '',
         'weeks': module_stored_week_count(module, len(weeks)),
         'weeksNumber': module_stored_week_count(module, len(weeks)),
-        'totalOtjh': float(module.get('total_otjh') or 0),
-        'declaredTotalOtjh': float(module.get('total_otjh') or 0),
+        'totalOtjh': otjh_hours_from_minutes(sum(
+            otjh_rounded_minutes(row.get('expected_otjh')) for row in component_rows
+        )),
+        'declaredTotalOtjh': otjh_hours_from_minutes(sum(
+            otjh_rounded_minutes(row.get('expected_otjh')) for row in component_rows
+        )),
         'ksbCount': len({mapping['code'] for mapping in module_mappings + [m for week in weeks for m in week['ksbMappings']] + [m for week in weeks for component in week['components'] for m in component['ksbMappings']]}),
         'lessonCount': len(component_rows),
         'quizCount': len([row for row in component_rows if normalise_component_type(row.get('type')) == 'quiz']),
@@ -22952,10 +22949,10 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
         summary['ksbCount'] = len(summary['ksbCodes'])
         summary['ksbCodes'] = sorted(summary['ksbCodes'])
         # The authored week count the module actually holds, resolved the same way
-        # the structure endpoint resolves it: the stored `weeks_number` wins, and
-        # rows written before that column existed fall back to the weeks that were
-        # counted above. The two reads have to agree -- the catalogue card and the
-        # placement drawer read this one, the Module Builder rail reads the other.
+        # the structure endpoint resolves it: live week rows win, and modules with
+        # no week rows fall back to a sessions-derived estimate. The two reads have
+        # to agree -- the catalogue card and the placement drawer read this one,
+        # the Module Builder rail reads the other.
         authored_week_count = module_stored_week_count(
             module_rows_by_catalogue_id.get(catalogue_id, {}),
             len(summary.get('weekStructure') or []),
@@ -24264,13 +24261,11 @@ def save_module_authoring_structure(
         is_programme_deleted = True
     else:
         is_programme_deleted = programme_archived_for_authoring(programme_id)
-    # The two counts are stored apart on purpose. `weeks_number` is what the
-    # week builder authors; `sessions_number` is what the calendar and the Teams
-    # series schedule. A module delivered Mon+Thu runs 10 sessions across 5
-    # authored weeks -- one column cannot mean both, and collapsing them made
-    # every edit round-trip multiply the weeks shown by the delivery days.
-    # Only the scalar key is read here: `weeks` doubles as the legacy alias for
-    # the week LIST, so an int under that name is a structure payload error.
+    # `sessions_number` is the calendar session count (weeks × delivery days per
+    # week). `weeks` doubles as the legacy alias for the week LIST on this
+    # endpoint, so an int under that name is a structure payload error; the
+    # scalar is supplied as `weeksNumber` instead and used only to seed
+    # `sessions_number` when no other count is available.
     authored_week_count = parse_int(payload.get('weeksNumber'), 0) or parse_int(payload.get('weeks_number'), 0)
     if authored_week_count <= 0:
         authored_week_count = len(weeks) or module_stored_week_count(existing_module_row)
@@ -24328,13 +24323,11 @@ def save_module_authoring_structure(
             # No draft/published value: modules.status is the lifecycle only
             # (active/inactive, CHECK-constrained), set above.
             'sessions_number': stored_sessions_number,
-            'weeks_number': authored_week_count or None,
             # parse_date, not the raw value: callers that merge a stored payload
             # send '' for a module that has no dates, and an empty string reaching
             # a date column is a DataError, not a null. '' means "no date".
             'start_date': parse_date(payload.get('startDate') if 'startDate' in payload else payload.get('start_date') if 'start_date' in payload else existing_module_row.get('start_date')),
             'end_date': parse_date(payload.get('endDate') if 'endDate' in payload else payload.get('end_date') if 'end_date' in payload else existing_module_row.get('end_date')),
-            'total_otjh': declared_total,
             'quality_score': quality_score,
             'source_type': payload.get('sourceType') or payload.get('source_type') or existing_module_row.get('source_type') or None,
             'source_id': payload.get('sourceId') or payload.get('source_id') or existing_module_row.get('source_id') or None,
@@ -34928,15 +34921,28 @@ def resync_group_module_delivery_counts(previous_rows, delivery_updates):
     only self-heals a stored value that had drifted from that formula.
 
     ``previous_rows`` are the module rows as they stood *before* the new delivery
-    days were written. The week count is read from them on purpose: a legacy row
-    with no ``weeks_number`` derives its weeks by dividing sessions by the
-    delivery days, and doing that against the new day list would divide a
-    one-day-a-week module's sessions in half and then multiply them straight back
-    -- leaving the very count this is here to correct.
+    days were written. Week counts are fetched live from ``curriculum.weeks``
+    so the resync always reflects the current authored structure.
     """
+    if not previous_rows:
+        return
+    catalogue_ids = [clean_str(r.get('module_catalogue_id')) for r in previous_rows if r.get('module_catalogue_id')]
+    live_week_counts = {}
+    if catalogue_ids:
+        week_rows = [
+            row for row in active_week_rows(authoring_fetch_all(
+                AUTHORING_WEEKS_TABLE, 'module_catalogue_id = ANY(%s)', [catalogue_ids],
+                columns=['module_catalogue_id', 'status'],
+            ))
+            if clean_str(row.get('status')).lower() not in ('inactive',)
+        ]
+        for row in week_rows:
+            mid = clean_str(row.get('module_catalogue_id'))
+            if mid:
+                live_week_counts[mid] = live_week_counts.get(mid, 0) + 1
     for previous_row in previous_rows or []:
         catalogue_id = clean_str(previous_row.get('module_catalogue_id'))
-        weeks = module_stored_week_count(previous_row)
+        weeks = live_week_counts.get(catalogue_id, 0)
         if not catalogue_id or weeks <= 0:
             continue
         module_row = {**previous_row, **delivery_updates}
@@ -34944,13 +34950,11 @@ def resync_group_module_delivery_counts(previous_rows, delivery_updates):
         end_date = module_calendar_end_date(module_row.get('start_date'), weeks) or format_date(module_row.get('end_date'))
         if (
             sessions == parse_int(previous_row.get('sessions_number'), 0)
-            and weeks == parse_int(previous_row.get('weeks_number'), 0)
             and end_date == format_date(previous_row.get('end_date'))
         ):
             continue
         update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id], {
             'sessions_number': sessions,
-            'weeks_number': weeks,
             'end_date': end_date or None,
             'updated_at': datetime.utcnow(),
         })
@@ -37460,16 +37464,29 @@ def curriculum_tutor_workspace(request):
     modules = []
     if module_ids:
         placeholders = ', '.join(['%s'] * len(module_ids))
-        for row in authoring_fetch_all(
-            AUTHORING_MODULES_TABLE,
-            # Do not replace or drop an explicitly assigned ID because its
-            # curriculum row is archived. The staff profile is the source of
-            # truth for this tutor's scope; the row still supplies the module
-            # metadata needed by the workspace.
-            f'module_catalogue_id in ({placeholders})',
-            module_ids,
-            'start_date, title',
-        ):
+        if connection.vendor == 'postgresql':
+            # Compute expected OTJH from active components; the stored
+            # total_otjh column is being removed (see drop_module_total_otjh.sql).
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f'SELECT m.module_catalogue_id,m.title,m.description,m.programme_name,'
+                    f'm.cohort_name,m.group_name,m.color,m.sessions_number,'
+                    f'm.start_date,m.end_date,m.session_week_day,m.session_start_time,m.session_end_time,'
+                    f'{module_expected_otjh_sql("m")} AS total_otjh'
+                    f' FROM {authoring_table_name(AUTHORING_MODULES_TABLE)} m'
+                    f' WHERE m.module_catalogue_id IN ({placeholders})'
+                    f' ORDER BY m.start_date,m.title',
+                    module_ids,
+                )
+                module_rows = rows_as_dicts(cursor)
+        else:
+            module_rows = authoring_fetch_all(
+                AUTHORING_MODULES_TABLE,
+                f'module_catalogue_id in ({placeholders})',
+                module_ids,
+                'start_date, title',
+            )
+        for row in module_rows:
             payload = tutor_workspace_module_payload(row)
             # Each module carries its own next session, so opening one does not
             # need a second request to find out when it next runs.

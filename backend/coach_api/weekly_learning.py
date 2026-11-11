@@ -143,7 +143,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             to_jsonb(m)->'weekly_schedule' AS weekly_schedule,'''
     with connections['enrolment'].cursor() as cur:
         cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
-            m.weeks_number,m.sessions_number,m.cohort_id,
+            (SELECT COUNT(*) FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id AND {visible_week_sql('w')}) AS weeks_number,m.sessions_number,m.cohort_id,
             (SELECT jsonb_agg(sc.source_payload->'weekly_display')
              FROM curriculum.source_courses sc
              WHERE sc.source_system='old_lms' AND sc.source_course_ref=m.source_id

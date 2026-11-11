@@ -6,6 +6,7 @@ from learner_api.journal_sources import learner_journal_reads
 from old_otjh.service import ServiceError
 from old_otjh.repository import query
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 
 
 def overview_owner(context):
@@ -31,8 +32,10 @@ def read_overview_catalogue(context):
         if student_activity_available(context.source.aptem_id) else []
     with connections['enrolment'].cursor() as cur:
         ids, links = plan_module_ids(cur, context.source, owner)
-        cur.execute('''SELECT module_catalogue_id AS id,title,start_date,end_date,total_otjh,sessions_number
-            FROM curriculum.modules WHERE module_catalogue_id=ANY(%s) ORDER BY title,module_catalogue_id''', [ids])
+        cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
+            {module_expected_otjh_sql('m')} AS total_otjh,m.sessions_number
+            FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
+            ORDER BY m.title,m.module_catalogue_id''', [ids])
         modules = [{**row, 'title': clean_text(row['title']), 'total_otjh': number(row['total_otjh']),
                     'start_date': date_only(row['start_date']), 'end_date': date_only(row['end_date'])}
                    for row in rows(cur)]

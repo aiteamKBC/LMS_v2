@@ -12,6 +12,7 @@ from django.db import connections
 from django.utils import timezone
 from old_otjh.service import ServiceError
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 
 from . import canonical_learning as canonical, training_plan_dashboard as schedule
 from .dashboard_monthly import day, display_subjects, review_day
@@ -138,7 +139,7 @@ def module_rows(cur, ids, *, rich_id=None, identity_metadata=None):
         CASE WHEN m.module_catalogue_id=%s THEN m.description ELSE '' END AS description,
         m.start_date,m.end_date,{module_tutor_name_sql('m')} AS tutor_name,
         {group_coach_name_sql('g')} AS coach_name,
-        {module_placement_names_sql('m')},m.total_otjh,m.weeks_number,m.sessions_number,m.cohort_id,
+        {module_placement_names_sql('m')},{module_expected_otjh_sql('m')} AS total_otjh,(SELECT COUNT(*) FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id AND {visible_week_sql('w')}) AS weeks_number,m.sessions_number,m.cohort_id,
         coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
         coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
         coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time

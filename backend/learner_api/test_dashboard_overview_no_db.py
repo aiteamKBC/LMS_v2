@@ -432,7 +432,9 @@ class OverviewProjectionTests(SimpleTestCase):
             self.assertEqual(schedule.plan_planned_hours(object(), {'id': 17}, ids=['M1', 'M2']), 576.12)
             resolve.assert_not_called()
             sql, params = cursor.execute.call_args.args
-            self.assertIn('sum(total_otjh)', sql)
+            self.assertIn('curriculum.weeks', sql)
+            self.assertIn('curriculum.components', sql)
+            self.assertNotIn('total_otjh', sql)
             self.assertEqual(params, [['M1', 'M2']])
             cursor.execute.reset_mock()
             self.assertIsNone(schedule.plan_planned_hours(object(), {'id': 17}, ids=[]))

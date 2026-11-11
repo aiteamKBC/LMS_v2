@@ -529,8 +529,6 @@ class Command(BaseCommand):
                     views.clean_str(record.get('tutor_email'))
                     or views.resolve_staff_assignment_email('tutor', record.get('tutor_name'))
                 ),
-                'total_otjh': round(module_otjh, 2),
-                'weeks_number': len(week_payloads),
                 'sessions_number': len(week_payloads),
                 'source_type': 'mba-legacy',
                 'source_id': str(record.get('course_id')),

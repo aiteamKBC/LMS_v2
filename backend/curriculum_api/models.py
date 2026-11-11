@@ -162,7 +162,6 @@ class ModuleAuthoringModule(StatusLifecycleModel):
     tutor_id = models.CharField(max_length=255, blank=True, null=True)
     title = models.TextField()
     description = models.TextField(blank=True, null=True)
-    total_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     quality_score = models.IntegerField(default=0)
     status = models.CharField(max_length=32, default='active')
     created_at = models.DateTimeField(auto_now_add=True)
