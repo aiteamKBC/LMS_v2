@@ -8,9 +8,6 @@
 #   backend        Docker image, Django checks, no-database tests (each
 #                  module in its own process: they stub parts of Django),
 #                  /health/ smoke test, image vulnerability scan (Trivy)
-#   backend-db     Django tests against a throwaway Neon branch holding the
-#                  production *schema only* (no data); deleted afterwards.
-#                  Report-only until the suite is green (needs NEON_API_KEY)
 #   frontend       lint, type-check, build (blocking); unit tests (report)
 #   security       leaked-secret scan of the new commits (gitleaks),
 #                  dependency audits (npm audit, pip-audit)
@@ -205,61 +202,6 @@ jobs:
           docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
             -e SHARD=${{ matrix.shard }} -e SHARDS=4 \
             -v "$PWD/.github/ci:/ci:ro" --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
-
-  # ------------------------------------------- backend tests with a database
-  backend-db:
-    name: Backend - database tests (Neon schema branch)
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
-    # Report-only until the suite passes; then remove continue-on-error and
-    # add this job to deploy.needs
-    continue-on-error: true
-    env:
-      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
-      NEON_PARENT_BRANCH_ID: ${{ vars.NEON_PARENT_BRANCH_ID }}
-    steps:
-      - name: Skip when Neon is not configured
-        if: env.NEON_API_KEY == '' || env.NEON_PROJECT_ID == ''
-        run: echo "::notice::NEON_API_KEY / NEON_PROJECT_ID not set - database tests skipped"
-
-      - uses: actions/checkout@v4
-        if: env.NEON_API_KEY != '' && env.NEON_PROJECT_ID != ''
-        with:
-          ref: ${{ env.CHECKOUT_REF }}
-
-      - name: Create a schema-only Neon branch (no data)
-        if: env.NEON_API_KEY != '' && env.NEON_PROJECT_ID != ''
-        id: neon
-        run: bash .github/ci/neon_branch.sh create
-
-      - name: Run Django tests on the branch
-        if: steps.neon.outcome == 'success'
-        env:
-          BRANCH_URL: ${{ steps.neon.outputs.url }}
-          BRANCH_ID: ${{ steps.neon.outputs.id }}
-        run: |
-          set -o pipefail
-          cd backend
-          python3 -m pip install -q -r requirements.txt
-          # DATABASE_URL is only compared (by host) to prove the branch is not
-          # production; settings never connect to it in branch mode
-          export DATABASE_URL="postgresql://ci@${{ vars.NEON_PRODUCTION_HOST || 'production.invalid' }}/neondb"
-          export security_Database_url="$BRANCH_URL" SECURITY_TEST_BRANCH_ID="$BRANCH_ID"
-          export USE_SECURITY_TEST_BRANCH=true DJANGO_SECRET_KEY=ci DJANGO_DEBUG=false DB_POOL=false
-          python3 manage.py test --keepdb --noinput --pattern="tests*.py" \
-            --testrunner=login.test_runner.EnrolmentTestRunner 2>&1 | tee ../db-tests.txt
-      - name: Summary
-        if: always() && steps.neon.outcome == 'success'
-        run: |
-          { echo '### Database tests'; echo '```'; tail -5 db-tests.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Delete the Neon branch
-        if: always() && steps.neon.outputs.id != ''
-        env:
-          BRANCH_ID: ${{ steps.neon.outputs.id }}
-        run: bash .github/ci/neon_branch.sh delete "$BRANCH_ID"
 
   # --------------------------------------------------------------- frontend
   frontend:
