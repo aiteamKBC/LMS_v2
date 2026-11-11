@@ -114,15 +114,17 @@ class EvidenceUploadDeleteTests(SimpleTestCase):
         self.assertIn("learner_kind = %s and learner_id = %s", lookup_sql)
         self.assertEqual(lookup_params, ["file-id", "commercial", "56"])
         delete_blob.assert_not_called()
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertIn('pg_advisory_xact_lock', cursor.execute.call_args_list[0].args[0])
 
     def test_owner_can_delete_an_unsubmitted_file_with_scoped_queries(self):
         cursor = MagicMock()
-        cursor.fetchone.return_value = ("commercial/56/COMP-1/file.pdf", "approved", "COMP-1", None)
+        cursor.fetchone.return_value = ("commercial/56/COMP-1/file.pdf", "approved", "COMP-1", None, "file.pdf")
         connection = self.enterContext(patch.object(evidence, "_conn"))
         connection.return_value.cursor.return_value.__enter__.return_value = cursor
         self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
         self.enterContext(patch.object(evidence, "_is_submitted_for_marking", return_value=False))
+        self.enterContext(patch.object(evidence, "_evidence_submissions", return_value=[]))
         self.enterContext(patch.object(evidence, "azure_configured", return_value=False))
         request = self.factory.delete("/evidence/file-id/")
 
@@ -156,9 +158,15 @@ class SubmittedForMarkingTests(SimpleTestCase):
         return cursor
 
     def test_an_activity_sent_to_a_coach_is_locked(self):
-        self._cursor(submission_row=(1,))
+        self._cursor(submission_row=('submitted_for_tutor_review',))
 
         self.assertTrue(_is_submitted_for_marking("commercial", "101", "COMP-1"))
+
+    def test_drafts_and_returned_work_do_not_lock_new_uploads(self):
+        for status in ('draft', 'rejected', 'referred'):
+            with self.subTest(status=status):
+                self._cursor(submission_row=(status,))
+                self.assertFalse(_is_submitted_for_marking('commercial', '101', 'COMP-1'))
 
     def test_a_completed_activity_that_was_never_submitted_stays_editable(self):
         # The bug this replaces. Finishing an activity writes a progress entry;
