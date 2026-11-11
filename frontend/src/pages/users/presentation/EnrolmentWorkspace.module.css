@@ -126,21 +126,21 @@
 .directorySummary > span { padding: .0625rem .625rem; border: 1px solid #ffffff90; border-radius: 999px; background: #f5eff999; color: #30213a; }
 .heroActions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .5rem; margin-top: .25rem; }
 .heroActions > div { max-width: 100%; }
-.heroActions :is(button,a), .heroTools > summary { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .375rem .875rem; border: 1px solid #f5eff98c; border-radius: 1rem; background: #f5eff924; box-shadow: none; color: #f5eff9; font: 500 .8125rem/1.5 var(--font-body); gap: .5rem; cursor: pointer; }
+.heroActions :is(button,a), .heroActions .heroToolsTrigger { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .375rem .875rem; border: 1px solid #f5eff98c; border-radius: 1rem; background: #f5eff924; box-shadow: none; color: #f5eff9; font: 500 .8125rem/1.5 var(--font-body); gap: .5rem; cursor: pointer; }
 .heroActions > div > button:first-child { background: #f5eff9a0; color: #30213a; }
 .heroActions .heroPrimary { border-color: #f5eff98c; background: #f5eff924; color: #f5eff9; }
 .heroActions .heroSecondary { background: #f5eff9a0; color: #30213a; }
 .heroActions :is(button,a):disabled { opacity: .5; cursor: not-allowed; }
-.heroActions :is(button,a):hover:not(:disabled), .heroTools > summary:hover { background: #f5eff9; color: #30213a; }
+.heroActions :is(button,a):hover:not(:disabled), .heroActions .heroToolsTrigger:hover { background: #f5eff9; color: #30213a; }
 .heroTools { position: relative; }
-.heroTools > summary { width: 2.25rem; padding: 0; list-style: none; background: #f5eff9a0; color: #30213a; }
-.heroTools > summary::-webkit-details-marker { display: none; }
-.heroToolsMenu { position: absolute; z-index: var(--enrolment-z-menu, 10); top: calc(100% + .5rem); left: 0; display: grid; gap: .25rem; width: max-content; max-width: min(20rem,calc(100vw - 3rem)); padding: .5rem; border: 1px solid #d6c9e4; border-radius: 1rem; background: #fff; box-shadow: 0 10px 32px #25113426; }
+.heroActions .heroToolsTrigger { width: 2.25rem; padding: 0; background: #f5eff9a0; color: #30213a; }
+/* Portalled menus (FloatingMenu): placed and flipped in script, so no positioning here. */
+.heroToolsMenu[role="group"] { display: grid; gap: .25rem; max-width: min(20rem,calc(100vw - 1rem)); padding: .5rem; border: 1px solid #d6c9e4; border-radius: 1rem; background: #fff; box-shadow: 0 10px 32px #25113426; }
 /* This menu is portaled to body: above navigation, below user dialogs (100). */
-.portalMenu { z-index: 60; }
-.heroActions .heroToolsMenu :is(button,a) { justify-content: flex-start; border: 0; border-radius: .5rem; background: white; color: #49265e; }
-.heroActions .heroToolsMenu :is(button,a):hover { background: #f2eaf9; }
-.heroTools > summary:focus-visible { outline: 3px solid #f3d976; outline-offset: 3px; }
+.createMenu[role="group"] { width: 14rem; gap: 0; padding: .375rem; border-color: #e2dbe8; }
+.heroToolsMenu[role="group"] :is(button,a) { justify-content: flex-start; border: 0; border-radius: .5rem; background: white; color: #49265e; }
+.heroToolsMenu[role="group"] :is(button,a):hover { background: #f2eaf9; }
+.heroToolsMenu[role="group"] :is(button,a):focus-visible, .rowMoreMenu[role="group"] button:focus-visible, .createMenu[role="group"] button:focus-visible { outline: 3px solid #8b5db1; outline-offset: 1px; }
 .heroActions :is(button,a):focus-visible { outline: 3px solid #f3d976; outline-offset: 3px; }
 .shell .hero .heroActions :is(button,a) { border-radius: 1rem; }
 .page :global(.admin-console-page) { padding: 0; }
@@ -171,7 +171,7 @@
 .filterSelectMenu [role="option"] > span > span { font-size: .8125rem; font-weight: 400; }
 .filterSelectMenu [role="option"][aria-selected="true"] { background: #f0e7fa; color: #542b76; }
 .filterSelectMenu [role="option"]:hover:not(:disabled) { background: #f6f0fb; color: #542b76; }
-.filterMultiMenu { z-index: var(--enrolment-z-menu, 10); }
+.filterMultiMenu[role="group"] { gap: 0; max-width: none; padding: .25rem 0; border-color: #d9cce7; border-radius: .875rem; }
 .filterMultiMenu label { margin: .125rem .375rem; border-radius: .625rem; }
 .filterMultiMenu label:has(input:checked) { background: #f0e7fa; color: #542b76; }
 .page table, .profile table { width: 100%; }
@@ -214,7 +214,6 @@
 .userTable td[colspan] p { display: flex; align-items: center; justify-content: center; gap: .5rem; }
 .userTable tbody tr:has(> td[data-label]) { position: relative; display: grid; grid-template-columns: minmax(15rem,.7fr) minmax(0,1.4fr) repeat(2,minmax(0,1.05fr)) minmax(0,1.15fr) 9.25rem; grid-template-rows: auto auto; align-content: center; gap: .75rem 1rem; min-height: 7.375rem; padding: .875rem 1rem; border: 1px solid var(--enrolment-border); border-radius: 1rem; background: #fefdfF !important; }
 .userTable tbody tr > td { min-width: 0; max-width: none; padding: 0; border: 0 !important; border-radius: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; }
-.userTable tbody tr:has(.rowMore[open]) { z-index: var(--enrolment-z-menu, 10); }
 /* Beat the legacy workspace table rules without changing other directories. */
 .shell .users .userTable tbody tr:has(> td[data-label]) { background: #fefdfF !important; }
 .shell .users .userTable tbody tr:hover { background: #f8f5fc !important; }
@@ -261,17 +260,16 @@
 .programmeStatus[data-status="Withdrawn"] .rowDot { background: #ef4444; }
 .programmeStatus[data-status="On break"] .rowDot { background: #e0a328; }
 .userTable td[data-label="Actions"] { grid-column: 6; grid-row: 1 / 3; align-self: center; padding-right: 2.75rem; }
-.shell .users .userTable td[data-label="Actions"] button, .rowMore > summary { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; min-height: 2.25rem; min-width: 2.25rem; padding: 0; border: 1px solid #d9cde6; border-radius: .75rem; background: #fff; color: #736b62; font-size: .875rem; text-decoration: none; cursor: pointer; }
+.shell .users .userTable td[data-label="Actions"] button, .shell .users .userTable .rowMoreTrigger { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; min-height: 2.25rem; min-width: 2.25rem; padding: 0; border: 1px solid #d9cde6; border-radius: .75rem; background: #fff; color: #736b62; font-size: .875rem; text-decoration: none; cursor: pointer; }
 .shell .users .userTable td[data-label="Actions"] button.viewAction { width: auto; min-width: 3.75rem; padding-inline: .75rem; color: #5d2e88; font-weight: 600; }
 .userTable td[data-label="Actions"] > span { justify-content: flex-end; gap: .5rem; }
 .userTable td[data-label="Learning plan"] { grid-column: 6; grid-row: 1 / 3; align-self: center; justify-self: end; }
 .userTable td[data-label="Learning plan"]::before { display: none; }
-.rowMore { position: relative; }
-.rowMore > summary { list-style: none; }
-.rowMore > summary::-webkit-details-marker { display: none; }
-.rowMore[open] > summary { border-color: #5d2e88; background: #f4edf9; color: #5d2e88; }
-.shell .users .rowMore > span { position: absolute; z-index: var(--enrolment-z-menu, 10); top: calc(100% + .375rem); right: 0; display: flex; flex-direction: column; align-items: stretch; width: max-content; max-width: min(22rem,calc(100vw - 4rem)); padding: .625rem; border: 1px solid var(--enrolment-border); border-radius: .75rem; background: #fff; box-shadow: 0 8px 24px #29143a20; }
-.rowMore > span > button { justify-content: flex-start; }
+/* Shares grid cell 6 with the Actions cell; positioned so it paints above it (as the old <details> did). */
+.shell .users .userTable .rowMoreTrigger { position: relative; }
+.shell .users .userTable .rowMoreTrigger[aria-expanded="true"] { border-color: #5d2e88; background: #f4edf9; color: #5d2e88; }
+.rowMoreMenu[role="group"] { max-width: min(22rem,calc(100vw - 1rem)); gap: .5rem; padding: .625rem; font-size: .8125rem; border-color: var(--enrolment-border, #ded4eb); }
+.rowMoreMenu > button, .rowMoreMenu > span { justify-content: flex-start; }
 .sessionFilters { grid-template-columns: repeat(3,minmax(0,1fr)); align-items: end; gap: .75rem; }
 .sessionFilters > fieldset { display: contents; }
 .sessionFilters > button { grid-column: 1 / -1; justify-self: end; box-shadow: none; }
@@ -371,12 +369,11 @@
   .users .metrics { grid-template-columns: minmax(0,1fr); }
   .users .metrics > * { min-height: 7rem; }
   .userTable tbody { padding: .75rem; }
-  .shell .users .userTable td[data-label="Actions"] button, .rowMore > summary { width: 2.75rem; height: 2.75rem; min-height: 2.75rem; }
+  .shell .users .userTable td[data-label="Actions"] button, .shell .users .userTable .rowMoreTrigger { width: 2.75rem; height: 2.75rem; min-height: 2.75rem; }
   .userTable td[data-label="Actions"] { padding-right: 3.25rem; }
   .page .filterPanel :is(input,select), .wizard :is(input:not([type="checkbox"]):not([type="radio"]),select) { min-height: 2.75rem; }
   .users .filterSelectTrigger { height: 2.75rem; min-height: 2.75rem; }
   .profile > :global(.grid) { grid-template-columns: minmax(0,1fr); }
-  .heroToolsMenu { left: auto; right: 0; }
   .heroTools { margin-left: auto; }
   .heroActions > div > :is(button,div) > button, .heroActions > div > button { padding-inline: .625rem; }
   .sessionTable { padding: .75rem; }

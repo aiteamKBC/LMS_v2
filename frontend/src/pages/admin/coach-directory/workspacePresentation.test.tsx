@@ -108,9 +108,14 @@ it('preserves booking targets, edit values and removal confirmation in the Enrol
   expect(within(editor).getByLabelText('One to one URL')).toHaveValue('');
   fireEvent.click(within(editor).getByRole('button', { name: 'Cancel' }));
   confirm.mockReturnValue(false);
-  const more = card.querySelectorAll('details')[1];
-  fireEvent.click(more.querySelector('summary')!);
-  fireEvent.click(within(card).getByRole('button', { name: 'Remove coach' }));
+  // The menu is portalled so the card cannot clip it; it is reached from its own button.
+  const more = within(card).getByRole('button', { name: `More actions for ${coach.name}` });
+  expect(screen.queryByRole('button', { name: 'Remove coach' })).not.toBeInTheDocument();
+  fireEvent.click(more);
+  expect(more).toHaveAttribute('aria-expanded', 'true');
+  const actions = screen.getByRole('group', { name: `Actions for ${coach.name}` });
+  expect(card).not.toContainElement(actions);
+  fireEvent.click(within(actions).getByRole('button', { name: 'Remove coach' }));
   expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('does not delete their LMS account or cancel existing bookings'));
   expect(deleteCoach).not.toHaveBeenCalled();
 });
