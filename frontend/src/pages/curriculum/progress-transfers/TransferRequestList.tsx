@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, type KeyboardEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, Eye, Hourglass, Plus, Search, X } from 'lucide-react';
+import { CalendarDays, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, Eye, Hourglass, Plus, Search, X } from 'lucide-react';
 import type { AdminTransfer, AdminTransfers, TransferModule } from '@/api/progressTransfer';
 import { formatSystemTimestamp, systemDateParts } from '@/lib/format';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
@@ -147,7 +147,7 @@ export function TransferRequestList({ data, reading, saving, error, onReview, on
           <td role="cell" data-label="Programme & modules"><div className={styles.programmeCell}><div><strong className={styles.programmeName}>{row.programme || 'Programme not provided'}</strong><small className={styles.programmeDirection}>Old LMS → assigned modules</small></div><ModuleSummary modules={row.modules} requestId={row.requestId} /></div></td>
           <td role="cell" data-label="Requested"><RequestDate value={row.requestedAt} pending={status === 'pending'} /></td>
           {status === 'approved' && <td role="cell" data-label="Approved"><RequestDate value={row.approvedAt} /></td>}
-          <td role="cell" className={styles.rowAction}><button type="button" className={styles.button} disabled={reading || saving} onClick={event => onReview(row.requestId, event.currentTarget)} title={status === 'pending' ? 'Review before approving' : 'View transfer details'} aria-label={status === 'pending' ? `Review request ${row.requestId}` : `Details for request ${row.requestId}`}>{status === 'pending' ? <Check size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}<span className="sr-only">{status === 'pending' ? 'Review' : 'View details'}</span></button></td>
+          <td role="cell" className={styles.rowAction}><button type="button" className={`${styles.button} ${status === 'pending' ? styles.reviewAction : ''}`} disabled={reading || saving} onClick={event => onReview(row.requestId, event.currentTarget)} title={status === 'pending' ? 'Review before approving' : 'View transfer details'} aria-label={status === 'pending' ? `Review transfer request ${row.requestId}` : `Details for request ${row.requestId}`}>{status === 'pending' ? 'Review transfer' : <><Eye size={16} aria-hidden="true" /><span className="sr-only">View details</span></>}</button></td>
         </tr>)}</tbody>
       </table> : <div className={styles.empty}>{!data ? reading ? 'Loading transfer requests…' : 'Transfer requests could not be loaded.'
         : !complete ? reading ? 'Loading all request pages…' : `No ${status} requests in the retrieved records. Complete the list to check the rest.`

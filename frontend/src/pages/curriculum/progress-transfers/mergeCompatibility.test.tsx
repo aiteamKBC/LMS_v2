@@ -24,7 +24,7 @@ describe('enrolment merge compatibility with current transfer behavior', () => {
       sources: [{ sourceActivityRef: 'material:unmatched', title: 'Legacy specialist activity', type: 'unknown', week: 'Week 1', automaticTargetId: null }],
       targets: [{ componentId: 'BASE', title: 'Existing activity', type: 'reading', week: 'Week 1', plannedHours: 1 }],
     }] });
-    show(); fireEvent.click(await screen.findByRole('button', { name: 'Review request MERGE-1' }));
+    show(); fireEvent.click(await screen.findByRole('button', { name: 'Review transfer request MERGE-1' }));
     const retain = await screen.findByRole('checkbox', { name: /No equivalent component in the new module/ });
     const approve = screen.getByRole('button', { name: 'Approve transfer' });
     expect(approve).toBeDisabled(); expect(api.approveTransferRequest).not.toHaveBeenCalled();
@@ -50,7 +50,7 @@ describe('enrolment merge compatibility with current transfer behavior', () => {
       targets: [{ componentId: 'BASE', title: 'Verified destination', type: 'reading', week: 'Week 1', plannedHours: 1 },
         { componentId: 'EXTRA', title: 'Additional destination', type: 'reading', week: 'Week 2', plannedHours: 1 }],
     }] });
-    show(); fireEvent.click(await screen.findByRole('button', { name: 'Review request MERGE-1' }));
+    show(); fireEvent.click(await screen.findByRole('button', { name: 'Review transfer request MERGE-1' }));
     const choices = within(await screen.findByRole('group', { name: 'Match Verified source (material:verified) in New module' }));
     fireEvent.click(choices.getByRole('button', { name: 'Choose components' }));
     fireEvent.click(choices.getByRole('button', { name: /^Week 2/ }));

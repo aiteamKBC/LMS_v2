@@ -1,0 +1,102 @@
+[
+  {
+    "id": "users", "title": "User Management", "path": "/users",
+    "chapters": [
+      { "id": "overview", "title": "Find your way around", "text": "Manage learners, administrators and employers here. The summary cards filter the directory by role or active programme." },
+      { "id": "filters", "title": "Search and filter", "text": "Search names, email addresses, groups or programmes. Open Filters, choose your criteria and select Apply filters. Clear all resets them." },
+      { "id": "records", "title": "Open and edit records", "text": "View opens the learner workspace or employer page. The pencil edits details. More actions contains additional options for that record." },
+      { "id": "create", "title": "Create and import users", "text": "Create user offers the supported user types. Upload learners opens the import process. Review the information before submitting." },
+      { "id": "tools", "title": "Directory tools", "text": "Columns changes the visible fields. Export downloads the current results. Administrative tools include bulk actions and the form builders." }
+    ]
+  },
+  {
+    "id": "first-sessions", "title": "First Sessions", "path": "/users/first-sessions",
+    "chapters": [
+      { "id": "overview", "title": "Understand the bookings list", "text": "Review first-session bookings, including past and cancelled sessions. The summary shows scheduled, awaiting-approval and completed bookings." },
+      { "id": "filters", "title": "Narrow the results", "text": "Filter by case owner, programme, session dates or booking dates. Status buttons narrow the list further. Clear filters restores all bookings." },
+      { "id": "details", "title": "Read a booking", "text": "Each row shows the learner, programme, owner, booking date, session date and time. Session times are displayed in UK time." },
+      { "id": "meeting", "title": "Open a session", "text": "Open the learner record for more detail. An available meeting link opens Teams. A booking status does not confirm every attendee has accepted." }
+    ]
+  },
+  {
+    "id": "coach-directory", "title": "Coach Directory", "path": "/users/coach-directory",
+    "chapters": [
+      { "id": "overview", "title": "Browse coaches", "text": "Find coaches and their public booking pages. Search by name or link, sort by name, and filter by available booking type." },
+      { "id": "layout", "title": "Choose a layout", "text": "Switch between List and Cards. Each coach shows the booking options configured for their public page." },
+      { "id": "share", "title": "Preview or share a booking page", "text": "Preview opens the public booking page. Copy page link lets you share it. Confirm availability before promising a learner a slot." },
+      { "id": "edit", "title": "Add and update a coach", "text": "Add coach opens the editor. Enter the coach name and booking URLs, then Save coach. Edit updates an existing entry." },
+      { "id": "remove", "title": "Remove an entry", "text": "Remove coach asks for confirmation before deleting a directory entry. Check the coach name and the effect on shared links before confirming." }
+    ]
+  },
+  {
+    "id": "progress-transfers", "title": "Transfer Progress", "path": "/users/progress-transfers",
+    "chapters": [
+      { "id": "overview", "title": "Review transfer requests", "text": "Administrators review requests to move learning progress from the old LMS into new modules. Pending and Approved separate requests by status." },
+      { "id": "filters", "title": "Find a request", "text": "Search the retrieved requests, filter by programme and change the sort order. Use pagination and retrieval controls when more requests are available." },
+      { "id": "matching", "title": "Check component matching", "text": "Review transfer opens the old and new module components. Move between weeks and check the proposed matches. Review existing completions before making changes." },
+      { "id": "approve", "title": "Approve a transfer", "text": "Approve transfer applies the reviewed mappings. Check the learner and module carefully. Cancel closes the review without approving the request." },
+      { "id": "history", "title": "Check history and refresh", "text": "Approved shows completed requests. Export log downloads the transfer log. Refresh retrieves current requests; use Retry refresh if the service fails." }
+    ]
+  },
+  {
+    "id": "my-courses", "title": "My Courses", "path": "/users/my-courses",
+    "chapters": [
+      { "id": "overview", "title": "Your own learning", "text": "This is the administrator's personal learning space. Courses you have joined as a learner appear here. Previewing a course does not enrol you." },
+      { "id": "progress", "title": "Read your progress", "text": "Each course card shows its title and available progress information. Use the progress summary to see how much tracked learning is complete." },
+      { "id": "outline", "title": "Explore a course outline", "text": "Expand the course outline to see its weeks and activities. This helps you check the content before continuing your learning." },
+      { "id": "continue", "title": "Continue and refresh", "text": "Continue learning opens the learner course pages. Refresh updates your courses. If loading fails, Try again retries the request." }
+    ]
+  },
+  {
+    "id": "enrolment-details", "title": "Enrolment Details", "path": "/users/1",
+    "chapters": [
+      { "id": "overview", "title": "Review the learner record", "text": "Check the learner identity, programme, owner and onboarding status. Overview brings together contact details, programme information, contacts and notes." },
+      { "id": "wizard", "title": "Review enrolment answers", "text": "Show wizard opens the learner's enrolment form. Check the correct learner and delivery type before editing. Return here with Close wizard." },
+      { "id": "documents", "title": "Documents and signatures", "text": "For apprenticeship learners, Documents contains compliance paperwork, reviews and uploads. Check document status and signatures before issuing or signing anything." },
+      { "id": "skills", "title": "Skills and progress", "text": "Skills & progress brings together recorded competencies and course progress. Use the available training-plan actions to review or build the learner's plan." },
+      { "id": "activity", "title": "Activity and completion", "text": "Activity shows the recorded history. Finish enrolment is a separate action: review the required information and document status before completing it." }
+    ]
+  },
+  {
+    "id": "wizard", "title": "Enrolment Wizard", "path": "/users/1/wizard/introduction",
+    "chapters": [
+      { "id": "introduction", "title": "Welcome and navigation", "text": "Review this learner's enrolment answers step by step. Use the step navigation and progress indicators. Close wizard returns to the learner record." },
+      { "id": "before-you-begin", "title": "Before you begin", "text": "Read the preparation guidance before entering information. Check which details and evidence are needed. The published form controls the steps and questions shown." },
+      { "id": "personal-details", "title": "Personal details", "text": "Check the learner's name, contact details and other personal information. Required questions and format messages help identify incomplete or invalid answers." },
+      { "id": "ilr-details", "title": "ILR learner details", "text": "For apprenticeship learners, review the Individualised Learner Record details. Check the learner's declarations and evidence; do not guess missing information." },
+      { "id": "ilr", "title": "Extended ILR", "text": "Review the additional funding and learner information shown in this step. Complete applicable follow-up questions and declarations. Commercial enrolment skips the ILR steps." },
+      { "id": "cv-job", "title": "CV and job description", "text": "Review the learner's experience and the CV or job-description evidence requested by this form. Check uploaded evidence before moving on." },
+      { "id": "plr", "title": "Personal Learning Record", "text": "Review prior qualifications and the Personal Learning Record information. Check the evidence and any details already captured for the learner." },
+      { "id": "skills-radar", "title": "Skills Radar", "text": "Review the learner's self-assessment against the programme competencies. Staff review mode preserves the learner's own responses rather than replacing their ratings." },
+      { "id": "inclusion", "title": "Inclusion", "text": "Review the inclusion guidance and recorded assessment status. This status comes from the connected safeguarding assessment, rather than a status you can invent here." },
+      { "id": "policies", "title": "Policies", "text": "Review the policy documents and required acknowledgements. Read each document before confirming that it has been understood." },
+      { "id": "next-steps", "title": "Next steps and submission", "text": "Read what happens next and review incomplete steps. Submit only after checking the learner's information. A successful submission returns you to the profile." }
+    ]
+  },
+  {
+    "id": "wizard-builder", "title": "Enrolment Wizard Builder", "path": "/users/wizard-builder",
+    "chapters": [
+      { "id": "overview", "title": "Edit the published form", "text": "This editor controls the apprenticeship enrolment wizard. Work on a draft copy of the published layout. Changes reach learners when you publish." },
+      { "id": "steps", "title": "Organise steps and questions", "text": "Select a step to review its questions and content. Use the available ordering and editing controls. Some built-in items have restrictions." },
+      { "id": "questions", "title": "Configure form fields", "text": "Add supported custom fields, edit labels and text, and choose optional or mandatory where available. Check conditional questions and their dependencies." },
+      { "id": "publish", "title": "Review before publishing", "text": "Review the draft and the publish confirmation carefully. Publishing affects the shared form. Removing a published field hides it while preserving its stored answers." }
+    ]
+  },
+  {
+    "id": "eligibility-builder", "title": "Eligibility Form Builder", "path": "/users/eligibility-builder",
+    "chapters": [
+      { "id": "overview", "title": "Manage the application form", "text": "This editor controls the public apprenticeship eligibility form. Page text, sections and questions are edited in a draft before publication." },
+      { "id": "sections", "title": "Organise sections", "text": "Select a section to review its questions and guidance. Use the available controls to edit or reorder sections and the questions within them." },
+      { "id": "questions", "title": "Edit questions and choices", "text": "Configure supported question types, labels, choices and conditions. Review required questions and dependencies. Built-in questions may have additional restrictions." },
+      { "id": "publish", "title": "Publish the reviewed draft", "text": "Check the draft and publish confirmation before updating the public form. Removing a published question preserves its stored answers. Resolve validation messages before publishing." }
+    ]
+  },
+  {
+    "id": "training-plan", "title": "Training Plan", "path": "/training-plan/apprenticeship/1",
+    "chapters": [
+      { "id": "programme", "title": "Choose the learner placement", "text": "Build or edit this learner's training plan. Choose the programme and applicable cohort and group. Check the learner name before continuing." },
+      { "id": "modules", "title": "Build the learning content", "text": "Add modules from the selected programme. Each module brings its authored weeks and activities. Check the content counts and planned hours." },
+      { "id": "save", "title": "Review and save", "text": "Review the full plan before saving. Back returns to an earlier step. Saving applies the plan to this learner, so check the placement and content carefully." }
+    ]
+  }
+]
