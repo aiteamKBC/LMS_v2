@@ -274,7 +274,7 @@ class SharedRowsCacheTests(SimpleTestCase):
         self.assertEqual(pickle.loads(zlib.decompress(stored)), rows)
 
     def test_rows_follow_the_epoch_and_use_the_payload_ttl(self):
-        self.assertEqual(views.CURRICULUM_ROWS_CACHE_TTL_SECONDS, views.CURRICULUM_CACHE_TTL_SECONDS)
+        self.assertEqual(views.CURRICULUM_ROWS_CACHE_TTL_SECONDS, 300)
         with patch.object(views, 'get_curriculum_rows', side_effect=[{'v': 1}, {'v': 2}]):
             self.assertEqual(views.get_cached_curriculum_rows(), {'v': 1})
             views.shared_curriculum_epoch.return_value = 12
@@ -362,3 +362,29 @@ class InvalidationGuardTests(SimpleTestCase):
             if (self.RAW.search(text) or self.HELPER.search(text)) and 'invalidate_curriculum_cache' not in text:
                 offenders.append(relative)
         self.assertEqual(offenders, [], 'These write cached curriculum tables without invalidate_curriculum_cache().')
+
+
+@LOCAL_CACHE
+class SharedTtlCapTests(SimpleTestCase):
+    """Retired generations must not pile up in Valkey for the payload's full TTL."""
+
+    def setUp(self):
+        views._CURRICULUM_CACHE.clear()
+        self.addCleanup(views._CURRICULUM_CACHE.clear)
+
+    def test_shared_copy_is_capped_but_the_process_copy_keeps_its_ttl(self):
+        with patch.object(views, 'shared_curriculum_epoch', return_value=21), \
+                patch.object(views.cache, 'set', wraps=views.cache.set) as shared_set:
+            views.cached_curriculum_value('cap-check', lambda: {'v': 1}, ttl=1800)
+        self.assertEqual(shared_set.call_args.kwargs['timeout'], views.CURRICULUM_SHARED_TTL_SECONDS)
+        self.assertEqual(views.CURRICULUM_SHARED_TTL_SECONDS, 300)
+        entry = views._CURRICULUM_CACHE['cap-check']
+        import time as _time
+        from datetime import datetime
+        self.assertGreater(entry['expires_at'] - datetime.now().timestamp(), 1700)
+
+    def test_a_shorter_ttl_is_not_raised(self):
+        with patch.object(views, 'shared_curriculum_epoch', return_value=22), \
+                patch.object(views.cache, 'set', wraps=views.cache.set) as shared_set:
+            views.cached_curriculum_value('short-check', lambda: {'v': 1}, ttl=60)
+        self.assertEqual(shared_set.call_args.kwargs['timeout'], 60)

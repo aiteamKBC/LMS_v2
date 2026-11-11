@@ -108,11 +108,19 @@ CURRICULUM_LEARNER_DATA_TTL_SECONDS = 60
 # load -- it asks for `?visibility=all` and the default in the same burst, and
 # each used to pay for its own full read.
 #
-# Shared between processes (Valkey) and compressed, with the payload TTL: the
-# shared epoch is what retires them after a write, in this process or another,
-# so the TTL only bounds how long an unused generation lingers. It used to be a
-# 60 s process-local copy, which every worker re-read from Neon each minute.
-CURRICULUM_ROWS_CACHE_TTL_SECONDS = CURRICULUM_CACHE_TTL_SECONDS
+# Shared between processes (Valkey) and compressed. The shared epoch is what
+# retires them after a write, in this process or another, so the TTL only
+# bounds how long an unused generation lingers; 300 s, like every shared copy
+# (CURRICULUM_SHARED_TTL_SECONDS). It used to be a 60 s process-local copy,
+# which every worker re-read from Neon each minute.
+CURRICULUM_ROWS_CACHE_TTL_SECONDS = 300
+# The SHARED (Valkey) copy of any payload expires after at most this long; the
+# process copy keeps the payload's own TTL. Freshness comes from the epoch,
+# which retires a generation's keys by changing them, not by deleting them: a
+# retired generation simply lingers until its TTL. At hundreds of bumps a day a
+# 1800 s shared TTL kept 15-30 dead generations (~1.8 GB) in Valkey and pushed
+# out live keys. 300 s keeps at most a handful.
+CURRICULUM_SHARED_TTL_SECONDS = int(os.environ.get('CURRICULUM_SHARED_TTL_SECONDS', '300'))
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
 # One lock per payload key, so concurrent misses on the same key rebuild once
@@ -924,7 +932,8 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                 # This key includes the generation: a concurrent invalidation
                 # retires it even if this network write finishes afterwards.
                 try:
-                    cache.set(shared_key, _pack_shared(value) if compress else value, timeout=ttl)
+                    cache.set(shared_key, _pack_shared(value) if compress else value,
+                              timeout=min(ttl, CURRICULUM_SHARED_TTL_SECONDS))
                 except Exception:
                     logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
         finally:
