@@ -17,6 +17,7 @@ import { CompletionValidationError } from '@/lib/completionValidation';
 import type { WorkingHoursHoliday } from '@/lib/componentAccessWindow';
 import { ActivityRetakeTimeDialog } from './ActivityRetakeTimeDialog';
 import { applyActivityTime, type ActivityTimeChoice } from '@/lib/activityTimeDecision';
+import { reflectionKsbOptions } from './ReflectionWindow.ksbs';
 
 
 /** Normalise stored completion clocks. Older records use MM:SS (and may have
@@ -53,7 +54,8 @@ const KSB_GROUPS = [
   { key: 'B', label: 'Behaviours' },
 ] as const;
 
-type KsbGroupKey = (typeof KSB_GROUPS)[number]['key'];
+const KSB_FILTERS = [{ key: 'all', label: 'All KSBs' }, ...KSB_GROUPS] as const;
+type KsbFilterKey = (typeof KSB_FILTERS)[number]['key'];
 
 const BENEFITS = [
   'Improved productivity',
@@ -187,6 +189,7 @@ function ReflectionWindowForm({
   const [tab, setTab] = useState<TabId>(initialTab);
   const [reflection, setReflection] = useState('');
   const [selectedKsbs, setSelectedKsbs] = useState<string[]>([]);
+  const [savedKsbWeights, setSavedKsbWeights] = useState<Record<string, number>>({});
   const [ksbExplanations, setKsbExplanations] = useState<Record<string, string>>({});
   const [confidenceBefore, setConfidenceBefore] = useState<Record<string, number>>({});
   const [confidenceAfter, setConfidenceAfter] = useState<Record<string, number>>({});
@@ -256,35 +259,43 @@ function ReflectionWindowForm({
   const [localRecoveryAvailable, setLocalRecoveryAvailable] = useState(true);
 
   const hasAuthoredKsbs = Array.isArray(autoKsbs) && autoKsbs.length > 0;
-  // Pick relevant codes, not one from every K/S/B category. Authored mappings
-  // constrain the choices; otherwise offer the programme's KSBs.
-  const selectingFromProgramme = !hasAuthoredKsbs;
-  const availableKsbs = useMemo(() => hasAuthoredKsbs ? autoKsbs! : learnerKsbs.map(item => ({
-    code: item.code, description: item.description, weight: 0, classification: 'possible',
-  })), [autoKsbs, hasAuthoredKsbs, learnerKsbs]);
+  const availableKsbs = useMemo(() => reflectionKsbOptions(
+    learnerKsbs, autoKsbs ?? [], selectedKsbs, savedKsbWeights, submissionStatus === 'accepted',
+  ), [autoKsbs, learnerKsbs, selectedKsbs, savedKsbWeights, submissionStatus]);
+  const selectableKsbs = useMemo(() => availableKsbs.filter(item => !item.savedOnly), [availableKsbs]);
   const selectionRequired = availableKsbs.length > 0;
 
-  const [ksbGroup, setKsbGroup] = useState<KsbGroupKey>('K');
+  const [ksbGroup, setKsbGroup] = useState<KsbFilterKey>('all');
+  const [ksbPickerOpen, setKsbPickerOpen] = useState(false);
+  const [ksbSearch, setKsbSearch] = useState('');
+  const ksbPickerId = useId();
+  const ksbPickerButton = useRef<HTMLButtonElement>(null);
+  const ksbSearchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (ksbPickerOpen) ksbSearchInput.current?.focus(); }, [ksbPickerOpen]);
   const programmeKsbGroups = useMemo(() => {
-    const groups: Record<KsbGroupKey, typeof availableKsbs> = { K: [], S: [], B: [] };
-    for (const item of availableKsbs) {
+    const groups: Record<KsbFilterKey, typeof selectableKsbs> = { all: selectableKsbs, K: [], S: [], B: [] };
+    for (const item of selectableKsbs) {
       const kind = String(item.code || '').trim().charAt(0).toUpperCase();
       // Anything that is not an S or B code is listed with Knowledge so it can
       // still be selected.
       groups[kind === 'S' || kind === 'B' ? kind : 'K'].push(item);
     }
     return groups;
-  }, [availableKsbs]);
+  }, [selectableKsbs]);
   const activeKsbGroup = programmeKsbGroups[ksbGroup].length
     ? ksbGroup
-    : KSB_GROUPS.find(group => programmeKsbGroups[group.key].length)?.key ?? ksbGroup;
+    : 'all';
+  const visibleKsbs = programmeKsbGroups[activeKsbGroup].filter(item =>
+    `${item.code} ${item.description ?? ''}`.toLowerCase().includes(ksbSearch.trim().toLowerCase()));
 
   const mappedKsbs = useMemo(() => {
     return availableKsbs.filter(item => selectedKsbs.includes(item.code));
   }, [availableKsbs, selectedKsbs]);
+  const hasMappedSelection = mappedKsbs.some(item => item.mapped);
 
   const mappedKsbWeightSummary = useMemo(() => mappedKsbs.reduce(
     (summary, item) => {
+      if (!item.mapped) return summary;
       const weight = Number(item.weight) || 0;
       const kind = String(item.code || '').trim().charAt(0).toUpperCase();
       summary.total += weight;
@@ -438,6 +449,7 @@ function ReflectionWindowForm({
       setCoachFeedback(saved.coachFeedback || null);
       setReflection(saved.learningReflection || '');
       setSelectedKsbs(Array.isArray(saved.ksbCodes) ? saved.ksbCodes : []);
+      setSavedKsbWeights(saved.ksbWeights || {});
       setKsbExplanations(saved.ksbExplanations || {});
       setConfidenceBefore(saved.confidenceBefore || {});
       setConfidenceAfter(saved.confidenceAfter || {});
@@ -1037,11 +1049,11 @@ function ReflectionWindowForm({
             <h2 className="text-sm font-semibold text-foreground-900">KSB confidence check</h2>
             <p className="mt-1 text-xs text-foreground-500">
               {selectionRequired
-                ? `Select at least one relevant ${hasAuthoredKsbs ? 'mapped' : 'programme'} KSB this ${noun} developed. You do not need to select from every K, S and B category. Explain and rate only the KSBs you select.`
+                ? `Select at least one relevant ${learnerKsbs.length ? 'programme' : 'mapped'} KSB this ${noun} developed. You do not need to select from every K, S and B category. Explain and rate only the KSBs you select.`
                 : `Explain each mapped KSB, then rate your confidence before and after this ${noun}.`}
             </p>
 
-            {mappedKsbs.length > 0 && !selectingFromProgramme && (
+            {hasMappedSelection && (
               <div className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-gradient-to-r from-primary-50 via-white to-white shadow-sm">
                 <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -1070,11 +1082,26 @@ function ReflectionWindowForm({
             {selectionRequired && (
               <div className="mt-4 min-w-0 rounded-xl border border-foreground-200 bg-white p-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs font-semibold text-foreground-700">{hasAuthoredKsbs ? 'Select the mapped KSBs this activity developed' : 'Select the programme KSBs this activity developed'}</p>
+                  <p className="text-xs font-semibold text-foreground-700">{learnerKsbs.length ? 'Select the programme KSBs this activity developed' : 'Select the mapped KSBs this activity developed'}</p>
                   <span className="shrink-0 text-xs text-foreground-500">{ksbCodes.length} selected</span>
                 </div>
+                {hasAuthoredKsbs && learnerKsbs.length > 0 && <p className="mb-3 text-xs text-foreground-600">
+                  Suggested KSBs are mapped to this activity. You can also choose other KSBs from your programme.
+                </p>}
+                <button ref={ksbPickerButton} type="button" aria-expanded={ksbPickerOpen} aria-controls={ksbPickerId}
+                  onClick={() => setKsbPickerOpen(open => !open)}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-foreground-300 bg-white px-3 py-2.5 text-left text-sm font-semibold text-foreground-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400">
+                  <span>Choose KSBs</span><AppIcon className={ksbPickerOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                </button>
+                {ksbPickerOpen && <div id={ksbPickerId} role="group" aria-label="KSB choices"
+                  onKeyDown={event => { if (event.key === 'Escape') { setKsbPickerOpen(false); ksbPickerButton.current?.focus(); } }}
+                  className="mt-2 rounded-lg border border-foreground-200 p-3">
+                <label htmlFor={`${ksbPickerId}-search`} className="mb-1 block text-xs font-semibold text-foreground-700">Search KSBs</label>
+                <input ref={ksbSearchInput} id={`${ksbPickerId}-search`} type="search" value={ksbSearch}
+                  onChange={event => setKsbSearch(event.target.value)} placeholder="Search by code or description"
+                  className="mb-3 w-full rounded-lg border border-foreground-300 px-3 py-2 text-sm focus:border-primary-400 focus:outline-none" />
                 <div role="tablist" aria-label="KSB type" className="mb-3 inline-flex gap-1 rounded-lg bg-background-100 p-1">
-                  {KSB_GROUPS.map(group => {
+                  {KSB_FILTERS.map(group => {
                     const count = programmeKsbGroups[group.key].length;
                     const selectedCount = programmeKsbGroups[group.key]
                       .filter(item => selectedKsbs.includes(item.code)).length;
@@ -1092,7 +1119,7 @@ function ReflectionWindowForm({
                           active ? 'bg-white text-primary-700 shadow-sm' : 'text-foreground-600 hover:text-foreground-900'
                         }`}
                       >
-                        {group.key}
+                        {group.key === 'all' ? 'All' : group.key}
                         <span className="ml-1 font-normal text-foreground-500">
                           {selectedCount > 0 ? `${selectedCount}/${count}` : count}
                         </span>
@@ -1100,8 +1127,9 @@ function ReflectionWindowForm({
                     );
                   })}
                 </div>
-                <div role="tabpanel" aria-label={KSB_GROUPS.find(group => group.key === activeKsbGroup)?.label} className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
-                  {programmeKsbGroups[activeKsbGroup].map(item => {
+                <div role="tabpanel" aria-label={KSB_FILTERS.find(group => group.key === activeKsbGroup)?.label} className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                  {visibleKsbs.length === 0 && <p role="status" className="p-3 text-sm text-foreground-500">No KSBs match your search in this category.</p>}
+                  {visibleKsbs.map(item => {
                     const selected = selectedKsbs.includes(item.code);
                     return (
                       <label
@@ -1125,11 +1153,15 @@ function ReflectionWindowForm({
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
                           selected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-600'
                         }`}>{item.code}</span>
-                        <span className="min-w-0 break-words text-xs leading-relaxed text-foreground-600">{item.description}</span>
+                        <span className="min-w-0 break-words text-xs leading-relaxed text-foreground-600">
+                          {item.description || 'Description not available for this KSB.'}
+                          {item.mapped && <span className="mt-1 block text-[10px] font-semibold text-primary-700">Suggested for this activity</span>}
+                        </span>
                       </label>
                     );
                   })}
                 </div>
+                </div>}
               </div>
             )}
 
@@ -1148,10 +1180,10 @@ function ReflectionWindowForm({
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex min-w-0 items-start gap-2">
                         <span className="shrink-0 rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold text-primary-700">{item.code}</span>
-                        <p className="text-xs leading-relaxed text-foreground-600">{item.description}</p>
+                        <p className="text-xs leading-relaxed text-foreground-600">{item.description || 'Description not available for this KSB.'}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        {!selectingFromProgramme && (
+                        {(item.mapped || (item.savedOnly && item.weight > 0)) && (
                           <span className="rounded-lg bg-primary-50 px-2.5 py-1.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">
                             {formatKsbWeight(item.weight)} weight
                           </span>
@@ -1166,6 +1198,11 @@ function ReflectionWindowForm({
                         </span>
                       </div>
                     </div>
+                  {item.savedOnly && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">
+                    This saved KSB is outside the current programme list. Your explanation and ratings have been kept.
+                    {!submissionLocked && <button type="button" onClick={() => setSelectedKsbs(previous => previous.filter(code => code !== item.code))}
+                      className="ml-2 font-semibold underline">Remove {item.code}</button>}
+                  </p>}
                   <textarea
                     value={ksbExplanations[item.code] || ''}
                     onChange={event => setKsbExplanations(previous => ({ ...previous, [item.code]: event.target.value }))}
@@ -1195,7 +1232,7 @@ function ReflectionWindowForm({
                 <p className="rounded-xl bg-background-100 p-4 text-sm text-foreground-500">
                   {selectionRequired
                     ? 'Select at least one KSB above to explain and rate it.'
-                    : selectingFromProgramme
+                    : !hasAuthoredKsbs
                       ? 'No KSBs are mapped to this activity and your programme has no KSBs to choose from.'
                       : 'No KSBs are mapped to this activity.'}
                 </p>
