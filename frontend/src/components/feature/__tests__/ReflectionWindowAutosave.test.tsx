@@ -35,6 +35,7 @@ it.each(['commercial', 'apprenticeship'] as const)('restores %s KSB choices with
     learnerKsbs={[{ code: 'K1', type: 'K', number: '1', description: 'Programme knowledge' }]} />);
   await settle();
   fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Choose KSBs' }));
   expect(screen.getByRole('checkbox', { name: /K1/ })).toBeChecked();
   expect(screen.getByRole('slider', { name: 'K1: Confidence before' })).toHaveAttribute('aria-valuetext', 'Not rated');
   await tick();
@@ -44,6 +45,81 @@ it.each(['commercial', 'apprenticeship'] as const)('restores %s KSB choices with
   expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ ksbCodes: ['K1'],
     ksbExplanations: { K1: 'Applied the learning.' }, confidenceBefore: { K1: 1 }, confidenceAfter: { K1: 3 },
     learningReflection: 'Saved reflection' }));
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('saves and reopens %s programme choices beyond activity mappings without adding weight', async learnerKind => {
+  const ksbs = [
+    { code: 'K1', type: 'K', number: '1', description: 'Programme knowledge' },
+    { code: 'S2', type: 'S', number: '2', description: 'Programme skill' },
+  ];
+  const activityKsbs = [{ code: 'K1', description: null, weight: 20, classification: 'main' }];
+  const renderWindow = () => render(<ReflectionWindow {...props} learnerKind={learnerKind} learnerKsbs={ksbs} autoKsbs={activityKsbs} />);
+  const first = renderWindow();
+  await settle();
+  changeAnswer('My saved learning');
+  fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Choose KSBs' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /K1/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /S2/ }));
+  fireEvent.change(screen.getByPlaceholderText(/Why is S2 relevant/), { target: { value: 'My own evidence for this skill.' } });
+  fireEvent.change(screen.getByRole('slider', { name: 'S2: Confidence before' }), { target: { value: '2' } });
+  fireEvent.change(screen.getByRole('slider', { name: 'S2: Confidence after' }), { target: { value: '4' } });
+  await tick();
+  const payload = mocks.save.mock.lastCall![0];
+  expect(payload).toEqual(expect.objectContaining({ ksbCodes: ['K1', 'S2'], ksbWeights: { K1: 20, S2: 0 },
+    learningReflection: 'My saved learning', ksbExplanations: { S2: 'My own evidence for this skill.' },
+    confidenceBefore: { S2: 2 }, confidenceAfter: { S2: 4 } }));
+  expect(props.onSubmit).not.toHaveBeenCalled();
+  first.unmount();
+  mocks.load.mockResolvedValue({ ...payload, status: 'draft' });
+  renderWindow();
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Choose KSBs' }));
+  expect(screen.getByRole('checkbox', { name: /S2/ })).toBeChecked();
+  expect(screen.getByPlaceholderText(/Why is S2 relevant/)).toHaveValue('My own evidence for this skill.');
+  expect(screen.getByRole('slider', { name: 'S2: Confidence before' })).toHaveAttribute('aria-valuetext', '2 out of 5');
+  expect(screen.getByText('20% weight')).toBeInTheDocument();
+  expect(screen.queryByText('0% weight')).not.toBeInTheDocument();
+});
+
+it('keeps a saved code outside the current programme visible and in the next draft', async () => {
+  mocks.load.mockResolvedValue({ status: 'draft', ksbCodes: ['K99'], ksbWeights: { K99: 15 },
+    ksbExplanations: { K99: 'Original explanation' }, confidenceBefore: { K99: 2 }, confidenceAfter: { K99: 4 } });
+  render(<ReflectionWindow {...props}
+    learnerKsbs={[{ code: 'K1', type: 'K', number: '1', description: 'Current knowledge' }]}
+    autoKsbs={[{ code: 'K1', description: null, weight: 20, classification: 'main' }]} />);
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  expect(screen.getByText(/This saved KSB is outside the current programme list/)).toBeVisible();
+  expect(screen.getByPlaceholderText(/Why is K99 relevant/)).toHaveValue('Original explanation');
+  await tick();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ ksbCodes: ['K99'], ksbWeights: { K99: 15 },
+    ksbExplanations: { K99: 'Original explanation' }, confidenceBefore: { K99: 2 }, confidenceAfter: { K99: 4 } }));
+  fireEvent.click(screen.getByRole('button', { name: 'Choose KSBs' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /K1/ }));
+  expect(screen.queryByText('35%')).not.toBeInTheDocument();
+  expect(screen.getAllByText('20%')).toHaveLength(2); // Total and Knowledge: only the current mapping.
+  fireEvent.click(screen.getByRole('button', { name: 'Remove K99' }));
+  await tick();
+  expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ ksbCodes: ['K1'], ksbWeights: { K1: 20 } }));
+});
+
+it('keeps an accepted reflection locked and displays its saved weight rather than a changed mapping', async () => {
+  mocks.load.mockResolvedValue({ status: 'accepted', ksbCodes: ['K1'], ksbWeights: { K1: 20 },
+    ksbExplanations: { K1: 'Accepted explanation' }, confidenceBefore: { K1: 2 }, confidenceAfter: { K1: 4 } });
+  render(<ReflectionWindow {...props}
+    learnerKsbs={[{ code: 'K1', type: 'K', number: '1', description: 'Programme knowledge' }]}
+    autoKsbs={[{ code: 'K1', description: null, weight: 40, classification: 'main' }]} />);
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: 'KSBs' }));
+  expect(screen.getByText('Programme knowledge')).toBeVisible();
+  expect(screen.getByText('20% weight')).toBeVisible();
+  expect(screen.queryByText('40% weight')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Choose KSBs' })).toBeDisabled();
+  expect(screen.getByPlaceholderText(/Why is K1 relevant/)).toBeDisabled();
+  await tick();
+  expect(mocks.save).not.toHaveBeenCalled();
 });
 
 it.each(['commercial', 'apprenticeship'] as const)('automatically saves the latest %s draft without completing the activity', async learnerKind => {
