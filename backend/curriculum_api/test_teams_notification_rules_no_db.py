@@ -442,7 +442,7 @@ class WeekMeetingEditTests(unittest.TestCase):
                 return [{'id': 'COMP-2', 'settings': {'extraTeamsLiveSessionId': 'LIVE-EXTRA'}}]
             return []
 
-        def event_payload(single, _settings):
+        def event_payload(single, _settings, *, promote_presenters=True):
             start = checks.utc_datetime(single['startDateTimeUtc'])
             minutes = int(single.get('durationMinutes') or 60)
             people = list(single.get('attendees') or [])

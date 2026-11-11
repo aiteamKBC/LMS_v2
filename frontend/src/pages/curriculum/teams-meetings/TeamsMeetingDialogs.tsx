@@ -323,12 +323,12 @@ function MeetingSettingsFields({ form, patch }: {
       <FormField label="Spoken language" hint="Used for the recording and transcript.">
         <SelectControl value={form.spokenLanguage} onChange={value => patch({ spokenLanguage: value })} options={TEAMS_LANGUAGE_OPTIONS} />
       </FormField>
-      <FormField label="Presenters" hint="Only these people get the presenter role in Teams: they can share and record.">
+      <FormField label="Presenters" hint="Tutor presenters are also saved as co-organizers so they can manage breakout rooms. Use an internal Microsoft 365 account.">
         <EntraPeopleInput label="Presenters" value={form.presenters} onChange={value => patch({ presenters: value })} />
       </FormField>
       <FormField
         label="Co-organisers"
-        hint="Internal Microsoft 365 users who run the meeting with the organiser: start and stop the recording, admit people from the lobby and change the meeting options. Invited automatically."
+        hint="Up to 10 people, including presenters. Co-organizers can manage breakout rooms, admit people from the lobby and change meeting options. Invited automatically."
       >
         <EntraPeopleInput label="Co-organizers" value={form.coOrganizers} onChange={value => patch({ coOrganizers: value })} />
       </FormField>

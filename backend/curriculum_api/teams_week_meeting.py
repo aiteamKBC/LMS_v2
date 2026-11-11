@@ -662,8 +662,16 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
     single.pop('scheduledOccurrences', None)
     try:
         graph_settings = v.teams_schedule_settings(graph_settings, single, series=series)
+        from .teams_presenter_roles import roles_changed
+        from .teams_meeting_options_policy import stored_email_list
+        promote_presenters = roles_changed(
+            stored_email_list(single.get('presenters')),
+            stored_email_list(single.get('coOrganizers')),
+            stored_email_list(series.get('presenters')),
+            stored_email_list(series.get('co_organizers')),
+        )
         event_payload, invited_people, presenters, co_organizers, attendees, utc_start, duration, _repeat, _count = (
-            v.teams_event_payload(single, graph_settings)
+            v.teams_event_payload(single, graph_settings, promote_presenters=promote_presenters)
         )
         targets = v.calendar_targets(single, utc_start, duration, 'none', 1, v.graph_timezone_iana(graph_settings))
         non_delivery = v.teams_non_delivery_reason(targets, v.graph_timezone_iana(graph_settings))

@@ -2290,7 +2290,7 @@ def teams_calendar_subject(payload, series=None):
     )
 
 
-def teams_event_payload(payload, graph_settings):
+def teams_event_payload(payload, graph_settings, *, promote_presenters=True):
     title = teams_calendar_subject(payload)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
@@ -2309,10 +2309,15 @@ def teams_event_payload(payload, graph_settings):
         raise ValueError('Unsupported repeat option.')
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or 12)))
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
-    co_organizer_set = set(co_organizers)
     # A co-organiser may also be listed as a presenter. Teams gives each person
     # one role (co-organiser wins), so keeping both only keeps the author's list.
     presenters = teams_attendee_emails(payload.get('presenters'))
+    if promote_presenters:
+        from .teams_presenter_roles import presenter_co_organizers
+        co_organizers = presenter_co_organizers(
+            presenters, co_organizers, payload.get('organizerEmail') or teams_meeting_default_organizer(),
+        )
+    co_organizer_set = set(co_organizers)
     elevated = co_organizer_set | set(presenters)
     attendees = [
         email for email in teams_attendee_emails(payload.get('attendees'))
@@ -4339,11 +4344,14 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             teams_attendee_emails(payload['coOrganizers'])
             if 'coOrganizers' in payload else stored_co_organizers
         )
-        co_organizer_set = set(co_organizers)
         presenters = (
             teams_attendee_emails(payload['presenters'])
             if 'presenters' in payload else stored_presenters
         )
+        from .teams_presenter_roles import presenter_co_organizers, roles_changed
+        if roles_changed(presenters, co_organizers, stored_presenters, stored_co_organizers):
+            co_organizers = presenter_co_organizers(presenters, co_organizers, organizer)
+        co_organizer_set = set(co_organizers)
         elevated = co_organizer_set | set(presenters)
         attendees = [
             email for email in (

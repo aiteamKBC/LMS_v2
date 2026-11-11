@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type TeamsCalendarForm } from '../createCalendarForm';
-import { emptyTeamsCalendarForm, teamsUpdateChanges } from "../createCalendarForm.helpers";
+import { emptyTeamsCalendarForm, presenterCoOrganizers, teamsUpdateChanges } from "../createCalendarForm.helpers";
 import { savedEmails } from '../useTeamsMeetingsWorkspace';
 
 // The invitation fields opened empty because the calendar's saved lists
@@ -45,7 +45,8 @@ describe('teamsUpdateChanges', () => {
   it('sends only the changed list and option, and names only the new person', () => {
     const form = { ...saved, presenters: 'tutor@example.invalid\nguest@example.invalid', spokenLanguage: 'ar-EG' };
     expect(teamsUpdateChanges(form, saved)).toEqual({
-      fields: { presenters: ['tutor@example.invalid', 'guest@example.invalid'], spokenLanguage: 'ar-EG' },
+      fields: { presenters: ['tutor@example.invalid', 'guest@example.invalid'],
+        coOrganizers: ['coordinator@example.invalid', 'tutor@example.invalid', 'guest@example.invalid'], spokenLanguage: 'ar-EG' },
       addedPeople: ['guest@example.invalid'],
     });
   });
@@ -56,10 +57,30 @@ describe('teamsUpdateChanges', () => {
   });
 
   it('sends an emptied list, so removing everyone is saved', () => {
-    expect(teamsUpdateChanges({ ...saved, coOrganizers: '' }, saved).fields).toEqual({ coOrganizers: [] });
+    const before = { ...saved, presenters: '' };
+    expect(teamsUpdateChanges({ ...before, coOrganizers: '' }, before).fields).toEqual({ coOrganizers: [] });
+  });
+
+  it('retains the tutor as both presenter and co-organizer without inviting them again', () => {
+    expect(teamsUpdateChanges({ ...saved, coOrganizers: '' }, saved)).toEqual({
+      fields: { coOrganizers: ['tutor@example.invalid'] }, addedPeople: [],
+    });
   });
 
   it('never counts the organizer as added', () => {
     expect(teamsUpdateChanges({ ...saved, attendees: `${saved.attendees}\norganizer@example.invalid` }, saved).addedPeople).toEqual([]);
+  });
+});
+
+describe('presenter breakout room roles', () => {
+  it('keeps explicit co-organizers and adds tutor presenters once, excluding the owner', () => {
+    expect(presenterCoOrganizers('Tutor@example.invalid\nowner@example.invalid',
+      'co@example.invalid\nTUTOR@example.invalid', 'OWNER@example.invalid'))
+      .toEqual(['co@example.invalid', 'tutor@example.invalid']);
+  });
+
+  it('refuses to silently drop an existing co-organizer when the combined list exceeds ten', () => {
+    const co = Array.from({ length: 10 }, (_, i) => `co${i}@example.invalid`).join('\n');
+    expect(() => presenterCoOrganizers('tutor@example.invalid', co)).toThrow('up to 10 co-organizers');
   });
 });
