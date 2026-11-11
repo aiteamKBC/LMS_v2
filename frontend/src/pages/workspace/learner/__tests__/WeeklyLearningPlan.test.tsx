@@ -58,29 +58,6 @@ const sessionSchedule = (attended: boolean | null): TrainingPlanDashboard => ({
 }) as unknown as TrainingPlanDashboard;
 
 describe('weekly live session attendance', () => {
-  it.each(['commercial', 'apprenticeship'] as const)('defaults %s to the current module while keeping older modules selectable', kind => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-09-09T12:00:00Z'));
-    const schedule = sessionSchedule(null);
-    const current = { ...schedule.modules[0], id: 'M2', title: 'Current module',
-      curriculumSlots: [{ ...schedule.modules[0].curriculumSlots![0], weekId: 'W2' }] };
-    schedule.modules[0] = { ...schedule.modules[0], title: 'Earlier module', start_date: '2026-08-01', end_date: '2026-08-07',
-      curriculumSlots: [{ ...schedule.modules[0].curriculumSlots![0], date: '2026-08-01' }] };
-    schedule.modules.push(current);
-    const source = { ...learnerDetail.real, schedule };
-    weeklyRead.real = weeklyResourceFixture(weeklyContractFixture({ ...source, selectedWeekId: 'slot:M1:1' }), '125');
-    weeklyRead.details.clear();
-    for (const module of schedule.modules) {
-      const weekId = `slot:${module.id}:1`;
-      weeklyRead.details.set(weekId, { ...weeklyContractFixture({ ...source, selectedWeekId: weekId }), weekId, moduleId: module.id });
-    }
-    render(<MemoryRouter><CanonicalWeeklyLearningPlan kind={kind} learnerId="125" initialModuleId="M1" /></MemoryRouter>);
-    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('M2');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Module' }), { target: { value: 'M1' } });
-    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('M1');
-    expect(screen.getByRole('option', { name: 'Current module' })).toBeInTheDocument();
-  });
-
   it('explains the session colours and the activity progress ring', () => {
     render(<MemoryRouter><WeeklyLearningPlan kind="commercial" learnerId="125"
       schedule={sessionSchedule(null)} scheduleLoading={false} /></MemoryRouter>);

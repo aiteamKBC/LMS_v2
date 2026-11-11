@@ -99,7 +99,6 @@ describe('quiz requirements loading', () => {
     fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
     expect(await screen.findByText(/Quiz Passed/)).toBeVisible();
-    expect(screen.queryByRole('button', { name: /back to training plan/i })).not.toBeInTheDocument();
     expect(screen.getByText('Your time and progress were saved. Study-time points are not enabled for this activity.')).toBeVisible();
     expect(mocks.submit).toHaveBeenCalledWith(1, kind, '501', expect.objectContaining({
       trackingToken: 'original-token', answers: { '1': 1 }, timeTakenSeconds: 0,

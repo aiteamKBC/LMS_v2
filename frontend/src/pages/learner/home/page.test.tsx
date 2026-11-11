@@ -43,16 +43,17 @@ function workspace(path: string) { return render(<MemoryRouter initialEntries={[
 beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.events = []; state.scheduleError = ''; state.modules = []; vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [] }); rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); localStorage.clear(); });
 describe('connected student home', () => {
-  it('resumes saved learning when the independent progress card times out', () => {
+  it('continues to the current module when the independent progress card times out', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-09T12:00:00Z'));
     progressState.error = 'Progress request timed out';
     state.modules = [{ id: 'current:M1', title: 'Leadership', weekLabels: ['Week 2'], completed: 0, total: 3,
       percent: 0, ksbCodes: [], ksbMappingMissing: false }];
     page();
-    expect(useLiveLearnerRead).not.toHaveBeenCalledWith('apprenticeship', '71', true, currentLearningWeek.read, currentLearningWeek.peek);
-    fireEvent.click(screen.getByRole('link', { name: 'Continue Learning' }));
-    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/my-learning?resume=1');
+    expect(useLiveLearnerRead).toHaveBeenCalledWith('apprenticeship', '71', true, currentLearningWeek.read, currentLearningWeek.peek);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue Learning' }));
+    expect(screen.getByTestId('destination')).toHaveTextContent('subject=current%3AM1');
+    expect(screen.getByTestId('destination')).toHaveTextContent('week=2026-09-07');
     expect(screen.queryByText('We could not check your learning for this week.')).not.toBeInTheDocument();
   });
   it('uses only the authenticated identity, with real progress and empty events', () => {
@@ -159,14 +160,14 @@ describe('connected student home', () => {
     page();
     expect(await screen.findByRole('link', { name: 'Feedback, 1 pending' })).toHaveAttribute('href', '/learner/feedback');
   });
-  it('continues the signed-in learner’s saved learning, ignoring an identity supplied in the URL', () => {
+  it('continues the signed-in learner’s current module, ignoring an identity supplied in the URL', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-09T12:00:00Z'));
     state.modules = [{ id: 'current:M1', title: 'Leadership', weekLabels: ['Week 2'], completed: 0, total: 3,
       percent: 0, ksbCodes: [], ksbMappingMissing: false }];
     page();
-    fireEvent.click(screen.getByRole('link', { name: 'Continue Learning' }));
-    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/my-learning?resume=1');
+    fireEvent.click(screen.getByRole('button', { name: 'Continue Learning' }));
+    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/my-learning?subject=current%3AM1&week=2026-09-07');
   });
   it('shows a retry state if the personal profile fails', () => {
     state.profileError = 'Could not load the current learner'; page();

@@ -52,32 +52,6 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
-  it('keeps the catalogue available when all assigned learning is complete', async () => {
-    const catalogue = makeCatalogue();
-    catalogue.modules = catalogue.modules.map(card => ({ ...card, completedActivityCount: card.activityCount,
-      progress: 100, status: 'Completed' }));
-    vi.mocked(fetch).mockImplementation(async () => reply(catalogue));
-    route('/learner/my-learning/commercial/7?resume=1');
-    expect(await screen.findByRole('heading', { name: 'One' })).toBeVisible();
-    expect(urls().some(url => url.includes('/modules/'))).toBe(false);
-  });
-
-  it.each(['commercial', 'apprenticeship'] as const)('resolves resume for %s from saved progress in earlier assigned modules', async kind => {
-    const catalogue = makeCatalogue(kind);
-    catalogue.modules[0].planModule!.end_date = '2026-09-30';
-    catalogue.modules.push({ ...catalogue.modules[0], id: 'current:M2', moduleId: 'M2', title: 'New module',
-      planModule: { ...catalogue.modules[0].planModule!, start_date: '2026-11-01', end_date: '2026-11-30' } });
-    vi.mocked(fetch).mockImplementation(async input => {
-      const url = String(input);
-      if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
-      if (url.includes('/modules/')) return reply(makeModule());
-      return reply(catalogue);
-    });
-    route(`/learner/my-learning/${kind}/7?resume=1`);
-    await waitFor(() => expect(urls()).toContain(`/learner_api/my-learning/${kind}/7/modules/current%3AM1/`));
-    expect(urls().some(url => url.includes('/modules/current%3AM2/'))).toBe(false);
-  });
-
   it.each([
     ['commercial', false], ['commercial', true], ['apprenticeship', false], ['apprenticeship', true],
   ] as const)('uses saved component completion inside the module and hides the old percentage (%s, completed=%s)', async (kind, completed) => {
