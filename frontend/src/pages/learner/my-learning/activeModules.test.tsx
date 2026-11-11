@@ -23,18 +23,22 @@ afterEach(() => vi.useRealTimers());
 describe('active teaching in My Learning', () => {
   it('opens on active teaching independently of progress and preserves Old/New filters', () => {
     catalogue();
-    expect(screen.getByRole('combobox', { name: 'Teaching status' })).toHaveValue('active');
+    expect(screen.getByRole('button', { name: 'Active modules' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getAllByRole('heading', { level: 3 }).map(item => item.textContent)).toEqual(['active-new','active-old']);
     fireEvent.click(screen.getByRole('tab', { name: 'New LMS' }));
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(1);
     expect(screen.getByRole('heading', { name: 'active-new' })).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
     expect(screen.getByRole('heading', { name: 'active-old' })).toBeVisible();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Teaching status' }), { target: { value: 'all' } });
+    fireEvent.click(screen.getByRole('button', { name: 'All modules' }));
+    expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('heading', { name: 'undated' })).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: 'All modules' }));
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(5);
     expect(screen.getByText('5 subjects · 5 activities')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Active modules' }));
+    expect(screen.getByRole('button', { name: 'Active modules' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('heading', { name: 'undated' })).not.toBeInTheDocument();
   });
   it('offers All instead of silently hiding undated or finished subjects', () => {
     catalogue([subjects[2], subjects[4]]);
