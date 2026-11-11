@@ -11,6 +11,11 @@ from .tools import read  # noqa: F401 - registers the Step 6 read tools
 from .tools import video  # noqa: F401 - registers the default-off video tools
 from .tools import components  # noqa: F401 - registers default-off draft component creation
 from .tools import weeks  # noqa: F401 - registers default-off templated week creation
+from .tools import quizzes  # noqa: F401 - registers default-off draft quiz creation
+from .tools import content  # noqa: F401 - registers default-off KSB mapping and lesson text
+from .tools import quiz_edit  # noqa: F401 - registers default-off quiz edit/clone
+from .tools import files  # noqa: F401 - registers default-off component file uploads
+from .tools import structure  # noqa: F401 - registers default-off programme/cohort/group/module creation
 from . import pii, ratelimit
 from . import schema as json_schema
 from .dispatch import DispatchError

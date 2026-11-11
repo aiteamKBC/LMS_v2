@@ -32,6 +32,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from mcp_api.models import McpOAuthCode, McpOAuthToken, McpPendingChange
+from mcp_api.tools.files import cleanup_expired_file_previews
 from mcp_api.tools.video import cleanup_expired_video_previews
 
 CODE_RETENTION = timedelta(days=1)
@@ -78,6 +79,8 @@ class Command(BaseCommand):
         now = timezone.now()
         stages = cleanup_expired_video_previews(now, dry_run=options["dry_run"])
         self.stdout.write(f"  Video stages: {stages} {'would be cleaned' if options['dry_run'] else 'checked for cleanup'}")
+        files = cleanup_expired_file_previews(now, dry_run=options["dry_run"])
+        self.stdout.write(f"  File stages: {files} {'would be cleaned' if options['dry_run'] else 'checked for cleanup'}")
         for table, stale in STALE:
             if options["dry_run"]:
                 self.stdout.write(f"  {table}: {stale(now).count()} would be deleted")
