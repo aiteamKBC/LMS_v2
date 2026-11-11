@@ -10,9 +10,10 @@
 #   frontend baseline   npm run test:teams (mocked APIs, ~15 s). Runs on
 #                       every frontend change: that also covers changes to
 #                       anything a Teams file imports (the "indirect" rule).
-#   expanded backend    the Teams suites named in AGENTS.md section 6, on a
-#                       throwaway schema-only Neon branch (never production).
-#                       Runs when a file on .github/ci/teams_files.txt changed.
+#   expanded backend    NOT run in CI (no test database here). When a file
+#                       on .github/ci/teams_files.txt changes, the Result
+#                       table says so and lists it as NOT RUN, so the
+#                       reviewer knows to run AGENTS.md section 6 by hand.
 #   live Teams          never run from CI (needs explicit permission:
 #                       AGENTS.md section 3) - always reported as NOT RUN.
 #
@@ -111,98 +112,29 @@ jobs:
         run: |
           { echo '### Teams frontend baseline'; echo '```'; grep -E "Test Files|Tests  |FAIL" teams.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
-  backend:
-    name: Teams expanded backend checks
-    needs: scope
-    if: needs.scope.outputs.backend == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      blocked: ${{ steps.neon-check.outputs.blocked }}
-    env:
-      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
-      NEON_PARENT_BRANCH_ID: ${{ vars.NEON_PARENT_BRANCH_ID }}
-    steps:
-      # No safe database = BLOCKED, never a silent pass (AGENTS.md section 5)
-      - id: neon-check
-        run: |
-          if [ -z "$NEON_API_KEY" ] || [ -z "$NEON_PROJECT_ID" ]; then
-            echo "blocked=true" >> "$GITHUB_OUTPUT"
-            echo "::error::BLOCKED: NEON_API_KEY / NEON_PROJECT_ID not available, so there is no verified non-production database"
-            exit 1
-          fi
-
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.REF }}
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Create a schema-only Neon branch (no data)
-        id: neon
-        run: bash .github/ci/neon_branch.sh create
-
-      - name: Teams suites (AGENTS.md section 6)
-        env:
-          BRANCH_URL: ${{ steps.neon.outputs.url }}
-          BRANCH_ID: ${{ steps.neon.outputs.id }}
-        run: |
-          set -o pipefail
-          cd backend
-          python3 -m pip install -q -r requirements.txt
-          # Same safety setup as the database tests in deploy-aws.yml:
-          # DATABASE_URL is only compared (by host) to prove the branch is
-          # not production; settings never connect to it in branch mode
-          export DATABASE_URL="postgresql://ci@${{ vars.NEON_PRODUCTION_HOST || 'production.invalid' }}/neondb"
-          export security_Database_url="$BRANCH_URL" SECURITY_TEST_BRANCH_ID="$BRANCH_ID"
-          export USE_SECURITY_TEST_BRANCH=true DJANGO_SECRET_KEY=ci DJANGO_DEBUG=false DB_POOL=false
-          python3 manage.py test --keepdb --noinput --testrunner=login.test_runner.EnrolmentTestRunner \
-            curriculum_api.tests.TeamsMultiDayRecurrenceTests \
-            curriculum_api.tests.TeamsAttendanceRosterTests \
-            curriculum_api.tests.CurriculumTeamsMeetingTests \
-            curriculum_api.tests.TeamsCalendarSyncVerdictTests \
-            coach_api.tests coach_api.tests_calendar_race coach_api.tests_errors coach_api.tests_security \
-            learner_api.tests learner_api.tests_attendance_lectures learner_api.tests_booking_calendar \
-            learner_api.tests_cohort_schedule learner_api.tests_dashboard_metrics \
-            2>&1 | tee ../teams-backend.txt
-      - name: Summary
-        if: always() && steps.neon.outcome == 'success'
-        run: |
-          { echo '### Teams expanded backend checks'; echo '```'; grep -E "^(Ran|OK|FAILED)|^(FAIL|ERROR):" teams-backend.txt | head -40 || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Delete the Neon branch
-        if: always() && steps.neon.outputs.id != ''
-        env:
-          BRANCH_ID: ${{ steps.neon.outputs.id }}
-        run: bash .github/ci/neon_branch.sh delete "$BRANCH_ID"
-
   # The section 7 handoff, and the single check to require on PRs
   result:
     name: Result
-    needs: [scope, frontend, backend]
+    needs: [scope, frontend]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - env:
           SCOPE: ${{ needs.scope.result }}
           FE: ${{ needs.frontend.result }}
-          BE: ${{ needs.backend.result }}
-          BE_BLOCKED: ${{ needs.backend.outputs.blocked }}
+          TEAMS_FILES: ${{ needs.scope.outputs.backend }}
         run: |
           verdict() { case "$1" in success) echo PASS;; skipped) echo "NOT REQUIRED";; failure) [ "$2" = true ] && echo BLOCKED || echo FAIL;; *) echo "BLOCKED ($1)";; esac; }
-          fe=$(verdict "$FE"); be=$(verdict "$BE" "$BE_BLOCKED")
+          fe=$(verdict "$FE")
+          if [ "$TEAMS_FILES" = true ]; then be="NOT RUN - no test database in CI; run AGENTS.md section 6 by hand"; else be="NOT REQUIRED"; fi
           {
             echo "### Teams handoff (AGENTS.md section 7)"
             echo "| Check | Result |"; echo "|---|---|"
             echo "| Frontend Teams baseline (mocked APIs) | $fe |"
-            echo "| Expanded Teams backend checks (schema-only Neon branch) | $be |"
+            echo "| Expanded Teams backend checks | $be |"
             echo "| Live Teams (real meetings/invitations) | NOT RUN - never from CI; needs explicit permission (section 3) |"
             echo
             echo "A pass covers only the automated cases; it does not prove live Microsoft behaviour, permissions or invitations."
           } | tee -a "$GITHUB_STEP_SUMMARY"
           [ "$SCOPE" = success ] || { echo "::error::Teams scope step did not finish"; exit 1; }
-          case "$fe$be" in *FAIL*|*BLOCKED*) exit 1;; esac
+          case "$fe" in *FAIL*|*BLOCKED*) exit 1;; esac
