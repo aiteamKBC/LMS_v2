@@ -375,12 +375,16 @@ class ComponentContractTests(SimpleTestCase):
                 with components._locked_parents(target):
                     self.fail("must not reach creation when a parent disappeared")
 
-    def test_dispatcher_only_adds_component_collection_post(self):
+    def test_dispatcher_allows_single_component_writes_but_no_module_save_or_delete(self):
         self.assertTrue(dispatch.is_allowed("POST", dispatch.COMPONENT_CREATE_PATH))
+        # Step 7 links a quiz through the single-component PATCH (revision-checked by the LMS).
+        self.assertTrue(dispatch.is_allowed("PATCH", "/curriculum_api/curriculum/components/C1/"))
         for method, path in (("PUT", dispatch.COMPONENT_CREATE_PATH),
-                             ("PATCH", "/curriculum_api/curriculum/components/C1/"),
                              ("DELETE", "/curriculum_api/curriculum/components/C1/"),
-                             ("POST", "/curriculum_api/curriculum/modules/")):
+                             ("PATCH", "/curriculum_api/curriculum/modules/M1/structure/"),
+                             ("DELETE", "/curriculum_api/curriculum/modules/M1/weeks/W1/"),
+                             ("DELETE", "/quiz_api/quizzes/1/"),
+                             ("PATCH", "/curriculum_api/curriculum/modules/M1/")):
             self.assertFalse(dispatch.is_allowed(method, path))
 
 
@@ -415,3 +419,22 @@ class ComponentVideoHandoffTests(VideoTestCase):
         saved = self.apply(upload["structuredContent"]["preview_id"])
         self.assertFalse(saved.get("isError"), saved)
         self.assertEqual(self.post_count, 1)
+
+
+class LiveModuleWarningTests(ComponentTestCase):
+    def test_a_module_on_learner_plans_is_flagged_live_but_not_blocked(self):
+        self.live_learners.return_value = 91
+        result = self.run_tool()
+        self.assertFalse(result.get("isError"), result)
+        warning = result["structuredContent"]["warnings"][0]
+        self.assertIn("LIVE MODULE: 91 learner(s)", warning)
+        self.assertIn("LIVE MODULE", result["content"][0]["text"])
+        self.live_learners.assert_called_with("M1")
+
+    def test_an_unreadable_count_is_treated_as_live(self):
+        self.live_learners.return_value = None
+        result = self.run_tool()
+        self.assertIn("treat it as live", result["structuredContent"]["warnings"][0])
+
+    def test_no_learners_no_warning(self):
+        self.assertEqual(self.run_tool()["structuredContent"]["warnings"], [])

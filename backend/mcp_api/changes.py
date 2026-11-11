@@ -125,6 +125,10 @@ class WriteTool:
     def apply(self, request, payload, progress):
         raise NotImplementedError
 
+    def preview_warnings(self, request, payload):
+        """Extra warnings shown with the preview: never stored in the payload, never blocking."""
+        return []
+
 
 def register_write_tool(write_tool):
     """Register ``write_tool`` as an MCP tool whose call only ever produces a preview."""
@@ -171,7 +175,8 @@ def propose(request, write_tool, arguments):
     payload = jsonable(check.payload)
     preview = write_tool.preview(request, payload)
     summary = preview.get("summary", "")
-    stored_preview = {"summary": summary, "details": preview.get("details", {}), "warnings": list(check.warnings)}
+    warnings = [*write_tool.preview_warnings(request, payload), *check.warnings]
+    stored_preview = {"summary": summary, "details": preview.get("details", {}), "warnings": warnings}
     row = McpPendingChange.objects.create(
         id=uuid.uuid4(),
         account_id=account.pk,
@@ -184,8 +189,8 @@ def propose(request, write_tool, arguments):
     )
     minutes = int(PREVIEW_TTL.total_seconds() // 60)
     text = f"PREVIEW — {summary}"
-    if check.warnings:
-        text += "\n\nWarnings:\n" + _bullet(check.warnings)
+    if warnings:
+        text += "\n\nWarnings:\n" + _bullet(warnings)
     text += "\n\n" + CONFIRM_HINT.format(preview_id=row.id, minutes=minutes)
     return ToolResult(text, {
         "preview_id": str(row.id),
