@@ -4,12 +4,13 @@ import json
 import sqlite3
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
 from . import web_week_points as author
 from .web_week_points_schema import provision
 from learner_api import web_week_points as learner
+from learner_api.models import EnrolmentUser
 
 
 class MemoryCursor:
@@ -73,6 +74,45 @@ class OptionalPointTests(SimpleTestCase):
         self.assertEqual(result['weeks']['W1']['points'][0]['componentIds'], ['R1'])
         config['W1']['moduleId'] = 'M2'
         self.assertEqual(learner.project_points([('R1','W1','M1')], config), {'weeks': {}})
+
+    def test_learner_plan_uses_concrete_fields_and_current_curriculum_columns(self):
+        concrete_fields = ('id', 'aptem_id', 'learner_type')
+        for field in concrete_fields:
+            EnrolmentUser._meta.get_field(field)
+        source = SimpleNamespace(
+            _weekly_training_plan=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}],
+            _weekly_learning_plan=None,
+        )
+        query = MagicMock()
+        query.only.return_value = query
+        query.get.return_value = source
+        model = SimpleNamespace(all_learners=query)
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('R1', 'W1', 'M1')]
+        config = {'W1': {'moduleId': 'M1', 'points': self.points}}
+
+        with patch('learner_api.learner_detail.SOURCE_MODELS', {
+                'commercial': model, 'apprenticeship': model,
+             }), patch('coach_api.weekly_learning.assignment_projection', side_effect=lambda value: value), \
+             patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1']), \
+             patch('learner_api.canonical_learning.require_profile', return_value=object()), \
+             patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
+             patch.object(learner, 'connections', {'enrolment': connection}), \
+             patch.object(learner, 'read_configurations', return_value=config):
+            for kind in ('commercial', 'apprenticeship'):
+                result = learner.learner_plan(kind, 7)
+                self.assertEqual(result['weeks']['W1']['points'][0]['componentIds'], ['R1'])
+
+        self.assertEqual(
+            [call.args for call in query.only.call_args_list],
+            [concrete_fields, concrete_fields],
+        )
+        for call in cursor.execute.call_args_list:
+            sql = call.args[0]
+            self.assertNotIn('m.deleted_at', sql)
+            self.assertNotIn('m.deleted_via_parent', sql)
+            self.assertIn("status", sql)
 
     def author_request(self, *, role='staff', access='curriculum', method='get', csrf=True, saved=None):
         account = SimpleNamespace(id=1, role=role, subject_id=7) if role else None
