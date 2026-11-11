@@ -114,8 +114,11 @@ def upsert_live_session_register(cursor, rows):
             learner_email = EXCLUDED.learner_email,
             learner_name = EXCLUDED.learner_name,
             attendance_status = CASE
+                WHEN EXCLUDED.attendance_basis='staff' THEN EXCLUDED.attendance_status
                 WHEN current_register.attendance_basis='staff'
                     THEN current_register.attendance_status
+                WHEN current_register.parallel_source_occurrence_id IS NOT NULL
+                    THEN 'present'
                 WHEN current_register.qr_attendance_id IS NOT NULL
                      AND EXCLUDED.qr_attendance_id IS NULL
                     THEN current_register.attendance_status
@@ -127,7 +130,10 @@ def upsert_live_session_register(cursor, rows):
             last_leave_at = EXCLUDED.last_leave_at,
             calculated_at = EXCLUDED.calculated_at,
             attendance_basis = CASE
+                WHEN EXCLUDED.attendance_basis='staff' THEN 'staff'
                 WHEN current_register.attendance_basis='staff' THEN 'staff'
+                WHEN current_register.parallel_source_occurrence_id IS NOT NULL
+                     AND EXCLUDED.attendance_status='absent' THEN 'parallel'
                 WHEN current_register.qr_attendance_id IS NOT NULL
                      AND EXCLUDED.qr_attendance_id IS NULL
                     THEN current_register.attendance_basis

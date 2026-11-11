@@ -69,6 +69,8 @@ export interface ActivitySidebarProps {
   currentWeekKey?: string | null;
   accessOpen?: boolean;
   onAccessBlocked?: () => void;
+  /** Keep this sidebar scrollable beside a long material page. */
+  scrollWithinViewport?: boolean;
 }
 
 const ACTIVITY_TONES: Record<string, { background: string; border: string; color: string }> = {
@@ -136,6 +138,7 @@ export function ActivitySidebar({
   currentWeekKey,
   accessOpen = true,
   onAccessBlocked,
+  scrollWithinViewport = false,
 }: ActivitySidebarProps) {
   const weekComponents = useMemo(() => uniqueWeekActivities(suppliedWeekComponents), [suppliedWeekComponents]);
   const weeks = useMemo(() => suppliedWeeks.map(week => {
@@ -217,7 +220,8 @@ export function ActivitySidebar({
   const shownWeekComponents = visibleRows(weekComponents);
 
   return (
-    <aside aria-label="Module activities" className="min-w-0 space-y-4 lg:sticky lg:top-4">
+    <aside aria-label="Module activities" tabIndex={scrollWithinViewport ? 0 : undefined}
+      className={`min-w-0 space-y-4 lg:sticky lg:top-4 ${scrollWithinViewport ? 'lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto lg:pr-1' : ''}`}>
       {webPoints.error && <p role="status" className="text-xs text-amber-800">Point grouping could not load. Activities are shown below. <button type="button" onClick={webPoints.refresh} className="underline">Retry Points</button></p>}
       {legendItems.length > 0 && <section aria-label="Activity type key" className="rounded-xl border border-primary-100 bg-white px-4 py-3 shadow-sm">
         <p className="text-[10px] font-bold uppercase tracking-wider text-primary-900">Activity types</p>

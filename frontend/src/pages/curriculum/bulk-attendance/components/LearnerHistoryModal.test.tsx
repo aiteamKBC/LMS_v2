@@ -48,3 +48,10 @@ it("deletes an editable attendance record", () => {
   screen.getAllByRole("button", { name: "Delete attendance record for Session 1" })[0].click();
   expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ recordKey: "live:1" }));
 });
+
+it("shows which other group supplied saved attendance", () => {
+  const saved = [{ ...history[0], attendance: "present" as const, effectiveAttendance: undefined, recoveryGroup: "Group B" }];
+  render(<LearnerHistoryModal learner={learner} index={0} moduleLabel="Marketing" cohortName="Example"
+    history={saved} loading={false} error={null} onClose={vi.fn()} />);
+  expect(screen.getByText("Attended with Group B")).toBeVisible();
+});

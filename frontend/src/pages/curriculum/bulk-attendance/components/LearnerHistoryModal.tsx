@@ -23,6 +23,7 @@ export interface LearnerHistoryRecord {
   effectiveAttendance?: "present" | "awaiting_recording";
   attendanceBasis?: "recorded" | "awaiting_recording";
   recoveryOccurrenceId?: string;
+  recoveryGroup?: string;
   makeupForOccurrenceId?: string;
   makeupForDate?: string;
   countsAsSession?: boolean;
@@ -243,6 +244,9 @@ export default function LearnerHistoryModal({
                       )}
                       {entry.makeupForDate && <span className={"mt-0.5 block text-xs " + (current === "present" ? "text-green-700" : "text-foreground-500")}>
                         {current === "present" ? "Make-up evidence" : "Parallel-group record"} for {formatDateLabel(entry.makeupForDate)}
+                      </span>}
+                      {entry.recoveryOccurrenceId && <span className="mt-0.5 block text-xs text-green-700">
+                        Attended with {entry.recoveryGroup || "another group"}
                       </span>}
                       {recovered && <span className="mt-0.5 block text-xs text-green-700">Attended through a parallel group session</span>}
                     </span>
