@@ -9,6 +9,7 @@ import tempfile
 import types
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from django.core.management.base import CommandError
 from curriculum_api.management.commands import enable_presenter_breakout_rooms as command
@@ -33,6 +34,7 @@ class BreakoutCommandTests(unittest.TestCase):
         self.sql, self.graph_calls, self.invalidations = [], [], []
         self.staff_exists = True
         self.patch_effective = True
+        self.recurrence_changes_on_patch = False
         test = self
 
         class Cursor:
@@ -100,11 +102,15 @@ class BreakoutCommandTests(unittest.TestCase):
                     self.assertEqual(set(payload), {'participants'})
                     if self.patch_effective:
                         self.meeting['participants']['attendees'] = copy.deepcopy(payload['participants']['attendees'])
+                    if self.recurrence_changes_on_patch:
+                        self.event['recurrence'] = None
                 else:
                     self.assertEqual(method, 'GET')
                 return copy.deepcopy(self.meeting)
             self.assertEqual(method, 'GET')
-            if '/events/' in path: return copy.deepcopy(self.event)
+            if '/events/' in path:
+                fields = parse_qs(urlsplit(path).query)['$select'][0].split(',')
+                return {key: copy.deepcopy(value) for key, value in self.event.items() if key in fields}
             owner = 'owner%40example.invalid' in path
             return {'id': 'owner-id' if owner else 'tutor-id', 'userType': 'Member', 'accountEnabled': True,
                     'userPrincipalName': 'owner@example.invalid' if owner else 'tutor@example.invalid'}
@@ -144,6 +150,14 @@ class BreakoutCommandTests(unittest.TestCase):
         with patch.object(sys.modules['curriculum_api'], 'views', preloaded, create=True):
             self.assertIn('"eligible": 1', self.run_command())
             self.assertIs(sys.modules['curriculum_api'].views, preloaded)
+
+    def test_calendar_recurrence_change_stops_before_database_role_success(self):
+        self.event['type'] = 'seriesMaster'
+        self.event['recurrence'] = {'pattern': {'type': 'weekly', 'interval': 1, 'daysOfWeek': ['monday']}}
+        self.recurrence_changes_on_patch = True
+        with self.assertRaisesRegex(CommandError, 'microsoft_readback_unconfirmed'):
+            self.run_command(apply=True)
+        self.assertFalse(any(sql.startswith('UPDATE') for sql, _ in self.sql))
 
     def test_apply_updates_both_lms_role_lists_and_card_metadata_without_sending_mail(self):
         self.run_command(apply=True)

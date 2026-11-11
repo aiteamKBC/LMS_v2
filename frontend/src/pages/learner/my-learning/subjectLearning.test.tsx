@@ -320,6 +320,13 @@ function renderWorkspace(path: string, view: 'map' | 'catalogue' = 'map') {
 }
 
 describe('map and My Learning navigation', () => {
+  it('resumes an imported activity with its stored identity and pins the activity after navigation', async () => {
+    renderWorkspace('/learner/my-learning/commercial/132?subject=legacy%3A1&resume=1', 'catalogue');
+    expect(await screen.findByRole('region', { name: 'First reading content' })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent('activity=la%3A1%3A1');
+    expect(screen.getByTestId('location')).not.toHaveTextContent('resume=');
+  });
+
   it('opens a canonical evidence record without confusing it with a source material ID', async () => {
     vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string) => (url.includes('subject-covers') ? metadata : material) as T);
     const recorded = { ...data, activities: [
@@ -399,7 +406,26 @@ describe('map and My Learning navigation', () => {
     expect(screen.queryByRole('heading', { name: 'Continue learning' })).not.toBeInTheDocument();
   });
 
-  it.each(['current', '2026-09-07'])('opens a completed current-week native player from a Continue link (%s)', async week => {
+  it.each(['commercial', 'apprenticeship'] as const)('resumes the earlier incomplete activity for %s instead of the calendar week', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {}, activity_dates: {
+      DONE: { date: '2026-09-01', date_source: 'builder_week' },
+      OLD: { date: '2026-09-01', date_source: 'builder_week' },
+      CURRENT: { date: '2026-11-10', date_source: 'builder_week' },
+    } });
+    const real = { modules: ['Leadership'], components: ['DONE', 'OLD', 'CURRENT'].map(componentId => ({
+      componentId, moduleId: 'M1', module: 'Leadership', week: componentId === 'CURRENT' ? 'Week 7' : 'Week 1',
+      component: componentId, type: 'reading', contentAvailable: true,
+    })), componentProgress: [{ componentId: 'DONE', kind: 'component' }] } as LearnerDetail;
+    render(<MemoryRouter initialEntries={[`/learner/my-learning/${kind}/132?subject=current%3AM1&resume=1`]}><Routes>
+      <Route path={`/learner/my-learning/${kind}/132`} element={<StudentActivityPanel data={null} real={real} kind={kind} learnerId="132" loading={false} error={null} onRetry={() => {}} />} />
+      <Route path={`/learner/component/${kind}/132/:activityId`} element={<p>Activity player</p>} />
+    </Routes><Navigation /></MemoryRouter>);
+    expect(await screen.findByText('Activity player')).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/component/${kind}/132/OLD?`);
+    expect(screen.getByTestId('location')).not.toHaveTextContent('resume=');
+  });
+
+  it.each(['current', '2026-09-07'])('opens a completed current-week native player from an explicit week link (%s)', async week => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-13T12:00:00Z'));
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {}, activity_dates: {

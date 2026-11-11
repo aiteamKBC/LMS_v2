@@ -182,6 +182,7 @@ it.each(['commercial', 'apprenticeship'])('refreshes the %s recording chip after
   vi.mocked(readLearnerAttendanceMode).mockResolvedValue('lazy');
   await act(async () => { mount('C1', kind); });
   const player = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  expect(screen.queryByRole('button', { name: /back to training plan/i })).not.toBeInTheDocument();
   expect(screen.queryByText('Completed')).not.toBeInTheDocument();
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...original, componentProgress: [{ ...progress,
     timeTaken: null, reportedTime: '150 minutes', timeTrackingSource: 'verified_recording_watch' }] } as LearnerDetail);
