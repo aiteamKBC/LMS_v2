@@ -35,7 +35,7 @@ const selected = catalog.filter(tutorial => !only || only.split(',').includes(tu
           const trigger = page.getByRole('button', { name: `Watch ${tutorial.title} page guide` });
           await expect(trigger).toBeVisible();
           const box = await trigger.boundingBox();
-          assert(box && box.x >= 0 && box.x + box.width <= width && box.width >= 44, 'Help icon must fit the header and remain a full touch target.');
+          assert(box && box.x >= 0 && box.x + box.width <= width && box.width >= 44, 'Floating help button must stay on screen and remain a full touch target.');
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Page overflows horizontally');
           await trigger.click();
           const dialog = page.getByRole('dialog', { name: tutorial.title, exact: true });
