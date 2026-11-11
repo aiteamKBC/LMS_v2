@@ -1,0 +1,26 @@
+WEBVTT
+
+1
+00:00:01.700 --> 00:00:09.400
+Review transfer requests
+Administrators review requests to move learning progress from the old LMS into new modules. Pending and Approved separate requests by status.
+
+2
+00:00:09.400 --> 00:00:16.800
+Find a request
+Search the retrieved requests, filter by programme and change the sort order. Use pagination and retrieval controls when more requests are available.
+
+3
+00:00:16.800 --> 00:00:26.100
+Check component matching
+Review transfer opens the old and new module components. Move between weeks and check the proposed matches. Review existing completions before making changes.
+
+4
+00:00:26.100 --> 00:00:33.600
+Approve a transfer
+Approve transfer applies the reviewed mappings. Check the learner and module carefully. Cancel closes the review without approving the request.
+
+5
+00:00:33.600 --> 00:00:44.448
+Check history and refresh
+Approved shows completed requests. Export log downloads the transfer log. Refresh retrieves current requests; use Retry refresh if the service fails.

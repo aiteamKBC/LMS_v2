@@ -18,7 +18,7 @@ function Location() { return <output data-testid="location">{useLocation().searc
 const show = (url = '/users/progress-transfers') => render(<MemoryRouter initialEntries={[url]}><TransferRequests /><Location /></MemoryRouter>);
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 const decisions = { reviewToken: 'review', mappings: [] };
-const openReview = async (id = 'R1') => fireEvent.click(await screen.findByRole('button', { name: `Review request ${id}` }));
+const openReview = async (id = 'R1') => fireEvent.click(await screen.findByRole('button', { name: `Review transfer request ${id}` }));
 const approveInDialog = async () => { const button = dialog().getByRole('button', { name: 'Approve transfer' }); await waitFor(() => expect(button).toBeEnabled()); fireEvent.click(button); return button; };
 const expandModules = (id = 'R1') => fireEvent.click(row(id).getByText(/^[0-9]+ modules?$/));
 
@@ -37,13 +37,13 @@ describe('Transfer Progress list and supported operations', () => {
       request('R4', { requestedAt: null as unknown as string }),
     ]));
     show('/users/progress-transfers?transferModule=legacy%3AM1%3AM1&transferFrom=2026-10-25&transferTo=2026-10-25&keep=example');
-    await screen.findByRole('button', { name: 'Review request R1' });
-    expect(screen.queryByRole('button', { name: 'Review request R2' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Review request R3' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Review request R4' })).not.toBeInTheDocument();
+    await screen.findByRole('button', { name: 'Review transfer request R1' });
+    expect(screen.queryByRole('button', { name: 'Review transfer request R2' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review transfer request R3' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review transfer request R4' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Requested from')).toHaveValue('2026-10-25');
     fireEvent.change(screen.getByRole('combobox', { name: 'Module' }), { target: { value: 'legacy:M2:M2' } });
-    expect(screen.getByRole('button', { name: 'Review request R3' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Review transfer request R3' })).toBeVisible();
     fireEvent.change(screen.getByLabelText('Requested to'), { target: { value: '2026-10-24' } });
     expect(screen.getByText('No requests match your filters.')).toBeVisible();
     fireEvent.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]);
@@ -55,7 +55,7 @@ describe('Transfer Progress list and supported operations', () => {
 
   it('opens Pending first, keeps identities separate and prioritises the oldest request', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue(response([request('R2', { requestedAt: '2026-10-22T09:00:00Z' }), request()])); show();
-    await screen.findByRole('button', { name: 'Review request R1' });
+    expect(await screen.findByRole('button', { name: 'Review transfer request R1' })).toHaveTextContent('Review transfer');
     expect(pendingTab()).toHaveAttribute('aria-selected', 'true');
     expect(screen.getAllByRole('row').slice(1).map(el => el.getAttribute('aria-label'))).toEqual(['Request R1 for Same learner', 'Request R2 for Same learner']);
     expect(pendingTab()).toHaveTextContent('2 retrieved'); expect(approvedTab()).toHaveTextContent('0 retrieved');
@@ -66,7 +66,7 @@ describe('Transfer Progress list and supported operations', () => {
 
   it('expands every module with full source/destination identities, saved progress and hours', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue(response([request('R2', { modules: [module('M1', 100, 1), module('M2', 40, 2), module('M3', 0, 20)] })])); show();
-    await screen.findByRole('button', { name: 'Review request R2' });
+    await screen.findByRole('button', { name: 'Review transfer request R2' });
     const summary = row('R2').getByText('3 modules').closest('summary')!; summary.focus(); expect(summary).toHaveFocus();
     fireEvent.click(summary);
     const modules = within(screen.getByRole('list', { name: 'Modules in request R2' }));
@@ -89,7 +89,7 @@ describe('Transfer Progress list and supported operations', () => {
 
   it('preserves demo-progress warnings on the expanded module list and review', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue(response([request('R1', { modules: [{ ...module(), demoProgress: true }] })])); show();
-    await screen.findByRole('button', { name: 'Review request R1' }); expandModules(); expect(row().getByText('Demo progress')).toBeVisible();
+    await screen.findByRole('button', { name: 'Review transfer request R1' }); expandModules(); expect(row().getByText('Demo progress')).toBeVisible();
     await openReview(); expect(dialog().getByText('Demo progress')).toBeVisible();
   });
 
@@ -106,13 +106,13 @@ describe('Transfer Progress list and supported operations', () => {
     vi.mocked(api.getTransferRequests).mockRejectedValueOnce(new Error('Request list unavailable')).mockResolvedValue(response([request()])); show();
     expect(await screen.findByRole('alert')).toHaveTextContent('Request list unavailable'); expect(pendingTab()).toHaveTextContent('—');
     expect(screen.queryByText('No requests waiting for approval.')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry refresh' })); await screen.findByRole('button', { name: 'Review request R1' });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry refresh' })); await screen.findByRole('button', { name: 'Review transfer request R1' });
     expect(api.approveTransferRequest).not.toHaveBeenCalled();
   });
 
   it('does not turn missing hour/progress values into real zeros', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValue(response([request('R1', { modules: [module('M1', Number.NaN, Number.NaN)] })])); show();
-    await screen.findByRole('button', { name: 'Review request R1' }); expandModules();
+    await screen.findByRole('button', { name: 'Review transfer request R1' }); expandModules();
     expect(row().getByText('Progress unavailable · Hours unavailable')).toBeVisible(); expect(row().queryByText('0h')).not.toBeInTheDocument();
     await openReview(); expect(dialog().getAllByText('Progress unavailable')).toHaveLength(2);
     dialog().getAllByText('Progress unavailable').forEach(value => expect(value).toBeVisible()); expect(dialog().queryByRole('progressbar')).not.toBeInTheDocument();
@@ -125,7 +125,7 @@ describe('Transfer Progress list and supported operations', () => {
     expect(pendingTab()).toHaveTextContent('1 loaded'); expect(screen.getByRole('searchbox')).toBeDisabled(); expect(screen.getByRole('combobox', { name: 'Sort requests' })).toBeDisabled();
     await act(async () => last.resolve(response([request(), request('R2'), approved('A2')])));
     expect(pendingTab()).toHaveTextContent('2 retrieved'); expect(screen.getByRole('searchbox')).toBeEnabled();
-    expect(screen.getAllByRole('button', { name: /^Review request/ })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /^Review transfer request/ })).toHaveLength(2);
     expect(api.getTransferRequests).toHaveBeenLastCalledWith(50, expect.any(AbortSignal));
     fireEvent.click(approvedTab()); expect(screen.getAllByRole('button', { name: /^Details for request/ })).toHaveLength(2);
   });
@@ -134,7 +134,7 @@ describe('Transfer Progress list and supported operations', () => {
     vi.mocked(api.getTransferRequests).mockResolvedValueOnce(response([request()], 50)).mockRejectedValueOnce(new Error('Next page unavailable')).mockResolvedValueOnce(response([request('R2')])); show();
     expect(await screen.findByRole('alert')).toHaveTextContent('Next page unavailable'); expect(row().getByText('Same learner')).toBeVisible();
     expect(screen.getByRole('searchbox')).toBeDisabled(); expect(pendingTab()).toHaveTextContent('1 loaded');
-    fireEvent.click(screen.getByRole('button', { name: 'Continue loading requests' })); await screen.findByRole('button', { name: 'Review request R2' });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue loading requests' })); await screen.findByRole('button', { name: 'Review transfer request R2' });
     expect(pendingTab()).toHaveTextContent('2 retrieved'); expect(api.getTransferRequests).toHaveBeenLastCalledWith(50, expect.any(AbortSignal));
   });
 
@@ -151,7 +151,7 @@ describe('Transfer Progress list and supported operations', () => {
     expect(screen.getByText('Page 1 of 3')).toBeVisible(); fireEvent.click(screen.getByRole('button', { name: 'Next request page' }));
     expect(screen.getByText('Page 2 of 3')).toBeVisible();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Learner 21' } });
-    expect(screen.getByRole('button', { name: 'Review request R21' })).toBeVisible(); expect(screen.getByText('Page 1 of 1')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Review transfer request R21' })).toBeVisible(); expect(screen.getByText('Page 1 of 1')).toBeVisible();
     fireEvent.change(screen.getByRole('combobox', { name: 'Programme' }), { target: { value: 'Programme A' } });
     expect(screen.getByText('No requests match your filters.')).toBeVisible(); expect(pendingTab()).toHaveTextContent('22 retrieved');
     fireEvent.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]);
@@ -172,7 +172,7 @@ describe('Transfer Progress list and supported operations', () => {
   });
 
   it('uses linked tab semantics and keyboard navigation without altering filters', async () => {
-    vi.mocked(api.getTransferRequests).mockResolvedValue(response([request(), approved()])); show(); await screen.findByRole('button', { name: 'Review request R1' });
+    vi.mocked(api.getTransferRequests).mockResolvedValue(response([request(), approved()])); show(); await screen.findByRole('button', { name: 'Review transfer request R1' });
     const pending = pendingTab(); pending.focus(); fireEvent.keyDown(pending, { key: 'ArrowRight' });
     expect(approvedTab()).toHaveFocus(); expect(approvedTab()).toHaveAttribute('aria-selected', 'true');
     const panel = screen.getByRole('tabpanel'); expect(approvedTab()).toHaveAttribute('aria-controls', panel.id); expect(panel).toHaveAttribute('aria-labelledby', approvedTab().id);
@@ -242,7 +242,7 @@ describe('Transfer Progress list and supported operations', () => {
   });
 
   it('dismisses read-only review with Escape and restores its trigger', async () => {
-    vi.mocked(api.getTransferRequests).mockResolvedValue(response([request()])); show(); const trigger = await screen.findByRole('button', { name: 'Review request R1' }); trigger.focus(); fireEvent.click(trigger);
+    vi.mocked(api.getTransferRequests).mockResolvedValue(response([request()])); show(); const trigger = await screen.findByRole('button', { name: 'Review transfer request R1' }); trigger.focus(); fireEvent.click(trigger);
     fireEvent.keyDown(document, { key: 'Escape' }); await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument()); expect(trigger).toHaveFocus(); expect(api.approveTransferRequest).not.toHaveBeenCalled();
   });
 
@@ -270,7 +270,7 @@ describe('Transfer Progress list and supported operations', () => {
   });
 
   it('keeps the general explanation collapsed and reserves primary approval for the review', async () => {
-    vi.mocked(api.getTransferRequests).mockResolvedValue(response([request()])); show(); await screen.findByRole('button', { name: 'Review request R1' });
+    vi.mocked(api.getTransferRequests).mockResolvedValue(response([request()])); show(); await screen.findByRole('button', { name: 'Review transfer request R1' });
     const summary = screen.getByText('How transfers work').closest('summary')!; expect(summary.closest('details')).not.toHaveAttribute('open');
     expect(screen.queryByRole('button', { name: 'Approve transfer' })).not.toBeInTheDocument(); fireEvent.click(summary);
     expect(screen.getByText(/Confirm inside the review/)).toBeVisible(); await openReview(); expect(dialog().getByText(/Existing completions and matched old completions count once/)).toBeVisible();

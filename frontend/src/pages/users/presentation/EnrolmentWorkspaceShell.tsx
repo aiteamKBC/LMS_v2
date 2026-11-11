@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, ChevronRight, LogOut, UserRoundPlus, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, ChevronRight, CirclePlay, LogOut, UserRoundPlus, X } from 'lucide-react';
 import type { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { Header, SignOutConfirmModal } from '@/components/feature/Header';
 import { GlobalSearch } from '@/components/feature/GlobalSearch';
 import { SidebarIcon, type SidebarNavItem } from '@/components/feature/Sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import styles from './EnrolmentWorkspace.module.css';
+import { EnrolmentTutorial } from '../help/EnrolmentTutorial';
+import { tutorialForLocation } from '../help/tutorials';
+import tutorialStyles from '../help/EnrolmentTutorial.module.css';
 
 type Props = ComponentProps<typeof WorkspaceShell> & { directoryLayout?: boolean };
 const navigationOrder = ['/users', '/users/first-sessions', '/users/coach-directory', '/users/progress-transfers', '/users/my-courses'];
@@ -24,6 +27,9 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
+  const [guideLocation, setGuideLocation] = useState<string | null>(null);
+  const pageGuide = tutorialForLocation(location.pathname, location.search);
+  const locationKey = `${location.pathname}${location.search}`;
   const menuRef = useRef<HTMLButtonElement>(null);
   const accountRef = useRef<HTMLButtonElement>(null);
   const navigationRef = useRef<HTMLElement>(null);
@@ -49,6 +55,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
   const chromeRole = isAdmin && /^\/users(?:\/|$)/.test(location.pathname) ? 'admin' : role;
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname, location.search]);
+  useEffect(() => { setGuideLocation(null); }, [location.pathname, location.search]);
   useEffect(() => {
     const resize = () => { if (window.innerWidth >= 1024) setMobileOpen(false); };
     window.addEventListener('resize', resize);
@@ -116,7 +123,10 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
     </aside>
     <div className={`workspace-content ${styles.content}`} inert={mobileOpen || undefined} aria-hidden={mobileOpen || undefined}>
       {!hidePageChrome && <Header accountButtonRef={accountRef} pageTitle={pageTitle} pageSubtitle={pageSubtitle}
-        headerExtras={headerExtras} userName={displayName} role={chromeRole} appearance={directoryLayout ? 'enrolment' : undefined} workspaceLabel={workspaceLabel} sidebarSignOut
+        headerExtras={headerExtras || pageGuide ? <div className={tutorialStyles.extras}>{headerExtras}{pageGuide && <button type="button"
+          className={tutorialStyles.trigger} aria-label={`Watch ${pageGuide.tutorial.title} page guide`} title="Watch this page's guide (English)"
+          aria-haspopup="dialog" onClick={() => setGuideLocation(locationKey)}><CirclePlay size={21} aria-hidden="true" /></button>}</div> : undefined}
+        userName={displayName} role={chromeRole} appearance={directoryLayout ? 'enrolment' : undefined} workspaceLabel={workspaceLabel} sidebarSignOut
         pageIcon={activeHref ? <SidebarIcon id={destinations.find(item => item.href === activeHref)?.id} label={pageTitle} /> : undefined}
         onToggleMobileSidebar={() => setMobileOpen(value => !value)} mobileSidebarOpen={mobileOpen} mobileMenuButtonRef={menuRef}
         onOpenSearch={() => setSearchOpen(true)} />}
@@ -130,6 +140,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
       <main className={`workspace-main ${styles.main}`}>{children}</main>
     </div>
     <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} appearance="enrolment" />
+    {guideLocation === locationKey && pageGuide && <EnrolmentTutorial key={locationKey} tutorial={pageGuide.tutorial} initialChapter={pageGuide.chapter} onClose={() => setGuideLocation(null)} />}
     {signOutOpen && createPortal(<SignOutConfirmModal displayName={displayName} email={auth.user?.email || auth.account?.email || ''}
       onClose={() => setSignOutOpen(false)} onConfirm={() => { setSignOutOpen(false); logout(); }} />, document.body)}
   </div>;
