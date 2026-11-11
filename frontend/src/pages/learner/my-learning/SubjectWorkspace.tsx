@@ -21,6 +21,7 @@ import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/training
 import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
 import { PreviousLearningNotice } from './PreviousLearningNotice';
 import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
+import { nextIncompleteActivity } from './resumeLearning';
 import { resolveSubjectWeek } from './subjectLearning';
 import { subjectActivityHours } from '@/utils/activityPlan';
 import { ActivityPlanDetails } from '../video-watch/ActivityPlanDetails';
@@ -309,9 +310,10 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const selected = routeParams.get('subject') || routeParams.get('module');
   const selectedWeek = routeParams.get('week');
   const continueCurrentWeek = selectedWeek === 'current';
+  const resume = routeParams.get('resume') === '1';
   const select = (subject?: string, week?: string) => {
     const params = new URLSearchParams(location.search);
-    params.delete('module'); params.delete('week'); params.delete('subject'); params.delete('activity');
+    params.delete('module'); params.delete('week'); params.delete('subject'); params.delete('activity'); params.delete('resume');
     if (subject) params.set('subject', subject);
     if (week) params.set('week', week);
     navigate({ pathname: location.pathname, search: params.toString() });
@@ -428,10 +430,18 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const percent = summary.percent;
   if (!displayed && (error || imageError)) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error || imageError}</p><button onClick={error ? onRetry : retryMetadata} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
   if (!displayed) return <SubjectCardsSkeleton />;
+  if (resume && active && !requestedActivity && !loading && !error && !imageError) {
+    const target = nextIncompleteActivity(active);
+    if (target) {
+      const href = nativeHref(target.activity, kind, learnerId)
+        || `${learningHref('catalogue', kind, learnerId, active.id, target.week.id)}&activity=${encodeURIComponent(target.activity.id)}`;
+      return <Navigate to={href} replace />;
+    }
+  }
   if (requestedActivity && !activityTarget) return <div role="alert" className={styles.empty}><p>{activityMatches.length > 1 ? 'This evidence matches more than one learning activity. Choose the correct module to review it.' : 'This evidence activity is not available in My Learning.'}</p><button onClick={() => select()}>View modules</button></div>;
   // Catalogue links open the existing player directly. Imported-only courses
   // and weeks awaiting content keep their material browser available.
-  const openingActivity = !requestedActivity && active && !active.replacementCourseRef && view === 'catalogue' && (!selectedWeek || activeWeek)
+  const openingActivity = !resume && !requestedActivity && active && !active.replacementCourseRef && view === 'catalogue' && (!selectedWeek || activeWeek)
     ? subjectOpeningActivity(active, activeWeek) : undefined;
   const openingHref = openingActivity ? nativeHref(openingActivity, kind, learnerId) : null;
   if (openingHref) return <Navigate to={openingHref} replace />;
