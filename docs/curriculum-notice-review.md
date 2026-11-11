@@ -39,7 +39,7 @@ Normal status badges, readiness indicators, validation feedback and real action-
 4. Code paths for unavailable calendar integrity history, incomplete Microsoft verification and unavailable version history remain genuine configuration/integration states. Their existence in source does not establish that the deployed service is misconfigured. No schema repair, Graph sync, invitation, email or live external operation was attempted.
 5. The existing historical-evidence test `retries document preparation without losing the evidence details` also fails on the original `HEAD` sources (10 passed, 1 failed). It expects a single transient 503 to remain visible although the shared transport retries it. Neither that test nor the document preparation flow was changed in this task.
 
-## Validation and release gate
+## Initial validation and release gate
 
 - Frontend Teams baseline: **PASS**, `npm --prefix frontend run test:teams`: 9 files, 149 tests. The holiday-copy assertion now checks the intentionally collapsed, keyboard-accessible date details; the unchanged schedule and no-cascade assertions remain.
 - Feature checks: **FAIL**, 28 files, 539 passed and the same 3 recorded-course tests failed. The unchanged `HEAD` comparison reproduced all 3 failures (16 passed, 3 failed). Coverage includes notice disclosure, learner-note editing/publication, grouped KSB reporting, privacy of learner-facing errors, allowed/forbidden dashboard views, retries, retained progress, course structure, authoring saves, learner preview and connected learner views. An earlier intermittent reading-highlight assertion passed on both the original-source comparison and the resumed feature run; it is not classified as a confirmed existing defect.
@@ -62,3 +62,50 @@ The resumed feature command was:
 ```powershell
 npm --prefix frontend run test -- src/components/feature/__tests__/learningNotices.test.tsx src/pages/curriculum/module-builder/__tests__/courseStructureMonths.test.tsx src/pages/curriculum/module-builder/__tests__/moduleAutoSave.test.tsx src/pages/curriculum/module-builder/__tests__/learnerPreview.test.tsx src/pages/curriculum/module-builder/__tests__/holidayReadingWeeks.test.tsx src/pages/curriculum/teams-meetings/__tests__/offScheduleRuns.test.ts src/pages/curriculum/teams-meetings/__tests__/offScheduleRunDetails.test.tsx src/pages/curriculum/teams-meetings/CalendarHealthPanel.test.tsx src/pages/learner/training-plan-timeline src/pages/learner/my-learning/compactModules.test.tsx src/pages/learner/my-learning/studentActivity.test.tsx src/pages/learner/my-learning/studentMaterial.answers.test.tsx src/pages/learner/my-learning/AssignmentsTab.test.tsx src/pages/learner/my-learning/recordedCourseProgress.test.tsx src/pages/workspace/learner/__tests__/DashboardCompactTraining.test.tsx src/pages/workspace/learner/__tests__/dashboardRequestGraph.test.tsx src/pages/learner/video-watch/completion.test.tsx src/pages/learner/video-watch/readingAccessibility.test.tsx --maxWorkers=2
 ```
+
+## Pre-merge recheck — 11 November 2026
+
+The owner requested another regression review and explicitly reserved PR merge and deployment for a later instruction. Neither was performed.
+
+Concurrent work was active in the same working folder, including Module Builder, evidence, reflections and learner content. Validation therefore read tracked source directly from immutable Git objects into memory. No branch switch, worktree, reset, stash, alternate checkout or change to the teammate's source was used. Installed dependencies and existing test configuration were retained. The local validation adapters remain ignored under `frontend/.codex/curriculum-notice-validation/`; they are not application changes or replacements for the tests' assertions.
+
+- Compared main revision: `71b3f1c7c2b315dcfdb83a6cec60604eca63713d`.
+- Reviewed source commit: `b0c8d383` (the subsequent handoff change is documentation only).
+- Simulated combined source tree: `a3a09f14c12ad96e7a3251764efdb996e99eaa7c`.
+- `git merge-tree --write-tree --name-only HEAD 71b3f1c7c2b315dcfdb83a6cec60604eca63713d` produced a clean tree. Only moving this PR's `LearnerLoadError` import was needed to avoid the navigation import conflict. This does not merge either branch.
+
+The review added two calendar regression cases: initial failure followed by retry, and a failed background refresh followed by recovery while saved sessions remain visible. Both assert that no schedule-update API is called. Two existing learner-page assertions were updated for the intentionally safe error copy; their access gate and recovery assertions remain, with new checks that raw transport text is absent.
+
+| Check | Result and limit |
+| --- | --- |
+| Teams baseline, unchanged nine-file command with the pinned-source config | **PASS: 149 tests, 9 files.** All baseline cases ran. |
+| Final feature/recovery checks | **162 passed, 20 failed, 5 files, no skipped cases.** All 20 failures also failed on main. Notice disclosure (6), compact learning (30), Module Builder saves (30), and calendar recovery (2) all passed. The wider learner-page suite passed 94 and retained the same 20 main failures. |
+| Wider curriculum, learner and shared-consumer run | **5325 passed, 108 failed, 492 files, 5433 tests, no skipped cases.** This is not a green regression run. The run used the earlier combined tree `43659f1e3174544308d706bddfec186fbb7bb3b9`; the final tree differs only in the two test files described above. |
+| Comparison of wider failures with main | **104 identical failing cases were reproduced on main** across 22 files (526 comparison cases). Two additional failures were the old error-copy expectations, now corrected and passing. A video-upload case and an onboarding-review timing case failed in the large run, then passed on recheck: the full save suite passed 30/30 and the review-lock suite passed 7/7. Their intermittent causes were not established or silently repaired. |
+| Type check of final pinned source | **PASS: 2708 files, 0 diagnostics.** |
+| Lint of final pinned source | **PASS: 2706 files, 0 errors/warnings.** |
+| Production bundle of combined application source | **PASS.** Application source is unchanged between the bundle tree and final tree; only test files differ. Build emitted eval/plugin-timing and four asset-resolution warnings. The four assets are present in the combined Git tree but absent from the current working folder; this local validation output is not a deployment artifact. |
+| Applicable backend Teams/attendance/security checks | **PASS: 20 tests** from the pinned combined backend source, with both DB aliases forced to SQLite memory, mail in memory and application networking blocked. No databases were provisioned or used. |
+| Off-schedule no-database cases | **PASS: 8 tests.** |
+| PostgreSQL-dependent meeting/sync-verdict and booking/race/ownership suites | **BLOCKED / NOT RUN.** Read-only settings inspection confirmed normal application DB endpoints and all three isolated-test flags disabled. A historical test URL exists, but no exact approved branch ID or local branch configuration is declared. No connection, SQL, schema or data change was made during this verification. |
+| Visual check | **BLOCKED / NOT RUN.** Browser access host was unavailable. A local synthetic preview was prepared; no existing shared browser page was changed. |
+| Live Teams | **NOT RUN.** No meetings, invitations, recordings, attendance or Microsoft settings were changed. |
+
+The wider discovery covers the tracked test files present in this working folder. Four unrelated test files added on main (Global Search and three progress-transfer suites) were not present locally and were not executed or counted as passed. This is not a claim to have run the entire LMS test suite.
+
+The baseline comparisons establish automated failures in the same runner, not 104 confirmed live learner defects. Uncommitted work in the shared folder is also outside this tested snapshot. In particular, `module-builder/page.tsx` and `LearnerPreview.tsx` have continuing teammate edits; preserve those and check integration again when that work is committed.
+
+Pinned frontend checks used the existing Vitest configuration plus a read-only Git source loader:
+
+```powershell
+$env:NOTICE_REVIEW_TREE = 'a3a09f14c12ad96e7a3251764efdb996e99eaa7c'
+npm --prefix frontend run test:teams -- --config .codex/curriculum-notice-validation/vitest.config.mjs
+npm --prefix frontend run test -- --config .codex/curriculum-notice-validation/vitest.config.mjs src/components/feature/__tests__/learningNotices.test.tsx src/pages/learner/my-learning/compactModules.test.tsx src/pages/curriculum/session-calendar/__tests__/calendarRecovery.test.tsx src/pages/curriculum/module-builder/__tests__/moduleAutoSave.test.tsx src/pages/learner/__tests__/pages.test.tsx --maxWorkers=2
+# From frontend:
+node .codex/curriculum-notice-validation/checks.mjs types
+node .codex/curriculum-notice-validation/checks.mjs lint
+```
+
+The wider command targeted `src/pages/curriculum`, `src/pages/learner`, `src/pages/workspace/learner`, `src/components/feature`, `src/hooks/__tests__`, `src/api/__tests__`, `src/api/reflectionSubmission.test.ts`, `src/features/old-otjh` and `src/router/__tests__`, with the same pinned config and two workers. JSON results and local logs remain under the task-specific `lms-notices-pr678-*` names in the Windows temporary directory.
+
+**Acceptance remains blocked.** Resolve or explicitly review the recorded baseline/intermittent failures and complete the missing environment/visual checks before considering merge. Recheck current main and rerun affected checks if relevant source changes after this snapshot. The PR remains a draft; this report is not merge or deployment approval.
