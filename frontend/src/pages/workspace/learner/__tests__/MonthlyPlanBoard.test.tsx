@@ -82,7 +82,7 @@ describe('compact Monthly board keeps existing presentation and actions', () => 
     expect(onRefresh).toHaveBeenCalledOnce();
   });
 
-  it('bounds automatic retries when an expired report is retained after a failed refresh', () => {
+  it.each(['2026-10-20T09:00:10Z', '2026-10-20T09:00:15Z'])('bounds automatic retries with an expired response deadline of %s', refreshAt => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-20T09:00:20Z'));
     const payload = dashboardMonthlyFixture(); payload.refreshAt = '2026-10-20T09:00:10Z';
     const onRefresh = vi.fn(), onMonthChange = vi.fn();
@@ -92,8 +92,29 @@ describe('compact Monthly board keeps existing presentation and actions', () => 
     act(() => vi.advanceTimersByTime(0));
     expect(onRefresh).toHaveBeenCalledOnce();
     rerender(board(true));
+    // A successful response can also be expired on arrival when the browser
+    // clock is ahead. A newer deadline must not restart an immediate loop.
+    payload.refreshAt = refreshAt;
     rerender(board(false));
     act(() => vi.advanceTimersByTime(59_999));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(1));
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('still respects an earlier future session boundary after a successful refresh', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-20T09:00:00Z'));
+    const payload = dashboardMonthlyFixture(); payload.refreshAt = '2026-10-20T09:00:10Z';
+    const onRefresh = vi.fn(), onMonthChange = vi.fn();
+    const board = (refreshing: boolean) => <MemoryRouter><MonthlyPlanBoard payload={payload} kind="commercial" learnerId="265"
+      onRefresh={onRefresh} refreshing={refreshing} onMonthChange={onMonthChange} /></MemoryRouter>;
+    const { rerender } = render(board(false));
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    rerender(board(true));
+    payload.refreshAt = '2026-10-20T09:00:20Z';
+    rerender(board(false));
+    act(() => vi.advanceTimersByTime(9_999));
     expect(onRefresh).toHaveBeenCalledOnce();
     act(() => vi.advanceTimersByTime(1));
     expect(onRefresh).toHaveBeenCalledTimes(2);

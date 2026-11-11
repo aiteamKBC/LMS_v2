@@ -23,7 +23,7 @@ export function MonthlyPlanBoard({ payload, kind, learnerId, onRefresh, onMonthC
   active?: boolean;
 }) {
   const lastAutomaticRefresh = useRef<{ key: string; at: number } | null>(null);
-  const refreshKey = JSON.stringify([kind, learnerId, payload.month, payload.refreshAt]);
+  const refreshKey = JSON.stringify([kind, learnerId, payload.month]);
   useEffect(() => {
     if (!active || refreshing) return;
     const deadline = Date.parse(payload.refreshAt);
@@ -31,10 +31,10 @@ export function MonthlyPlanBoard({ payload, kind, learnerId, onRefresh, onMonthC
     const schedule = () => {
       window.clearTimeout(timer);
       if (document.visibilityState === 'hidden') return;
-      // A failed read retains the expired payload. Bound retries rather than
-      // immediately requesting that same snapshot again on every render.
+      // A failed read or clock skew can leave a deadline already expired.
+      // Bound retries even when a successful read returns a newer stale date.
       const previous = lastAutomaticRefresh.current;
-      const nextAttempt = previous?.key === refreshKey ? previous.at + 60_000 : deadline;
+      const nextAttempt = previous?.key === refreshKey && deadline <= Date.now() ? previous.at + 60_000 : deadline;
       timer = window.setTimeout(() => {
         lastAutomaticRefresh.current = { key: refreshKey, at: Date.now() };
         onRefresh();
