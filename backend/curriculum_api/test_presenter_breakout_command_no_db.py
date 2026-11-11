@@ -4,6 +4,7 @@ import copy
 import io
 import json
 from pathlib import Path
+import sys
 import tempfile
 import types
 import unittest
@@ -117,7 +118,12 @@ class BreakoutCommandTests(unittest.TestCase):
                    'expected_host': '127.0.0.1', 'expected_database': 'synthetic',
                    'backup_file': Path(self.folder.name) / 'roles-backup.jsonl'} | changes
         output = io.StringIO()
-        with patch.dict('sys.modules', self.modules), patch.object(command, 'connection', self.connection), \
+        # Django's runner has already imported curriculum_api.views and cached
+        # it on the parent package. Patch both import routes so the real schema
+        # probe is never used by this no-database suite.
+        with patch.dict('sys.modules', self.modules), \
+                patch.object(sys.modules['curriculum_api'], 'views', self.modules['curriculum_api.views'], create=True), \
+                patch.object(command, 'connection', self.connection), \
                 patch.object(command, 'transaction', self.transactions):
             command.Command(stdout=output).handle(**options)
         return output.getvalue()
@@ -130,6 +136,14 @@ class BreakoutCommandTests(unittest.TestCase):
         self.assertFalse(any(sql.startswith('UPDATE') for sql, _ in self.sql))
         self.assertTrue(all(method == 'GET' for method, _, _ in self.graph_calls))
         self.assertFalse(list(Path(self.folder.name).iterdir()))
+
+    def test_preloaded_application_views_cannot_escape_the_synthetic_adapter(self):
+        def forbidden_probe(*args, **kwargs):
+            self.fail('The preloaded application schema probe must not run')
+        preloaded = types.SimpleNamespace(table_exists=forbidden_probe)
+        with patch.object(sys.modules['curriculum_api'], 'views', preloaded, create=True):
+            self.assertIn('"eligible": 1', self.run_command())
+            self.assertIs(sys.modules['curriculum_api'].views, preloaded)
 
     def test_apply_updates_both_lms_role_lists_and_card_metadata_without_sending_mail(self):
         self.run_command(apply=True)
