@@ -13,12 +13,17 @@ from .attendance_rules import attendance_outcome
 from .projection_performance import projection_call
 
 
+# A verified Teams attendance report earns the full Live Teams activity credit.
+# This is intentionally separate from the scheduled/session display duration
+# used by the attendance register.
+LIVE_SESSION_CREDIT_MINUTES = 150
+
+
 def _live(component):
     return str(component.get('type') or '').strip().lower().replace('-', '_') == 'live_session'
 
 
 def project_live_credits(components, register, *, now=None):
-    from .attendance_lectures import LIVE_SESSION_MINUTES
     now = now or timezone.now()
     components = {str(c['componentId']): c for c in components if c.get('componentId') and _live(c)}
     register_by_module = defaultdict(list)
@@ -65,7 +70,7 @@ def project_live_credits(components, register, *, now=None):
             end = timezone.make_aware(end, utc.utc)
         result.append({'componentId': component_id, 'moduleId': component['moduleId'],
                        'title': component.get('title') or row.get('session_title') or 'Live session',
-                       'occurrenceId': occurrence, 'hours': LIVE_SESSION_MINUTES / 60,
+                       'occurrenceId': occurrence, 'hours': LIVE_SESSION_CREDIT_MINUTES / 60,
                        'verifiedSeconds': seconds, 'submittedAt': end.isoformat()})
     return result
 
@@ -131,7 +136,34 @@ def read_manual_live_credits(source, components):
 def supplement_component_progress(progress, credits):
     from .progress_rules import progress_record_counts_as_achieved
     completed = {str(row.get('componentId')) for row in progress if progress_record_counts_as_achieved(row)}
-    result = list(progress)
+    credit_by_component = {
+        str(credit.get('componentId')): credit
+        for credit in credits
+        if credit.get('componentId') and float(credit.get('hours') or 0) > 0
+    }
+    result = []
+    for row in progress:
+        credit = credit_by_component.get(str(row.get('componentId')))
+        # A saved learner completion may still carry the old fixed duration.
+        # A verified Teams credit is authoritative for this activity, so
+        # project its current 150-minute value without rewriting reflections,
+        # KSBs, or the historical source row.
+        row_type = str(row.get('componentType') or '').replace('-', '_').replace(' ', '_').lower()
+        is_live_credit_row = bool(credit) and (row_type == 'live_session' or (
+            not row_type and 'verifiedSeconds' in credit
+            and str(credit.get('timeTrackingSource') or 'verified_teams_attendance').startswith('verified_teams')
+        ))
+        if is_live_credit_row:
+            result.append({
+                **row,
+                'reportedTime': f"{credit['hours'] * 60:g} minutes",
+                'timeTaken': None,
+                'timeTrackingSource': credit.get('timeTrackingSource', 'verified_teams_attendance'),
+                'claimedSeconds': None,
+                **({'verifiedSeconds': credit['verifiedSeconds']} if 'verifiedSeconds' in credit else {}),
+            })
+        else:
+            result.append(row)
     for credit in credits:
         if credit['componentId'] in completed:
             continue

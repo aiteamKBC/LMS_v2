@@ -143,5 +143,5 @@ class RecordedSessionProgressTests(SimpleTestCase):
              patch('learner_api.live_session_progress.timezone.now', return_value=NOW):
             source = SimpleNamespace(id=7, learner_type='commercial')
             result = read_live_credits(source, components=[live(), recording()], register=[row()])
-        self.assertEqual([(r['componentId'], r['hours']) for r in result], [('LIVE', 2)])
+        self.assertEqual([(r['componentId'], r['hours']) for r in result], [('LIVE', 2.5)])
         components.assert_not_called()

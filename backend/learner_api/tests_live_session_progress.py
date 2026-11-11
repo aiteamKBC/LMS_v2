@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
 
 from .live_session_progress import (project_live_credits, read_live_credits,
-    supplement_component_progress, supplement_module_hours)
+    supplement_component_progress, supplement_module_hours, LIVE_SESSION_CREDIT_MINUTES)
 from .module_progress import aggregate_module_progress
 
 
@@ -42,7 +42,7 @@ class LiveSessionProgressTests(SimpleTestCase):
                 credits = self.credits(register=[lecture(attended_seconds=seconds)])
                 self.assertEqual(len(credits), int(seconds > 180))
                 if credits:
-                    self.assertEqual(credits[0]['hours'], 2)
+                    self.assertEqual(credits[0]['hours'], LIVE_SESSION_CREDIT_MINUTES / 60)
                     self.assertEqual(credits[0]['verifiedSeconds'], seconds)
 
     def test_recorded_recovery_and_staff_absence_do_not_grant_live_credit(self):
@@ -87,11 +87,26 @@ class LiveSessionProgressTests(SimpleTestCase):
         self.assertEqual(once[0]['ksbs'], [])
         self.assertNotIn('feedback', once[0])
         self.assertEqual(once[0]['timeTrackingSource'], 'verified_teams_attendance')
+        self.assertEqual(once[0]['reportedTime'], '150 minutes')
         manual = [{'componentId': 'C1', 'kind': 'component', 'reportedTime': '30 minutes'}]
         self.assertEqual(supplement_component_progress(manual, credits), manual)
 
+    def test_verified_teams_credit_refreshes_a_saved_live_session_duration(self):
+        saved = [{
+            'componentId': 'C1', 'componentType': 'live_session', 'kind': 'component',
+            'reportedTime': '120 minutes', 'timeTaken': '02:00:00',
+            'timeTrackingSource': 'activity-time-decision:input', 'claimedSeconds': 7200,
+            'feedback': 'Keep this reflection',
+        }]
+        refreshed = supplement_component_progress(saved, self.credits())
+        self.assertEqual(refreshed[0]['reportedTime'], '150 minutes')
+        self.assertIsNone(refreshed[0]['claimedSeconds'])
+        self.assertIsNone(refreshed[0]['timeTaken'])
+        self.assertEqual(refreshed[0]['timeTrackingSource'], 'verified_teams_attendance')
+        self.assertEqual(refreshed[0]['feedback'], 'Keep this reflection')
+
     def test_hours_top_up_existing_manual_time_without_changing_stored_rows(self):
-        for seconds, expected in [(0, 2), (1800, 2), (7200, 2), (10800, 3)]:
+        for seconds, expected in [(0, 2.5), (1800, 2.5), (7200, 2.5), (10800, 3)]:
             with self.subTest(seconds=seconds):
                 records = [{'component_ref': 'C1', 'actual_seconds': seconds, 'accepted': True}]
                 before = deepcopy(records)
@@ -123,7 +138,7 @@ class LiveSessionProgressTests(SimpleTestCase):
             source = SimpleNamespace(id=7, learner_type=kind)
             with patch('learner_api.attendance_lectures.lecture_register', return_value=[lecture()]) as register, \
                  patch('learner_api.live_session_progress.timezone.now', return_value=NOW):
-                self.assertEqual(read_live_credits(source, components=[component()])[0]['hours'], 2)
+                self.assertEqual(read_live_credits(source, components=[component()])[0]['hours'], LIVE_SESSION_CREDIT_MINUTES / 60)
                 register.assert_called_once_with(source, module_ids=['M1'], credit_projection=True)
 
     def test_non_live_catalogue_does_not_read_attendance(self):
@@ -169,7 +184,7 @@ class LiveSessionProgressTests(SimpleTestCase):
             self.manual.return_value = ({('C1', 'M1'): (False, NOW)}, [])
             self.assertEqual(read_live_credits(SimpleNamespace(id=7), components=[component()], register=[lecture()]), [])
             self.manual.return_value = ({}, [])
-            self.assertEqual(read_live_credits(SimpleNamespace(id=7), components=[component()], register=[lecture()])[0]['hours'], 2)
+            self.assertEqual(read_live_credits(SimpleNamespace(id=7), components=[component()], register=[lecture()])[0]['hours'], LIVE_SESSION_CREDIT_MINUTES / 60)
 
     def test_canonical_module_percentage_includes_verified_live_completion(self):
         from .module_progress import canonical_module_progress
@@ -199,7 +214,7 @@ class LiveSessionProgressTests(SimpleTestCase):
             profiles.objects.filter.return_value.only.return_value.first.return_value = None
             first = read_dashboard(source, section='overview', records=[], targets={})
             second = read_dashboard(source, section='overview', records=[], targets={})
-        self.assertEqual(first['moduleProgress']['M1']['hours']['actual'], 2)
+        self.assertEqual(first['moduleProgress']['M1']['hours']['actual'], LIVE_SESSION_CREDIT_MINUTES / 60)
         self.assertEqual(second['moduleProgress'], first['moduleProgress'])
         self.assertEqual(first['actual'], [])
         self.assertEqual(read.call_count, 2)

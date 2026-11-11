@@ -865,8 +865,8 @@ def _component_for(row, components):
     return candidates[0] if len(candidates) == 1 else None
 
 
-# Every live session counts as a two-hour lecture, the same rule the audit uses
-# (audit_api.views.LIVE_SESSION_HOURS), whatever its schedule or source.
+# Attendance views retain the scheduled/session display duration. The separate
+# verified Live Teams activity credit is defined in live_session_progress.
 LIVE_SESSION_MINUTES = 120
 
 
