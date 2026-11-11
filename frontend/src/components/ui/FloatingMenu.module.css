@@ -1,3 +1,4 @@
 /* Rendered at the end of <body>: above page chrome, below modal dialogs. */
 .panel { z-index: 60; display: flex; flex-direction: column; align-items: stretch; gap: .25rem; width: max-content; max-width: min(22rem, calc(100vw - 1rem)); padding: .5rem; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #ded4eb; border-radius: .75rem; background: #fff; color: #3e323e; box-shadow: 0 8px 24px #29143a26; }
-.panel[hidden] { display: none; }
+/* Closed is a shared invariant: page-specific grid/flex rules must not expose it. */
+.panel[hidden] { display: none !important; }

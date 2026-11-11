@@ -90,13 +90,15 @@ export function useFloatingPanel<T extends HTMLElement, P extends HTMLElement>({
     observer?.observe(panel);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', place);
-    document.addEventListener('pointerdown', onPointerDown);
+    // Capture before page controls can stop propagation; the first outside
+    // mouse/touch/pen press dismisses without swallowing that control's action.
+    document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('focusin', onFocusIn);
     return () => {
       observer?.disconnect();
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', place);
-      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('focusin', onFocusIn);
     };
   }, [open, align, matchWidth, maxHeight]);

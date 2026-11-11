@@ -113,6 +113,19 @@ describe('FloatingMenu', () => {
     expect(screen.getByRole('button', { name: 'Pressed 1' })).toBeVisible();
   });
 
+  it('dismisses on the first outside pointer press even when propagation is stopped', () => {
+    render(<div onPointerDown={event => event.stopPropagation()}><Harness /></div>);
+    const trigger = screen.getByRole('button', { name: 'More actions for Example' });
+    fireEvent.click(trigger);
+    const action = screen.getByRole('button', { name: 'Pressed 0' });
+    fireEvent.pointerDown(action);
+    expect(screen.getByRole('group', { name: 'Actions for Example' })).toBeVisible();
+    // No blur or click follows: pointerdown alone must close the menu.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Elsewhere' }));
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('group', { name: 'Actions for Example' })).not.toBeInTheDocument();
+  });
+
   it('lets an action close the menu before opening its own dialog', () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole('button', { name: 'More actions for Example' }));
