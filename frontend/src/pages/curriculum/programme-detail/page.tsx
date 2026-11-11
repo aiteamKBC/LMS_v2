@@ -134,8 +134,26 @@ interface Week {
   sessions: Session[];
 }
 
+/**
+ * A summary bucket, with the distinct KSB codes mapped to its components when
+ * the server could read them (`components/summary/`). Absent, not empty, when
+ * it could not -- the page then reads the full component list for the count.
+ */
+type ComponentSummaryRow = CurriculumComponentSummaryRow & { ksbCodes?: string[] };
+
+/**
+ * Where the component figures (counts, OTJH, KSBs) stand: still loading,
+ * built from the summary or the full list, or unavailable because both reads
+ * failed. A figure is printed only once it is `ready`, so a loading or failed
+ * read never shows as a real zero.
+ */
+type ComponentFiguresState = 'pending' | 'ready' | 'failed';
+
 /** The detail document with the component list, or its summary until the list is loaded. */
-type ProgrammeDetailData = CurriculumOverview & { componentSummary?: CurriculumComponentSummaryRow[] | null };
+type ProgrammeDetailData = CurriculumOverview & {
+  componentSummary?: ComponentSummaryRow[] | null;
+  componentFigures?: ComponentFiguresState;
+};
 
 /** How many components a week holds, whichever of the list or the summary it was built from. */
 function weekComponentCount(week: Pick<Week, 'components' | 'componentCount'>) {
@@ -215,6 +233,8 @@ interface Module {
   archived: boolean;
   ksbTags: string[];
   ksbMapping: ModuleKsbMappingSummary[];
+  /** Whether the component counts, OTJH and KSB figures can be shown yet. */
+  componentFigures: ComponentFiguresState;
   weeksData: Week[];
 }
 
@@ -1512,7 +1532,16 @@ function buildLiveProgramme(data: ProgrammeDetailData | null, routeId: string): 
       ]),
     ])];
     const componentRollup = collectComponentKsbRollup(moduleComponents, liveModule.name);
-    const ksbRollup = componentRollup.length ? componentRollup : fallbackKsbRollup(fallbackKsbCodes, liveModule.name);
+    // Before the full list is loaded, the summary names the same codes the
+    // list's mappings carry (live mappings with a code, on live components), so
+    // the module's KSBs are known without it. Weights and evidence are not: the
+    // codes stand in as a code-only roll-up until the list arrives.
+    const summaryKsbCodes = moduleComponents.length ? [] : moduleComponentSummary.flatMap(row => row.ksbCodes || []);
+    const ksbRollup = componentRollup.length
+      ? componentRollup
+      : summaryKsbCodes.length
+        ? fallbackKsbRollup(summaryKsbCodes, liveModule.name)
+        : fallbackKsbRollup(fallbackKsbCodes, liveModule.name);
     const ksbTags = ksbRollup.map(item => item.ksb);
     // The module's OTJH is the sum of every component's Expected OTJH across
     // every week -- the same minute-based rule the Module Builder header uses.
@@ -1555,6 +1584,7 @@ function buildLiveProgramme(data: ProgrammeDetailData | null, routeId: string): 
         sourceType: item.sourceType,
         sourceId: item.sourceId,
       })),
+      componentFigures: data.componentFigures ?? 'ready',
       weeksData,
     };
   });
@@ -1933,12 +1963,16 @@ function StaffSlot({
  * something countable — mapped KSBs, published components — rather than a score,
  * so the number always has a definition the reader can check.
  */
-function ReadinessBar({ label, value, detail, color }: { label: string; value: number; detail: string; color: string }) {
+/**
+ * `valueText` replaces the percentage while the figure cannot be known yet
+ * (still loading, or the read failed), so an empty bar never reads as 0%.
+ */
+function ReadinessBar({ label, value, detail, color, valueText }: { label: string; value: number; detail: string; color: string; valueText?: string }) {
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-2">
         <span className="text-[12px] font-semibold text-foreground-700">{label}</span>
-        <span className="text-[13px] font-heading font-bold text-foreground-950">{value}%</span>
+        <span className="text-[13px] font-heading font-bold text-foreground-950">{valueText ?? `${value}%`}</span>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-background-200">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
@@ -2506,12 +2540,19 @@ function ProgrammeDetailContent() {
   // null until loaded: an empty list is a programme with no components, and
   // only a loaded list may take over from the summary.
   const [detailComponents, setDetailComponents] = useState<CurriculumComponent[] | null>(null);
-  const [componentSummary, setComponentSummary] = useState<CurriculumComponentSummaryRow[] | null>(null);
+  const [componentSummary, setComponentSummary] = useState<ComponentSummaryRow[] | null>(null);
+  // Both component reads failed for the current scope: figures read "—", not 0.
+  const [componentSummaryFailed, setComponentSummaryFailed] = useState(false);
+  const [detailComponentsFailed, setDetailComponentsFailed] = useState(false);
+  const componentFigures: ComponentFiguresState = detailComponents || componentSummary
+    ? 'ready'
+    : componentSummaryFailed && detailComponentsFailed ? 'failed' : 'pending';
   const hydratedData = useMemo<ProgrammeDetailData | null>(() => data ? {
     ...data,
     components: detailComponents || [],
     componentSummary: detailComponents ? null : componentSummary,
-  } : data, [data, detailComponents, componentSummary]);
+    componentFigures,
+  } : data, [data, detailComponents, componentSummary, componentFigures]);
   const { programme: liveProgramme, found } = useMemo(() => buildLiveProgramme(hydratedData, id || ''), [hydratedData, id]);
   const [backendCoverage, setBackendCoverage] = useState<CurriculumKsbCoverageResponse | CurriculumKsbCoverageSummaryResponse | null>(null);
   const [backendCoverageLoading, setBackendCoverageLoading] = useState(false);
@@ -2875,6 +2916,8 @@ function ProgrammeDetailContent() {
   useEffect(() => {
     setDetailComponents(null);
     setComponentSummary(null);
+    setComponentSummaryFailed(false);
+    setDetailComponentsFailed(false);
     componentsRequestKeyRef.current = '';
     componentSummaryRequestKeyRef.current = '';
     coverageRequestKeyRef.current = '';
@@ -2897,16 +2940,29 @@ function ProgrammeDetailContent() {
       ...(module.relatedCatalogueIds || []),
     ]).map(value => clean(value)).filter(Boolean))].sort());
 
-  // The Overview reads its component figures from the summary below, so the
-  // full component list -- every component of the programme, ~17k on the
-  // largest -- is only requested once a tab that lists components is opened.
-  // Sticky: going back to the Overview keeps what was loaded, and does not
-  // abort a read that is already on its way.
-  // Achievement owns a paged server projection; it does not consume this list.
-  const [fullComponentsWanted, setFullComponentsWanted] = useState(() => tab !== 'overview' && tab !== 'achievement');
+  // Every tab reads its component figures -- counts, published counts, OTJH and
+  // each module's KSBs -- from the summary below. The full component list --
+  // every component of the programme, ~20k on the largest -- is requested only
+  // by a tab that reads components one by one:
+  //   * Sessions, which lists the live and recorded components;
+  //   * KSB coverage, whose placement preview finds a component by its title;
+  //   * Quality, only when the server's coverage could not be read and the
+  //     heatmap falls back to the components' own mappings;
+  //   * any tab, when the summary cannot answer: it failed, or it could not
+  //     name the KSB codes (an older schema) and the Modules tab needs them.
+  // Sticky: going back keeps what was loaded, and does not abort a read that is
+  // already on its way. Achievement owns a paged server projection; it does
+  // not consume this list.
+  const summaryLacksKsbCodes = Boolean(componentSummary?.some(row => !Array.isArray(row.ksbCodes)));
+  const componentListNeeded = tab === 'sessions'
+    || tab === 'coverage'
+    || (tab === 'quality' && Boolean(backendCoverageError))
+    || (tab === 'modules' && summaryLacksKsbCodes)
+    || (componentSummaryFailed && tab !== 'achievement');
+  const [fullComponentsWanted, setFullComponentsWanted] = useState(componentListNeeded);
   useEffect(() => {
-    if (tab !== 'overview' && tab !== 'achievement') setFullComponentsWanted(true);
-  }, [tab]);
+    if (componentListNeeded) setFullComponentsWanted(true);
+  }, [componentListNeeded]);
   const loadFullComponents = fullComponentsWanted && tab !== 'achievement';
 
   // Counts, published counts and Expected OTJH per module/week, for every tab
@@ -2919,10 +2975,16 @@ function ProgrammeDetailContent() {
     componentSummaryRequestKeyRef.current = summaryKey;
     const controller = new AbortController();
     fetchCurriculumComponentSummary(controller.signal, { moduleCatalogueIds, revalidate: readRevision > 0 })
-      .then(rows => { if (!controller.signal.aborted) setComponentSummary(rows); })
+      .then(rows => {
+        if (controller.signal.aborted) return;
+        setComponentSummary(rows as ComponentSummaryRow[]);
+        setComponentSummaryFailed(false);
+      })
       .catch(error => {
         if (!controller.signal.aborted) {
           componentSummaryRequestKeyRef.current = '';
+          // The full list is then read in its place (componentListNeeded).
+          setComponentSummaryFailed(true);
           console.warn('Unable to load the programme component summary.', error);
         }
       });
@@ -2945,10 +3007,15 @@ function ProgrammeDetailContent() {
     // file lists. The KSB placement preview loads one component's full settings
     // when it opens (see useCompleteComponent).
     fetchCurriculumComponents(controller.signal, { moduleCatalogueIds, programmeView: true, revalidate: readRevision > 0 })
-      .then(rows => { if (!controller.signal.aborted) setDetailComponents(rows); })
+      .then(rows => {
+        if (controller.signal.aborted) return;
+        setDetailComponents(rows);
+        setDetailComponentsFailed(false);
+      })
       .catch(error => {
         if (!controller.signal.aborted) {
           componentsRequestKeyRef.current = '';
+          setDetailComponentsFailed(true);
           console.warn('Unable to load programme components.', error);
         }
       });
@@ -3557,6 +3624,20 @@ function ProgrammeDetailContent() {
   const emptyWeekCount = activeModules
     .flatMap(mod => mod.weeksData)
     .filter(wk => !weekComponentCount(wk)).length;
+  // The component figures above (counts, OTJH, empty weeks) are zeros until the
+  // summary or the full list has answered. The Overview prints them only once
+  // they are known, and says "loading" or "unavailable" otherwise, so a slow or
+  // failed read never reads as "no content" or "0h planned".
+  // A programme whose modules are loaded and name no catalogue id asks for no
+  // components at all (see componentsScopeKey), so its zeros are the answer.
+  const overviewComponentFigures: ComponentFiguresState = !modulesLoading && componentsScopeKey === '[]'
+    ? 'ready'
+    : componentFigures;
+  const componentFiguresKnown = overviewComponentFigures === 'ready';
+  const componentFigureText = (value: string | number) => (
+    overviewComponentFigures === 'pending' ? '…' : overviewComponentFigures === 'failed' ? '—' : value
+  );
+  const knownEmptyWeekCount = componentFiguresKnown ? emptyWeekCount : 0;
   // A useful first design slice is tangible rather than percentage-based: at
   // least one module, one authored week and one component learners can consume.
   const hasMinimumDesign = activeModules.length > 0 && totalWeeks > 0 && componentTotal > 0;
@@ -3837,8 +3918,15 @@ function ProgrammeDetailContent() {
               : { icon: 'ri-stack-line', label: 'Modules', value: activeModules.length, detail: archivedModuleCount ? `${archivedModuleCount} archived` : untutoredModules.length ? `${untutoredModules.length} need a tutor` : 'All tutored' },
             modulesLoading
               ? { icon: 'ri-calendar-line', label: 'Weeks', value: '…', detail: 'Loading modules' }
-              : { icon: 'ri-calendar-line', label: 'Weeks', value: totalWeeks, detail: `${componentTotal} components` },
-            { icon: 'ri-time-line', label: 'OTJH', value: modulesLoading ? '…' : formatHoursMinutes(totalOtjh) },
+              : {
+                icon: 'ri-calendar-line',
+                label: 'Weeks',
+                value: totalWeeks,
+                detail: overviewComponentFigures === 'pending'
+                  ? 'Loading components'
+                  : overviewComponentFigures === 'failed' ? 'Components unavailable' : `${componentTotal} components`,
+              },
+            { icon: 'ri-time-line', label: 'OTJH', value: modulesLoading ? '…' : componentFigureText(formatHoursMinutes(totalOtjh)) },
             {
               icon: 'ri-node-tree',
               label: 'KSB coverage',
@@ -3984,8 +4072,13 @@ function ProgrammeDetailContent() {
                     label="OTJH progress"
                     value={otjhProgress}
                     color="bg-emerald-500"
+                    valueText={componentFiguresKnown ? undefined : String(componentFigureText(''))}
                     detail={learnerOtjhLoading && !learnerOtjh
                       ? 'Loading learner hours…'
+                      : overviewComponentFigures === 'pending'
+                        ? 'Loading the planned OTJH from authored components…'
+                      : overviewComponentFigures === 'failed'
+                        ? 'The planned OTJH could not be loaded, so progress cannot be measured. Refresh the page to try again.'
                       : !learnerOtjh
                         ? 'Learner hours could not be read for this programme.'
                         : !learnerOtjhLearners
@@ -3997,9 +4090,9 @@ function ProgrammeDetailContent() {
                   <div className="grid grid-cols-2 gap-2 border-t border-background-200 pt-4 sm:grid-cols-4">
                     {[
                       { label: 'Weeks', value: totalWeeks },
-                      { label: 'Components', value: componentTotal },
+                      { label: 'Components', value: componentFigureText(componentTotal) },
                       { label: 'KSBs unmapped', value: missingKsbCount },
-                      { label: 'Authored OTJH', value: formatHoursMinutes(totalOtjh) },
+                      { label: 'Authored OTJH', value: componentFigureText(formatHoursMinutes(totalOtjh)) },
                     ].map(stat => (
                       <div key={stat.label} className="rounded-xl border border-background-200 bg-background-100/60 px-3 py-2">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{stat.label}</p>
@@ -4068,7 +4161,7 @@ function ProgrammeDetailContent() {
             >
               {modulesLoading ? (
                 <p role="status" className="text-[12px] text-foreground-500">Checking the programme's modules...</p>
-              ) : unstaffedGroupCount || untutoredModules.length || unlinkedModules.length || emptyWeekCount || missingKsbCount ? (
+              ) : unstaffedGroupCount || untutoredModules.length || unlinkedModules.length || knownEmptyWeekCount || missingKsbCount || !componentFiguresKnown ? (
                 <ul className="space-y-2">
                   {unstaffedGroupCount > 0 && (
                     <AttentionRow
@@ -4097,11 +4190,18 @@ function ProgrammeDetailContent() {
                       action={{ label: 'Open Modules', onClick: () => goToTab('modules') }}
                     />
                   )}
-                  {emptyWeekCount > 0 && (
+                  {!componentFiguresKnown && (
+                    <li role="status" className="rounded-xl border border-background-200 bg-background-50 px-4 py-3 text-[12px] text-foreground-500">
+                      {overviewComponentFigures === 'pending'
+                        ? 'Checking which weeks have content…'
+                        : 'Week content could not be checked, so empty weeks are not listed here. Refresh the page to try again.'}
+                    </li>
+                  )}
+                  {knownEmptyWeekCount > 0 && (
                     <AttentionRow
                       icon="ri-calendar-close-line"
                       tone="sky"
-                      title={`${emptyWeekCount} ${emptyWeekCount === 1 ? 'week has' : 'weeks have'} no content`}
+                      title={`${knownEmptyWeekCount} ${knownEmptyWeekCount === 1 ? 'week has' : 'weeks have'} no content`}
                       detail="A scheduled week with no components gives learners nothing to do."
                       action={{ label: 'Open Module Builder', onClick: () => navigate(moduleBuilderProgrammeUrl) }}
                     />
@@ -4548,9 +4648,9 @@ function ProgrammeDetailContent() {
                         : <span className="font-bold text-amber-700">Unassigned</span>}
                     </PlainCell>
                     <PlainCell align="center">{mod.weeksData.length || mod.weeks || 0}</PlainCell>
-                    <PlainCell align="center">{componentCount}</PlainCell>
-                    <PlainCell align="center">{formatHoursMinutes(mod.otjh)}</PlainCell>
-                    <PlainCell align="center">{ksbCount}</PlainCell>
+                    <PlainCell align="center"><ComponentFigure state={mod.componentFigures} value={componentCount} /></PlainCell>
+                    <PlainCell align="center"><ComponentFigure state={mod.componentFigures} value={formatHoursMinutes(mod.otjh)} /></PlainCell>
+                    <PlainCell align="center"><ComponentFigure state={mod.componentFigures} value={ksbCount} /></PlainCell>
                     <PlainCell align="center"><LearnerStatusCounts target={{ scope: 'module', id: moduleBuilderIdentifier(mod), name: mod.name }} refreshKey={readRevision} /></PlainCell>
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
@@ -5164,6 +5264,23 @@ function ProgrammeDetailContent() {
 // ============================================================
 // Helper Components
 // ============================================================
+
+/**
+ * A component figure on the Modules table: the value once the summary (or the
+ * full list) has answered, a quiet placeholder while it is loading, and a dash
+ * that says why when neither read could be made -- never a 0 that is not one.
+ */
+function ComponentFigure({ state, value }: { state: ComponentFiguresState; value: string | number }) {
+  if (state === 'pending') {
+    return (
+      <span role="status" aria-label="Loading" title="Loading this module's components" className="inline-block h-3 w-6 animate-pulse rounded bg-background-200" />
+    );
+  }
+  if (state === 'failed') {
+    return <span title="The component figures could not be loaded. Refresh the page to try again.">—</span>;
+  }
+  return <>{value}</>;
+}
 
 function QualityCheckCard({ title, count, clearText, issueText, icon, onClick }: { title: string; count: number; clearText: string; issueText: string; icon: string; onClick: () => void }) {
   const clear = count === 0;
@@ -6239,8 +6356,10 @@ function KsbPlacementPreviewModal({
                 </p>
               )}
 
-              {clean(component.description) && (
-                <p className="text-[12px] leading-relaxed text-foreground-700">{component.description}</p>
+              {/* The list row leaves the description out (it is long authored
+                  text); the full row loaded above carries it. */}
+              {clean(content.component?.description || component.description) && (
+                <p className="text-[12px] leading-relaxed text-foreground-700">{content.component?.description || component.description}</p>
               )}
 
               {facts.length > 0 && (

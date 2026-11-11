@@ -237,6 +237,19 @@ def _course_values(raw):
     }
 
 
+def _stored_cover(course_id, value):
+    """A cover as a storage URL instead of an inline data: URI in the column.
+
+    The picker sends an uploaded file as base64; kept in the column it rode in
+    every catalogue and course response and could never be cached by the
+    browser. Same helper, path shape and failure behaviour as module covers:
+    URLs and '' pass through untouched.
+    """
+    from .views import stored_module_cover_image  # lazy: views is heavy, keep this module light to import
+
+    return stored_module_cover_image(course_id, value)
+
+
 def _validate_shape(weeks):
     if not isinstance(weeks, list):
         raise MutationError("validation_error", "weeks must be a list.")
@@ -364,6 +377,7 @@ def create_course(payload, *, staff_id, idempotency_key):
 
         course_id = _new_id("FREECOURSE")
         course = _course_values(payload.get("course"))
+        course["cover_image_url"] = _stored_cover(course_id, course["cover_image_url"])
         client_map = {"courses": {}, "weeks": {}, "components": {}}
         seen_clients = set()
         course_client = _client_id(payload.get("clientId"), seen_clients, "course clientId")
@@ -536,6 +550,7 @@ def update_course(course_id, payload):
                     "price": course_patch.get("price", course.get("price")),
                 }
                 values = _course_values(merged)
+                values["cover_image_url"] = _stored_cover(course_id, values["cover_image_url"])
                 _update_row(cursor, "free_courses", course_id, course, values)
                 if "displayOrder" in course_patch:
                     catalogue_expected = _expected(payload, "expectedCatalogueRevision")

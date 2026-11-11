@@ -30,10 +30,11 @@ class ModuleScopedSessionTests(unittest.TestCase):
             'MOD-2': [{'date': '2026-09-10', 'weekId': 'W9', 'componentId': 'C9'}],
         }
         self.reads = []
-        self.overview = Mock(return_value={'sessions': [
+        # The overview's sessions, served by the sessions-only build.
+        self.overview = Mock(return_value=[
             {'moduleCatalogueId': 'LEGACY-1', 'moduleId': 'LEGACY-1', 'title': 'legacy'},
             {'moduleCatalogueId': 'MOD-9', 'moduleId': 'MOD-9', 'title': 'other'},
-        ]})
+        ])
         self.n = dict(
             date=date, SimpleNamespace=SimpleNamespace, require_GET=lambda view: view,
             AUTHORING_MODULES_TABLE='modules', COHORT_AUTHORING_DETAILS_TABLE='cohorts', GROUPS_TABLE='groups',
@@ -58,8 +59,7 @@ class ModuleScopedSessionTests(unittest.TestCase):
             parse_json_value=lambda value, default: value or default, format_date=lambda value: value or '',
             slugify=lambda value: str(value).lower().replace(' ', '-'),
             curriculum_results_response=lambda results, request=None: {'results': results},
-            curriculum_collection_response=lambda payload, key: {'results': payload[key], 'overview': True},
-            get_cached_payload=self.overview,
+            get_cached_sessions=self.overview,
             curriculum_visibility=lambda request: 'all' if request.GET.get('visibility') == 'all' else 'operational',
         )
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
@@ -121,9 +121,9 @@ class ModuleScopedSessionTests(unittest.TestCase):
         self.assertEqual(self.get(module_catalogue_id='MOD-1')['results'], [])
 
     def test_non_authoring_module_and_archive_view_are_answered_by_the_overview(self):
-        self.assertEqual(self.get(module_catalogue_id='LEGACY-1')['results'], [self.overview.return_value['sessions'][0]])
+        self.assertEqual(self.get(module_catalogue_id='LEGACY-1')['results'], [self.overview.return_value[0]])
         self.assertEqual(self.get(module_catalogue_id='MOD-1', visibility='all')['results'], [])
-        self.assertTrue(self.get()['overview'])
+        self.assertEqual(self.get()['results'], self.overview.return_value)
 
 
 if __name__ == '__main__':

@@ -410,10 +410,29 @@ class CanonicalFreeCourseModelTests(SimpleTestCase):
         self.assertIs(owner.remote_field.model, LearnerProfile)
         self.assertEqual(owner.column, "learner_id")
 
-    def test_completed_at_remains_required_without_an_application_default(self):
+    def test_completed_at_allows_an_unknown_date_without_an_application_default(self):
+        # Migrated completions whose original date could not be verified are
+        # stored with completed_at NULL. They are still completions, and no
+        # default may invent a date for them.
         completed_at = LearnerFreeCourseProgress._meta.get_field("completed_at")
-        self.assertFalse(completed_at.null)
+        self.assertTrue(completed_at.null)
         self.assertFalse(completed_at.has_default())
+
+    def test_completion_read_does_not_depend_on_the_completion_date(self):
+        captured = {}
+
+        def values_list(*fields):
+            captured["fields"] = fields
+            return [("FREE-1", "C-1")]
+
+        queryset = Mock()
+        queryset.filter.return_value.values_list.side_effect = values_list
+        with patch.object(LearnerFreeCourseProgress, "objects", queryset):
+            refs = view._completed_refs(7, ["FREE-1"])
+        self.assertEqual(refs, {("FREE-1", "C-1")})
+        filters = queryset.filter.call_args.kwargs
+        self.assertEqual(set(filters), {"learner_id", "free_course_ref__in"})
+        self.assertEqual(captured["fields"], ("free_course_ref", "component_ref"))
 
 
 class LearningPlanCanonicalFreeCourseReadTests(SimpleTestCase):

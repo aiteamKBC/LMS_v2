@@ -230,14 +230,37 @@ def _public_course(row, *, include_counts=False):
 def catalogue_document(*, read_snapshot=True):
     schema_gate.require_tables(free_course_catalogue.FREE_COURSES_TABLE)
     with (_read_snapshot() if read_snapshot else nullcontext()):
+        return _catalogue_from_rows(free_course_catalogue.courses())
+
+
+def _catalogue_from_rows(rows):
+    return {
+        "schemaVersion": CATALOGUE_SCHEMA_VERSION,
+        "scope": "catalogue",
+        "revision": catalogue_revision(rows),
+        "courses": [_public_course(row, include_counts=True) for row in rows],
+    }
+
+
+def catalogue_with_documents():
+    """The catalogue plus every course's document, read in one snapshot.
+
+    ``revision`` stays the catalogue revision (writers send it back as
+    expectedRevision). ``documentsRevision`` also covers every course revision,
+    so it is the one to use as the ETag: a 304 must not hide a course edit.
+    """
+    _require_course_tables()
+    with _read_snapshot():
         rows = free_course_catalogue.courses()
-        revision = catalogue_revision(rows)
-        return {
-            "schemaVersion": CATALOGUE_SCHEMA_VERSION,
-            "scope": "catalogue",
-            "revision": revision,
-            "courses": [_public_course(row, include_counts=True) for row in rows],
-        }
+        document = _catalogue_from_rows(rows)
+        documents = course_documents(rows)
+    document["documents"] = documents
+    document["documentsRevision"] = _revision(CATALOGUE_REVISION_PREFIX, {
+        "version": 1,
+        "catalogue": document["revision"],
+        "courses": [item["revision"] for item in documents],
+    })
+    return document
 
 
 def _decode_settings(value):
@@ -382,8 +405,31 @@ def _duplicate_order_issues(rows, *, owner_key, entity):
     ]
 
 
-def course_document(course_id, *, read_snapshot=True):
-    course_id = normalize_course_id(course_id)
+def _decode_components(components):
+    """Decode each component's settings and collect the quizzes they reference."""
+    decoded_settings = {}
+    quiz_ids = set()
+    initial_issues = []
+    malformed_quiz = {}
+    for component in components:
+        component_id = str(component.get("id") or "")
+        settings, settings_error = _decode_settings(component.get("settings_json"))
+        decoded_settings[component_id] = settings
+        if settings_error:
+            initial_issues.append(_issue(
+                settings_error,
+                "blocked",
+                componentId=component_id,
+                freeCourseWeekId=str(component.get("free_module_id") or ""),
+            ))
+        quiz_id, malformed = _linked_quiz_id(settings)
+        malformed_quiz[component_id] = (quiz_id, malformed)
+        if quiz_id:
+            quiz_ids.add(quiz_id)
+    return decoded_settings, quiz_ids, initial_issues, malformed_quiz
+
+
+def _require_course_tables():
     schema_gate.require_tables(
         free_course_catalogue.FREE_COURSES_TABLE,
         free_course_catalogue.FREE_COURSE_WEEKS_TABLE,
@@ -391,6 +437,11 @@ def course_document(course_id, *, read_snapshot=True):
         QUIZZES_TABLE,
         QUIZ_LINKS_TABLE,
     )
+
+
+def course_document(course_id, *, read_snapshot=True):
+    course_id = normalize_course_id(course_id)
+    _require_course_tables()
     with (_read_snapshot() if read_snapshot else nullcontext()):
         courses = free_course_catalogue.courses(course_ids=[course_id])
         if not courses:
@@ -400,182 +451,246 @@ def course_document(course_id, *, read_snapshot=True):
         week_ids = [str(row.get("id") or "") for row in weeks]
         components = free_course_catalogue.components(week_ids=week_ids)
 
-        decoded_settings = {}
-        quiz_ids = set()
-        initial_issues = []
-        malformed_quiz = {}
-        for component in components:
-            component_id = str(component.get("id") or "")
-            settings, settings_error = _decode_settings(component.get("settings_json"))
-            decoded_settings[component_id] = settings
-            if settings_error:
-                initial_issues.append(_issue(
-                    settings_error,
-                    "blocked",
-                    componentId=component_id,
-                    freeCourseWeekId=str(component.get("free_module_id") or ""),
-                ))
-            quiz_id, malformed = _linked_quiz_id(settings)
-            malformed_quiz[component_id] = (quiz_id, malformed)
-            if quiz_id:
-                quiz_ids.add(quiz_id)
-
-        referenced_quiz_ids = set(quiz_ids)
+        decoded = _decode_components(components)
+        quiz_ids = set(decoded[1])
         quiz_links = _quiz_link_rows(course_id, quiz_ids)
         quiz_ids.update(str(link.get("quiz_id") or "") for link in quiz_links if link.get("quiz_id"))
         quizzes = _quiz_rows(quiz_ids)
+        return _assemble_course_document(course, weeks, components, decoded, quiz_links, quizzes)
 
-        week_by_id = {str(row.get("id") or ""): row for row in weeks}
-        quiz_by_id = {str(row.get("id") or ""): row for row in quizzes}
-        links_by_quiz = {}
-        for link in quiz_links:
-            links_by_quiz.setdefault(str(link.get("quiz_id") or ""), []).append(link)
 
-        issues = list(initial_issues)
-        if len({str(row.get("id") or "") for row in weeks}) != len(weeks):
-            issues.append(_issue("duplicate_free_week_id", "blocked"))
-        if len({str(row.get("id") or "") for row in components}) != len(components):
-            issues.append(_issue("duplicate_free_component_id", "blocked"))
-        for week in weeks:
-            if str(week.get("course_id") or "") != course_id:
-                issues.append(_issue(
-                    "free_week_owner_mismatch", "blocked",
-                    freeCourseWeekId=str(week.get("id") or ""),
-                ))
-        for component in components:
-            component_id = str(component.get("id") or "")
-            week_id = str(component.get("free_module_id") or "")
-            if week_id not in week_by_id:
-                issues.append(_issue(
-                    "free_component_week_owner_mismatch", "blocked",
-                    componentId=component_id, freeCourseWeekId=week_id,
-                ))
-            if str(component.get("programme_id") or "") != FREE_COURSE_PROGRAMME_MARKER:
-                issues.append(_issue(
-                    "free_component_programme_marker_mismatch", "blocked",
-                    componentId=component_id, freeCourseWeekId=week_id,
-                ))
-        for quiz_id, links in links_by_quiz.items():
-            if len(links) > 1:
-                issues.append(_issue(
-                    "duplicate_canonical_quiz_link", "blocked", quizId=quiz_id,
-                ))
-        for link in quiz_links:
-            if str(link.get("free_course_id") or "") != course_id:
-                continue
-            quiz_id = str(link.get("quiz_id") or "")
-            link_week_id = str(link.get("free_course_week_id") or "")
-            quiz = quiz_by_id.get(quiz_id)
-            if (
-                link_week_id not in week_by_id
-                or quiz is None
-                or str(quiz.get("free_course_week_id") or "") != link_week_id
-                or bool(quiz.get("week_id"))
-                or bool(link.get("week_id"))
-                or bool(link.get("module_catalogue_id"))
-            ):
-                issues.append(_issue(
-                    "canonical_quiz_link_owner_mismatch", "blocked",
-                    quizId=quiz_id, freeCourseWeekId=link_week_id,
-                ))
-            if quiz_id not in referenced_quiz_ids:
-                issues.append(_issue(
-                    "unreferenced_canonical_quiz_link", "warning",
-                    quizId=quiz_id, freeCourseWeekId=link_week_id,
-                ))
-        issues.extend(_duplicate_order_issues(weeks, owner_key="course_id", entity="week"))
-        issues.extend(_duplicate_order_issues(components, owner_key="free_module_id", entity="component"))
+def course_documents(course_rows):
+    """Build the course document for every row in ``course_rows`` in one pass.
 
-        public_components = {}
-        legacy_count = 0
-        for component in components:
-            component_id = str(component.get("id") or "")
-            quiz_id, malformed = malformed_quiz[component_id]
-            quiz_reference, quiz_issues, legacy = _quiz_reference(
-                component, course_id, quiz_id, malformed, quiz_by_id, links_by_quiz
-            )
-            issues.extend(quiz_issues)
-            legacy_count += int(legacy)
-            public_components.setdefault(str(component.get("free_module_id") or ""), []).append({
-                "id": component_id,
-                "freeCourseWeekId": str(component.get("free_module_id") or ""),
-                "type": component.get("type") or "",
-                "title": component.get("title") or "",
-                "description": component.get("description") or "",
-                "expectedOtjh": canonical_value(component.get("expected_otjh") or 0),
-                "points": component.get("points") or 0,
-                "reflectionRequired": bool(component.get("reflection_required")),
-                "workplaceEvidenceRequired": bool(component.get("workplace_evidence_required")),
-                "tutorValidationRequired": bool(component.get("tutor_validation_required")),
-                "displayOrder": component.get("display_order"),
-                "settings": decoded_settings[component_id],
-                "quizReference": quiz_reference,
-            })
+    Same output as calling ``course_document`` once per course, but the weeks,
+    components, quiz links and quizzes are each read once for all the courses
+    instead of once per course. Call inside the caller's read snapshot.
+    """
+    course_rows = list(course_rows)
+    if not course_rows:
+        return []
+    _require_course_tables()
+    course_ids = [str(row.get("id") or "") for row in course_rows]
+    weeks = free_course_catalogue.weeks(course_ids=course_ids)
+    components = free_course_catalogue.components(
+        week_ids=[str(row.get("id") or "") for row in weeks]
+    )
+    weeks_by_course = {}
+    for week in weeks:
+        weeks_by_course.setdefault(str(week.get("course_id") or ""), []).append(week)
+    week_course = {str(week.get("id") or ""): str(week.get("course_id") or "") for week in weeks}
+    components_by_course = {}
+    for component in components:
+        owner = week_course.get(str(component.get("free_module_id") or ""))
+        components_by_course.setdefault(owner, []).append(component)
 
-        for rows in public_components.values():
-            rows.sort(key=lambda row: (
-                row.get("displayOrder") is None,
-                row.get("displayOrder"),
-                row["title"],
-                row["id"],
-            ))
-        public_weeks = []
-        for week in sorted(
-            weeks,
-            key=lambda row: (
-                row.get("display_order") is None, row.get("display_order"),
-                row.get("week_number") is None, row.get("week_number"), str(row.get("id") or ""),
-            ),
-        ):
-            week_id = str(week.get("id") or "")
-            provenance = str(week.get("legacy_copied_from_week_id") or "").strip() or None
-            public_weeks.append({
-                "freeCourseWeekId": week_id,
-                "legacyCopiedFromWeekId": provenance,
-                "weekNumber": week.get("week_number"),
-                "title": week.get("title") or "",
-                "summary": week.get("summary") or "",
-                "learningOutcomes": week.get("learning_outcomes") or "",
-                "status": week.get("status") or "",
-                "holidayNoteEnabled": bool(week.get("holiday_note_enabled")),
-                "holidayNote": week.get("holiday_note") or "",
-                "displayOrder": week.get("display_order"),
-                "components": public_components.get(week_id, []),
-            })
+    decoded_by_course = {
+        course_id: _decode_components(components_by_course.get(course_id, []))
+        for course_id in course_ids
+    }
+    all_quiz_ids = set().union(*(decoded[1] for decoded in decoded_by_course.values()))
+    all_links = _quiz_link_rows_for_courses(course_ids, all_quiz_ids)
+    all_quiz_ids.update(str(link.get("quiz_id") or "") for link in all_links if link.get("quiz_id"))
+    all_quizzes = _quiz_rows(all_quiz_ids)
 
-        # Only canonical quiz ownership participates beyond the component's own
-        # linkedQuizId. Legacy normal-owned quiz metadata remains diagnostic and
-        # read-only, so unrelated changes there cannot stale a Free Course edit.
-        canonical_quiz_ids = {
-            str(link.get("quiz_id") or "")
-            for link in quiz_links
+    documents = []
+    for course in course_rows:
+        course_id = str(course.get("id") or "")
+        decoded = decoded_by_course[course_id]
+        referenced = decoded[1]
+        # The same rows _quiz_link_rows(course_id, referenced) would return.
+        quiz_links = [
+            link for link in all_links
             if str(link.get("free_course_id") or "") == course_id
-        }
-        revision_quizzes = [row for row in quizzes if str(row.get("id") or "") in canonical_quiz_ids]
-        revision_links = [
-            row for row in quiz_links
-            if str(row.get("free_course_id") or "") == course_id
+            or (str(link.get("quiz_id") or "") in referenced and link.get("free_course_week_id") is not None)
         ]
-        revision = course_revision(
-            course, weeks, components, revision_quizzes, revision_links
+        quiz_ids = set(referenced)
+        quiz_ids.update(str(link.get("quiz_id") or "") for link in quiz_links if link.get("quiz_id"))
+        quizzes = [row for row in all_quizzes if str(row.get("id") or "") in quiz_ids]
+        documents.append(_assemble_course_document(
+            course, weeks_by_course.get(course_id, []), components_by_course.get(course_id, []),
+            decoded, quiz_links, quizzes,
+        ))
+    return documents
+
+
+def _quiz_link_rows_for_courses(course_ids, quiz_ids):
+    """Every link row any of ``course_ids`` would read through _quiz_link_rows."""
+    course_ids = sorted({str(value) for value in course_ids if value})
+    quiz_ids = sorted({str(value) for value in quiz_ids if value is not None and str(value)})
+    if not course_ids and not quiz_ids:
+        return []
+    columns = ", ".join(_quote_ident(column) for column in QUIZ_LINK_REVISION_COLUMNS)
+    clauses, params = [], []
+    if course_ids:
+        clauses.append(f'"free_course_id" in ({", ".join(["%s"] * len(course_ids))})')
+        params.extend(course_ids)
+    if quiz_ids:
+        clauses.append(
+            f'("quiz_id" in ({", ".join(["%s"] * len(quiz_ids))}) '
+            'and "free_course_week_id" is not null)'
         )
-        issues.sort(key=lambda issue: canonical_json_bytes(issue))
-        return {
-            "schemaVersion": CATALOGUE_SCHEMA_VERSION,
-            "scope": "course",
-            "revision": revision,
-            "course": _public_course(course),
-            "weeks": public_weeks,
-            "integrity": {
-                "status": _integrity_status(issues),
-                "issues": issues,
-                "legacyQuizReferenceCount": legacy_count,
-            },
-            "policies": {
-                "expectedRevisionRequired": True,
-                "componentWeekMoveAllowed": False,
-                "assignedContentDeletionAllowed": False,
-                "quizOwnershipEditingAllowed": False,
-                "normalToFreeMode": "clone-only",
-            },
-        }
+        params.extend(quiz_ids)
+    sql = f"select {columns} from {_table_name(QUIZ_LINKS_TABLE)} where " + " or ".join(clauses)
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return _dict_rows(cursor)
+
+
+def _assemble_course_document(course, weeks, components, decoded, quiz_links, quizzes):
+    course_id = str(course.get("id") or "")
+    decoded_settings, referenced_quiz_ids, initial_issues, malformed_quiz = decoded
+    week_by_id = {str(row.get("id") or ""): row for row in weeks}
+    quiz_by_id = {str(row.get("id") or ""): row for row in quizzes}
+    links_by_quiz = {}
+    for link in quiz_links:
+        links_by_quiz.setdefault(str(link.get("quiz_id") or ""), []).append(link)
+
+    issues = list(initial_issues)
+    if len({str(row.get("id") or "") for row in weeks}) != len(weeks):
+        issues.append(_issue("duplicate_free_week_id", "blocked"))
+    if len({str(row.get("id") or "") for row in components}) != len(components):
+        issues.append(_issue("duplicate_free_component_id", "blocked"))
+    for week in weeks:
+        if str(week.get("course_id") or "") != course_id:
+            issues.append(_issue(
+                "free_week_owner_mismatch", "blocked",
+                freeCourseWeekId=str(week.get("id") or ""),
+            ))
+    for component in components:
+        component_id = str(component.get("id") or "")
+        week_id = str(component.get("free_module_id") or "")
+        if week_id not in week_by_id:
+            issues.append(_issue(
+                "free_component_week_owner_mismatch", "blocked",
+                componentId=component_id, freeCourseWeekId=week_id,
+            ))
+        if str(component.get("programme_id") or "") != FREE_COURSE_PROGRAMME_MARKER:
+            issues.append(_issue(
+                "free_component_programme_marker_mismatch", "blocked",
+                componentId=component_id, freeCourseWeekId=week_id,
+            ))
+    for quiz_id, links in links_by_quiz.items():
+        if len(links) > 1:
+            issues.append(_issue(
+                "duplicate_canonical_quiz_link", "blocked", quizId=quiz_id,
+            ))
+    for link in quiz_links:
+        if str(link.get("free_course_id") or "") != course_id:
+            continue
+        quiz_id = str(link.get("quiz_id") or "")
+        link_week_id = str(link.get("free_course_week_id") or "")
+        quiz = quiz_by_id.get(quiz_id)
+        if (
+            link_week_id not in week_by_id
+            or quiz is None
+            or str(quiz.get("free_course_week_id") or "") != link_week_id
+            or bool(quiz.get("week_id"))
+            or bool(link.get("week_id"))
+            or bool(link.get("module_catalogue_id"))
+        ):
+            issues.append(_issue(
+                "canonical_quiz_link_owner_mismatch", "blocked",
+                quizId=quiz_id, freeCourseWeekId=link_week_id,
+            ))
+        if quiz_id not in referenced_quiz_ids:
+            issues.append(_issue(
+                "unreferenced_canonical_quiz_link", "warning",
+                quizId=quiz_id, freeCourseWeekId=link_week_id,
+            ))
+    issues.extend(_duplicate_order_issues(weeks, owner_key="course_id", entity="week"))
+    issues.extend(_duplicate_order_issues(components, owner_key="free_module_id", entity="component"))
+
+    public_components = {}
+    legacy_count = 0
+    for component in components:
+        component_id = str(component.get("id") or "")
+        quiz_id, malformed = malformed_quiz[component_id]
+        quiz_reference, quiz_issues, legacy = _quiz_reference(
+            component, course_id, quiz_id, malformed, quiz_by_id, links_by_quiz
+        )
+        issues.extend(quiz_issues)
+        legacy_count += int(legacy)
+        public_components.setdefault(str(component.get("free_module_id") or ""), []).append({
+            "id": component_id,
+            "freeCourseWeekId": str(component.get("free_module_id") or ""),
+            "type": component.get("type") or "",
+            "title": component.get("title") or "",
+            "description": component.get("description") or "",
+            "expectedOtjh": canonical_value(component.get("expected_otjh") or 0),
+            "points": component.get("points") or 0,
+            "reflectionRequired": bool(component.get("reflection_required")),
+            "workplaceEvidenceRequired": bool(component.get("workplace_evidence_required")),
+            "tutorValidationRequired": bool(component.get("tutor_validation_required")),
+            "displayOrder": component.get("display_order"),
+            "settings": decoded_settings[component_id],
+            "quizReference": quiz_reference,
+        })
+
+    for rows in public_components.values():
+        rows.sort(key=lambda row: (
+            row.get("displayOrder") is None,
+            row.get("displayOrder"),
+            row["title"],
+            row["id"],
+        ))
+    public_weeks = []
+    for week in sorted(
+        weeks,
+        key=lambda row: (
+            row.get("display_order") is None, row.get("display_order"),
+            row.get("week_number") is None, row.get("week_number"), str(row.get("id") or ""),
+        ),
+    ):
+        week_id = str(week.get("id") or "")
+        provenance = str(week.get("legacy_copied_from_week_id") or "").strip() or None
+        public_weeks.append({
+            "freeCourseWeekId": week_id,
+            "legacyCopiedFromWeekId": provenance,
+            "weekNumber": week.get("week_number"),
+            "title": week.get("title") or "",
+            "summary": week.get("summary") or "",
+            "learningOutcomes": week.get("learning_outcomes") or "",
+            "status": week.get("status") or "",
+            "holidayNoteEnabled": bool(week.get("holiday_note_enabled")),
+            "holidayNote": week.get("holiday_note") or "",
+            "displayOrder": week.get("display_order"),
+            "components": public_components.get(week_id, []),
+        })
+
+    # Only canonical quiz ownership participates beyond the component's own
+    # linkedQuizId. Legacy normal-owned quiz metadata remains diagnostic and
+    # read-only, so unrelated changes there cannot stale a Free Course edit.
+    canonical_quiz_ids = {
+        str(link.get("quiz_id") or "")
+        for link in quiz_links
+        if str(link.get("free_course_id") or "") == course_id
+    }
+    revision_quizzes = [row for row in quizzes if str(row.get("id") or "") in canonical_quiz_ids]
+    revision_links = [
+        row for row in quiz_links
+        if str(row.get("free_course_id") or "") == course_id
+    ]
+    revision = course_revision(
+        course, weeks, components, revision_quizzes, revision_links
+    )
+    issues.sort(key=lambda issue: canonical_json_bytes(issue))
+    return {
+        "schemaVersion": CATALOGUE_SCHEMA_VERSION,
+        "scope": "course",
+        "revision": revision,
+        "course": _public_course(course),
+        "weeks": public_weeks,
+        "integrity": {
+            "status": _integrity_status(issues),
+            "issues": issues,
+            "legacyQuizReferenceCount": legacy_count,
+        },
+        "policies": {
+            "expectedRevisionRequired": True,
+            "componentWeekMoveAllowed": False,
+            "assignedContentDeletionAllowed": False,
+            "quizOwnershipEditingAllowed": False,
+            "normalToFreeMode": "clone-only",
+        },
+    }

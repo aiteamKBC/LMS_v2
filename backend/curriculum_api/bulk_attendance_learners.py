@@ -46,6 +46,19 @@ def read_learners(dsn):
             ]
 
 
+LMS_LEARNERS_SQL = '''
+            SELECT l.aptem_id::text AS id, l.full_name AS name, l.email AS email,
+                   coalesce(p.name, '') AS programme, coalesce(g.group_name, '') AS "group",
+                   coalesce(l.end_date, l.learner_end_date)::text AS "endDate",
+                   l.programme_status AS "kbcStatus"
+            FROM "Learner".learners l
+            LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
+            LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
+            WHERE l.aptem_id IS NOT NULL
+            ORDER BY lower(coalesce(l.full_name, '')), l.aptem_id
+'''
+
+
 def read_lms_learners():
     """The register's learner list on the new database: the LMS's own learners.
 
@@ -58,21 +71,59 @@ def read_lms_learners():
     from .bulk_attendance_kbc_source import dict_rows, new_database_cursor
 
     with new_database_cursor(read_only=True) as cursor:
-        cursor.execute('''
-            SELECT l.aptem_id::text AS id, l.full_name AS name, l.email AS email,
-                   coalesce(p.name, '') AS programme, coalesce(g.group_name, '') AS "group",
-                   coalesce(l.end_date, l.learner_end_date)::text AS "endDate",
-                   l.programme_status AS "kbcStatus"
-            FROM "Learner".learners l
-            LEFT JOIN curriculum.programmes p ON p.programme_id = l.programme_id
-            LEFT JOIN curriculum.groups g ON g.group_id = l.group_id
-            WHERE l.aptem_id IS NOT NULL
-            ORDER BY lower(coalesce(l.full_name, '')), l.aptem_id
-        ''')
+        cursor.execute(LMS_LEARNERS_SQL)
         return [
             {key: str(value or '').strip() for key, value in row.items()}
             for row in dict_rows(cursor)
         ]
+
+
+ENROLMENT_ROWS_SQL = '''
+    SELECT u.aptem_id, u."Email", u."Programme_status", p.mode
+    FROM enrolment."Created_users" u
+    LEFT JOIN "Learner".attendance_preferences p ON p.learner_id = u.id
+'''
+
+
+def enrolment_maps(rows):
+    """Statuses, emails and attendance modes by Aptem id, from one enrolment read.
+
+    Rows are (aptem_id, email, programme_status, saved mode or None). The same
+    rules as the separate reads apply: an ambiguous id is left out, and a
+    learner without a saved preference is live.
+    """
+    from .bulk_attendance_live_policy import enrolment_status_by_aptem
+
+    rows = list(rows)
+    return {
+        'statuses': enrolment_status_by_aptem((aptem_id, status) for aptem_id, _, status, _ in rows),
+        'emails': enrolment_email_by_aptem((aptem_id, email) for aptem_id, email, _, _ in rows),
+        'modes': {
+            'byAptem': attendance_mode_by_aptem(
+                (aptem_id, mode or 'live') for aptem_id, _, _, mode in rows if aptem_id is not None
+            ),
+            'byEmail': attendance_mode_by_email((email, mode or 'live') for _, email, _, mode in rows),
+        } if rows else {},
+    }
+
+
+def read_lms_directory():
+    """The new database's learner list and its enrolment details in one transaction.
+
+    The four separate reads cost about ten round trips to Neon for ~500 small
+    rows; the register's first paint waits on them. Same rows, same rules.
+    """
+    from .bulk_attendance_kbc_source import dict_rows, new_database_cursor
+
+    with new_database_cursor(read_only=True) as cursor:
+        cursor.execute(LMS_LEARNERS_SQL)
+        learners = [
+            {key: str(value or '').strip() for key, value in row.items()}
+            for row in dict_rows(cursor)
+        ]
+        cursor.execute(ENROLMENT_ROWS_SQL)
+        enrolment = enrolment_maps(cursor.fetchall())
+    return learners, enrolment
 
 
 ENROLMENT_STATUS_WARNING = 'Enrolment statuses could not be read; showing KBC statuses.'
@@ -222,9 +273,15 @@ def bulk_attendance_learners(request):
     from django.db import DatabaseError
     from .bulk_attendance_kbc_source import on_new_database
 
+    enrolment = None
     try:
         if on_new_database():
-            learners = read_lms_learners()
+            try:
+                learners, enrolment = read_lms_directory()
+            except DatabaseError:
+                # The combined read failed: take the separate reads below,
+                # each of which reports its own warning.
+                learners = read_lms_learners()
         else:
             dsn = learner_directory_dsn()
             if not dsn:
@@ -235,6 +292,14 @@ def bulk_attendance_learners(request):
         return JsonResponse({'error': 'Unable to load the learner directory. Please try again.'}, status=503)
 
     warnings = []
+    if enrolment is not None:
+        learners = with_attendance_modes(
+            with_lms_emails(with_statuses(learners, enrolment['statuses']), enrolment['emails']),
+            enrolment['modes'],
+        )
+        response = JsonResponse({'learners': learners, 'warnings': warnings})
+        response['Cache-Control'] = 'private, no-store'
+        return response
     try:
         enrolment_statuses = _enrolment_statuses()
     except DatabaseError:

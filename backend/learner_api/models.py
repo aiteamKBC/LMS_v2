@@ -1191,7 +1191,11 @@ class LearnerFreeCourseProgress(models.Model):
     )
     component_ref = models.TextField()
     free_course_ref = models.TextField()
-    completed_at = models.DateTimeField()
+    # NULL = completed on a date nobody can verify (rows carried over from the
+    # old free-course store). The row itself is the completion; readers key on
+    # (free_course_ref, component_ref) and never on this date. New completions
+    # always store timezone.now(). Never backfill a NULL.
+    completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False

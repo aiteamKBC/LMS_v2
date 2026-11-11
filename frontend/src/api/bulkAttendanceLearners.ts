@@ -302,9 +302,15 @@ export async function fetchBulkAttendanceDayLearners(date: string, signal?: Abor
 /** Each learner's last four saved attendance lectures, oldest first, keyed by KBC id. */
 export async function fetchBulkAttendanceKbcRecent(
   signal?: AbortSignal,
-  options: BulkAttendanceHistoryReadOptions = { source: 'live' },
+  options: BulkAttendanceHistoryReadOptions & {
+    /** KBC ids to read (the visible page). Omitted reads every learner. */
+    learnerIds?: string[];
+  } = { source: 'live' },
 ): Promise<BulkAttendanceRecentResult> {
-  const query = options.source ? `?source=${encodeURIComponent(options.source)}` : '';
+  const params = new URLSearchParams();
+  if (options.source) params.set('source', options.source);
+  if (options.learnerIds) params.set('learner_ids', options.learnerIds.join(','));
+  const query = params.toString() ? `?${params.toString()}` : '';
   const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/kbc-recent/${query}`, { signal });
   const payload = await response.json();
   if (!response.ok) {

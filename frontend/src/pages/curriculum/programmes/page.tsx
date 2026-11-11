@@ -433,6 +433,14 @@ function CurriculumProgrammesContent() {
     () => listedProgrammes.map(programme => withProgrammeKsbStats(programme, programmeKsbStats)),
     [listedProgrammes, programmeKsbStats],
   );
+  // The learner-count chips reload when their refresh key changes. Keyed on the
+  // row the server sent, not the merged one above: each arriving KSB stat makes
+  // a new merged object, and keying on that re-fetched every card's counts once
+  // more per stat, queueing those reads behind the stats on the same pool.
+  const listedProgrammeById = useMemo(
+    () => new Map(listedProgrammes.map(programme => [programme.id, programme])),
+    [listedProgrammes],
+  );
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(reviewDefinitions, standards), [reviewDefinitions, standards]);
 
@@ -1400,7 +1408,7 @@ function CurriculumProgrammesContent() {
                   <Metric label="Groups" value={String(prog.groups || 0)} onOpen={openTab('delivery')} hint={`Open the groups of ${prog.name}`} />
                   <Metric label="Modules" value={String(prog.modules)} onOpen={openTab('design')} hint={`Open the ${prog.modules} modules of ${prog.name}`} />
                   <Metric label="Weeks" value={`${prog.weeks}`} onOpen={openTab('design')} hint={`Open the module plan of ${prog.name}`} />
-                  <div className="col-span-2 py-1 sm:col-span-5"><p className="mb-1 text-[9px] uppercase text-foreground-400">Learners</p><LearnerStatusCounts target={{ scope: 'programme', id: prog.sourceId || prog.id, name: prog.name }} refreshKey={prog} /></div>
+                  <div className="col-span-2 py-1 sm:col-span-5"><p className="mb-1 text-[9px] uppercase text-foreground-400">Learners</p><LearnerStatusCounts target={{ scope: 'programme', id: prog.sourceId || prog.id, name: prog.name }} refreshKey={listedProgrammeById.get(prog.id) ?? prog} /></div>
                   <button
                     type="button"
                     onClick={openTab('coverage', 'mapping')}

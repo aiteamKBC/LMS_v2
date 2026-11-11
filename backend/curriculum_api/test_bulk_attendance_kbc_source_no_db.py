@@ -207,21 +207,67 @@ class DirectoryTests(SimpleTestCase):
         request.login_account = SimpleNamespace(role='admin')
         return directory.bulk_attendance_learners(request)
 
+    LMS = [{'id': '301', 'name': 'Synthetic One', 'email': 'one@example.invalid', 'programme': 'P',
+            'group': 'G', 'endDate': '', 'kbcStatus': 'active'}]
+
     def test_on_the_new_database_the_list_is_the_lms_learners(self):
-        lms = [{'id': '301', 'name': 'Synthetic One', 'email': 'one@example.invalid', 'programme': 'P',
-                'group': 'G', 'endDate': '', 'kbcStatus': 'active'}]
         with patch.object(source, 'on_new_database', return_value=True), \
-             patch.object(directory, 'read_lms_learners', return_value=lms) as read, \
+             patch.object(directory, 'read_lms_directory',
+                          return_value=(self.LMS, directory.enrolment_maps([]))) as read, \
              patch.object(directory, 'read_learners') as direct, \
-             patch.object(directory, '_enrolment_statuses', return_value={}), \
+             patch.object(directory, '_enrolment_statuses') as statuses, \
+             patch.object(directory, '_enrolment_emails') as emails, \
+             patch.object(directory, '_enrolment_attendance_modes') as modes:
+            response = self._get()
+        read.assert_called_once_with()
+        direct.assert_not_called()
+        # One combined read: the separate enrolment reads are not repeated.
+        statuses.assert_not_called()
+        emails.assert_not_called()
+        modes.assert_not_called()
+        payload = json.loads(response.content)
+        self.assertEqual(payload['warnings'], [])
+        self.assertEqual([(row['id'], row['status'], row['attendanceMode']) for row in payload['learners']],
+                         [('301', 'active', 'live')])
+
+    def test_a_failed_combined_read_falls_back_to_the_separate_reads(self):
+        from django.db import DatabaseError
+
+        with patch.object(source, 'on_new_database', return_value=True), \
+             patch.object(directory, 'read_lms_directory', side_effect=DatabaseError('x')), \
+             patch.object(directory, 'read_lms_learners', return_value=self.LMS) as read, \
+             patch.object(directory, '_enrolment_statuses', side_effect=DatabaseError('x')), \
              patch.object(directory, '_enrolment_emails', return_value={}), \
              patch.object(directory, '_enrolment_attendance_modes', return_value={}):
             response = self._get()
         read.assert_called_once_with()
-        direct.assert_not_called()
-        learners = json.loads(response.content)['learners']
-        self.assertEqual([(row['id'], row['status'], row['attendanceMode']) for row in learners],
-                         [('301', 'active', 'live')])
+        self.assertEqual(json.loads(response.content)['warnings'], [directory.ENROLMENT_STATUS_WARNING])
+
+    def test_the_combined_read_is_one_transaction_with_the_same_rules(self):
+        cursor = FakeCursor([
+            (['id', 'name', 'email', 'programme', 'group', 'endDate', 'kbcStatus'],
+             [('301', 'One', 'one@kbc.invalid', 'P', 'G', None, 'active'),
+              ('302', 'Two', 'two@kbc.invalid', 'P', 'G', None, 'active')]),
+            (['aptem_id', 'Email', 'Programme_status', 'mode'],
+             [('301', 'One@LMS.invalid', 'Withdrawn', 'lazy'),
+              ('302', 'two@lms.invalid', 'Active', None),
+              ('302', 'other@lms.invalid', 'Active', 'lazy')]),
+        ])
+        transactions = []
+        with patch.object(source, 'new_database_cursor', fake_cursor_context(cursor, transactions)):
+            learners, enrolment = directory.read_lms_directory()
+        self.assertEqual(transactions, [True])
+        self.assertEqual(len(cursor.executed), 2)
+        self.assertIn('FROM "Learner".learners l', cursor.executed[0][0])
+        self.assertIn('LEFT JOIN "Learner".attendance_preferences p ON p.learner_id = u.id',
+                      cursor.executed[1][0])
+        self.assertEqual(learners[0]['endDate'], '')
+        self.assertEqual(enrolment['statuses'], {'301': 'Withdrawn', '302': 'Active'})
+        # An Aptem id with two emails or two modes is ambiguous and left out.
+        self.assertEqual(enrolment['emails'], {'301': 'one@lms.invalid'})
+        self.assertEqual(enrolment['modes']['byAptem'], {'301': 'lazy'})
+        self.assertEqual(enrolment['modes']['byEmail'],
+                         {'one@lms.invalid': 'lazy', 'two@lms.invalid': 'live', 'other@lms.invalid': 'lazy'})
 
     def test_without_the_link_the_direct_directory_is_kept(self):
         with patch.object(source, 'on_new_database', return_value=False), \

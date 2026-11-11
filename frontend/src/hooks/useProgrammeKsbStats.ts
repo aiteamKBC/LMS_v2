@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchProgrammeKsbStats, type CurriculumProgramme, type ProgrammeKsbStats } from '@/lib/curriculumApi';
+import type { CurriculumProgramme, ProgrammeKsbStats } from '@/lib/curriculumApi';
+import { fetchProgrammeKsbStatsBatch, PROGRAMME_KSB_STATS_BATCH_SIZE } from '@/api/programmeKsbStatsBatch';
 
 /**
  * The KSB numbers a programme card shows, fetched per programme behind the list.
@@ -14,11 +15,14 @@ import { fetchProgrammeKsbStats, type CurriculumProgramme, type ProgrammeKsbStat
  * So the list answers first and the bars fill in. A card is readable without its
  * progress bar; it is not readable at all while the page is a skeleton.
  *
- * One request per programme, a few at a time. Not one batched request: each
- * programme is cached separately on the server, so a slow one delays only its
- * own card, and a page that shows ten of thirty programmes pays for ten.
+ * One request for all of them (split only past the server's cap). It used to be
+ * one request per programme, but the curriculum client sends those one at a
+ * time, so the last card waited for every card before it: ~60s in the browser
+ * for eight cards whose numbers take ~8-11s to build. The server builds the
+ * batch in one read scope and still caches each programme on its own, under the
+ * key the single-programme endpoint uses.
  */
-const CONCURRENCY = 4;
+const REQUEST_TIMEOUT_MS = 120000;
 
 export function useProgrammeKsbStats(
   programmes: Pick<CurriculumProgramme, 'id' | 'sourceId'>[],
@@ -44,27 +48,47 @@ export function useProgrammeKsbStats(
     wanted.forEach(id => requestedRef.current.add(id));
 
     const controller = new AbortController();
+    // A cold build against the remote database can be slow; keep a finite limit.
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     let cancelled = false;
-    const queue = [...wanted];
+    const delivered = new Set<string>();
 
-    const runOne = async (): Promise<void> => {
-      const id = queue.shift();
-      if (!id) return;
+    const runBatch = async (batch: string[]): Promise<void> => {
       try {
-        const result = await fetchProgrammeKsbStats(id, controller.signal, { visibility });
-        if (!cancelled) setStats(prev => ({ ...prev, [id]: result }));
+        const result = await fetchProgrammeKsbStatsBatch(batch, controller.signal, { visibility });
+        if (cancelled) return;
+        const found: Record<string, ProgrammeKsbStats> = {};
+        batch.forEach(id => {
+          const value = result[id];
+          if (value) found[id] = value;
+          // Not found: keep the placeholder, and allow a retry on the next mount.
+          else requestedRef.current.delete(id);
+        });
+        Object.keys(found).forEach(id => delivered.add(id));
+        setStats(prev => ({ ...prev, ...found }));
       } catch {
-        // A card that cannot get its numbers keeps the placeholder it already
-        // shows. Allowed to be retried on the next mount.
-        requestedRef.current.delete(id);
+        // A cancelled run already released its ids in the cleanup below, and a
+        // newer run may have claimed them again since.
+        if (cancelled) return;
+        // The cards that cannot get their numbers keep the placeholder they
+        // already show. Allowed to be retried on the next mount.
+        batch.forEach(id => requestedRef.current.delete(id));
       }
-      if (!cancelled) await runOne();
     };
 
-    void Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, runOne));
+    const batches: string[][] = [];
+    for (let index = 0; index < wanted.length; index += PROGRAMME_KSB_STATS_BATCH_SIZE) {
+      batches.push(wanted.slice(index, index + PROGRAMME_KSB_STATS_BATCH_SIZE));
+    }
+    void Promise.all(batches.map(runBatch)).finally(() => window.clearTimeout(timeout));
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
       controller.abort();
+      // Released now, not when the aborted request settles: the next run of
+      // this effect (StrictMode's remount, or one more programme in the list)
+      // happens first, and must ask again for what never arrived.
+      wanted.forEach(id => { if (!delivered.has(id)) requestedRef.current.delete(id); });
     };
   }, [idKey, visibility, enabled]);
 

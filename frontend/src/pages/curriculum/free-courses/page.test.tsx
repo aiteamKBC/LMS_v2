@@ -13,7 +13,7 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({ showCurriculumAler
 vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({ fetchWeekTemplates: vi.fn().mockResolvedValue([]), fetchWeekTemplateDetail: vi.fn() }));
 vi.mock('@/lib/curriculumApi', () => ({
   CurriculumApiError: class extends Error { status = 409; },
-  fetchFreeCourseAuthoringCatalogue: vi.fn(), fetchFreeCourseAuthoringCourse: vi.fn(),
+  fetchFreeCourseAuthoringCatalogue: vi.fn(), fetchFreeCourseAuthoringCatalogueWithDocuments: vi.fn(), fetchFreeCourseAuthoringCourse: vi.fn(),
   createFreeCourseAuthoring: vi.fn(), updateFreeCourseAuthoring: vi.fn(),
   cloneModuleToFreeCourseAuthoring: vi.fn(), createFreeCourseQuiz: vi.fn(), deleteFreeCourseAuthoring: vi.fn(),
   fetchCurriculumProgrammeDetail: vi.fn(), fetchCurriculumProgrammes: vi.fn(), injectFreeCourseIntoGroup: vi.fn(), unlinkFreeCourseQuiz: vi.fn(),
@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.stubGlobal('AppIcon', () => null);
   vi.mocked(api.fetchFreeCourseAuthoringCatalogue).mockResolvedValue({ revision: 'catalogue-1', courses: [document.course] } as api.FreeCourseAuthoringCatalogue);
   vi.mocked(api.fetchFreeCourseAuthoringCourse).mockResolvedValue(document);
+  vi.mocked(api.fetchFreeCourseAuthoringCatalogueWithDocuments).mockResolvedValue({ revision: 'catalogue-1', courses: [document.course], documents: [document] } as unknown as Awaited<ReturnType<typeof api.fetchFreeCourseAuthoringCatalogueWithDocuments>>);
   vi.mocked(api.updateFreeCourseAuthoring).mockResolvedValue(document);
 });
 
@@ -39,6 +40,22 @@ async function edit() {
   render(<MemoryRouter><FreeCoursesPage /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
 }
+
+describe('Free Course library loading', () => {
+  it('loads the catalogue and every course in one request', async () => {
+    render(<MemoryRouter><FreeCoursesPage /></MemoryRouter>);
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(api.fetchFreeCourseAuthoringCatalogueWithDocuments).toHaveBeenCalledTimes(1);
+    expect(api.fetchFreeCourseAuthoringCourse).not.toHaveBeenCalled();
+  });
+
+  it('falls back to per-course reads when the backend returns no documents', async () => {
+    vi.mocked(api.fetchFreeCourseAuthoringCatalogueWithDocuments).mockResolvedValueOnce({ revision: 'catalogue-1', courses: [document.course] } as unknown as Awaited<ReturnType<typeof api.fetchFreeCourseAuthoringCatalogueWithDocuments>>);
+    render(<MemoryRouter><FreeCoursesPage /></MemoryRouter>);
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(api.fetchFreeCourseAuthoringCourse).toHaveBeenCalledWith('FREE-1', expect.anything());
+  });
+});
 
 describe('Revision-aware Free Course pricing', () => {
   it('creates using catalogue revision, new client identities and sale metadata', async () => {

@@ -69,8 +69,45 @@ def _lecture_titles(rows, occurrences, local_date):
     return titles
 
 
-def read_live_register_records(kbc_id=None):
-    rows = list(LiveSessionLearnerAttendance.objects.values(
+def _candidate_profile_ids(kbc_ids):
+    """Profiles that may resolve to one of ``kbc_ids``: a superset, never a guess.
+
+    The Aptem rule reads Created_users.aptem_id first and the profile copy as
+    the fallback, so a profile is a candidate when either copy names a requested
+    id. read_live_register_records() still resolves every candidate through the
+    same rule and keeps only the profiles that land on a requested id.
+    """
+    from django.db.models.functions import Trim
+
+    from learner_api.models import EnrolmentUser
+
+    numeric = [int(value) for value in kbc_ids]
+    enrolment_ids = list(
+        EnrolmentUser.all_learners
+        .annotate(trimmed_aptem_id=Trim('aptem_id'))
+        .filter(trimmed_aptem_id__in=list(kbc_ids))
+        .values_list('pk', flat=True)
+    )
+    by_profile = set(LearnerProfile.objects.filter(aptem_id__in=numeric).values_list('id', flat=True))
+    by_enrolment = set(
+        LearnerProfile.objects.filter(enrolment_id__in=enrolment_ids).values_list('id', flat=True)
+    ) if enrolment_ids else set()
+    return by_profile | by_enrolment
+
+
+def read_live_register_records(kbc_id=None, kbc_ids=None):
+    """Live register rows as KBC-shaped records keyed by KBC id.
+
+    ``kbc_ids`` scopes the read to those learners (the register's visible
+    page); None reads every learner, as before.
+    """
+    requested = {str(value) for value in kbc_ids} if kbc_ids is not None else None
+    register = LiveSessionLearnerAttendance.objects.all()
+    if requested is not None:
+        if not requested:
+            return {}
+        register = register.filter(learner_profile_id__in=_candidate_profile_ids(requested))
+    rows = list(register.values(
         'id', 'occurrence_id', 'live_session_id', 'module_catalogue_id',
         'learner_profile_id', 'attendance_status',
     ))
@@ -102,6 +139,11 @@ def read_live_register_records(kbc_id=None):
     )
     aptem_by_profile, _conflicts = resolve_effective_aptem_ids(profiles)
     kbc_id_by_profile = {profile_id: str(aptem_id) for profile_id, aptem_id in aptem_by_profile.items()}
+    if requested is not None:
+        # A candidate whose effective Aptem id is another learner's is not ours.
+        kbc_id_by_profile = {
+            profile_id: value for profile_id, value in kbc_id_by_profile.items() if value in requested
+        }
 
     from .bulk_attendance_live_recovery import parallel_recovery_links
     covered, guests = parallel_recovery_links(
@@ -133,9 +175,9 @@ def read_live_register_records(kbc_id=None):
     return records
 
 
-def read_live_register_or_warning(kbc_id=None):
+def read_live_register_or_warning(kbc_id=None, kbc_ids=None):
     try:
-        return read_live_register_records(kbc_id), None
+        return read_live_register_records(kbc_id, kbc_ids=kbc_ids), None
     except DatabaseError:
         return {}, LIVE_REGISTER_WARNING
 

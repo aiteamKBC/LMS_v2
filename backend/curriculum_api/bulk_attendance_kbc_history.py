@@ -20,10 +20,12 @@ from .bulk_attendance_learners import learner_directory_dsn
 from .bulk_attendance_live_policy import live_days_per_learner, merge_live_over_kbc, parse_attendance_changes
 
 
-def _live_register(kbc_id=None):
+def _live_register(kbc_id=None, kbc_ids=None):
     # Imported here so the KBC reader stays usable without the ORM loaded.
     from .bulk_attendance_live_register import read_live_register_or_warning
-    return read_live_register_or_warning(kbc_id)
+    if kbc_ids is None:
+        return read_live_register_or_warning(kbc_id)
+    return read_live_register_or_warning(kbc_id, kbc_ids=kbc_ids)
 
 
 def _live_day_learner_ids(session_date):
@@ -512,8 +514,20 @@ def _read_linked_month(first, following, learner_ids=None):
         return _map_kbc_history_rows(dict_rows(cursor))
 
 
-def _read_linked_recent(limit):
+def _recent_scope(learner_ids):
+    """(SQL, params) narrowing a recent read to the requested learners, if any.
+
+    Applied inside the ranked subquery, so the window only ranks those
+    learners' rows instead of the whole attendance table.
+    """
+    if learner_ids is None:
+        return '', []
+    return ' AND "ID"::text = ANY(%s)', [list(learner_ids)]
+
+
+def _read_linked_recent(limit, learner_ids=None):
     """read_kbc_recent_attendance through the new database's link."""
+    scope_sql, scope_params = _recent_scope(learner_ids)
     with new_database_cursor(read_only=True) as cursor:
         cursor.execute(
             f'''SELECT "recordKey", "learnerId", "sessionDate", "moduleName",
@@ -522,11 +536,11 @@ def _read_linked_recent(limit):
                     SELECT {KBC_RECORD_COLUMNS},
                         dense_rank() OVER (PARTITION BY "ID"::text ORDER BY "date" DESC) AS recent_rank
                     FROM {LINKED_TABLE}
-                    WHERE "ID" IS NOT NULL AND "date" IS NOT NULL AND "date" <= CURRENT_DATE
+                    WHERE "ID" IS NOT NULL AND "date" IS NOT NULL AND "date" <= CURRENT_DATE{scope_sql}
                 ) recent
                 WHERE recent_rank <= %s
                 ORDER BY "learnerId", "sessionDate", "recordKey"''',
-            [limit],
+            [*scope_params, limit],
         )
         recent = {}
         for record in _map_kbc_history_rows(dict_rows(cursor)):
@@ -534,22 +548,24 @@ def _read_linked_recent(limit):
         return recent
 
 
-def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
+def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT, learner_ids=None):
     """Rows from each learner's latest ``limit`` dates, oldest first.
 
     Unmarked rows are included because they are still real learner attendance
     records. Rank dates rather than individual rows: a day replaced by Live
     can contain many KBC rows. The endpoint takes four records after merging.
+    ``learner_ids`` limits the read to those KBC ids; None reads everyone.
     """
     if dsn == NEW_DATABASE:
-        return _read_linked_recent(limit)
+        return _read_linked_recent(limit, learner_ids)
+    scope_sql, scope_params = _recent_scope(learner_ids)
     # Neon's pooler rejects startup `options`; set the timeout per transaction.
     with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as connection:
         connection.read_only = True
         connection.execute("SET LOCAL statement_timeout = '10s'")
         with connection.cursor() as cursor:
             cursor.execute(
-                '''
+                f'''
                 SELECT "recordKey", "learnerId", "sessionDate", "moduleName",
                        "lectureName", attendance_value, source_status
                 FROM (
@@ -568,12 +584,12 @@ def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
                     FROM public.kbc_attendance
                     WHERE "ID" IS NOT NULL
                       AND "date" IS NOT NULL
-                      AND "date" <= CURRENT_DATE
+                      AND "date" <= CURRENT_DATE{scope_sql}
                 ) recent
                 WHERE recent_rank <= %s
                 ORDER BY "learnerId", "sessionDate", "recordKey"
                 ''',
-                [limit],
+                [*scope_params, limit],
             )
             recent = {}
             for row in cursor.fetchall():
@@ -618,7 +634,17 @@ def _with_warnings(payload, warning):
 @require_GET
 def bulk_attendance_kbc_recent(request):
     live_only = request.GET.get('source') == 'live'
-    live, warning = _live_register()
+    # Optional: the register's visible page. Absent, every learner is read.
+    learner_ids = None
+    if 'learner_ids' in request.GET:
+        learner_ids = sorted({
+            value.strip() for value in str(request.GET.get('learner_ids') or '').split(',') if value.strip()
+        })
+        if len(learner_ids) > 1000 or any(not re.fullmatch(r'\d{1,20}', value) for value in learner_ids):
+            return JsonResponse({'error': 'The selected learners are invalid.'}, status=400)
+        if not learner_ids:
+            return _with_warnings({'recent': {}}, None)
+    live, warning = _live_register(kbc_ids=learner_ids)
     kbc = {}
     if not live_only:
         try:
@@ -628,7 +654,11 @@ def bulk_attendance_kbc_recent(request):
             # Read four candidate dates plus the dates Live may replace.
             # Each date can contain multiple records; never truncate those
             # before applying the same merge policy as full history.
-            kbc = read_kbc_recent_attendance(dsn, RECENT_LECTURE_LIMIT + live_days_per_learner(live))
+            limit = RECENT_LECTURE_LIMIT + live_days_per_learner(live)
+            kbc = (
+                read_kbc_recent_attendance(dsn, limit) if learner_ids is None
+                else read_kbc_recent_attendance(dsn, limit, learner_ids)
+            )
         except (psycopg.Error, DatabaseError):
             # Database driver errors can expose connection information.
             return JsonResponse({'error': 'Unable to load recent KBC attendance. Please try again.'}, status=503)

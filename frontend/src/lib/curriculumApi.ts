@@ -4909,6 +4909,18 @@ export function fetchFreeCourseAuthoringCatalogue(signal?: AbortSignal) {
   return fetchJson<FreeCourseAuthoringCatalogue>('/curriculum/free-courses/authoring/', { signal, revalidate: true });
 }
 
+/**
+ * The catalogue plus every course's full document in one request, instead of
+ * the catalogue followed by one request per course. `documents` is absent only
+ * from a backend that predates `?include=documents`.
+ */
+export function fetchFreeCourseAuthoringCatalogueWithDocuments(signal?: AbortSignal) {
+  return fetchJson<FreeCourseAuthoringCatalogue & { documents?: FreeCourseAuthoringDocument[] }>(
+    '/curriculum/free-courses/authoring/?include=documents',
+    { signal, revalidate: true },
+  );
+}
+
 export function fetchFreeCourseAuthoringCourse(courseId: string, signal?: AbortSignal) {
   return fetchJson<FreeCourseAuthoringDocument>(`/curriculum/free-courses/${encodeURIComponent(courseId)}/authoring/`, { signal, revalidate: true });
 }

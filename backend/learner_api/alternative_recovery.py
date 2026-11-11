@@ -217,17 +217,33 @@ def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="e
     if not contexts:
         return result
 
-    # Each cohort's modules and series, read once however many lectures share it.
+    # Every cohort's modules and series in two queries, however many cohorts
+    # the lectures span; one query pair per cohort cost a round trip each.
+    cohorts = {(module.programme_id, module.cohort_id) for _o, _s, module in contexts.values()}
+    cohort_filter = Q()
+    for programme_id, cohort_id in cohorts:
+        cohort_filter |= Q(programme_id=programme_id, cohort_id=cohort_id)
+    modules_by_cohort = defaultdict(list)
+    for module in (_recovery_modules(database)
+                   .filter(cohort_filter)
+                   .exclude(Q(group_id__isnull=True) | Q(group_id=""))):
+        modules_by_cohort[(module.programme_id, module.cohort_id)].append(module)
+    catalogue_ids = {
+        str(module.module_catalogue_id)
+        for modules in modules_by_cohort.values() for module in modules
+    }
+    sessions_by_module = defaultdict(list)
+    if catalogue_ids:
+        for series in LiveSession.objects.using(database).filter(module_catalogue_id__in=list(catalogue_ids)):
+            sessions_by_module[str(series.module_catalogue_id)].append(series)
     cohort_rows = {}
-    for cohort in {(module.programme_id, module.cohort_id) for _o, _s, module in contexts.values()}:
-        modules = list(
-            _recovery_modules(database)
-            .filter(programme_id=cohort[0], cohort_id=cohort[1])
-            .exclude(Q(group_id__isnull=True) | Q(group_id=""))
-        )
-        modules_by_id = {str(module.module_catalogue_id): module for module in modules}
-        cohort_rows[cohort] = (modules, list(
-            LiveSession.objects.using(database).filter(module_catalogue_id__in=list(modules_by_id))))
+    for cohort in cohorts:
+        modules = modules_by_cohort.get(cohort, [])
+        cohort_rows[cohort] = (modules, [
+            series
+            for catalogue_id in dict.fromkeys(str(module.module_catalogue_id) for module in modules)
+            for series in sessions_by_module[catalogue_id]
+        ])
 
     matched = {}
     for occurrence_id, (occurrence, session, module) in contexts.items():
