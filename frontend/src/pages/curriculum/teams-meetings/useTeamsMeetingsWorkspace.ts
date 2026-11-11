@@ -1723,7 +1723,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     }
     try {
       const inviting = invite && changes.addedPeople.length > 0;
-      const result = await updateExistingTeamsMeeting(summary.liveSessionId, { ...held, ...changes.fields, ...(inviting ? {} : { invitationsOnly: true }) }, {
+      const result = await updateExistingTeamsMeeting(summary.liveSessionId, { ...held, ...changes.fields,
+        sendLmsEmails: inviting, ...(inviting ? {} : { invitationsOnly: true }) }, {
         onSubmitted: () => setUpdateProgress({ stage: 'calendar' }),
       });
       settleInvitations(update.form);

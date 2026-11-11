@@ -238,13 +238,13 @@ describe('Student Dashboard request graph', () => {
     vi.mocked(fetch).mockImplementation((input, init) => String(input).endsWith('/header/minimal/')
       ? Promise.resolve(new Response(JSON.stringify({ error: 'Permission revoked' }), { status: 403 })) : original(input, init));
     renderDashboard();
-    expect(await screen.findByText('Permission revoked')).toBeVisible();
+    expect(await screen.findByText('You do not have access to this page')).toBeVisible();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
   });
   it('rejects incomplete Header data without starting protected tab reads', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ learner: {}, weeklyCandidates: [] })));
     renderDashboard();
-    expect(await screen.findByText('Dashboard Header response required.')).toBeVisible();
+    expect(await screen.findByText('Could not load your learning data')).toBeVisible();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(dashboardUrls()).toEqual(['/learner_api/dashboard/commercial/265/header/minimal/']);
   });
@@ -267,7 +267,7 @@ describe('Student Dashboard request graph', () => {
     vi.mocked(fetch).mockImplementation((input, init) => String(input).endsWith('/header/minimal/')
       ? Promise.resolve(new Response(JSON.stringify({ error: 'Header unavailable' }), { status: 503 })) : original(input, init));
     renderDashboard();
-    expect(await screen.findByText('Header unavailable')).toBeVisible();
+    expect(await screen.findByText('Could not load your learning data')).toBeVisible();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     vi.mocked(fetch).mockImplementation(original);
     fireEvent.click(screen.getByRole('button', { name: /try again|retry/i }));
@@ -279,7 +279,7 @@ describe('Student Dashboard request graph', () => {
     viewer.role = role;
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: 'Access denied' }), { status: 403 }));
     renderDashboard();
-    expect(await screen.findByText('Access denied')).toBeVisible();
+    expect(await screen.findByText('You do not have access to this page')).toBeVisible();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(dashboardUrls()).toEqual(['/learner_api/dashboard/commercial/265/header/minimal/']);
   });

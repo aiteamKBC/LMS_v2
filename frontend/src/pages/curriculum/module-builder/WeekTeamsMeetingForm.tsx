@@ -2,6 +2,7 @@ import { emptyWeekTeamsMeetingForm, liveSessionsOf, heldAdditionalMeeting, booke
 export type { WeekTeamsMeetingForm } from './WeekTeamsMeetingForm.helpers';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { Notice } from '@/components/ui/Notice';
 import { formatSystemTimestamp } from '@/lib/format';
 import { EntraPeopleInput } from '../teams-meetings/EntraPeopleInput';
 import { TeamsMeetingOptionFields, TeamsPeopleFields, type TeamsCalendarForm } from '../teams-meetings/createCalendarForm';
@@ -535,9 +536,9 @@ export function WeekTeamsMeetingPanel({
         {created.email && <ScheduleEmailNote email={created.email} />}
         {created.added && <ScheduleEmailNote email={created.added} kind="added" />}
         {created.moved && <ScheduleEmailNote email={created.moved} kind="moved" />}
-        {created.warnings.map(warning => (
-          <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] font-semibold text-amber-800">{warning}</p>
-        ))}
+        {created.warnings.length > 0 && <Notice tone="attention" role="status" title="Meeting notices">
+          <ul className="list-disc space-y-1 pl-5">{created.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
+        </Notice>}
         <button
           type="button"
           onClick={() => {

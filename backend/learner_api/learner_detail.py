@@ -1859,6 +1859,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                              if mid in master_module_title]
                 week_lookup = {(row['moduleId'], row['weekId']): row for row in out_weeks}
                 valid = set(week_lookup)
+                live_ids = {(_s(mid), _s(cid)) for cid, wid, mid, ctype, *_ in master_components
+                            if (mid, wid) in valid and _s(ctype).lower().replace('-', '_') == 'live_session'}
                 out_components = []
                 for cid, wid, mid, ctype, title, _, settings, link, *_ in master_components:
                     if (mid, wid) not in valid:
@@ -1885,7 +1887,13 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                             and _s(settings.get('recordingDate')))):
                         continue
                     week = week_lookup[(mid, wid)]
+                    linked_id = _s(settings.get(LINK_KEY))
+                    linked_module = _s(settings.get(LINK_MODULE_KEY)) or _s(mid)
+                    presentation_link = ({'linkedSessionComponentId': linked_id}
+                                         if _s(ctype).lower().replace('-', '_') == 'recording_placeholder'
+                                         and linked_module == _s(mid) and (linked_module, linked_id) in live_ids else {})
                     out_components.append({**week, 'componentId': cid, 'isQuiz': bool(quiz),
+                                           **presentation_link,
                                            'quizMeta': quiz, 'component': title, **point_projection(settings),
                                            **({'type': ctype, 'sessionDate': _s(settings.get('sessionDate')) or None,
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
@@ -2283,6 +2291,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "recordingSeriesId": comp["recordingSeriesId"],
                     "recordingSessionNumber": comp["recordingSessionNumber"],
                     "recordingDate": comp["recordingDate"],
+                    **({"linkedSessionComponentId": comp["linkedSessionComponentId"]}
+                       if comp.get("linkedSessionComponentId") else {}),
                     "sessionDate": comp["sessionDate"],
                     "sessionTime": comp["sessionTime"],
                     "sessionDateTimeUtc": comp["sessionDateTimeUtc"],
