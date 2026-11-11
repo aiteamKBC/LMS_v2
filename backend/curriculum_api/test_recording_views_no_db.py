@@ -1,5 +1,6 @@
 import inspect
 import json
+from datetime import datetime, timezone
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -58,6 +59,31 @@ class RecordingWatchTests(SimpleTestCase):
 
 
 class FullyWatchedTests(SimpleTestCase):
+    def test_completion_evidence_separates_ready_recordings_from_completed_watching(self):
+        available = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
+        watched_at = datetime(2026, 11, 10, 12, tzinfo=timezone.utc)
+        artifacts = [self.recording('R1', archive_updated_at=available)]
+        views = [{'artifact_id': 'R1', 'watched_seconds': 300, 'duration_seconds': 600,
+                  'last_heartbeat_at': watched_at}]
+        def read(sql, params=()):
+            return views if 'live_session_recording_views' in sql else artifacts
+        with patch.object(recording_views, 'read', side_effect=read) as query:
+            result = recording_views.recording_completion_evidence('commercial', 101, ['OCC-1'])
+            self.assertEqual(result, {'OCC-1': {'ready': True, 'completed': False,
+                                              'availableAt': available, 'completedAt': None}})
+            self.assertEqual(query.call_args.args[1], ['commercial', 101, ['OCC-1']])
+            views[0]['watched_seconds'] = 600
+            self.assertEqual(recording_views.recording_completion_evidence('commercial', 101, ['OCC-1'])['OCC-1'],
+                             {'ready': True, 'completed': True, 'availableAt': available, 'completedAt': watched_at})
+
+    def test_pending_bunny_recording_grants_neither_ready_nor_watched_evidence(self):
+        artifacts = [self.recording('R1', metadata={'lmsBunnyRecording': {'state': 'pending'}})]
+        views = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        with patch.object(recording_views, 'read', side_effect=lambda sql, params=():
+                          views if 'live_session_recording_views' in sql else artifacts):
+            result = recording_views.recording_completion_evidence('apprenticeship', 202, ['OCC-1'])
+        self.assertEqual(result['OCC-1'], {'ready': False, 'completed': False, 'availableAt': None, 'completedAt': None})
+
     def check(self, artifacts, views):
         def fake_read(sql, params=()):
             return list(views) if 'live_session_recording_views' in sql else list(artifacts)

@@ -92,6 +92,36 @@ class ResilientRedisCache(RedisCache):
         return getattr(self._fallback, name)(*args, **kwargs)
 
 
+class SharedCacheUnavailable(Exception):
+    """The shared cache could not answer; the caller must use its source of truth."""
+
+
+def _strict(self, name, *args, **kwargs):
+    """Call ``name`` on the shared server only, never on the process fallback.
+
+    Additive: the proxied methods above keep their fallback exactly as before.
+    For data whose invalidation must reach every process (signed-in sessions,
+    a learner's assigned modules), a per-process copy is wrong rather than
+    merely cold, so these callers ask the server or nobody. A failure here does
+    not move this cache into or out of degraded mode, so it changes nothing
+    for the other callers.
+    """
+    now = time.monotonic()
+    # Its own cooldown, so a dead server costs these callers one connect
+    # attempt per window rather than one per call -- and the proxied methods'
+    # degraded state is left exactly as they set it.
+    if now < self._degraded_until or now < getattr(self, '_strict_degraded_until', 0.0):
+        raise SharedCacheUnavailable('cache server degraded')
+    try:
+        return getattr(RedisCache, name)(self, *args, **kwargs)
+    except CONNECTION_ERRORS as exc:
+        self._strict_degraded_until = time.monotonic() + self._retry_after
+        raise SharedCacheUnavailable(str(exc)) from exc
+
+
+ResilientRedisCache.strict = _strict
+
+
 def _make_proxy(name):
     def method(self, *args, **kwargs):
         return self._proxy(name, *args, **kwargs)

@@ -873,6 +873,10 @@ def _create_enrolment_user(request, fields, *, require_account=False,
     # they become Active. Apprenticeship learners keep the normal document
     # and review progression.
     advance_learner(user)
+    if _s(user.programme_status).casefold() == "active":
+        from .active_users import ensure_active_learner_profile
+
+        ensure_active_learner_profile(user)
     row = to_list_row(user)
     # Book the first session with the case owner resolved above. Reported on the
     # row like the invitation is, and for the same reason: it can partly fail

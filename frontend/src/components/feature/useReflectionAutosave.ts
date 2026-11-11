@@ -32,7 +32,10 @@ export function useReflectionAutosave(payload: LearningReflectionSubmissionInput
 
   const save = useCallback(async (snapshot: LearningReflectionSubmissionInput) => {
     if (timer.current) clearTimeout(timer.current);
-    const text = JSON.stringify(snapshot);
+    // The manual-save intent belongs to transport, not to editable form data.
+    const comparable = { ...snapshot };
+    delete comparable.reflectionDraftIntent;
+    const text = JSON.stringify(comparable);
     setPending(count => count + 1);
     setError('');
     // A failed earlier write must not block a later retry.

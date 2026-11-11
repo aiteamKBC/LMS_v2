@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS curriculum.live_session_learner_attendance (
     attendance_report_id text NOT NULL DEFAULT '',
     first_join_at timestamptz,
     last_leave_at timestamptz,
+    attendance_basis varchar(16) NOT NULL DEFAULT 'teams',
+    teams_attendance_status varchar(16),
+    attendance_source_occurrence_id varchar(128),
+    qr_attendance_id bigint REFERENCES curriculum.qr_attendance(id) ON DELETE RESTRICT,
+    qr_confirmed_at timestamptz,
     calculated_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -27,12 +32,40 @@ CREATE TABLE IF NOT EXISTS curriculum.live_session_learner_attendance (
         CHECK (recovery_status IN ('none', 'requested', 'catchup_booked', 'completed')),
     CONSTRAINT curriculum_live_learner_attendance_seconds_valid
         CHECK (attended_seconds >= 0),
+    CONSTRAINT curriculum_live_learner_attendance_basis_valid
+        CHECK (attendance_basis IN ('teams', 'qr', 'teams_qr', 'staff')),
+    CONSTRAINT curriculum_live_learner_teams_status_valid
+        CHECK (teams_attendance_status IS NULL OR teams_attendance_status IN ('present', 'absent')),
     CONSTRAINT curriculum_live_learner_attendance_uniq
         UNIQUE (occurrence_id, learner_profile_id, module_catalogue_id)
 );
 
 ALTER TABLE curriculum.live_session_learner_attendance
     ADD COLUMN IF NOT EXISTS recovery_status varchar(24) NOT NULL DEFAULT 'none';
+
+ALTER TABLE curriculum.live_session_learner_attendance
+    ADD COLUMN IF NOT EXISTS attendance_basis varchar(16) NOT NULL DEFAULT 'teams',
+    ADD COLUMN IF NOT EXISTS teams_attendance_status varchar(16),
+    ADD COLUMN IF NOT EXISTS attendance_source_occurrence_id varchar(128),
+    ADD COLUMN IF NOT EXISTS qr_attendance_id bigint,
+    ADD COLUMN IF NOT EXISTS qr_confirmed_at timestamptz;
+
+UPDATE curriculum.live_session_learner_attendance
+SET teams_attendance_status=coalesce(teams_attendance_status, attendance_status),
+    attendance_source_occurrence_id=coalesce(attendance_source_occurrence_id, occurrence_id);
+
+ALTER TABLE curriculum.live_session_learner_attendance
+    DROP CONSTRAINT IF EXISTS curriculum_live_learner_attendance_basis_valid,
+    DROP CONSTRAINT IF EXISTS curriculum_live_learner_teams_status_valid,
+    DROP CONSTRAINT IF EXISTS curriculum_live_learner_qr_attendance_fk;
+
+ALTER TABLE curriculum.live_session_learner_attendance
+    ADD CONSTRAINT curriculum_live_learner_attendance_basis_valid
+        CHECK (attendance_basis IN ('teams', 'qr', 'teams_qr', 'staff')),
+    ADD CONSTRAINT curriculum_live_learner_teams_status_valid
+        CHECK (teams_attendance_status IS NULL OR teams_attendance_status IN ('present', 'absent')),
+    ADD CONSTRAINT curriculum_live_learner_qr_attendance_fk
+        FOREIGN KEY (qr_attendance_id) REFERENCES curriculum.qr_attendance(id) ON DELETE RESTRICT;
 
 ALTER TABLE curriculum.live_session_learner_attendance
     DROP CONSTRAINT IF EXISTS curriculum_live_learner_recovery_status_valid;
@@ -58,6 +91,42 @@ CREATE INDEX IF NOT EXISTS curriculum_live_learner_attendance_module_idx
 
 CREATE INDEX IF NOT EXISTS curriculum_live_learner_attendance_profile_idx
     ON curriculum.live_session_learner_attendance (learner_profile_id, calculated_at DESC);
+
+CREATE INDEX IF NOT EXISTS curriculum_live_learner_attendance_qr_idx
+    ON curriculum.live_session_learner_attendance (qr_attendance_id)
+    WHERE qr_attendance_id IS NOT NULL;
+
+INSERT INTO curriculum.live_session_learner_attendance AS register (
+    occurrence_id,live_session_id,module_catalogue_id,
+    learner_profile_id,learner_email,learner_name,
+    attendance_status,recovery_status,attended_seconds,attendance_report_id,
+    calculated_at,attendance_basis,teams_attendance_status,
+    attendance_source_occurrence_id,qr_attendance_id,qr_confirmed_at
+)
+SELECT q.occurrence_id,o.live_session_id,q.module_id,
+       p.id,p.email,p.full_name,
+       'present','none',0,'',q.confirmed_at,'qr',NULL,
+       q.occurrence_id,q.id,q.confirmed_at
+FROM curriculum.qr_attendance q
+JOIN "Learner".learners p ON p.enrolment_id=q.enrolment_id
+JOIN curriculum.live_session_occurrences o ON o.id=q.occurrence_id
+WHERE NOT EXISTS (
+    SELECT 1 FROM "Learner".learners duplicate
+    WHERE duplicate.enrolment_id=p.enrolment_id AND duplicate.id<>p.id
+)
+ON CONFLICT ON CONSTRAINT curriculum_live_learner_attendance_uniq DO UPDATE SET
+    attendance_status=CASE
+        WHEN register.attendance_basis='staff' THEN register.attendance_status
+        ELSE 'present' END,
+    attendance_basis=CASE
+        WHEN register.attendance_basis='staff' THEN 'staff'
+        WHEN register.teams_attendance_status='present' THEN 'teams_qr'
+        ELSE 'qr' END,
+    attendance_source_occurrence_id=EXCLUDED.attendance_source_occurrence_id,
+    qr_attendance_id=EXCLUDED.qr_attendance_id,
+    qr_confirmed_at=EXCLUDED.qr_confirmed_at,
+    calculated_at=GREATEST(register.calculated_at,EXCLUDED.calculated_at),
+    updated_at=CURRENT_TIMESTAMP;
 
 COMMIT;
 

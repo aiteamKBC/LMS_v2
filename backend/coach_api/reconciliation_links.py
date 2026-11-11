@@ -59,7 +59,7 @@ def require_schedulable(record, *, allow_started=False):
         allowed = {"scheduled", "not-scheduled"}
         if allow_started and overlay.status == 'in-progress':
             from .review_rescheduling import require_started_reschedule
-            require_started_reschedule(record, overlay.status)
+            require_started_reschedule(record, overlay.status, overlay=overlay)
             allowed.add('in-progress')
         if (overlay.status not in allowed or source.get("completed_date")
                 or not initial_local_status(source.get("status"))

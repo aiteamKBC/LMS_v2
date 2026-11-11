@@ -19,10 +19,10 @@ function data(linked = false): AttendanceLinkContext {
         ...(!linked ? [{ id: 'extra', name: 'Alternate account', role: 'attendee', expected: false, attended: true,
           status: 'extra', totalAttendanceSeconds: 1200 }] : [])] } };
 }
-function mount(canEdit = true) {
+function mount(canEdit = true, onLinkChange?: () => void) {
   const fetchArtifacts = vi.fn().mockResolvedValue({ artifacts: [], attendance: data().attendance });
   return render(<CoachMeetingArtifactsPanel event={event} fetchArtifacts={fetchArtifacts} showMeetingSummary={false}
-    attendanceLinkKey={canEdit ? event.eventKey : undefined} />);
+    attendanceLinkKey={canEdit ? event.eventKey : undefined} onAttendanceLinkChange={onLinkChange} />);
 }
 async function open() {
   fireEvent.click(await screen.findByRole('button', { name: 'Link Alternate account to expected participant' }));
@@ -54,7 +54,8 @@ describe('Review attendance identity link', () => {
   });
 
   it('requires explicit learner selection and saves the source evidence/version, never an email guess', async () => {
-    mount(); await open();
+    const onLinkChange = vi.fn();
+    mount(true, onLinkChange); await open();
     expect(screen.getByRole('button', { name: /^Confirm$/ })).toBeDisabled();
     fireEvent.change(screen.getByRole('combobox', { name: 'Expected participant' }), { target: { value: 'learner' } });
     request.mockResolvedValueOnce(data(true));
@@ -65,6 +66,21 @@ describe('Review attendance identity link', () => {
     });
     expect(screen.queryByText('Alternate account')).not.toBeInTheDocument();
     expect(screen.getByText('Linked Teams account: alternate@example.invalid')).toBeVisible();
+    expect(onLinkChange).toHaveBeenCalledOnce();
+  });
+
+  it('does not label a verified identity as present below ten minutes', async () => {
+    const linked = data(true);
+    linked.attendance.expectedAttendedCount = 0;
+    linked.attendance.expectedAbsentCount = 1;
+    linked.attendance.tracker![0] = { ...linked.attendance.tracker![0], attended: false,
+      status: 'absent', totalAttendanceSeconds: 599 };
+    request.mockResolvedValueOnce(linked);
+    mount();
+    expect(await screen.findByText('Linked Teams account: alternate@example.invalid')).toBeVisible();
+    expect(screen.queryByText('Present · Coach verified')).not.toBeInTheDocument();
+    expect(screen.getByText('Under 10 min')).toBeVisible();
+    expect(screen.getByText('9m 59s')).toBeVisible();
   });
 
   it('cancel never writes and does not alter the raw absence', async () => {

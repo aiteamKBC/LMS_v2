@@ -22,7 +22,7 @@ READER_PATHS = {
     'learner_api/training_plan_dashboard.py': 1,
     'learner_api/overview_week.py': 3,
     'learner_api/mobile.py': 2,
-    'learner_api/learner_detail.py': 4,
+    'learner_api/learner_detail.py': 5,
     'learner_api/builder_activity_dates.py': 1,
     'learner_api/personal_learning_reads.py': 1,
     'learner_api/training_plan_targets.py': 1,
@@ -40,18 +40,21 @@ CHILD_READER_PATHS = {
     'learner_api/training_plan_dashboard.py': 2,
     'learner_api/overview_week.py': 3,
     'learner_api/mobile.py': 2,
-    'learner_api/learner_detail.py': 7,
+    'learner_api/learner_detail.py': 8,  # +2: the shared ksb_mappings read (content_cache); catalogue_facts path uses pre-filtered master_components
     'learner_api/builder_activity_dates.py': 1,
     'learner_api/curriculum.py': 1,
+    'learner_api/dashboard_header.py': 1,
+    'learner_api/dashboard_metrics.py': 2,  # ksb_mappings subquery uses component_ksb_mappings_sql() -> current_status_sql (equivalent rule)
+    'learner_api/dashboard_training.py': 1,
     'learner_api/module_shift.py': 2,
     'learner_api/training_plan_document.py': 1,
     'learner_api/active_users.py': 1,
-    'learner_api/live_session_progress.py': 1,
+    'learner_api/live_session_progress.py': 2,
     'learner_api/student_activity_data.py': 2,
     'coach_api/overview_modules.py': 1,
     'coach_api/otjh_ksb.py': 1,
     'coach_api/learning_plan_projection.py': 1,
-    'coach_api/weekly_learning.py': 2,
+    'coach_api/weekly_learning.py': 1,  # ksb_mappings subquery uses component_ksb_codes_sql() -> current_status_sql (equivalent rule)
 }
 
 # The old rule: any parent stamp kept a deleted week visible.

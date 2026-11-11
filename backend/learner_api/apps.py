@@ -8,6 +8,13 @@ class LearnerApiConfig(AppConfig):
         from .read_model import register_learner_home_read_model
         register_learner_home_read_model()
 
+        # Writes to a learner's row, profile link or plan mirror retire their
+        # cached subject rows (learner_api.subject_cache).
+        from .subject_cache import connect_signals as connect_subject_cache_signals
+        connect_subject_cache_signals()
+        from .progress_cache import connect_signals as connect_progress_cache_signals
+        connect_progress_cache_signals()
+
         # Additive read-model events only; every receiver fails open while the
         # feature flags/outbox remain disabled during staged deployment.
         from . import read_model_signals  # noqa: F401

@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import { Download, FileText, X } from 'lucide-react';
 import { AssignmentPdfPreview } from '@/pages/learner/monthly-submission/AssignmentPdfPreview';
 
-export default function EvidencePdfDialog({ open, url, kind, busy, error, onRetry, onClose, onDownload }: {
+export default function EvidencePdfDialog({ open, url, kind, filename, busy, error, onRetry, onClose, onDownload }: {
   open: boolean; url: string; kind: 'transcript' | 'analysis'; busy: boolean; error: string;
+  filename?: string;
   onRetry: () => void; onClose: () => void; onDownload: () => void;
 }) {
   const titleId = useId();
@@ -48,7 +49,7 @@ export default function EvidencePdfDialog({ open, url, kind, busy, error, onRetr
         </div>
       </header>
       <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-5">
-        {url ? <AssignmentPdfPreview url={url} scrollableZoom filename={kind === 'transcript' ? 'Coaching session - full transcript.pdf' : 'Coaching session - saved AI report.pdf'}
+        {url ? <AssignmentPdfPreview url={url} scrollableZoom filename={filename ?? (kind === 'transcript' ? 'Coaching session - full transcript.pdf' : 'Coaching session - saved AI report.pdf')}
           label={kind === 'transcript' ? 'Transcript PDF preview' : 'AI analysis PDF preview'} /> :
           <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-4 rounded-xl bg-background-50 p-6 text-center">
             {error ? <div role="alert" className="space-y-3 text-sm text-amber-900"><p>{error}</p>

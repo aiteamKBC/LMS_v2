@@ -44,6 +44,22 @@ class AttendanceTimeHistoryTests(SimpleTestCase):
         self.assertEqual(cursor.execute.call_args.args[1], ['C1'])
         read.assert_called_once_with(source, module_ids=['M1'])
 
+    def test_recording_uses_its_earned_session_hours_as_the_first_native_time_baseline(self):
+        record = {'kind': 'component', 'componentType': 'recording_placeholder',
+                  'componentId': 'REC', 'retakeTimeChoice': 'retry'}
+        source = SimpleNamespace(id=19)
+        seconds, _, read = self.baseline(source=source, record=record,
+            credits=[{'componentId': 'REC', 'hours': 2.5}])
+        self.assertEqual(seconds, 9000)
+        read.assert_called_once_with(source, module_ids=['M1'])
+        self.assertEqual(self.baseline(source=source, record=record,
+            credits=[{'componentId': 'LIVE', 'hours': 2}])[0], 0)
+        seconds, cursor, read = self.baseline(source=source, record=record,
+            history=[{'kind': 'component', 'componentId': 'REC', 'passed': True}])
+        self.assertEqual(seconds, 0)
+        cursor.execute.assert_not_called()
+        read.assert_not_called()
+
     def test_absence_ambiguity_and_other_components_do_not_create_credit(self):
         for credits in ([], [{'componentId': 'C2', 'hours': 2}],
                         [{'componentId': 'C1', 'hours': 2}] * 2):

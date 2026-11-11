@@ -92,7 +92,7 @@ class ReviewAttendanceDisplayTests(SimpleTestCase):
                         self.assertEqual(self.annotate([report], events=[self.imported_event(review_type)]), expected)
 
     def test_imported_verified_report_preserves_duration_boundary(self):
-        for seconds, expected in [(1, 'missed'), (180, 'missed'), (181, 'attended')]:
+        for seconds, expected in [(1, 'missed'), (599, 'missed'), (600, 'attended')]:
             with self.subTest(seconds=seconds):
                 self.assertEqual(self.annotate([self.verified_report(seconds)], events=[self.imported_event()]), expected)
 
@@ -168,9 +168,43 @@ class ReviewAttendanceDisplayTests(SimpleTestCase):
         self.assertEqual(self.event['reviewAttendance'], 'unavailable')
 
     def test_existing_duration_boundary_is_preserved(self):
-        for seconds, expected in [(1, 'missed'), (180, 'missed'), (181, 'attended')]:
+        for seconds, expected in [(1, 'missed'), (599, 'missed'), (600, 'attended')]:
             with self.subTest(seconds=seconds):
                 self.assertEqual(self.annotate([self.report(seconds)]), expected)
+
+    def test_required_review_people_need_ten_minutes_even_with_matching_names(self):
+        from .views import build_coach_meeting_attendance_tracker
+
+        expected = [
+            {'id': role, 'role': role, 'email': f'{role}@example.test',
+             'displayName': name, 'required': True}
+            for role, name in [('coach', 'Synthetic Coach'), ('learner', 'Synthetic Learner'),
+                               ('employer', 'Synthetic Employer')]
+        ]
+        actual = [
+            {'id': role, 'email': f'other-{role}@example.test', 'displayName': name,
+             'attended': True, 'totalAttendanceSeconds': seconds}
+            for (role, name), seconds in zip(
+                [('coach', 'Synthetic Coach'), ('learner', 'Synthetic Learner'),
+                 ('employer', 'Synthetic Employer')], [599, 600, 601])
+        ]
+        review = build_coach_meeting_attendance_tracker(expected, actual, has_report=True, review=True)
+        self.assertEqual([(row['role'], row['status']) for row in review['tracker']],
+                         [('coach', 'absent'), ('learner', 'attended'), ('employer', 'attended')])
+        self.assertEqual((review['expectedAttendedCount'], review['extraCount']), (2, 0))
+        other = build_coach_meeting_attendance_tracker(expected, actual, has_report=True)
+        self.assertEqual(other['expectedAttendedCount'], 3)
+
+    def test_rejoins_use_non_overlapping_total(self):
+        from .review_attendance_policy import attended_seconds
+
+        rows = [
+            {'totalAttendanceSeconds': 420, 'intervals': [
+                {'joinDateTime': '2026-11-02T10:00:00Z', 'leaveDateTime': '2026-11-02T10:07:00Z'}]},
+            {'totalAttendanceSeconds': 300, 'intervals': [
+                {'joinDateTime': '2026-11-02T10:05:00Z', 'leaveDateTime': '2026-11-02T10:10:00Z'}]},
+        ]
+        self.assertEqual(attended_seconds(rows), 600)
 
     def test_other_participant_does_not_confirm_learner(self):
         report = self.report(600)

@@ -20,6 +20,7 @@ from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
 from . import canonical_learning
 from .module_placement_sql import current_module_sql
+from . import subject_cache
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 
 
@@ -409,8 +410,7 @@ def read_overview_subjects(source, profile):
                 .exclude(kind='activity_event')
                 .values('kind', 'passed', 'component_ref', 'quiz_ref')]
     with connections['enrolment'].cursor() as cur:
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.pk])
-        assigned = cur.fetchall()
+        assigned = subject_cache.subject_rows(cur, CURRENT_SUBJECTS_SQL, source.pk)
         cur.execute('''SELECT c.id,c.module_catalogue_id AS module_id,m.title AS module_title,
             coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                       WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
@@ -512,8 +512,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
                     else _direct_progress_records(source.pk))
     attendance_module_ids = None
     with projection_stage('plan_resolution'), connections['enrolment'].cursor() as cur:
-        cur.execute(HOME_SUBJECTS_SQL if home_kind else CURRENT_SUBJECTS_SQL, [source.pk])
-        subject_rows = cur.fetchall()
+        subject_rows = subject_cache.subject_rows(cur, HOME_SUBJECTS_SQL if home_kind else CURRENT_SUBJECTS_SQL, source.pk)
         if home_kind:
             assigned = [(module_id, title) for module_id, title, current in subject_rows if current]
             attendance_module_ids = [module_id for module_id, _title, _current in subject_rows]

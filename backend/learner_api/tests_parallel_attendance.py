@@ -101,8 +101,11 @@ class ParallelAttendanceTests(SimpleTestCase):
                 self.assertEqual(self.project(rows=[row]), [row])
 
     def test_saved_register_presence_counts_and_absence_overrides_teams(self):
-        saved = {**self.evidence, 'source': 'live-register', 'attendance_report_id': ''}
-        self.assertEqual(self.project(evidence=[], records=[saved])[0]['effective_attendance'], 1)
+        saved = {**self.evidence, 'source': 'live-register', 'attendance_report_id': '',
+                 'attendance_basis': 'qr', 'qr_attendance_id': 9}
+        recovered = self.project(evidence=[], records=[saved])[0]
+        self.assertEqual(recovered['effective_attendance'], 1)
+        self.assertEqual(recovered['recovery_occurrence_id'], 'g2-session-1')
         saved['attendance_status'] = 'absent'
         self.assertEqual(self.project(records=[saved]), [self.row])
 

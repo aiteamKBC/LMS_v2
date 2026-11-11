@@ -36,6 +36,12 @@ class RegisterPostgresTests(unittest.TestCase):
                 or role != 'feedback_guard_test' or address != '127.0.0.1'):
             raise RuntimeError('Refusing writes outside the dedicated local synthetic test cluster.')
         self.connection.execute('CREATE SCHEMA curriculum')
+        self.connection.execute('CREATE SCHEMA "Learner"')
+        self.connection.execute('''CREATE TABLE curriculum.qr_attendance (
+            id bigint PRIMARY KEY,enrolment_id bigint,module_id text,
+            occurrence_id text,confirmed_at timestamptz)''')
+        self.connection.execute('''CREATE TABLE "Learner".learners (
+            id bigint PRIMARY KEY,enrolment_id bigint)''')
         self.connection.execute(TABLE_SQL)
         self.now = datetime(2026, 10, 28, 14, tzinfo=timezone.utc)
 

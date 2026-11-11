@@ -13,7 +13,7 @@ from django.db import connections
 
 from .session_results import read, result_rows
 from .session_results_policy import archive_prefix, attendance_csv, transcript_text
-from .session_media_policy import transcript_timing_ready
+from .session_media_policy import artifact_metadata, transcript_timing_ready
 from .session_transcripts import parse_vtt_cues
 from .session_transfer_progress import TransferProgress, byte_count
 from .session_cloud_archive import copy_matched_recording, verify_existing_recording
@@ -34,6 +34,7 @@ def save_transcript_timing(artifact_id, raw):
         cursor.execute('''UPDATE curriculum.live_session_artifacts
             SET metadata=jsonb_set(coalesce(metadata::jsonb,'{}'::jsonb),'{lmsTranscriptTimeline}',%s::jsonb)
             WHERE id=%s AND artifact_type='transcript' ''', [json.dumps(timeline, ensure_ascii=False), artifact_id])
+    return timeline
 
 
 def provision_container():
@@ -104,6 +105,7 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
     client = None
     token = None
     drive_cache = {}
+    caption_candidates = False
     for artifact in artifacts:
         from .session_bunny_policy import recording_uses_bunny
         occurrence = by_id[artifact['occurrence_id']]
@@ -114,6 +116,7 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
             try:
                 asset = enqueue_recording(series, occurrence, artifact, modules[0] if modules else {})
                 asset = process(asset.pk, session_lease_id=lease_id)
+                caption_candidates = caption_candidates or asset.status == 'ready'
                 if asset.status != 'ready':
                     errors.append(asset.error or f"Bunny is processing recording {artifact['id']}.")
             except VideoImportError as failure:
@@ -131,7 +134,8 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
                     raw = client.get_blob_client(CONTAINER, artifact['saved_name']).download_blob(offset=0, length=16 * 1024 * 1024 + 1).readall()
                     if len(raw) > 16 * 1024 * 1024:
                         raise ValueError('Transcript exceeds the supported size.')
-                    save_transcript_timing(artifact['id'], raw)
+                    timeline = save_transcript_timing(artifact['id'], raw)
+                    artifact['metadata'] = {**artifact_metadata(artifact), 'lmsTranscriptTimeline': timeline}
                 except Exception as failure:
                     log.warning('Transcript timing %s failed: %s', artifact['id'], type(failure).__name__)
                     errors.append(f"Could not prepare transcript timing for {artifact['id']}. Check worker logs.")
@@ -310,7 +314,8 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
                         raise ValueError('Transcript exceeds the supported size.')
                     text = transcript_text(raw.decode('utf-8-sig', errors='replace'))
                 client.get_blob_client(CONTAINER, name.rsplit('.', 1)[0] + '.txt').upload_blob(text.encode('utf-8'), overwrite=True)
-                save_transcript_timing(artifact['id'], raw)
+                timeline = save_transcript_timing(artifact['id'], raw)
+                artifact['metadata'] = {**artifact_metadata(artifact), 'lmsTranscriptTimeline': timeline}
             save_archive(artifact, name, text=text)
         except Exception as failure:
             log.warning('Session artifact %s archive failed: %s', artifact['id'], type(failure).__name__)
@@ -325,6 +330,15 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
             error = f"Could not archive {kind} {artifact['id']} during {phase} ({type(failure).__name__}{status_label}{detail}). Check worker logs and access."
             save_archive(artifact, name, state='failed', error=error)
             errors.append(error)
+    if caption_candidates:
+        # Independent receipts/retries: a caption failure must not invalidate the
+        # playable recording, attendance archive or its existing transfer job.
+        from .session_captions import sync_series_captions
+        try:
+            sync_series_captions(series_id, artifacts)
+        except Exception as failure:
+            log.warning('Caption journal for series %s is unavailable (%s); the session worker will check again.',
+                        series_id, type(failure).__name__)
     if artifact_ids is not None:
         return errors
     for session in result_rows(series):

@@ -39,6 +39,8 @@ class AttendanceCompletionTests(SimpleTestCase):
         self.assertIn(visible_child_sql('c'), sql)
         self.assertNotIn('c.deleted_at', sql)
         self.assertNotIn('c.is_programme_deleted', sql)
+        self.assertIn("r.qr_attendance_id IS NOT NULL", sql)
+        self.assertIn("r.attendance_basis IN ('qr','teams_qr')", sql)
 
     def test_missing_verified_evidence_clears_untrusted_flags(self):
         connection = MagicMock()

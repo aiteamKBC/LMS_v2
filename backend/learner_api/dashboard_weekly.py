@@ -30,7 +30,8 @@ def recorded_ksbs(owner, component_ids):
     """Display existing learner activity links without awarding KSB progress."""
     if not component_ids:
         return {}
-    records = canonical_learning.query(f'''SELECT DISTINCT
+    from .progress_cache import value
+    sql = f'''SELECT DISTINCT
         coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,'')) AS component_id,
         upper(btrim(k.ksb_code)) AS code
         FROM "Learner".learner_progress_entries p
@@ -38,7 +39,10 @@ def recorded_ksbs(owner, component_ids):
         WHERE p.learner_id=%s AND p.deleted_at IS NULL
           AND coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,''))=ANY(%s)
           AND nullif(btrim(k.ksb_code),'') IS NOT NULL AND {canonical_learning._ksb_not_excluded('k')}
-        ORDER BY component_id,code''', [owner['id'], component_ids])
+        ORDER BY component_id,code'''
+    alias = canonical_learning.repository._query_alias.get() or canonical_learning.repository.DB
+    records = value(sql, [alias, list(component_ids)], owner['id'],
+                    lambda: canonical_learning.query(sql, [owner['id'], component_ids]))
     result = {}
     for row in records:
         result.setdefault(row['component_id'], []).append(row['code'])

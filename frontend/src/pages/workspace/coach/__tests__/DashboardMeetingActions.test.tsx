@@ -70,6 +70,20 @@ it('reschedules the same event and preserves a partial Teams failure message', a
   expect(onScheduleNotice).toHaveBeenCalledWith('Saved locally; Teams update needs retry.');
 });
 
+it('hides native in-progress Reschedule when the learner attended', async () => {
+  mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ canReschedule: false })));
+  mount({ status: 'in-progress' });
+  await waitFor(() => expect(mocks.fetch).toHaveBeenCalledWith(
+    '/coach_api/coach/review-attendance/mcr%3A42%3A1/links', expect.objectContaining({ method: 'GET' })));
+  expect(screen.queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
+});
+
+it('offers native in-progress Reschedule when the learner has not attended ten minutes', async () => {
+  mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ canReschedule: true })));
+  mount({ status: 'in-progress' });
+  expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeEnabled();
+});
+
 it('leaves a failed reschedule open and retains entered values', async () => {
   mocks.schedule.mockRejectedValue(new Error('This time is already booked.'));
   const { container } = mount();

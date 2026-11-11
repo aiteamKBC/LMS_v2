@@ -337,6 +337,24 @@ function ReviewInstanceContent({
   const [reopenNote, setReopenNote] = useState('');
   const signatureSaveInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const attendanceBookingRefresh = useRef(0);
+  const onAttendanceLinkChange = useCallback(() => {
+    const reviewId = definition?.instance.id;
+    if (!reviewId) return;
+    const revision = ++attendanceBookingRefresh.current;
+    // Keep the coach's unsaved answers while the server recalculates booking eligibility.
+    setDefinition(current => current?.instance.id === reviewId && current.booking
+      ? { ...current, booking: { ...current.booking, canReschedule: false } } : current);
+    void fetchReviewInstanceForm(reviewId).then(updated => {
+      if (!reviewActive.current || revision !== attendanceBookingRefresh.current) return;
+      setDefinition(current => current?.instance.id === reviewId
+        ? { ...current, booking: updated.booking } : current);
+    }).catch(() => {
+      if (reviewActive.current && revision === attendanceBookingRefresh.current) {
+        setError('Attendance was saved, but booking eligibility could not refresh. Reload this review.');
+      }
+    });
+  }, [definition?.instance.id]);
   const joinMeeting = useImportedMeetingJoin({
     contextKey: `${coachIdentity.email}:${isViewingAsCoach}:${instanceId}`, readOnly: isViewingAsCoach,
     onError: setError,
@@ -850,7 +868,7 @@ function ReviewInstanceContent({
   /** Calculating is an explicit action and never happens on load, reload or
    *  reopen -- the snapshot below is whatever the backend already stored. */
   const calculateProgress = async () => {
-    if (!definition || calculating || isViewingAsCoach) return;
+    if (!definition || calculating || isSignatureStage) return;
     const migratedVersion = definition.answerVersion || definition.progressVersion;
     if (definition.source === 'aptem' && (progressRequestRef.current || !definition.migratedForm
       || !definition.canCalculateProgress || !migratedVersion
@@ -1113,6 +1131,7 @@ function ReviewInstanceContent({
                 checkBlocked={hasUnsavedMigratedAnswers || busy || templateSyncConflict}
                 onCheckComplete={onMigratedCheckComplete}
                 onCheckingChange={setCheckingSession}
+                onAttendanceLinkChange={onAttendanceLinkChange}
               />
             ) : null}
             {!definition.migratedForm && definition.source !== 'aptem' && definition.calendarMeeting ? (
@@ -1373,7 +1392,7 @@ function ReviewInstanceContent({
                 snapshot={definition.progressSnapshot}
                 ragHistory={definition.ragHistory}
                 showCalculateAction={showMigratedCoachActions ? true : undefined}
-                canCalculate={!isViewingAsCoach && !isSignatureStage && (definition.source !== 'aptem'
+                canCalculate={!isSignatureStage && (definition.source !== 'aptem'
                   || Boolean(definition.migratedForm && definition.canCalculateProgress
                     && (definition.answerVersion || definition.progressVersion)))}
                 calculating={calculating}

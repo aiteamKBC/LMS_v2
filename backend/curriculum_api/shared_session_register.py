@@ -51,7 +51,8 @@ def project_shared_attendance(module_id, series_id, sessions, reports, correctio
                 continue
             profile_id = next(iter(profiles))
             raw_status = person.get('rawStatus') or person.get('status')
-            status = corrections.get((occurrence_id, profile_id)) or raw_status
+            correction = corrections.get((occurrence_id, profile_id))
+            status = correction or raw_status
             # An unfinished report or unresolved identity never becomes absence.
             if status not in {'present', 'absent'}:
                 continue
@@ -64,6 +65,8 @@ def project_shared_attendance(module_id, series_id, sessions, reports, correctio
                 'module_catalogue_id': module_id, 'learner_profile_id': profile_id,
                 'learner_email': email, 'learner_name': person.get('name') or '',
                 'attendance_status': status,
+                'attendance_basis': 'staff' if correction else 'teams',
+                'teams_attendance_status': raw_status if raw_status in {'present', 'absent'} else None,
                 'recovery_status': recovery if recovery in {'none', 'requested', 'catchup_booked', 'completed'} else 'none',
                 'attended_seconds': max(0, int(person.get('seconds') or 0)),
                 'attendance_report_id': reports[occurrence_id],

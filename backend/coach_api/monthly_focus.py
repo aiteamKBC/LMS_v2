@@ -27,8 +27,8 @@ def read_month_activities(context, month):
     from learner_api.overview_week import merged_activities
 
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [context.source.pk])
-        assigned = [row[0] for row in cursor.fetchall()]
+        from learner_api.subject_cache import subject_rows
+        assigned = [row[0] for row in subject_rows(cursor, CURRENT_SUBJECTS_SQL, context.source.pk)]
         # The shared scheduler needs ordered empty weeks/holiday metadata to
         # place undated content correctly. It never loads lesson bodies or slots.
         dates = read_builder_activity_dates(cursor, assigned)

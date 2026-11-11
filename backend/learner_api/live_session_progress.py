@@ -1,4 +1,4 @@
-"""Read-only activity credit from verified Teams or explicit staff attendance.
+"""Read-only activity credit from attendance or a recorded-delivery completion.
 
 No progress submission, reflection, KSB achievement or audit ledger is written.
 The lecture register owns attendance eligibility and staff corrections.
@@ -89,6 +89,14 @@ def read_live_credits(source, *, components=None, module_ids=None, register=None
             components = [dict(zip(('componentId', 'moduleId', 'title', 'teamsOccurrenceId',
                                     'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDate'), row),
                                type='live_session') for row in cur.fetchall()]
+    components = list(components)
+    scope = sorted({c['moduleId'] for c in components if c.get('moduleId')
+                    and str(c.get('type') or '').replace('-', '_') in {'live_session', 'recording_placeholder'}})
+    if scope:
+        from .recorded_attendance import saved_delivery_mode
+        if saved_delivery_mode(getattr(source, 'pk', None) or source.id) == 'lazy':
+            from .recorded_session_progress import read_recorded_credits
+            return read_recorded_credits(source, scope, register=register)
     live = [c for c in components if _live(c) and c.get('componentId') and c.get('moduleId')]
     if not live:
         return []
@@ -244,7 +252,7 @@ def supplement_component_progress(progress, credits):
         if credit['componentId'] in completed:
             continue
         completed.add(credit['componentId'])
-        result.append({'kind': 'component', 'componentType': 'live_session',
+        result.append({'kind': 'component', 'componentType': credit.get('componentType', 'live_session'),
                        'componentId': credit['componentId'], 'componentTitle': credit['title'],
                        'startedAt': None, 'submittedAt': credit['submittedAt'], 'timeTaken': None,
                        'timeTrackingSource': credit.get('timeTrackingSource', 'verified_teams_attendance'),
@@ -263,7 +271,9 @@ def supplement_module_hours(metrics, records, credits):
     from . import canonical_learning as canonical
     result = {key: {**value, 'hours': dict(value['hours'])} for key, value in metrics.items()}
     credits = credits if isinstance(credits,(list,tuple)) else list(credits)
-    component_ids = {credit['componentId'] for credit in credits if credit['moduleId'] in result}
+    identities = {credit['componentId']: set(credit.get('creditComponentIds') or [credit['componentId']])
+                  for credit in credits if credit['moduleId'] in result}
+    component_ids = set().union(*identities.values()) if identities else set()
     if not component_ids:
         return result
     seconds_by_component = defaultdict(float)
@@ -282,9 +292,10 @@ def supplement_module_hours(metrics, records, credits):
         if component_id in seen or module_id not in result:
             continue
         seen.add(component_id)
-        if component_id in corrected:
+        credit_ids = identities[component_id]
+        if credit_ids & corrected:
             continue
-        seconds = seconds_by_component[component_id]
+        seconds = sum(seconds_by_component[identity] for identity in credit_ids)
         result[module_id]['hours']['actual'] = round(
             result[module_id]['hours']['actual'] + max(0, credit['hours'] - seconds / 3600), 4)
     return result

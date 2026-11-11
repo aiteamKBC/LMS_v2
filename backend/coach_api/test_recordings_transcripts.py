@@ -36,6 +36,25 @@ class TranscriptReadTests(SimpleTestCase):
         self.graph.assert_called_once_with('GET', 'users/owner/onlineMeetings/online/transcripts')
         self.content.assert_called_once_with('users/owner/onlineMeetings/online', 'transcript')
 
+    def test_captions_keep_recording_offset_and_reuse_cached_original_vtt(self):
+        self.content.return_value = 'WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n<v Tutor>Saved words\n'
+        recording = {'graph_artifact_id': 'recording', 'created_datetime': START.replace(second=2),
+                     'end_datetime': END}
+        result = transport.recording_captions(self.record, self.job, recording)
+        self.assertIn('00:00:00.000 --> 00:00:03.000', result)
+        self.assertIn('Tutor: Saved words', result)
+        self.assertEqual(transport.recording_captions(self.record, self.job, recording), result)
+        self.content.assert_called_once()
+
+    def test_captions_refuse_untimed_and_other_calls_without_generating_new_text(self):
+        recording = {'graph_artifact_id': 'recording', 'created_datetime': START, 'end_datetime': END,
+                     'call_id': 'THIS'}
+        self.graph.return_value = {'value': [{'id': 'wrong', 'createdDateTime': START.isoformat(),
+            'endDateTime': END.isoformat(), 'callId': 'OTHER'}]}
+        self.assertIsNone(transport.recording_captions(self.record, self.job, recording))
+        self.content.assert_not_called()
+        self.assertIsNone(transport.recording_captions(self.record, self.job, {'graph_artifact_id': 'untimed'}))
+
     def test_published_transcript_is_read_before_scheduled_end_without_claiming_call_ended(self):
         self.graph.return_value['value'][0]['endDateTime'] = START.replace(minute=15).isoformat()
         with patch.object(transport.timezone, 'now', return_value=START.replace(minute=30)):

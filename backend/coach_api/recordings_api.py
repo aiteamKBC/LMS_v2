@@ -547,8 +547,10 @@ def coaching_recording_session(request):
     selected = [row for row, belongs in zip(reports, verdicts) if belongs]
     tracker = attendance.get('tracker') or []
     if len(selected) != len(reports):
+        from .review_attendance_policy import is_review_event
         tracker = build_coach_meeting_attendance_tracker(attendance.get('expectedAttendees') or [],
-            [row for report in selected for row in report.get('records') or []], has_report=bool(selected))['tracker']
+            [row for report in selected for row in report.get('records') or []], has_report=bool(selected),
+            review=is_review_event(record))['tracker']
     if unavailable or not selected:
         tracker = []
     rows = [{key: row.get(key) for key in ('name', 'displayName', 'email', 'role', 'status', 'totalAttendanceSeconds', 'expected')}
@@ -684,6 +686,16 @@ def coaching_recording_content(request):
                                verify_identity, cache_if=lambda value: value is True)
         if not verified:
             return _response({'error': 'Recording occurrence could not be verified.', 'code': 'recording_session_mismatch'}, 409)
+        if request.GET.get('format') == 'captions':
+            from .recordings_transcripts import recording_captions
+            content = recording_captions(record, job, artifact)
+            if not content:
+                return _response({'error': 'English captions are not available for this recording yet.',
+                                  'code': 'captions_pending'}, 404)
+            response = HttpResponse(content, content_type='text/vtt; charset=utf-8')
+            response['Cache-Control'] = 'private, no-store'
+            response['X-Content-Type-Options'] = 'nosniff'
+            return response
         from django.core.handlers.asgi import ASGIRequest
         return recording_response(job.result['base'], artifact_id, preview=request.GET.get('preview') == '1',
             byte_range=request.headers.get('Range'), if_range=request.headers.get('If-Range'),

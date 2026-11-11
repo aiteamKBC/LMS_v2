@@ -144,4 +144,8 @@ def sync_progress_ksbs(mappings_by_component, *, actor='curriculum-ksb-sync'):
                     row['weight'], row['weight_class'],
                 ] for row in next_rows])
 
+    # Raw SQL above: retire the cached KSB progress of every learner touched.
+    from learner_api.progress_cache import bump_learners
+    bump_learners({item['learner_id'] for _id, item, _next, _current in changed},
+                  using=getattr(getattr(cursor, 'db', None), 'alias', None))
     return {'components': len(desired), 'progress_rows': len(changed), 'revisions': len(changed)}

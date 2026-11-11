@@ -24,6 +24,7 @@ from functools import cached_property, lru_cache
 from django.db import DatabaseError, connections, models
 from django.db.models.functions import Lower, Trim
 from system_audit.writes import AuditedQuerySet
+from config.cache_versions import VersionBumpQuerySetMixin
 
 
 class SafeJSONField(models.JSONField):
@@ -176,8 +177,12 @@ def _progress_entry_activity(entry):
     return item
 
 
-class LearnerTypeQuerySet(AuditedQuerySet):
-    """Queryset for the merged learner table, scoped by "Learner_type"."""
+class LearnerTypeQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
+    """Queryset for the merged learner table, scoped by "Learner_type".
+
+    Bulk writes retire the learners' cached subject rows
+    (learner_api.subject_cache) as well as being audited.
+    """
 
     def apprenticeship(self):
         return self.filter(learner_type="apprenticeship")
@@ -270,7 +275,9 @@ class EnrolmentUser(models.Model):
     # `objects` is scoped to apprenticeship learners; `all_learners` spans both
     # kinds (used by lookups that resolve a learner by id regardless of type).
     objects = ApprenticeshipManager()
-    all_learners = models.Manager()
+    # Same queryset as the scoped managers (no filter): bulk writes are audited
+    # as before and also retire cached subject rows.
+    all_learners = models.Manager.from_queryset(LearnerTypeQuerySet)()
 
     id = models.AutoField(primary_key=True, db_column="id")
     # Aptem's learner identifier. It is the bridge to the read-only
@@ -440,10 +447,6 @@ class EnrolmentUser(models.Model):
     documents = models.JSONField(db_column="Documents", null=True, blank=True)
     subscription_details = models.JSONField(db_column="Subscription_details", null=True, blank=True)
 
-    def save(self, *args, **kwargs):
-        self.__dict__.pop('_placement_names', None)
-        return super().save(*args, **kwargs)
-
     def refresh_from_db(self, *args, **kwargs):
         super().refresh_from_db(*args, **kwargs)
         self.__dict__.pop('_educational_placement', None)
@@ -465,6 +468,14 @@ class EnrolmentUser(models.Model):
     def group(self):
         return self._placement_names[2]
 
+    @classmethod
+    def cache_version_fields(cls):
+        return ("id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        return {"lplan": [row["id"] if isinstance(row, dict) else row.pk for row in rows]}
+
     class Meta:
         managed = False
         # Emitted by Django as "enrolment"."Created_users".
@@ -475,6 +486,7 @@ class EnrolmentUser(models.Model):
         db_table = 'enrolment"."Created_users'
 
     def save(self, *args, **kwargs):
+        self.__dict__.pop('_placement_names', None)
         # Default a new row to apprenticeship. The CommercialUser proxy overrides
         # this with 'commercial'; without a value the row would be invisible to
         # the commercial manager and only reachable via all_learners.
@@ -600,6 +612,14 @@ class StaffUser(models.Model):
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}> [{self.position or 'no position'}]"
 
 
+class LearnerProfileQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
+    """Bulk writes retire the linked learners' cached subject rows."""
+
+
+class LearnerPlanModuleQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
+    """Bulk writes (the mirror rebuild) retire the learner's cached subject rows."""
+
+
 class LearnerProfile(models.Model):
     """Permanent learner identity shared by active and inactive workflows."""
 
@@ -715,6 +735,8 @@ class LearnerProfile(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = models.Manager.from_queryset(LearnerProfileQuerySet)()
+
     def save(self, *args, **kwargs):
         self.__dict__.pop('_placement_names', None)
         return super().save(*args, **kwargs)
@@ -739,6 +761,17 @@ class LearnerProfile(models.Model):
     @property
     def group_name(self):
         return self._placement_names[2] or ''
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("enrolment_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        ids = [row["enrolment_id"] if isinstance(row, dict) else row.enrolment_id for row in rows]
+        if fields and fields.get("enrolment_id") is not None:
+            ids.append(fields["enrolment_id"])  # the learner it is being linked to
+        return {"lplan": ids}
 
     class Meta:
         managed = False
@@ -1067,6 +1100,22 @@ class LearnerTrainingPlanModule(models.Model):
     module_ref = models.TextField(null=True, blank=True)
     module_title = models.TextField(blank=True)
 
+    objects = models.Manager.from_queryset(LearnerPlanModuleQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("learner_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        profile_ids = {row["learner_id"] if isinstance(row, dict) else row.learner_id for row in rows}
+        profile_ids.discard(None)
+        if not profile_ids:
+            return {}
+        # The subject read joins this mirror through learners.enrolment_id.
+        enrolment_ids = LearnerProfile.objects.filter(pk__in=profile_ids).values_list("enrolment_id", flat=True)
+        return {"lplan": list(enrolment_ids)}
+
     class Meta:
         managed = False
         db_table = 'Learner"."learner_training_plan_modules'
@@ -1150,6 +1199,10 @@ class LearnerFreeCourseProgress(models.Model):
         unique_together = (("learner", "component_ref"),)
 
 
+class LearnerProgressQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
+    """Bulk writes retire the learner's cached progress rows (learner_api.progress_cache)."""
+
+
 class LearnerProgressEntry(models.Model):
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="progress_entries")
     entry_order = models.PositiveIntegerField()
@@ -1213,6 +1266,19 @@ class LearnerProgressEntry(models.Model):
     # active learner progress, hours and KSB projections.
     deleted_at = models.DateTimeField(null=True, blank=True)
 
+    objects = models.Manager.from_queryset(LearnerProgressQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("learner_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        ids = [row["learner_id"] if isinstance(row, dict) else row.learner_id for row in rows]
+        if fields and fields.get("learner_id") is not None:
+            ids.append(getattr(fields["learner_id"], "pk", fields["learner_id"]))
+        return {"lprog": ids}
+
     class Meta:
         managed = False
         db_table = 'Learner"."learner_progress_entries'
@@ -1230,6 +1296,21 @@ class LearnerProgressKsb(models.Model):
     classification = models.CharField(max_length=32, blank=True, default='')
     weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     weight_class = models.CharField(max_length=32, blank=True, default='')
+
+    objects = models.Manager.from_queryset(LearnerProgressQuerySet)()
+
+    @classmethod
+    def cache_version_fields(cls):
+        return ("progress_id",)
+
+    @classmethod
+    def cache_version_targets(cls, rows, fields=None):
+        progress_ids = {row["progress_id"] if isinstance(row, dict) else row.progress_id for row in rows}
+        progress_ids.discard(None)
+        if not progress_ids:
+            return {}
+        learners = LearnerProgressEntry.objects.filter(pk__in=progress_ids).values_list("learner_id", flat=True)
+        return {"lprog": list(learners)}
 
     class Meta:
         managed = False

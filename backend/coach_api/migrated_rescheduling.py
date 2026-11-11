@@ -14,7 +14,7 @@ def can_reschedule(overlay, calendar, *, family=None):
         from .review_rescheduling import require_started_reschedule
         from .views import LearnerCalendarConflict
         try:
-            require_started_reschedule(calendar, overlay.status)
+            require_started_reschedule(calendar, overlay.status, overlay=overlay)
             return True
         except (LearnerCalendarConflict, DatabaseError):
             return False
