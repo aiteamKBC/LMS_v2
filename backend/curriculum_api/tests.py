@@ -771,11 +771,12 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertTrue(meeting_patch['allowTranscription'])
         self.assertEqual(meeting_patch['meetingSpokenLanguageTag'], 'en-GB')
         presenter = next(item for item in meeting_patch['participants']['attendees'] if item['upn'] == 'presenter@example.com')
-        self.assertEqual(presenter['role'], 'presenter')
+        # Tutor presenters retain the LMS presenter label and manage rooms as co-organizers.
+        self.assertEqual(presenter['role'], 'coorganizer')
         self.assertEqual(
             {item['upn']: item['role'] for item in meeting_patch['participants']['attendees']},
             {'student1@example.com': 'attendee', 'student2@example.com': 'attendee',
-             'presenter@example.com': 'presenter', 'co-organizer@example.com': 'coorganizer'},
+             'presenter@example.com': 'coorganizer', 'co-organizer@example.com': 'coorganizer'},
         )
         live_session = views.authoring_fetch_all(
             views.LIVE_SESSIONS_TABLE,
@@ -792,7 +793,8 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         # way every production reader does rather than asserting one vendor's
         # physical storage encoding.
         self.assertEqual(views.as_json_value(live_session['presenters'], []), ['presenter@example.com'])
-        self.assertEqual(views.as_json_value(live_session['co_organizers'], []), ['co-organizer@example.com'])
+        self.assertEqual(views.as_json_value(live_session['co_organizers'], []),
+                         ['co-organizer@example.com', 'presenter@example.com'])
         self.assertEqual(
             views.as_json_value(live_session['attendees'], []),
             ['student1@example.com', 'student2@example.com'],

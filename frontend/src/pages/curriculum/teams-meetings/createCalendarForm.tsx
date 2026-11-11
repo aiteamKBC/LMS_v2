@@ -421,7 +421,7 @@ export function TeamsPeopleFields({ form, patch, prefilling, prefillNotice, onPr
           </p>
         </div>
       )}
-      <FormField label="Presenters" hint="These people can share and record.">
+      <FormField label="Presenters" hint="For LMS-created meetings, tutor presenters are also saved as co-organizers so they can manage breakout rooms. Use an internal Microsoft 365 account.">
         <EntraPeopleInput label="Presenters"
           value={form.presenters}
           onChange={value => patch({ presenters: value })}
@@ -429,7 +429,7 @@ export function TeamsPeopleFields({ form, patch, prefilling, prefillNotice, onPr
       </FormField>
       <FormField
         label="Co-organisers"
-        hint="They run the meeting with the organizer: start and stop the recording, admit people from the lobby and change the meeting options. Invited automatically."
+        hint="Up to 10 people, including presenters on LMS-created meetings. Co-organizers manage breakout rooms, admit people from the lobby and change meeting options. Invited automatically."
       >
         <EntraPeopleInput label="Co-organizers"
           value={form.coOrganizers}

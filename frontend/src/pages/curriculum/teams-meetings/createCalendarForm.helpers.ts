@@ -19,6 +19,17 @@ export const DEFAULT_START_TIME = '09:00';
 
 export const DEFAULT_DURATION_MINUTES = 60;
 
+/** Tutor presenters retain their LMS label and run breakout rooms as co-organizers. */
+export function presenterCoOrganizers(presenters: string, coOrganizers: string, organizer = ''): string[] {
+  const owner = organizer.trim().toLowerCase();
+  const people = [...new Set([...emailList(coOrganizers), ...emailList(presenters)]
+    .map(email => email.toLowerCase()))].filter(email => email !== owner);
+  if (people.length > 10) {
+    throw new Error('Teams supports up to 10 co-organizers, including presenters who manage breakout rooms. Reduce the combined list before saving these roles.');
+  }
+  return people;
+}
+
 
 /**
  * The minute a UTC instant falls on, for comparing two dates for equality.
@@ -271,7 +282,7 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
     organizerEmail: form.organizerEmail.trim(),
     attendees: emailList(form.attendees),
     presenters: emailList(form.presenters),
-    coOrganizers: emailList(form.coOrganizers),
+    coOrganizers: presenterCoOrganizers(form.presenters, form.coOrganizers, form.organizerEmail),
     moduleCatalogueId: row.catalogueId,
     moduleTitle: meetingTitle,
     localStartDateTime: sessionNaiveLocal(row.sessions[0]),
@@ -318,6 +329,9 @@ export function teamsUpdateChanges(form: TeamsCalendarForm, before: TeamsCalenda
   const sameList = (left: string[], right: string[]) => left.length === right.length && left.every(value => right.includes(value));
   for (const key of ['attendees', 'presenters', 'coOrganizers'] as const) {
     if (!sameList(lower(form[key]), lower(before[key]))) fields[key] = emailList(form[key]);
+  }
+  if ('presenters' in fields || 'coOrganizers' in fields) {
+    fields.coOrganizers = presenterCoOrganizers(form.presenters, form.coOrganizers, form.organizerEmail);
   }
   for (const key of ['recording', 'lobbyBypass', 'spokenLanguage'] as const) {
     if (form[key] !== before[key]) fields[key] = form[key];
