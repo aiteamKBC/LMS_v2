@@ -86,6 +86,17 @@ it('reads every learner\'s recent KBC lectures in one authenticated request', as
     expect.objectContaining({ credentials: 'include', signal: controller.signal }));
 });
 
+it('reads recent attendance for the requested learners only', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ recent: {}, warnings: [] })));
+  vi.stubGlobal('fetch', fetch);
+
+  await fetchBulkAttendanceKbcRecent(undefined, { source: 'all', learnerIds: ['301', '302'] });
+  expect(fetch).toHaveBeenCalledWith(
+    '/curriculum_api/curriculum/bulk-attendance/kbc-recent/?source=all&learner_ids=301%2C302',
+    expect.anything(),
+  );
+});
+
 it('reports a recent-attendance failure instead of returning no lectures', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ error: 'Recent unavailable' }), { status: 503 }),

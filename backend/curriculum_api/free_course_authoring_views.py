@@ -21,9 +21,9 @@ from .free_course_writer_mode import FreeCourseWriterDisabled
 logger = logging.getLogger(__name__)
 
 
-def _response(document):
+def _response(document, etag=None):
     response = JsonResponse(document)
-    response["ETag"] = quote_etag(document["revision"])
+    response["ETag"] = quote_etag(etag or document["revision"])
     response["Cache-Control"] = "private, no-store"
     patch_vary_headers(response, ("Cookie",))
     return response
@@ -82,6 +82,12 @@ def _unavailable(exc):
 @require_access(ACCESS_CURRICULUM)
 def _catalogue_get(request):
     try:
+        # ?include=documents returns every course's full document with the
+        # catalogue, so the Free Courses page needs one request instead of one
+        # per course. Without it the response is unchanged.
+        if request.GET.get("include") == "documents":
+            document = free_course_authoring.catalogue_with_documents()
+            return _response(document, etag=document["documentsRevision"])
         return _response(free_course_authoring.catalogue_document())
     except (DatabaseError, schema_gate.SchemaNotProvisioned) as exc:
         return _unavailable(exc)

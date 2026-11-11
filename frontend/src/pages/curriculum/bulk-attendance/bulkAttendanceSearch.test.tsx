@@ -49,6 +49,8 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
 }));
 
 import AttendancePage from './page';
+import { resetKbcRecentCache } from './kbcRecentCache';
+import { resetBulkAttendanceDataCache } from '@/hooks/useBulkAttendanceData';
 
 const overview = {
   programmes: [{ id: 'P1', name: 'Engineering' }],
@@ -70,6 +72,9 @@ beforeEach(() => {
   // reset, not clear: a test's leftover mockResolvedValueOnce must not leak into the next.
   vi.resetAllMocks();
   localStorage.clear();
+  // The register keeps its last reads between mounts; each test starts cold.
+  resetBulkAttendanceDataCache();
+  resetKbcRecentCache();
   mocks.overview.mockResolvedValue(overview);
   mocks.groups.mockResolvedValue([]);
   mocks.sessions.mockResolvedValue([]);
@@ -126,7 +131,7 @@ it('filters by saved day membership outside Last 4 while keeping complete histor
   await screen.findByRole('button', { name: 'Alex Example' });
   expect(screen.queryByRole('button', { name: 'Morgan Sample' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'View all 1 learners' })).toBeVisible();
-  expect(screen.getByText('Oct 14')).toBeVisible();
+  expect(await screen.findByText('Oct 14')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'View details for Alex Example' }));
   expect(await screen.findByText('Historical lecture')).toBeVisible();
   expect(screen.getByText('Recent lecture')).toBeVisible();
@@ -715,14 +720,14 @@ it("shows the same four saved KBC and live records as history despite a differen
 
   render(<AttendancePage />);
   await screen.findByRole('button', { name: 'Alex Example' });
-  expect(screen.getByTitle(/Lecture 1/)).toBeVisible();
+  expect(await screen.findByTitle(/Lecture 1/)).toBeVisible();
   expect(screen.getByTitle(/Lecture 2/)).toBeVisible();
   expect(screen.getByTitle(/Lecture 3/)).toBeVisible();
   expect(screen.getByTitle(/Lecture 4/)).toBeVisible();
   expect(screen.getByTitle(/Lecture 1 \(KBC\).*Present/)).toBeVisible();
   expect(screen.getByTitle(/Lecture 4 \(KBC\).*Absent/)).toBeVisible();
   expect(screen.queryByText('Oct 13')).not.toBeInTheDocument();
-  expect(mocks.kbcRecent).toHaveBeenCalledWith(expect.any(AbortSignal), { source: 'all' });
+  expect(mocks.kbcRecent).toHaveBeenCalledWith(expect.any(AbortSignal), { source: 'all', learnerIds: ['301'] });
 
   fireEvent.click(screen.getByRole('button', { name: 'View details for Alex Example' }));
   const dialog = await screen.findByRole('dialog', { name: 'Alex Example' });
@@ -759,7 +764,8 @@ it('shows all four live lectures when their module title no longer matches the s
 
   render(<AttendancePage />);
   await screen.findByRole('button', { name: 'Alex Example' });
-  expect(screen.getByTitle(/Live 1 \(Live register\).*Present/)).toBeVisible();
+  // The row draws from the directory; Last 4 fills in when its own read lands.
+  expect(await screen.findByTitle(/Live 1 \(Live register\).*Present/)).toBeVisible();
   expect(screen.getByTitle(/Live 2 \(Live register\).*Absent/)).toBeVisible();
   expect(screen.getByTitle(/Live 3 \(Live register\).*Present/)).toBeVisible();
   expect(screen.getByTitle(/Live 4 \(Live register\).*Absent/)).toBeVisible();
@@ -901,12 +907,36 @@ it("shows the latest four saved database lectures, including legacy KBC rows", a
   render(<AttendancePage />);
   await screen.findByRole('button', { name: 'Alex Example' });
 
-  expect(screen.getByTitle(/^Lecture 2 \(Live register\) • .* • Absent$/)).toBeInTheDocument();
+  // Last 4 is read for the visible page once its rows are known.
+  expect(await screen.findByTitle(/^Lecture 2 \(Live register\) • .* • Absent$/)).toBeInTheDocument();
   expect(screen.getByTitle(/^Lecture 4 \(Live register\) • .* • Absent$/)).toBeInTheDocument();
   expect(screen.getByTitle(/^Lecture legacy \(KBC\) • .* • Present$/)).toBeInTheDocument();
   expect(screen.queryByTitle(/^Lecture 1 \(Live register\)/)).not.toBeInTheDocument();
   expect(mocks.kbcRecent).toHaveBeenCalledTimes(1);
   expect(mocks.kbcHistory).not.toHaveBeenCalled();
+});
+
+it('pages the register by 50 and reads Last 4 for the visible page only', async () => {
+  const many: BulkAttendanceDirectoryLearner[] = Array.from({ length: 60 }, (_, index) => ({
+    id: String(1000 + index), name: `Learner ${String(index).padStart(2, '0')}`,
+    email: `learner${index}@example.invalid`, programme: '', group: '', endDate: '2099-01-01', status: 'Active',
+  }));
+  mocks.directory.mockResolvedValue({ learners: many, warnings: [] });
+  mocks.dayLearners.mockResolvedValue(many.map((learner) => learner.id));
+  render(<AttendancePage />);
+
+  await screen.findByText(/Showing/);
+  await waitFor(() => expect(mocks.kbcRecent).toHaveBeenCalledTimes(1));
+  const firstIds = mocks.kbcRecent.mock.calls[0][1].learnerIds as string[];
+  expect(firstIds).toHaveLength(50);
+  expect(screen.getAllByRole('button', { name: /^View details for / })).toHaveLength(50);
+
+  fireEvent.click(screen.getByRole('button', { name: /next/i }));
+  await waitFor(() => expect(mocks.kbcRecent).toHaveBeenCalledTimes(2));
+  const secondIds = mocks.kbcRecent.mock.calls[1][1].learnerIds as string[];
+  expect(secondIds).toHaveLength(10);
+  expect(secondIds.some((id) => firstIds.includes(id))).toBe(false);
+  expect(screen.getAllByRole('button', { name: /^View details for / })).toHaveLength(10);
 });
 
 it('shows a partial-read warning when the live register could not be read', async () => {

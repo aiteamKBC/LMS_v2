@@ -61,6 +61,13 @@ class AchievementReadTests(SimpleTestCase):
             mock = stack.enter_context(patch.object(views, name, return_value=value))
             setattr(self, name, mock)
         stack.enter_context(patch.object(views, 'mappings_with_inferred_sources', side_effect=lambda rows, modules: rows))
+        # Every read builds: the cache layer is exercised by AchievementInputsCacheTests.
+        self.cache_calls = []
+
+        def build_now(key, build, **options):
+            self.cache_calls.append((key, options))
+            return build()
+        stack.enter_context(patch.object(views, 'cached_curriculum_value', side_effect=build_now))
         for name in ('scope_learner_ksb_impact_payload', 'build_coverage', 'reflection_submission_ksb_consumption',
                      'progress_evidence_index', 'learner_activity_plan', 'scope_otjh_summary'):
             stack.enter_context(patch.object(views, name, side_effect=AssertionError(f'Unneeded work: {name}')))
@@ -108,6 +115,26 @@ class AchievementReadTests(SimpleTestCase):
         self.assigned_learners_for_scope.assert_called_once_with('programme', 'P1', 'active', lineage={'found': True})
         self.assertEqual(self.learner_progress_ksb_consumption.call_args.args[0], [12])
 
+    def test_cached_inputs_are_keyed_by_programme_status_and_source_and_scoped_to_the_programme(self):
+        views.programme_achievement_inputs(
+            self.factory.get('/achievement/?learnerStatus=Active&source_type=Standard&source_id=STD&page=3&search=x'), 'P1',
+        )
+        key, options = self.cache_calls[-1]
+        # Paging and filters are applied after the cache, so they are not in the key.
+        self.assertEqual(key, 'ksb-achievement-inputs-v1:P1:active:standard:STD')
+        self.assertEqual(options['scope'], 'P1')
+        self.assertFalse(options['shared'])
+        self.assertEqual(options['ttl'], views.CURRICULUM_LEARNER_DATA_TTL_SECONDS)
+        self.assertTrue(callable(options['fingerprint']))
+        self.assertEqual(views._ACHIEVEMENT_LEARNER_IDS[key], {'7'})
+
+    def test_cached_inputs_keep_only_rows_the_projection_can_count(self):
+        payload, error = views.programme_achievement_inputs(self.factory.get('/achievement/'), 'P1')
+        self.assertIsNone(error)
+        # The not-achieved and out-of-scope rows are dropped before caching.
+        self.assertEqual([row['code'] for row in payload['consumptionSources']['progress']], ['K1'])
+        self.assertEqual(set(payload['assignedLearners'][0]), set(views.ACHIEVEMENT_LEARNER_FIELDS))
+
     def test_detail_endpoint_uses_the_same_filtered_projection(self):
         import json
         response = views.curriculum_programme_ksb_achievement_consumptions(
@@ -117,3 +144,43 @@ class AchievementReadTests(SimpleTestCase):
         self.assertEqual(body['total'], 1)
         self.assertEqual(body['ksb']['code'], 'K1')
         self.assertEqual(body['items'][0]['learner']['id'], 7)
+
+
+class AchievementInputsFingerprintTests(SimpleTestCase):
+    def test_a_failed_read_never_matches_so_the_entry_is_rebuilt(self):
+        from unittest.mock import MagicMock
+        from django.db import DatabaseError
+        connection = MagicMock()
+        connection.cursor.side_effect = DatabaseError('down')
+        with patch.object(views, 'connection', connection), self.assertLogs('curriculum_api.views', 'WARNING'):
+            first = views.achievement_inputs_fingerprint('P1', 'k')
+            second = views.achievement_inputs_fingerprint('P1', 'k')
+        self.assertNotEqual(first, second)
+
+    def test_covers_the_learner_side_the_curriculum_sources_and_an_age_ceiling(self):
+        from unittest.mock import MagicMock
+        cursor = MagicMock()
+        cursor.fetchone.return_value = ('493:1', '10:2', '20:3', '0:0')
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        views._ACHIEVEMENT_LEARNER_IDS['k'] = {'12', '7'}
+        try:
+            with patch.object(views, 'connection', connection), \
+                 patch.object(views, 'component_source_inputs_fingerprint', return_value=('standards',)):
+                value = views.achievement_inputs_fingerprint('P1', 'k')
+        finally:
+            views._ACHIEVEMENT_LEARNER_IDS.pop('k', None)
+        learner_side, sources, age_bucket = value
+        self.assertEqual(learner_side, ('493:1', '10:2', '20:3', '0:0'))
+        self.assertEqual(sources, ('standards',))
+        # The age ceiling: the bucket changes every ACHIEVEMENT_INPUTS_MAX_AGE_SECONDS.
+        import time
+        self.assertEqual(age_bucket, int(time.time() // views.ACHIEVEMENT_INPUTS_MAX_AGE_SECONDS))
+        sql, params = cursor.execute.call_args.args
+        # The programme's learners by id, plus the ids its last build read.
+        self.assertEqual(params, ['P1', [7, 12]])
+        for table in ('"Learner".learners', '"Learner".learner_progress_entries',
+                      '"Learner".learner_progress_ksbs', '"Learner".learner_progress_ksb_exclusions'):
+            self.assertIn(table, sql)
+        # Order-independent: a sum of row hashes, never a sorted aggregate.
+        self.assertNotIn('order by', sql.lower())

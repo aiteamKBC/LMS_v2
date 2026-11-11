@@ -260,6 +260,43 @@ class KbcHistoryTests(unittest.TestCase):
         self.assertIn('"date" <= CURRENT_DATE', sql)
         self.assertNotIn('UPDATE ', sql.upper())
 
+    def test_recent_endpoint_scopes_both_sources_to_the_requested_page(self):
+        with patch.object(history, 'learner_directory_dsn', return_value='synthetic'), \
+             patch.object(history, 'read_kbc_recent_attendance', return_value={'301': []}) as read:
+            response = history.bulk_attendance_kbc_recent(
+                SimpleNamespace(method='GET', GET={'learner_ids': '302, 301,301'}),
+            )
+        self.assertEqual(response.status_code, 200)
+        read.assert_called_once_with('synthetic', 4, ['301', '302'])
+        self.live.assert_called_once_with(kbc_ids=['301', '302'])
+
+    def test_recent_endpoint_rejects_bad_ids_and_reads_nothing_for_an_empty_page(self):
+        with patch.object(history, 'read_kbc_recent_attendance') as read:
+            bad = history.bulk_attendance_kbc_recent(
+                SimpleNamespace(method='GET', GET={'learner_ids': '301,abc'}),
+            )
+            empty = history.bulk_attendance_kbc_recent(
+                SimpleNamespace(method='GET', GET={'learner_ids': ''}),
+            )
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(json.loads(empty.content), {'recent': {}, 'warnings': []})
+        read.assert_not_called()
+        self.live.assert_not_called()
+
+    def test_recent_reader_ranks_only_the_requested_learners(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value.__enter__.return_value = cursor
+        with patch.object(history.psycopg, 'connect', return_value=connection):
+            history.read_kbc_recent_attendance('synthetic', 4, ['301'])
+        sql, params = cursor.execute.call_args.args
+        inner, outer = sql.split(') recent', 1)
+        self.assertIn('"ID"::text = ANY(%s)', inner)
+        self.assertIn('recent_rank <= %s', outer)
+        self.assertEqual(params, [['301'], 4])
+
     def test_recent_endpoint_is_private_and_hides_driver_errors(self):
         with patch.object(history, 'learner_directory_dsn', return_value='synthetic'), \
              patch.object(history, 'read_kbc_recent_attendance', return_value={'301': []}):

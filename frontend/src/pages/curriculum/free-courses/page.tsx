@@ -9,7 +9,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
-import { CurriculumApiError, cloneModuleToFreeCourseAuthoring, createFreeCourseAuthoring, createFreeCourseQuiz, deleteFreeCourseAuthoring, fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeCourseAuthoringCatalogue, fetchFreeCourseAuthoringCourse, injectFreeCourseIntoGroup, unlinkFreeCourseQuiz, updateFreeCourseAuthoring, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeCourseAuthoringDocument, type FreeProgrammeModule } from '@/lib/curriculumApi';
+import { CurriculumApiError, cloneModuleToFreeCourseAuthoring, createFreeCourseAuthoring, createFreeCourseQuiz, deleteFreeCourseAuthoring, fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeCourseAuthoringCatalogue, fetchFreeCourseAuthoringCatalogueWithDocuments, fetchFreeCourseAuthoringCourse, injectFreeCourseIntoGroup, unlinkFreeCourseQuiz, updateFreeCourseAuthoring, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeCourseAuthoringDocument, type FreeProgrammeModule } from '@/lib/curriculumApi';
 import {
   fetchWeekTemplateDetail,
   fetchWeekTemplates,
@@ -190,8 +190,11 @@ function authoringDocumentToModules(document: FreeCourseAuthoringDocument): Free
 }
 
 async function loadCanonicalFreeCourses(signal?: AbortSignal) {
-  const catalogue = await fetchFreeCourseAuthoringCatalogue(signal);
-  const documents = await Promise.all(catalogue.courses.map(course => fetchFreeCourseAuthoringCourse(course.courseId, signal)));
+  // One request for the catalogue and every course. The per-course reads remain
+  // only as a fallback for a backend that does not return `documents` yet.
+  const { documents: included, ...catalogue } = await fetchFreeCourseAuthoringCatalogueWithDocuments(signal);
+  const documents = included
+    ?? await Promise.all(catalogue.courses.map(course => fetchFreeCourseAuthoringCourse(course.courseId, signal)));
   return { catalogue, documents };
 }
 
@@ -1861,6 +1864,8 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete, onConvert }: { card: 
           <img
             src={card.coverImageUrl}
             alt=""
+            loading="lazy"
+            decoding="async"
             className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
             onError={() => setCoverBroken(true)}
           />

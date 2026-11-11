@@ -41,8 +41,11 @@ class CoveragePartTests(SimpleTestCase):
         part = views.coverage_part(json.loads(json.dumps(FULL)), 'heatmap')
         self.assertEqual([item['mappings'] for item in part['items']], [[], []])
         self.assertEqual([item['occurrence_count'] for item in part['items']], [1, 0])
+        # The heatmap's evidence never shows a mapping id or the component's
+        # OTJH (only the items half's readers do), so its cells leave both out.
+        heatmap_slim = {key: value for key, value in SLIM.items() if key not in {'mapping_id', 'component_otjh'}}
         self.assertEqual(part['heatmap'], {'modules': FULL['heatmap']['modules'], 'rows': [
-            {'code': 'K1', 'total': 40, 'modules': [{'module_id': 'MOD-A', 'weight': 40, 'mappings': [SLIM]}]},
+            {'code': 'K1', 'total': 40, 'modules': [{'module_id': 'MOD-A', 'weight': 40, 'mappings': [heatmap_slim]}]},
         ]})
         self.assertTrue(part['mappingsOmitted'])
         self.assertTrue(part['placementFieldsOnly'])
@@ -87,9 +90,22 @@ class CoverageEntryTests(SimpleTestCase):
         self.assertEqual(len(self.builds), 1)
         self.assertEqual(heatmap, views.coverage_part(json.loads(json.dumps(FULL)), 'heatmap'))
         self.assertEqual(items, views.coverage_part(json.loads(json.dumps(FULL)), 'items'))
-        self.assertEqual(sorted(self.store), ['ksb-coverage-response:programme:PROG-1:::0:parts-v3'])
+        # v4: the heatmap half's cells changed shape, so no v3 entry may be served.
+        self.assertEqual(sorted(self.store), ['ksb-coverage-response:programme:PROG-1:::0:parts-v4'])
         self.assertEqual(self._get(), FULL)           # a plain request still gets the whole document
         self.assertEqual(len(self.builds), 2)
+
+    def test_every_coverage_entry_is_rechecked_against_the_ksb_sources_past_its_ttl(self):
+        seen = []
+
+        def cached(key, build, ttl=None, **kwargs):
+            seen.append((ttl, kwargs.get('fingerprint')))
+            return build()
+
+        with mock.patch.object(views, 'cached_curriculum_value', side_effect=cached):
+            self._get(view='heatmap')
+            self._get()
+        self.assertEqual(seen, [(60, views.component_source_inputs_fingerprint)] * 2)
 
     def test_other_scopes_ignore_the_view(self):
         self.assertEqual(self._get(scope='module', view='heatmap'), FULL)

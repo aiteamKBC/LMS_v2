@@ -316,6 +316,14 @@ async function openTab(name: RegExp) {
   await userEvent.click(tabStrip().getByRole('button', { name }));
 }
 
+/** The Modules table row a module's link sits in (its cells are the row's children). */
+function moduleRow(link: HTMLElement): HTMLElement {
+  let node: HTMLElement | null = link;
+  while (node && !String(node.className).includes('grid-cols-[')) node = node.parentElement;
+  if (!node) throw new Error('No module row rendered');
+  return node;
+}
+
 describe('Programme workspace', { timeout: 15000 }, () => {
   it('shows KSB summary counts while modules are still pending and loads the matrix only on its tab', async () => {
     const api = await import('@/lib/curriculumApi');
@@ -380,14 +388,71 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     await act(async () => finishStats({ programmeId: 'PROG-DATA' } as Awaited<ReturnType<typeof api.fetchProgrammeKsbStats>>));
     expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1);
     expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
+    // Groups reads its figures from the summary too: no component list yet.
     await openTab(/Groups/);
     await vi.waitFor(() => expect(api.fetchCurriculumCoaches).toHaveBeenCalledTimes(1));
-    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
     expect(api.fetchCurriculumTutors).not.toHaveBeenCalled();
     expect(api.fetchCurriculumHolidays).not.toHaveBeenCalled();
+    // KSB coverage's placement preview finds components by title: it loads the list, once.
     await openTab(/KSB Coverage/);
     await vi.waitFor(() => expect(api.fetchCurriculumKsbSets).toHaveBeenCalledTimes(1));
-    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1));
+  });
+
+  it('counts module KSBs from the summary, so the Modules tab never loads the component list', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    // The server names each bucket's distinct mapped codes; K1/k1 are one KSB.
+    vi.mocked(api.fetchCurriculumComponentSummary).mockResolvedValueOnce(summaryOf(components).map(row => ({
+      ...row, ksbCodes: row.moduleCatalogueId === 'MOD-1' ? ['K1', 'S2', 'k1'] : [],
+    })));
+    await renderWorkspace('?tab=modules');
+    await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1));
+    const row = moduleRow(await screen.findByRole('link', { name: /^Data Foundations/ }));
+    // Columns: Module, Cohort/Group, Tutor, Weeks, Components, OTJH, KSBs, ...
+    await vi.waitFor(() => expect(row.children[6].textContent).toBe('2'));
+    expect(row.children[4].textContent).toBe('1');
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
+    // Searching by KSB still works off the summary's codes.
+    await userEvent.type(screen.getByPlaceholderText(/Search modules, cohort, group, tutor, KSB/), 'S2');
+    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /^Orphan Module/ })).not.toBeInTheDocument();
+    // Sessions lists components one by one, so it is the tab that loads them.
+    await openTab(/Sessions/);
+    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows component figures as loading, not as zero, until the summary answers', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    let finishSummary!: (rows: CurriculumComponentSummaryRow[]) => void;
+    vi.mocked(api.fetchCurriculumComponentSummary).mockImplementationOnce(() => new Promise(resolve => { finishSummary = resolve; }));
+    await renderWorkspace('?tab=modules');
+    const row = moduleRow(await screen.findByRole('link', { name: /^Data Foundations/ }));
+    await vi.waitFor(() => expect(within(row).getAllByRole('status', { name: 'Loading' })).toHaveLength(3));
+    expect(row.children[6].textContent).toBe('');
+    await act(async () => finishSummary(summaryOf(components).map(item => ({ ...item, ksbCodes: ['K1'] }))));
+    await vi.waitFor(() => expect(row.children[6].textContent).toBe('1'));
+    expect(within(row).queryByRole('status', { name: 'Loading' })).not.toBeInTheDocument();
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
+  });
+
+  it('reads the component list in place of a failed summary, and says so when both fail', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    vi.mocked(api.fetchCurriculumComponentSummary).mockRejectedValueOnce(new Error('summary down'));
+    vi.mocked(api.fetchCurriculumComponents).mockRejectedValueOnce(new Error('list down'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await renderWorkspace('?tab=modules');
+      await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1));
+      const row = moduleRow(await screen.findByRole('link', { name: /^Data Foundations/ }));
+      await vi.waitFor(() => expect(row.children[6].textContent).toBe('—'));
+      expect(row.children[4].textContent).toBe('—');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('refreshes component contents after a return even when module IDs are unchanged', async () => {
@@ -570,7 +635,8 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await vi.waitFor(() => expect(api.fetchCurriculumHolidays).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(screen.queryByText('Loading editor options')).not.toBeInTheDocument());
-    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+    // Cohorts and the cohort editor read no component list.
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
   });
 
   it('loads the workspace module projection and retains canonical links and edit metadata', async () => {
@@ -805,7 +871,38 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
     const otjhCard = screen.getByText('OTJH').parentElement;
     expect(otjhCard).not.toBeNull();
-    expect(otjhCard).toHaveTextContent('0h');
+    // "0h" only once the summary has answered: until then the card says it is
+    // loading rather than printing a zero nobody has measured.
+    await vi.waitFor(() => expect(otjhCard).toHaveTextContent('0h'));
+  });
+
+  it('shows the component figures as loading, not as zeros, until the summary answers', async () => {
+    const api = await import('@/lib/curriculumApi');
+    let finishSummary: (rows: Awaited<ReturnType<typeof api.fetchCurriculumComponentSummary>>) => void = () => {};
+    vi.mocked(api.fetchCurriculumComponentSummary).mockImplementationOnce(() => new Promise(resolve => { finishSummary = resolve; }));
+
+    await renderWorkspace();
+
+    await vi.waitFor(() => expect(screen.getByText('Checking which weeks have content…')).toBeInTheDocument());
+    expect(screen.getByText('Loading components')).toBeInTheDocument();
+    expect(screen.queryByText(/weeks? (?:has|have) no content/)).not.toBeInTheDocument();
+
+    finishSummary(summaryOf(components));
+
+    await vi.waitFor(() => expect(screen.queryByText('Checking which weeks have content…')).not.toBeInTheDocument());
+    expect(screen.queryByText('Loading components')).not.toBeInTheDocument();
+  });
+
+  it('says the component figures are unavailable when both reads fail', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.mocked(api.fetchCurriculumComponentSummary).mockRejectedValueOnce(new Error('summary down'));
+    vi.mocked(api.fetchCurriculumComponents).mockRejectedValueOnce(new Error('components down'));
+
+    await renderWorkspace();
+
+    await vi.waitFor(() => expect(screen.getByText(/Week content could not be checked/)).toBeInTheDocument());
+    expect(screen.getByText('Components unavailable')).toBeInTheDocument();
+    expect(screen.queryByText(/weeks? (?:has|have) no content/)).not.toBeInTheDocument();
   });
 
   it('uses the same component Expected OTJH total as Module Builder in the Modules tab', async () => {

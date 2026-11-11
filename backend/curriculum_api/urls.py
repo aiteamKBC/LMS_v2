@@ -6,6 +6,7 @@ from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .archive_index import curriculum_archive_index
+from .programme_ksb_stats_batch import curriculum_programmes_ksb_stats
 from .record_snapshots import curriculum_record_snapshot
 from .free_course_conversion import convert_free_course
 from .module_live import curriculum_live, curriculum_module_changes
@@ -167,6 +168,8 @@ urlpatterns = [
     path('curriculum/programmes/tree/', views.curriculum_programme_tree_save, name='curriculum-programme-tree-save'),
     # Before the <identifier> detail route, or 'reorder' reads as a programme id.
     path('curriculum/programmes/reorder/', views.curriculum_programme_reorder, name='curriculum-programmes-reorder'),
+    # Several cards' KSB numbers at once (?ids=a,b). Before <identifier> for the same reason.
+    path('curriculum/programmes/ksb-stats/', curriculum_programmes_ksb_stats, name='curriculum-programmes-ksb-stats'),
     path('curriculum/free-programmes/<str:programme_id>/modules/', views.curriculum_free_programme_modules, name='curriculum-free-programme-modules'),
     path('curriculum/free-programmes/<str:programme_id>/convert/', views.curriculum_free_programme_convert, name='curriculum-free-programme-convert'),
     path('curriculum/free-programmes/<str:programme_id>/import-module/', views.curriculum_free_programme_import_module, name='curriculum-free-programme-import-module'),

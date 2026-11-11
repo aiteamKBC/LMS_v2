@@ -23,11 +23,16 @@ export interface BulkAttendanceData {
   modules: Module[];
   lectures: Lecture[];
   learners: Learner[];
+  /** The learner directory is still loading: the register has no rows yet. */
   loading: boolean;
+  /** Programme / cohort / group / module choices are still loading. Learners render without them. */
+  filtersLoading: boolean;
+  /** Lectures arrive after the register: the session list is a separate, slower read. */
+  lecturesLoading: boolean;
   error: string | null;
 }
 
-const EMPTY_DATA: Omit<BulkAttendanceData, "loading" | "error"> = {
+const EMPTY_DATA: Omit<BulkAttendanceData, "loading" | "filtersLoading" | "lecturesLoading" | "error"> = {
   programmes: [],
   cohorts: [],
   groups: [],
@@ -282,21 +287,68 @@ function toBulkData(
   return { programmes, cohorts, groups, modules, lectures, learners };
 }
 
+/**
+ * The last successful reads, kept for the browser tab's lifetime. Returning to
+ * the register paints them at once while fresh reads replace them behind; a
+ * failed refresh keeps them and reports the error instead of blanking the page.
+ */
+const lastRead: {
+  overview: CurriculumOverview | null;
+  directory: BulkAttendanceDirectoryLearner[] | null;
+  sessions: CurriculumOverview["sessions"] | null;
+} = { overview: null, directory: null, sessions: null };
+
+/** Tests only: forget the reads kept between mounts. */
+export function resetBulkAttendanceDataCache() {
+  lastRead.overview = null;
+  lastRead.directory = null;
+  lastRead.sessions = null;
+}
+
 export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendanceData & { retry: () => void } {
-  const [overview, setOverview] = useState<CurriculumOverview | null>(null);
-  const [sessions, setSessions] = useState<CurriculumOverview["sessions"]>([]);
+  const [overview, setOverview] = useState<CurriculumOverview | null>(() => lastRead.overview);
+  const [fetchedSessions, setFetchedSessions] = useState<CurriculumOverview["sessions"]>(() => lastRead.sessions ?? []);
+  const [lecturesLoading, setLecturesLoading] = useState(() => !lastRead.sessions);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [rosters, setRosters] = useState<Map<string, CurriculumProgrammeAssignedLearner[]>>(new Map());
-  const [directory, setDirectory] = useState<BulkAttendanceDirectoryLearner[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [directory, setDirectory] = useState<BulkAttendanceDirectoryLearner[]>(() => lastRead.directory ?? []);
+  const [loading, setLoading] = useState(() => !lastRead.directory);
+  const [filtersLoading, setFiltersLoading] = useState(() => !lastRead.overview);
   const [error, setError] = useState<string | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
   const archiveIdsKey = useMemo(() => [...new Set(archiveIds.filter(Boolean))].join(","), [archiveIds]);
 
+  // The lecture list needs the full (non-compact) curriculum build, which can
+  // take tens of seconds cold. Read it on its own so the register, filters and
+  // learners render as soon as their own reads finish; lectures fill in after.
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    setLecturesLoading(!lastRead.sessions);
+    setSessionsError(null);
+    fetchCurriculumSessions(controller.signal, { visibility: "all" })
+      .then((next) => {
+        if (controller.signal.aborted) return;
+        lastRead.sessions = next;
+        setFetchedSessions(next);
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setSessionsError("The lecture list could not be loaded. Try again to refresh it.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLecturesLoading(false);
+      });
+    return () => controller.abort();
+  }, [retryVersion]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(!lastRead.directory);
+    setFiltersLoading(!lastRead.overview);
     setError(null);
-    void Promise.allSettled([
+    // Each read paints as soon as it lands: the register needs only the
+    // directory, the filter choices only the overview.
+    const overviewRead = (
       // The register only needs the entity lists here. The full overview also
       // builds authoring details, components and generated sessions; fetch
       // lectures separately below so a cold/large overview cannot blank every
@@ -313,31 +365,43 @@ export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendance
       fetchCurriculumOverview(controller.signal, { compact: true, visibility: "all" }).catch((reason: unknown) => {
         if (controller.signal.aborted) throw reason;
         return fetchCurriculumOverview(controller.signal, { visibility: "all" });
-      }),
-      fetchBulkAttendanceLearners(controller.signal),
-      fetchCurriculumSessions(controller.signal, { visibility: "all" }),
-    ])
-      .then(async ([overviewResult, directoryResult, sessionsResult]) => {
-        const nextOverview = overviewResult.status === "fulfilled" ? overviewResult.value : null;
+      }))
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          lastRead.overview = value;
+          setOverview(value);
+        }
+        return value;
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFiltersLoading(false);
+      });
+    const directoryRead = fetchBulkAttendanceLearners(controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          lastRead.directory = value.learners;
+          setDirectory(value.learners);
+        }
+        return value;
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    void Promise.allSettled([overviewRead, directoryRead])
+      .then(async ([overviewResult, directoryResult]) => {
+        // A failed refresh keeps the last good read on screen beside its error.
+        const nextOverview = overviewResult.status === "fulfilled" ? overviewResult.value : lastRead.overview;
         const nextDirectory = directoryResult.status === "fulfilled"
           ? directoryResult.value.learners
           : [];
         if (controller.signal.aborted) return;
-        setOverview(nextOverview);
-        setSessions(sessionsResult.status === "fulfilled" && sessionsResult.value.length > 0
-          ? sessionsResult.value
-          : nextOverview?.sessions ?? []);
         setRosters(new Map());
-        setDirectory(nextDirectory);
         const directoryFailed = directoryResult.status === "rejected";
         const loadErrors: string[] = [];
         if (overviewResult.status === "rejected") {
           loadErrors.push(
             `Programme and cohort filters could not be loaded.${overviewFailureHint(overviewResult.reason)}`,
           );
-        }
-        if (sessionsResult.status === "rejected" && !nextOverview?.sessions?.length) {
-          loadErrors.push("The lecture list could not be loaded. Try again to refresh it.");
         }
         if (directoryFailed) {
           loadErrors.unshift(directoryResult.reason instanceof Error
@@ -394,15 +458,38 @@ export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendance
         setError(reason instanceof Error ? reason.message : "Unable to load curriculum data.");
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setFiltersLoading(false);
+        }
       });
     return () => controller.abort();
   }, [archiveIdsKey, retryVersion]);
 
   const retry = useCallback(() => setRetryVersion((version) => version + 1), []);
 
+  // As before: the dedicated session read wins; the overview's own sessions
+  // (present only after a full-overview fallback) cover an empty or failed read.
+  const sessions = useMemo(
+    () => (fetchedSessions.length > 0 ? fetchedSessions : overview?.sessions ?? []),
+    [fetchedSessions, overview],
+  );
+  const combinedError = useMemo(() => {
+    const lectureError = sessionsError && !overview?.sessions?.length ? sessionsError : null;
+    return [error, lectureError].filter(Boolean).join(" ") || null;
+  }, [error, sessionsError, overview]);
+
   return useMemo(() => {
-    if (!overview && !directory.length && !sessions.length) return { ...EMPTY_DATA, loading, error, retry };
-    return { ...toBulkData(overview, sessions, rosters, directory), loading, error, retry };
-  }, [overview, sessions, rosters, directory, loading, error, retry]);
+    if (!overview && !directory.length && !sessions.length) {
+      return { ...EMPTY_DATA, loading, filtersLoading, lecturesLoading, error: combinedError, retry };
+    }
+    return {
+      ...toBulkData(overview, sessions, rosters, directory),
+      loading,
+      filtersLoading,
+      lecturesLoading,
+      error: combinedError,
+      retry,
+    };
+  }, [overview, sessions, rosters, directory, loading, filtersLoading, lecturesLoading, combinedError, retry]);
 }

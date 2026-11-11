@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceShell } from "@/components/feature/WorkspaceShell";
+import { Pagination } from "@/components/ui/Pagination";
 import { curriculumNavItems } from "@/mocks/navigation";
 import type { AttendanceStatus, Learner, Lecture } from "@/types/bulkAttendance";
 import { useAttendance } from "@/hooks/useBulkAttendance";
 import { useBulkAttendanceData } from "@/hooks/useBulkAttendanceData";
+import { readKbcRecentCache, writeKbcRecentCache } from "./kbcRecentCache";
 import {
   fetchCurriculumScopeLearnerRoster,
   type CurriculumLearnerScope,
@@ -11,6 +13,7 @@ import {
 } from "@/lib/curriculumApi";
 
 const ROSTER_TIMEOUT_MS = 60_000;
+const REGISTER_PAGE_SIZE = 50;
 
 // Curriculum rosters list learners by LMS email. A learner whose KBC
 // directory email differs is matched through the LMS email for the same KBC id.
@@ -97,6 +100,8 @@ export default function AttendancePage() {
     lectures,
     modules,
     loading: dataLoading,
+    filtersLoading,
+    lecturesLoading,
     error: dataError,
     retry: retryData,
   } = useBulkAttendanceData();
@@ -120,7 +125,7 @@ export default function AttendancePage() {
   const [detailKbcHistory, setDetailKbcHistory] = useState<BulkAttendanceKbcHistoryRecord[]>([]);
   const [detailHistoryLoading, setDetailHistoryLoading] = useState(false);
   const [detailHistoryError, setDetailHistoryError] = useState<string | null>(null);
-  const [kbcRecent, setKbcRecent] = useState<Record<string, BulkAttendanceKbcHistoryRecord[]>>({});
+  const [kbcRecent, setKbcRecent] = useState<Record<string, BulkAttendanceKbcHistoryRecord[]>>(readKbcRecentCache);
   const [kbcRecentError, setKbcRecentError] = useState<string | null>(null);
   const [kbcRecentWarnings, setKbcRecentWarnings] = useState<string[]>([]);
   const [detailHistoryWarnings, setDetailHistoryWarnings] = useState<string[]>([]);
@@ -132,6 +137,7 @@ export default function AttendancePage() {
   const [kbcRecentVersion, setKbcRecentVersion] = useState(0);
   const [dayMembership, setDayMembership] = useState<{ date: string; ids: Set<string> } | null>(null);
   const [dayLoading, setDayLoading] = useState(true);
+  const dayMembershipDate = useRef<string | null>(null);
   const [dayError, setDayError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showActions, setShowActions] = useState(false);
@@ -142,6 +148,10 @@ export default function AttendancePage() {
   const [addAttendanceError, setAddAttendanceError] = useState<string | null>(null);
   const [liveDayError, setLiveDayError] = useState<string | null>(null);
   const [savingLiveLearnerIds, setSavingLiveLearnerIds] = useState<string[]>([]);
+  // The register table shows one page at a time; its last-4 column is read
+  // for that page only. Exports, select-all and the other tabs keep the full list.
+  const [registerPage, setRegisterPage] = useState(1);
+  const kbcRecentLoaded = useRef<{ version: number; ids: Set<string> }>({ version: -1, ids: new Set() });
 
   const selectedLecture = useMemo(
     () => lectures.find((lecture) => lecture.id === lectureId) ?? null,
@@ -393,17 +403,24 @@ export default function AttendancePage() {
   useEffect(() => {
     const controller = new AbortController();
     if (!date) {
+      dayMembershipDate.current = null;
       setDayMembership(null);
       setDayError(null);
       setDayLoading(false);
       return () => controller.abort();
     }
-    setDayLoading(true);
     setDayError(null);
-    setDayMembership(null);
+    // A refresh of the same day (after a save) keeps the current rows on
+    // screen; only a different day empties the register while it loads.
+    if (dayMembershipDate.current !== date) {
+      setDayLoading(true);
+      setDayMembership(null);
+    }
     void fetchBulkAttendanceDayLearners(date, controller.signal)
       .then((ids) => {
-        if (!controller.signal.aborted) setDayMembership({ date, ids: new Set(ids) });
+        if (controller.signal.aborted) return;
+        dayMembershipDate.current = date;
+        setDayMembership({ date, ids: new Set(ids) });
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) setDayError(
@@ -620,6 +637,25 @@ export default function AttendancePage() {
   }, [moduleId, modules, scopedModules]);
   const visibleRows = rows;
   const visibleLearners = useMemo(() => visibleRows.map((row) => row.learner), [visibleRows]);
+  const registerPageCount = Math.max(1, Math.ceil(visibleRows.length / REGISTER_PAGE_SIZE));
+  const currentRegisterPage = Math.min(registerPage, registerPageCount);
+  const pageRows = useMemo(
+    () => visibleRows.slice(
+      (currentRegisterPage - 1) * REGISTER_PAGE_SIZE,
+      currentRegisterPage * REGISTER_PAGE_SIZE,
+    ),
+    [visibleRows, currentRegisterPage],
+  );
+  const pageKbcIdsKey = useMemo(
+    () => [...new Set(pageRows.map((row) => row.learner.kbcId).filter((id): id is string => Boolean(id)))]
+      .sort()
+      .join(","),
+    [pageRows],
+  );
+
+  useEffect(() => {
+    setRegisterPage(1);
+  }, [programmeId, cohortId, groupId, moduleId, lectureId, attendanceModeFilter, query, date]);
 
   const handleToggleSelectAll = () => {
     setSelectedIds((previous) => {
@@ -723,15 +759,31 @@ export default function AttendancePage() {
   };
 
   useEffect(() => {
+    // A save bumps the version: every page's last 4 must be read again.
+    if (kbcRecentLoaded.current.version !== kbcRecentVersion) {
+      kbcRecentLoaded.current = { version: kbcRecentVersion, ids: new Set() };
+    }
+    const loaded = kbcRecentLoaded.current;
+    const missing = pageKbcIdsKey.split(",").filter((id) => id && !loaded.ids.has(id));
+    if (missing.length === 0) return;
     const controller = new AbortController();
     setKbcRecentError(null);
     // Last 4 is an attendance-record view. Load the merged database result so
     // the column never invents a date or status from the curriculum schedule;
-    // the live register wins on dates covered by both sources.
-    void fetchBulkAttendanceKbcRecent(controller.signal, { source: "all" })
+    // the live register wins on dates covered by both sources. Only the
+    // learners on the visible page are read; other pages load when opened.
+    void fetchBulkAttendanceKbcRecent(controller.signal, { source: "all", learnerIds: missing })
       .then(({ recent, warnings }) => {
         if (controller.signal.aborted) return;
-        setKbcRecent(recent);
+        missing.forEach((id) => loaded.ids.add(id));
+        setKbcRecent((previous) => {
+          const next = { ...previous };
+          missing.forEach((id) => {
+            next[id] = recent[id] ?? [];
+          });
+          writeKbcRecentCache(next);
+          return next;
+        });
         setKbcRecentWarnings(warnings);
       })
       .catch((reason: unknown) => {
@@ -741,7 +793,7 @@ export default function AttendancePage() {
           : "Unable to load recent KBC attendance.");
       });
     return () => controller.abort();
-  }, [kbcRecentVersion]);
+  }, [kbcRecentVersion, pageKbcIdsKey]);
 
   const lectureInfo = useMemo(() => {
     const map: Record<string, LectureInfo> = {};
@@ -1010,7 +1062,7 @@ export default function AttendancePage() {
                 </>
               )}
             </p>
-            {dataLoading && (
+            {(dataLoading || filtersLoading) && (
               <p className="mt-2 text-xs text-foreground-500">Loading current curriculum data…</p>
             )}
             {dataError && (
@@ -1019,7 +1071,7 @@ export default function AttendancePage() {
                 <button
                   type="button"
                   onClick={retryData}
-                  disabled={dataLoading}
+                  disabled={dataLoading || filtersLoading}
                   className="font-medium underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Retry loading data
@@ -1177,7 +1229,10 @@ export default function AttendancePage() {
               label="Lecture"
               value={lectureId}
               placeholder="All Lectures"
-              options={lectureOptions}
+              options={lecturesLoading
+                ? [{ value: "", label: "Loading lectures…" }]
+                : lectureOptions}
+              disabled={lecturesLoading}
               onChange={(value) => {
                 const lecture = lectures.find((item) => item.id === value);
                 if (lecture?.sessionDate) handleDateChange(lecture.sessionDate, value);
@@ -1361,7 +1416,7 @@ export default function AttendancePage() {
                   learnerKeys={visibleRows.map((row) => highlightKey(row.learner))}
                 />
                 <AttendanceTable
-                  rows={visibleRows}
+                  rows={pageRows}
                   loading={pageLoading}
                   selectedIds={selectedIds}
                   lectureInfo={lectureInfo}
@@ -1372,6 +1427,16 @@ export default function AttendancePage() {
                   highlights={highlights}
                   onHighlightChange={setHighlight}
                 />
+                {!pageLoading && visibleRows.length > REGISTER_PAGE_SIZE && (
+                  <Pagination
+                    page={currentRegisterPage}
+                    totalPages={registerPageCount}
+                    total={visibleRows.length}
+                    pageSize={REGISTER_PAGE_SIZE}
+                    onPageChange={setRegisterPage}
+                    noun="learners"
+                  />
+                )}
               </section>
             )}
 

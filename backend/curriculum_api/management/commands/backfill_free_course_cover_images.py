@@ -100,6 +100,17 @@ class Command(BaseCommand):
         found = []
         for table, key in TABLES:
             with connection.cursor() as cursor:
+                # The new database's free_course_weeks has no cover column:
+                # covers live on the course only there, so skip, don't fail.
+                schema, name = table.split('.', 1)
+                cursor.execute(
+                    "select 1 from information_schema.columns "
+                    "where table_schema = %s and table_name = %s and column_name = 'cover_image_url'",
+                    [schema, name],
+                )
+                if not cursor.fetchone():
+                    self.stdout.write(f'{table}: no cover_image_url column, skipped.')
+                    continue
                 cursor.execute(
                     f"""
                     select {key}, cover_image_url, octet_length(cover_image_url)

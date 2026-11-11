@@ -91,7 +91,7 @@ class SessionDeliveryClockTests(unittest.TestCase):
         }
         exec(self.code, self.n)
 
-    def fetch(self, table, *args):
+    def fetch(self, table, *args, **kwargs):
         if table == 'modules':
             return [self.module]
         if table == 'weeks':

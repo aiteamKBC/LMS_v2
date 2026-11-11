@@ -262,3 +262,115 @@ class AuthoringDocumentTests(SimpleTestCase):
         self.assertIn('"free_course_id" = %s', sql)
         self.assertIn('"free_course_week_id" is not null', sql)
         self.assertNotIn('module_catalogue_id" is not null', sql)
+
+
+class BatchedCourseDocumentsTests(SimpleTestCase):
+    """course_documents must equal course_document, course by course."""
+
+    COURSES = [
+        course_row(id="FREE-1", display_order=0),
+        course_row(id="FREE-2", display_order=1, cover_image_url=""),
+        course_row(id="FREE-3", display_order=2),  # no weeks at all
+    ]
+    WEEKS = [
+        week_row("FW-1", course_id="FREE-1"),
+        week_row("FW-2", course_id="FREE-1", display_order=1),
+        week_row("FW-3", course_id="FREE-2"),
+    ]
+    COMPONENTS = [
+        component_row("FC-1", free_module_id="FW-1", settings_json={"linkedQuizId": "Q-1"}),
+        component_row("FC-2", free_module_id="FW-2", settings_json="not json"),
+        # FREE-2 references FREE-1's quiz: an owner mismatch only FREE-2 reports.
+        component_row("FC-3", free_module_id="FW-3", settings_json={"linkedQuizId": "Q-1"}),
+        component_row("FC-4", free_module_id="FW-3", settings_json={"linkedQuizId": "LEGACY-1"}),
+    ]
+    QUIZZES = [
+        {"id": "Q-1", "free_course_week_id": "FW-1", "week_id": None, "status": "published"},
+        {"id": "Q-9", "free_course_week_id": "FW-3", "week_id": None, "status": "draft"},
+        {"id": "LEGACY-1", "free_course_week_id": None, "week_id": "NORMAL-1", "status": "trash"},
+    ]
+    LINKS = [
+        {"id": 1, "quiz_id": "Q-1", "free_course_week_id": "FW-1", "free_course_id": "FREE-1",
+         "module_catalogue_id": None, "week_id": None},
+        # Linked to FREE-2 but referenced by no component: an unreferenced link.
+        {"id": 2, "quiz_id": "Q-9", "free_course_week_id": "FW-3", "free_course_id": "FREE-2",
+         "module_catalogue_id": None, "week_id": None},
+    ]
+
+    def _patches(self):
+        def courses(*, course_ids=None, columns=None):
+            return [deepcopy(row) for row in self.COURSES if course_ids is None or row["id"] in course_ids]
+
+        def weeks(*, course_ids=None, week_ids=None, columns=None):
+            return [deepcopy(row) for row in self.WEEKS if course_ids is None or row["course_id"] in course_ids]
+
+        def components(*, week_ids=None, programme_id=None, columns=None):
+            return [deepcopy(row) for row in self.COMPONENTS if week_ids is None or row["free_module_id"] in week_ids]
+
+        def quiz_rows(quiz_ids):
+            return [deepcopy(row) for row in self.QUIZZES if row["id"] in set(quiz_ids)]
+
+        def link_matches(link, course_ids, quiz_ids):
+            return link["free_course_id"] in course_ids or (
+                link["quiz_id"] in quiz_ids and link["free_course_week_id"] is not None)
+
+        def link_rows(course_id, quiz_ids):
+            return [deepcopy(row) for row in self.LINKS if link_matches(row, {course_id}, set(quiz_ids))]
+
+        def link_rows_for_courses(course_ids, quiz_ids):
+            return [deepcopy(row) for row in self.LINKS if link_matches(row, set(course_ids), set(quiz_ids))]
+
+        return [
+            mock.patch.object(authoring.schema_gate, "require_tables"),
+            mock.patch.object(authoring, "_read_snapshot", return_value=nullcontext()),
+            mock.patch.object(authoring.free_course_catalogue, "courses", side_effect=courses),
+            mock.patch.object(authoring.free_course_catalogue, "weeks", side_effect=weeks),
+            mock.patch.object(authoring.free_course_catalogue, "components", side_effect=components),
+            mock.patch.object(authoring, "_quiz_rows", side_effect=quiz_rows),
+            mock.patch.object(authoring, "_quiz_link_rows", side_effect=link_rows),
+            mock.patch.object(authoring, "_quiz_link_rows_for_courses", side_effect=link_rows_for_courses),
+        ]
+
+    def _run(self, call):
+        patches = self._patches()
+        for patch in patches:
+            patch.start()
+        try:
+            return call()
+        finally:
+            for patch in reversed(patches):
+                patch.stop()
+
+    def test_batched_documents_equal_one_read_per_course(self):
+        expected = [self._run(lambda course_id=row["id"]: authoring.course_document(course_id)) for row in self.COURSES]
+        batched = self._run(lambda: authoring.course_documents(deepcopy(self.COURSES)))
+        self.assertEqual(batched, expected)
+        # The fixture really exercises the cross-course paths.
+        self.assertEqual(expected[0]["integrity"]["status"], "blocked")
+        self.assertIn("unreferenced_canonical_quiz_link", {i["code"] for i in expected[1]["integrity"]["issues"]})
+        self.assertEqual(expected[2]["weeks"], [])
+
+    def test_batched_read_queries_each_table_once(self):
+        def call():
+            authoring.course_documents(deepcopy(self.COURSES))
+            return (
+                authoring.free_course_catalogue.weeks.call_count,
+                authoring.free_course_catalogue.components.call_count,
+                authoring._quiz_rows.call_count,
+                authoring._quiz_link_rows_for_courses.call_count,
+                authoring._quiz_link_rows.call_count,
+            )
+        self.assertEqual(self._run(call), (1, 1, 1, 1, 0))
+
+    def test_catalogue_with_documents_etag_covers_course_content(self):
+        first = self._run(authoring.catalogue_with_documents)
+        self.assertEqual(first["revision"], self._run(authoring.catalogue_document)["revision"])
+        self.assertEqual([doc["course"]["courseId"] for doc in first["documents"]], ["FREE-1", "FREE-2", "FREE-3"])
+        original = self.COMPONENTS
+        try:
+            self.COMPONENTS = [dict(original[0], title="Renamed")] + original[1:]
+            second = self._run(authoring.catalogue_with_documents)
+        finally:
+            self.COMPONENTS = original
+        self.assertEqual(first["revision"], second["revision"])
+        self.assertNotEqual(first["documentsRevision"], second["documentsRevision"])
