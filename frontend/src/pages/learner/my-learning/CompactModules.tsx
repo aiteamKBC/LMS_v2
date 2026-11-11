@@ -7,6 +7,7 @@ import { SubjectCard, StudentActivityPanel, SubjectCardsSkeleton } from './Subje
 import { LearningCatalogue, type UpcomingLearningLink } from './LearningCatalogue';
 import type { Subject, UnifiedLearningSummary } from './learningSummary';
 import { recommendedLearningSubject } from './subjectLearning';
+import { nextIncompleteSubject } from './resumeLearning';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import styles from './SubjectWorkspace.module.css';
 import { TransferProgress } from './TransferProgress';
@@ -37,6 +38,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
   const requested = params.get('subject') || params.get('module');
   const requestedActivity = params.get('activity');
   const requestedWeek = params.get('week');
+  const resume = params.get('resume') === '1';
   const selected = requested || (requestedActivity ? `activity:${requestedActivity}` : null);
   const module = useMyLearningModule(kind, id, selected);
   const [search, setSearch] = useState('');
@@ -90,18 +92,27 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
   const schedule = useMemo(() => ({ modules: catalogue?.modules.flatMap(card => card.planModule ? [{ ...card.planModule, id: card.moduleId || card.id.slice(8), title: card.title, description: '', coach_name: '' }] : []) || [],
     moduleLinks: {}, generatedAt: '' }), [catalogue]);
   const current = recommendedLearningSubject(subjects, catalogue?.learner ?? null, undefined, schedule);
+  const resumeSubject = nextIncompleteSubject(subjects, Object.fromEntries(
+    (catalogue?.modules || []).map(card => [card.id, card.planModule?.start_date])));
   const open = (subject: Subject, continuing = false) => {
     const next = new URLSearchParams(location.search);
-    next.delete('activity'); next.delete('module'); next.delete('week'); next.set('subject', subject.id);
+    next.delete('activity'); next.delete('module'); next.delete('week'); next.delete('resume'); next.set('subject', subject.id);
     if (continuing) next.set('week', 'current');
     navigate({ pathname: location.pathname, search: next.toString() });
   };
   useEffect(() => {
+    if (!resume || selected || !resumeSubject || loading || error) return;
+    const next = new URLSearchParams(location.search);
+    next.delete('week'); next.set('subject', resumeSubject.id);
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+  }, [resume, selected, resumeSubject, loading, error, location.pathname, location.search, navigate]);
+  useEffect(() => {
+    if (resume) return;
     if ((view !== 'map' && requestedWeek !== 'current') || selected || !current) return;
     const next = new URLSearchParams(location.search);
     next.set('subject', current.id);
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
-  }, [view, requestedWeek, selected, current, location.pathname, location.search, navigate]);
+  }, [view, requestedWeek, selected, current, location.pathname, location.search, navigate, resume]);
   const subjectTones = new Map([...subjects].sort((a,b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
     .map((subject,index) => [subject.id, tones[index % tones.length]]));
   if (selected) {
