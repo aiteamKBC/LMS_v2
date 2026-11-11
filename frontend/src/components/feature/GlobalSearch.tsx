@@ -1,13 +1,16 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ALL_SEARCH_RESULTS, SEARCH_CATEGORIES, RECENT_SEARCHES, type SearchResultItem } from '@/mocks/search';
+import { AppIcon } from './AppIcon';
+import styles from './GlobalSearch.module.css';
 
 interface GlobalSearchProps {
   isOpen: boolean;
   onClose: () => void;
+  appearance?: 'enrolment';
 }
 
-export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
+export function GlobalSearch({ isOpen, onClose, appearance = 'enrolment' }: GlobalSearchProps) {
   // Client-side navigation: assigning window.location reloaded the whole SPA,
   // so opening a search result reset the app and re-fetched every route chunk.
   const navigate = useNavigate();
@@ -85,8 +88,6 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
           navigate(allFlat[selectedIndex].href);
           onClose();
         }
-      } else if (e.key === 'Escape') {
-        onClose();
       }
     },
     [allFlat, selectedIndex, onClose, navigate]
@@ -118,53 +119,61 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
   const showRecent = !query.trim() && RECENT_SEARCHES.length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
+    <div className={`fixed inset-0 z-50 flex items-start justify-center pt-[15vh] ${appearance === 'enrolment' ? styles.enrolment : ''}`}>
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-foreground-950/40 backdrop-blur-sm" onClick={onClose}></div>
+      <div className={`${styles.backdrop} absolute inset-0 bg-foreground-950/40 backdrop-blur-sm`} onClick={onClose}></div>
 
       {/* Modal */}
-      <div className="relative w-full max-w-[640px] bg-background-50 rounded-2xl border border-background-200 shadow-2xl shadow-foreground-950/10 overflow-hidden animate-in fade-in zoom-in-95">
+      <div role={appearance === 'enrolment' ? 'dialog' : undefined} aria-label={appearance === 'enrolment' ? 'Global search' : undefined} onKeyDown={event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }} className={`${styles.dialog} relative w-full max-w-[640px] bg-background-50 rounded-2xl border border-background-200 shadow-2xl shadow-foreground-950/10 overflow-hidden animate-in fade-in zoom-in-95`}>
       {/* Search input */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-background-100">
-          <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
+        <div className={`${styles.header} flex items-center gap-3 px-5 py-4 border-b border-background-100`}>
+          <span className={`${styles.searchIcon} w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center shrink-0`}>
             <AppIcon className="ri-search-line text-base text-primary-600"></AppIcon>
           </span>
           <input
             ref={inputRef}
             type="text"
+            aria-label="Search workspace"
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search learners, employers, evidence, KSBs, reports..."
-            className="flex-1 bg-transparent text-[15px] text-foreground-900 placeholder:text-foreground-300 outline-none border-none focus:ring-0 font-body"
+            className={`${styles.input} flex-1 bg-transparent text-[15px] text-foreground-900 placeholder:text-foreground-300 outline-none border-none focus:ring-0 font-body`}
           />
           {query && (
             <button
               onClick={() => setQuery('')}
-              className="w-6 h-6 rounded-md flex items-center justify-center text-foreground-300 hover:text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"
+              aria-label="Clear search"
+              className={`${styles.clear} w-6 h-6 rounded-md flex items-center justify-center text-foreground-300 hover:text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer`}
             >
               <AppIcon className="ri-close-line text-sm"></AppIcon>
             </button>
           )}
-          <span className="text-[11px] text-foreground-300 bg-background-100 px-2 py-0.5 rounded-md font-medium border border-foreground-200">
+          {appearance === 'enrolment' ? <button type="button" aria-label="Close search" className={styles.close} onClick={onClose}>Esc</button> : <span className="text-[11px] text-foreground-300 bg-background-100 px-2 py-0.5 rounded-md font-medium border border-foreground-200">
             ESC
-          </span>
+          </span>}
         </div>
 
         {/* Results area */}
-        <div ref={listRef} className="max-h-[420px] overflow-y-auto py-2">
+        <div ref={listRef} className={`${styles.results} max-h-[420px] overflow-y-auto py-2`}>
           {showRecent && (
             <div className="pb-1">
-              <div className="px-5 py-1.5">
+              <div className={`${styles.groupLabel} px-5 py-1.5`}>
                 <span className="text-[10px] font-semibold text-foreground-300 uppercase tracking-widest">Recent Searches</span>
               </div>
               {RECENT_SEARCHES.map((s, i) => (
                 <button
                   key={i}
-                  className="w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-background-100 transition-smooth"
+                  className={`${styles.recentRow} w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-background-100 transition-smooth`}
                   onClick={() => { setQuery(s); inputRef.current?.focus(); }}
                 >
-                  <AppIcon className="ri-history-line text-foreground-300 text-sm"></AppIcon>
+                  <AppIcon className={`${styles.historyIcon} ri-history-line text-foreground-300 text-sm`}></AppIcon>
                   <span className="text-[14px] text-foreground-600">{s}</span>
                 </button>
               ))}
@@ -183,7 +192,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
 
           {!showRecent && groupedResults.map(group => (
             <div key={group.category} className="pb-0.5">
-              <div className="px-5 py-1.5 flex items-center gap-2">
+              <div className={`${styles.groupLabel} px-5 py-1.5 flex items-center gap-2`}>
                 <AppIcon className={`${group.icon} text-[10px] text-foreground-300`}></AppIcon>
                 <span className="text-[10px] font-semibold text-foreground-300 uppercase tracking-widest">{group.label}</span>
                 <span className="text-[10px] text-foreground-250 ml-auto">{group.items.length}</span>
@@ -197,8 +206,9 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
                     key={item.id}
                     href={item.href}
                     data-search-index={flatIdx}
+                    data-selected={isSelected}
                     onClick={e => { e.preventDefault(); navigate(item.href); onClose(); }}
-                    className={`flex items-center gap-3 px-5 py-2.5 transition-smooth group ${
+                    className={`${styles.resultRow} flex items-center gap-3 px-5 py-2.5 transition-smooth group ${
                       isSelected ? 'bg-primary-50/70 border-l-2 border-primary-400' : 'hover:bg-background-100 border-l-2 border-transparent'
                     }`}
                   >
@@ -234,7 +244,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center gap-4 px-5 py-2.5 border-t border-background-100 bg-background-50">
+        <div className={`${styles.footer} flex items-center gap-4 px-5 py-2.5 border-t border-background-100 bg-background-50`}>
           <div className="flex items-center gap-1.5 text-[11px] text-foreground-300">
             <span className="bg-background-100 px-1.5 py-0.5 rounded text-foreground-400 font-medium border border-foreground-200">↑↓</span>
             <span>Navigate</span>

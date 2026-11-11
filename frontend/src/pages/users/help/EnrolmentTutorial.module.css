@@ -1,0 +1,60 @@
+.dialog { position: fixed; inset: 0; width: min(72rem,calc(100vw - 2rem)); max-width: none; max-height: calc(100dvh - 2rem); margin: auto; padding: 0; overflow: hidden; border: 1px solid #ded4eb; border-radius: 1.25rem; background: #fff; color: #30213c; box-shadow: 0 24px 90px #180b2b55; font-family: system-ui,sans-serif; }
+.dialog::backdrop { background: #170e2db3; }
+.surface { display: flex; flex-direction: column; max-height: calc(100dvh - 2rem); }
+.heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem; border-bottom: 1px solid #e8e0ef; }
+.heading p { display: flex; align-items: center; gap: .375rem; margin: 0 0 .25rem; font-size: .75rem; font-weight: 600; color: #6b4789; }
+.heading h2 { margin: 0; font-size: 1.25rem; font-weight: 700; }
+.heading span { display: block; margin-top: .25rem; color: #6f6277; font-size: .75rem; }
+.heading > button { display: grid; place-items: center; flex-shrink: 0; width: 2.75rem; height: 2.75rem; border-radius: .75rem; background: #f5f0f8; cursor: pointer; }
+.body { display: grid; grid-template-columns: minmax(0,1.8fr) minmax(17rem,1fr); gap: 1.25rem; padding: 1.25rem; overflow-y: auto; }
+.player { position: sticky; top: 0; align-self: start; min-width: 0; }
+.player video { display: block; width: 100%; aspect-ratio: 8 / 5; border-radius: .75rem; background: #1d1029; }
+.note { margin: .75rem 0; color: #706477; font-size: .75rem; line-height: 1.6; }
+.download { display: inline-flex; align-items: center; gap: .375rem; min-height: 2.75rem; color: #5d2e88; font-size: .8125rem; font-weight: 600; }
+.chapters h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+.chapters > p { margin: .375rem 0 1rem; color: #706477; font-size: .8125rem; line-height: 1.5; }
+.chapters ol { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+.chapters button { display: flex; align-items: flex-start; gap: .625rem; width: 100%; padding: .75rem; border: 1px solid #e7dfed; border-radius: .75rem; text-align: left; cursor: pointer; }
+.chapters button:hover, .chapters button[aria-current] { border-color: #a77dc4; background: #f6f0fb; }
+.number { display: grid; place-items: center; flex-shrink: 0; width: 1.5rem; height: 1.5rem; border-radius: 50%; background: #e9dcf4; color: #5d2e88; font-size: .75rem; font-weight: 700; }
+.chapters strong { display: block; margin: 0 0 .25rem; font-size: .8125rem; }
+.chapters button > span > span { display: block; color: #675b6f; font-size: .75rem; line-height: 1.65; }
+.error { padding: .75rem; margin-top: .75rem; border: 1px solid #efcbcb; border-radius: .75rem; color: #8e2828; font-size: .8125rem; }
+.error button { min-height: 2.75rem; text-decoration: underline; font-weight: 600; }
+@media (max-width: 800px) {
+  .dialog { width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); border-radius: 1rem; }
+  .surface { max-height: calc(100dvh - 1rem); }
+  .heading { padding: .875rem; }
+  .heading h2 { font-size: 1.125rem; }
+  .body { grid-template-columns: minmax(0,1fr); padding: .75rem; gap: 1rem; }
+  .player { position: static; }
+}
+
+/* Floating help launcher: bottom-right, under the mobile navigation and every menu or dialog. */
+.launcher { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 35; display: flex; align-items: center; gap: .625rem; pointer-events: none; }
+.launcher > * { pointer-events: auto; }
+.launcherSpacer { height: 5.5rem; flex-shrink: 0; }
+.fab { position: relative; display: grid; place-items: center; width: 3.5rem; height: 3.5rem; flex-shrink: 0; border: 0; border-radius: 50%; background: linear-gradient(140deg, #6d3a9a, #4b2270); color: #fff; box-shadow: 0 10px 28px #3a175a55, inset 0 1px 0 #ffffff33; cursor: pointer; transition: transform .2s ease, box-shadow .2s ease; }
+.fab:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 14px 34px #3a175a66, inset 0 1px 0 #ffffff33; }
+.fab:focus-visible, .hint button:focus-visible { outline: 3px solid #f3d976; outline-offset: 3px; }
+.fab > svg { position: relative; }
+.pulse { position: absolute; inset: -3px; border: 2px solid #f3d976; border-radius: 50%; animation: help-pulse 2s ease-out infinite; }
+@keyframes help-pulse { 0% { box-shadow: 0 0 0 0 #f3d976b3, 0 0 0 0 #8b5db166; } 70% { box-shadow: 0 0 0 12px #f3d97600, 0 0 0 22px #8b5db100; } 100% { box-shadow: 0 0 0 0 #f3d97600, 0 0 0 0 #8b5db100; } }
+.hint { position: relative; display: flex; align-items: center; gap: .125rem; max-width: min(17rem, calc(100vw - 6.5rem)); padding: .25rem .25rem .25rem .875rem; border: 1px solid #e3d5ef; border-radius: 999px; background: #fff; color: #3d2650; box-shadow: 0 8px 24px #2b153a2e; animation: help-hint-in .4s ease-out both, help-hint-float 3.2s ease-in-out .4s infinite; }
+.hint::after { position: absolute; top: 50%; right: -.375rem; width: .75rem; height: .75rem; border-top: 1px solid #e3d5ef; border-right: 1px solid #e3d5ef; background: #fff; transform: translateY(-50%) rotate(45deg); content: ''; }
+.hintText { min-height: 2.25rem; padding: .25rem .125rem; border: 0; background: none; color: inherit; font: 600 .8125rem/1.3 system-ui, sans-serif; text-align: left; cursor: pointer; }
+.hintText:hover { color: #5d2e88; text-decoration: underline; text-underline-offset: 2px; }
+.hintClose { position: relative; z-index: 1; display: grid; place-items: center; width: 2rem; height: 2rem; flex-shrink: 0; border: 0; border-radius: 50%; background: transparent; color: #7a6b86; cursor: pointer; }
+.hintClose:hover { background: #f4edf9; color: #5d2e88; }
+@keyframes help-hint-in { from { opacity: 0; transform: translateX(.5rem); } to { opacity: 1; transform: none; } }
+@keyframes help-hint-float { 0%, 100% { transform: none; } 50% { transform: translateY(-3px); } }
+@media (max-width: 640px) {
+  .launcher { right: 1rem; bottom: 1rem; }
+  .fab { width: 3.25rem; height: 3.25rem; }
+  .hintText { font-size: .75rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse, .hint { animation: none; }
+  .fab, .fab:hover { transition: none; transform: none; }
+}
+@media print { .launcher, .launcherSpacer { display: none; } }

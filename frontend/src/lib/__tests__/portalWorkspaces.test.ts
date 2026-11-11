@@ -60,7 +60,7 @@ describe('activeWorkspace', () => {
 describe('the list itself', () => {
   it('is the curated set, Super Admin first', () => {
     expect(PORTAL_WORKSPACES.map((w) => w.slug)).toEqual([
-      'admin', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'support', 'employer', 'audit', 'learner',
+      'admin', 'my-courses', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'support', 'employer', 'audit', 'learner',
     ]);
   });
 
@@ -103,6 +103,13 @@ describe('the list itself', () => {
     const employer = PORTAL_WORKSPACES.find((w) => w.slug === 'employer');
     expect(employer).toBeDefined();
     expect(employer?.demoEmail).toBeNull();
+  });
+
+  it('offers personal courses without a learner record or a public demo login', () => {
+    expect(workspacesFor(null).find(workspace => workspace.slug === 'my-courses'))
+      .toMatchObject({ path: '/my-courses', label: 'My Courses', demoEmail: null });
+    expect(activeWorkspace('/my-courses')?.slug).toBe('my-courses');
+    expect(activeWorkspace('/my-courses-other')).toBeNull();
   });
 
   it('opens the protected support queue without offering a public demo account', () => {

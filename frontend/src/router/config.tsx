@@ -312,6 +312,7 @@ const TutorSessionsPage = lazyRoute(() => import("../pages/tutor/sessions/page")
 const UserGuidePage = lazyRoute(() => import("../pages/user-guide/page"));
 const UsersListPage = lazyRoute(() => import("../pages/users/page"));
 const FirstSessionBookingsPage = lazyRoute(() => import("../pages/users/first-sessions/page"));
+const EnrolmentCoursesPage = lazyRoute(() => import("../pages/users/my-courses/page"));
 const VideoWatchPage = lazyRoute(() => import("../pages/learner/video-watch/page"));
 const VoucherClaimsPage = lazyRoute(() => import("../pages/engagement/voucher-claims/page"));
 const WeekDetailPage = lazyRoute(() => import("../pages/learner/week-detail/page"));
@@ -1087,6 +1088,10 @@ const routes: RouteObject[] = [
   {
     path: "/users/first-sessions",
     element: <FirstSessionBookingsPage />,
+  },
+  {
+    path: "/users/my-courses",
+    element: <EnrolmentCoursesPage />,
   },
   {
     path: "/curriculum/coach-directory",

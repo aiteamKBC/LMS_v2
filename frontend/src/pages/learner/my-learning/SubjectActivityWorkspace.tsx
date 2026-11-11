@@ -107,7 +107,7 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
       {!weeks.length && <p className="rounded-xl border bg-white p-5 text-sm text-foreground-500">Activities will appear here when they are added to this subject.</p>}
     </div>
     {/* Use the catalogue's dates, rather than fetching a second plan by title. */}
-    <ActivitySidebar moduleTitle={subject.title} weekTitle={sidebarWeek ? weekTitle(sidebarWeek) : ''}
+    <ActivitySidebar scrollWithinViewport moduleTitle={subject.title} weekTitle={sidebarWeek ? weekTitle(sidebarWeek) : ''}
       webPointKind={kind} webPointLearnerId={learnerId}
       pointIdentityFor={item => entries.get(item.componentId || '')?.native?.componentId}
       attendanceLearner={{ kind, id: learnerId }}

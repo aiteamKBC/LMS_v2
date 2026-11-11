@@ -201,4 +201,6 @@ def confirm(email, module_id, occurrence_id):
                     'attendance_profile_unavailable', 409,
                 )
             upsert_qr_attendance_register(cursor, final_row)
+            from .parallel_attendance_register import reconcile_parallel_attendance
+            reconcile_parallel_attendance([occurrence_id], database=connection.alias)
             return result

@@ -8,8 +8,8 @@ import { fetchAttendanceModes } from '@/api/attendanceLectures';
 import type { UserListRow } from '../types';
 import UsersListPage from '../page';
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: false }) }));
-vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => children }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isAdmin: false }) }));
+vi.mock('@/pages/users/presentation/EnrolmentWorkspaceShell', () => ({ EnrolmentWorkspaceShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock('@/api/enrolmentUsers', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/enrolmentUsers')>(), fetchEnrolmentUsers: vi.fn(),
 }));
@@ -60,8 +60,9 @@ it('shows each learner’s saved attendance mode, with no mode for staff', async
 });
 
 const applyAttendanceFilter = (value: 'live' | 'lazy') => {
-  const select = screen.getByText('Attendance mode', { selector: 'label' }).nextElementSibling as HTMLSelectElement;
-  fireEvent.change(select, { target: { value } });
+  fireEvent.click(screen.getByRole('button', { name: /^Filters$/ }));
+  fireEvent.click(screen.getByRole('combobox', { name: 'Attendance mode' }));
+  fireEvent.click(screen.getByRole('option', { name: value === 'live' ? 'Live Sessions' : 'Recorded' }));
   fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
 };
 
