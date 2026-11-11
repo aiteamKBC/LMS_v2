@@ -42,7 +42,7 @@ def learner_plan(kind, learner_id):
     if model is None:
         raise ValueError('Invalid learner kind.')
     source = assignment_projection(model.all_learners.only(
-        'id', 'aptem_id', 'learner_type', 'programme', 'cohort', 'group',
+        'id', 'aptem_id', 'learner_type',
     )).get(pk=learner_id)
     source.training_plan = source._weekly_training_plan
     source.learning_plan = source._weekly_learning_plan
@@ -58,8 +58,7 @@ def learner_plan(kind, learner_id):
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
-              AND {visible_week_sql('w')}
-              AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')''', [module_ids])
+              AND {visible_week_sql('w')}''', [module_ids])
         rows = cursor.fetchall()
     return project_points(rows, read_configurations({row[1] for row in rows}))
 
