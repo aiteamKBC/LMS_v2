@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChevronLeft, ChevronRight, Clock3, Equal, FileText, GraduationCap, Target, TrendingDown, TrendingUp } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -22,12 +22,33 @@ export function MonthlyPlanBoard({ payload, kind, learnerId, onRefresh, onMonthC
   refreshing: boolean; onMonthChange: (month: string) => void;
   active?: boolean;
 }) {
+  const lastAutomaticRefresh = useRef<{ key: string; at: number } | null>(null);
+  const refreshKey = JSON.stringify([kind, learnerId, payload.month, payload.refreshAt]);
   useEffect(() => {
     if (!active || refreshing) return;
     const deadline = Date.parse(payload.refreshAt);
-    const timer = window.setTimeout(onRefresh, Math.min(Math.max(0, deadline - Date.now()), 2_147_483_647));
-    return () => window.clearTimeout(timer);
-  }, [payload.refreshAt, onRefresh, active, refreshing]);
+    let timer: number | undefined;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      if (document.visibilityState === 'hidden') return;
+      // A failed read retains the expired payload. Bound retries rather than
+      // immediately requesting that same snapshot again on every render.
+      const previous = lastAutomaticRefresh.current;
+      const nextAttempt = previous?.key === refreshKey ? previous.at + 60_000 : deadline;
+      timer = window.setTimeout(() => {
+        lastAutomaticRefresh.current = { key: refreshKey, at: Date.now() };
+        onRefresh();
+      }, Math.min(Math.max(0, Math.max(deadline, nextAttempt) - Date.now()), 2_147_483_647));
+    };
+    schedule();
+    document.addEventListener('visibilitychange', schedule);
+    window.addEventListener('focus', schedule);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', schedule);
+      window.removeEventListener('focus', schedule);
+    };
+  }, [payload.refreshAt, refreshKey, onRefresh, active, refreshing]);
   const canGoPrevious = !!payload.navigation.previous;
   const canGoNext = !!payload.navigation.next;
   const shiftMonth = (step: number) => { const month = step < 0 ? payload.navigation.previous : payload.navigation.next; if (month) onMonthChange(month); };
