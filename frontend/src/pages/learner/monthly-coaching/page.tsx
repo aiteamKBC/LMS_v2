@@ -6,7 +6,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { downloadLearnerMcmPdf, downloadMigratedReviewForParty, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, retryMigratedMonthlyLogSignature, saveLearnerEventReviewAnswers, saveMigratedReviewPartyAnswers, signLearnerProgressReview, signMigratedReviewAsParty, type LearnerCalendarEvent, type MonthlyLogSignatureSync } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useAuth } from '@/hooks/useAuth';
-import { needsLearnerMigratedForm } from '@/api/learnerMigratedReview';
+import { canPreviewLearnerMigratedReview, needsLearnerMigratedForm } from '@/api/learnerMigratedReview';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -309,7 +309,7 @@ export default function MonthlyCoachingPage() {
     && String(auth.account.subjectId) === String(myLearner.id)
     && !searchParams.get('viewAsLearner') && !searchParams.get('viewAsCoach')
     && needsLearnerMigratedForm(selected));
-  const previewImported = Boolean(isInitialized && auth.account?.role === 'admin'
+  const previewImported = Boolean(isInitialized && canPreviewLearnerMigratedReview(auth.account?.role)
     && selected && (isMigratedContinuationEvent(selected) || needsLearnerMigratedForm(selected)));
   const migratedEvent = isMigratedContinuationEvent(selected) || prepareImported || previewImported;
   const selectedDate = dateOf(selected);
