@@ -12,7 +12,7 @@ import type { EnrolmentBoard, FsBlock } from '../types';
 import { fetchLearnerCoach, updateLearnerCoach } from '@/api/coach';
 import { fetchCoachOptions } from '@/api/staffUsers';
 
-vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => children }));
+vi.mock('@/pages/users/presentation/EnrolmentWorkspaceShell', () => ({ EnrolmentWorkspaceShell: ({ children }: { children: ReactNode }) => children }));
 const toast = vi.hoisted(() => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
 vi.mock("@/hooks/useToast", () => ({ useToast: () => toast }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: true, auth: { user: { fullName: 'Staff Member' } } }) }));

@@ -87,6 +87,19 @@ describe('learner account menu', () => {
     expect(document.querySelector('.kbc-learner-header-pattern')).toBeInTheDocument();
   });
 
+  it('keeps search and account actions available in the enrolment directory header', async () => {
+    const onOpenSearch = vi.fn();
+    render(<MemoryRouter>
+      <Header role="admin" appearance="enrolment" workspaceLabel="Enrolment" pageTitle="Users" onOpenSearch={onOpenSearch} />
+    </MemoryRouter>);
+    const account = screen.getByRole('button', { name: 'Account menu' });
+    expect(account).toHaveTextContent('Aya Aya Test');
+    await userEvent.click(screen.getByRole('button', { name: 'Jump to a screen' }));
+    expect(onOpenSearch).toHaveBeenCalledOnce();
+    await userEvent.click(account);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+  });
+
   it('keeps the coach account menu above the scrolling page content', async () => {
     showHeader('coach');
 

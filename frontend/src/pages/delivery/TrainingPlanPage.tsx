@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { EnrolmentWorkspaceShell as WorkspaceShell } from '@/pages/users/presentation/EnrolmentWorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { useToast } from "@/hooks/useToast";
-import { Hero, inputClass, btnPrimary, btnSecondary, EmptyState } from '@/pages/users/components/ui';
+import { useToast } from '@/hooks/useToast';
+import { inputClass, btnPrimary, btnSecondary, EmptyState } from '@/pages/users/components/ui';
+import { EnrolmentHero } from '@/pages/users/presentation/EnrolmentPage';
+import styles from '@/pages/users/presentation/EnrolmentForms.module.css';
+import motion from '@/pages/users/presentation/EnrolmentMotion.module.css';
 import {
   fetchProgrammes, fetchCohorts, fetchGroups, fetchModules, fetchWeeks, fetchComponents,
   fetchLegacyOtjh, legacyOtjhKey,
@@ -317,22 +320,28 @@ export default function TrainingPlanPage() {
       pageSubtitle={learnerName || 'Build a learner training plan'}
       userName="Enrolment Officer"
       userRole="Enrolment Officer"
+      hideBreadcrumbs
+      showBackButton={false}
+      directoryLayout
     >
-      <div className="p-6 space-y-6 max-w-5xl mx-auto">
-        <Hero
+      <div className={`${styles.page} ${styles.plan} ${motion.page}`}>
+        <EnrolmentHero
           icon="ri-node-tree"
           title="Training plan wizard"
-          subtitle={<>{hadExisting ? <>Editing the existing plan for <strong>{learnerName || 'this learner'}</strong>.</> : <>Building a plan for <strong>{learnerName || 'this learner'}</strong>.</>} Complete the steps below.</>}
+          description={<>{hadExisting ? <>Editing the existing plan for <strong>{learnerName || 'this learner'}</strong>.</> : <>Building a plan for <strong>{learnerName || 'this learner'}</strong>.</>} Complete the steps below.</>}
+          eyebrow="Enrolment"
+          className={`${styles.hero} ${motion.cardEnter}`}
         />
 
         {/* stepper */}
-        <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-4 card-premium">
+        <div className={styles.stepper} aria-label="Training plan steps">
           <div className="flex items-center">
             {STEPS.map((s, i) => {
               const state = step === s.n ? 'current' : step > s.n ? 'done' : 'todo';
               return (
                 <div key={s.n} className="flex items-center flex-1 last:flex-none">
                   <button
+                    aria-current={state === 'current' ? 'step' : undefined}
                     onClick={() => (s.n < step || (s.n === 2 && programme)) && setStep(s.n)}
                     className="flex items-center gap-2.5 cursor-pointer disabled:cursor-default"
                     disabled={s.n > step && !(s.n === 2 && programme)}
@@ -476,7 +485,7 @@ export default function TrainingPlanPage() {
             )}
 
             {/* footer nav */}
-            <div className="flex items-center justify-between gap-3">
+            <div className={styles.formFooter}>
               <button className={btnSecondary} onClick={() => navigate(backHref)}>Cancel</button>
               <div className="flex items-center gap-3">
                 {step > 1 && <button className={btnSecondary} onClick={back}><AppIcon className="ri-arrow-left-line" />Back</button>}

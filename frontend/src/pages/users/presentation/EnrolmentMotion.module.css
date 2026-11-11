@@ -1,0 +1,38 @@
+/* Motion values retained from the Readdy Enrollment reference. */
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(14px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes rowIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.page { min-width: 0; }
+:global(.workspace-main):has(> .page) { scroll-behavior: smooth; scroll-padding-block: 1rem; }
+.cardEnter, .staggerCards > * { animation: cardIn .42s cubic-bezier(.22, .9, .28, 1) backwards; }
+.rowEnter, .staggerRows > * { animation: rowIn .34s cubic-bezier(.22, .9, .28, 1) backwards; }
+.sectionEnter { animation: rise .28s ease-out both; }
+:is(.staggerCards, .staggerRows) > :nth-child(1) { animation-delay: 0ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(2) { animation-delay: 45ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(3) { animation-delay: 90ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(4) { animation-delay: 135ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(5) { animation-delay: 180ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(6) { animation-delay: 225ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(7) { animation-delay: 270ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(8) { animation-delay: 315ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(9) { animation-delay: 360ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(10) { animation-delay: 405ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(11) { animation-delay: 450ms; }
+:is(.staggerCards, .staggerRows) > :nth-child(n+12) { animation-delay: 495ms; }
+.staggerCards > *, .staggerRows > * { transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease; }
+@media (hover: hover) {
+  .staggerCards > *:hover { box-shadow: 0 8px 22px -12px #5d2e8840; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cardEnter, .rowEnter, .sectionEnter, .staggerCards > *, .staggerRows > * { animation: none; transition: none; }
+  :global(.workspace-main):has(> .page) { scroll-behavior: auto; }
+}

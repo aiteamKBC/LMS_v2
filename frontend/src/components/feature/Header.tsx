@@ -262,12 +262,13 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
   const initials = initialsOf(displayName);
   const hasLearnerProfile = role === 'learner' && auth.account?.subjectType === 'learner' && Boolean(auth.account.subjectId);
   const headerLook = appearance ?? role;
+  const usesEnrolmentHeader = headerLook === 'enrolment';
   const usesLearnerHeader = headerLook === 'learner' || headerLook === 'coach' || headerLook === 'curriculum';
 
   return (
     <>
     {/* Every workspace shares the same frame as its icon rail. */}
-    <header className={`kbc-workspace-topbar workspace-topbar relative mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 overflow-visible rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80 ${role === 'coach' ? 'z-40' : ''} ${usesLearnerHeader ? 'kbc-learner-header' : ''}`}>
+    <header data-enrolment-header={usesEnrolmentHeader || undefined} className={`kbc-workspace-topbar workspace-topbar relative mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 overflow-visible rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80 ${role === 'coach' ? 'z-40' : ''} ${usesLearnerHeader ? 'kbc-learner-header' : ''}`}>
       {usesLearnerHeader && (
         <div
           aria-hidden="true"
@@ -300,7 +301,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
 
       {/* Where the page says what it is. These props were being passed by every
           page and thrown away, which is what left the bar looking empty. */}
-      <div className={`${usesLearnerHeader ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1`}>
+      <div className={`${usesEnrolmentHeader ? 'hidden' : usesLearnerHeader ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1`}>
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-inset ring-white/10" aria-hidden="true">
             {pageIcon ?? <AppIcon className="ri-dashboard-line h-5 w-5" />}
@@ -322,7 +323,8 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
 
       {/* Multi-access accounts can return to their workspaces from personal learning too. */}
       {headerExtras && <div className="kbc-header-extras min-w-0 shrink-0">{headerExtras}</div>}
-      {(!personalLearning || (auth.account?.accessWorkspaces?.length ?? 0) > 1) && <WorkspaceSwitcher />}
+      {(!personalLearning || (auth.account?.accessWorkspaces?.length ?? 0) > 1) && <WorkspaceSwitcher label={usesEnrolmentHeader ? workspaceLabel : undefined} />}
+      {usesEnrolmentHeader && <button type="button" className="kbc-enrolment-search" aria-label="Jump to a screen" onClick={onOpenSearch}><AppIcon name="ri-search-line" aria-hidden="true" /><span>Jump to a screen...</span></button>}
 
       {/* Profile and its existing account actions. */}
       <div className="flex shrink-0 items-center gap-0.5 lg:border-l lg:border-white/15 lg:pl-4">
@@ -340,7 +342,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
             }`}
           >
             <AccountAvatar initials={initials} className="h-8 w-8 shadow-sm shadow-primary-900/25" />
-            <span className="kbc-topbar-user-name hidden max-w-[8rem] truncate text-xs font-semibold text-white xl:inline">{role === 'learner' ? displayName : workspaceLabel || roleLabel || displayName}</span>
+            <span className="kbc-topbar-user-name hidden max-w-[8rem] truncate text-xs font-semibold text-white xl:inline">{usesEnrolmentHeader ? <span className="kbc-enrolment-identity"><span>{displayName}</span><small>Signed in</small></span> : role === 'learner' ? displayName : workspaceLabel || roleLabel || displayName}</span>
             <AppIcon
               className={`ri-arrow-down-s-line hidden text-xs text-foreground-400 transition-transform duration-200 sm:inline ${profileOpen ? 'rotate-180' : ''}`}
             ></AppIcon>
