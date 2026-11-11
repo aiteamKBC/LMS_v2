@@ -28,6 +28,7 @@ def lecture(**values):
 
 class LiveSessionProgressTests(SimpleTestCase):
     def setUp(self):
+        patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='live').start()
         self.manual = patch('learner_api.live_session_progress.read_manual_live_credits', return_value=({}, [])).start()
         self.addCleanup(patch.stopall)
 

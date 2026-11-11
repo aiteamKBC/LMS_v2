@@ -15,7 +15,7 @@ import { useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { acknowledgeEmail, fetchEmailLog, type EmailLogRow } from '@/api/platformAdmin';
 
 const PAGE_SIZE = 25;

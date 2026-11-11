@@ -2,8 +2,9 @@
 
 Read-only: the stored status and every per-type lifecycle (review instances,
 signatures, catch-up recovery) are left untouched. A meeting still open after
-its booked end shows as ``ended`` unless the stored Teams attendance shows the
-learner in it for more than three minutes, which shows it as ``completed``.
+its booked end shows as ``ended`` unless the stored Teams attendance qualifies
+the learner as present, which shows it as ``completed``. Reviews use their own
+ten-minute display rule; other meetings retain the three-minute rule.
 """
 from datetime import datetime, timedelta
 
@@ -66,6 +67,8 @@ def learner_attended_event_keys(event_keys):
 def annotate_meeting_outcomes(events, *, now=None):
     """Add ``meetingOutcome`` ('ended' | 'completed' | None) to serialized calendar events."""
     now_local = timezone.localtime(now).replace(tzinfo=None)
+    from .review_attendance_display import annotate_review_attendance
+    annotate_review_attendance(events, now_local=now_local)
     elapsed = []
     for event in events:
         if not isinstance(event, dict):
@@ -80,5 +83,8 @@ def annotate_meeting_outcomes(events, *, now=None):
         return events
     attended = learner_attended_event_keys(event.get('calendarEventKey') or event.get('eventKey') for event in elapsed)
     for event in elapsed:
-        event['meetingOutcome'] = 'completed' if (event.get('calendarEventKey') or event.get('eventKey')) in attended else 'ended'
+        if event.get('source') in {'mcr', 'progress-review'} and event.get('reviewAttendance') is not None:
+            event['meetingOutcome'] = 'completed' if event['reviewAttendance'] == 'attended' else 'ended'
+        else:
+            event['meetingOutcome'] = 'completed' if (event.get('calendarEventKey') or event.get('eventKey')) in attended else 'ended'
     return events

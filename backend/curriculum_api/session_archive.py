@@ -1,4 +1,4 @@
-"""Background-only import of Teams files into a private Azure container."""
+"""Background imports: new lecture videos to Bunny; historical files retained."""
 import json
 import logging
 import os
@@ -13,7 +13,7 @@ from django.db import connections
 
 from .session_results import read, result_rows
 from .session_results_policy import archive_prefix, attendance_csv, transcript_text
-from .session_media_policy import transcript_timing_ready
+from .session_media_policy import artifact_metadata, transcript_timing_ready
 from .session_transcripts import parse_vtt_cues
 from .session_transfer_progress import TransferProgress, byte_count
 from .session_cloud_archive import copy_matched_recording, verify_existing_recording
@@ -34,6 +34,7 @@ def save_transcript_timing(artifact_id, raw):
         cursor.execute('''UPDATE curriculum.live_session_artifacts
             SET metadata=jsonb_set(coalesce(metadata::jsonb,'{}'::jsonb),'{lmsTranscriptTimeline}',%s::jsonb)
             WHERE id=%s AND artifact_type='transcript' ''', [json.dumps(timeline, ensure_ascii=False), artifact_id])
+    return timeline
 
 
 def provision_container():
@@ -84,7 +85,7 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
     from learner_api.evidence_storage import upload_blob
     from .views import teams_online_meeting_owner_id
     series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [series_id])[0]
-    modules = read('SELECT group_id,group_name FROM curriculum.modules WHERE module_catalogue_id=%s', [series['module_catalogue_id']])
+    modules = read('SELECT group_id,group_name,programme_id,programme_name,cohort_id,cohort_name,title FROM curriculum.modules WHERE module_catalogue_id=%s', [series['module_catalogue_id']])
     occurrences = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s', [series_id])
     by_id = {row['id']: row for row in occurrences}
     artifacts = read('''SELECT a.*,r.status AS saved_status,r.blob_name AS saved_name,
@@ -95,19 +96,40 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
         selected = set(artifact_ids)
         artifacts = [artifact for artifact in artifacts if artifact['id'] in selected]
     errors = []
-    client = storage_client()
+    client = None
     token = None
     drive_cache = {}
+    caption_candidates = False
     for artifact in artifacts:
+        from .session_bunny_policy import recording_uses_bunny
+        occurrence = by_id[artifact['occurrence_id']]
+        if recording_uses_bunny(occurrence, artifact):
+            from .bunny_stream import VideoImportError
+            from .session_bunny import enqueue_recording
+            from .video_imports import process
+            try:
+                asset = enqueue_recording(series, occurrence, artifact, modules[0] if modules else {})
+                asset = process(asset.pk, session_lease_id=lease_id)
+                caption_candidates = caption_candidates or asset.status == 'ready'
+                if asset.status != 'ready':
+                    errors.append(asset.error or f"Bunny is processing recording {artifact['id']}.")
+            except VideoImportError as failure:
+                errors.append(str(failure))
+            except Exception as failure:
+                log.warning('Bunny recording %s could not be queued (%s).', artifact['id'], type(failure).__name__)
+                errors.append(f"Could not prepare Bunny recording {artifact['id']}. Check worker logs.")
+            continue
         if artifact['saved_status'] == 'ready':
             # Backfill timing for previously archived transcripts from Azure once.
             # Ready videos are never downloaded or uploaded again.
             if artifact['artifact_type'] == 'transcript' and not transcript_timing_ready(artifact):
                 try:
+                    client = client or storage_client()
                     raw = client.get_blob_client(CONTAINER, artifact['saved_name']).download_blob(offset=0, length=16 * 1024 * 1024 + 1).readall()
                     if len(raw) > 16 * 1024 * 1024:
                         raise ValueError('Transcript exceeds the supported size.')
-                    save_transcript_timing(artifact['id'], raw)
+                    timeline = save_transcript_timing(artifact['id'], raw)
+                    artifact['metadata'] = {**artifact_metadata(artifact), 'lmsTranscriptTimeline': timeline}
                 except Exception as failure:
                     log.warning('Transcript timing %s failed: %s', artifact['id'], type(failure).__name__)
                     errors.append(f"Could not prepare transcript timing for {artifact['id']}. Check worker logs.")
@@ -128,6 +150,7 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
         progress = TransferProgress(series_id, artifact['id'], lease_id)
         progress.update('preparing')
         try:
+            client = client or storage_client()
             blob = client.get_blob_client(CONTAINER, name)
             text = None
             blob_present = blob.exists()
@@ -285,7 +308,8 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
                         raise ValueError('Transcript exceeds the supported size.')
                     text = transcript_text(raw.decode('utf-8-sig', errors='replace'))
                 client.get_blob_client(CONTAINER, name.rsplit('.', 1)[0] + '.txt').upload_blob(text.encode('utf-8'), overwrite=True)
-                save_transcript_timing(artifact['id'], raw)
+                timeline = save_transcript_timing(artifact['id'], raw)
+                artifact['metadata'] = {**artifact_metadata(artifact), 'lmsTranscriptTimeline': timeline}
             save_archive(artifact, name, text=text)
         except Exception as failure:
             log.warning('Session artifact %s archive failed: %s', artifact['id'], type(failure).__name__)
@@ -300,6 +324,15 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
             error = f"Could not archive {kind} {artifact['id']} during {phase} ({type(failure).__name__}{status_label}{detail}). Check worker logs and access."
             save_archive(artifact, name, state='failed', error=error)
             errors.append(error)
+    if caption_candidates:
+        # Independent receipts/retries: a caption failure must not invalidate the
+        # playable recording, attendance archive or its existing transfer job.
+        from .session_captions import sync_series_captions
+        try:
+            sync_series_captions(series_id, artifacts)
+        except Exception as failure:
+            log.warning('Caption journal for series %s is unavailable (%s); the session worker will check again.',
+                        series_id, type(failure).__name__)
     if artifact_ids is not None:
         return errors
     for session in result_rows(series):
@@ -308,6 +341,7 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
         occurrence = by_id[session['id']]
         prefix = archive_prefix(series, occurrence, modules[0] if modules else {})
         try:
+            client = client or storage_client()
             client.get_blob_client(CONTAINER, prefix + '/attendance.csv').upload_blob(attendance_csv(session['attendance']).encode('utf-8'), overwrite=True)
             raw = read('SELECT raw_data FROM curriculum.live_session_attendance WHERE occurrence_id=%s', [session['id']])
             client.get_blob_client(CONTAINER, prefix + '/teams-attendance-original.json').upload_blob(json.dumps(raw, default=str).encode('utf-8'), overwrite=True)

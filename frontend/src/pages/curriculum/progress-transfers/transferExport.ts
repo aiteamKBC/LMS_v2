@@ -2,7 +2,9 @@ import type { AdminTransfer } from '@/api/progressTransfer';
 
 function cell(value: string | number | null | undefined) {
   const text = value == null ? '' : String(value);
-  const safe = /^[\s\u0000-\u001f]*[=+@-]/.test(text) ? `'${text}` : text;
+  let first = 0;
+  while (first < text.length && (text.charCodeAt(first) < 32 || /\s/.test(text[first]))) first++;
+  const safe = /^[=+@-]/.test(text.slice(first)) ? `'${text}` : text;
   return `"${safe.replace(/"/g, '""')}"`;
 }
 

@@ -27,8 +27,8 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
 }));
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: mocks.useAuth }));
-vi.mock('@/hooks/useToast', () => ({
+vi.mock("@/hooks/useAuth", () => ({ useAuth: mocks.useAuth }));
+vi.mock("@/hooks/useToast", () => ({
   useToast: () => ({ success: vi.fn(), error: mocks.toastError }),
 }));
 vi.mock('@/api/employerPortal', async (importOriginal) => ({
@@ -260,7 +260,7 @@ describe('EmployerLearnerPage content and review signing', () => {
   it('places Progress reviews after Documents and opens the employer review workspace', async () => {
     mocks.fetchEmployerLearner.mockResolvedValue(detail([]));
     renderPage();
-    const tab = await screen.findByRole('button', { name: 'Progress reviews' });
+    const tab = await screen.findByRole('button', { name: 'Progress & Gateway reviews' });
     const documents = screen.getByRole('button', { name: /Documents/ });
     expect(documents.compareDocumentPosition(tab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.click(tab);
@@ -272,7 +272,7 @@ describe('EmployerLearnerPage content and review signing', () => {
   it.each(['reviews', 'documents'])('opens the %s tab directly from the employer home link', async tabName => {
     mocks.fetchEmployerLearner.mockResolvedValue(detail([]));
     renderPage(`?tab=${tabName}`);
-    const label = tabName === 'reviews' ? /^Progress reviews$/ : /^Documents/;
+    const label = tabName === 'reviews' ? /^Progress & Gateway reviews$/ : /^Documents/;
     expect(await screen.findByRole('button', { name: label })).toHaveAttribute('aria-current', 'page');
   });
 

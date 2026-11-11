@@ -1,8 +1,81 @@
+import uuid
+
 from django.db import models
+from django.utils import timezone
+
+
+class QRAttendance(models.Model):
+    """Independent email-submitted evidence used by the final learner register.
+
+    Identity fields are scalar snapshots. The migration installs real database
+    foreign keys because the external enrolment/curriculum tables are unmanaged.
+    """
+    enrolment_id = models.IntegerField()
+    programme_id = models.CharField(max_length=150)
+    module_id = models.CharField(max_length=128)
+    occurrence_id = models.CharField(max_length=128)
+    assigned_group_id = models.CharField(max_length=128, null=True, blank=True)
+    attended_group_id = models.CharField(max_length=128, null=True, blank=True)
+    assigned_cohort_id = models.CharField(max_length=128, null=True, blank=True)
+    attended_cohort_id = models.CharField(max_length=128, null=True, blank=True)
+    source = models.CharField(max_length=2, default='qr', editable=False)
+    confirmed_at = models.DateTimeField(default=timezone.now, editable=False)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."qr_attendance'
+        constraints = [models.UniqueConstraint(fields=['enrolment_id', 'occurrence_id'], name='qr_attendance_student_occurrence_uniq')]
+
+
+class CurriculumVideoImport(models.Model):
+    """Durable import identity, source and outcome; no learner records."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    target_kind = models.CharField(max_length=16)
+    target_id = models.CharField(max_length=128)
+    component_id = models.CharField(max_length=128)
+    fingerprint = models.CharField(max_length=64, unique=True)
+    title = models.TextField()
+    source_url = models.TextField(blank=True, default='')
+    source_at_start = models.TextField(blank=True, default='')
+    scope = models.JSONField(default=dict)
+    library_id = models.CharField(max_length=32, default='798153')
+    collection_id = models.CharField(max_length=64, blank=True, default='')
+    video_id = models.CharField(max_length=64, blank=True, default='')
+    status = models.CharField(max_length=24, default='queued', db_index=True)
+    error = models.TextField(blank=True, default='')
+    lease_until = models.DateTimeField(null=True, blank=True)
+    requested_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum_video_import'
+
+
+class CurriculumVideoChange(models.Model):
+    """Database-captured source changes awaiting the Bunny import worker."""
+
+    target_kind = models.CharField(max_length=16)
+    target_id = models.CharField(max_length=128)
+    component_id = models.CharField(max_length=128)
+    previous_settings = models.JSONField(default=dict)
+    settings = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+    available_at = models.DateTimeField(default=timezone.now, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    error = models.TextField(blank=True, default='')
+
+    class Meta:
+        db_table = 'curriculum_video_change'
 
 
 class ModuleAuthoringModule(models.Model):
     module_catalogue_id = models.CharField(max_length=128, primary_key=True)
+    is_for_sale = models.BooleanField(default=False)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=3, default='GBP')
     programme_id = models.CharField(max_length=255, blank=True, default='')
     programme_name = models.CharField(max_length=255, blank=True, default='')
     is_programme_deleted = models.BooleanField(default=False)
@@ -10,6 +83,7 @@ class ModuleAuthoringModule(models.Model):
     cohort_name = models.CharField(max_length=255, blank=True, default='')
     group_id = models.CharField(max_length=255, blank=True, default='')
     group_name = models.CharField(max_length=255, blank=True, default='')
+    tutor_name = models.CharField(max_length=255, blank=True, default='')
     title = models.TextField()
     description = models.TextField(blank=True, default='')
     total_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)
@@ -316,6 +390,7 @@ class LiveSessionLearnerAttendance(models.Model):
     ]
 
     occurrence_id = models.CharField(max_length=128, db_index=True)
+    session_date = models.DateField(null=True, blank=True, editable=False)
     live_session_id = models.CharField(max_length=128, db_index=True)
     module_catalogue_id = models.CharField(max_length=128, db_index=True)
     learner_profile_id = models.BigIntegerField(db_index=True)
@@ -327,6 +402,11 @@ class LiveSessionLearnerAttendance(models.Model):
     attendance_report_id = models.TextField(blank=True, default='')
     first_join_at = models.DateTimeField(blank=True, null=True)
     last_leave_at = models.DateTimeField(blank=True, null=True)
+    attendance_basis = models.CharField(max_length=16, default='teams')
+    teams_attendance_status = models.CharField(max_length=16, null=True, blank=True)
+    attendance_source_occurrence_id = models.CharField(max_length=128, null=True, blank=True)
+    qr_attendance_id = models.BigIntegerField(null=True, blank=True)
+    qr_confirmed_at = models.DateTimeField(null=True, blank=True)
     calculated_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -336,7 +416,7 @@ class LiveSessionLearnerAttendance(models.Model):
         managed = False
         constraints = [
             models.UniqueConstraint(
-                fields=['occurrence_id', 'learner_profile_id'],
+                fields=['occurrence_id', 'learner_profile_id', 'module_catalogue_id'],
                 name='curriculum_live_learner_attendance_uniq',
             ),
         ]

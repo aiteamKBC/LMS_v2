@@ -123,13 +123,15 @@ class ModuleContextScopeTests(SimpleTestCase):
 
 
 class TransferredModuleOpenTests(SimpleTestCase):
-    def open_module(self, kind, status, *, new_completion=False, http=False):
+    def open_module(self, kind, status, *, new_completion=False, http=False, overlap=False, duplicate=False):
         from . import (weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress,
                        teams_attendance, builder_activity_dates, subject_store)
         source = SimpleNamespace(pk=7, id=7, email='learner@example.test', programme='Programme',
             cohort='', group='', _case_file_profile=SimpleNamespace(pk=9))
         old = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
         components = [component(f'C{i}') for i in range(10)]
+        if duplicate:
+            components.append(component('C0'))
         snapshot = {'courseRef': 'legacy:50', 'activityId': 'catalogue:50:material:7',
             'sourceActivityId': 7, 'catalogueKind': 'material', 'completed': True}
         transfers = saved(status, [item(
@@ -137,6 +139,8 @@ class TransferredModuleOpenTests(SimpleTestCase):
         content = native(components, id='7', week=[])
         if new_completion:
             content['componentProgress'] = [{'componentId': 'C1', 'kind': 'component'}]
+        if overlap:
+            content['componentProgress'].append({'componentId': 'C0', 'kind': 'component'})
         meta = metadata()
         meta.update(imported_courses={'current:M1': 'legacy:50'}, progress_transfers=transfers['items'],
                     replacement_settings={'C0': {'legacySettings': {'sourceLessonId': 7}}})
@@ -172,9 +176,17 @@ class TransferredModuleOpenTests(SimpleTestCase):
                 result = learning.read_module(source, kind, owner, 'current:M1')
         return result, historical
 
+    def test_current_progress_deduplicates_overlap_and_placements_but_keeps_old_snapshot(self):
+        for kind in ('commercial', 'apprenticeship'):
+            result, _ = self.open_module(kind, 'approved', new_completion=True, overlap=True, duplicate=True, http=True)
+            credit = result['metadata']['module_credits']['current:M1']
+            self.assertEqual((credit['progress'], credit['transferredProgress'], credit['actualHours']), (20, 40, 2))
+            self.assertEqual(result['detail']['componentProgress'], [
+                {'componentId': 'C1', 'kind': 'component'}, {'componentId': 'C0', 'kind': 'component'}])
+
     def test_transferred_module_http_response_is_serializable_with_completion_credit(self):
         for kind in ('commercial', 'apprenticeship'):
-            for completed, expected in ((False, 40), (True, 50)):
+            for completed, expected in ((False, 10), (True, 20)):
                 with self.subTest(kind=kind, new_completion=completed):
                     result, _ = self.open_module(kind, 'approved', new_completion=completed, http=True)
                     self.assertNotIn('_completion', result['detail'])
@@ -199,7 +211,7 @@ class TransferredModuleOpenTests(SimpleTestCase):
 
     def test_approved_opens_new_content_and_matched_progress_without_counting_twice(self):
         for kind in ('commercial', 'apprenticeship'):
-            for new_completion, expected in ((False, 40), (True, 50)):
+            for new_completion, expected in ((False, 10), (True, 20)):
                 with self.subTest(kind=kind, new_completion=new_completion):
                     result, historical = self.open_module(kind, 'approved', new_completion=new_completion)
                     self.assertEqual(result['subjectId'], 'current:M1')

@@ -45,7 +45,7 @@ def _join(event):
     return (event.get('onlineMeeting') or {}).get('joinUrl') or ''
 
 
-def cancellation_plan(series, occurrences, previous, read):
+def cancellation_plan(series, occurrences, previous, read, *, original_prefix=''):
     """Return exact local IDs to cancel plus durable occurrence identities.
 
     `read` returns None only for a confirmed Graph event 404; all other failures
@@ -57,7 +57,7 @@ def cancellation_plan(series, occurrences, previous, read):
     owner = quote(str(series.get('organizer_email') or ''), safe='')
     if not owner or not series.get('graph_event_id'):
         raise CalendarStateError('The saved calendar identity is incomplete.')
-    prefix = f'users/{owner}'
+    prefix = original_prefix or f'users/{owner}'
     cache, snapshot, cancelled, errors = {}, {'roots': {}, 'occurrences': {}}, set(), []
     # Planned sessions Microsoft could not be matched to this run. Reported to
     # Calendar health as "verification failed"; never read as a cancellation.
@@ -67,6 +67,8 @@ def cancellation_plan(series, occurrences, previous, read):
         snapshot['management'] = previous['management']
     if previous.get('importedExtension'):
         snapshot['importedExtension'] = previous['importedExtension']
+    if previous.get('originalCalendar'):
+        snapshot['originalCalendar'] = previous['originalCalendar']
 
     def get(event_id, expand=False):
         key = (event_id, expand)
@@ -106,16 +108,19 @@ def cancellation_plan(series, occurrences, previous, read):
     def confirmed_missing(root_id, link):
         nonlocal all_calendar_events
         if all_calendar_events is None:
-            calendars = _list(read, prefix + '/calendars?' + urlencode({'$select': 'id', '$top': 100}))
-            if not calendars:
-                raise CalendarStateError('The organizer calendars could not be verified.')
-            all_calendar_events = []
-            for calendar in calendars:
-                calendar_id = calendar.get('id')
-                if not calendar_id:
-                    raise CalendarStateError('Microsoft returned an invalid calendar identity.')
-                all_calendar_events.extend(_list(read, f'{prefix}/calendars/{quote(calendar_id, safe="")}/events?' +
-                    urlencode({'$select': 'id,iCalUId,isCancelled,onlineMeeting', '$top': 100})))
+            if prefix.startswith('groups/'):
+                all_calendar_events = _list(read, prefix + '/events?' + urlencode({'$select': 'id,iCalUId,isCancelled,onlineMeeting', '$top': 100}))
+            else:
+                calendars = _list(read, prefix + '/calendars?' + urlencode({'$select': 'id', '$top': 100}))
+                if not calendars:
+                    raise CalendarStateError('The organizer calendars could not be verified.')
+                all_calendar_events = []
+                for calendar in calendars:
+                    calendar_id = calendar.get('id')
+                    if not calendar_id:
+                        raise CalendarStateError('Microsoft returned an invalid calendar identity.')
+                    all_calendar_events.extend(_list(read, f'{prefix}/calendars/{quote(calendar_id, safe="")}/events?' +
+                        urlencode({'$select': 'id,iCalUId,isCancelled,onlineMeeting', '$top': 100})))
         uid = previous.get('roots', {}).get(root_id, {}).get('iCalUId')
         if not uid and not link:
             raise CalendarStateError('The missing calendar has no saved identity to verify.')

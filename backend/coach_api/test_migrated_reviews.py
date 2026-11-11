@@ -3,7 +3,7 @@ import json
 from datetime import date, time, timedelta
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.db import IntegrityError, transaction
 from django.test import RequestFactory, SimpleTestCase, TestCase
@@ -261,8 +261,39 @@ class MigratedPreviewTests(SimpleTestCase):
         self.templates.assert_called_once_with(
             "id:P-42", "MCM",
         )
-        # Read by existing event key, then by explicit source FK for legacy keys.
-        self.assertEqual(self.overlays.return_value.first.call_count, 2)
+        # Read by event key, then by the selected coach/source association.
+        # A third read prevents a fresh preview/continuation over another
+        # coach's saved record when neither owned lookup found an instance.
+        self.assertEqual(self.overlays.call_args_list, [
+            call(owner_email__iexact="coach@example.invalid", event_key="imported-review:A-7"),
+            call(owner_email__iexact="coach@example.invalid", learner_id=21, source_review_id=407),
+            call(learner_id=21, source_review_id=407),
+        ])
+        self.assertEqual(self.overlays.return_value.first.call_count, 3)
+        for method in ("create", "get_or_create", "update", "delete", "bulk_create", "bulk_update"):
+            getattr(self.overlays.return_value, method).assert_not_called()
+        self.assertEqual(self.cursor.execute.call_count, 1)
+        self.assertTrue(self.cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
+
+    def test_other_coach_continuation_blocks_preview_without_creating_or_overwriting_a_record(self):
+        self.overlays.return_value.first.side_effect = [
+            None, None, SimpleNamespace(owner_email="other-coach@example.invalid"),
+        ]
+        request = RequestFactory().get(
+            "/coach_api/coach/reviews/imported-review%3AA-7",
+            {"viewAsCoach": "coach@example.invalid"},
+        )
+        response = unwrap(views.coach_review_instance_detail)(request, "imported-review:A-7")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.overlays.call_args_list, [
+            call(owner_email__iexact="coach@example.invalid", event_key="imported-review:A-7"),
+            call(owner_email__iexact="coach@example.invalid", learner_id=21, source_review_id=407),
+            call(learner_id=21, source_review_id=407),
+        ])
+        self.assertEqual(self.overlays.return_value.first.call_count, 3)
+        self.templates.assert_not_called()
+        for method in ("create", "get_or_create", "update", "delete", "bulk_create", "bulk_update"):
+            getattr(self.overlays.return_value, method).assert_not_called()
         self.assertEqual(self.cursor.execute.call_count, 1)
         self.assertTrue(self.cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
 
@@ -481,6 +512,72 @@ class MigratedPreviewTests(SimpleTestCase):
         self.assertEqual(result["learnerName"], "Synthetic learner")
         self.assertEqual(result["programme"], "Programme")
         self.templates.assert_not_called()
+
+    def test_completed_lms_form_survives_source_completion_without_rewriting_history(self):
+        self._patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
+        self._patch("learner_api.booking_calendar.booking_calendar_payload", return_value={})
+        self._patch("coach_api.personal_support_booking.booking_state", return_value=(None, {}))
+        completed_at = timezone.now()
+        for source_type, family in (("Monthly Coaching Meeting", "MCM"), ("Progress Review", "PR"),
+                                   ("Progress Review (+ Skills Radar)", "PR_SKILLS_RADAR"), ("Personal Support Plan", "PSP")):
+            for source_status in ("Completed", "Scheduled"):
+                with self.subTest(family=family, source_status=source_status):
+                    self._set_source_status(source_status)
+                    row = list(self.cursor.fetchall.return_value[0])
+                    row[3] = row[4] = source_type
+                    row[8] = completed_at
+                    self.cursor.fetchall.return_value = [tuple(row)]
+                    snapshot = {**copy.deepcopy(self.definition_json), "templateSource": {"family": family}}
+                    roles = [] if family == "PSP" else ["advisor", "participant"] + (["employer"] if family.startswith("PR") else [])
+                    signatures = [SimpleNamespace(role=role, signer_email=f"{role}@example.invalid",
+                        signer_name=f"Synthetic {role}", signed_at=completed_at, signature="saved-mark") for role in roles]
+                    saved = SimpleNamespace(event_key="imported-review:A-7", owner_email="coach@example.invalid",
+                        learner_id=21, source_review_id=407, template_snapshot=snapshot,
+                        progress_snapshot={"calculatedAt": "2026-10-01"} if family.startswith("PR") else None,
+                        updated_at=completed_at, migrated_template_id=None, meeting_intelligence={},
+                        answers={"section-0:comment": "Frozen LMS answer"}, status="completed", completed_at=completed_at,
+                        migrated_signatures=SimpleNamespace(all=lambda: signatures),
+                        signature_requirements={role: role in roles for role in ("advisor", "participant", "employer")})
+                    self.overlays.return_value.first.return_value = saved
+                    before = copy.deepcopy(vars(saved))
+                    self.view_as.return_value = False
+                    result = self._get()
+                    self.assertTrue(result["migratedForm"])
+                    self.assertTrue(result["formAvailable"])
+                    self.assertTrue(result["readOnly"])
+                    self.assertFalse(result["summaryOnly"])
+                    self.assertFalse(result["canInitialize"])
+                    self.assertTrue(result["canReopen"])
+                    self.assertEqual(result["sections"][0]["fields"][0]["answer"], "Frozen LMS answer")
+                    self.assertEqual(result["instance"]["status"], "completed")
+                    self.assertEqual(result["instance"]["completedAt"], completed_at.isoformat())
+                    self.assertEqual(result["progressSnapshot"], saved.progress_snapshot)
+                    self.assertEqual({role for role, state in result["signatures"].items() if state["signed"]}, set(roles))
+                    self.assertEqual(result["pdf"], {"available": True, "reason": "", "source": "lms-migrated"})
+                    self.assertEqual(vars(saved), before)
+                    self.assertTrue(views._imported_review_definition(
+                        saved.owner_email, saved.event_key, pdf_only=True)["canReopen"])
+        self.templates.assert_not_called()
+        self.overlays.return_value.get_or_create.assert_not_called()
+
+    def test_completed_source_does_not_promote_an_unfinished_or_empty_lms_form(self):
+        self._set_source_status("Completed")
+        for status, completed_at, snapshot in (
+            ("in-progress", None, self.definition_json),
+            ("awaiting-signature", None, self.definition_json),
+            ("completed", None, self.definition_json),
+            ("completed", timezone.now(), {}),
+        ):
+            with self.subTest(status=status, completed_at=bool(completed_at), snapshot=bool(snapshot)):
+                self.overlays.return_value.first.return_value = SimpleNamespace(
+                    event_key="imported-review:A-7", owner_email="coach@example.invalid",
+                    learner_id=21, source_review_id=407, template_snapshot=snapshot,
+                    status=status, completed_at=completed_at, answers={"section-0:comment": "Unverified draft"})
+                result = self._get()
+                self.assertFalse(result["migratedForm"])
+                self.assertTrue(result["summaryOnly"])
+                self.assertEqual(result["sections"], [])
+                self.assertEqual(result["pdf"]["source"], "aptem")
 
     def test_no_approved_template_returns_clear_empty_state(self):
         self.templates.return_value = None

@@ -211,6 +211,10 @@ def _enabled():
 
 def rule_for(path):
     """The ``(prefix, roles)`` governing ``path``, or None if it is not gated."""
+    # Public email-only declarations. Exact endpoint; other curriculum APIs
+    # retain their session/role gates. The view owns CSRF and programme checks.
+    if path == '/curriculum_api/qr-attendance/':
+        return None
     # Email approval authenticates with an expiring, single-use signed request.
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':
@@ -220,6 +224,10 @@ def rule_for(path):
     # keeping this narrow prefix public lets guests respond without opening any
     # other Engagement endpoint.
     if path.startswith('/engagement_api/feedback/public-event/'):
+        return None
+    # The shared lecture QR still validates a secret per lecture and checks
+    # the supplied email against that lecture's assigned module on every call.
+    if path.startswith('/engagement_api/feedback/public-lecture/'):
         return None
     if path.startswith('/engagement_api/feedback/public-rsvp/'):
         return None
@@ -241,6 +249,11 @@ def rule_for(path):
     # Fetched by Microsoft's Office Online servers, which carry no session. The
     # view authenticates on a signed, 15-minute token naming one upload.
     if path.startswith('/curriculum_api/office-preview/'):
+        return None
+    # The MCP server for AI connectors carries no session cookie. Its views
+    # authenticate a bearer token (or, for the OAuth consent step, check the
+    # session themselves), and all of them are 404 while MCP_ENABLED is off.
+    if path.startswith(('/mcp/', '/oauth/', '/.well-known/oauth-')):
         return None
     from old_otjh.gate import is_transition_path
     if is_transition_path(path):
@@ -322,17 +335,21 @@ def refusal_for(path, account, *, django_user_is_authenticated=False, method='GE
             '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
             '/login_api/forgot-password/', '/login_api/reset/',
             '/login_api/reset-password/', '/login_api/login/',
-            '/login_api/health/',
+            '/login_api/health/', '/login_api/announcements/',
         }
         if not path.startswith('/login_api/advanced-admin/') and path not in account_paths:
             return _forbidden(['advanced-admin'])
-    if account is not None and getattr(account, '_staff_access', None) == 'record-monitor':
+    if (account is not None and getattr(account, '_staff_access', None) == 'record-monitor'
+            and not (getattr(account, '_staff_accesses', frozenset())
+                     - {'record-monitor', 'advanced-admin'})):
         from old_otjh.gate import is_transition_path
-        # Applies to batch children too. Record endpoints enforce read-only
-        # methods and learner scope; authentication keeps its own handlers.
+        # Monitoring alone remains restricted, including batch children. Extra
+        # grants use the normal endpoint/ownership gates; previous-record
+        # endpoints still enforce their own read-only monitoring scope.
         if not is_transition_path(path) and path not in {
             '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
             '/login_api/login/', '/login_api/health/',
+            '/login_api/announcements/',
         }:
             return _forbidden(['previous_records.view'])
 

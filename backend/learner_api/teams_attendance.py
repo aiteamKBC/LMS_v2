@@ -62,10 +62,15 @@ def annotate_attendance_completion(components, learner_profile):
               AND c.reflection_required IS FALSE
               AND c.tutor_validation_required IS FALSE
               AND NOT coalesce(c.workplace_evidence_required,false)
-              AND r.attendance_status='present' AND r.attended_seconds>180
-              AND coalesce(r.attendance_report_id,'')<>''
-              AND r.attendance_report_id=CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
-                  THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END
+              AND r.attendance_status='present'
+              AND (
+                    (r.qr_attendance_id IS NOT NULL
+                     AND r.attendance_basis IN ('qr','teams_qr'))
+                 OR (r.attended_seconds>180
+                     AND coalesce(r.attendance_report_id,'')<>''
+                     AND r.attendance_report_id=CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
+                         THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END)
+              )
               AND o.scheduled_end<=CURRENT_TIMESTAMP
               AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
               AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
@@ -860,12 +865,15 @@ def sync_verified_teams_attendance_reporting(
         module_refs,
         all_learners=all_learners,
     )
+    from curriculum_api.shared_session_register import shared_register_rows
+    shared_rows = shared_register_rows(database=database, module_refs=module_refs,
+        learner_ids=learner_ids, learner_emails=learner_emails, all_learners=all_learners)
     occurrence_ids = (
         _verified_occurrence_ids(database, module_refs)
         if all_learners or module_refs
         else []
     )
-    if not rows and not occurrence_ids and not scoped_modules and not all_learners:
+    if not rows and not shared_rows and not occurrence_ids and not scoped_modules and not all_learners:
         return 0
 
     query = f"""
@@ -1011,9 +1019,13 @@ def sync_verified_teams_attendance_reporting(
                 )
             if params:
                 cursor.executemany(query, params)
-            upsert_live_session_register(cursor, rows)
+            upsert_live_session_register(cursor, [*rows, *shared_rows])
+        from engagement_api.feedback_delivery import reconcile_feedback_after_attendance_commit
+        reconcile_feedback_after_attendance_commit(
+            [row['occurrence_id'] for row in [*rows, *shared_rows]], using=database,
+        )
     _award_attendance_points(rows)
-    return len(rows)
+    return len(rows) + len(shared_rows)
 
 
 def _award_attendance_points(rows):

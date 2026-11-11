@@ -157,6 +157,64 @@ def bulk_attendance_save_attendance(request):
     return JsonResponse({'updated': _change_keys(saved_live, saved_kbc)})
 
 
+@require_POST
+def bulk_attendance_delete_attendance(request):
+    """Delete one saved attendance record without deleting its session."""
+    try:
+        body = json.loads(request.body or b'{}')
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({'error': 'Invalid request.'}, status=400)
+    if not isinstance(body, dict):
+        return JsonResponse({'error': 'Invalid request.'}, status=400)
+    source = str(body.get('source') or '').strip().lower()
+    record_key = str(body.get('recordKey') or '').strip()
+    if source == 'kbc':
+        if not record_key or len(record_key) > 500:
+            return JsonResponse({'error': 'A KBC record key is invalid.'}, status=400)
+        try:
+            dsn = learner_directory_dsn()
+            if not dsn:
+                return JsonResponse({'error': 'KBC attendance is not configured.'}, status=503)
+            with psycopg.connect(dsn, connect_timeout=10) as connection:
+                connection.execute("SET LOCAL statement_timeout = '10s'")
+                deleted = connection.execute(
+                    'DELETE FROM public.kbc_attendance WHERE "key" = %s RETURNING "key"',
+                    [record_key],
+                ).fetchone()
+                if not deleted:
+                    return JsonResponse({'error': 'The attendance record no longer exists.'}, status=404)
+        except psycopg.Error:
+            return JsonResponse({'error': 'Attendance could not be deleted. Please try again.'}, status=503)
+    elif source == 'live':
+        match = re.fullmatch(r'live:(\d{1,18})', record_key)
+        if not match:
+            return JsonResponse({'error': 'A live register record key is invalid.'}, status=400)
+        from django.db import router, transaction
+        from .models import LiveSession, LiveSessionLearnerAttendance
+        from coach_api.models import CoachAttendanceSourceAdjustment
+        row_id = int(match.group(1))
+        database = router.db_for_write(LiveSessionLearnerAttendance)
+        with transaction.atomic(using=database):
+            row = LiveSessionLearnerAttendance.objects.using(database).filter(id=row_id).values(
+                'learner_profile_id', 'occurrence_id', 'live_session_id', 'module_catalogue_id',
+            ).first()
+            if not row:
+                return JsonResponse({'error': 'The attendance record no longer exists.'}, status=404)
+            owners = dict(LiveSession.objects.using(database).filter(
+                id=row['live_session_id'],
+            ).values_list('id', 'module_catalogue_id'))
+            source_id = row['occurrence_id']
+            if owners.get(row['live_session_id']) != row['module_catalogue_id']:
+                source_id = f"{row['occurrence_id']}:{row['module_catalogue_id']}"
+            CoachAttendanceSourceAdjustment.objects.using(database).filter(
+                learner_id=row['learner_profile_id'], source='microsoft-teams', source_id=source_id,
+            ).update(is_deleted=True, status='')
+            LiveSessionLearnerAttendance.objects.using(database).filter(id=row_id).delete()
+    else:
+        return JsonResponse({'error': 'The attendance record source is invalid.'}, status=400)
+    return JsonResponse({'deleted': record_key})
+
+
 def _session_number(lecture_name):
     match = re.search(r'\b(?:lecture|lec|session|l)\s*#?\s*(\d+)\b', lecture_name or '', re.I)
     return int(match.group(1)) if match else None
@@ -407,7 +465,24 @@ def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
             return recent
 
 
+def _recorded_outcomes(records):
+    from .bulk_attendance_recorded import apply_recorded_outcomes
+    return apply_recorded_outcomes(records)
+
+
 def _with_warnings(payload, warning):
+    from django.db import DatabaseError
+    try:
+        if 'records' in payload:
+            payload = {**payload, 'records': _recorded_outcomes(payload['records'])}
+        elif 'recent' in payload:
+            records = _recorded_outcomes([record for rows in payload['recent'].values() for record in rows])
+            recent = {key: [] for key in payload['recent']}
+            for record in records:
+                recent[record['learnerId']].append(record)
+            payload = {**payload, 'recent': recent}
+    except DatabaseError:
+        return JsonResponse({'error': 'Recording attendance could not be read. Please try again.'}, status=503)
     response = JsonResponse({**payload, 'warnings': [warning] if warning else []})
     response['Cache-Control'] = 'private, no-store'
     return response
@@ -432,7 +507,9 @@ def bulk_attendance_kbc_recent(request):
             return JsonResponse({'error': 'Unable to load recent KBC attendance. Please try again.'}, status=503)
 
     recent = {
-        learner_id: merge_live_over_kbc(kbc.get(learner_id, []), live.get(learner_id, []))[-RECENT_LECTURE_LIMIT:]
+        learner_id: [record for record in merge_live_over_kbc(
+            kbc.get(learner_id, []), live.get(learner_id, []))
+            if record.get('countsAsSession') is not False][-RECENT_LECTURE_LIMIT:]
         for learner_id in set(kbc) | set(live)
     }
     return _with_warnings({'recent': recent}, warning)

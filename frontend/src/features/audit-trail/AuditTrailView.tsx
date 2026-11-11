@@ -1194,12 +1194,13 @@ function PeopleView({
     setOpen(null);
   }, [windowDays, workspace, page, search, role]);
 
+  const openEmail = open?.email;
   useEffect(() => {
-    if (!open) { setDetail(null); setDetailError(null); return undefined; }
+    if (!openEmail) { setDetail(null); setDetailError(null); return undefined; }
     const controller = new AbortController();
     setDetailLoading(true);
     setDetailError(null);
-    fetchPersonActivity(open.email, {
+    fetchPersonActivity(openEmail, {
       days: Number(windowDays),
       workspace: workspace || undefined,
       signal: controller.signal,
@@ -1219,7 +1220,7 @@ function PeopleView({
     return () => controller.abort();
     // `open.email` alone: reopening the same person on a different number is
     // the same request, and the panel already has its answer.
-  }, [open?.email, windowDays, workspace]);
+  }, [openEmail, windowDays, workspace]);
 
   const toggle = (email: string, metric: CountMetric) => {
     setOpen(current => (current && current.email === email && current.metric === metric

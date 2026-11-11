@@ -7,6 +7,9 @@ export const EXTERNAL_CALENDAR_MESSAGE = 'This module uses an existing Teams mee
 export interface ExternalCalendar {
   source: 'imported' | 'replacement' | 'untracked';
   joinUrls: string[];
+  /** Identifies the saved original, independently of any component overrides. */
+  originalSeriesId?: string;
+  conflictingComponentIds?: string[];
   /** The saved calendar must describe the links learners actually use. */
   canReattach: boolean;
 }
@@ -34,17 +37,27 @@ export function externalCalendarFor(
   const links = [...new Set(main.map(component => text(component.settings?.liveSessionLinkOverride)
     || text(component.settings?.liveSessionUrl) || text(component.settings?.teamsMeetingUrl)).filter(Boolean))];
   const savedLink = text(summary?.joinUrl);
+  const ownershipKnown = Boolean(summary?.calendarManagement || summary?.meetingType
+    || (series?.id === summary?.liveSessionId && series?.meeting_type));
   const imported = summary?.calendarManagement === 'external' || summary?.meetingType === 'linked-external'
     || (Boolean(summary?.liveSessionId) && series?.id === summary?.liveSessionId && series?.meeting_type === 'linked-external')
-    || main.some(component => component.settings?.teamsMeetingType === 'linked-external');
+    || (!ownershipKnown && main.some(component => component.settings?.teamsMeetingType === 'linked-external'));
   const replacement = main.some(component => {
     const override = text(component.settings?.liveSessionLinkOverride);
     return override && override !== savedLink;
   });
+  const originalSeriesId = imported && savedLink ? text(summary?.liveSessionId) : '';
+  const conflictingComponentIds = originalSeriesId ? main.filter(component => {
+    const link = text(component.settings?.liveSessionLinkOverride)
+      || text(component.settings?.liveSessionUrl) || text(component.settings?.teamsMeetingUrl);
+    return link && link !== savedLink;
+  }).map(component => component.id) : [];
   if (!imported && !replacement && (summary || !links.length)) return null;
   return {
     source: replacement ? 'replacement' : imported ? 'imported' : 'untracked',
     joinUrls: links.length ? links : savedLink ? [savedLink] : [],
+    ...(originalSeriesId ? { originalSeriesId } : {}),
+    ...(conflictingComponentIds.length ? { conflictingComponentIds } : {}),
     canReattach: Boolean(summary && imported && savedLink && (!links.length || links.every(link => link === savedLink))),
   };
 }

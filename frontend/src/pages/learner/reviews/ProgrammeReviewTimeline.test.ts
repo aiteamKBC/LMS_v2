@@ -17,6 +17,25 @@ const attendance = (overrides: Partial<MeetingAttendance> = {}): MeetingAttendan
 });
 
 describe('programme review timeline status', () => {
+  it('keeps missed attendance ahead of an in-progress form for Native and Imported reviews', () => {
+    for (const source of ['mcr', 'progress-review']) {
+      for (const reviewSource of ['curriculum', 'aptem'] as const) {
+        const row = event({ source, reviewSource, status: 'in-progress', reviewAttendance: 'missed' });
+        expect(completedReviewTimelineStatus(row, attendance(), 'in-progress')).toBe('missed');
+        expect(row.status).toBe('in-progress');
+      }
+    }
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress' }), attendance({ missed: true }))).toBe('missed');
+  });
+
+  it('separates a pending report or future replacement from stale absence data', () => {
+    const stale = attendance({ missed: true });
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress', meetingOutcome: 'ended', reviewAttendance: 'pending' }), stale)).toBe('awaiting-attendance');
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress', reviewAttendance: null, scheduledDate: '2026-12-01' }), stale)).toBe('in-progress');
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress', reviewAttendance: 'unavailable', meetingOutcome: 'ended' }), stale)).toBe('in-progress');
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress', reviewAttendance: 'attended' }), stale)).toBe('attended');
+  });
+
   it('keeps an elapsed booking scheduled until an attendance source identifies its outcome', () => {
     expect(reviewTimelineStatus(event())).toBe('scheduled');
     expect(reviewTimelineStatus(event(), attendance())).toBe('scheduled');

@@ -188,7 +188,8 @@ class ImportedRescheduleEndpointTests(SimpleTestCase):
         self.enterContext(patch.object(calendar, "_booking_response_event", return_value={"eventKey": "existing"}))
         self.personal = self.enterContext(patch("learner_api.calendar_connections.booking_conflicts", return_value=False))
         self.enterContext(patch("coach_api.booking_availability.ensure_coach_calendar_available"))
-        self.outlook = self.enterContext(patch("coach_api.booking_availability.ensure_coach_outlook_available"))
+        # The endpoint now uses the combined local/personal-calendar boundary.
+        self.outlook = self.enterContext(patch("coach_api.booking_availability.ensure_coach_review_slot_available"))
         self.reserve = self.enterContext(patch.object(imported_booking, "reserve_imported_booking", return_value=(self.record, True)))
         self.sync = self.enterContext(patch.object(views, "synchronize_reserved_calendar_event", return_value=(self.record, "", True)))
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { LoaderCircle } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -54,7 +54,7 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'ksbs', label: 'KSB progress', icon: 'ri-award-line' },
   { key: 'assignments', label: 'Assignments', icon: 'ri-task-line' },
   { key: 'documents', label: 'Documents', icon: 'ri-folder-open-line' },
-  { key: 'reviews', label: 'Progress reviews', icon: 'ri-file-list-3-line' },
+  { key: 'reviews', label: 'Progress & Gateway reviews', icon: 'ri-file-list-3-line' },
 ];
 
 /** The tabs that read the learner's workspace payload (fetched on first use). */

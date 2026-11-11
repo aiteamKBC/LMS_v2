@@ -92,6 +92,8 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_
     attempt_id = attempt_id or str(uuid4())
     snapshot = {key: definition.get(key) for key in ('title', 'quiz', 'has_reading', 'available')}
     snapshot['catalogue_kind'] = definition.get('catalogue_kind', 'material')
+    if definition.get('activity_part') == 'reading':
+        snapshot['activity_part'] = 'reading'
     if definition.get('retakeTimeChoice') is not None:
         from .retake_timing import choice
         snapshot['retakeTimeChoice'] = choice(definition['retakeTimeChoice'])
@@ -104,6 +106,13 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_
         assert_legacy_writable(cur, enrolment_id, group_id)
         if not ready(cur):
             raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
+        if definition.get('retakeRequired'):
+            from . import legacy_quiz_retakes as retakes
+            grant = retakes.available(cur, enrolment_id, aptem_id, group_id, activity_id)
+            if snapshot['catalogue_kind'] != 'quiz' or grant is None:
+                from old_otjh.service import ServiceError
+                raise ServiceError('No additional attempt is available for this quiz.', 'quiz_retake_required', 409)
+            snapshot['retakeGrantId'] = grant
         cur.execute(f'''INSERT INTO {ATTEMPTS}
                         (id,enrolment_id,aptem_id,group_id,activity_id,kind,definition)
                         VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)''',
@@ -112,7 +121,7 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition, *, attempt_
     return attempt_id
 
 
-def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, reading_confirmed, *, catalogue_kind='material', learner_kind=None, timing_payload=None):
+def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, reading_confirmed, *, catalogue_kind='material', learner_kind=None, timing_payload=None, activity_part=None):
     from .retake_timing import choice
     retake_choice = choice((timing_payload or {}).get('retakeTimeChoice'))
     from .progress_transfer_store import lock_learner, assert_legacy_writable
@@ -129,12 +138,14 @@ def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, r
             row = cur.fetchone()
             if not row:
                 raise LookupError('Attempt not found.')
+            definition = _json(row[0])
+            if definition.get('activity_part') != activity_part:
+                raise LookupError('Attempt not found for this activity part.')
             if row[1] is not None:
                 # Retrying a successful network request cannot add another result.
                 saved_time = _json(row[0]).get('studyTime')
                 return {'score_percent': row[2], 'passed': row[3], 'completed': row[4], 'already_submitted': True,
                         **({'study_time': saved_time} if saved_time else {})}
-            definition = _json(row[0])
             if definition.get('has_reading') and reading_confirmed is not True:
                 raise ValueError('Confirm that you have completed the reading material.')
             if not definition.get('quiz') and reading_confirmed is not True:
@@ -162,6 +173,10 @@ def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, r
                                completed=%s,reading_confirmed=%s,submitted_at=CURRENT_TIMESTAMP
                             WHERE id=%s''', [json.dumps(answers), result['score_percent'], result['passed'],
                                            result['completed'], reading_confirmed is True, attempt_id])
+            if definition.get('retakeGrantId'):
+                from . import legacy_quiz_retakes as retakes
+                retakes.consume(cur, definition['retakeGrantId'], enrolment_id, aptem_id,
+                                group_id, activity_id, attempt_id)
     return result
 
 

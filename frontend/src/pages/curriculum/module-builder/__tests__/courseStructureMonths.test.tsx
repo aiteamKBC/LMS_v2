@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 import type { ModuleCatalogueItem, ModuleWeek } from '../moduleAuthoringData';
+import ModuleBuilder from '../page';
 
 /**
  * The Course structure rail, read as a timetable.
@@ -65,7 +66,7 @@ const loadModuleStructure = vi.fn(async () => structure);
 
 // The workspace reads the signed-in account. Without this the page throws on
 // its first line and every case below fails before it asserts anything.
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
 }));
 
@@ -97,6 +98,7 @@ vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
 vi.mock('../moduleAuthoringData', async importOriginal => ({
   ...(await importOriginal<typeof import('../moduleAuthoringData')>()),
   loadModuleStructure: (...args: unknown[]) => loadModuleStructure(...(args as [])),
+  loadModuleWeekSessionPlan: vi.fn(async () => null),
 }));
 
 const programmes = [
@@ -138,7 +140,6 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
 
 async function openBuilder() {
   window.history.replaceState({}, '', '/curriculum/module-builder?module=MOD-WEEKS');
-  const { default: ModuleBuilder } = await import('../page');
   return render(
     <MemoryRouter initialEntries={['/curriculum/module-builder?module=MOD-WEEKS']}>
       <ModuleBuilder />

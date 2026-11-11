@@ -6,6 +6,34 @@ from django.conf import settings
 from config.management_safety import reconciliation_command
 
 
+#: LOAD_METRIC_SERVICE values whose web workers serve curriculum pages.
+#: night-api serves the learner, login and curriculum paths overnight and at
+#: weekends while those services are scaled to zero. Unset is local
+#: development or a deployment that does not name its services.
+CURRICULUM_WARM_SERVICES = frozenset({'', 'curriculum-api', 'night-api'})
+_WEB_SERVERS = ('uvicorn', 'gunicorn', 'daphne', 'hypercorn')
+
+
+def serves_curriculum_pages(argv=None, environ=None):
+    """Whether this process is a web worker of a service with curriculum pages.
+
+    An allow-list, so a new management command or worker never warms by
+    default. uvicorn and gunicorn workers inherit the server's argv[0];
+    `runserver` serves from its reloader child (RUN_MAIN), not the parent.
+    """
+    argv = sys.argv if argv is None else argv
+    environ = os.environ if environ is None else environ
+    program = os.path.basename(argv[0] if argv else '').lower()
+    command = argv[1] if len(argv) > 1 else ''
+    if program == 'manage.py' or program.startswith('django-admin'):
+        web = command == 'runserver' and environ.get('RUN_MAIN') == 'true'
+    else:
+        web = any(server in program or server in ' '.join(argv[:2]).lower() for server in _WEB_SERVERS)
+    if not web:
+        return False
+    return environ.get('LOAD_METRIC_SERVICE', '').strip().lower() in CURRICULUM_WARM_SERVICES
+
+
 class CurriculumApiConfig(AppConfig):
     name = 'curriculum_api'
 
@@ -17,10 +45,12 @@ class CurriculumApiConfig(AppConfig):
         its build lock. The warm runs on a daemon thread, so a slow or failing
         database delays nothing and blocks no worker from accepting requests.
 
-        Skipped for management commands that are not serving traffic. `migrate`
-        in particular must not have a thread reading tables it is in the middle
-        of altering, and `test` has its own reason (see CURRICULUM_WARM in
-        config/settings.py).
+        Only a web-server process of a service that serves curriculum pages
+        warms (see serves_curriculum_pages). Any management command -- the
+        session worker starts a new `process_session_results` process every
+        minute -- or another service's worker would only pay for a warm it
+        never reads; `migrate` must not read tables it is altering, and `test`
+        has its own reason (see CURRICULUM_WARM in config/settings.py).
         """
         from .read_model import register_curriculum_home_read_model
         register_curriculum_home_read_model()
@@ -28,20 +58,7 @@ class CurriculumApiConfig(AppConfig):
         if reconciliation_command():
             return
 
-        command = sys.argv[1] if len(sys.argv) > 1 else ''
-        if command in {
-            'migrate', 'makemigrations', 'test', 'collectstatic', 'shell',
-            'dbshell', 'createsuperuser', 'showmigrations', 'sqlmigrate',
-            'flush', 'loaddata', 'dumpdata', 'check', 'diffsettings',
-            'rebuild_read_model', 'reconcile_read_models',
-            'process_read_model_events',
-            'import_global_migrated_review_template',
-            'enable_personal_support_form',
-        }:
-            return
-        # runserver spawns a reloader child that does the actual serving; the
-        # parent would only warm a cache it never reads from.
-        if command == 'runserver' and os.environ.get('RUN_MAIN') != 'true':
+        if not serves_curriculum_pages():
             return
         self.log_cache_backend()
         # Once reads have switched to the persistent projection, its worker is

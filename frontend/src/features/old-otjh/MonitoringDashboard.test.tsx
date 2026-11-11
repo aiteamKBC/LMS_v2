@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import type { AccessWorkspace } from '@/api/auth';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { coachNavItems } from '@/mocks/navigation';
 import OldOtjhPage from './page';
@@ -10,9 +11,9 @@ import { getMonitoring, type MonitoringData, type MonitoredLearner } from './mon
 import { getContentReview, getMonth, getSummary, startReview, type MonthDetail, type Summary } from './api';
 import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
 
-const viewer = { id: 100, subjectId: 70, role: 'staff' as const, access: 'record-monitor', displayName: 'Record monitor' };
+const viewer = { id: 100, subjectId: 70, role: 'staff' as const, access: 'record-monitor', displayName: 'Record monitor', accessWorkspaces: [] as AccessWorkspace[] };
 const shellNavigation = vi.hoisted(() => vi.fn());
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: viewer }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: viewer }, isInitialized: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, navItems }: { children: ReactNode; navItems: SidebarNavItem[] }) => {
   shellNavigation(navItems);
   return <div>{children}</div>;
@@ -54,6 +55,7 @@ function page(path = '/old-otjh/monitor') {
 }
 beforeEach(() => {
   viewer.access = 'record-monitor';
+  viewer.accessWorkspaces = [];
   vi.mocked(getMonitoring).mockResolvedValue(structuredClone(fixture));
   vi.mocked(getSummary).mockResolvedValue(structuredClone(summary));
   vi.mocked(getMonth).mockResolvedValue(structuredClone(detail));
@@ -62,6 +64,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('record monitoring', () => {
+  it('keeps a secondary monitoring workspace read-only for a coach', async () => {
+    viewer.access = 'coach';
+    viewer.accessWorkspaces = [{ access: 'coach', home: '/workspace/coach' }, { access: 'record-monitor', home: '/old-otjh/monitor' }];
+    // Even an already cached coaching response must not cause an automatic start.
+    vi.mocked(getSummary).mockResolvedValue({ ...summary, read_only: false });
+    page('/old-otjh/coach/42/months/2026-07?workspace=monitor');
+    await screen.findByRole('table', { name: 'Report sign-off' });
+    expect(startReview).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /Sign as|Complete month|Reopen month/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Read-only monitoring')).toBeInTheDocument();
+  });
+
+  it('preserves monitoring when changing months', async () => {
+    viewer.access = 'coach';
+    viewer.accessWorkspaces = [{ access: 'coach', home: '/workspace/coach' }, { access: 'record-monitor', home: '/old-otjh/monitor' }];
+    page('/old-otjh/coach/42?workspace=monitor');
+    await screen.findByRole('heading', { name: learner.name });
+    expect(screen.getByRole('link', { name: 'Review month' })).toHaveAttribute('href', '/old-otjh/coach/42/months/2026-07?workspace=monitor');
+    expect(startReview).not.toHaveBeenCalled();
+  });
   it('keeps previous learning records out of the coach sidebar for administrators', async () => {
     viewer.access = 'super-admin';
     page();
@@ -99,7 +121,7 @@ describe('record monitoring', () => {
     expect(within(table).getByText('2 / 3')).toBeInTheDocument();
     expect(within(table).getByText('1 / 3')).toBeInTheDocument();
     expect(within(table).getByText('Enrolment: Delivery')).toBeInTheDocument();
-    expect(within(table).getByRole('link', { name: 'Open record for Example learner' })).toHaveAttribute('href', '/old-otjh/coach/42');
+    expect(within(table).getByRole('link', { name: 'Open record for Example learner' })).toHaveAttribute('href', '/old-otjh/coach/42?workspace=monitor');
   });
   it('searches across the cohort and resets pagination', async () => {
     page('/old-otjh/monitor?page=2');

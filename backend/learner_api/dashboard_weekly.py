@@ -11,14 +11,62 @@ from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 
 from coach_api.weekly_learning import assignment_projection, read_weekly_learning
+from .response_cache import cached_learner_read
 from . import canonical_learning, journal_sources
 from .identity import learner_profile_for_source
 from .learner_detail import SOURCE_MODELS
 from .projection_performance import measure_projection
 from .weekly_learning import _weekly_component
 from .learner_detail import _resolve_from_master, _apply_programme_assignment_template
+from .submission_visibility import VISIBLE_SUBMISSION_SQL
 
 WEEKLY_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme', 'cohort', 'group')
+
+
+def recorded_ksbs(owner, component_ids):
+    """Display existing learner activity links without awarding KSB progress."""
+    if not component_ids:
+        return {}
+    from .progress_cache import value
+    sql = f'''SELECT DISTINCT
+        coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,'')) AS component_id,
+        upper(btrim(k.ksb_code)) AS code
+        FROM "Learner".learner_progress_entries p
+        JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+        WHERE p.learner_id=%s AND p.deleted_at IS NULL
+          AND coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,''))=ANY(%s)
+          AND nullif(btrim(k.ksb_code),'') IS NOT NULL AND {canonical_learning._ksb_not_excluded('k')}
+        ORDER BY component_id,code'''
+    alias = canonical_learning.repository._query_alias.get() or canonical_learning.repository.DB
+    records = value(sql, [alias, list(component_ids)], owner['id'],
+                    lambda: canonical_learning.query(sql, [owner['id'], component_ids]))
+    result = {}
+    for row in records:
+        result.setdefault(row['component_id'], []).append(row['code'])
+    return result
+
+
+def reflection_ksbs(owner, component_ids):
+    """Saved learner choices, separate from authored mappings and achievement."""
+    if not component_ids:
+        return {}
+    records = canonical_learning.query(f'''SELECT activity_id, status, ksb_codes
+        FROM "Learner".learning_reflection_submissions AS submission
+        WHERE learner_id=%s AND learner_kind=%s AND activity_id=ANY(%s)
+          AND {VISIBLE_SUBMISSION_SQL}
+        ORDER BY activity_id, status, submitted_at, id''',
+        [str(owner['enrolment_id']), owner['learner_type'], component_ids])
+    grouped = {}
+    for row in records:
+        # Keep topic drafts/pending reviews distinct from accepted work.
+        codes = canonical_learning.decoded(row['ksb_codes'], [])
+        if not isinstance(codes, list):
+            continue
+        selected = {code.strip() for code in codes if isinstance(code, str) and code.strip()}
+        if selected:
+            grouped.setdefault(row['activity_id'], {}).setdefault(row['status'], set()).update(selected)
+    return {cid: [{'status': status, 'codes': sorted(codes)} for status, codes in groups.items()]
+            for cid, groups in grouped.items()}
 
 
 def slot_id(module_id, slot):
@@ -60,26 +108,32 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
         raise ServiceError('Week not found.', 'not_found', 404)
     if selected and selected['activities']:
         # Eligibility and routing remain the Student resolver's responsibility.
-        # Only the selected authored week is read; no progress is reloaded and
-        # no separate component/progress/schedule payload crosses the wire.
+        # Only the selected authored week and its saved KSB links are read;
+        # no attempt bodies or separate progress/schedule payload cross the wire.
         _, _, components = _resolve_from_master([], [], [],
             assigned_modules=[{'moduleId': navigation['moduleId']}], strict=True, compact=True,
             live_session_ids=False, week_ids=[str(navigation['weekId'])],
             resolved_metadata=getattr(source, '_weekly_resolved_metadata', None), routing_only=True)
         components = _apply_programme_assignment_template(components, source.programme)
         routing = {str(row['componentId']): _weekly_component(row) for row in components}
+        activity_ids = [str(activity['id']) for activity in selected['activities']]
+        selections = reflection_ksbs(owner, activity_ids)
+        recorded = recorded_ksbs(owner, activity_ids)
         for activity in selected['activities']:
             row = routing.get(str(activity['id']))
             if row is None:
                 raise ServiceError('Activity routing could not be resolved.', 'invalid_week', 503)
             activity.update({key: row.get(key) for key in (
                 'contentAvailable', 'videoUrl', 'sessionDate', 'sessionDateTimeUtc', 'teamsLiveSessionId') if key in row})
+            activity['reflectionKsbs'] = selections.get(str(activity['id']), [])
+            activity['recordedKsbCodes'] = recorded.get(str(activity['id']), [])
     return payload
 
 
 @learner_self_or_staff(kwarg='pk')
 @require_GET
 @journal_sources.learner_journal_view
+@cached_learner_read('dashboard-weekly')
 def dashboard_weekly(request, kind, pk, week_id=None):
     model = SOURCE_MODELS.get(kind)
     if model is None:

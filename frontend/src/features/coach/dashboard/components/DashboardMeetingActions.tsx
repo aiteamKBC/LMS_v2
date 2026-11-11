@@ -6,6 +6,7 @@ import { openReviewInstanceForEvent } from '@/api/reviewInstances';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '@/pages/coach/shared/ScheduleControls';
 import { reviewInstancePath, reviewInstanceRouteState } from '@/pages/coach/shared/reviewInstanceNavigation';
+import { reviewAttendanceLinks } from '@/pages/coach/shared/reviewAttendanceLinks';
 import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import { reviewCategory } from '@/lib/reviewCategory';
 import { slidesTargetFromEvent } from '@/pages/coach/progress-reviews/components/slidesTarget';
@@ -24,6 +25,7 @@ export function DashboardMeetingActions({ event, onUpdated, onScheduleNotice }: 
   const [reminderSent, setReminderSent] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [nativeRescheduleAllowed, setNativeRescheduleAllowed] = useState<boolean | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const category = reviewCategory(event);
   const isReview = category === 'progress-review';
@@ -31,6 +33,19 @@ export function DashboardMeetingActions({ event, onUpdated, onScheduleNotice }: 
   const canWrite = !coach.isViewingAsCoach;
   const canRemind = ['scheduled', 'confirmed'].includes(event.status) && ['mcr', 'progress-review', 'catch-up', 'student-support'].includes(event.source || '');
   const identity = eventIdentity(event);
+  const nativeAttendanceKey = event.reviewSource !== 'aptem' && !event.aptemReviewId && event.status === 'in-progress'
+    && ['mcr', 'progress-review'].includes(event.source || '') && event.reviewInstanceId
+    ? event.eventKey : '';
+
+  useEffect(() => {
+    setNativeRescheduleAllowed(null);
+    if (!nativeAttendanceKey) return;
+    const controller = new AbortController();
+    reviewAttendanceLinks(nativeAttendanceKey, undefined, controller.signal)
+      .then(context => { if (!controller.signal.aborted) setNativeRescheduleAllowed(context.canReschedule === true); })
+      .catch(() => { if (!controller.signal.aborted) setNativeRescheduleAllowed(false); });
+    return () => controller.abort();
+  }, [nativeAttendanceKey]);
 
   useEffect(() => {
     if (scheduleOpen) dialogRef.current?.showModal();
@@ -47,8 +62,10 @@ export function DashboardMeetingActions({ event, onUpdated, onScheduleNotice }: 
 
   const writeReason = canWrite ? undefined : 'Viewing as a coach is read-only.';
   return <>
-    <td><button className={styles.textButton} type="button" disabled={!canWrite || Boolean(busy) || !event.eventKey} title={writeReason}
-      onClick={() => { setForm(scheduleDefaults(event)); setError(''); setScheduleOpen(true); }}><AppIcon name="ri-calendar-line" />Reschedule</button></td>
+    <td>{nativeAttendanceKey && nativeRescheduleAllowed !== true
+      ? <span className={styles.subtle}>Not available</span>
+      : <button className={styles.textButton} type="button" disabled={!canWrite || Boolean(busy) || !event.eventKey} title={writeReason}
+        onClick={() => { setForm(scheduleDefaults(event)); setError(''); setScheduleOpen(true); }}><AppIcon name="ri-calendar-line" />Reschedule</button>}</td>
     <td><button className={`${styles.textButton} ${styles.primaryButton}`} type="button" disabled={!canWrite || !canRemind || Boolean(busy) || reminderSent || !event.eventKey} title={writeReason || (!canRemind ? 'Reminders are available for scheduled or confirmed coaching, review and support meetings.' : undefined)}
       onClick={() => void perform('reminder', async () => {
         const response = await coachFetch(`/coach_api/coach/timetable/events/${encodeURIComponent(identity)}/reminder`, { method: 'POST' });

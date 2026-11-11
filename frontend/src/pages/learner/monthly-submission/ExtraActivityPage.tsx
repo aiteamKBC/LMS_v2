@@ -13,29 +13,51 @@ import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, typ
 import { checkMonthlyAssignment, emptyMonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from '../video-watch/MonthlyAssignmentSteps';
 import { AssignmentAiCheckContext } from '../video-watch/AssignmentAiCheckContext';
-import { assignmentTimeHours } from '../video-watch/AssignmentTimeEntries';
+import { assignmentTimeHours } from "../video-watch/AssignmentTimeEntries.helpers";
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
+import { useAuth } from '@/hooks/useAuth';
 import { ExtraActivities } from './ExtraActivities';
 import styles from './monthlySubmission.module.css';
+import { ExtraActivityInfo } from '@/components/feature/ExtraActivityInfo';
 
 const steps = ['Activity answer', 'Evidence & cross-referencing', 'KSBs & hours claimed', 'Quality checks'];
 const monthNow = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit' }).format(new Date());
 export default function ExtraActivityPage() {
   const { kind: routeKind, id: routeId } = useParams();
   const { kind, id } = useResolvedLearner(routeKind, routeId);
-  const [query] = useSearchParams();
   if (!id || (kind !== 'commercial' && kind !== 'apprenticeship')) return <p>Loading learner...</p>;
-  return <ExtraActivityForm key={`${kind}:${id}:${query.get('activity') || 'new'}`} kind={kind} learnerId={id} savedId={query.get('activity')} />;
+  return <ExtraActivityRoute key={`${kind}:${id}`} kind={kind} learnerId={id} />;
 }
-export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerKind; learnerId: string; savedId: string | null }) {
+function ExtraActivityRoute({ kind, learnerId }: { kind: LearnerKind; learnerId: string }) {
+  const [query, setQuery] = useSearchParams();
+  const [newActivityId, setNewActivityId] = useState(() => `extra:${crypto.randomUUID()}`);
+  const savedId = query.get('activity');
+  const activityId = savedId || newActivityId;
+  return <ExtraActivityForm key={activityId} kind={kind} learnerId={learnerId} savedId={savedId} initialActivityId={activityId}
+    onSaved={identifier => {
+      if (query.get('activity') === identifier) return;
+      setQuery(current => { const next = new URLSearchParams(current); next.set('activity', identifier); return next; }, { replace: true });
+    }} onNewActivity={() => {
+      setNewActivityId(`extra:${crypto.randomUUID()}`);
+      setQuery(current => { const next = new URLSearchParams(current); next.delete('activity'); return next; });
+    }} />;
+}
+export function ExtraActivityForm({ kind, learnerId, savedId, initialActivityId, onSaved, onNewActivity }: {
+  kind: LearnerKind; learnerId: string; savedId: string | null; initialActivityId?: string;
+  onSaved?: (activityId: string) => void; onNewActivity?: () => void;
+}) {
+  const { auth, isInitialized } = useAuth();
+  const staffPreview = auth.account?.role === 'staff' && String(auth.account.learnerRecordId ?? '') !== learnerId;
   const { real } = useLearnerDetailParam(kind, learnerId);
-  const [activityId] = useState(() => savedId || `extra:${crypto.randomUUID()}`);
+  const [activityId] = useState(() => savedId || initialActivityId || `extra:${crypto.randomUUID()}`);
+  const [restoreSavedDraft] = useState(Boolean(savedId));
   const [title, setTitle] = useState('');
   const [answers, setAnswers] = useState({ assignmentAnswer: '', whatYouLearned: '', businessImpact: '' });
   const [monthly, setMonthly] = useState(() => emptyMonthlyAssignment([], monthNow()));
   const [step, setStep] = useState(0);
   const [status, setStatus] = useState('draft');
+  const [addedBy, setAddedBy] = useState('');
   const [attempts, setAttempts] = useState<SubmissionAttempt[]>([]);
   const [files, setFiles] = useState<EvidenceRecord[]>([]);
   const [loading, setLoading] = useState(Boolean(savedId));
@@ -52,13 +74,17 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
   const [savedVersion, setSavedVersion] = useState(0);
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const requestRunning = useRef(false);
+  const mounted = useRef(true);
+  const pendingUploads = useRef(new Set<string>());
+  const previousEvidenceIds = useRef(new Set<string>());
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const { confirmTime, timeConfirmation } = useManualTimeConfirmation();
-  const locked = ['accepted', 'submitted_for_tutor_review'].includes(status);
-  const disabled = locked || busy || loading || loadFailed;
+  const locked = Boolean(addedBy) || ['accepted', 'submitted_for_tutor_review'].includes(status);
+  const disabled = !isInitialized || staffPreview || locked || busy || loading || loadFailed;
   const validMonth = /^(?!0000)\d{4}-(0[1-9]|1[0-2])$/.test(monthly.month);
   const datesOutsideMonth = validMonth && (monthly.timeEntries || []).some(entry => entry.date && !entry.date.startsWith(`${monthly.month}-`));
   useEffect(() => {
-    if (!savedId) return;
+    if (!restoreSavedDraft) return;
     let active = true;
     void loadLearningReflectionSubmission({ learnerKind: kind, learnerId, activityType: 'extra_activity', activityId })
       .then(value => {
@@ -66,18 +92,38 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
         if (!value) throw new Error('Extra activity not found.');
         setTitle(value.activityTitle); setAnswers({ assignmentAnswer: value.assignmentAnswer || '', whatYouLearned: value.whatYouLearned || '', businessImpact: '' });
         setStatus(value.status); setAttempts(value.submissionAttempts || []);
+        if (value.submissionOrigin === 'coach') setAddedBy(value.coachCreation?.name || 'Coach');
         if (value.monthlyAssignment) { setMonthly({ ...value.monthlyAssignment, month: value.monthlyAssignment.month || monthNow() }); setStep(Math.min(3, value.monthlyAssignment.step || 0)); }
         setOutsideConfirmed(Boolean(value.outsideWorkingHoursConfirmed));
       }).catch(reason => { if (active) { setLoadFailed(true); setError(String(reason.message || reason)); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [savedId, kind, learnerId, activityId]);
+  }, [restoreSavedDraft, kind, learnerId, activityId]);
   useEffect(() => {
     const controller = new AbortController();
-    void fetchEvidence(kind, learnerId, { sectionRef: activityId, signal: controller.signal }).then(setFiles)
+    void fetchEvidence(kind, learnerId, { sectionRef: activityId, signal: controller.signal }).then(rows => {
+      if (controller.signal.aborted) return;
+      const own = rows.filter(file => file.sectionRef === activityId);
+      const currentIds = new Set(own.map(file => file.id));
+      const removed = new Set([...previousEvidenceIds.current].filter(id => !currentIds.has(id)));
+      const added = own.filter(file => file.status === 'approved' && pendingUploads.current.has(file.id));
+      own.filter(file => file.status === 'rejected').forEach(file => pendingUploads.current.delete(file.id));
+      setFiles(rows);
+      if (locked || busy) return;
+      previousEvidenceIds.current = currentIds;
+      if (!added.length && !removed.size) return;
+      added.forEach(file => pendingUploads.current.delete(file.id));
+      setMonthly(current => ({ ...current,
+        evidence: [...current.evidence.filter(file => !removed.has(file.id)),
+          ...added.filter(file => !current.evidence.some(entry => entry.id === file.id)).map(file => ({ id: file.id, name: file.filename, points: '' }))],
+        claims: current.claims.map(claim => ({ ...claim, evidenceIds: claim.evidenceIds.filter(id => !removed.has(id)) })),
+      }));
+      setChecks([]); setDirty(true); setSaveState('idle');
+      if (added.length) setNotice('Uploaded evidence attached to this activity.');
+    })
       .catch(() => { if (!controller.signal.aborted) setError('Could not load evidence. Please reload before submitting.'); });
     return () => controller.abort();
-  }, [kind, learnerId, activityId, evidenceVersion]);
+  }, [kind, learnerId, activityId, evidenceVersion, locked, busy]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (dirty && !locked) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
@@ -130,11 +176,13 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
         return false;
       }
       const result = await saveLearningReflectionSubmission(payload(mode));
+      if (!mounted.current) return true;
       setStatus(result.status); setAttempts(result.submissionAttempts || attempts);
       if (savingSnapshot === latest.current) { setDirty(false); setSaveState('saved'); }
       else setSaveState('idle');
       setFailedSnapshot('');
       setSavedVersion(value => value + 1);
+      onSaved?.(activityId);
       if (mode === 'submit') setNotice(`Extra activity submitted for ${monthly.month}. It now appears in that month's full-month reflection, awaiting coach review.`);
       return true;
     } catch (reason) {
@@ -149,14 +197,19 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
     <main className={`page-container ${styles.extraPage}`}>
       {timeConfirmation}
       <Link to={`/learner/monthly-submission/${kind}/${learnerId}`} onClick={event => { if (dirty && !window.confirm('Leave without saving your changes?')) event.preventDefault(); }}>Back to monthly submission</Link>
-      <header className={styles.extraHeader}><div><p className={styles.eyebrow}>Monthly learning</p><h1>Extra activity</h1>
-      <p>Record your learning, add evidence and claim your KSBs and hours.</p><p>Choose the month this activity belongs to. Your submission date is recorded separately.</p></div>
+      <header className={styles.extraHeader}><div><p className={styles.eyebrow}>Monthly learning</p><h1>Extra activities</h1>
+        <ExtraActivityInfo />
+        {staffPreview && <p role="note">Learners add their own extra activities and evidence. Review and approve submitted work from the coach Extra activities page.</p>}
+        {addedBy && <p role="note">Added and originally approved by {addedBy}. This record was completed by your coach.</p>}
+      <p>Record your learning, add evidence and claim your KSBs and hours.</p><p>Choose the month this activity belongs to. Your submission date is recorded separately.</p>
+      <a href="#saved-extra-activities">View saved activities and continue a draft</a></div>
       <div className={styles.extraSave}><span role="status" data-state={saveState}>{locked ? 'Submitted work' : savingDraft ? 'Saving draft...' : saveState === 'error' ? 'Draft not saved — please retry' : dirty ? 'Unsaved changes' : saveState === 'saved' ? 'Draft saved' : 'Changes save automatically'}</span>
+        {onNewActivity && <button type="button" className={styles.secondary} disabled={!isInitialized || staffPreview || busy || savingDraft || loading} onClick={() => { if (!dirty || window.confirm('Start a new activity and discard your unsaved changes?')) onNewActivity(); }}>New activity</button>}
         <button type="button" className={styles.secondary} disabled={disabled || !validMonth || savingDraft} onClick={() => void save('draft')}>{saveState === 'error' ? 'Retry save' : 'Save draft'}</button></div></header>
       {loading && <p role="status">Loading extra activity...</p>}
       {notice && <p role="status" className="rounded-xl bg-green-50 p-4 text-green-900">{notice}</p>}
       {error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{error}</p>}
-      {locked && <p>This activity is {status === 'accepted' ? 'accepted' : 'awaiting coach review'}. Your submitted work is read-only.</p>}
+      {locked && <p>{addedBy ? 'Your coach recorded this activity. It is read-only here.' : `This activity is ${status === 'accepted' ? 'accepted' : 'awaiting coach review'}. Your submitted work is read-only.`}</p>}
       <AssignmentAttemptHistory attempts={attempts} />
       <section className={styles.extraForm} aria-label="Extra activity form">
       <div className="border-b border-slate-200 p-6">
@@ -176,13 +229,17 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
       <AssignmentAiCheckContext.Provider value={{ learnerId, learnerKind: kind, enabled: !disabled }}>
         {step === 0 && <section className="space-y-5">
           <label className="block">Activity title<input className="mt-2 block w-full rounded-xl border p-3" value={title} disabled={disabled} onChange={event => { changed(); setTitle(event.target.value); }} /></label>
-          <MonthlyAnswerField title={title} label="Describe your extra activity (at least 120 words)" minimumWords={120} value={answers.assignmentAnswer} disabled={disabled} onChange={value => { changed(); setAnswers(current => ({ ...current, assignmentAnswer: value })); }} generation={{ enabled: generation.canGenerate, busy: generation.generating, onGenerate: () => void generation.generate() }} />
+          <MonthlyAnswerField title={title} label="Describe your extra activity (at least 120 words)" minimumWords={120} value={answers.assignmentAnswer} disabled={disabled} onChange={value => { changed(); setAnswers(current => ({ ...current, assignmentAnswer: value })); }} generation={{ enabled: generation.canGenerate, busy: generation.generating, onGenerate: () => {
+            if (![answers.whatYouLearned, monthly.understood, monthly.gainedSkills].some(value => value.trim()) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void generation.generate();
+          } }} />
           {generation.status && <p role="status">{generation.status}</p>}
           <MonthlyAnswerField title={title} label="What I learned (at least 20 words)" minimumWords={20} value={answers.whatYouLearned} disabled={disabled} onChange={value => { changed(); setAnswers(current => ({ ...current, whatYouLearned: value })); }} />
           {(['understood', 'gainedSkills'] as const).map(key => <MonthlyAnswerField key={key} title={title} label={key === 'understood' ? 'What I understood (at least 20 words)' : 'Skills I gained (at least 20 words)'} minimumWords={20} value={monthly[key]} disabled={disabled} onChange={value => { changed(); setMonthly(current => ({ ...current, [key]: value })); }} />)}
         </section>}
         {(step === 1 || step === 2) && <MonthlyAssignmentSteps step={step} data={monthly} onChange={update => { changed(); setMonthly(update); }} answers={answers} onAnswer={(key, value) => { changed(); setAnswers(current => ({ ...current, [key]: value })); }}
-          kind={kind} learnerId={learnerId} title={title} plannedOtjh={null} mappings={[]} evidenceFiles={files} evidenceUploader={<AssignmentEvidence kind={kind} learnerId={learnerId} componentId={activityId} trainingPlanDetails={{}} onUploaded={() => { changed(); setEvidenceVersion(value => value + 1); }} readOnly={disabled} />} timeControl={null} disabled={disabled} payload={() => payload('draft')} checks={checks} checking={busy} onCheck={runChecks} onSave={() => save('draft')} activityId={activityId} />}
+          kind={kind} learnerId={learnerId} title={title} plannedOtjh={null} mappings={[]} evidenceFiles={files} evidenceUploader={<AssignmentEvidence kind={kind} learnerId={learnerId} componentId={activityId} trainingPlanDetails={{}}
+            onUploadCompleted={file => { if (!locked && file.sectionRef === activityId && file.status !== 'rejected') { pendingUploads.current.add(file.id); setNotice('File uploaded. It will be attached after the upload checks finish.'); setEvidenceVersion(value => value + 1); } }}
+            onUploaded={() => setEvidenceVersion(value => value + 1)} readOnly={disabled} />} timeControl={null} disabled={disabled} payload={() => payload('draft')} checks={checks} checking={busy} onCheck={runChecks} onSave={() => save('draft')} activityId={activityId} />}
         {step === 2 && !monthly.paidHours && <label className="flex gap-2"><input type="checkbox" checked={outsideConfirmed} disabled={disabled} onChange={event => { changed(); setOutsideConfirmed(event.target.checked); }} />I confirm this learning took place outside my working hours.</label>}
       </AssignmentAiCheckContext.Provider>
       {step === 3 && <section className={styles.extraChecks}><h2>Ready to submit?</h2><p>Run the checks, then select any result to review or correct that part of your activity.</p>
@@ -193,7 +250,7 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
       </div><footer className={styles.extraFooter}><button type="button" className={styles.secondary} disabled={step === 0} onClick={() => setStep(value => value - 1)}>Back</button>
         {step === 3 ? <button type="button" className={styles.primary} disabled={disabled || savingDraft || checks.length !== 8 || checks.some(check => !check.passed)} onClick={() => void save('submit')}>Submit extra activity</button>
           : <button type="button" className={styles.primary} onClick={() => setStep(value => value + 1)}>Next</button>}</footer></section>
-      <section className={styles.extraHistory}><ExtraActivities key={savedVersion} kind={kind} learnerId={learnerId} /></section>
+      <section id="saved-extra-activities" aria-label="Saved activities" className={styles.extraHistory}><ExtraActivities key={savedVersion} kind={kind} learnerId={learnerId} /></section>
     </main>
   </WorkspaceShell>;
 }

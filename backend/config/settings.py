@@ -408,6 +408,7 @@ INSTALLED_APPS = [
     # One shared projection table, one transactional outbox and one short-lived
     # performance-sample table for aggregate screens across every workspace.
     'read_models',
+    'mcp_api',
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
     'login',
@@ -436,6 +437,9 @@ MIDDLEWARE = [
     # Django's own AuthenticationMiddleware so both identities are available and
     # neither shadows the other while the admin still uses django.contrib.auth.
     'login.middleware.LoginSessionMiddleware',
+    # A successful write to a learner's /learner_api/.../<kind>/<pk>/ paths
+    # invalidates their cached dashboard/My Learning reads (learner_api/response_cache.py).
+    'learner_api.response_cache.LearnerReadCacheMiddleware',
     # Rejects anonymous callers on the API prefixes before any view runs. Must
     # sit after LoginSessionMiddleware so the session is already resolved, and
     # before anything that would act on the request. Answers only "is there a
@@ -469,10 +473,10 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
-# Release Live Sessions Feedback for learners in production; other types stay
-# local-only. Publication, ownership, assignment and dates are still enforced.
+# Release every assigned feedback type for learners in production and locally.
+# Publication, ownership, assignment and availability dates are still enforced.
 LEARNER_FEEDBACK_ENABLED = True
-LEARNER_NON_LECTURE_FEEDBACK_ENABLED = False
+LEARNER_NON_LECTURE_FEEDBACK_ENABLED = True
 
 ROOT_URLCONF = 'config.urls'
 
@@ -499,6 +503,13 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 ASGI_APPLICATION = 'config.asgi.application'
+
+# Module Builder coordination is opt-in for a measured pilot. It does not
+# enable chat. Empty module list means all modules once explicitly enabled.
+CURRICULUM_COLLABORATION_ENABLED = os.environ.get('CURRICULUM_COLLABORATION_ENABLED', 'false').lower() == 'true'
+CURRICULUM_COLLABORATION_MODULES = tuple(value.strip() for value in os.environ.get('CURRICULUM_COLLABORATION_MODULES', '').split(',') if value.strip())
+CURRICULUM_COLLABORATION_REDIS_URL = os.environ.get('CURRICULUM_COLLABORATION_REDIS_URL', '')
+
 
 # DRF is used by the chat API. Session authentication keeps it compatible with
 # Django's existing browser login flow; projects using another auth mechanism
@@ -709,6 +720,12 @@ _enrolment_database_url = (
 )
 if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
+    # Learner pages run most of their queries here (e.g. 44 of the dashboard
+    # overview's ~58), so keep it as warm as ``default`` instead of min_size 1:
+    # a surge otherwise queues behind one-at-a-time connects to Neon.
+    _enrolment_pool = DATABASES['enrolment'].get('OPTIONS', {}).get('pool')
+    if isinstance(_enrolment_pool, dict):
+        _enrolment_pool['min_size'] = DB_POOL_DEFAULT_MIN_SIZE
     # `default` and `enrolment` are usually the same Neon database. Django treats
     # a second alias with the same NAME as a mirror and leaves it pointing at the
     # original during tests — which would aim the unmanaged-table DDL in
@@ -980,6 +997,19 @@ AZURE_MATERIALS_STORAGE_ACCOUNT = os.environ.get("AZURE_MATERIALS_STORAGE_ACCOUN
 AZURE_MATERIALS_STORAGE_KEY = os.environ.get("AZURE_MATERIALS_STORAGE_KEY", "")
 AZURE_MATERIALS_CONTAINER = os.environ.get("AZURE_MATERIALS_CONTAINER") or "activity-media-backups"
 AZURE_MATERIALS_SAS_TTL_MINUTES = int(os.environ.get("AZURE_MATERIALS_SAS_TTL_MINUTES", "15"))
+
+# Object storage backend — see config/blob_storage.py. "azure" (default) keeps
+# every file in Azure Blob Storage. "s3" serves the same containers from one S3
+# bucket, keyed "<azure account>/<container>/<blob>", so stored Azure URLs stay
+# valid; the AZURE_*_ACCOUNT names above are still required as key prefixes.
+# S3 credentials come from the AWS default chain (the ECS task role), never
+# from settings.
+STORAGE_BACKEND = (os.environ.get("STORAGE_BACKEND") or "azure").strip().lower()
+if STORAGE_BACKEND not in ("azure", "s3"):
+    raise ImproperlyConfigured("STORAGE_BACKEND must be 'azure' or 's3'.")
+AWS_S3_STORAGE_BUCKET = os.environ.get("AWS_S3_STORAGE_BUCKET", "")
+AWS_S3_STORAGE_REGION = os.environ.get("AWS_S3_STORAGE_REGION") or "eu-west-2"
+AWS_S3_STORAGE_ENDPOINT_URL = os.environ.get("AWS_S3_STORAGE_ENDPOINT_URL", "")
 
 # Generated/signed enrolment paperwork (ILR and the other compliance documents)
 # — see enrolment_api/documents.py. Separate from the evidence containers: these

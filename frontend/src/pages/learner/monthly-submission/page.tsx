@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, CalendarDays, CheckCircle2, FileText } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -10,6 +10,7 @@ import { AssignmentDetailsCard } from './AssignmentDetailsCard';
 import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment, monthName, statusLabels } from './model';
 import { useMonthlyAssignmentPlan } from './useMonthlyAssignmentPlan';
 import styles from './monthlySubmission.module.css';
+import { ExtraActivityInfo } from '@/components/feature/ExtraActivityInfo';
 
 const extraStatusLabels = { ...statusLabels, rejected: 'Rejected', escalated: 'Escalated' };
 
@@ -58,6 +59,11 @@ export default function MonthlySubmissionPage() {
   const assignment = selectedAssignment?.row;
   const assignmentGroup = selectedAssignment?.sourceGroup;
   const selectedId = selectedExtra?.activityId || assignment?.id;
+  const rememberSelection = (month: string, assignmentId?: string) => {
+    try {
+      sessionStorage.setItem(selectionKey, JSON.stringify({ month, assignment: assignmentId }));
+    } catch { /* URL selection still works without storage. */ }
+  };
   const filterByView = (nextView: 'month' | 'overdue' | 'extras') => {
     setParams(current => {
       const next = new URLSearchParams(current);
@@ -68,6 +74,9 @@ export default function MonthlySubmissionPage() {
     }, { replace: true });
   };
   const select = (month: string, assignmentId?: string) => {
+    // Save the explicit choice before navigation, including an immediate leave.
+    // Defaults are derived above; a background effect must not navigate over it.
+    if (view !== 'extras') rememberSelection(month, assignmentId);
     setParams(current => {
       const next = new URLSearchParams(current);
       next.set('month', month);
@@ -85,19 +94,6 @@ export default function MonthlySubmissionPage() {
     }, { replace: true });
   };
   const busy = loading || plan.loading;
-  useEffect(() => {
-    if (busy || extras.loading || loadError || plan.errors.length || !kind || !id || !group || !selectedId) return;
-    if (view === 'month') {
-      try { sessionStorage.setItem(selectionKey, JSON.stringify({ month: group.month, assignment: selectedId })); } catch { /* URL selection still works without storage. */ }
-    }
-    if (params.get('month') === group.month && params.get('assignment') === selectedId) return;
-    setParams(current => {
-      const next = new URLSearchParams(current);
-      next.set('month', group.month);
-      next.set('assignment', selectedId);
-      return next;
-    }, { replace: true });
-  }, [busy, extras.loading, loadError, plan.errors.length, kind, id, group, selectedId, selectionKey, view, params, setParams]);
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel}
     pageTitle="Monthly submission" pageSubtitle="Your assignment, evidence and coaching preparation" userName={real?.name || 'Learner'} userRole="Learner">
     <main className={`page-container ${styles.page}`}>
@@ -129,7 +125,7 @@ export default function MonthlySubmissionPage() {
                     {monthName(item.month)}{item.label !== monthName(item.month) ? ` — ${item.label}` : ''}
                   </option>)}
                 </select>
-              </label><Link className={`${styles.primary} ${styles.extraActivityButton}`} to={`/learner/monthly-submission/${kind}/${id}/extra-activities`}>+ Extra activities</Link></div>
+              </label><div><Link className={`${styles.primary} ${styles.extraActivityButton}`} to={`/learner/monthly-submission/${kind}/${id}/extra-activities`}>+ Extra activities</Link><ExtraActivityInfo /></div></div>
             </section>
             <div className={styles.assignmentWorkspace}>
             <div className={styles.assignmentDetail}>
@@ -154,6 +150,7 @@ export default function MonthlySubmissionPage() {
                 </div>
                 <aside className={styles.extraMetadata} aria-label="Extra activity information">
                   <h3>Submission details</h3><dl>
+                    {selectedExtra.addedBy && <div><dt>Added by coach</dt><dd>{selectedExtra.addedBy}</dd></div>}
                     <div><dt>Submitted</dt><dd>{selectedExtra.submittedAt ? new Date(selectedExtra.submittedAt).toLocaleString('en-GB', { timeZone: 'Europe/London' }) + ' (UK time)' : 'Date unavailable'}</dd></div>
                     {selectedExtra.hours && <div><dt>Hours claimed</dt><dd>{selectedExtra.hours} {Number(selectedExtra.hours) === 1 ? 'hour' : 'hours'}</dd></div>}
                     {selectedExtra.ksbs.length > 0 && <div><dt>KSBs claimed</dt><dd className={styles.extraKsbTags}>{selectedExtra.ksbs.map((code, index) => <span key={`${code}:${index}`}>{code}</span>)}</dd></div>}

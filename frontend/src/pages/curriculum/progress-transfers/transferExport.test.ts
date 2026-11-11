@@ -9,6 +9,10 @@ const request: AdminTransfer = {
 };
 
 describe('transfer log export', () => {
+  it.each([String.fromCharCode(0, 31) + '=1', '\t +1', '\uFEFF@SUM(1)'])('escapes formulas after whitespace or control prefixes: %j', value => {
+    expect(transferLogCsv([{ ...request, programme: value }])).toContain(`"'${value}"`);
+  });
+
   it('retains authoritative identities, dates, snapshots and quoted multiline values in spreadsheet-safe CSV', () => {
     const csv = transferLogCsv([request]);
     expect(csv.startsWith('\uFEFF')).toBe(true);

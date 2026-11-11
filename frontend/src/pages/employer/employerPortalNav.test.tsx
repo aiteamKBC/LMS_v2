@@ -6,7 +6,7 @@ import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { useEmployerPortalChrome } from './employerPortalNav';
 
 const viewer = vi.hoisted(() => ({ role: 'employer' }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({
   auth: { account: { role: viewer.role, displayName: 'Example Employer' }, roles: [] },
   isAdmin: viewer.role === 'admin', canSeeNavItem: () => true,
 }) }));
@@ -48,11 +48,13 @@ function expectSection(label: string, href: string) {
 it.each([
   ['/employers/7', 'Home', '/employers/7'],
   ['/employers/7/learners', 'My learners', '/employers/7/learners'],
-  ['/employers/7/reviews', 'Progress reviews', '/employers/7/reviews'],
+  ['/employers/7/reviews', 'Progress & Gateway reviews', '/employers/7/reviews'],
   ['/employers/7/documents', 'Documents', '/employers/7/documents'],
+  ['/employers/7/feedback', 'Feedback', '/employers/7/feedback'],
+  ['/employers/7/feedback/501', 'Feedback', '/employers/7/feedback'],
   ...['commercial', 'apprenticeship'].flatMap(kind => [
-    [`/employers/7/learner/${kind}/101?tab=reviews`, 'Progress reviews', '/employers/7/reviews'],
-    [`/employers/7/learner/${kind}/101/?reviewId=example&tab=reviews`, 'Progress reviews', '/employers/7/reviews'],
+    [`/employers/7/learner/${kind}/101?tab=reviews`, 'Progress & Gateway reviews', '/employers/7/reviews'],
+    [`/employers/7/learner/${kind}/101/?reviewId=example&tab=reviews`, 'Progress & Gateway reviews', '/employers/7/reviews'],
     [`/employers/7/learner/${kind}/101?tab=documents`, 'Documents', '/employers/7/documents'],
     [`/employers/7/learner/${kind}/101`, 'My learners', '/employers/7/learners'],
     [`/employers/7/learner/${kind}/101?tab=unknown`, 'My learners', '/employers/7/learners'],
@@ -69,19 +71,19 @@ it.each(['employer', 'staff', 'admin'])('tracks tabs and browser history for %s 
   const destinations = () => sidebar.getAllByRole('link').map(link => link.getAttribute('href'));
   const original = destinations();
   fireEvent.click(screen.getByRole('link', { name: 'Open learner reviews' }));
-  expectSection('Progress reviews', '/employers/7/reviews');
+  expectSection('Progress & Gateway reviews', '/employers/7/reviews');
   fireEvent.click(screen.getByRole('link', { name: 'Open learner documents' }));
   expectSection('Documents', '/employers/7/documents');
   fireEvent.click(screen.getByRole('button', { name: 'Browser back' }));
-  expectSection('Progress reviews', '/employers/7/reviews');
+  expectSection('Progress & Gateway reviews', '/employers/7/reviews');
   fireEvent.click(screen.getByRole('button', { name: 'Browser forward' }));
   expectSection('Documents', '/employers/7/documents');
   fireEvent.click(screen.getByRole('link', { name: 'Open learning plan' }));
   expectSection('My learners', '/employers/7/learners');
   expect(destinations()).toEqual(original);
-  fireEvent.click(sidebar.getByRole('link', { name: 'Progress reviews' }));
+  fireEvent.click(sidebar.getByRole('link', { name: 'Progress & Gateway reviews' }));
   expect(screen.getByTestId('route')).toHaveTextContent('/employers/7/reviews');
-  expectSection('Progress reviews', '/employers/7/reviews');
+  expectSection('Progress & Gateway reviews', '/employers/7/reviews');
   fireEvent.click(sidebar.getByRole('link', { name: 'Home' }));
   expectSection('Home', '/employers/7');
 });

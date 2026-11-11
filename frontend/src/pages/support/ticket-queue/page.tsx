@@ -3,7 +3,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 
 import { loadSupportTickets, updateSupportTicket, ticketDate, TICKET_CATEGORIES, type SupportTicket } from '@/api/supportTickets';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import TicketAttachments from '@/components/support/TicketAttachments';
 
 const supportConfig = roleNavMap.support;

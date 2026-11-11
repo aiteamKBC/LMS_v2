@@ -8,7 +8,7 @@ import CoachSupportTicketsPage from './page';
 
 const { load, reply, inclusion } = vi.hoisted(() => ({ load: vi.fn(), reply: vi.fn(), inclusion: vi.fn() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 7 } } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { id: 7 } } }) }));
 vi.mock('@/api/coachLmsSupportTickets', () => ({
   loadCoachLmsTickets: load, replyToCoachLmsTicket: reply,
   coachLmsAttachmentUrl: (ticketId: string, fileId: string) => `/coach_api/coach/lms-support-tickets/${ticketId}/attachments/${fileId}`,

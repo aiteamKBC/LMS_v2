@@ -1,3 +1,5 @@
+import { ukOffsetForDate } from '@/lib/timeZones';
+import type { ReviewAttendance } from '@/lib/reviewAttendance';
 ﻿import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation, withCallerSignal } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -14,8 +16,10 @@ subscribeLearnerReadInvalidation(() => calendarResource.invalidate());
 
 export interface LearnerCalendarEvent {
   id: string;
+  bookingOnly?: boolean;
   /** Server-derived once the booked time has passed: learner attended (completed) or not (ended). */
   meetingOutcome?: 'ended' | 'completed' | null;
+  reviewAttendance?: ReviewAttendance;
   /** Live session the learner missed but then watched in full as a recording. */
   watchedRecording?: boolean;
   /** Catch-up only: the absence report it already makes up, if any. */
@@ -43,6 +47,11 @@ export interface LearnerCalendarEvent {
   targetDate: string | null;
   scheduledDate: string | null;
   scheduledTime: string | null;
+  /** Source clock and authoritative instants, when supplied by Live sessions. */
+  timeZone?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  isTimeEstimated?: boolean;
   durationMinutes: number;
   coachName: string;
   coachEmail: string;
@@ -63,7 +72,7 @@ export interface LearnerCalendarEvent {
   syncState?: 'pending' | 'syncing' | 'synced' | 'failed' | 'reconciliation' | 'cancelled';
   syncWarning?: string;
   reviewId?: string;
-  reviewSource?: 'aptem' | 'curriculum';
+  reviewSource?: 'aptem' | 'curriculum' | 'unlinked-booking';
   aptemReviewId?: string;
   importedReviewType?: string;
   sourceStatus?: string;
@@ -248,6 +257,10 @@ export async function downloadLearnerMcmPdf(kind: LearnerKind, learnerId: string
 
 export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
   return request<CoachMeetingArtifactsResponse>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/`, { signal, credentials: 'include' });
+}
+
+export function fetchLearnerMeetingRecordings(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
+  return request<CoachMeetingArtifactsResponse>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/?recordings_only=1`, { signal, credentials: 'include' });
 }
 
 export function learnerMeetingArtifactContentUrl(kind: LearnerKind, learnerId: string, eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}): string {
@@ -550,19 +563,8 @@ export async function fetchReviewSlots(
   return Array.isArray(result.times) ? result.times as string[] : [];
 }
 
-export function ukOffsetForDate(date: string): number {
-  return (
-    (12 -
-      Number(
-        new Intl.DateTimeFormat('en-GB', {
-          timeZone: 'Europe/London',
-          hour: '2-digit',
-          hourCycle: 'h23',
-        }).format(new Date(`${date}T12:00:00Z`)),
-      )) *
-    60
-  );
-}
+export { ukOffsetForDate } from '@/lib/timeZones';
+
 
 /** The bookable day, and whether the case owner's calendar was actually read. */
 export interface FirstSessionSlots {

@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import {
   fetchEnglandHolidaySyncs,
-  fetchCurriculumHolidays,
   fetchEnglandHolidays,
   refreshEnglandHolidays,
   type EnglandHoliday,
@@ -35,7 +34,6 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
 }));
 
 vi.mock('@/lib/curriculumApi', () => ({
-  fetchCurriculumHolidays: vi.fn(async () => { throw new Error('Current calendar response is not configured in this legacy fixture.'); }),
   fetchEnglandHolidays: vi.fn(),
   fetchEnglandHolidaySyncs: vi.fn(),
   refreshEnglandHolidays: vi.fn(),
@@ -139,8 +137,6 @@ describe('England Holidays page', () => {
   });
 
   it('explains an empty table rather than looking merely unpopulated', async () => {
-    // The current page reads the combined calendar, not the raw feed endpoint.
-    vi.mocked(fetchCurriculumHolidays).mockResolvedValueOnce([]);
     vi.mocked(fetchEnglandHolidays).mockResolvedValue([]);
     renderPage();
 

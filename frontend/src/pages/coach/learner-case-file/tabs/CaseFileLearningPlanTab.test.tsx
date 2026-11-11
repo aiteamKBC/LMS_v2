@@ -6,7 +6,7 @@ import { CaseFileSessionProvider } from '@/features/coach/case-file/hooks/CaseFi
 import { clearCaseFileCache } from '@/features/coach/case-file/cache/caseFileCache';
 import { caseFileSectionRead } from '@/features/coach/case-file/api/caseFileApi';
 import { CaseFileLearningPlanTab } from './CaseFileLearningPlanTab';
-import { dateLabel } from '@/pages/learner/training-plan-timeline/presentation';
+import { dateLabel } from "@/pages/learner/training-plan-timeline/presentation.helpers";
 
 const transport = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: transport }));

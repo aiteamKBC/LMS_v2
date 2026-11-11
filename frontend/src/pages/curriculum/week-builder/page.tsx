@@ -1,8 +1,8 @@
+import { CollaborativeField } from '../module-builder/CollaborativeField';
+import { componentSessionTitle, type SessionTitleWeek } from '../shared/sessionDisplayTitle';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
-import railStyles from './WeekComponentRail.module.css';
-import overviewStyles from './WeekOverviewPanel.module.css';
-import { liveSessionCalendarMovePending } from '../module-builder/componentWeekMove';
 import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
+import { moduleUploadedFiles, withStoredUploads } from './moduleUploadedFiles';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
@@ -43,6 +43,8 @@ import {
   updateWeekTemplate,
   weekTemplateConflict,
   uploadWeekComponentResource,
+  fetchModuleStoredUploads,
+  type StoredModuleUpload,
   validateWeekComponent,
   weekPaletteGroups,
   weekPaletteTypes,
@@ -64,7 +66,7 @@ import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, import
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
 import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
-import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
+import { loadModuleStructure, saveModuleStructure, manualLiveSessionLinkSettings, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { liveSessionDriftCause } from '@/pages/curriculum/shared/entities/liveSessionDriftCause';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel, ModuleLiveSessionResults } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
@@ -89,6 +91,8 @@ import {
 } from '@/pages/curriculum/shared/entities/liveSessionRecordingLink';
 import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
+import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
+import { PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } from '@/pages/curriculum/shared/pendingVideoFiles';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
 // load of this page and of module-builder, which imports from this module.
@@ -495,6 +499,7 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 // page and a URL parameter to ask it.
 export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
   const [template, setTemplate] = useState<WeekTemplate>(initial);
+  const videoFiles = usePendingVideoFiles(initial.id);
   const [persistedId, setPersistedId] = useState(isNew ? '' : initial.id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -627,7 +632,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
     } catch { /* snapshot stays as-is if it somehow isn't valid JSON */ }
   }, [pointsByType]);
 
-  const dirty = JSON.stringify(template) !== savedSnapshot.current;
+  const dirty = JSON.stringify(template) !== savedSnapshot.current || videoFiles.hasPending;
 
   /**
    * Somebody else's save landing on the template this editor is holding.
@@ -736,9 +741,16 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
       let result: WeekTemplate | null = null;
       for (let rebases = 0; ; rebases += 1) {
         try {
-          const input = toWeekTemplateInput(working);
+          const selectedVideo = working.components.find(component => component.id === selectedId && component.type === 'video');
+          const videoImport = selectedVideo ? { importVideoComponentIds: [selectedVideo.id] } : {};
+          const input = { ...toWeekTemplateInput(working), ...videoImport };
           result = persistedId
-            ? await updateWeekTemplate(persistedId, working.revision ? { ...input, expectedRevision: working.revision } : input)
+            ? await updateWeekTemplate(persistedId, {
+              // An unchanged Save may retry the selected video. It must not
+              // replace every template component just to request that copy.
+              ...(dirty ? input : videoImport),
+              ...(working.revision ? { expectedRevision: working.revision } : {}),
+            })
             : await createWeekTemplate(input);
           break;
         } catch (err) {
@@ -760,6 +772,14 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
       savedSnapshot.current = JSON.stringify(result);
       setSelectedId(prev => (prev && result.components.some(c => c.id === prev) ? prev : null));
       savedChanges.current = true;
+      await videoFiles.uploadSaved('template', result.id, result.components, (id, settings, originalSource) => {
+        const apply = (value: WeekTemplate): WeekTemplate => ({ ...value,
+          components: value.components.map(component => withUploadedVideo(component, id, settings, originalSource)),
+        });
+        result = apply(result!);
+        savedSnapshot.current = JSON.stringify(apply(JSON.parse(savedSnapshot.current) as WeekTemplate));
+        setTemplate(current => apply(current));
+      });
       showCurriculumAlert({ title: 'Week template saved', icon: 'success', timer: 1400 });
     } catch (err) {
       showCurriculumAlert({ title: 'Save failed', text: err instanceof Error ? err.message : undefined, icon: 'error' });
@@ -769,6 +789,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
   };
 
   const discard = () => {
+    videoFiles.clear();
     const restored = JSON.parse(savedSnapshot.current) as WeekTemplate;
     setTemplate(restored);
     setSelectedId(prev => (prev && restored.components.some(c => c.id === prev) ? prev : restored.components[0]?.id ?? null));
@@ -835,6 +856,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
   }
 
   return (
+    <PendingVideoFilesContext.Provider value={videoFiles}>
     <div className="px-5 lg:px-8 py-6 space-y-6">
       {/* The receipt for a merge that has already happened: their components
           are in the rail by the time this renders, and the ones the reader had
@@ -870,7 +892,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
                 <SaveStatus dirty={dirty} saving={saving} isNew={!persistedId} />
               </div>
               <input value={template.title} onChange={e => update(prev => ({ ...prev, title: e.target.value }))} placeholder="Untitled week" className="mt-1 w-full max-w-[600px] bg-transparent font-heading text-[24px] font-black text-foreground-950 outline-none placeholder:text-foreground-300 border-b-2 border-transparent focus:border-primary-300 transition-colors" />
-              <FlowStrip components={template.components} selectedId={selectedId} onJump={jumpTo} />
+              <FlowStrip components={template.components} selectedId={selectedId} onJump={jumpTo} displayWeek={template} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <input
@@ -885,7 +907,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
                   if (file) void importKsbSheet(file);
                 }}
               />
-              <button onClick={save} disabled={saving || !dirty} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
+              <button onClick={save} disabled={saving || (!dirty && selected?.type !== 'video')} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
                 {saving ? <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Saving</> : <><AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save' : 'Create'}</>}
               </button>
             </div>
@@ -911,6 +933,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         <div className="space-y-4">
           <WeekComponentRail
             weekId={template.id}
+            displayWeek={template}
             components={template.components}
             selectedId={selectedId}
             onSelectId={setSelectedId}
@@ -928,7 +951,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
         {/* Inspector — the wide working canvas */}
         <div>
           {selected ? (
-            <ComponentEditor key={selected.id} component={selected} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} />
+            <ComponentEditor key={selected.id} component={selected} displayWeek={template} onChange={patch => patchComponent(selected.id, patch)} onBack={() => setSelectedId(null)} groupOptions={groupOptions} rulePoints={pointsByType[selected.type]} weekScope={weekScope} recordingLinks={templateRecordingLinks} videoTemplateId={template.id} />
           ) : (
             <WeekOverviewPanel
               components={template.components}
@@ -957,6 +980,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
 
       <style>{`@keyframes wbRise{from{opacity:0;transform:translate(-50%,14px)}to{opacity:1;transform:translate(-50%,0)}}.wb-savebar{transform:translate(-50%,0);animation:wbRise .2s ease-out}@media (prefers-reduced-motion:reduce){.wb-savebar{animation:none}}`}</style>
     </div>
+    </PendingVideoFilesContext.Provider>
   );
 }
 
@@ -984,7 +1008,7 @@ function Meter({ icon, value, label }: { icon: string; value: string; label: str
 }
 
 // At-a-glance sequence — click a dot to jump to that part.
-function FlowStrip({ components, selectedId, onJump }: { components: ModuleComponent[]; selectedId: string | null; onJump: (id: string) => void }) {
+function FlowStrip({ components, selectedId, onJump, displayWeek }: { components: ModuleComponent[]; selectedId: string | null; onJump: (id: string) => void; displayWeek?: SessionTitleWeek }) {
   if (components.length === 0) return null;
   return (
     <div className="mt-3 flex items-center gap-1 flex-wrap">
@@ -995,7 +1019,7 @@ function FlowStrip({ components, selectedId, onJump }: { components: ModuleCompo
           <button
             key={component.id}
             onClick={() => onJump(component.id)}
-            title={`${index + 1}. ${component.title || weekTypeLabel(component.type)}`}
+            title={`${index + 1}. ${componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type))}`}
             className={`h-2 rounded-full transition-all ${tone.marker} ${active ? 'w-7 ring-2 ring-offset-1 ring-foreground-300' : 'w-4 opacity-70 hover:opacity-100 hover:w-6'}`}
           />
         );
@@ -1006,10 +1030,7 @@ function FlowStrip({ components, selectedId, onJump }: { components: ModuleCompo
 
 // A "+" threaded into the spine records exactly where the new component lands;
 // the actual picker opens in a roomy dialog instead of squeezing into the rail.
-function InsertionZone({ active, onOpen, first, last, compact = false }: { active: boolean; onOpen: () => void; first?: boolean; last?: boolean; compact?: boolean }) {
-  if (compact) return <div className={railStyles.insertion} data-active={active || undefined}>
-    <button type="button" onClick={onOpen} aria-label="Add a component here"><span><AppIcon className="ri-add-line" />{active ? 'Adding here' : 'Insert here'}</span></button>
-  </div>;
+function InsertionZone({ active, onOpen, first, last }: { active: boolean; onOpen: () => void; first?: boolean; last?: boolean }) {
   return (
     <div className={`group/insert flex gap-3 ${active ? 'py-1' : ''}`}>
       <SpineGutter connectTop={!first} connectBottom={!last} />
@@ -1038,13 +1059,13 @@ function SpineGutter({ connectTop = true, connectBottom = true, children }: { co
 }
 
 interface RailNodeProps {
-  compact?: boolean;
-  onDeselect?: () => void;
   component: ModuleComponent;
+  displayWeek?: SessionTitleWeek;
   index: number;
   selected: boolean;
   focused?: boolean;
   issues: number;
+  nested?: boolean;
   weekSessionDate?: string;
   /**
    * The delivery days of this week a ticked holiday falls on, as `YYYY-MM-DD`.
@@ -1076,8 +1097,8 @@ interface RailNodeProps {
    */
   otherWeeks?: { id: string; label: string }[];
   onCopyToWeek?: (weekId: string) => void;
+  /** Moves this component (and its linked partner) to another week of the module. */
   onMoveToWeek?: (weekId: string) => void;
-  onReviewTeamsCalendar?: () => void;
   /** The live-session/recording link, in words; empty for a component that has none. */
   linkLabel?: string;
   /** What else moves with this component, in words; empty when it moves alone. */
@@ -1096,11 +1117,11 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, compact = false, onDeselect, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, onReviewTeamsCalendar, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, displayWeek, index, selected, focused = false, issues, nested = false, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, linkLabel = '', moveNote = '', handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+  const displayTitle = componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type));
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
-  const calendarMovePending = liveSessionCalendarMovePending(component);
   const externalTeamsCalendar = isLiveSession && !component.settings.extraTeamsMeetingUrl
     && (component.settings.teamsMeetingType === 'linked-external' || Boolean(component.settings.liveSessionLinkOverride));
   // The date this live session itself holds. It used to fall back to the week's
@@ -1123,88 +1144,8 @@ function RailNodeCard({ component, index, selected, compact = false, onDeselect,
   // twenty components shows at a glance which ones are still placeholders --
   // it is a hint and nothing else, and it disappears on the first real edit.
   const unedited = componentLooksUnedited(component, weekAutoTitleLabels(component.type));
-  const sessionDetails = <>
-            {linkLabel && (
-              <span
-                data-testid="component-link-label"
-                title={linkLabel === 'Not linked'
-                  ? 'This recording is not linked to a live session. It needs its own recording link and moves on its own.'
-                  : linkLabel === 'Linked session missing'
-                    ? 'The live session this recording was linked to no longer exists, so it plays nothing. Open the recording to link it again.'
-                    : moveNote
-                      ? 'Linked: the recording plays the live session’s recording and takes its date. Moving either one to another week moves both, whichever weeks they are in now.'
-                      : 'Linked to a live session in another module: the recording plays that session’s recording. Moving this recording never moves that session, and they stay linked.'}
-                className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-bold ${linkLabel === 'Not linked' ? 'border-background-300 bg-background-100 text-foreground-500' : linkLabel === 'Linked session missing' ? 'border-amber-300 bg-amber-100 text-amber-800' : 'border-purple-200 bg-purple-50 text-purple-700'}`}
-              >
-                <AppIcon className={`${linkLabel === 'Not linked' || linkLabel === 'Linked session missing' ? 'ri-link-unlink-m' : 'ri-link-m'} text-[10px]`}></AppIcon>
-                <span className="truncate">{linkLabel}</span>
-              </span>
-            )}
-        {calendarMovePending && <span className="inline-flex flex-wrap items-center gap-1 text-amber-800" title="This component has moved to a new planned date. Its existing Teams booking still needs to be updated through the Teams calendar.">
-      <AppIcon className="ri-calendar-schedule-line" /><span>Teams calendar update needed</span>
-      {onReviewTeamsCalendar && <button type="button" className="underline" onClick={event => { event.stopPropagation(); onReviewTeamsCalendar(); }}>Update Teams calendar</button>}
-    </span>}
-    {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
-    {isLiveSession && ['missing', 'ambiguous'].includes(String(component.settings?.teamsCalendarBinding || '')) && (
-      <span
-        title={externalTeamsCalendar
-          ? 'This date has no confirmed session in the imported Teams calendar. The organizer must check or extend the original series in Teams, then its updated dates can be imported and matched here. The existing meeting link is preserved.'
-          : 'This date has no confirmed calendar session. Open Update Teams meeting to review the module calendar.'}
-        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
-      >
-        <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
-        Teams date awaiting confirmation
-      </span>
-    )}
-    {/* The session and its week disagree about when this runs, and the
-        session's date is the one that wins everywhere downstream. Said
-        on the row that owns the date, with the correction offered --
-        pressing it only edits the module, exactly like typing the date
-        in the session's own settings would. */}
-    {dateDrift && (
-      <span
-        title={`Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. ${externalTeamsCalendar
-          ? 'This is an imported Teams series. Open Update Teams meeting to review and re-match its saved dates. If the planned date is missing, the organizer must update the original series in Teams before its dates can be imported. The LMS keeps the existing link and does not reschedule this series.'
-          : 'This session keeps its confirmed date because attendees were invited to it. Open the Teams Meetings page and run Update to move the Microsoft meeting to the planned date and notify attendees.'}`}
-        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
-      >
-        <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
-        Teams calendar: {formatDateLabel(dateDrift.storedDate)} · planned here: {formatDateLabel(dateDrift.weekDates[0])} · {externalTeamsCalendar ? 'review imported calendar' : 'update Teams to match'}
-      </span>
-    )}
-    {/* Says what is missing rather than filling it in: this session is
-        not on the calendar and not in the Teams series until it has a
-        date of its own. The week's date is offered as context, marked
-        as the week's so it cannot be read as this session's. */}
-    {isLiveSession && !scheduledDate && (
-      <span
-        title="This live session has no date, so it is not on the calendar and is not sent to Teams. Give it one in its settings."
-        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
-      >
-        <AppIcon className="ri-calendar-close-line text-[10px]"></AppIcon>
-        No date
-      </span>
-    )}
-    {weekDate && <span className="tabular-nums text-foreground-300">week: {formatDateLabel(weekDate)}</span>}
-    {onHoliday && (
-      <span
-        title="This live session falls on a holiday. It is unchanged: same date, same week, still scheduled."
-        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
-      >
-        <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
-        Holiday
-      </span>
-    )}
-  </>;
-  if (compact) return <CompactRailNode
-    component={component} index={index} selected={selected} focused={focused} issues={issues}
-    onSelect={onSelect} onDeselect={onDeselect} onDuplicate={onDuplicate} onDelete={onDelete}
-    otherWeeks={otherWeeks} onCopyToWeek={onCopyToWeek} onMoveToWeek={onMoveToWeek} handleProps={handleProps}
-    scheduledDate={scheduledDate} unedited={unedited}
-    notices={linkLabel || isLiveSession && (calendarMovePending || !scheduledDate || onHoliday || dateDrift || ['missing', 'ambiguous'].includes(String(component.settings.teamsCalendarBinding || ''))) ? sessionDetails : null}
-  />;
   return (
-    <div id={`node-${component.id}`} data-component-type={component.type} data-focused={focused || undefined} className="group/node">
+    <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node">
       {/* Its own row above the card rather than beside the title: the title
           line already truncates in a narrow rail, and a component's name is
           what an author scans for -- the hint says something ABOUT the row,
@@ -1227,32 +1168,88 @@ function RailNodeCard({ component, index, selected, compact = false, onDeselect,
         </SpineGutter>
         <div
           onClick={onSelect}
-          className={`min-w-0 flex-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
+          className={`min-w-0 flex-1 my-1 ${nested ? 'grid grid-cols-[20px_32px_minmax(0,1fr)] items-start gap-x-2 gap-y-1.5' : 'flex flex-wrap items-center gap-2'} rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
         >
           <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
-          <span data-authoring-type-icon className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
+          <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
           <span className="flex-1 min-w-0">
-          <span className="flex min-w-0 items-center gap-2">
-            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold truncate ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
+          <span className={`flex min-w-0 gap-2 ${nested ? 'items-start' : 'items-center'}`}>
+            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold ${nested ? 'break-words [overflow-wrap:anywhere]' : 'truncate'} ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{displayTitle}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
+          {nested && scheduledDate && (
+            <span className="mt-1 flex flex-wrap items-center gap-x-1 text-[10px] text-foreground-400">
+              <AppIcon className="ri-calendar-line shrink-0" />
+              Session:
+              <time dateTime={scheduledDate} className="whitespace-nowrap tabular-nums">{formatDateLabel(scheduledDate)}</time>
+            </span>
+          )}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
             <span className={`font-semibold ${tone.text}`}>{weekTypeLabel(component.type)}</span>
             <span className="tabular-nums">{formatHoursMinutes(component.expectedOtjh)}</span>
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
-            {sessionDetails}
+            {!nested && scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
+            {isLiveSession && ['missing', 'ambiguous'].includes(String(component.settings?.teamsCalendarBinding || '')) && (
+              <span
+                title={externalTeamsCalendar
+                  ? 'This date has no confirmed session in the imported Teams calendar. The organizer must check or extend the original series in Teams, then its updated dates can be imported and matched here. The existing meeting link is preserved.'
+                  : 'This date has no confirmed calendar session. Open Update Teams meeting to review the module calendar.'}
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
+                Teams date awaiting confirmation
+              </span>
+            )}
+            {/* Says what is missing rather than filling it in: this session is
+                not on the calendar and not in the Teams series until it has a
+                date of its own. The week's date is offered as context, marked
+                as the week's so it cannot be read as this session's. */}
+            {isLiveSession && !scheduledDate && (
+              <span
+                title="This live session has no date, so it is not on the calendar and is not sent to Teams. Give it one in its settings."
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-calendar-close-line text-[10px]"></AppIcon>
+                No date
+              </span>
+            )}
+            {weekDate && <span className="tabular-nums text-foreground-300">week: {formatDateLabel(weekDate)}</span>}
+            {linkLabel && (
+              <span
+                data-testid="component-link-label"
+                title={linkLabel === 'Not linked'
+                  ? 'This recording is not linked to a live session. It needs its own recording link and moves on its own.'
+                  : linkLabel === 'Linked session missing'
+                    ? 'The live session this recording was linked to no longer exists, so it plays nothing. Open the recording to link it again.'
+                    : moveNote
+                      ? 'Linked: the recording plays the live session’s recording and takes its date. Moving either one to another week moves both, whichever weeks they are in now.'
+                      : 'Linked to a live session in another module: the recording plays that session’s recording. Moving this recording never moves that session, and they stay linked.'}
+                className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-bold ${linkLabel === 'Not linked' ? 'border-background-300 bg-background-100 text-foreground-500' : linkLabel === 'Linked session missing' ? 'border-amber-300 bg-amber-100 text-amber-800' : 'border-purple-200 bg-purple-50 text-purple-700'}`}
+              >
+                <AppIcon className={`${linkLabel === 'Not linked' || linkLabel === 'Linked session missing' ? 'ri-link-unlink-m' : 'ri-link-m'} text-[10px]`}></AppIcon>
+                <span className="truncate">{linkLabel}</span>
+              </span>
+            )}
+            {onHoliday && (
+              <span
+                title="This live session falls on a holiday. It is unchanged: same date, same week, still scheduled."
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
+                Holiday
+              </span>
+            )}
           </span>
         </span>
         {(onDuplicate || onDelete) && (
-          <span className="flex shrink-0 items-center gap-0.5">
+          <span className={`flex shrink-0 items-center gap-0.5 ${nested ? 'col-span-3 justify-end border-t border-background-200 pt-1' : ''}`}>
             {onDuplicate && (
               <CloneComponentButton
                 label={component.title || weekTypeLabel(component.type)}
                 otherWeeks={otherWeeks}
                 onDuplicateSameWeek={onDuplicate}
                 onCopyToWeek={onCopyToWeek}
-                onMoveToWeek={onMoveToWeek}
               />
             )}
             {onMoveToWeek && otherWeeks && otherWeeks.length > 0 && (
@@ -1276,7 +1273,7 @@ function RailNodeCard({ component, index, selected, compact = false, onDeselect,
             title={`${liveSessionDriftCause(dateDrift)?.sentence ? `${liveSessionDriftCause(dateDrift)?.sentence} ` : ''}Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. ${externalTeamsCalendar
               ? 'This is an imported Teams series. Open Update Teams meeting to review and re-match its saved dates. If the planned date is missing, the organizer must update the original series in Teams before its dates can be imported. The LMS keeps the existing link and does not reschedule this series.'
               : 'This session keeps its confirmed date because attendees were invited to it. Open the Teams Meetings page and run Update to move the Microsoft meeting to the planned date and notify attendees.'}`}
-            className="basis-full rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] leading-snug text-amber-900"
+            className={`${nested ? 'col-span-3' : 'basis-full'} rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] leading-snug text-amber-900`}
           >
             <p className="flex items-center gap-1 font-bold">
               <AppIcon className="ri-calendar-schedule-line text-[11px] text-amber-600"></AppIcon>
@@ -1296,62 +1293,20 @@ function RailNodeCard({ component, index, selected, compact = false, onDeselect,
   );
 }
 
-function CompactRailNode({ component, index, selected, focused, issues, onSelect, onDeselect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, onMoveToWeek, handleProps, scheduledDate, unedited, notices }: RailNodeProps & {
-  handleProps?: Record<string, unknown>; scheduledDate: string; unedited: boolean; notices: ReactNode;
-}) {
-  const definition = getComponentDefinition(component.type);
-  const title = component.title || weekTypeLabel(component.type);
-  const labels = [definition.label, ...weekAutoTitleLabels(component.type)].map(label => label.toLocaleLowerCase());
-  const customTitle = !labels.includes(title.replace(/\s+\d+$/, '').trim().toLocaleLowerCase());
-  const status = String(component.settings.contentStatus || 'Draft');
-  const typeLabels: Partial<Record<ModuleComponentType, string>> = { 'live-session': 'Live session', reading: 'Reading', powerpoint: 'Slides' };
-  return <div id={`node-${component.id}`} data-component-type={component.type} data-focused={focused || undefined} data-compact-component className={railStyles.node}>
-    <div className={railStyles.card} data-selected={selected || undefined} data-focused={focused || undefined} onClick={onSelect}
-      title={`${index + 1}. ${title} · ${formatHoursMinutes(component.expectedOtjh)} · ${component.points} pts${scheduledDate ? ` · ${formatDateLabel(scheduledDate)}` : ''}`}>
-      <div className={railStyles.row}>
-        <input type="checkbox" aria-label={`Select ${title}`} checked={selected} disabled={!onSelect} onClick={event => event.stopPropagation()}
-          onChange={event => event.target.checked ? onSelect?.() : onDeselect?.()} />
-        <span className={railStyles.icon} aria-hidden><AppIcon className={definition.icon} /></span>
-        <div className={`${railStyles.summary} min-w-0 flex-1`}>
-          <div className={railStyles.badges}>
-            <span data-content-status={status} title={unedited ? 'Not edited yet — this component still has its initial placeholder values.' : undefined}>{status}</span>
-            <span className={railStyles.scope}>{component.copiedFromId ? 'Reused' : 'This week'}</span>
-          </div>
-          <span className={customTitle ? railStyles.title : 'sr-only'} onMouseEnter={showFullTextWhenTruncated}>{title}</span>
-          <div className={railStyles.meta}>
-            <span className={railStyles.type}>{typeLabels[component.type] || weekTypeLabel(component.type)}</span>
-            <span>{formatHoursMinutes(component.expectedOtjh)} · {component.points} pts</span>
-            {component.ksbMappings.length > 0 && <span>{component.ksbMappings.length} KSB</span>}
-          </div>
-        </div>
-        <div className={railStyles.actions}>
-          <button type="button" aria-label={`Edit ${title}`} title="Edit component" onClick={event => { event.stopPropagation(); onSelect?.(); }}><AppIcon className="ri-pencil-line" /></button>
-          {onDuplicate && <CloneComponentButton label={title} otherWeeks={otherWeeks} onDuplicateSameWeek={onDuplicate} onCopyToWeek={onCopyToWeek} onMoveToWeek={onMoveToWeek} />}
-          {onDelete && <button type="button" aria-label={`Delete ${title}`} title="Delete component" onClick={event => { event.stopPropagation(); onDelete(); }}><AppIcon className="ri-delete-bin-line" /></button>}
-          <button type="button" {...(handleProps || {})} aria-label={`Drag ${title} to reorder`} title="Drag to reorder" onClick={event => event.stopPropagation()} className={railStyles.drag}><AppIcon className="ri-drag-move-2-line" /></button>
-        </div>
-      </div>
-      {notices && <div className={railStyles.notices}>{notices}</div>}
-      {issues > 0 && <span className={railStyles.validation} title={`${issues} fields need attention`} aria-label={`${issues} fields need attention`}><AppIcon className="ri-error-warning-line" /></span>}
-    </div>
-  </div>;
-}
-
 // The clone button: a single click still just duplicates in place wherever the
 // rail has nowhere else to put the copy (the standalone week builder, week
 // templates). Inside the module builder, where a week sits alongside its
 // siblings, it opens a small menu instead so the same button can also send the
 // copy to another week -- one action, offered where it applies.
-function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyToWeek, onMoveToWeek }: {
+function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyToWeek }: {
   label: string;
   otherWeeks?: { id: string; label: string }[];
   onDuplicateSameWeek: () => void;
   onCopyToWeek?: (weekId: string) => void;
-  onMoveToWeek?: (weekId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const hasOtherWeeks = Boolean((onCopyToWeek || onMoveToWeek) && otherWeeks && otherWeeks.length > 0);
+  const hasOtherWeeks = Boolean(onCopyToWeek && otherWeeks && otherWeeks.length > 0);
 
   useEffect(() => {
     if (!open) return;
@@ -1374,7 +1329,7 @@ function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyTo
         aria-label={`Duplicate ${label}`}
         aria-haspopup={hasOtherWeeks ? 'menu' : undefined}
         aria-expanded={hasOtherWeeks ? open : undefined}
-        title={hasOtherWeeks && onMoveToWeek ? 'Copy or move component' : hasOtherWeeks ? 'Duplicate component' : 'Duplicate component in this week'}
+        title={hasOtherWeeks ? 'Duplicate component' : 'Duplicate component in this week'}
         onClick={e => {
           e.stopPropagation();
           if (!hasOtherWeeks) { onDuplicateSameWeek(); return; }
@@ -1385,12 +1340,12 @@ function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyTo
         <AppIcon className="ri-file-copy-line text-[13px]"></AppIcon>
       </button>
       {open && hasOtherWeeks && (
-        <div role="menu" onClick={e => e.stopPropagation()} className="absolute right-0 top-full z-20 mt-1 max-h-[65vh] w-56 overflow-y-auto rounded-xl border border-background-200 bg-background-50 py-1 shadow-xl">
+        <div role="menu" onClick={e => e.stopPropagation()} className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-xl border border-background-200 bg-background-50 py-1 shadow-xl">
           <button type="button" role="menuitem" onClick={() => { setOpen(false); onDuplicateSameWeek(); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-800 hover:bg-background-100">
             <AppIcon className="ri-file-copy-line text-[13px] text-foreground-400"></AppIcon>
             Duplicate in this week
           </button>
-          {onCopyToWeek && <><p className="mt-1 border-t border-background-200 px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Copy to another week</p>
+          <p className="mt-1 border-t border-background-200 px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Copy to another week</p>
           <div className="max-h-48 overflow-y-auto">
             {otherWeeks!.map(week => (
               <button key={week.id} type="button" role="menuitem" onClick={() => { setOpen(false); onCopyToWeek?.(week.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-700">
@@ -1399,15 +1354,6 @@ function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyTo
               </button>
             ))}
           </div>
-          </>}
-          {onMoveToWeek && <>
-            <p className="mt-1 border-t border-background-200 px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Move to another week</p>
-            <div className="max-h-48 overflow-y-auto">
-              {otherWeeks!.map(week => <button key={week.id} type="button" role="menuitem" aria-label={`Move to ${week.label}`} onClick={() => { setOpen(false); onMoveToWeek(week.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-700">
-                <AppIcon className="ri-arrow-right-line text-[13px] text-foreground-400" /><span className="truncate">{week.label}</span>
-              </button>)}
-            </div>
-          </>}
         </div>
       )}
     </div>
@@ -1484,36 +1430,29 @@ const COMPONENT_PICKER_DESCRIPTIONS: Partial<Record<ModuleComponentType, string>
   assignment: 'Set a task for learners to submit.',
 };
 
-function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse }: {
+function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse, selfStudyOnly = false }: {
   atIndex: number;
   componentCount: number;
-  onPick: (types: ModuleComponentType[]) => void;
+  onPick: (type: ModuleComponentType) => void;
   onClose: () => void;
   onReuse?: () => void;
+  selfStudyOnly?: boolean;
 }) {
   const [search, setSearch] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState<Set<ModuleComponentType>>(() => new Set());
-  const selected = weekPaletteTypes.filter(type => selectedTypes.has(type.type)).map(type => type.type);
-  const toggleType = (type: ModuleComponentType) => setSelectedTypes(current => {
-    const next = new Set(current);
-    if (next.has(type)) next.delete(type); else next.add(type);
-    return next;
-  });
   const query = search.trim().toLowerCase();
-  const visibleTypes = weekPaletteTypes.filter(type => (
+  const visibleTypes = weekPaletteTypes.filter(type => (!selfStudyOnly || type.type !== 'live-session') && (
     !query
     || type.label.toLowerCase().includes(query)
     || type.group.toLowerCase().includes(query)
     || String(COMPONENT_PICKER_DESCRIPTIONS[type.type] || '').toLowerCase().includes(query)
   ));
-  const noun = selected.length > 1 ? 'components' : 'component';
   const placement = componentCount === 0
-    ? selected.length > 1 ? 'These will be the first components in the week.' : 'This will be the first component in the week.'
+    ? 'This will be the first component in the week.'
     : atIndex === 0
-      ? `The new ${noun} will be added at the start of the week.`
+      ? 'The new component will be added at the start of the week.'
       : atIndex >= componentCount
-        ? `The new ${noun} will be added at the end of the week.`
-        : `The new ${noun} will be inserted at position ${atIndex + 1}.`;
+        ? 'The new component will be added at the end of the week.'
+        : `The new component will be inserted at position ${atIndex + 1}.`;
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -1537,7 +1476,7 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className="ri-add-box-line text-lg"></AppIcon></span>
               <div className="min-w-0">
                 <h3 id="component-picker-title" className="text-base font-heading font-bold text-foreground-950">Add a component</h3>
-                <p className="mt-1 text-[12px] font-medium text-foreground-500">Choose one or more learning activities, then add them to this week.</p>
+                <p className="mt-1 text-[12px] font-medium text-foreground-500">Choose one learning activity. It will open immediately so you can complete its details.</p>
               </div>
             </div>
             <button type="button" onClick={onClose} aria-label="Close component picker" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
@@ -1550,13 +1489,6 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
             <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Search component types..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-50 pl-9 pr-3 text-[12px] font-medium text-foreground-900 outline-none transition-smooth placeholder:text-foreground-300 focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
           </label>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-            <span aria-live="polite" className="font-semibold text-primary-700">{selected.length} selected</span>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => setSelectedTypes(new Set(weekPaletteTypes.map(type => type.type)))} className="rounded-lg px-2 py-1.5 font-semibold text-primary-700 hover:bg-primary-50">Select all</button>
-              <button type="button" onClick={() => setSelectedTypes(new Set())} disabled={!selected.length} className="rounded-lg px-2 py-1.5 font-semibold text-foreground-500 hover:bg-background-100 disabled:opacity-40">Clear</button>
-            </div>
-          </div>
         </div>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-background-100/45 p-4 sm:p-5">
           {weekPaletteGroups.map(group => {
@@ -1569,14 +1501,13 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
                   {groupTypes.map(type => {
                     const tone = TONE[type.tone] || TONE.slate;
                     const definition = getComponentDefinition(type.type);
-                    const chosen = selectedTypes.has(type.type);
                     return (
-                      <button key={type.type} type="button" aria-pressed={chosen} onClick={() => toggleType(type.type)} className={`group/tile flex min-h-[88px] items-start gap-3 rounded-xl border p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-200 ${chosen ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-200' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}>
+                      <button key={type.type} type="button" onClick={() => onPick(type.type)} className="group/tile flex min-h-[88px] items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-200">
                         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${tone.chip} transition-transform group-hover/tile:scale-105`}><AppIcon className={`${type.icon} text-lg`}></AppIcon></span>
                         <span className="min-w-0 flex-1">
                           <span className="flex items-start justify-between gap-2">
                             <span className="text-[13px] font-bold text-foreground-900">{type.label}</span>
-                            <AppIcon className={`${chosen ? 'ri-checkbox-circle-fill opacity-100' : 'ri-add-circle-line opacity-0 group-hover/tile:opacity-100'} shrink-0 text-primary-500 transition-opacity`} />
+                            <AppIcon className="ri-arrow-right-line shrink-0 text-primary-500 opacity-0 transition-opacity group-hover/tile:opacity-100"></AppIcon>
                           </span>
                           <span className="mt-1 block text-[11px] leading-relaxed text-foreground-500">{COMPONENT_PICKER_DESCRIPTIONS[type.type]}</span>
                           <span className="mt-2 flex items-center gap-2 text-[10px] font-semibold text-foreground-400 tabular-nums">
@@ -1594,10 +1525,9 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
         </div>
         <div className="flex flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <p className="text-[10px] font-medium text-foreground-400">You can reorder components from the week timeline at any time.</p>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-2">
             {onReuse && <button type="button" onClick={onReuse} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100"><AppIcon className="ri-file-copy-line"></AppIcon>Reuse existing</button>}
             <button type="button" onClick={onClose} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 hover:bg-background-100">Cancel</button>
-            <button type="button" onClick={() => { if (selected.length) onPick(selected); }} disabled={!selected.length} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-add-line" />Add {selected.length || ''} component{selected.length === 1 ? '' : 's'}</button>
           </div>
         </div>
       </div>
@@ -1613,7 +1543,9 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
 // list (and whatever persistence — save-to-template vs save-to-module — sits
 // on top of it), via a single `onChange(nextComponents)` callback.
 export interface WeekComponentRailProps {
+  selfStudyOnly?: boolean;
   weekId: string;
+  displayWeek?: SessionTitleWeek;
   components: ModuleComponent[];
   selectedId: string | null;
   focusedId?: string;
@@ -1650,13 +1582,16 @@ export interface WeekComponentRailProps {
   // `otherWeeks` -- the caller owns the module's week structure, so this is
   // where the clone actually lands.
   onCopyComponentToWeek?: (component: ModuleComponent, weekId: string) => void;
-  /** Moves the existing component rather than making a copy; owned by Module Builder. */
+  // Moves the given component -- and, while linked, its live session or
+  // recording with it -- to the chosen week. Paired with `otherWeeks`, like the
+  // copy above; a single-week surface leaves it unset and shows no Move action.
   onMoveComponentToWeek?: (component: ModuleComponent, weekId: string) => void;
-  onReviewTeamsCalendar?: () => void;
+  // The module's weeks and other modules, so a recording's row can name a
+  // session in another week or module. Unset, links are read within this week.
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, onReviewTeamsCalendar, recordingLinks }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1665,25 +1600,21 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const addComponentsAt = (types: ModuleComponentType[], index: number) => {
-    if (!types.length) return;
-    const created = types.map((type, offset) => {
-      const number = components.length + offset + 1;
-      const component = createEmptyComponent(weekId, type, number);
-      component.title = `${weekTypeLabel(type)} ${number}`;
-      const rulePoints = pointsByType[type];
-      if (typeof rulePoints === 'number') component.points = rulePoints;
-      return component;
-    });
-    const added = withLinkedRecordings(created, () => {
-      const recording = createEmptyComponent(weekId, 'recording-placeholder', components.length + created.length + 1);
-      const rulePoints = pointsByType['recording-placeholder'];
-      return typeof rulePoints === 'number' ? { ...recording, points: rulePoints } : recording;
+  const addComponentAt = (type: ModuleComponentType, index: number) => {
+    const component = createEmptyComponent(weekId, type, components.length + 1);
+    component.title = `${weekTypeLabel(type)} ${components.length + 1}`;
+    const rulePoints = pointsByType[type];
+    if (typeof rulePoints === 'number') component.points = rulePoints;
+    // A live session arrives with its session recording right after it, linked.
+    const added = withLinkedRecordings([component], () => {
+      const recording = createEmptyComponent(weekId, 'recording-placeholder', components.length + 2);
+      const recordingPoints = pointsByType['recording-placeholder'];
+      return typeof recordingPoints === 'number' ? { ...recording, points: recordingPoints } : recording;
     });
     const next = [...components];
     next.splice(index, 0, ...added);
     onChange(next);
-    onSelectId(added[0].id);
+    onSelectId(component.id);
     setPickerIndex(null);
   };
 
@@ -1753,7 +1684,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
   const activeComponent = components.find(c => c.id === activeDragId) || null;
   const searchTerm = componentSearch.trim().toLocaleLowerCase();
   const visibleComponents = searchTerm
-    ? components.filter(component => [component.title, component.description, component.type, weekTypeLabel(component.type)]
+    ? components.filter(component => [componentSessionTitle(component, displayWeek), component.title, component.description, component.type, weekTypeLabel(component.type)]
       .some(value => value.toLocaleLowerCase().includes(searchTerm)))
     : components;
 
@@ -1767,19 +1698,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
           <span className="text-[11px] text-foreground-400 tabular-nums">{components.length} {components.length === 1 ? 'part' : 'parts'}</span>
         </div>
       )}
-      {nested && (
-        <div data-week-rail-toolbar>
-          <label className="relative block min-w-0 flex-1">
-            <span className="sr-only">Search components in this week</span>
-            <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-400" />
-            <input type="search" value={componentSearch} onChange={event => setComponentSearch(event.target.value)} placeholder="Search this week's components" aria-label="Search components in this week" className="h-7 w-full rounded border border-background-200 bg-background-50 pl-7 pr-2 text-[10px] outline-none focus:border-primary-300" />
-          </label>
-          <button type="button" data-week-rail-add aria-label="Add component" onClick={() => setPickerIndex(components.length)} className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-background-200 bg-background-50 px-2 text-[10px]">
-            <AppIcon className="ri-add-line" />Add
-          </button>
-        </div>
-      )}
-      {!nested && components.length > 0 && (
+      {components.length > 0 && (
         <div className={nested ? 'space-y-2' : 'mt-3 space-y-2 border-y border-background-200 py-2'}>
           <div className={`flex flex-wrap items-center gap-2 ${nested ? 'justify-end' : 'justify-between'}`}>
             {!nested && <p className="text-[10px] font-medium text-foreground-400">Select a component to edit it, or add another.</p>}
@@ -1806,11 +1725,7 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
         </div>
       )}
 
-      {nested && components.length === 0 && pickerIndex === null ? (
-        <button type="button" data-week-rail-empty aria-label="Add the first component" onClick={() => setPickerIndex(0)}>
-          No components in this week yet. Drag a part here, or insert one right below.
-        </button>
-      ) : components.length === 0 && pickerIndex === null ? (
+      {components.length === 0 && pickerIndex === null ? (
         <div className="mt-3">
           <button onClick={() => setPickerIndex(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
             <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
@@ -1826,18 +1741,18 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
           <SortableContext items={visibleComponents.map(c => c.id)} strategy={verticalListSortingStrategy}>
-            <div data-week-rail-parts className="mt-2 max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-hidden px-1.5 py-1.5">
+            <div className="mt-2 max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-hidden px-1.5 py-1.5">
               {visibleComponents.length === 0 && searchTerm ? (
                 <p className="rounded-xl border border-dashed border-background-300 px-3 py-6 text-center text-[11px] font-medium text-foreground-500">No components match “{componentSearch.trim()}”.</p>
               ) : <>
-              {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first compact={nested} />}
+              {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />}
               {visibleComponents.map((component, index) => (
                 <Fragment key={component.id}>
                   <SortableRailNode
                     component={component}
+                    displayWeek={displayWeek}
+                    nested={nested}
                     index={index}
-                    compact={nested}
-                    onDeselect={() => onSelectId(null)}
                     selected={component.id === selectedId}
                     focused={component.id === focusedId}
                     onSelect={() => onSelectId(component.id)}
@@ -1846,7 +1761,6 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                     otherWeeks={otherWeeks}
                     onCopyToWeek={targetWeekId => onCopyComponentToWeek?.(component, targetWeekId)}
                     onMoveToWeek={onMoveComponentToWeek ? targetWeekId => onMoveComponentToWeek(component, targetWeekId) : undefined}
-                    onReviewTeamsCalendar={onReviewTeamsCalendar}
                     linkLabel={linkLabel(component)}
                     moveNote={moveNote(component)}
                     issues={validateWeekComponent(component).length}
@@ -1854,22 +1768,23 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                     holidayDates={holidayDates}
                     dateDrift={dateDriftByComponentId?.get(component.id)}
                   />
-                  {!searchTerm && <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === visibleComponents.length - 1} compact={nested} />}
+                  {!searchTerm && <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === visibleComponents.length - 1} />}
                 </Fragment>
               ))}
               </>}
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} compact={nested} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} displayWeek={displayWeek} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} nested={nested} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
           </DragOverlay>
         </DndContext>
       )}
       {pickerIndex !== null && (
         <ComponentTypePickerDialog
+          selfStudyOnly={selfStudyOnly}
           atIndex={pickerIndex}
           componentCount={components.length}
-          onPick={types => addComponentsAt(types, pickerIndex)}
+          onPick={type => addComponentAt(type, pickerIndex)}
           onClose={() => setPickerIndex(null)}
           onReuse={onReuseComponents ? () => {
             setPickerIndex(null);
@@ -1950,7 +1865,6 @@ function computeWeekStats(components: ModuleComponent[], weekKsbs: KsbMapping[])
 }
 
 export interface WeekOverviewPanelProps {
-  moduleVariant?: boolean;
   components: ModuleComponent[];
   ksbMappings: KsbMapping[];
   summary: string;
@@ -1959,26 +1873,9 @@ export interface WeekOverviewPanelProps {
   onChangeLearningOutcomes: (value: string[]) => void;
 }
 
-export function WeekOverviewPanel({ components, ksbMappings, summary, learningOutcomes, onChangeSummary, onChangeLearningOutcomes, moduleVariant = false }: WeekOverviewPanelProps) {
+export function WeekOverviewPanel({ components, ksbMappings, summary, learningOutcomes, onChangeSummary, onChangeLearningOutcomes }: WeekOverviewPanelProps) {
   const stats = useMemo(() => computeWeekStats(components, ksbMappings), [components, ksbMappings]);
   const readiness = stats.count ? Math.round((stats.cleanParts / stats.count) * 100) : 0;
-  const composition = stats.byGroup.map(group => ({ ...group, color: undefined }));
-  const weekDetail = (
-    <Section title="Week detail">
-      <Field label="Summary"><textarea value={summary} onChange={e => onChangeSummary(e.target.value)} rows={2} placeholder="What this week is about…" className={`${inputClass} resize-none`} /></Field>
-      <Field label="Learning outcomes" className="mt-4"><textarea value={learningOutcomes.join('\n')} onChange={e => onChangeLearningOutcomes(e.target.value.split('\n'))} rows={3} placeholder="One outcome per line" className={`${inputClass} resize-none`} /></Field>
-      <p className="mt-3 text-[11px] text-foreground-400"><AppIcon className="ri-lightbulb-flash-line mr-1 text-amber-500"></AppIcon>Hover the spine between parts to insert exactly where you want.</p>
-    </Section>
-  );
-
-  if (moduleVariant) {
-    return (
-      <div className={overviewStyles.panel}>
-        <ModuleWeekSummary stats={stats} components={components} />
-        {weekDetail}
-      </div>
-    );
-  }
 
   return (
     <div className="min-w-0 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -2006,16 +1903,16 @@ export function WeekOverviewPanel({ components, ksbMappings, summary, learningOu
           ) : (
             <>
               <div className="flex h-3 w-full overflow-hidden rounded-full bg-background-100">
-                {composition.map(group => (
-                  <span key={group.group} title={`${group.group}: ${group.count}`} className={(TONE[GROUP_TONE[group.group]] || TONE.slate).marker} style={{ width: `${(group.count / stats.count) * 100}%`, backgroundColor: group.color }} />
+                {stats.byGroup.map(group => (
+                  <span key={group.group} title={`${group.group}: ${group.count}`} className={(TONE[GROUP_TONE[group.group]] || TONE.slate).marker} style={{ width: `${(group.count / stats.count) * 100}%` }} />
                 ))}
               </div>
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
-                {composition.map(group => {
+                {stats.byGroup.map(group => {
                   const tone = TONE[GROUP_TONE[group.group]] || TONE.slate;
                   return (
                     <span key={group.group} className="inline-flex items-center gap-1.5 text-[11px] text-foreground-600">
-                      <span className={`w-2.5 h-2.5 rounded-full ${tone.marker}`} style={{ backgroundColor: group.color }} />
+                      <span className={`w-2.5 h-2.5 rounded-full ${tone.marker}`} />
                       {group.group}
                       <strong className="tabular-nums text-foreground-900">{group.count}</strong>
                       <span className="text-foreground-400 tabular-nums">· {Math.round(group.otjh * 10) / 10}h</span>
@@ -2050,80 +1947,13 @@ export function WeekOverviewPanel({ components, ksbMappings, summary, learningOu
         </Section>
 
         {/* Editable week detail */}
-        {weekDetail}
+        <Section title="Week detail">
+          <Field editField="summary" label="Summary"><textarea value={summary} onChange={e => onChangeSummary(e.target.value)} rows={2} placeholder="What this week is about…" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="learningOutcomes" label="Learning outcomes" className="mt-4"><textarea value={learningOutcomes.join('\n')} onChange={e => onChangeLearningOutcomes(e.target.value.split('\n'))} rows={3} placeholder="One outcome per line" className={`${inputClass} resize-none`} /></Field>
+          <p className="mt-3 text-[11px] text-foreground-400"><AppIcon className="ri-lightbulb-flash-line mr-1 text-amber-500"></AppIcon>Hover the spine between parts to insert exactly where you want.</p>
+        </Section>
       </div>
     </div>
-  );
-}
-
-function ModuleWeekSummary({ stats, components }: { stats: WeekStats; components: ModuleComponent[] }) {
-  const typeLabels: Partial<Record<ModuleComponentType, string>> = { 'live-session': 'Live session', reading: 'Reading', powerpoint: 'Slides' };
-  const composition = [...new Set(components.map(component => component.type))].map(type => {
-    const parts = components.filter(component => component.type === type);
-    return { type, label: typeLabels[type] || weekTypeLabel(type), icon: getComponentDefinition(type).icon, count: parts.length, otjh: Math.round(parts.reduce((sum, part) => sum + Number(part.expectedOtjh || 0), 0) * 100) / 100 };
-  });
-  const metrics = [
-    { label: 'Parts', value: stats.count, icon: 'ri-circle-line', tone: 'violet' },
-    { label: 'OTJH', value: stats.totalOtjh, icon: 'ri-time-line', tone: 'mint' },
-    { label: 'Points', value: stats.points, icon: 'ri-star-line', tone: 'amber' },
-    { label: 'KSBs', value: stats.ksbCodes.length, icon: 'ri-shield-check-line', tone: 'teal' },
-  ];
-  const assurance = [
-    { label: 'Reflection', value: stats.reflection, icon: 'ri-chat-quote-line', tone: 'teal' },
-    { label: 'Evidence', value: stats.evidence, icon: 'ri-folder-open-line', tone: 'aqua' },
-    { label: 'Tutor sign-off', value: stats.tutor, icon: 'ri-user-star-line', tone: 'mint' },
-    { label: 'Coach sign-off', value: stats.coach, icon: 'ri-shield-user-line', tone: 'violet' },
-    { label: 'Assessments', value: stats.assessment, icon: 'ri-award-line', tone: 'amber' },
-  ];
-
-  return (
-    <section className={overviewStyles.summary} aria-label="Week at a glance">
-      <div className={overviewStyles.heading}>
-        <h3 className={overviewStyles.caption}>Week at a glance</h3>
-        <span className={overviewStyles.partCount}>{stats.count} {stats.count === 1 ? 'part' : 'parts'} in this week</span>
-      </div>
-      <dl className={overviewStyles.metrics}>
-        {metrics.map(metric => (
-          <div key={metric.label} className={overviewStyles.metric} data-tone={metric.tone}>
-            <dt><AppIcon className={metric.icon} />{metric.label}</dt>
-            <dd>{metric.value}</dd>
-          </div>
-        ))}
-      </dl>
-
-      <div className={overviewStyles.composition} role="group" aria-label="Learning type composition">
-        <div className={overviewStyles.compositionHeading}>
-          <h4 className={overviewStyles.caption}>Composition — mix of learning types</h4>
-          {composition.length > 0 && (
-            <ul className={overviewStyles.typeList}>
-              {composition.map(group => (
-                <li key={group.type} className={overviewStyles.typePill} data-type={group.type}>
-                  <AppIcon className={group.icon} />{group.label} {group.count} · {group.otjh}h
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        {stats.count > 0 ? (
-          <div className={overviewStyles.compositionBar} aria-hidden="true">
-            {composition.map(group => <span key={group.type} data-type={group.type} style={{ width: `${(group.count / stats.count) * 100}%` }} title={`${group.label}: ${group.count}`} />)}
-          </div>
-        ) : <p className={overviewStyles.emptyComposition}>Add parts to see the week take shape.</p>}
-      </div>
-
-      <div role="group" aria-label="Week assurance" className={overviewStyles.assurance}>
-        <h4 className={overviewStyles.caption}>Assurance — what this week demands of learners</h4>
-        <dl className={overviewStyles.assuranceTiles}>
-          {assurance.map(item => (
-            <div key={item.label} className={overviewStyles.assuranceTile} data-tone={item.tone}>
-              <AppIcon className={item.icon} />
-              <dt>{item.label}</dt>
-              <dd>{item.value}</dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-    </section>
   );
 }
 
@@ -2177,6 +2007,7 @@ function SaveStatus({ dirty, saving, isNew }: { dirty: boolean; saving: boolean;
 // importable quizzes and stamp newly-created ones.
 export interface ComponentBodyProps {
   component: ModuleComponent;
+  selfStudyOnly?: boolean;
   onChange: (patch: Partial<ModuleComponent>) => void;
   setSetting: (key: string, value: ComponentSettingValue) => void;
   groupOptions: GroupOption[];
@@ -2193,6 +2024,7 @@ export interface ComponentBodyProps {
   // Injected file uploader so the same bodies work in both the week builder
   // (posts to week-components/) and the module builder (module-scoped upload).
   uploadResource?: WeekComponentUploader;
+  videoTemplateId?: string;
   // The module this component is authored in (module builder only). A live
   // session saved without its own Teams series reads its recording from the
   // module's saved sessions, the same list Sessions & Recordings shows.
@@ -2203,7 +2035,7 @@ export interface ComponentBodyProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, initializeGroupSelection = true, recordingLinks }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; initializeGroupSelection?: boolean; recordingLinks?: RecordingLinkContext }) {
+export function ComponentEditor({ component, displayWeek, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly = false }: { component: ModuleComponent; displayWeek?: SessionTitleWeek; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string; recordingLinks?: RecordingLinkContext; videoTemplateId?: string; selfStudyOnly?: boolean }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -2214,8 +2046,12 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
-  const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks };
+  const setSetting = (key: string, value: ComponentSettingValue) => onChange({
+    settings: component.type === 'live-session' && key === 'liveSessionUrl'
+      ? manualLiveSessionLinkSettings(component.settings, String(value))
+      : { ...component.settings, [key]: value },
+  });
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId, recordingLinks, videoTemplateId, selfStudyOnly };
 
   return (
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -2224,7 +2060,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
         <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><AppIcon className={`${definition.icon} text-xl`}></AppIcon></span>
         <div className="flex-1 min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${tone.text}`}>{definition.group}</p>
-          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{component.title || weekTypeLabel(component.type)}</p>
+          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{componentSessionTitle(component, displayWeek, component.title || weekTypeLabel(component.type))}</p>
         </div>
         <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${issues.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
           <AppIcon className={issues.length ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'}></AppIcon>{issues.length ? `${issues.length} to fix` : 'Valid'}
@@ -2244,7 +2080,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
 
         {/* Group assignment applies to every component type — scoped to the
             week's programme + module (resolved in the editor). */}
-        <AssignedGroupsSection component={component} onChange={onChange} groupOptions={groupOptions} programmeId={weekScope.programmeId} groupName={weekScope.groupName} initializeSelection={initializeGroupSelection} />
+        <AssignedGroupsSection component={component} onChange={onChange} groupOptions={groupOptions} programmeId={weekScope.programmeId} groupName={weekScope.groupName} />
 
         {issues.length > 0 && (
           <Section title="To fix before publish">
@@ -2265,23 +2101,23 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
     <>
       <Section title="Basics">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))]">
-          <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-          <Field label="Expected OTJH"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} className={`${inputClass} resize-none`} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} className={`${inputClass} resize-none`} /></Field>
       </Section>
 
       <Section title="Requirements" hint="What completing this part demands">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Workplace evidence" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="workplaceEvidenceRequired" label="Workplace evidence" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder={`What should the learner reflect on after this ${weekTypeLabel(component.type).toLowerCase()}?`} className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder={`What should the learner reflect on after this ${weekTypeLabel(component.type).toLowerCase()}?`} className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -2381,8 +2217,8 @@ function SessionRecordingBody({ component, onChange, setSetting, rulePoints, wee
   return (
     <>
       <Section title="Recording details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What learners will watch…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What learners will watch…" className={`${inputClass} resize-none`} /></Field>
       </Section>
 
       <Section title="Linked live session" hint={target ? (linked ? 'Linked' : 'Link needs attention') : 'Not linked'}>
@@ -2477,13 +2313,13 @@ function SessionRecordingBody({ component, onChange, setSetting, rulePoints, wee
         {linked ? (
           <LiveSessionResults liveSession={linked.liveSession} weekSessionDate={sessionWeekDate} moduleId={target?.moduleId || moduleId} />
         ) : (
-          <Field label="Recording link"><input value={String(component.settings.recordingUrl ?? '')} onChange={e => setSetting('recordingUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
+          <Field editField="settings.recordingUrl" label="Recording link"><input value={String(component.settings.recordingUrl ?? '')} onChange={e => setSetting('recordingUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
         )}
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2491,12 +2327,12 @@ function SessionRecordingBody({ component, onChange, setSetting, rulePoints, wee
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after watching?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after watching?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
     </>
@@ -2510,6 +2346,11 @@ function LiveSessionResults({ liveSession, weekSessionDate, moduleId }: { liveSe
   const s = (key: string) => String(liveSession.settings[key] ?? '');
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  if (['unverified', 'missing', 'ambiguous'].includes(s('teamsCalendarBinding'))) {
+    return <p className="rounded-xl border border-background-200 bg-background-50/60 p-4 text-[12px] text-foreground-500">
+      This join link has not been matched to its original calendar. Use Replace Teams links, then Existing Teams series, to connect its recording and attendance.
+    </p>;
+  }
   // A live session delivered by its own additional meeting reads that
   // meeting's results (a single event, so always session 1); every other live
   // session reads its occurrence of the module's calendar.
@@ -2603,7 +2444,7 @@ function LinkedRecordingsSection({ component, recordingLinks }: Pick<ComponentBo
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId, recordingLinks }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId, recordingLinks, selfStudyOnly }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   // An explicit edit always wins; otherwise default to the date/time the week is
   // actually scheduled on (the group-creation clock), so the fields read
@@ -2611,15 +2452,20 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
   // someone repeats what the session plan already worked out.
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
-  const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  const hasMeeting = Boolean(s('teamsLiveSessionId') || s('extraTeamsLiveSessionId')) && s('teamsCalendarBinding') !== 'unverified';
 
   return (
     <>
       <Section title="Session details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
 
-        {hasMeeting ? (
+        {selfStudyOnly ? (
+          <div className="mt-4">
+            <Field label="Existing Microsoft Teams link"><input value={s('liveSessionUrl') || s('teamsMeetingUrl')} readOnly className={inputClass} /></Field>
+            <p className="mt-2 text-xs text-foreground-500">This existing live activity is retained. Meeting changes are unavailable in a free course.</p>
+          </div>
+        ) : hasMeeting ? (
           // Meeting created: the join link is read-only (copy/open only).
           <LiveSessionScheduleEditor
             component={component}
@@ -2630,7 +2476,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           </div>
         )}
 
-        <Field label="Session outline" className="mt-4"><textarea value={s('sessionPurpose')} onChange={e => setSetting('sessionPurpose', e.target.value)} rows={3} placeholder="A short summary of what this session covers…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="settings.sessionPurpose" label="Session outline" className="mt-4"><textarea value={s('sessionPurpose')} onChange={e => setSetting('sessionPurpose', e.target.value)} rows={3} placeholder="A short summary of what this session covers…" className={`${inputClass} resize-none`} /></Field>
       </Section>
 
       {/* Read this component's saved results through the same archive-backed
@@ -2644,7 +2490,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the "Attendance" points rule for live sessions (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2652,18 +2498,18 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this session?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this session?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -2676,7 +2522,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 // details for a source-type-driven video field, matching the Module
 // Builder's video authoring fields (source type, URL/embed, duration,
 // required progress, component content).
-function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBodyProps) {
+function VideoBody({ component, onChange, setSetting, rulePoints, moduleId, videoTemplateId }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceType = normaliseVideoSourceType(s('sourceType') || s('provider'));
   const updateSourceType = (value: string) => onChange({
@@ -2686,8 +2532,11 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
   return (
     <>
       <Section title="Video details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this video is about…" className={`${inputClass} resize-none`} /></Field>
+        <CurriculumVideoUpload key={`${moduleId || videoTemplateId}:${component.id}`} targetKind={moduleId ? 'module' : 'template'} targetId={moduleId || videoTemplateId} componentId={component.id} title={component.title}
+          source={s('videoUrl') || s('embedCode')}
+          onUploaded={settings => onChange({ settings: { ...component.settings, ...settings } })} />
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this video is about…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-[220px_minmax(0,1fr)]">
           <Field label="Source type">
@@ -2696,24 +2545,24 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
             </select>
           </Field>
           {sourceType === 'Embed' ? (
-            <Field label="Embed iframe content"><textarea value={s('embedCode')} onChange={e => setSetting('embedCode', e.target.value)} rows={4} className={`${inputClass} resize-none`} /></Field>
+            <Field editField="settings.embedCode" label="Embed iframe content"><textarea value={s('embedCode')} onChange={e => setSetting('embedCode', e.target.value)} rows={4} className={`${inputClass} resize-none`} /></Field>
           ) : (
-            <Field label={sourceType === 'HTML (MP4)' ? 'MP4 file URL' : 'Video URL'}><input value={s('videoUrl')} onChange={e => setSetting('videoUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
+            <Field editField="settings.videoUrl" label={sourceType === 'HTML (MP4)' ? 'MP4 file URL' : 'Video URL'}><input value={s('videoUrl')} onChange={e => setSetting('videoUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
           )}
         </div>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2 max-w-md">
           <Field label="Component duration (minutes)"><input type="number" min="0" value={Number(component.settings.durationMinutes) || 0} onChange={e => setSetting('durationMinutes', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
-          <Field label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
+          <Field editField="settings.requiredProgressPercentage" label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
         {/* The same editor as the Module Builder writes this key with: its
             content is HTML, which a plain textarea showed as raw tags. */}
-        <div className="mt-4"><RichTextDraft label="Component content" value={s('lessonContent')} onChange={value => setSetting('lessonContent', value)} rows={6} /></div>
+        <div className="mt-4"><RichTextDraft editField="settings.lessonContent" label="Component content" value={s('lessonContent')} onChange={value => setSetting('lessonContent', value)} rows={6} /></div>
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for videos (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2721,18 +2570,18 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this video?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this video?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -2770,7 +2619,7 @@ function componentFileSettings(files: ComponentFile[]) {
 // text (a plain content field, matching the Module Builder's text editor
 // intent) or an uploaded document (Word/PDF/text/RTF/OpenDocument), each with
 // its own field beneath the toggle.
-function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
+function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResource, recordingLinks, moduleId }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceMode = ['File', 'LMS resource'].includes(s('readingSource')) ? 'File' : 'Text';
   // The stored list when one exists, otherwise the single file this component
@@ -2798,8 +2647,8 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
   return (
     <>
       <Section title="Reading details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this reading covers…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this reading covers…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
           <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Source</span>
@@ -2814,7 +2663,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
         {sourceMode === 'Text' ? (
           <div className="mt-4">
-            <RichTextDraft label="Component content" value={s('readingContent')} onChange={value => setSetting('readingContent', value)} rows={14} htmlOnly />
+            <RichTextDraft editField="settings.readingContent" label="Component content" value={s('readingContent')} onChange={value => setSetting('readingContent', value)} rows={14} htmlOnly />
             <div className="mt-3 flex justify-end">
               <button type="button" disabled={!s('readingContent').trim()} onClick={() => setWrittenPreviewOpen(current => !current)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50" aria-expanded={writtenPreviewOpen}>
                 <AppIcon className={writtenPreviewOpen ? 'ri-eye-off-line' : 'ri-eye-line'} />
@@ -2835,6 +2684,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
               componentId={component.id}
               componentType="reading"
               onUpload={uploadResource}
+              moduleLibrary={recordingLinks ? { weeks: recordingLinks.weeks, label: recordingLinks.moduleId ? 'module' : 'template', moduleId: recordingLinks.moduleId ? moduleId || '' : '' } : undefined}
               accept={READING_UPLOAD_ACCEPT}
               files={readingFileList}
               onFilesChange={files => onChange({
@@ -2853,7 +2703,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for reading materials (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2861,18 +2711,18 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this reading?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this reading?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -2915,10 +2765,10 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
   return (
     <>
       <Section title="Podcast details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this podcast is about…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this podcast is about…" className={`${inputClass} resize-none`} /></Field>
 
-        <Field label="Source type" className="mt-4">
+        <Field editField="settings.podcastSource" label="Source type" className="mt-4">
           <select value={sourceType} onChange={e => setSetting('podcastSource', e.target.value)} className={inputClass}>
             {PODCAST_SOURCE_TYPES_WEEK.map(type => <option key={type} value={type}>{type}</option>)}
           </select>
@@ -2944,10 +2794,10 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
             <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: MP3, OGG, WAV (plus M4A, AAC, WEBM).</p>
           </div>
         ) : sourceType === 'External Link' ? (
-          <Field label="Podcast URL" className="mt-4"><input value={s('podcastUrl')} onChange={e => setSetting('podcastUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
+          <Field editField="settings.podcastUrl" label="Podcast URL" className="mt-4"><input value={s('podcastUrl')} onChange={e => setSetting('podcastUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
         ) : (
           <div className="mt-4">
-            <Field label="Embed code"><textarea value={s('podcastEmbedCode')} onChange={e => setSetting('podcastEmbedCode', e.target.value)} rows={4} placeholder="Paste the Apple Podcasts / SoundCloud / Deezer / Spotify embed snippet…" className={`${inputClass} resize-none`} /></Field>
+            <Field editField="settings.podcastEmbedCode" label="Embed code"><textarea value={s('podcastEmbedCode')} onChange={e => setSetting('podcastEmbedCode', e.target.value)} rows={4} placeholder="Paste the Apple Podcasts / SoundCloud / Deezer / Spotify embed snippet…" className={`${inputClass} resize-none`} /></Field>
             {s('podcastEmbedCode') && (
               <div className="mt-3">
                 <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
@@ -2961,13 +2811,13 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
       <Section title="Listening settings">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
           <Field label="Duration (minutes)"><input type="number" min="0" value={Number(component.settings.durationMinutes) || 0} onChange={e => setSetting('durationMinutes', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
-          <Field label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
+          <Field editField="settings.requiredProgressPercentage" label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <DurationFields editField="expectedOtjh" value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for podcasts (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2975,18 +2825,18 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this podcast?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this podcast?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -3021,7 +2871,7 @@ function UploadedDeckPreview({ url }: { url: string }) {
 // field rather than a real range. A component authored while an external-link
 // source still existed keeps whatever `presentationUrl` it has in storage —
 // this editor no longer shows or writes it, but nothing here deletes it.
-function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
+function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource, recordingLinks, moduleId }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   // Same fallback as reading. A deck's name lives in `fileName` when the upload
   // predates the shared `uploadedFileName` key.
@@ -3038,14 +2888,15 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
   return (
     <>
       <Section title="PowerPoint details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this presentation covers…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this presentation covers…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
           <WeekComponentFileUpload
             componentId={component.id}
             componentType="powerpoint"
             onUpload={uploadResource}
+            moduleLibrary={recordingLinks ? { weeks: recordingLinks.weeks, label: recordingLinks.moduleId ? 'module' : 'template', moduleId: recordingLinks.moduleId ? moduleId || '' : '' } : undefined}
             accept={POWERPOINT_UPLOAD_ACCEPT}
             files={deckFileList}
             onFilesChange={files => onChange({
@@ -3055,15 +2906,15 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
           <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
         </div>
 
-        <Field label="Speaker notes" className="mt-4"><textarea value={s('speakerNotes')} onChange={e => setSetting('speakerNotes', e.target.value)} rows={3} placeholder="Notes for whoever presents or reviews this deck…" className={`${inputClass} resize-none`} /></Field>
+        <Field editField="settings.speakerNotes" label="Speaker notes" className="mt-4"><textarea value={s('speakerNotes')} onChange={e => setSetting('speakerNotes', e.target.value)} rows={3} placeholder="Notes for whoever presents or reviews this deck…" className={`${inputClass} resize-none`} /></Field>
         <div className="mt-3">
-          <Toggle label="Download allowed" checked={component.settings.downloadAllowed !== false} onChange={value => setSetting('downloadAllowed', value)} />
+          <Toggle editField="settings.downloadAllowed" label="Download allowed" checked={component.settings.downloadAllowed !== false} onChange={value => setSetting('downloadAllowed', value)} />
         </div>
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>2 hours is the starting estimate for a PowerPoint component. It is not calculated from the uploaded file or slide count; adjust it to the learner's expected off-the-job learning time.</p>
@@ -3072,18 +2923,18 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this presentation?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this presentation?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -3252,7 +3103,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
       )}
 
       <Section title="Quiz source">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} placeholder="e.g. Week 1 knowledge check" className={inputClass} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} placeholder="e.g. Week 1 knowledge check" className={inputClass} /></Field>
 
         {weekScope.courseType === 'paid' && (
           <p className="mt-2 text-[11px] text-foreground-400">
@@ -3328,7 +3179,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for a passed quiz (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -3336,12 +3187,12 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this quiz?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this quiz?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -3404,15 +3255,11 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
   return (
     <>
       <Section title="Assignment details">
-        <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-        <Field label="Title shown to learners" className="mt-4"><input value={s('learnerTitle')} onChange={e => setSetting('learnerTitle', e.target.value)} placeholder="Leave blank to show the title above" className={inputClass} /></Field>
+        <Field editField="title" label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field editField="settings.learnerTitle" label="Title shown to learners" className="mt-4"><input value={s('learnerTitle')} onChange={e => setSetting('learnerTitle', e.target.value)} placeholder="Leave blank to show the title above" className={inputClass} /></Field>
         <p className="mt-1 text-[11px] text-foreground-400">Use the name learners were given, for example the assignment named in their training plan.</p>
-        <label className="mt-4 flex items-start gap-2 text-[12px] text-foreground-700">
-          <input type="checkbox" checked={component.settings.isMonthlyAssignment === true} onChange={e => setSetting('isMonthlyAssignment', e.target.checked)} className="mt-0.5" />
-          <span><span className="font-semibold">Monthly assignment (8-step submission)</span>
-            <span className="block text-[11px] text-foreground-400">Once any assignment in a learner's plan is ticked, only ticked assignments use the 8-step monthly submission and appear under Monthly submission. The others are completed like ordinary activities.</span></span>
-        </label>
-        <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this assignment asks the learner to do…" className={`${inputClass} resize-none`} /></Field>
+        <p className="mt-4 text-[11px] text-foreground-400">All assignments appear automatically in Monthly submission and use the 8-step submission.</p>
+        <Field editField="description" label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this assignment asks the learner to do…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
           <AssignmentTopicsEditor value={component.settings.assignmentTopics}
@@ -3426,7 +3273,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <Field editField="expectedOtjh" label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for assignments (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -3434,18 +3281,18 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Assurance">
         <div className="flex flex-wrap gap-2">
-          <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-          <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <Toggle editField="reflectionRequired" label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+          <Toggle editField="tutorValidationRequired" label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
           <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this assignment?" className={`${inputClass} resize-none`} /></Field>
+          <Field editField="reflectionQuestion" label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this assignment?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
       <Section title="Publishing">
         <div className="grid gap-4 max-w-md">
-          <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
+          <Field editField="settings.version" label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
 
@@ -3465,7 +3312,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
  * The author never types an index. Position is the order, shown as #1, #2, …
  * one above the zero-based array so the list reads the way a person counts.
  */
-function WeekComponentFileUpload({ componentId, componentType, accept, files, onFilesChange, onUpload = uploadWeekComponentResource }: {
+function WeekComponentFileUpload({ componentId, componentType, accept, files, onFilesChange, onUpload = uploadWeekComponentResource, moduleLibrary }: {
   componentId: string;
   componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
   accept: string;
@@ -3473,8 +3320,15 @@ function WeekComponentFileUpload({ componentId, componentType, accept, files, on
   files: ComponentFile[];
   onFilesChange: (files: ComponentFile[]) => void;
   onUpload?: WeekComponentUploader;
+  /**
+   * When given, files uploaded elsewhere can be reused here: those attached in
+   * `weeks`, plus (with a `moduleId`) files stored for the module that no
+   * component uses any more. A week template has no module folder of its own.
+   */
+  moduleLibrary?: { weeks: RecordingLinkWeek[]; label: 'module' | 'template'; moduleId: string };
 }) {
   const [uploading, setUploading] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState('');
   const [failedFiles, setFailedFiles] = useState<File[]>([]);
   const inputId = useMemo(() => `week-component-upload-${Math.random().toString(36).slice(2)}`, []);
@@ -3511,6 +3365,32 @@ function WeekComponentFileUpload({ componentId, componentType, accept, files, on
     }
     setUploading(false);
   };
+
+  // Reuses the stored path; nothing is uploaded or copied.
+  const attachExisting = (file: ComponentFile) => {
+    if (latest.current.some(existing => existing.url === file.url)) return;
+    const next = [...latest.current, file];
+    latest.current = next;
+    onFilesChange(next);
+  };
+  const moduleLabel = moduleLibrary?.label || 'module';
+  const libraryWeeks = moduleLibrary?.weeks;
+  const libraryModuleId = moduleLibrary?.moduleId || '';
+  const attachedInModule = useMemo(() => (libraryWeeks ? moduleUploadedFiles(libraryWeeks) : []), [libraryWeeks]);
+  const [stored, setStored] = useState<{ moduleId: string; status: 'loading' | 'ready' | 'error'; files: StoredModuleUpload[]; truncated: boolean }>({ moduleId: '', status: 'ready', files: [], truncated: false });
+  // Fetched each time the list opens, so a file uploaded or removed since shows up.
+  useEffect(() => {
+    if (!pickerOpen || !libraryModuleId) return;
+    const controller = new AbortController();
+    setStored({ moduleId: libraryModuleId, status: 'loading', files: [], truncated: false });
+    fetchModuleStoredUploads(libraryModuleId, controller.signal)
+      .then(result => setStored({ moduleId: libraryModuleId, status: 'ready', ...result }))
+      .catch(() => { if (!controller.signal.aborted) setStored({ moduleId: libraryModuleId, status: 'error', files: [], truncated: false }); });
+    return () => controller.abort();
+  }, [pickerOpen, libraryModuleId]);
+  const storedFiles = stored.moduleId === libraryModuleId && stored.status === 'ready' ? stored.files : [];
+  const reusable = withStoredUploads(attachedInModule, storedFiles, libraryWeeks || [])
+    .filter(item => !files.some(existing => existing.url === item.file.url));
 
   const removeAt = (index: number) => {
     const next = latest.current.filter((_, position) => position !== index);
@@ -3561,6 +3441,49 @@ function WeekComponentFileUpload({ componentId, componentType, accept, files, on
         <AppIcon className="ri-information-line shrink-0"></AppIcon>
         Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL} each.
       </p>
+
+      {moduleLibrary && (
+        <div className="mt-2">
+          <button type="button" disabled={uploading} onClick={() => setPickerOpen(open => !open)} aria-expanded={pickerOpen}
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50">
+            <AppIcon className={pickerOpen ? 'ri-close-line' : 'ri-folder-open-line'}></AppIcon>
+            {pickerOpen ? 'Close file list' : `Use a file already uploaded in this ${moduleLabel}`}
+          </button>
+          {pickerOpen && libraryModuleId && stored.status === 'loading' && (
+            <p className="mt-2 text-[11px] text-foreground-400">Checking the files stored for this module…</p>
+          )}
+          {pickerOpen && libraryModuleId && stored.status === 'error' && (
+            <p role="alert" className="mt-2 text-[11px] font-semibold text-red-700">The stored files for this module could not be loaded, so only files attached to components are listed. Close and reopen the list to retry.</p>
+          )}
+          {pickerOpen && stored.truncated && (
+            <p className="mt-2 text-[11px] text-foreground-400">Showing the 500 most recent stored files.</p>
+          )}
+          {pickerOpen && !(libraryModuleId && stored.status === 'loading') && (
+            reusable.length ? (
+              <ul aria-label={`Files already uploaded in this ${moduleLabel}`} className="mt-2 max-h-72 space-y-1.5 overflow-auto rounded-lg border border-background-200 bg-white p-2">
+                {reusable.map(item => (
+                  <li key={item.file.url} className="flex flex-col gap-2 rounded-md px-2 py-1.5 hover:bg-background-100 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-[12px] font-bold text-foreground-800">
+                        {item.file.fileName || 'Uploaded file'}
+                        {item.file.size > 0 && <span className="ml-2 font-normal tabular-nums text-foreground-400">{formatFileSize(item.file.size)}</span>}
+                      </p>
+                      {item.source && <p className="truncate text-[10px] text-foreground-400">Used in {item.source}</p>}
+                      {item.note && <p className="truncate text-[10px] text-amber-700">{item.note}</p>}
+                    </div>
+                    <button type="button" onClick={() => attachExisting(item.file)}
+                      className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-primary-600 px-2.5 text-[11px] font-bold !text-white hover:bg-primary-700">
+                      <AppIcon className="ri-add-line !text-white"></AppIcon> Use this file
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-[11px] text-foreground-400">No other files have been uploaded in this {moduleLabel} yet.</p>
+            )
+          )}
+        </div>
+      )}
 
       {files.length > 0 && (
         <ul className="mt-3 space-y-2">
@@ -3800,28 +3723,18 @@ function formatFileSize(size: number) {
 // (the option list is prepared by the editor). Stored as parallel key/name
 // arrays so a saved template keeps readable names even if a group is later
 // renamed or removed from the picker.
-function AssignedGroupsSection({ component, onChange, groupOptions, programmeId, groupName, initializeSelection = true }: Pick<ComponentBodyProps, 'component' | 'onChange' | 'groupOptions'> & { programmeId: string; groupName?: string; initializeSelection?: boolean }) {
+function AssignedGroupsSection({ component, onChange, groupOptions, programmeId, groupName }: Pick<ComponentBodyProps, 'component' | 'onChange' | 'groupOptions'> & { programmeId: string; groupName?: string }) {
   const rawSelectedKeys = component.settings.selectedGroupKeys as string[] | undefined;
   const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
-  // The module was built for this group, so it's never really optional — shown
-  // It starts selected, but remains editable and can be cleared by the tutor.
+  // Legacy components inherit the module's group for display. Opening their
+  // editor must not write that default and mark the module as edited. An
+  // explicit empty selection stays empty; only an assignment action persists it.
   const moduleGroupOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
-  const storedKeys = rawSelectedKeys ?? [];
-  const selectedKeys = storedKeys;
-  const hasStoredSelection = Array.isArray(component.settings.selectedGroupKeys);
+  const selectedKeys = Array.isArray(rawSelectedKeys) ? rawSelectedKeys : moduleGroupOption ? [moduleGroupOption.key] : [];
   const [browsingKey, setBrowsingKey] = useState<string | null>(null);
   const setGroups = (keys: string[]) => onChange({
     settings: { ...component.settings, selectedGroupKeys: keys, selectedGroupNames: groupOptions.filter(option => keys.includes(option.key)).map(option => option.name) },
   });
-
-  // Self-heals a never-touched (or pre-existing) component so the locked group
-  // is actually persisted as assigned, not just shown that way — otherwise a
-  // week saved without ever touching this list would still store it as
-  // unassigned underneath.
-  useEffect(() => {
-    if (initializeSelection && moduleGroupOption && !hasStoredSelection) setGroups([moduleGroupOption.key]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moduleGroupOption?.key, hasStoredSelection, initializeSelection]);
 
   // Placed copies this component has produced elsewhere, one entry per copy
   // (parallel arrays — ComponentSettingValue has no object type). A single
@@ -4130,7 +4043,6 @@ function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (
     <div className="flex items-center gap-2">
       <div className="flex flex-1 items-center gap-1">
         <input
-          aria-label="Expected OTJH hours"
           type="number"
           min={0}
           step={1}
@@ -4144,7 +4056,6 @@ function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (
       </div>
       <div className="flex flex-1 items-center gap-1">
         <input
-          aria-label="Expected OTJH minutes"
           type="number"
           min={0}
           max={59}
@@ -4162,12 +4073,8 @@ function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (
 }
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
-  // Presentation metadata only. Module Builder groups the existing sections
-  // into drawer tabs; Week Builder keeps every section visible as before.
-  const tab = ['Assigned groups', 'Effort & reward'].includes(title) ? 'delivery'
-    : ['Assurance', 'Requirements', 'Publishing', 'To fix before publish'].includes(title) ? 'quality' : 'content';
   return (
-    <section data-authoring-tab={tab} className="px-6 py-5">
+    <section className="px-6 py-5">
       <div className="flex items-baseline gap-2 mb-3">
         <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-foreground-500">{title}</h4>
         {hint && <span className="text-[10px] text-foreground-400">· {hint}</span>}
@@ -4256,16 +4163,16 @@ function IconButton({ label, icon, tone = 'default', onClick }: { label: string;
   );
 }
 
-function Field({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
+function Field({ label, children, className = '', editField }: { label: string; children: ReactNode; className?: string; editField?: string }) {
   return (
     <label className={`block ${className}`}>
       <span className="block text-[11px] font-semibold text-foreground-500 mb-1">{label}</span>
-      {children}
+      <CollaborativeField field={editField}>{children}</CollaborativeField>
     </label>
   );
 }
 
-function DurationFields({ value, onChange, label = 'Expected OTJH' }: { value: number; onChange: (value: number) => void; label?: string }) {
+function DurationFieldsControl({ value, onChange, label = 'Expected OTJH' }: { value: number; onChange: (value: number) => void; label?: string }) {
   const { hours, minutes } = splitHoursMinutes(value);
   const update = (nextHours: number, nextMinutes: number) => {
     onChange(hoursMinutesToHours(nextHours, nextMinutes));
@@ -4286,7 +4193,7 @@ function DurationFields({ value, onChange, label = 'Expected OTJH' }: { value: n
 // puts on its Coach validation checkbox.
 function CoachValidationToggle({ component, onChange }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void }) {
   return (
-    <Toggle
+    <Toggle editField="coachValidationRequired"
       label="Coach validation"
       checked={component.coachValidationRequired}
       onChange={value => {
@@ -4307,7 +4214,7 @@ function CoachValidationToggle({ component, onChange }: { component: ModuleCompo
   );
 }
 
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+function ToggleControl({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
     <button onClick={() => onChange(!checked)} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold transition-all ${checked ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-500 hover:border-background-300'}`}>
       <AppIcon className={checked ? 'ri-checkbox-circle-fill' : 'ri-circle-line'}></AppIcon>{label}
@@ -4327,4 +4234,12 @@ function ModalShell({ title, children, onClose }: { title: string; children: Rea
       </div>
     </div>
   );
+}
+
+function Toggle({ editField, ...props }: Parameters<typeof ToggleControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><ToggleControl {...props} /></CollaborativeField>;
+}
+
+function DurationFields({ editField, ...props }: Parameters<typeof DurationFieldsControl>[0] & { editField?: string }) {
+  return <CollaborativeField field={editField}><DurationFieldsControl {...props} /></CollaborativeField>;
 }

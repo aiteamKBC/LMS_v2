@@ -34,6 +34,7 @@ from urllib.parse import quote
 
 import httpx
 from django.http import JsonResponse
+from .teams_original_calendar import original_calendar_read
 from django.views.decorators.http import require_GET
 from login.permissions import require_role
 
@@ -221,6 +222,7 @@ def compare_meeting_attendees(live_session_id):
 
 @require_role('admin', 'staff')
 @require_GET
+@original_calendar_read
 def teams_meeting_attendee_comparison(request, live_session_id):
     """Compare this meeting's published invitation list with Microsoft's.
 

@@ -1,5 +1,13 @@
 import { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { exceedsManualTimeWarning } from '@/lib/manualTimeEntry';
+
+export function HighManualTimeWarning({ duration }: { duration: number | string }) {
+  if (!exceedsManualTimeWarning(duration)) return null;
+  return <p role="alert" className="rounded-lg border border-amber-400 bg-amber-100 p-3 text-sm text-amber-950">
+    <strong>This time entry exceeds 8 hours.</strong> Check whether you meant minutes instead of hours before confirming.
+  </p>;
+}
 
 export function ManualTimeSummary({ seconds }: { seconds: number }) {
   const total = Math.round(seconds);
@@ -10,6 +18,7 @@ export function ManualTimeSummary({ seconds }: { seconds: number }) {
   return <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-foreground-900">
     <p>You entered <strong>{hours} {hours === 1 ? 'hour' : 'hours'} and {minutes} {minutes === 1 ? 'minute' : 'minutes'}{remainder > 0 ? ` and ${remainder} ${remainder === 1 ? 'second' : 'seconds'}` : ''}</strong>.</p>
     <p className="text-lg font-semibold">{decimalHours} {total === 3600 ? 'hour' : 'hours'}</p>
+    <HighManualTimeWarning duration={total} />
     <p className="text-sm">Please check this duration before submitting. If it is incorrect, choose Edit time to change it.</p>
   </div>;
 }
@@ -46,6 +55,7 @@ export function ManualTimeConfirmation({ duration, onConfirm, onEdit }: {
       <div id={descriptionId}>{typeof duration === 'number' ? <ManualTimeSummary seconds={duration} />
         : <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p>You entered <strong>{duration}</strong>.</p>
+          <HighManualTimeWarning duration={duration} />
           <p className="text-sm">Check the value and its units before submitting. Choose Edit time if you need to correct it.</p>
         </div>}</div>
       <div className="grid grid-cols-2 gap-3">

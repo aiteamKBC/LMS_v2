@@ -9,7 +9,7 @@ import { moduleOverviewFixture } from './caseFileOverview.fixture';
 
 const transport = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: transport }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: null } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: null } }) }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ isInitialized: true, hasCoachAccess: true, email: 'coach@example.test', name: 'Coach' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 

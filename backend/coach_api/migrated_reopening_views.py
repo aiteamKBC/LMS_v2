@@ -19,7 +19,7 @@ from .review_sources import booking_for_overlay
 @require_POST
 def reopen_review(request, review_id):
     owner, definition = _coach_review(request, review_id, pdf_only=True)
-    if not definition:
+    if not definition or definition.get("canReopen") is False:
         return JsonResponse({"detail": "Editable Aptem continuation not found."}, status=404)
     account = request.login_account
     if account.role != "staff" or (account.email or "").strip().casefold() != owner:
@@ -90,7 +90,7 @@ def party_revision_pdf(request, review_id, number):
     account = authenticate_request(request)
     if account is None:
         return JsonResponse({"detail": "Sign in to view this PDF."}, status=401)
-    overlay = _party_overlay(review_id, account)
+    overlay = _party_overlay(review_id, account, allow_completed_source=True)
     if not overlay:
         return JsonResponse({"detail": "Review not found for this account."}, status=404)
     return archived_pdf(overlay, number, role="participant" if account.role == "learner" else "employer")

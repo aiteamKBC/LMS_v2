@@ -12,7 +12,7 @@ from unittest import skipUnless
 from unittest.mock import patch
 from uuid import uuid4
 
-from django.db import connections, transaction
+from django.db import connection, connections, transaction
 from django.http import JsonResponse
 from django.test import RequestFactory, TestCase, TransactionTestCase
 from django.utils import timezone
@@ -25,9 +25,20 @@ from .tests_migrated_completion import PNG, SNAPSHOT
 
 def review_fixture(family="MCM"):
     key = "imported-review:auto-" + uuid4().hex
+    source_id = -int(uuid4().int % 10**12)
+    if connection.vendor == "postgresql":
+        # PostgreSQL enforces the durable source FK. Persist its synthetic
+        # parent instead of relying on a source-query mock to satisfy it.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'INSERT INTO "Learner".reviews (id, learner_id, aptem_review_id, review_type, status) '
+                'VALUES (%s, %s, %s, %s, %s)',
+                [source_id, 17, key.removeprefix("imported-review:"),
+                 "Monthly Coaching Meeting" if family == "MCM" else "Progress Review", "Scheduled"],
+            )
     overlay = ImportedReviewInstance.objects.create(
         event_key=key, owner_email="coach@example.invalid", learner_id=17,
-        source_review_id=-int(uuid4().int % 10**12),
+        source_review_id=source_id,
         status="awaiting-signature", signature_requirements=requirements_for_family(family),
         template_snapshot=deepcopy(SNAPSHOT), answers={"answer": "Agreed next steps"},
     )
@@ -126,12 +137,38 @@ class MigratedAutoCompletionTests(TestCase):
         booking.review_instance_id = str(uuid4())
         booking.review_template_id = str(uuid4())
         booking.save(update_fields=["event_key", "review_instance_id", "review_template_id"])
+        approver_id = 1
+        if connection.vendor == "postgresql":
+            # Reconciliation also has real Native, learner and approver FKs.
+            from learner_api.models import LearnerProfile
+            from login.models import LoginAccount
+            LearnerProfile.objects.using("default").create(
+                id=17, full_name="Synthetic learner", email="learner@example.invalid",
+                lifecycle_status="active", coach_email=overlay.owner_email,
+            )
+            approver = LoginAccount.objects.using("default").create(
+                subject_type="staff", subject_id=17, role="admin",
+                email="approver@example.invalid", is_active=True,
+            )
+            approver_id = approver.pk
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    'INSERT INTO curriculum.review_templates (id,programme_id,name) VALUES (%s,%s,%s)',
+                    [booking.review_template_id, "synthetic-reconciliation", "Synthetic MCM"],
+                )
+                cursor.execute(
+                    'INSERT INTO curriculum.review_instances '
+                    '(id,review_template_id,learner_id,programme_id,target_date,definition_snapshot,'
+                    'coach_email,status,calendar_event_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                    [booking.review_instance_id, booking.review_template_id, 17, "synthetic-reconciliation",
+                     booking.target_date, json.dumps(SNAPSHOT), overlay.owner_email, "awaiting-signature", booking.pk],
+                )
         ReviewSourceReconciliation.objects.create(
             calendar_event_id=booking.pk, native_review_instance_id=booking.review_instance_id,
             native_template_id=booking.review_template_id, native_event_key=booking.event_key,
             source_review_id=overlay.source_review_id, aptem_review_id=overlay.event_key.removeprefix("imported-review:"),
             learner_id=overlay.learner_id, family="MCM", overlay=overlay,
-            approved_by=1, approved_at=timezone.now(), reason="Synthetic reconciliation fixture",
+            approved_by=approver_id, approved_at=timezone.now(), reason="Synthetic reconciliation fixture",
         )
         original = (booking.pk, booking.event_key, booking.graph_event_id, booking.review_instance_id)
         with source_identity():

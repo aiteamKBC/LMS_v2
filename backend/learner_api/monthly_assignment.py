@@ -169,10 +169,7 @@ def coaching_meeting_booked(kind, learner_id, meeting_key):
     if record is not None:
         return bool(record.event_type == "mcr" and record.scheduled_date and record.status in booked_statuses)
 
-    # Aptem can own a scheduled appointment without an LMS calendar row. The
-    # read-only calendar adapter already verifies its source/learner identity.
-    # Do not create a local booking just to satisfy assignment validation.
-    if not meeting_key.startswith("imported-review:"):
+    if not meeting_key.startswith(("imported-review:", "review:")):
         return False
     model = SOURCE_MODELS.get(kind)
     learner = model.all_learners.filter(pk=learner_id).first() if model else None
@@ -181,6 +178,24 @@ def coaching_meeting_booked(kind, learner_id, meeting_key):
     profile = review_profile_for_source(learner)
     if profile is None or source_for_learner(learner, profile).kind != "aptem":
         return False
+    if not meeting_key.startswith("imported-review:"):
+        # The calendar can retain a confirmed legacy appointment after Aptem
+        # becomes the Review source. Its booking-only projection verifies the
+        # owner, saved Native association, sync proof and reconciliation links.
+        # Count that appointment without manufacturing or replacing a Review.
+        events = coaching_events_for_learner(learner, profile, only_sources={"mcr"},
+                                             dates_only=True, include_unlinked_bookings=True)
+        matches = [event for event in events if event.get("eventKey") == meeting_key]
+        return bool(len(matches) == 1
+                    and matches[0].get("bookingOnly") is True
+                    and matches[0].get("reviewSource") == "unlinked-booking"
+                    and matches[0].get("calendarEventKey") == meeting_key
+                    and matches[0].get("source") == "mcr"
+                    and matches[0].get("scheduledDate") and matches[0].get("scheduledTime")
+                    and matches[0].get("status") in booked_statuses)
+    # Aptem can own a scheduled appointment without an LMS calendar row. The
+    # read-only calendar adapter already verifies its source/learner identity.
+    # Do not create a local booking just to satisfy assignment validation.
     events = coaching_events_for_learner(learner, profile, only_sources={"mcr"}, dates_only=True)
     matches = [event for event in events if event.get("eventKey") == meeting_key]
     if len(matches) != 1:
@@ -349,6 +364,11 @@ def export_presentation(request):
             if len(text(mapping(slide).get("body"))) > 12000:
                 raise ValueError(f"Slide {index}: split the content across more slides (maximum 12,000 characters per slide).")
         from .presentation_design import build_deck
+        from .compact_presentation import build_compact_deck, FORMAT
+        from .standard_mcm_presentation import build_standard_deck, FORMAT as STANDARD_FORMAT
+        presentation_format = mapping(payload.get("monthlyAssignment")).get("presentationFormat")
+        compact = presentation_format in (FORMAT, STANDARD_FORMAT)
+        renderer = build_standard_deck if presentation_format == STANDARD_FORMAT else build_compact_deck
         design = mapping(mapping(payload.get("monthlyAssignment")).get("presentationDesign"))
         if design and not design.get("evidenceId"):
             raise ValueError("This saved reference contains colours only. Upload the original PPTX again to use its full template, or choose the default KBC design.")
@@ -358,13 +378,13 @@ def export_presentation(request):
             try:
                 _, reference = load_owned_template(payload["learnerKind"], payload["learnerId"], design["evidenceId"])
                 extract_design(reference)
-                content = build_from_template(slides, reference, design)
+                content = renderer(slides, reference, design) if compact else build_from_template(slides, reference, design)
             except ValueError:
                 raise
             except Exception:
                 return JsonResponse({"error": "Could not load or apply the saved PowerPoint template. Try uploading it again."}, status=503)
         else:
-            content = build_deck(slides)
+            content = renderer(slides) if compact else build_deck(slides)
         response = HttpResponse(content, content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
         response["Content-Disposition"] = 'attachment; filename="monthly-assignment.pptx"'
         response["X-Presentation-Token"] = signing.dumps(presentation_fingerprint(payload), salt="monthly-assignment-pptx")

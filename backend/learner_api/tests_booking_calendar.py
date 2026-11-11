@@ -161,7 +161,11 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
             with self.subTest(session_type=session_type), \
                     patch.object(module, "SOURCE_MODELS", {"commercial": source_model}), \
                     patch.object(module, "learner_profile_for_source", return_value=mirror), \
+                    patch.object(module, "_case_owner_record", return_value=("owner@example.com", "Case Owner", 1)), \
+                    patch.object(module.CoachCalendarEvent.objects, "filter") as existing, \
                     patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 9, 1)):
+                # An assigned owner and no prior first session let every type reach the date rule.
+                existing.return_value.exclude.return_value.exists.return_value = False
                 request = RequestFactory().post(
                     "/learner_api/calendar/commercial/101/book/",
                     data=json.dumps({
@@ -293,6 +297,7 @@ class RescheduleEndpointTests(SimpleTestCase):
                 patch.object(module, "_learner_booking_record", return_value=record), \
                 patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 9, 7)), \
                 patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
+                patch("learner_api.coach_availability.free_slots", return_value=["11:30"]), \
                 patch("coach_api.views.build_booked_calendar_event", return_value={}) as build_event, \
                 patch("coach_api.views.persist_calendar_sync_reservation", return_value=record) as persist, \
                 patch("coach_api.views.synchronize_reserved_calendar_event", return_value=(record, "", True)) as sync:
@@ -319,6 +324,7 @@ class RescheduleEndpointTests(SimpleTestCase):
                 patch.object(module, "_learner_booking_record", return_value=record), \
                 patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 9, 7)), \
                 patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
+                patch("learner_api.coach_availability.free_slots", return_value=["11:30"]), \
                 patch("coach_api.views.persist_calendar_sync_reservation", side_effect=LearnerCalendarConflict("This learner already has another session at that time.")), \
                 patch("coach_api.views.synchronize_reserved_calendar_event") as sync:
             response = view(self.request(), "commercial", 101)

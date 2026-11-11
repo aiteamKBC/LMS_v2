@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { Modal } from '@/pages/users/components/Modal';
 import { SignatureCapture } from './SignatureCapture';
 import { saveMonthSignatures, type SignatureCaptureMethod, type SignedMonths, type Summary } from './api';

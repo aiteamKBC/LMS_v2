@@ -9,6 +9,13 @@ const event: CoachCalendarEvent = {
 };
 
 describe('explicitly reconciled imported booking', () => {
+  it.each(['aptem', 'curriculum'])('offers an existing in-progress %s booking for server attendance validation', reviewSource => {
+    const booked = { ...event, reviewSource, status: 'in-progress' as const,
+      scheduledDate: '2026-11-03', scheduledTime: '10:00', meetingLink: 'https://example.invalid/meeting' };
+    expect(reviewActionMatrix(booked).schedule).toBe('Reschedule');
+    expect(reviewActionMatrix({ ...booked, status: 'awaiting-signature' }).schedule).toBeNull();
+    expect(reviewActionMatrix({ ...booked, status: 'completed' }).schedule).toBeNull();
+  });
   it('offers reschedule using the saved calendar identity and keeps the imported form identity', () => {
     expect(canRescheduleReconciledReview(event)).toBe(true);
     expect(reviewActionMatrix(event)).toMatchObject({ schedule: 'Reschedule', viewForm: true });

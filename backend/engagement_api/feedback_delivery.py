@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone as datetime_timezone
+import logging
 from secrets import SystemRandom
 
 from django.db import IntegrityError, connection, transaction
@@ -15,6 +16,8 @@ from .feedback_delivery_guard import audit, is_creation_guard_rejection, rejecte
 
 
 _random = SystemRandom()
+logger = logging.getLogger(__name__)
+QR_SCHEDULE_SOURCE = 'qr_schedule'
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,7 @@ class LectureOccurrence:
     group_name: str = ''
     module_name: str = ''
     title: str = ''
+    tutor_name: str = ''
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     attendance_source: str = 'attendance'
@@ -176,26 +180,28 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
         for form in forms:
             tag_transaction(connection)
             audit('write_attempt', occurrence_key=occurrence_key, form=form, starts_at=occurrence.starts_at)
+            delivery_defaults = {
+                'form': form,
+                'attendance_source': _required(occurrence.attendance_source, 'Attendance source'),
+                'attendance_reference': str(occurrence.attendance_reference or '').strip(),
+                'programme_id': str(occurrence.programme_id or '').strip(),
+                'programme_name': str(occurrence.programme_name or '').strip(),
+                'cohort_id': str(occurrence.cohort_id or '').strip(),
+                'cohort_name': str(occurrence.cohort_name or '').strip(),
+                'group_id': str(occurrence.group_id or '').strip(),
+                'group_name': str(occurrence.group_name or '').strip(),
+                'module_catalogue_id': module_id,
+                'module_name': str(occurrence.module_name or '').strip(),
+                'session_title': str(occurrence.title or '').strip(),
+                'starts_at': occurrence.starts_at,
+                'ends_at': occurrence.ends_at,
+                'available_at': available_at,
+                'status': 'open',
+            }
             delivery, created = FeedbackDelivery.objects.update_or_create(
                 occurrence_key=occurrence_key,
-                defaults={
-                    'form': form,
-                    'attendance_source': _required(occurrence.attendance_source, 'Attendance source'),
-                    'attendance_reference': str(occurrence.attendance_reference or '').strip(),
-                    'programme_id': str(occurrence.programme_id or '').strip(),
-                    'programme_name': str(occurrence.programme_name or '').strip(),
-                    'cohort_id': str(occurrence.cohort_id or '').strip(),
-                    'cohort_name': str(occurrence.cohort_name or '').strip(),
-                    'group_id': str(occurrence.group_id or '').strip(),
-                    'group_name': str(occurrence.group_name or '').strip(),
-                    'module_catalogue_id': module_id,
-                    'module_name': str(occurrence.module_name or '').strip(),
-                    'session_title': str(occurrence.title or '').strip(),
-                    'starts_at': occurrence.starts_at,
-                    'ends_at': occurrence.ends_at,
-                    'available_at': available_at,
-                    'status': 'open',
-                },
+                defaults=delivery_defaults,
+                create_defaults={**delivery_defaults, 'tutor_name': str(occurrence.tutor_name or '').strip()},
             )
             if created:
                 _pin_delivery_questions(delivery, form)
@@ -203,7 +209,7 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
                 ensure_delivery_questions(delivery)
             deliveries.append(delivery.id)
             revoked_count += FeedbackDeliveryRecipient.objects.filter(
-                delivery=delivery, revoked_at__isnull=True,
+                delivery=delivery, revoked_at__isnull=True, public_claimed_at__isnull=True,
             ).exclude(learner_id__in=learners).update(revoked_at=timezone.now())
             for learner_id, learner in learners.items():
                 attendee = attendees_by_id[learner_id]
@@ -237,6 +243,30 @@ def _aware_utc(value):
     return timezone.make_aware(value, datetime_timezone.utc)
 
 
+def reconcile_feedback_after_attendance_commit(occurrence_ids, *, using):
+    """Refresh only the saved lectures once their attendance transaction commits.
+
+    The existing reconciliation still checks finalization, form creation time
+    and learner identity, and retains the pinned form/question set. This hook
+    must not wait for unrelated recording/archive work or undo saved attendance
+    if feedback fails; the existing session worker remains the retry fallback.
+    """
+    ids = list(dict.fromkeys(str(value or '').strip() for value in occurrence_ids
+                            if str(value or '').strip()))
+    if not ids:
+        return
+
+    def reconcile():
+        try:
+            sync_post_lecture_feedback_from_attendance(occurrence_ids=ids)
+        except Exception as error:
+            # Driver messages may contain names, answers or connection details.
+            logger.warning('Live Sessions Feedback pending after attendance commit: %s occurrence(s), %s',
+                           len(ids), type(error).__name__)
+
+    transaction.on_commit(reconcile, using=using)
+
+
 def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurrence_ids=None):
     """Reconcile finalized curriculum attendance into feedback deliveries.
 
@@ -268,6 +298,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
             SELECT a.occurrence_id,
                    a.module_catalogue_id,
                    coalesce(nullif(m.title, ''), nullif(s.module_title, ''), a.module_catalogue_id) AS module_title,
+                   coalesce(nullif(btrim(lecture_module.tutor_name), ''), '') AS lecture_tutor_name,
                    coalesce(p.programme_id::text, '') AS programme_id,
                    coalesce(nullif(p.name, ''), m.programme_name, '') AS programme_name,
                    coalesce(c.cohort_id::text, '') AS cohort_id,
@@ -286,6 +317,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
               JOIN curriculum.live_session_occurrences o ON o.id = a.occurrence_id
               JOIN curriculum.live_sessions s ON s.id = o.live_session_id
          LEFT JOIN curriculum.modules m ON m.module_catalogue_id = a.module_catalogue_id
+         LEFT JOIN curriculum.modules lecture_module ON lecture_module.module_catalogue_id = s.module_catalogue_id
          LEFT JOIN curriculum.groups g ON g.group_id = m.group_id
          LEFT JOIN curriculum.cohorts c ON c.cohort_id = g.cohort_id
          LEFT JOIN curriculum.programmes p ON p.programme_id = c.programme_id
@@ -335,6 +367,7 @@ def sync_post_lecture_feedback_from_attendance(*, live_session_ids=None, occurre
                     group_name=row['group_name'],
                     module_name=row['module_title'],
                     title=title,
+                    tutor_name=row.get('lecture_tutor_name') or '',
                     starts_at=_aware_utc(row['scheduled_start']),
                     ends_at=_aware_utc(row['session_end']),
                     attendance_source='curriculum.live_session_learner_attendance',

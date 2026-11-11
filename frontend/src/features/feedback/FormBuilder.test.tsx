@@ -10,7 +10,7 @@ import { FormBuilder } from './FormBuilder';
 vi.mock('sweetalert2', () => ({ default: { fire: vi.fn() } }));
 Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function chooseGeneralFeedback(user: ReturnType<typeof userEvent.setup>) {
   screen.getByRole('combobox', { name: 'Form Type' }).focus();
@@ -18,7 +18,7 @@ async function chooseGeneralFeedback(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('post-lecture feedback delivery scope', () => {
-  it.each(['post_lecture', 'general', 'post_event', 'event_rsvp', 'post_mcm_review', 'post_progress_review', 'mid_module', 'end_module'] as const)('offers staff scoring examples for %s without including them in saved form data or learner preview', async formType => {
+  it.each(['post_lecture', 'general', 'post_event', 'event_rsvp', 'post_mcm_review', 'post_progress_review', 'post_progress_review_employer', 'post_epa_review', 'mid_module', 'end_module'] as const)('offers staff scoring examples for %s without including them in saved form data or learner preview', async formType => {
     const user = userEvent.setup();
     const form: FeedbackForm = {
       id: 7, title: 'Synthetic feedback', formType, deliveryScope: ['post_lecture', 'mid_module', 'end_module'].includes(formType) ? 'all_modules' : 'manual',
@@ -47,7 +47,7 @@ describe('post-lecture feedback delivery scope', () => {
     expect(JSON.stringify(update.mock.calls[0][1])).not.toContain('answer');
   });
 
-  it.each(['Mid-module Feedback', 'End-module Feedback'])('configures %s using module dates and assignment', async label => {
+  it.each(['Wellbeing', 'End-module Feedback'])('configures %s using module dates and assignment', async label => {
     const user = userEvent.setup();
     const curriculum = vi.spyOn(feedbackApi, 'curriculumOptions').mockResolvedValue({
       programmes: [{ id: 'P1', name: 'Data' }], cohorts: [], groups: [],
@@ -104,8 +104,10 @@ describe('post-lecture feedback delivery scope', () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FormBuilder /></MemoryRouter>);
 
-    expect(screen.getByText('Reusable Live Sessions Feedback QR')).toBeVisible();
-    expect(screen.getByText(`${window.location.origin}/login?lectureFeedback=1`)).toBeVisible();
+    expect(screen.getByText('One Live Sessions Feedback QR')).toBeVisible();
+    expect(screen.getByText(`${window.location.origin}/lecture-feedback`)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Download QR' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy link' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Question bank' })).toBeVisible();
     expect(screen.getAllByRole('radio', { name: /star/ })).toHaveLength(5);
     expect(screen.getByRole('combobox', { name: 'Rating style' })).toHaveValue('stars');
@@ -123,6 +125,31 @@ describe('post-lecture feedback delivery scope', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' }), '1');
     expect(screen.getByRole('combobox', { name: 'Section 1 questions per lecture' })).toHaveValue('1');
     expect(screen.getByRole('status')).toHaveTextContent('Learners will answer 1 question per lecture');
+  });
+
+  it('downloads a shareable image with the lecture QR centred and its link below', async () => {
+    vi.stubGlobal('Image', class {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) { this.onload?.(); }
+    });
+    const drawImage = vi.fn();
+    const fillText = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      fillRect: vi.fn(), drawImage, fillText,
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,synthetic');
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Download QR' }));
+
+    await waitFor(() => expect(click).toHaveBeenCalledOnce());
+    expect(drawImage).toHaveBeenCalledWith(expect.anything(), 200, 240, 500, 500);
+    expect(fillText).toHaveBeenCalledWith(`${window.location.origin}/lecture-feedback`, 450, 875, 760);
+    expect(fillText).not.toHaveBeenCalledWith('The same code works for every lecture.', expect.anything(), expect.anything());
+    expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe('kbc-live-sessions-feedback-qr.png');
+    expect((click.mock.instances[0] as HTMLAnchorElement).href).toBe('data:image/png;base64,synthetic');
   });
 
   it('saves imported choice types and category quotas without changing other form details', async () => {

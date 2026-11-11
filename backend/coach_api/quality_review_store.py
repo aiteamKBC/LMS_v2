@@ -74,9 +74,18 @@ def save_review(snapshot, *, expected, request_id, actor):
         from datetime import datetime, timezone
         saved = {**snapshot, 'id':review_id, 'version':expected+1,
                  'updatedBy':actor, 'updatedAt':datetime.now(timezone.utc).isoformat()}
+        # New reviews opt into the new PDF presentation. Existing reviews keep
+        # their original layout, including later saves and first-time exports.
+        # Take this only from the stored record, never from a caller's snapshot.
+        saved.pop('pdfLayoutVersion', None)
+        if not current:
+            saved['pdfLayoutVersion'] = 3
+        elif 'pdfLayoutVersion' in _payload(current):
+            saved['pdfLayoutVersion'] = _payload(current)['pdfLayoutVersion']
         if 'attachments' in snapshot['form']:
             saved['evidenceFiles'] = [{key:row[key] for key in ('id','section','filename','size','contentType','hasPreview')} for row in attachments]
-        params = [saved['coach']['email'],saved['learner']['id'],saved['learner']['name'],
+        learner = saved.get('learner') or {}
+        params = [saved['coach']['email'],learner.get('id'),learner.get('name'),
                   saved['meeting']['startsAt'],saved['meeting']['endsAt'],saved['status'],saved['version'],Jsonb(saved),actor]
         if current:
             result = connection.execute('''UPDATE lms_quality.review SET coach_email=%s,learner_id=%s,learner_name=%s,
@@ -97,7 +106,7 @@ def save_review(snapshot, *, expected, request_id, actor):
 
 def list_reviews(start,end,coach='',status='',offset=0,search='',review_type='',pdf=''):
     from .quality_review_types import type_sql
-    where = 'starts_at >= %s AND starts_at < %s'
+    where = "starts_at >= %s AND starts_at < %s AND coalesce(payload->>'scope','coaching')='coaching'"
     params = [start,end]
     if coach:
         where += ' AND coach_email=%s'
@@ -259,6 +268,7 @@ def reviews_for_meeting(identity, offset=0):
         rows=connection.execute('''SELECT r.id,r.learner_id,r.learner_name,r.status,r.version,r.updated_at,r.payload->'reviewer'->>'name' AS reviewer_name,r.payload->'definition'->>'title' AS form_title,'''+type_sql('r')+''' AS review_type,
           (SELECT max(d.version) FROM lms_quality.document d WHERE d.review_id=r.id) AS pdf_version
           FROM lms_quality.review r WHERE r.payload->'meeting'->>'id'=%s
+          AND coalesce(r.payload->>'scope','coaching')='coaching'
           ORDER BY r.learner_name,r.id LIMIT 31 OFFSET %s''',[identity,offset]).fetchall()
     return rows[:30],offset+30 if len(rows)>30 else None
 

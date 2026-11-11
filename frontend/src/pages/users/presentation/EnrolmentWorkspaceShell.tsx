@@ -57,6 +57,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
   useEffect(() => {
     if (!mobileOpen) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const menu = menuRef.current;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     closeRef.current?.focus();
@@ -73,7 +74,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
     return () => {
       document.body.style.overflow = overflow;
       document.removeEventListener('keydown', keydown);
-      if (previous?.isConnected) previous.focus(); else menuRef.current?.focus();
+      if (previous?.isConnected) previous.focus(); else menu?.focus();
     };
   }, [mobileOpen]);
 

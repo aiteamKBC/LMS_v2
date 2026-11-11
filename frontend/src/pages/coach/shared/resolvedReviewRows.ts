@@ -63,17 +63,22 @@ export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatri
     (event.reviewSource === 'aptem' || event.aptemReviewId) && status !== 'completed',
   );
   const imported = Boolean(event.reviewSource === 'aptem' || event.aptemReviewId);
+  const bookedNativeMcm = !imported && event.source === 'mcr' && Boolean(event.eventKey)
+    && (status === 'scheduled' || status === 'in-progress');
   const importedSchedulable = imported && (['progress-review', 'mcr'].includes(reviewCategory(event)) || isImportedPersonalSupportPlan(event))
     && (status === 'not-scheduled' || status === 'scheduled');
+  // The server rechecks attendance and ownership before changing any booking.
+  const startedBooking = status === 'in-progress' && ['mcr', 'progress-review'].includes(reviewCategory(event))
+    && Boolean(event.scheduledDate && event.scheduledTime && (event.meetingLink || event.graphWebLink));
   return {
     // Aptem source dates alone do not identify a local booking to reschedule.
     // The dialog loads the authoritative booking permissions before saving.
-    schedule: imported ? importedSchedulable ? status === 'scheduled' && event.calendarEventKey ? 'Reschedule' : 'Schedule' : null
+    schedule: startedBooking ? 'Reschedule' : imported ? importedSchedulable ? status === 'scheduled' && event.calendarEventKey ? 'Reschedule' : 'Schedule' : null
       : status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
     view: true,
     // Imported reviews remain reachable through local progress and signature
     // stages even when the Aptem source still has summary metadata only.
-    viewForm: formAvailable || importedActiveReview,
+    viewForm: formAvailable || importedActiveReview || bookedNativeMcm,
     presentation: Boolean(event.enrolmentId),
     join: canJoinMeeting({ ...event, status }),
   };

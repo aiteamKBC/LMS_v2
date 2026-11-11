@@ -159,6 +159,8 @@ export interface WeekTemplate {
 
 /** Body accepted by create/update. Components reuse ModuleComponent verbatim. */
 export interface WeekTemplateInput {
+  /** The selected video is copied/retried as part of a successful Save. */
+  importVideoComponentIds?: string[];
   /**
    * The version the editor read, sent back so the server can refuse a save
    * built on a template somebody else has already replaced. Omitted means "do
@@ -449,6 +451,22 @@ export async function uploadWeekComponentResource(componentId: string, file: Fil
   form.set('file', file);
   form.set('componentType', componentType);
   return uploadComponentFile<WeekComponentUploadResult>(`${API_BASE_URL}/curriculum/week-components/${encodeURIComponent(componentId)}/upload/`, form);
+}
+
+/** A file stored under a module's upload folder, attached anywhere or not. */
+export interface StoredModuleUpload {
+  fileName: string;
+  url: string;
+  size: number;
+  contentType: string;
+  /** The component it was uploaded for (its folder), which may no longer use it. */
+  componentId: string;
+  uploadedAt: string | null;
+}
+
+export async function fetchModuleStoredUploads(moduleCatalogueId: string, signal?: AbortSignal): Promise<{ files: StoredModuleUpload[]; truncated: boolean }> {
+  const payload = await request<{ files?: StoredModuleUpload[]; truncated?: boolean }>(`/curriculum/module-uploads/${encodeURIComponent(moduleCatalogueId)}/`, { signal });
+  return { files: payload.files || [], truncated: Boolean(payload.truncated) };
 }
 
 export async function fetchComponentPointsDefaults(): Promise<Partial<Record<ModuleComponentType, number>>> {

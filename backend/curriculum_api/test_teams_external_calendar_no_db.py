@@ -129,7 +129,7 @@ class ImportedCalendarGuardTests(unittest.TestCase):
                      'as_json_value': lambda value, fallback: json.loads(value) if isinstance(value, str) else value or fallback}
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in
-                    {'LEGACY_SETTING_KEYS', 'LIVE_SESSION_TRACKING_SETTING_KEYS'} for target in node.targets):
+                    {'LEGACY_SETTING_KEYS', 'RECORDING_SOURCE_SETTING_KEYS', 'LIVE_SESSION_TRACKING_SETTING_KEYS'} for target in node.targets):
                 namespace[node.targets[0].id] = ast.literal_eval(node.value)
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'views.py', 'exec'), namespace)
@@ -162,7 +162,8 @@ class ImportedCalendarEndpointTests(unittest.TestCase):
             'authoring_fetch_all': self.read, 'active_component_rows': lambda rows: rows,
             'frontend_component_type': lambda value: str(value).replace('_', '-'),
             'as_json_value': lambda value, fallback: json.loads(value) if isinstance(value, str) else value or fallback,
-            'authoring_module_exists': lambda _module: True, 'resolve_stored_module_catalogue_id': lambda value: value,
+            'authoring_module_exists': lambda module_id: {'module_catalogue_id': module_id, 'source_type': 'authoring'},
+            'resolve_stored_module_catalogue_id': lambda value: value,
             'ensure_live_sessions_table': Mock(), 'ensure_live_session_tracking_tables': Mock(),
             'teams_meeting_default_organizer': lambda: '',
             'json_body': lambda _request: {'moduleCatalogueId': 'MODULE'},
@@ -182,6 +183,16 @@ class ImportedCalendarEndpointTests(unittest.TestCase):
         modules = patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': transport})
         modules.start()
         self.addCleanup(modules.stop)
+        # The requested standard editor now verifies the original calendar
+        # instead of rejecting every imported series. The real access/binding
+        # boundary is covered by test_teams_original_calendar and HTTP tests.
+        original = types.ModuleType('curriculum_api.teams_original_calendar')
+        original.calendar_authorized = lambda _id: False
+        self.prepare_original = Mock(return_value=self.ns['json_error']('Connect the original calendar.', status=409, code='original_calendar_access'))
+        original.original_calendar_request = lambda _view: self.prepare_original
+        original_modules = patch.dict(sys.modules, {'curriculum_api.teams_original_calendar': original})
+        original_modules.start()
+        self.addCleanup(original_modules.stop)
         network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
         network.start()
         self.addCleanup(network.stop)
@@ -205,14 +216,16 @@ class ImportedCalendarEndpointTests(unittest.TestCase):
             self.ns['curriculum_teams_meeting'](types.SimpleNamespace(method='POST'))
         self.graph.assert_not_called()
 
-    def test_tracked_imported_calendar_blocks_create_and_patch_with_event_id(self):
+    def test_imported_calendar_keeps_creation_blocked_and_verifies_the_original_before_patch(self):
         self.series = [{'id': 'LIVE', 'module_catalogue_id': 'MODULE', 'meeting_type': 'linked-external',
                         'status': 'active', 'graph_event_id': 'EXTERNAL-EVENT', 'join_url': 'https://example.invalid/original'}]
         result = self.ns['curriculum_teams_meeting'](types.SimpleNamespace(method='POST'))
         self.assertEqual(result['code'], 'external_teams_calendar')
         result = self.ns['curriculum_teams_meeting_schedule'](types.SimpleNamespace(method='PATCH'), 'LIVE')
         self.assertEqual(result.status_code, 409)
-        self.assertEqual(result['code'], 'external_calendar_read_only')
+        self.assertEqual(result['code'], 'original_calendar_access')
+        self.prepare_original.assert_called_once()
+        self.assertEqual(self.prepare_original.call_args.args[1], 'LIVE')
         self.calendar_groups.assert_not_called()
         self.graph.assert_not_called()
 

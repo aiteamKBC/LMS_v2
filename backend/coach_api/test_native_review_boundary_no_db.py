@@ -237,8 +237,8 @@ class NativeReviewBoundaryTests(SimpleTestCase):
     def test_imported_mcm_invalid_dates_are_rejected_before_source_or_calendar_io(self):
         with patch.object(calendar, "coaching_events_for_learner") as source_events, \
              patch.object(views.CoachCalendarEvent.objects, "get_or_create") as create:
-            for day, message in (("2026-11-19", "20th"), ("2026-12-07", "20th"),
-                                 ("2026-11-21", "Saturdays or Sundays"),
+            for day, message in (("2026-11-21", "Saturdays or Sundays"),
+                                 ("2026-11-22", "Saturdays or Sundays"),
                                  ("2026-12-25", "bank holidays"), ("2026-11-05", "already passed")):
                 with self.subTest(day=day):
                     response = self.learner_book(eventKey="imported-review:A-401", scheduledDate=day)
@@ -246,6 +246,20 @@ class NativeReviewBoundaryTests(SimpleTestCase):
                     self.assertIn(message, json.loads(response.content)["error"])
             source_events.assert_not_called()
             create.assert_not_called()
+        self.graph.assert_not_called()
+
+    def test_imported_mcm_working_days_outside_old_window_still_require_owned_review(self):
+        for day in ("2026-11-19", "2026-12-07"):
+            with self.subTest(day=day), \
+                 patch.object(calendar, "coaching_events_for_learner", return_value=[]) as source_events, \
+                 patch.object(views.CoachCalendarEvent.objects, "get_or_create") as create:
+                response = self.learner_book(eventKey="imported-review:A-401", scheduledDate=day)
+                # The date passes validation, but an absent imported Review
+                # must still be refused before reserving a meeting.
+                self.assertEqual(response.status_code, 409, response.content)
+                self.assertEqual(json.loads(response.content)["code"], "APTEM_REVIEW_SOURCE_ONLY")
+                source_events.assert_called_once_with(self.enrolment, self.person)
+                create.assert_not_called()
         self.graph.assert_not_called()
 
     def test_native_learner_booking_still_links_official_occurrence(self):
@@ -361,13 +375,18 @@ class NativeReviewBoundaryTests(SimpleTestCase):
         self.assertEqual([row["occurrence_number"] for row in instances], [2, 2])
 
     def test_durable_native_learner_booking_is_owned_and_not_relinked(self):
+        self.make_native()
         model = MagicMock()
         model.all_learners.filter.return_value.first.return_value = self.enrolment
         record = booking("review:21:T-MCM:1", review_instance_id="EXISTING", review_template_id="T-MCM")
         before = {field.attname: deepcopy(getattr(record, field.attname)) for field in record._meta.concrete_fields}
+        linked = {"id": "EXISTING", "calendar_event_id": record.pk,
+                  "learner_id": self.person.id, "review_template_id": "T-MCM",
+                  "coach_email": record.owner_email}
         with patch.dict(calendar.SOURCE_MODELS, {"commercial": model}), \
              patch.object(calendar, "_calendar_profile", return_value=self.person), \
              patch.object(calendar.CoachCalendarEvent.objects, "filter") as records, \
+              patch.object(engine, "get_review_instance", return_value=linked), \
              patch.object(calendar, "coaching_events_for_learner", return_value=[]) as imported:
             records.return_value.first.return_value = record
             self.assertIs(calendar._learner_calendar_record("commercial", 121, record.event_key), record)

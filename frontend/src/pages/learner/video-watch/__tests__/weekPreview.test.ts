@@ -90,25 +90,29 @@ describe('toggleExpandedWeek', () => {
 });
 
 describe('module month headings', () => {
-  it('groups each four teaching weeks and leaves assessments and introduction separate', () => {
-    const weeks = ['Introduction', ...Array.from({ length: 10 }, (_, index) => `Week ${index + 1}`), 'Module assessments'];
-    expect(weekMonthHeadings(weeks.map(week => ({ week })), '2026-08-03')).toEqual([
-      null, 'August 2026', null, null, null, 'September 2026', null, null, null, 'October 2026', null, null,
+  it('groups by the session dates and leaves assessments and introduction separate', () => {
+    const days = ['2026-08-03', '2026-08-10', '2026-08-17', '2026-08-24', '2026-08-31',
+      '2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05'];
+    const weeks = [{ week: 'Introduction' }, ...days.map((sessionDate, index) => ({ week: `Week ${index + 1}`,
+      components: [{ title: 'Live', type: 'live_session', expectedOtjh: null, sessionDate }] })), { week: 'Module assessments' }];
+    expect(weekMonthHeadings(weeks)).toEqual([
+      null, 'August 2026', null, null, null, null, 'September 2026', null, null, null, 'October 2026', null,
     ]);
   });
 
   it.each([
-    ['2026-12-31', ['December 2026', 'January 2027', 'February 2027']],
-    ['2026-01-31', ['January 2026', 'February 2026', 'March 2026']],
-    ['2026-02-30', ['Month 1', 'Month 2', 'Month 3']],
-  ])('preserves calendar month order for training-plan start %s', (start, expected) => {
-    const weeks = Array.from({ length: 10 }, (_, index) => ({ week: `Week ${index + 1}` }));
-    expect(weekMonthHeadings(weeks, start).filter(Boolean)).toEqual(expected);
+    ['2026-12-31', '2027-01-07', ['December 2026', 'January 2027']],
+    ['2026-01-31', '2026-02-07', ['January 2026', 'February 2026']],
+    ['2026-02-30', '', ['Dates not scheduled yet']],
+  ])('uses real calendar dates across a boundary starting %s', (first, second, expected) => {
+    const weeks = [first, second].filter(Boolean).map((sessionDate, index) => ({ week: `Week ${index + 1}`,
+      components: [{ title: 'Live', type: 'live_session', expectedOtjh: null, sessionDate }] }));
+    expect(weekMonthHeadings(weeks).filter(Boolean)).toEqual(expected);
   });
 
-  it('uses plan order for named or repeated weeks', () => {
+  it('keeps named and repeated undated weeks visible without inventing months', () => {
     expect(weekMonthHeadings(Array.from({ length: 6 }, () => ({ week: 'Marketing workshop' }))))
-      .toEqual(['Month 1', null, null, null, 'Month 2', null]);
+      .toEqual(['Dates not scheduled yet', null, null, null, null, null]);
   });
 });
 
@@ -155,6 +159,12 @@ describe('placeActivity', () => {
 
     expect(placement?.weeks.map((w) => w.week)).toEqual(['Week 1', 'Week 2']);
     expect(placement?.weeks.find((w) => w.active)?.week).toBe('Week 1');
+  });
+
+  it('retains an empty authored week identity for its curriculum date and future materials', () => {
+    const withEmptyWeek = { ...detail, week: [...detail.week, { module: 'Aya Modual', week: 'Future week', weekId: 'EMPTY-WEEK' }] };
+    const placement = placeActivity(withEmptyWeek, { componentId: 'COMP-READ-9' }, new Set());
+    expect(placement?.weeks[2]).toMatchObject({ key: 'EMPTY-WEEK', weekId: 'EMPTY-WEEK', count: 0, components: [] });
   });
 
   it('finds an ordinary activity by its component id', () => {

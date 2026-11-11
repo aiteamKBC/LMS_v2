@@ -284,15 +284,15 @@ class MigratedSummaryActionTests(TestCase):
         self.assertNotIn('AI_SUMMARY_FAILED', data['intelligence']['errorCodes'])
         self.assertIsNone(data['intelligence']['generationError'])
 
-    def test_oversized_summary_keeps_full_original_and_does_not_write_answer(self):
+    def test_long_mcm_summary_populates_without_overwriting_a_coach_edit(self):
         response, _ = self.upload(summary='X' * 4001)
-        self.assertNotIn('recap', self.overlay.answers)
-        self.assertEqual(json.loads(response.content)['summaryBinding']['status'], 'summary-too-long')
+        self.assertEqual(self.overlay.answers['recap'], 'X' * 4001)
+        self.assertEqual(json.loads(response.content)['summaryBinding']['status'], 'populated')
         self.assertEqual(len(self.overlay.meeting_intelligence['aiSummaryOriginal']['overview']), 4001)
         self.save({'recap': 'Final coach answer'})
         response, _ = self.upload(summary='Y' * 4001)
         binding = json.loads(response.content)['summaryBinding']
-        self.assertTrue(binding['summaryTooLong'])
+        self.assertFalse(binding['summaryTooLong'])
         self.assertTrue(binding['replacementAvailable'])
         self.assertEqual(binding['suggestionText'], 'Y' * 4001)
         self.assertEqual(self.overlay.answers['recap'], 'Final coach answer')

@@ -1,5 +1,7 @@
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { MonthlyAssignment } from '@/api/monthlyAssignment';
+import { compactSlideIssue, COMPACT_PRESENTATION_FORMAT } from './compactMonthlyPresentation';
+import { standardSlideIssue, STANDARD_PRESENTATION_FORMAT } from './standardMonthlyPresentation';
 
 export function monthlyPresentation(title: string, answer: string, learned: string, businessImpact: string,
   monthly: MonthlyAssignment, detail: LearnerDetail, question: string) {
@@ -26,15 +28,22 @@ export function monthlyPresentation(title: string, answer: string, learned: stri
   return slides;
 }
 
-export function slideIssue(slide: { title: string; body: string }): string {
+export function slideIssue(slide: MonthlyAssignment['slides'][number], format?: MonthlyAssignment['presentationFormat']): string {
   if (!slide.title?.trim()) return 'Add a slide title.';
   if (!slide.body?.trim()) return 'Add content, regenerate the presentation from your completed answers, or remove this slide.';
   if (slide.body.trim().length > 12000) return 'Split this content across more slides (maximum 12,000 characters per slide).';
+  if (format === COMPACT_PRESENTATION_FORMAT) return compactSlideIssue(slide);
+  if (format === STANDARD_PRESENTATION_FORMAT) return standardSlideIssue(slide);
   return '';
 }
 
 /** Repair empty generated sections only; never replace existing slide text. */
 export function fillEmptyPresentationSlides(monthly: MonthlyAssignment, learned: string, businessImpact: string): MonthlyAssignment {
+  if (monthly.presentationFormat === COMPACT_PRESENTATION_FORMAT || monthly.presentationFormat === STANDARD_PRESENTATION_FORMAT) {
+    // A deliberately cleared highlight is an edit, not permission to restore it.
+    // Fresh compact generation always supplies content; validation flags any gap.
+    return monthly;
+  }
   const join = (parts: [string, string][]) => parts.filter(([, value]) => value?.trim()).map(([label, value]) => `${label}\n${value.trim()}`).join('\n\n');
   const sources: Record<string, string> = {
     'Learning and understanding': join([['I learned', learned], ['I understood', monthly.understood], ['Skills gained', monthly.gainedSkills]]),

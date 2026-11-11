@@ -76,7 +76,7 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
       .then(data => {
         if (controller.signal.aborted) return;
         setDefinition(data);
-        setDate(initialReviewBookingDate(data, reviewCategory(event) === 'mcr'));
+        setDate(initialReviewBookingDate(data));
         setTime(data.booking?.scheduledTime || '09:00');
         setDuration(initialReviewBookingDuration(data));
       })
@@ -92,7 +92,10 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
   const locked = viewingAsCoach || (!independentBooking && definition?.readOnly) || definition?.previewOnly
     || definition?.templateSync?.status === 'conflict' || booking?.conflict
     || Boolean(definition?.instance.completedAt)
-    || ['completed', 'in-progress', 'awaiting-signature', 'cancelled'].includes(booking?.status || definition?.localStatus || definition?.instance.status || '');
+    || ['completed', 'awaiting-signature', 'cancelled'].includes(booking?.status || definition?.localStatus || definition?.instance.status || '')
+    || ((booking?.status || definition?.localStatus || definition?.instance.status) === 'in-progress'
+      && (!booking?.canReschedule || !['mcr', 'progress-review'].includes(reviewCategory(event))
+        || event.importedReviewType?.trim().toLowerCase() === 'personal support plan'));
   const eligible = Boolean(definition?.source === 'aptem' && (definition.migratedForm || independentBooking) && booking && !locked
     && (booking.canBook || booking.canAttach || booking.canReschedule));
   const attaching = Boolean(booking?.canAttach && !booking.canReschedule);
@@ -128,7 +131,7 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
       if (active) setAvailabilityError(reason instanceof Error ? reason.message : 'Could not check the coach calendar. Retry before booking.');
     }).finally(() => { if (active) setAvailabilityLoading(false); });
     return () => { active = false; controller.abort(); };
-  }, [eligible, attaching, definition?.instance.learnerId, date, duration, rescheduling, booking?.eventKey, reload, availabilityRetry]);
+  }, [eligible, attaching, definition, date, duration, rescheduling, booking?.eventKey, reload, availabilityRetry]);
 
   const save = async () => {
     if (!eligible || !definition || !booking || savingRef.current) return;

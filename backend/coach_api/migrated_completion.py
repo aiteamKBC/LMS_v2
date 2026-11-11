@@ -13,10 +13,10 @@ from PIL import Image as PillowImage, UnidentifiedImageError
 from django.db import transaction
 from django.utils import timezone
 
-from .migrated_reviews import EDITABLE_STATUSES, SCHEDULED_WORK_STATUSES, _visible_fields, validate_answers
+from .migrated_reviews import EDITABLE_STATUSES, _visible_fields, validate_answers
 from .migrated_template_sync import active_answers, preserve_inactive_answers
 from .models import ImportedReviewInstance, MigratedReviewDocument, MigratedReviewSignature
-from .migrated_signature_rules import ROLES, requirements_for_definition, requirements_for_family
+from .migrated_signature_rules import ROLES, requirements_for_definition, requirements_for_family, requirements_for_overlay
 
 
 IMAGE_PATTERN = re.compile(r"^data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$", re.I)
@@ -86,11 +86,11 @@ def submit(overlay, answers):
                 raise ValueError("Required review fields are unanswered.")
             overlay.save(update_fields=["answers", "updated_at"])
         return
-    if overlay.status not in SCHEDULED_WORK_STATUSES:
-        raise ValueError("Only a scheduled or in-progress migrated review can be submitted.")
+    if overlay.status not in EDITABLE_STATUSES:
+        raise ValueError("Only an editable migrated review can be submitted.")
     validate_answers(overlay.template_snapshot, answers, completing=True)
     family = (overlay.template_snapshot.get("templateSource") or {}).get("family") or overlay.migrated_template.review_family
-    overlay.signature_requirements = requirements_for_definition(overlay.template_snapshot, family)
+    overlay.signature_requirements = requirements_for_overlay(overlay, family)
     overlay.answers = preserve_inactive_answers(overlay.template_snapshot, overlay.answers or {}, answers)
     overlay.status = ImportedReviewInstance.STATUS_AWAITING_SIGNATURE
     # Completion and any configured hours allocation must roll back together if

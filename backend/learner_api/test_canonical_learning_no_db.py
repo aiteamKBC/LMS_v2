@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT.parent))
+from learner_api.hour_review_status import review_hour_totals
 
 
 class ServiceError(Exception):
@@ -75,11 +76,13 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(sum(p['actual_seconds'] for p in parts if p['reporting_month'] == '2026-09'), 1800)
         self.assertFalse(any(p['reporting_month'] == '2026-10' for p in parts))
         dashboard = {'defaultdict': defaultdict, 'canonical': SimpleNamespace(**self.scope),
+                     'review_hour_totals': review_hour_totals,
                      'number': self.scope['number']}
         functions('dashboard_tabs.py', dashboard, {'monthly_hours'})
         chart = dashboard['monthly_hours'](self.owner, [entry], {}, current_month='2026-10')
         self.assertEqual(chart['months'], [{'month': '2026-09', 'actual_hours': 0.5,
-                                          'not_accepted_hours': 0, 'training_plan_target': None}])
+                                          'not_accepted_hours': 0, 'submitted_hours': 0, 'verification_hours': 0,
+                                          'training_plan_target': None}])
         self.scope['entries_for'] = Mock(return_value=[entry])
         found, original_record = self.scope['content_row'](self.owner, '2026-09', row['id'])
         self.assertEqual(found['id'], row['id'])
@@ -158,6 +161,33 @@ class CanonicalLearningTests(unittest.TestCase):
             'sources': [{'activity_status': 'completed', 'completed': True}],
         }))
         self.assertFalse(self.scope['counts_as_completed']({'activity_status': 'not accepted'}))
+
+    def test_untimed_completion_is_visible_for_review_without_awarding_hours(self):
+        entry = {'id': 'subject:50:10', 'component_title': 'Synthetic reading',
+                 'kind': 'component', 'completed': True, 'completion_only': True,
+                 'accepted': False, 'actual_seconds': None, 'ksbs': [],
+                 'reporting_month': '2026-10', 'reporting_started_at': '2026-10-12T10:00:00Z'}
+        self.query.return_value = []
+        row = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertEqual(row['reporting_month'], '2026-10')
+        self.assertEqual(row['activity_date'], '2026-10-12')
+        self.assertFalse(row['actual_hours_recorded'])
+        self.assertEqual(row['actual_hours'], 0)
+        self.assertFalse(row['accepted'])
+        self.assertEqual(self.scope['allocations'](entry), [])
+        self.assertEqual(self.scope['metrics_from_records']([entry], {})['otjh']['actual'], 0)
+        self.query.reset_mock()
+        content = self.scope['content'](row, self.owner, entry)
+        self.assertIn('without a recorded study duration', content['parts'][0]['html'])
+        self.query.assert_not_called()
+
+    def test_recorded_zero_duration_is_distinct_from_unavailable_duration(self):
+        self.query.return_value = []
+        entry = {'id': 1, 'accepted': True, 'actual_seconds': 0, 'ksbs': [],
+                 'reporting_month': '2026-09', 'component_title': 'Synthetic zero duration'}
+        row = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertTrue(row['actual_hours_recorded'])
+        self.assertEqual(row['actual_hours'], 0)
 
     def test_journal_date_corrects_an_import_timestamp_without_moving_hours(self):
         entry = {'id': 1, 'source_system': 'journal', 'accepted': True,
@@ -912,11 +942,13 @@ class CanonicalLearningTests(unittest.TestCase):
             activity_rows=lambda _: [{'reporting_month': '2025-07'}, {'reporting_month': '2026-09'}, {'reporting_month': '2026-12'}],
             targets=lambda _: {'2026-08': 2})
         scope = dict(canonical=canonical, defaultdict=defaultdict,
+                     attendance_rows=lambda _: [{'reporting_month': '2026-09'}, {'reporting_month': '2026-12'}],
                      timezone=SimpleNamespace(localdate=lambda: date(2026, 9, 24)))
         functions('monthly_logs.py', scope, {'current_months'})
         grouped = scope['current_months']({'id': 271}, include_open=True)
         self.assertEqual(set(grouped), {'2025-07', '2026-08', '2026-09'})
         self.assertEqual(len(grouped['2025-07']), 1)
+        self.assertEqual(len(grouped['2026-09']), 2)
 
     def test_subject_progress_uses_exact_lineage_and_never_matches_titles(self):
         activity = {'source_activity_id': 10, 'group_id': 50, 'activity': 'Same title', 'completed': False}

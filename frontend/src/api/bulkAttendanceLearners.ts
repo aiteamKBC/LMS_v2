@@ -25,6 +25,14 @@ export interface BulkAttendanceKbcHistoryRecord {
   lectureName: string;
   sessionNumber: number | null;
   attendance: 'present' | 'absent' | null;
+  occurrenceId?: string;
+  /** Display credit from an equivalent group delivery; raw attendance remains editable. */
+  effectiveAttendance?: 'present' | 'awaiting_recording';
+  attendanceBasis?: 'recorded' | 'awaiting_recording';
+  recoveryOccurrenceId?: string;
+  makeupForOccurrenceId?: string;
+  makeupForDate?: string;
+  countsAsSession?: boolean;
   /** 'kbc' = kbc_attendance; 'live' = LMS live-session register. */
   source: 'kbc' | 'live';
 }
@@ -91,6 +99,9 @@ export interface BulkAttendanceLiveDayRecord {
   moduleCatalogueId: string;
   occurrenceId: string;
   attendance: 'present' | 'absent';
+  effectiveAttendance?: 'present' | 'awaiting_recording';
+  attendanceBasis?: 'recorded' | 'awaiting_recording';
+  countsAsSession?: boolean;
 }
 
 export interface BulkAttendanceMonthOccurrence {
@@ -107,6 +118,9 @@ export interface BulkAttendanceMonthRecord {
   moduleCatalogueId: string;
   learnerId: string;
   attendance: 'present' | 'absent';
+  effectiveAttendance?: 'present' | 'awaiting_recording';
+  attendanceBasis?: 'recorded' | 'awaiting_recording';
+  countsAsSession?: boolean;
 }
 
 export interface BulkAttendanceMonthResult {
@@ -177,6 +191,18 @@ export async function saveBulkAttendanceChanges(changes: BulkAttendanceChange[])
     throw new BulkAttendanceSaveError('Saving attendance returned an invalid response.');
   }
   return payload.updated;
+}
+
+export async function deleteBulkAttendanceRecord(record: Pick<BulkAttendanceChange, 'source' | 'recordKey'>): Promise<string> {
+  const response = await coachFetch('/curriculum_api/curriculum/bulk-attendance/attendance/delete/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(record),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Attendance could not be deleted. Please try again.');
+  if (typeof payload.deleted !== 'string') throw new Error('Deleting attendance returned an invalid response.');
+  return payload.deleted;
 }
 
 /** Add or correct an outcome for an existing LMS live-session occurrence. */

@@ -14,12 +14,14 @@ it('requires confirmation of entered catch-up time and preserves the form while 
   }
   fireEvent.click(screen.getByRole('button', { name: 'Submit Evidence' }));
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('You entered 49 hours');
+  expect(screen.getByRole('alert')).toHaveTextContent('This time entry exceeds 8 hours.');
   expect(screen.queryByText('Evidence Submitted!')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
   expect(container.querySelector<HTMLTextAreaElement>('[name="keyLearning"]')?.value).toBe('Synthetic learning evidence');
   fireEvent.change(container.querySelector('[name="timeSpent"]')!, { target: { value: '4.9 hours' } });
   fireEvent.click(screen.getByRole('button', { name: 'Submit Evidence' }));
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('You entered 4.9 hours');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
   expect(await screen.findByText('Evidence Submitted!')).toBeVisible();
 });

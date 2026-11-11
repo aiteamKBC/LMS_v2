@@ -11,7 +11,7 @@ export interface QualityFormCard { reviewType: string; title: string; group: str
 export interface QualityEvidenceFile { id: string; section: string; filename: string; size: number; contentType: string; hasPreview: boolean }
 export type QualityAnswer = string | number | boolean | null | string[];
 export interface QualityTemplate {
-  id: string; title: string; version?: number; actionsTitle?: string; reviewType?: QualityReviewType; ratings: Record<Exclude<Rating, ''>, string>;
+  id: string; title: string; purpose?: string; version?: number; actionsTitle?: string; reviewType?: QualityReviewType; ratings: Record<Exclude<Rating, ''>, string>;
   sections: { id: string; title: string; screenshots: boolean; criteria: QualityField[] }[];
 }
 export interface QualityTemplateState { id: string; reviewType?: QualityReviewType; revision: number; draft: QualityTemplate; published: QualityTemplate; publishedAt: string | null; updatedAt: string | null }
@@ -25,7 +25,9 @@ export interface QualityForm {
 }
 export interface QualityReview {
   id: string; version: number; templateId: string; identity: string; reviewType?: QualityReviewType | ''; status: 'draft' | 'completed'; form: QualityForm;
-  coach: { email: string; name: string }; learner: { id: string; name: string; email?: string };
+  coach: { email: string; name: string }; learner: { id: string; name: string; email?: string } | null;
+  scope?: 'teaching';
+  lecture?: { moduleId: string; seriesId: string; occurrenceId: string; tutorKey: string; programme: string; cohort: string; group: string };
   meeting: { eventId: string; onlineMeetingId?: string; startsAt: string; endsAt: string; title: string };
   reviewer: { id: string; name: string; email: string }; updatedAt: string; updatedBy: string;
   definition?: QualityTemplate;
@@ -34,7 +36,7 @@ export interface QualityReview {
 }
 export interface QualityContext {
   template: QualityTemplate; learners: { id: string; name: string }[]; review: QualityReview | null;
-  snapshot: Pick<QualityReview, 'coach' | 'meeting' | 'reviewType'> & { learner: QualityReview['learner'] | null };
+  snapshot: Pick<QualityReview, 'coach' | 'meeting' | 'reviewType' | 'lecture' | 'scope'> & { learner: QualityReview['learner'] };
   observer: QualityReview['reviewer'];
 }
 export interface QualitySummary {
@@ -48,15 +50,16 @@ export interface MeetingQualityCheck { id: string; learnerId: string; learnerNam
 const base = '/coach_api/coaching-recordings/quality';
 export class QualityReviewError extends Error {
   status: number;
-  constructor(message: string, status: number) { super(message); this.status = status; }
+  code?: string;
+  constructor(message: string, status: number, code?: string) { super(message); this.status = status; this.code = code; }
 }
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
   try {
     const response = await (init.method ? coachFetch : learningFetch)(url, { ...init, credentials: 'include', cache: 'no-store', signal: controller.signal });
-    const value = await response.json() as { error?: string };
-    if (!response.ok) throw new QualityReviewError(value.error || 'The quality review could not be loaded or saved.', response.status);
+    const value = await response.json() as { error?: string; code?: string };
+    if (!response.ok) throw new QualityReviewError(value.error || 'The quality review could not be loaded or saved.', response.status, value.code);
     return value as T;
   } catch (error) {
     if (controller.signal.aborted) throw new QualityReviewError('This request took too long. Your edits are still here; retry the save.', 503);

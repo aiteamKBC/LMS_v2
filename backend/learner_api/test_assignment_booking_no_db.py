@@ -141,7 +141,6 @@ class AssignmentBookingTests(unittest.TestCase):
                        REVIEW_BOOKING_TYPES=frozenset(('mcr', 'progress-review', 'review', 'eligibility-review',
                                                        'workspace', 'training-plan', 'uln-privacy')),
                        booking_date_restriction=Mock(return_value=None),
-                       mcm_booking_date_restriction=Mock(return_value=None),
                        _catchup_time_error=Mock(return_value=None),
                        _resolve_assignment_month_mcm_occurrence=self.resolver,
                        _resolve_assignment_month_progress_review_occurrence=self.resolver,
@@ -337,13 +336,20 @@ class AssignmentBookingTests(unittest.TestCase):
         self.assertIn('reviewId is required', response['error'])
         self.assert_no_booking()
 
-    def test_imported_review_keeps_its_original_window_and_linkage(self):
-        response = self.book(bookingContext=None, reviewId='9', scheduledDate='2026-09-22')
-        self.assertEqual(response.status_code, 201, response)
-        self.mark_imported.assert_called_once_with('9', 248, date(2026, 9, 22), time(10, 0))
-        response = self.book(bookingContext=None, reviewId='9')
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(self.coach.synchronize_reserved_calendar_event.call_count, 1)
+    def test_imported_review_keeps_its_linkage_for_available_dates_outside_the_old_window(self):
+        for day in ('2026-09-22', '2026-10-06', '2026-10-19', '2026-11-06'):
+            with self.subTest(day=day):
+                response = self.book(bookingContext=None, reviewId='9', scheduledDate=day)
+                self.assertEqual(response.status_code, 201, response)
+                self.mark_imported.assert_called_with('9', 248, date.fromisoformat(day), time(10, 0))
+                self.assertEqual(self.record.graph_event_id, 'existing-graph-event')
+
+    def test_both_assignment_and_imported_bookings_still_validate_month_context(self):
+        for context in ('monthly-assignment', None):
+            with self.subTest(context=context):
+                response = self.book(bookingContext=context, reviewId='9', eventKey=None, assignmentMonth='invalid')
+                self.assertEqual(response.status_code, 400, response)
+        self.assert_no_booking()
 
     def test_imported_progress_review_keeps_its_independent_schedule(self):
         self.event['source'] = 'progress-review'

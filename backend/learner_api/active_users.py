@@ -21,6 +21,7 @@ from django.utils.dateparse import parse_datetime
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .identity import learner_profile_for_source
+from .retake_timing import attempt_order, selected_attempt
 from .mappers import get_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
@@ -221,6 +222,23 @@ def dedupe_otjh_progress_records(progress):
             candidate_minutes == current_minutes and candidate_is_newer
         ):
             unique[position] = record
+    # New explicit decisions are projected without overwriting timer evidence.
+    # Unlabelled history retains the original best-attempt calculation here.
+    groups = {}
+    for index, row in enumerate(progress):
+        if isinstance(row, dict):
+            groups.setdefault(otjh_progress_dedupe_key(row, index), []).append(row)
+    for key, rows in groups.items():
+        if not any(row.get('retakeTimeChoice') in ('correct', 'add', 'retry') for row in rows):
+            continue
+        ordered = sorted(((index, row) for index, row in enumerate(rows) if row.get('passed') is not False),
+                         key=lambda item: attempt_order(item[1].get('submittedAt'), item[0]))
+        selected, seconds = selected_attempt([{**row, 'seconds': _progress_record_minutes(row) * 60,
+            'mode': row.get('retakeTimeChoice'), 'previousSeconds': row.get('retakePreviousSeconds')}
+            for _, row in ordered], default='retry')
+        if selected:
+            unique[positions[key]] = {**selected, 'claimedSeconds': seconds,
+                'reportedTime': f'{seconds / 60:g} minutes', 'timeTrackingSource': 'activity-time-decision:input'}
     return unique
 
 
@@ -1094,7 +1112,7 @@ def _create_progress_entry(**fields):
     return LearnerProgressEntry.objects.create(**fields)
 
 
-def save_progress_record(learner, record, activity=None):
+def save_progress_record(learner, record, activity=None, *, monthly_assignment=False):
     """Store progress, quiz detail, KSB links, and feed presentation atomically."""
     if learner is None:
         return None
@@ -1136,7 +1154,45 @@ def save_progress_record(learner, record, activity=None):
     with transaction.atomic(using="enrolment"):
         # Serialize writes per learner so two simultaneous submissions cannot
         # claim the same entry/event order.
+        if record.get('retakeTimeChoice') in ('correct', 'add', 'retry'):
+            with connections['enrolment'].cursor() as cursor:
+                lock = ' FOR UPDATE' if connections['enrolment'].vendor == 'postgresql' else ''
+                cursor.execute('SELECT id FROM enrolment."Created_users" WHERE id=%s' + lock, [learner.enrolment_id])
         learner = LearnerProfile.objects.select_for_update().get(pk=learner.pk)
+        from .retake_timing import validate_activity_time
+        from .activity_time_history import attendance_baseline
+        authoritative_record = {**record, 'componentType': component_context.get('componentType') or record.get('componentType')}
+        history = learner.training_plan_progress
+        validate_activity_time(authoritative_record, history,
+                               seconds_for=lambda row: _progress_record_minutes(row) * 60, monthly_assignment=monthly_assignment,
+                               initial_seconds=attendance_baseline(authoritative_record, history, learner=learner))
+        if 'countedSeconds' in authoritative_record:
+            record['countedSeconds'] = authoritative_record['countedSeconds']
+            record['retakePreviousSeconds'] = authoritative_record['retakePreviousSeconds']
+        if record.get('retakeTimeChoice') in ('correct', 'add', 'retry'):
+            # Add/retry append a new attempt. Only a correction must reject a
+            # signed month; historical/staff-reviewed allocations stay protected.
+            from .manual_time_corrections import require_activity_time_month
+            from old_otjh.repository import query
+            from old_otjh.service import ServiceError
+            reference = ('quiz_ref', str(record['quizId'])) if record.get('quizId') else ('component_ref', component_id)
+            previous = query(f'''SELECT source_system,actual_basis,reporting_month,declared_completed_at,submitted_at
+                FROM "Learner".learner_progress_entries WHERE learner_id=%s AND {reference[0]}=%s AND deleted_at IS NULL''',
+                [learner.pk, reference[1]])
+            from .retake_timing import stamp
+            months = {stamp(record.get('declaredCompletedAt') or record.get('submittedAt')).strftime('%Y-%m')}
+            for entry in previous:
+                if entry.get('source_system') or entry.get('actual_basis') == 'staff:module-progress':
+                    raise ValueError('This activity has historical or staff-reviewed hours. Ask your coach to review its time.')
+                at = entry.get('declared_completed_at') or entry.get('submitted_at')
+                if at:
+                    months.add(entry.get('reporting_month') or stamp(at).strftime('%Y-%m'))
+            for month in months:
+                try:
+                    require_activity_time_month({'id': learner.pk, 'enrolment_id': learner.enrolment_id,
+                                        'aptem_id': learner.aptem_id}, month, record['retakeTimeChoice'])
+                except ServiceError as error:
+                    raise ValueError(str(error)) from error
         next_order = (
             LearnerProgressEntry.objects.filter(learner=learner)
             .aggregate(value=Max("entry_order"))["value"]
@@ -1204,11 +1260,15 @@ def save_progress_record(learner, record, activity=None):
         )
         if record.get('retakeTimeChoice') is not None:
             from .retake_timing import choice
-            selected = choice(record['retakeTimeChoice'])
+            selected = choice(record['retakeTimeChoice'], activity=True)
             with connections['enrolment'].cursor() as cursor:
                 cursor.execute('''UPDATE "Learner".learner_progress_entries
-                    SET source_payload=coalesce(source_payload,'{}'::jsonb) || jsonb_build_object('retakeTimeChoice',%s::text)
-                    WHERE id=%s AND learner_id=%s''', [selected, progress.pk, learner.pk])
+                    SET source_payload=coalesce(source_payload,'{}'::jsonb) || %s::jsonb
+                    WHERE id=%s AND learner_id=%s''', [json.dumps({'retakeTimeChoice': selected,
+                        **({'retakePreviousSeconds': record['retakePreviousSeconds']} if 'countedSeconds' in record else {}),
+                        **({'retakeTimeReason': record['retakeTimeReason'].strip()} if record.get('retakeTimeReason') else {})}), progress.pk, learner.pk])
+            from .progress_cache import bump_learners
+            bump_learners([learner.pk])
         LearnerProgressKsb.objects.bulk_create(
             [
                 LearnerProgressKsb(
@@ -2118,6 +2178,17 @@ def sync_active_user(source):
     }
     try:
         with transaction.atomic(using="enrolment"):
+            from .aptem_learner_sync import aptem_id
+
+            # The canonical reader verifies this against Created_users. A new
+            # imported profile without it is unusable even with a valid plan.
+            # An absent source ID must preserve a legacy profile-only ID.
+            source_aptem_id = _s(getattr(source, "aptem_id", None))
+            if source_aptem_id:
+                normalised_aptem_id = aptem_id(source_aptem_id)
+                if normalised_aptem_id is None:
+                    raise DatabaseError("The enrolment Aptem identity needs review.")
+                defaults["aptem_id"] = int(normalised_aptem_id)
             # Preserve legacy profile-only assignments, but copy an explicit
             # assignment (including an unassignment) on activation and rebuild.
             defaults.update(source_coach(source) or {})
@@ -2188,3 +2259,41 @@ def sync_active_user(source):
     except DatabaseError as exc:
         logger.warning("Could not sync learner %s: %s", source.id, exc)
         return None
+
+
+def ensure_active_learner_profile(source):
+    """Provision missing Active identities on writes, never on workspace reads.
+
+    Imported/already-Active enrolments bypass the status-transition hook. Lock
+    their source row so retries cannot create two profiles; leave an existing
+    profile and all its plan/progress children alone. Identity conflicts fail
+    closed and roll back any attempted creation.
+    """
+    from django.db.models.functions import Lower, Trim
+    from old_otjh.service import ServiceError
+    from .canonical_learning import require_profile
+
+    with transaction.atomic(using="enrolment"):
+        source = EnrolmentUser.all_learners.select_for_update().get(pk=source.pk)
+        if _s(source.programme_status).casefold() != ACTIVE_STATUS:
+            return None
+        profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first()
+        if profile is None:
+            email = _s(source.email).casefold()
+            if not email or (EnrolmentUser.all_learners
+                    .annotate(_identity_email=Lower(Trim("email")))
+                    .filter(_identity_email=email).exclude(pk=source.pk).exists()):
+                raise DatabaseError("The enrolment email identity needs review.")
+            legacy = learner_profile_for_source(source, heal=False)
+            source_aptem = _s(getattr(source, "aptem_id", None)).lstrip("0")
+            legacy_aptem = _s(getattr(legacy, "aptem_id", None)).lstrip("0")
+            if legacy_aptem and source_aptem and legacy_aptem != source_aptem:
+                raise DatabaseError("The consolidated learner identity needs review.")
+            profile = sync_active_user(source)
+            if profile is None:
+                raise DatabaseError("Could not create the consolidated learner record.")
+        try:
+            require_profile(source.pk)
+        except ServiceError as exc:
+            raise DatabaseError("The consolidated learner identity needs review.") from exc
+        return profile

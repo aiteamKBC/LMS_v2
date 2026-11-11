@@ -10,6 +10,7 @@
 // defaulting to zero: on a database where a schema has not been provisioned, a
 // zero would read as "nothing happened" when the truth is "nobody asked".
 // ============================================================================
+import type { Announcement } from './announcements';
 
 const BASE = '/login_api/admin';
 
@@ -560,4 +561,40 @@ export interface SystemStatus {
 
 export function fetchSystemStatus(): Promise<SystemStatus> {
   return request<SystemStatus>(`${BASE}/system/`);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Announcements                                                               */
+/* -------------------------------------------------------------------------- */
+
+export type AnnouncementStatus = 'scheduled' | 'live' | 'ended';
+
+export interface AdminAnnouncement extends Announcement {
+  status: AnnouncementStatus;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnnouncementInput {
+  message: string;
+  backgroundColor: string;
+  startsAt: string;
+  endsAt: string;
+}
+
+export async function fetchAnnouncements(): Promise<AdminAnnouncement[]> {
+  return (await request<{ results: AdminAnnouncement[] }>(`${BASE}/announcements/`)).results;
+}
+
+export function createAnnouncement(input: AnnouncementInput): Promise<AdminAnnouncement> {
+  return request<AdminAnnouncement>(`${BASE}/announcements/`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updateAnnouncement(id: number, input: AnnouncementInput): Promise<AdminAnnouncement> {
+  return request<AdminAnnouncement>(`${BASE}/announcements/${id}/`, { method: 'PUT', body: JSON.stringify(input) });
+}
+
+export function deleteAnnouncement(id: number): Promise<{ id: number; deleted: boolean }> {
+  return request(`${BASE}/announcements/${id}/`, { method: 'DELETE' });
 }

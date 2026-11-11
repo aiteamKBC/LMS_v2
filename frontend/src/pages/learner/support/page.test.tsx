@@ -20,7 +20,7 @@ const session = vi.hoisted(() => ({
     displayName: string | null; programme: string; subjectType?: string; subjectId?: number; learnerType?: string;
   } | null,
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: session }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: session }) }));
 vi.mock('@/hooks/useDashboardHeader', () => ({ useDashboardHeader: () => coachHeader }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children, userName, userRole }: { children: ReactNode; userName: string; userRole: string }) => (

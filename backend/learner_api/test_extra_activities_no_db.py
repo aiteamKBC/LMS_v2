@@ -138,7 +138,8 @@ class ExtraActivityTests(unittest.TestCase):
             self.payload['monthlyAssignment']['month'] = '2026-09'
             self.payload['monthlyAssignment']['timeEntries'][0]['date'] = '2026-09-29'
             self.cur.fetchone.side_effect = [('rejected', self.payload, 'Add evidence', 'Coach', None, None), ('saved-1',)]
-            request = SimpleNamespace(method='POST', body=json.dumps({**self.payload, 'submissionMode': 'submit'}).encode())
+            request = SimpleNamespace(method='POST', body=json.dumps({**self.payload, 'submissionMode': 'submit',
+                'submissionOrigin': 'coach', 'coachCreation': {'name': 'Spoofed Coach'}}).encode())
             response = self.scope['_submit_reflection'](request)
             self.assertEqual(response.status_code, 201)
             attempts = json.loads(response.content)['submissionAttempts']
@@ -146,9 +147,18 @@ class ExtraActivityTests(unittest.TestCase):
             self.assertEqual(attempts[0]['coachFeedback'], 'Add evidence')
             saved_payload = json.loads(self.cur.execute.call_args.args[1][30])
             self.assertEqual(saved_payload['monthlyAssignment']['month'], '2026-09')
+            self.assertNotIn('coachCreation', saved_payload)
+            self.assertEqual(saved_payload['submissionOrigin'], 'learner')
             self.cur.fetchone.side_effect = [('submitted_for_tutor_review', self.payload, None, None, None, None)]
             response = self.scope['_submit_reflection'](request)
             self.assertEqual(response.status_code, 409)
+            # A coach-authored record stays staff-owned even after referral.
+            self.cur.fetchone.side_effect = [('referred', {**self.payload, 'submissionOrigin': 'coach',
+                'coachCreation': {'name': 'Original Coach'}}, None, None, None, None)]
+            self.cur.execute.reset_mock()
+            response = self.scope['_submit_reflection'](request)
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(self.cur.execute.call_count, 1)
 
 
     def test_new_extra_activity_cannot_use_the_legacy_missing_time_entries_exemption(self):

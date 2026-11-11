@@ -76,7 +76,11 @@ def claims(token):
 def access_for(request, live_id):
     from coach_api.views import microsoft_graph_token
     from .teams_imported_calendar_auth import delegated_calendar_access
+    from .teams_organization_calendar import for_series
 
+    organization = for_series(request, live_id)
+    if organization:
+        return organization
     delegated = delegated_calendar_access(request, live_id)
     if delegated:
         # Auth verified the ID-token signature and bound its tenant to this
@@ -112,8 +116,10 @@ class CalendarClient:
 
     def extend(self, operation):
         # No event POST, no attendee/body/options PATCH, no alternate link.
-        response = self.client.patch(operation['path'], json={'recurrence': operation['afterRecurrence']},
-                                     headers={'If-Match': operation['etag']})
+        headers = {'If-Match': operation['etag']}
+        if operation.get('notifyAttendees') is False:
+            headers['Prefer'] = 'outlook.send-invitations="none"'
+        response = self.client.patch(operation['path'], json={'recurrence': operation['afterRecurrence']}, headers=headers)
         if response.status_code not in (200, 204):
             raise GraphRefusal(response.status_code)
 
@@ -158,6 +164,18 @@ def original_master(series, client):
                        '$select': 'id,iCalUId,type,subject,isCancelled,isOrganizer,onlineMeeting', '$top': 100})
     found = {}
     for prefix in prefixes:
+        # A saved Graph ID and exact join link are stronger than a subject:
+        # renaming a course must not make its original calendar disappear.
+        saved_id = text(series.get('graph_event_id'))
+        if saved_id:
+            try:
+                candidate = client.read(prefix + '/events/' + quote(saved_id, safe='') + '?' + urlencode({'$select': MASTER_FIELDS}))
+                if (candidate.get('isOrganizer') is True and candidate.get('type') == 'seriesMaster'
+                        and not candidate.get('isCancelled') and (candidate.get('onlineMeeting') or {}).get('joinUrl') == join_url):
+                    found[(text(candidate.get('iCalUId')), text(candidate.get('id')))] = (prefix + '/events/' + quote(saved_id, safe=''), candidate)
+                    continue
+            except GraphRefusal:
+                inaccessible = True
         try:
             events = calendar_collection(client.read, prefix + '/events?' + query)
         except GraphRefusal:
@@ -226,7 +244,9 @@ def load_local(live_id, *, lock=False):
             link = (text(settings.get('liveSessionLinkOverride')) or text(settings.get('liveSessionUrl'))
                     or text(settings.get('teamsMeetingUrl')) or text(component.get('live_sessions_link')) or text(series.get('join_url')))
             if link != text(series.get('join_url')):
-                raise Blocked('different_main_links', 'A main-calendar session uses a different join link. Resolve its calendar choice before updating this series.')
+                # A selected-week replacement belongs to its own meeting. Its
+                # dated slot still exists; it does not extend this series.
+                continue
             if week_index >= len(slots) or index >= len(slots[week_index]):
                 raise Blocked('missing_main_session_date', 'A main-calendar session has no dated delivery slot. Save its schedule before reviewing Teams.')
             planned = slots[week_index][index]
@@ -377,7 +397,7 @@ def pending_result(operation):
             'message': operation.get('message') or 'The previous update needs a status check. Checking will not send the calendar update again.'}
 
 
-def review(live_id, actor, access):
+def review(live_id, actor, access, *, notify_attendees=True, standard_before=None):
     series, rows, snapshot, module, targets, version, zone_name = load_local(live_id)
     previous = snapshot.get(KEY) or {}
     if previous.get('status') in {'processing', 'uncertain'}:
@@ -406,7 +426,8 @@ def review(live_id, actor, access):
                'joinUrl': series['join_url'], 'calendarChangeRequired': bool(added)}
     if not added and not missing:
         return {**display, 'status': 'up_to_date', 'message': 'The original Teams series and saved LMS sessions already cover the main-calendar plan.'}
-    operation = {'id': uuid.uuid4().hex, 'liveId': live_id, 'actor': actor, 'version': version,
+    operation = {'id': uuid.uuid4().hex, 'liveId': live_id, 'actor': actor, 'version': version, 'notifyAttendees': notify_attendees,
+                 'standardBefore': standard_before,
                  'accessMode': access['mode'], 'accessActor': text(access.get('actorId')), 'calendarKind': access['calendarKind'], 'tenantId': access['tenantId'],
                  'path': path, 'etag': master['@odata.etag'], 'joinUrl': series['join_url'],
                  'beforeRecurrence': master['recurrence'], 'afterRecurrence': after,
@@ -584,6 +605,9 @@ def persist_verified(live_id, operation_id, events):
 def execute(live_id, operation_id, actor, access, *, send=False):
     _series, _rows, snapshot = load_calendar_state(live_id)
     operation = snapshot.get(KEY) or {}
+    if operation.get('kind') == 'meeting-edit':
+        from .teams_imported_meeting_edit import execute_edit
+        return execute_edit(live_id, operation_id, actor, access, send=send)
     if operation.get('id') != operation_id or operation.get('actor') != actor:
         raise Blocked('wrong_operation_owner', 'No pending calendar operation belongs to this account and series.')
     same_access(operation, access)
@@ -654,7 +678,19 @@ def imported_calendar_update(request, live_session_id, stage):
             if not (snapshot.get(KEY) or {}).get('id'):
                 return JsonResponse({'status': 'blocked', 'code': 'no_operation', 'message': 'No calendar update was committed. Open a new review.'})
         access = access_for(request, live_session_id)
-        if stage == 'preview':
+        if stage in {'edit-read', 'edit-preview', 'edit-confirm', 'edit-status'}:
+            from .teams_imported_meeting_edit import read_edit, review_edit, confirm_edit
+            if stage == 'edit-read':
+                result = read_edit(live_session_id, actor, access, **({'standard': True} if payload.get('standard') is True else {}))
+            elif stage == 'edit-preview':
+                result = review_edit(live_session_id, payload, actor, access)
+            elif stage == 'edit-confirm':
+                result = confirm_edit(live_session_id, payload, actor, access)
+            else:
+                _s, _r, snapshot = load_calendar_state(live_session_id)
+                wanted = text(payload.get('operationId')) or text((snapshot.get(KEY) or {}).get('id'))
+                result = execute(live_session_id, wanted, actor, access, send=False)
+        elif stage == 'preview':
             result = review(live_session_id, actor, access)
         elif stage == 'confirm':
             result = confirm(live_session_id, payload, actor, access)

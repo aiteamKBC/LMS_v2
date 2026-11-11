@@ -30,9 +30,10 @@ def answers(definition):
 
 class FeedbackDefinitionTests(SimpleTestCase):
     def test_all_fourteen_forms_preserve_their_criteria_and_full_reference_descriptions(self):
-        self.assertEqual(len(defaults()),14)
+        original_forms=[row for row in defaults() if row['reviewType']!='FORM_PORTFOLIO_SAMPLING']
+        self.assertEqual(len(original_forms),14)
         total=0
-        for row in defaults():
+        for row in original_forms:
             definition=default_definition(row['reviewType'])
             fields=definition['sections'][1]['criteria'];total+=len(fields)
             self.assertEqual(definition['title'],row['title'])
@@ -48,12 +49,28 @@ class FeedbackDefinitionTests(SimpleTestCase):
         self.assertEqual(sum(q['text']=='Assessment for learning and feedback' for q in teaching),1)
         self.assertEqual(default_definition('FORM_TARGET_SETTING')['sections'][1]['criteria'][0]['text'],'Target Setting')
 
-    def test_na_availability_and_required_file_fields_are_enforced_on_the_server(self):
+    def test_every_rating_accepts_na_without_evidence_in_all_quality_forms(self):
+        kinds = ['', 'MCM', 'PR', *[row['reviewType'] for row in defaults()]]
+        from .quality_feedback_catalog import new_definition
+        definitions = [default_definition(kind) for kind in kinds]
+        definitions.append(clean_definition(new_definition('FORM_CUSTOM_TEST', 'Custom observation')))
+        for definition in definitions:
+            with self.subTest(form=definition['id']):
+                original = deepcopy(definition)
+                value = answers(definition)
+                for answer in value['criteria'].values():
+                    answer.update(rating='na', evidence='')
+                for status in ('draft', 'completed'):
+                    self.assertEqual(clean_answers(value, status, definition)['criteria'], value['criteria'])
+                self.assertEqual(definition, original)
+
+    def test_na_does_not_bypass_other_ratings_or_required_file_fields(self):
         definition=default_definition('FORM_MONTHLY_COACHING');value=answers(definition)
-        value['criteria']['criterion-1']['rating']='na'
-        with self.assertRaises(InvalidReview):clean_answers(value,'completed',definition)
-        value=answers(definition);value['criteria']['criterion-12']={'rating':'na','evidence':''}
+        value['criteria']['criterion-1']={'rating':'na','evidence':''}
         clean_answers(value,'completed',definition)
+        for answer in ({'rating':'','evidence':''}, {'rating':'green','evidence':''}, {'rating':'invalid','evidence':''}):
+            invalid=deepcopy(value);invalid['criteria']['criterion-2']=answer
+            with self.assertRaises(InvalidReview):clean_answers(invalid,'completed',definition)
         definition['sections'][1]['criteria'].append({'id':'evidence-file','text':'Attach supporting evidence','type':'file','required':True})
         definition=clean_definition(definition)
         with self.assertRaises(InvalidReview):clean_answers(value,'completed',definition)
@@ -70,9 +87,9 @@ class FeedbackDefinitionTests(SimpleTestCase):
                 pdf=PdfReader(BytesIO(_render(review,{})))
                 text=' '.join(' '.join(page.extract_text() for page in pdf.pages).split())
                 self.assertIn(definition['title'],text)
-                for q in definition['sections'][1]['criteria']:
+                for q in [q for section in definition['sections'] for q in section['criteria'] if q['type']=='rating']:
                     self.assertIn(' '.join(q['text'].split()),text)
-                    self.assertIn(' '.join(q['descriptors']['green'].split()),text)
+                    self.assertIn(' '.join((q.get('descriptors') or definition['ratings'])['green'].split()),text)
                 self.assertTrue(pdf.pages[0].images)
 
 
@@ -83,9 +100,35 @@ class FeedbackStorageTests(SimpleTestCase):
         sql=(Path(__file__).parent/'sql'/'coaching_quality_v3.sql').read_text()
         self.db.executescript(sql.replace('lms_quality.',''))
 
-    def test_catalog_has_fourteen_lightweight_cards_and_custom_drafts_require_publication(self):
+    def test_na_round_trips_with_existing_definition_and_pdf_without_rewriting_history(self):
+        definition=default_definition('FORM_MONTHLY_COACHING')
+        self.assertIs(definition['sections'][1]['criteria'][0]['allowNa'], False)
+        original={**snapshot(), 'definition':definition, 'reviewType':'FORM_MONTHLY_COACHING',
+            'form':answers(definition), 'reviewer':{'id':'staff:1','name':'Synthetic Reviewer'}}
+        first=store.save_review(original,expected=0,request_id=str(uuid4()),actor='staff:1')
+        updated=deepcopy(original)
+        updated['form']['criteria']['criterion-1']['rating']='na'
+        updated['form']['criteria']['criterion-2']={'rating':'na','evidence':''}
+        updated['form']=clean_answers(updated['form'],'completed',definition)
+        updated['status']='completed'
+        saved=store.save_review(updated,expected=1,request_id=str(uuid4()),actor='staff:1')
+        self.assertEqual(store.read_review(review_id=saved['id'])['form'],updated['form'])
+        self.assertEqual(store.read_revision(saved['id'],1),first)
+        self.assertEqual(saved['definition'],definition)
+        pdf=PdfReader(BytesIO(_render(saved,{})))
+        text=' '.join(' '.join(page.extract_text() for page in pdf.pages).split())
+        # Newly created reviews display the count above the N/A tile label.
+        self.assertIn('2 N/A',text)
+        self.assertIn('Observed evidence at 12:30.',text)
+        self.assertIn('Not applicable - no additional evidence recorded.',text)
+
+    def test_catalog_includes_portfolio_and_custom_drafts_require_publication(self):
         catalog=store.form_catalog()
-        self.assertEqual(len(catalog),14)
+        self.assertEqual(len(catalog),15)
+        portfolio=[card for card in catalog if card['reviewType']=='FORM_PORTFOLIO_SAMPLING']
+        self.assertEqual(len(portfolio),1)
+        self.assertEqual(portfolio[0]['title'],'Portfolio Sampling Feedback Form')
+        self.assertTrue(portfolio[0]['published'])
         self.assertFalse(any('sections' in card for card in catalog))
         kind='FORM_CUSTOM_'+uuid4().hex.upper()
         from .quality_feedback_catalog import new_definition

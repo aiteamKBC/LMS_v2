@@ -1,4 +1,8 @@
 """Template-owned signature policy for Aptem continuation reviews."""
+from datetime import date, datetime
+
+
+WAIVER_KEY = "mcmSignatureWaiver"
 
 ROLES = ("advisor", "participant", "employer", "referrer")
 CONFIGURABLE_ROLES = ROLES[:3]
@@ -31,3 +35,33 @@ def requirements_for_definition(definition, family):
     # Missing settings preserve the established defaults of existing templates.
     # An explicit all-false selection means completion without signatures.
     return {**defaults, **definition.get("signatures", {}), "referrer": False}
+
+
+def signature_waiver(overlay, family):
+    """Only an audited, explicitly selected historical MCM may be exempt.
+
+    This metadata is written by the scoped maintenance command, never accepted
+    from form payloads or inherited from a template or another review.
+    """
+    waiver = (getattr(overlay, "meeting_intelligence", None) or {}).get(WAIVER_KEY)
+    if family != "MCM" or not isinstance(waiver, dict):
+        return None
+    if (waiver.get("version") != 1 or waiver.get("eventKey") != overlay.event_key
+            or waiver.get("sourceReviewId") != overlay.source_review_id
+            or waiver.get("learnerId") != overlay.learner_id
+            or not waiver.get("reason") or not waiver.get("appliedBy")):
+        return None
+    try:
+        meeting_day = date.fromisoformat(waiver["meetingDate"])
+        cutoff = date.fromisoformat(waiver["before"])
+        applied = datetime.fromisoformat(waiver["appliedAt"])
+        if not applied.tzinfo or not meeting_day < cutoff <= applied.date():
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return waiver
+
+
+def requirements_for_overlay(overlay, family, *, definition=None):
+    rules = requirements_for_definition(overlay.template_snapshot if definition is None else definition, family)
+    return {role: False for role in ROLES} if signature_waiver(overlay, family) else rules

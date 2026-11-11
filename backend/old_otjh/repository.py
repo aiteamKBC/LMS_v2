@@ -117,7 +117,7 @@ def historical_learner(aptem_id):
 
 
 def staff(staff_id):
-    result = query('SELECT id, "Email" AS email, "Access" AS access '
+    result = query('SELECT id, "Email" AS email, "Access" AS access, "Access_extra" AS access_extra '
                    'FROM enrolment."Staff_users" WHERE id=%s', [staff_id])
     return result[0] if result else None
 

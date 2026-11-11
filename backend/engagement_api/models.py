@@ -512,7 +512,9 @@ class FeedbackForm(models.Model):
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
         ('post_mcm_review', 'MCM Feedback'),
         ('post_progress_review', 'Progress Review Feedback'),
-        ('mid_module', 'Mid-module Feedback'),
+        ('post_epa_review', 'EPA Feedback'),
+        ('post_progress_review_employer', 'Progress Review – Employer Feedback'),
+        ('mid_module', 'Wellbeing'),
         ('end_module', 'End-module Feedback'),
     ]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
@@ -615,6 +617,7 @@ class FeedbackDelivery(models.Model):
     module_catalogue_id = models.CharField(max_length=255)
     module_name = models.CharField(max_length=500, blank=True, default='')
     session_title = models.CharField(max_length=500, blank=True, default='')
+    tutor_name = models.CharField(max_length=255, blank=True, default='')
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
     available_at = models.DateTimeField()
@@ -656,10 +659,33 @@ class FeedbackDeliveryRecipient(models.Model):
     available_at = models.DateTimeField(null=True, blank=True)
     due_date = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    # A module member may claim this lecture through its shared public QR even
+    # without an attendance row. Attendance reconciliation must retain that claim.
+    public_claimed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_delivery_recipients'
+
+
+class FeedbackDeliveryQuestionOverride(models.Model):
+    """One recipient's corrected question, without rewriting a started response."""
+
+    recipient = models.ForeignKey(
+        FeedbackDeliveryRecipient, on_delete=models.PROTECT, related_name='question_overrides',
+        db_column='recipient_id',
+    )
+    original_question = models.ForeignKey(
+        FeedbackQuestion, on_delete=models.PROTECT, related_name='+', db_column='original_question_id',
+    )
+    replacement_question = models.ForeignKey(
+        FeedbackQuestion, on_delete=models.PROTECT, related_name='+', db_column='replacement_question_id',
+    )
+    effective_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_delivery_question_overrides'
 
 
 class FeedbackReviewDelivery(models.Model):
@@ -680,6 +706,28 @@ class FeedbackReviewDelivery(models.Model):
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_review_deliveries'
+
+
+class FeedbackEmployerReviewDelivery(models.Model):
+    """Employer assignment, preserved even while its account link is missing."""
+
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='employer_review_deliveries')
+    source_review_id = models.BigIntegerField(unique=True)
+    aptem_review_id = models.TextField(blank=True, default='')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255, blank=True, default='')
+    review_type = models.CharField(max_length=255)
+    review_name = models.CharField(max_length=500, blank=True, default='')
+    completed_at = models.DateTimeField()
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    employer_id = models.BigIntegerField(null=True, blank=True)
+    employer_name = models.CharField(max_length=255, blank=True, default='')
+    employer_email = models.TextField(blank=True, default='')
+    pending_reason = models.CharField(max_length=80, blank=True, default='missing_employer_link')
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_employer_review_deliveries'
 
 
 class FeedbackEventCampaign(models.Model):
@@ -824,6 +872,10 @@ class FeedbackResponse(models.Model):
     review_delivery = models.ForeignKey(
         FeedbackReviewDelivery, on_delete=models.PROTECT, related_name='responses',
         db_column='review_delivery_id', null=True, blank=True,
+    )
+    employer_review_delivery = models.ForeignKey(
+        FeedbackEmployerReviewDelivery, on_delete=models.PROTECT, related_name='responses',
+        db_column='employer_review_delivery_id', null=True, blank=True,
     )
     learner_id = models.CharField(max_length=100, blank=True, default='')
     learner_name = models.CharField(max_length=255)

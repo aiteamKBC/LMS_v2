@@ -85,6 +85,17 @@ const weekIds = (module: ModuleCatalogueItem) => module.weekStructure.map(item =
 const componentIds = (module: ModuleCatalogueItem, at = 0) => module.weekStructure[at].components.map(item => item.id);
 
 describe('module structure merge', () => {
+  it('merges independently edited component hours without asking about the recalculated declared total', () => {
+    const base = moduleWith([week('W1', [component('C1'), component('C2')])], { declaredTotalOtjh: 2 });
+    const local = moduleWith([week('W1', [component('C1', { expectedOtjh: 2 }), component('C2')])], { declaredTotalOtjh: 3 });
+    const remote = moduleWith([week('W1', [component('C1'), component('C2', { expectedOtjh: 3 })])], { declaredTotalOtjh: 4 });
+    const result = mergeModuleStructures(base, local, remote);
+    expect(result.collisions).toEqual([]);
+    expect(result.module.weekStructure[0].components.map(item => item.expectedOtjh)).toEqual([2, 3]);
+    expect(result.module.declaredTotalOtjh).toBe(5);
+    expect(result.module.totalOtjh).toBe(5);
+  });
+
   // --- 1. different fields on the same item -------------------------------
   it('keeps both editors when they change different fields of one week', () => {
     const base = moduleWith([week('W1', [component('C1')])]);

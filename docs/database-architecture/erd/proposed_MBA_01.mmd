@@ -1,0 +1,15 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    MBA__course_curriculum {
+        bigint course_id PK
+    }
+    MBA__student_progress {
+        bigint user_id PK
+        bigint course_id PK
+    }
+    MBA__students {
+        bigint user_id PK
+    }
+    MBA__course_curriculum ||..o{ MBA__student_progress : "fk_mba_progress_course"
+    MBA__students ||..o{ MBA__student_progress : "fk_mba_progress_student"

@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
   account: { subjectType: 'learner', subjectId: 125 } as { subjectType: string; subjectId: number } | null,
 }));
 
-vi.mock('@/hooks/useAuth', () => ({
+vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({
     auth: {
       user: { fullName: 'Aya Aya Test', email: 'aya@example.test' },

@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, Check, Circle, CircleAlert, ClipboardPenLine, Clock3, Layers, LoaderCircle, Signature, Users, Workflow, X } from 'lucide-react';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
-import { formatReviewDate, learnerHref, learnerReviewHref, learnerKey, nextReview, orderReviewJourney, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
+import { formatReviewDate, isGatewayReview, learnerHref, learnerReviewHref, learnerKey, nextReview, orderReviewJourney, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
 import styles from './EmployerReviewJourneys.module.css';
 import { isAptemReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 import selection from '@/pages/learner/reviews/reviewMarkerSelection.module.css';
@@ -16,13 +16,15 @@ type Props = {
   onClearFilters: () => void;
 };
 
-const timelineStatuses: TimelineStatus[] = ['planned', 'scheduled', 'in-progress', 'awaiting-signature', 'attended', 'missed'];
+const timelineStatuses: TimelineStatus[] = ['planned', 'scheduled', 'in-progress', 'awaiting-attendance', 'awaiting-signature', 'attended', 'missed'];
 const timelineStatusLabels: Record<TimelineStatus, string> = {
   planned: 'Planned', scheduled: 'Scheduled', 'in-progress': 'In progress',
+  'awaiting-attendance': 'Awaiting attendance',
   'awaiting-signature': 'Awaiting signatures', attended: 'Attended', missed: 'Missed',
 };
 const timelineStatusIcons = {
   planned: Circle, scheduled: CalendarDays, 'in-progress': Clock3,
+  'awaiting-attendance': Clock3,
   'awaiting-signature': Signature, attended: Check, missed: X,
 };
 
@@ -40,7 +42,7 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
       <header className={styles.heading}>
         <div>
           <h2 id="employer-reviews"><Workflow size={21} aria-hidden />Progress review journey</h2>
-          <p>Review dates, progress and signatures, organised by learner.</p>
+          <p>Progress and Gateway review dates, progress and signatures, organised by learner.</p>
         </div>
         <span className={styles.learnerCount}><Users size={16} aria-hidden />{learners.length} of {totalLearners} learners</span>
       </header>
@@ -99,12 +101,13 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
                       const tone = timelineStatus(event);
                       const date = reviewDate(event);
                       const StatusIcon = timelineStatusIcons[tone];
+                      const title = isGatewayReview(event) ? event.title || 'Gateway Review' : `Review ${index + 1}`;
                       return (
                         <li key={event.eventKey} data-status={state} data-tone={tone} data-active={event.eventKey === upcomingKey} data-selection={isAptemReview(event) ? 'marker' : undefined}>
-                          <Link to={learnerReviewHref(employerId, learner, event.eventKey)} className={`${styles.review} ${selection.control}`} data-selection={isAptemReview(event) ? 'marker' : undefined} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: Review ${index + 1}, ${reviewLabels[state]}, ${formatReviewDate(date)}`}>
+                          <Link to={learnerReviewHref(employerId, learner, event.eventKey)} className={`${styles.review} ${selection.control}`} data-selection={isAptemReview(event) ? 'marker' : undefined} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: ${title}, ${reviewLabels[state]}, ${formatReviewDate(date)}`}>
                             <span className={styles.date}>{date ? formatReviewDate(date) : 'Date to confirm'}</span>
                             <span className={`${styles.marker} ${selection.marker}`}><StatusIcon size={14} strokeWidth={2.4} aria-hidden /></span>
-                            <span className={styles.title}>Review {index + 1}</span>
+                            <span className={styles.title}>{title}</span>
                           </Link>
                         </li>
                       );

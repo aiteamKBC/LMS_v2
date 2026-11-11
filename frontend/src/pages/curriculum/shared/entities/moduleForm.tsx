@@ -1,3 +1,5 @@
+import { moduleFormTarget, type ModuleFormDeliveryRef, type ModuleFormTarget } from './moduleForm.helpers';
+export type { ModuleFormTarget } from './moduleForm.helpers';
 // ============================================================================
 // The create/edit form for a Module.
 //
@@ -67,6 +69,7 @@ import {
   weekendDateNotice,
 } from './model';
 import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
+import { isNameOnlyEdit } from './nameOnlyEdit';
 import { weekCountChangeForSave, weekCountChangeText, type StoredWeekStructure } from './weekCountChange';
 import {
   CoEditNotice,
@@ -83,104 +86,13 @@ import {
   type MultiSelectOption,
 } from './ui';
 import { useFormFieldMerge, useFormSeedGuard, useRecordGuard, useRecordRebaseRetry } from './useDrawerState';
+import { ModuleHoursTargetField } from '../components/ModuleHours';
+import { useModuleHoursDraft } from '../components/moduleHoursState';
 
 export interface ModuleFormDefaults {
   programmeId?: string;
   cohortId?: string;
   groupId?: string;
-}
-
-interface ModuleFormDeliveryRef {
-  /**
-   * This delivery's own module row id -- the id `/curriculum/modules/<id>` and
-   * the tutor-email ledger both use. A module delivered to three groups is
-   * three rows, and the tick needs to ask about all of them.
-   */
-  deliveryModuleId?: string;
-  programmeId?: string;
-  programme?: string;
-  cohortId?: string;
-  cohort?: string;
-  groupId?: string;
-  group?: string;
-  tutor?: string;
-  startDate?: string;
-  endDate?: string;
-  sessions?: number;
-  weeklySchedule?: CurriculumWeeklySession[];
-  weekDays?: string;
-  startTime?: string;
-  endTime?: string;
-}
-
-/**
- * The module being edited, reduced to what this form reads and writes. Declared
- * rather than reusing `CurriculumModule` because the Module Builder holds its
- * modules as authoring catalogue items â€” same records, different field names â€”
- * and both call sites must end up patching the same canonical id.
- */
-export interface ModuleFormTarget {
-  /** Canonical module catalogue id: what PATCH /curriculum/modules/<id>/ takes. */
-  id: string;
-  name: string;
-  programmeId?: string;
-  programme?: string;
-  cohortId?: string;
-  groupId?: string;
-  sessionsNumber?: number;
-  weeklySchedule?: CurriculumWeeklySession[];
-  sessionHolidays?: CurriculumModule['sessionHolidays'];
-  deliveryWeeks?: number;
-  weekDays?: string;
-  startTime?: string;
-  endTime?: string;
-  weeks?: number;
-  startDate?: string;
-  /** The stored end date, shown until the session-plan preview returns its own. */
-  endDate?: string;
-  tutor?: string;
-  status?: string;
-  notes?: string;
-  color?: string;
-  /** The stored cover image: a URL, or a data: URL for an uploaded file. */
-  coverImage?: string;
-  deliveryUsages?: ModuleFormDeliveryRef[];
-}
-
-/**
- * A saved module reduced to what this form reads, so re-opening it edits the
- * record rather than starting a second one. It lives here, beside the shape it
- * builds, because every door onto this form needs it — the structure wizard
- * stepping back to its module step, and a programme workspace opening one of
- * its module rows.
- */
-export function moduleFormTarget(module: CurriculumModule | undefined | null): ModuleFormTarget | null {
-  if (!module) return null;
-  const id = cleanText(module.moduleCatalogueId) || cleanText(module.catalogueId) || cleanText(module.moduleId) || cleanText(module.id);
-  if (!id) return null;
-  return {
-    id,
-    name: module.name || '',
-    programmeId: module.programmeId,
-    programme: module.programme,
-    cohortId: module.cohortId,
-    groupId: module.groupId,
-    sessionsNumber: module.sessionsNumber,
-    weeklySchedule: module.weeklySchedule,
-    sessionHolidays: module.sessionHolidays,
-    deliveryWeeks: module.deliveryWeeks,
-    weekDays: module.weekDays,
-    startTime: module.startTime,
-    endTime: module.endTime,
-    weeks: module.weeks,
-    startDate: module.startDate,
-    endDate: module.endDate,
-    tutor: module.tutor,
-    status: module.status,
-    notes: module.notes,
-    color: module.color,
-    coverImage: module.coverImage,
-  };
 }
 
 /** What a successful save hands back, so the caller can go straight to the module. */
@@ -215,6 +127,7 @@ const MODULE_FIELD_LABELS: Record<string, string> = {
   description: 'description',
   color: 'colour',
   coverImage: 'cover image',
+  pricing: 'course pricing',
 };
 
 const UNASSIGNED = 'unassigned';
@@ -257,6 +170,7 @@ function isSelectableProgramme(programme: CurriculumProgramme): boolean {
 export function ModuleFormDrawer({
   open,
   module,
+  freeCourse = false,
   defaults,
   programmes,
   cohorts,
@@ -273,6 +187,7 @@ export function ModuleFormDrawer({
   open: boolean;
   /** Present when editing; absent when creating. */
   module?: ModuleFormTarget | null;
+  freeCourse?: boolean;
   defaults?: ModuleFormDefaults;
   programmes: CurriculumProgramme[];
   cohorts: CurriculumCohort[];
@@ -294,6 +209,8 @@ export function ModuleFormDrawer({
    */
   storedStructure?: () => StoredWeekStructure | null;
 }) {
+  const isFreeCourse = freeCourse || module?.isFreeCourse === true;
+  const [pricing, setPricing] = useState({ isForSale: false, price: '' });
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
   const [cohortId, setCohortId] = useState('');
@@ -327,6 +244,7 @@ export function ModuleFormDrawer({
   const [coverImage, setCoverImage] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const moduleHours = useModuleHoursDraft(module?.id, open && !chain?.chained);
   // 'later' lets a brand-new module save with no programme, cohort or group at
   // all -- the same catalogue-draft save `createNewModule` already supports,
   // just no longer blocked by the placement checks below. Only offered on a
@@ -395,7 +313,7 @@ export function ModuleFormDrawer({
   const liveValues = {
     name, programmeId, cohortId, groupIds, sessionsNumber, sessionsPerWeek, weekDays,
     groupStartTime, groupEndTime, weeklyTimes, startDate, targetEndDate, tutor, status,
-    description, color, coverImage, deliveryPattern,
+    description, color, coverImage, deliveryPattern, pricing,
   };
   const dirty = !sameFormValues(liveValues, baseline.current);
   const liveRef = useRef<Record<string, unknown>>(liveValues);
@@ -546,7 +464,20 @@ export function ModuleFormDrawer({
       description: visibleNotes(record?.notes),
       color: record?.color || parentGroup?.color || '#2563eb',
       coverImage: cleanText(record?.coverImage),
+      pricing: { isForSale: record?.isForSale === true, price: record?.price ?? '' },
     };
+    if (isFreeCourse) {
+      initial.programmeId = '';
+      initial.cohortId = '';
+      initial.groupIds = [];
+      initial.startDate = '';
+      initial.targetEndDate = '';
+      initial.tutor = '';
+      initial.weekDays = '';
+      initial.weeklyTimes = {};
+      initial.groupStartTime = '';
+      initial.groupEndTime = '';
+    }
     const storedPattern = {
       sessionsPerWeek: initial.sessionsPerWeek,
       weekDays: initial.weekDays,
@@ -600,8 +531,9 @@ export function ModuleFormDrawer({
     setDescription(coEdit.take(verdict, 'description', initial.description));
     setColor(coEdit.take(verdict, 'color', initial.color));
     setCoverImage(coEdit.take(verdict, 'coverImage', initial.coverImage));
+    setPricing(coEdit.take(verdict, 'pricing', initial.pricing));
     coEdit.publish();
-  }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, guard.stored, module, open, selectableProgrammes]);
+  }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, guard.stored, isFreeCourse, module, open, selectableProgrammes]);
 
   const programmeOptions = useMemo(
     () => selectableProgrammes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -1091,7 +1023,7 @@ export function ModuleFormDrawer({
   // way and have not assigned it in this visit either. Once a module carries a
   // stored placement, editing it always requires the full set again: this only
   // relaxes the *first* placement, never removes one that already exists.
-  const placementOptional = !lockGroup && (
+  const placementOptional = isFreeCourse || !lockGroup && (
     (!module && assignMode === 'later')
     || (Boolean(module) && !initiallyAssigned.current)
   );
@@ -1100,16 +1032,40 @@ export function ModuleFormDrawer({
   // field still reads as something to fill in. `revealPlacement` is the one
   // escape hatch: the toggle flips it for a fresh create, and a plain link
   // flips it when editing an already-unassigned module (see the render below).
-  const showPlacement = !lockGroup && (!placementOptional || revealPlacement);
+  const showPlacement = !isFreeCourse && !lockGroup && (!placementOptional || revealPlacement);
   // The Weeks/dates/tutor block is a delivery's fields, not the module's -- it
   // stays hidden for exactly as long as the placement picker above does, since
   // there is nothing to schedule until a group can even be ticked.
-  const showSchedule = lockGroup || showPlacement;
+  const showSchedule = !isFreeCourse && (lockGroup || showPlacement);
 
   const submit = async () => {
+    const hoursError = moduleHours.validate();
+    if (hoursError) { setError(hoursError); return; }
+    // A target-only edit must not reschedule or reload the authored structure.
+    // An explicitly requested tutor email still uses the existing save flow.
+    if (module && !dirty && moduleHours.dirty && (!notifyTutor || tutorFullyEmailed)) {
+      setSaving(true); setError(null);
+      try { await moduleHours.save(); onClose(); }
+      catch (reason) { setError(reason instanceof Error ? reason.message : 'The hours target could not be saved.'); }
+      finally { setSaving(false); }
+      return;
+    }
+    const renameOnly = Boolean(module && isNameOnlyEdit(liveValues, baseline.current));
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
-    if (!lockGroup && !placementOptional) {
+    if (isFreeCourse && pricing.isForSale && (
+      !/^[0-9]+(?:\.[0-9]{1,2})?$/.test(pricing.price.trim())
+      || Number(pricing.price) <= 0 || Number(pricing.price) > 99999999.99
+    )) {
+      setError('Enter a GBP price between £0.01 and £99,999,999.99, with at most two decimal places.');
+      return;
+    }
+    const coursePricing = isFreeCourse ? {
+      isForSale: pricing.isForSale,
+      price: pricing.isForSale ? pricing.price.trim() : null,
+      currency: 'GBP' as const,
+    } : {};
+    if (!renameOnly && !lockGroup && !placementOptional) {
       if (!programmeId) { setError('Choose the programme this module belongs to.'); return; }
       if (!cohortId) { setError('Choose the cohort this module runs for.'); return; }
       if (!groupIds.length) { setError('Tick at least one group to run this module.'); return; }
@@ -1118,7 +1074,7 @@ export function ModuleFormDrawer({
     // only mean something once at least one group is actually being attached.
     // An unplaced module (no group ticked, whichever way it got there) saves
     // with none of them.
-    if (selectedGroups.length) {
+    if (!renameOnly && selectedGroups.length) {
       if (!(Number(sessionsNumber) >= 1)) { setError('Set how many weeks the module runs for.'); return; }
       if (!startDate) { setError('Choose the module start date.'); return; }
       if (!endDate) { setError('Choose the module end date.'); return; }
@@ -1267,6 +1223,7 @@ export function ModuleFormDrawer({
     setError(null);
     setTutorConflictGroup(null);
     let failingGroup: CurriculumGroup | null = null;
+    let savingHoursAfterDetails = false;
     try {
       if (module) {
         // Only sent when this drawer actually changed it. The Weeks box is
@@ -1280,7 +1237,8 @@ export function ModuleFormDrawer({
         const primarySchedule = primaryPattern?.days && primaryPattern.startTime && primaryPattern.endTime
           ? primaryPattern.days.split(', ').map(day => ({ day, startTime: primaryPattern.startTime, endTime: primaryPattern.endTime }))
           : [];
-        const patchPayload = {
+        const patchPayload = renameOnly ? { name: trimmed } : {
+          ...coursePricing,
           name: trimmed,
           notes: description,
           status,
@@ -1359,6 +1317,9 @@ export function ModuleFormDrawer({
         // numbers. Closing first left a window -- as long as the round-trip, which
         // is seconds on a slow connection -- where reopening the drawer offered the
         // pre-save weeks and saving again wrote them straight back.
+        savingHoursAfterDetails = moduleHours.dirty;
+        await moduleHours.save();
+        savingHoursAfterDetails = false;
         await onSaved({ catalogueId: module.id, name: trimmed, created: false, ...savedParents() });
         const editedEmailNote = await notifyTutorIfAsked();
         // In a chain the wizard owns closing and confirming, so that a run of
@@ -1449,6 +1410,8 @@ export function ModuleFormDrawer({
       // cohort when one was chosen) so it is findable, and it can be placed in a
       // group from this same drawer later.
       const created = await createNewModule({
+        ...(isFreeCourse ? { isFreeCourse: true, learnerRosterMode: 'manual' as const } : {}),
+        ...coursePricing,
         title: trimmed,
         description,
         programme: programme?.name || programmeId || 'Unassigned programme',
@@ -1472,8 +1435,9 @@ export function ModuleFormDrawer({
       // `err.message` instead showed the reader "Curriculum API returned 400
       // for /curriculum/modules/MOD-…/" with the sentence buried after it.
       setError(
-        tutorConflictMessage(err)
-        || curriculumErrorMessage(err, err instanceof Error ? err.message : 'The module could not be saved.'),
+        (savingHoursAfterDetails ? 'Module details were saved, but the hours target was not saved. ' : '')
+        + (tutorConflictMessage(err)
+        || curriculumErrorMessage(err, err instanceof Error ? err.message : 'The module could not be saved.')),
       );
       if (isTutorConflictError(err) && failingGroup) {
         setTutorConflictGroup({ groupId: failingGroup.id, groupName: failingGroup.name });
@@ -1507,25 +1471,25 @@ export function ModuleFormDrawer({
   return (
     <EntityDrawer
       open={open}
-      title={module ? 'Edit module' : 'Add module'}
-      subtitle={module
+      title={isFreeCourse ? (module ? 'Edit free course' : 'Free course') : module ? 'Edit module' : 'Add module'}
+      subtitle={isFreeCourse ? 'Independent self-study content. Assign it directly to commercial or apprenticeship learners; hours follow the normal module rules.' : module
         ? 'Placement, module dates and tutor. Delivery days and times are read from the selected Group.'
         : 'Where the module lives. Set its dates here; delivery days and times come from the selected Group.'}
       banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
       closeConfirm={chain?.closeConfirm}
-      submitLabel={chain?.submitLabel || (module ? 'Save module' : 'Create module')}
+      submitLabel={chain?.submitLabel || (isFreeCourse ? (module ? 'Save free course' : 'Create free course') : module ? 'Save module' : 'Create module')}
       cancelLabel={chain?.cancelLabel}
       extraAction={chain?.extraAction}
       backAction={chain?.backAction}
       width={chain?.width || 'w-[760px]'}
       saving={saving}
       error={error}
-      dirty={dirty}
+      dirty={dirty || moduleHours.dirty}
     >
       <CoEditNotice notices={coEdit.notices} onDismiss={coEdit.dismiss} />
-      {!module && !lockGroup && !chained && (
+      {!isFreeCourse && !module && !lockGroup && !chained && (
         <FormField as="group" label="When to assign" hint={
           assignMode === 'later'
             ? 'Creates the module on its own, with its weeks and dates but no programme, cohort or group. Assign it later, from Edit.'
@@ -1550,7 +1514,7 @@ export function ModuleFormDrawer({
           </div>
         </FormField>
       )}
-      {!lockGroup && placementOptional && !showPlacement && (
+      {!isFreeCourse && !lockGroup && placementOptional && !showPlacement && (
         <p className="-mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] leading-5 text-foreground-500">
           <span>
             <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
@@ -1626,26 +1590,39 @@ export function ModuleFormDrawer({
           )}
         </>
       )}
-      <FormField label="Module name" required>
+      <FormField label={isFreeCourse ? 'Course name' : 'Module name'} required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Modelling" />
       </FormField>
+      {isFreeCourse && <fieldset className="space-y-3 rounded-xl border border-primary-100 bg-primary-50/40 p-4">
+        <legend className="px-1 text-sm font-semibold text-foreground-900">Course pricing</legend>
+        <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-foreground-900">
+          <input type="checkbox" checked={pricing.isForSale}
+            onChange={event => setPricing(value => ({ ...value, isForSale: event.target.checked }))}
+            className="h-4 w-4 rounded border-primary-300 accent-primary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500" />
+          Available for sale
+        </label>
+        {pricing.isForSale ? <FormField label="Price (GBP)" required hint="Enter the course price in pounds sterling (£).">
+          <TextControl value={pricing.price} inputMode="decimal" placeholder="e.g. 49.99"
+            onChange={price => setPricing(value => ({ ...value, price }))} />
+        </FormField> : <p className="text-xs text-foreground-600">This course has no sale price.</p>}
+      </fieldset>}
       {/* Weeks describe the authored module structure. The selected Group owns
           the delivery days and clock; this form owns the module date window. */}
       <FormField
         label="Weeks"
         required={Boolean(selectedGroups.length)}
         hint={
-          selectedGroups.length
+          isFreeCourse ? 'How many authored weeks the free course contains.' : selectedGroups.length
             ? 'How many authored weeks the module contains. Its sessions use the selected Group delivery pattern.'
             : 'How many authored weeks the module contains. Delivery dates are set when it is assigned to a Group.'
         }
       >
         <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={changeWeeks} />
       </FormField>
-      <p className="-mt-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] leading-5 text-primary-800">
+      {!isFreeCourse && <p className="-mt-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] leading-5 text-primary-800">
         <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
         The selected Group supplies the delivery days and session times. The module start and end dates belong to this module.
-      </p>
+      </p>}
       {showSchedule && selectedGroup && (
         <div className="space-y-4 rounded-lg border border-background-200 bg-background-50 p-4">
           {showInheritedScheduleControls && <>
@@ -1871,6 +1848,7 @@ export function ModuleFormDrawer({
           alt={`${name || 'Module'} cover`}
         />
       </FormField>
+      {module && !chained && <ModuleHoursTargetField state={moduleHours} disabled={saving} />}
     </EntityDrawer>
   );
 }

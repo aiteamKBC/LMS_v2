@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { AuthError, PasswordSetupRequired, apiMicrosoftStart, type AuthUser } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and

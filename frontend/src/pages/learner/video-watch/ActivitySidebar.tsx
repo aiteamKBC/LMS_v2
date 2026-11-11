@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { JourneyComponent } from '@/utils/learnerJourney';
@@ -8,12 +8,17 @@ import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { PointActivityRows } from './PointActivityRows';
+import { uniqueWeekActivities } from '@/utils/uniqueWeekActivities';
+import { useWebPointPlan } from '@/hooks/useWebPointPlan';
+import { ActivityPlanDetails } from './ActivityPlanDetails';
+import { allocatedActivityHours, requiredActivityRows } from '@/utils/activityPlan';
 import {
   isNavigableComponent,
   toggleExpandedWeek,
   weekComponentRows,
   weekDisplayLabel,
   weekMonthHeadings,
+  sidebarWeekRanges,
   type SidebarWeek,
 } from './weekPreview';
 
@@ -29,6 +34,9 @@ import {
 // ============================================================================
 
 export interface ActivitySidebarProps {
+  webPointKind?: string;
+  webPointLearnerId?: string;
+  pointIdentityFor?: (component: JourneyComponent) => string | undefined;
   /** This week's activities, in plan order. */
   weekComponents: JourneyComponent[];
   weekTitle: string;
@@ -40,6 +48,8 @@ export interface ActivitySidebarProps {
   completedIds: Set<string>;
   kind?: string;
   id?: string;
+  /** Catalogue dates are already supplied; attendance identity does not load a second schedule. */
+  attendanceLearner?: { kind?: string; id?: string };
   /** The component being consumed, if this sidebar sits beside one. */
   currentComponentId?: string;
   /** The quiz being sat, if it sits beside one. Quizzes have no componentId. */
@@ -102,15 +112,19 @@ function sidebarActivityMeta(component: JourneyComponent) {
 }
 
 export function ActivitySidebar({
-  weekComponents,
+  webPointKind,
+  webPointLearnerId,
+  pointIdentityFor,
+  weekComponents: suppliedWeekComponents,
   weekTitle,
   weekDateLabel,
   dateLabelFor,
   moduleTitle,
-  weeks,
+  weeks: suppliedWeeks,
   completedIds,
   kind,
   id,
+  attendanceLearner,
   currentComponentId,
   currentQuizId,
   completionTimeFor,
@@ -123,7 +137,17 @@ export function ActivitySidebar({
   accessOpen = true,
   onAccessBlocked,
 }: ActivitySidebarProps) {
+  const weekComponents = useMemo(() => uniqueWeekActivities(suppliedWeekComponents), [suppliedWeekComponents]);
+  const weeks = useMemo(() => suppliedWeeks.map(week => {
+    const components = uniqueWeekActivities(week.components);
+    return components.length === week.components.length ? week : {
+      ...week, components, count: components.length,
+      completed: components.filter(component => isComponentComplete(component, completedIds)).length,
+    };
+  }), [suppliedWeeks, completedIds]);
   const navigate = useNavigate();
+  const webPoints = useWebPointPlan(webPointKind || kind, webPointLearnerId || id,
+    [...weekComponents, ...weeks.flatMap(week => week.components)].some(component => !!component.weekId && !!component.moduleId));
   const learnerKind = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
   // Read the plan whenever there is a week to describe, not only when the list
   // below has more than one row: a single-week module can still fall on a
@@ -137,6 +161,12 @@ export function ActivitySidebar({
   // straight into one of its activities; it now opens under the row it belongs
   // to and whatever is on screen stays there.
   const [expandedWeek, setExpandedWeek] = useState<string | null>(null);
+  const hasAllocatedHours = [...weekComponents, ...weeks.flatMap(week => week.components)]
+    .some(component => allocatedActivityHours(component.expectedOtjh) != null);
+  const filterScope = JSON.stringify([kind, id, [...moduleIds].sort(), moduleTitle]);
+  const [filter, setFilter] = useState({ scope: filterScope, requiredOnly: false });
+  const requiredOnly = hasAllocatedHours && filter.scope === filterScope && filter.requiredOnly;
+  const setRequiredOnly = (value: boolean) => setFilter({ scope: filterScope, requiredOnly: value });
 
   // Moving to another activity collapses the list: what was expanded belonged
   // to the page the learner was reading, not the one they opened.
@@ -153,7 +183,16 @@ export function ActivitySidebar({
   const contentAvailableFor = canOpen || hasComponentContent;
   const openableFor = canOpen || ((c: JourneyComponent) => hasComponentContent(c) && isNavigableComponent(c));
   const hasUnavailableContent = weekComponents.some((c) => !contentAvailableFor(c));
-  const monthHeadings = monthHeadingFor ? weeks.map(monthHeadingFor) : weekMonthHeadings(weeks, plannedModule?.start_date);
+  const deliveryRanges = sidebarWeekRanges(weeks, plannedModule?.curriculumSlots);
+  const rangeLabel = (index: number) => {
+    const range = deliveryRanges[index];
+    if (!range?.start) return undefined;
+    const format = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+    return `${format(range.start)}${range.end ? ` – ${format(range.end)}` : ''}`;
+  };
+  const currentDateLabel = weekDateLabel ?? rangeLabel(activeWeekIndex);
+  const dateLabel = (week: SidebarWeek, index: number) => dateLabelFor ? dateLabelFor(week, index) : rangeLabel(index);
+  const monthHeadings = monthHeadingFor ? weeks.map(monthHeadingFor) : weekMonthHeadings(weeks, plannedModule?.curriculumSlots);
   // Only weeks the curriculum team published a holiday hint for appear here.
   const holidayNotes = weekHolidayNotes(plannedModule?.curriculumSlots);
   const currentWeekNote = holidayNotes.get(weeks.find(w => w.active)?.weekId
@@ -170,9 +209,16 @@ export function ActivitySidebar({
       ? currentQuizId != null && c.quizMeta?.quizId === currentQuizId
       : Boolean(c.componentId) && c.componentId === currentComponentId
   );
+  const visibleRows = (components: JourneyComponent[]) => {
+    if (!requiredOnly) return components;
+    const required = requiredActivityRows(components);
+    return components.filter(component => required.has(component) || isCurrentRow(component));
+  };
+  const shownWeekComponents = visibleRows(weekComponents);
 
   return (
     <aside aria-label="Module activities" className="min-w-0 space-y-4 lg:sticky lg:top-4">
+      {webPoints.error && <p role="status" className="text-xs text-amber-800">Point grouping could not load. Activities are shown below. <button type="button" onClick={webPoints.refresh} className="underline">Retry Points</button></p>}
       {legendItems.length > 0 && <section aria-label="Activity type key" className="rounded-xl border border-primary-100 bg-white px-4 py-3 shadow-sm">
         <p className="text-[10px] font-bold uppercase tracking-wider text-primary-900">Activity types</p>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -188,15 +234,27 @@ export function ActivitySidebar({
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">{weekHeading}</p>
           <h2 className="text-sm font-heading font-bold text-primary-900">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
-            {weekDateLabel && <span className="mb-1 block text-foreground-500">{weekDateLabel}</span>}
+            {currentDateLabel && <span className="mb-1 block text-foreground-500">{currentDateLabel}</span>}
             {weekComponents.length} components{' '}
             {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
+            {requiredOnly && <span> · {shownWeekComponents.length} shown</span>}
           </p>
           {hasUnavailableContent && <p className="mt-2 text-[11px] leading-4 text-foreground-500">Locked activities have no learning content available yet.</p>}
           <HolidayNoteHint note={currentWeekNote} className="mt-2" />
+          {hasAllocatedHours && <div className="mt-3">
+            <div role="group" aria-label="Activity filter" className="flex flex-wrap gap-1 rounded-lg border border-emerald-200 bg-white p-1">
+              {[false, true].map(value => <button key={String(value)} type="button" aria-pressed={requiredOnly === value}
+                onClick={() => setRequiredOnly(value)}
+                className={`min-h-11 min-w-0 flex-1 rounded-md px-2 py-2 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${requiredOnly === value ? 'bg-primary-100 text-primary-900' : 'text-foreground-600 hover:bg-primary-50'}`}>
+                {value ? 'Required only' : 'All activities'}
+              </button>)}
+            </div>
+            {requiredOnly && <p role="status" className="mt-2 text-xs leading-5 text-foreground-600">Showing required activities and related quizzes. Your open activity stays visible.</p>}
+          </div>}
         </div>
         <ul className="divide-y divide-emerald-100">
-          <PointActivityRows components={weekComponents} current={isCurrentRow} renderRow={(c) => {
+          {requiredOnly && !shownWeekComponents.length && <li className="px-4 py-3 text-xs text-foreground-600">No required activities in this week. <button type="button" onClick={() => setRequiredOnly(false)} className="min-h-11 font-semibold text-primary-800 underline">Show all activities</button></li>}
+          <PointActivityRows components={shownWeekComponents} plan={webPoints.data} current={isCurrentRow} pointIdentityFor={pointIdentityFor} renderRow={(c) => {
             const cm = sidebarActivityMeta(c);
             const isCurrent = isCurrentRow(c);
             const contentAvailable = contentAvailableFor(c);
@@ -212,6 +270,8 @@ export function ActivitySidebar({
                 <button
                   disabled={!clickable && !accessBlocked}
                   aria-disabled={accessBlocked || undefined}
+                  aria-current={isCurrent ? 'step' : undefined}
+                  style={isCurrent && contentAvailable && !accessBlocked ? { opacity: 1 } : undefined}
                   title={!contentAvailable ? 'Learning content is not available yet.' : undefined}
                   onClick={() => accessBlocked ? onAccessBlocked?.() : clickable && navigate(routeFor(c, weekTitle))}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
@@ -230,11 +290,13 @@ export function ActivitySidebar({
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className="block text-[9px] font-semibold uppercase tracking-wider" style={{ color: cm.tone.color }}>{cm.label}</span>
-                    <span className={`block text-[13px] font-semibold leading-snug truncate ${
+                    <span title={c.title || cm.detail || cm.label} className={`block text-[13px] font-semibold leading-snug truncate ${
                       isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-primary-800'
                     }`}>
                       {cm.detail || cm.label}
                     </span>
+                    <ActivityPlanDetails hours={c.expectedOtjh} componentType={c.type}
+                      kind={attendanceLearner?.kind ?? kind} learnerId={attendanceLearner?.id ?? id} />
                     {completionTime && (
                       <span className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-semibold tabular-nums text-emerald-700" title="Time taken">
                         <AppIcon className="ri-timer-line text-[10px]" />
@@ -282,6 +344,7 @@ export function ActivitySidebar({
               const viewable = !!onSelectWeek || w.count > 0;
               const expanded = viewable && weekKey === expandedWeek;
               const weekNote = w.weekId ? holidayNotes.get(w.weekId) : undefined;
+              const shownComponents = visibleRows(w.components);
               return (
                 <li key={weekKey}>
                   {monthHeadings[index] && <h3 className="border-b border-primary-100 bg-primary-50/80 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-primary-800">{monthHeadings[index]}</h3>}
@@ -316,8 +379,8 @@ export function ActivitySidebar({
                         {weekDisplayLabel(weeks, index)}
                       </span>
                       <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
-                        {dateLabelFor?.(w, index) && <span className="mb-1 block text-foreground-500">{dateLabelFor(w, index)}</span>}
-                        {w.count} components{weekComplete ? ' complete' : ''}
+                        {dateLabel(w, index) && <span className="mb-1 block text-foreground-500">{dateLabel(w, index)}</span>}
+                        {w.count} components{weekComplete ? ' complete' : ''}{requiredOnly && ` · ${shownComponents.length} shown`}
                       </span>
                     </span>
                     {isCurrentWeek(w) && (
@@ -345,7 +408,8 @@ export function ActivitySidebar({
                       yet, so the count above and the list below agree. */}
                   {expanded && (
                     <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
-                      <PointActivityRows components={w.components} current={isCurrentRow} renderRow={(component) => {
+                      {requiredOnly && !shownComponents.length && <li className="px-4 py-3 text-xs text-foreground-600"><p>No required activities in this week.</p><button type="button" onClick={() => setRequiredOnly(false)} className="min-h-11 font-semibold text-primary-800 underline">Show all activities</button></li>}
+                      <PointActivityRows components={shownComponents} plan={webPoints.data} current={isCurrentRow} pointIdentityFor={pointIdentityFor} renderRow={(component) => {
                         const row = weekComponentRows({ ...w, components: [component] }, completedIds)[0];
                         const rowMeta = sidebarActivityMeta(row.component);
                         const openable = canOpen ? canOpen(row.component) : row.openable;
@@ -370,11 +434,13 @@ export function ActivitySidebar({
                                 <span className="block text-[9px] font-semibold uppercase tracking-wider" style={{ color: rowMeta.tone.color }}>
                                   {rowMeta.label}
                                 </span>
-                                <span className={`block text-[12px] font-medium leading-snug truncate ${
+                                <span title={row.component.title || rowMeta.detail || rowMeta.label} className={`block text-[12px] font-medium leading-snug truncate ${
                                   row.complete ? 'text-emerald-900' : 'text-primary-800'
                                 }`}>
                                   {rowMeta.detail || rowMeta.label}
                                 </span>
+                                <ActivityPlanDetails hours={row.component.expectedOtjh} componentType={row.component.type}
+                                  kind={attendanceLearner?.kind ?? kind} learnerId={attendanceLearner?.id ?? id} />
                               </span>
                               {row.complete ? (
                                 <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-[13px] shrink-0" />

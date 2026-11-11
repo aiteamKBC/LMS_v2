@@ -13,6 +13,7 @@ import type {
   CurriculumTeamsMeetingSummary,
 } from '@/lib/curriculumApi';
 import { TeamsMeetingModal } from '../TeamsMeetingModal';
+import { createTeamsMeeting, loadTeamsMeetingConfiguration } from '../moduleAuthoringData';
 import type { ModuleCatalogueItem } from '../moduleAuthoringData';
 
 /**
@@ -134,12 +135,12 @@ beforeEach(() => {
 function open(catalogueId: string, props: Partial<Parameters<typeof TeamsMeetingModal>[0]> = {}) {
   const onClose = vi.fn();
   const onRestored = vi.fn();
-  render(
+  const view = render(
     <MemoryRouter>
       <TeamsMeetingModal module={{ catalogueId, title: 'Module' } as never} onClose={onClose} onRestored={onRestored} {...props} />
     </MemoryRouter>,
   );
-  return { onClose, onRestored };
+  return { ...view, onClose, onRestored };
 }
 
 it('opens the Teams Meetings dialog itself, for this module alone', async () => {
@@ -183,35 +184,112 @@ it('opens the shared create form for a module with no calendar', async () => {
 it('refuses every write while the module has unsaved changes, and still lets it sync', async () => {
   open('MOD-1', { unsavedChanges: true });
   const dialog = within(await screen.findByRole('dialog'));
-  expect(await dialog.findByText(/This module has unsaved changes/)).toBeVisible();
+  const feedback = await dialog.findByRole('status', { name: 'Teams calendar action' });
+  expect(feedback).toHaveTextContent('This module has unsaved changes');
   await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel series' })).toBeDisabled());
-  for (const name of ['Update Teams calendar', 'Edit session dates', 'Cancel series', 'Save without notifying']) {
+  for (const name of ['Edit session dates', 'Cancel series', 'Save without notifying']) {
     expect(dialog.getByRole('button', { name })).toBeDisabled();
   }
+  const update = dialog.getByRole('button', { name: 'Update Teams calendar' });
+  expect(update).toHaveAttribute('aria-disabled', 'true');
+  await userEvent.click(update);
+  expect(feedback).toHaveFocus();
+  expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  expect(dialog.queryByRole('button', { name: 'Confirm update' })).not.toBeInTheDocument();
   expect(dialog.getByRole('button', { name: 'Sync calendar status' })).toBeEnabled();
 });
 
+it('explains blocked Create beside the button for pointer and keyboard users without sending a meeting', async () => {
+  const { onRestored } = open('MOD-3', { unsavedChanges: true });
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('combobox', { name: 'Organizer' });
+  const create = dialog.getByRole('button', { name: 'Create' });
+  const feedback = dialog.getByRole('status', { name: 'Teams calendar action' });
+  const footer = create.parentElement!;
+  expect(footer).toContainElement(feedback);
+  expect(create).toHaveAttribute('aria-disabled', 'true');
+  expect(create).toHaveAccessibleDescription(/press Save in Module Builder, then reopen Teams/);
+  await userEvent.type(dialog.getByLabelText(/Details/), 'Keep these meeting details');
+  await userEvent.click(create);
+  expect(feedback).toHaveFocus();
+  create.focus();
+  await userEvent.keyboard('{Enter}');
+  expect(feedback).toHaveFocus();
+  expect(dialog.getByLabelText(/Details/)).toHaveValue('Keep these meeting details');
+  expect(createTeamsMeeting).not.toHaveBeenCalled();
+  expect(onRestored).not.toHaveBeenCalled();
+});
+
+it('shows missing organizer validation in the fixed action area', async () => {
+  vi.mocked(loadTeamsMeetingConfiguration).mockResolvedValueOnce({
+    configured: true, defaultOrganizer: '', timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
+  } as never);
+  open('MOD-3');
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('combobox', { name: 'Organizer' });
+  const create = dialog.getByRole('button', { name: 'Create' });
+  await userEvent.click(create);
+  expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveTextContent('Enter the Microsoft 365 organizer email.');
+  expect(create).toHaveAccessibleDescription('Enter the Microsoft 365 organizer email.');
+  expect(createTeamsMeeting).not.toHaveBeenCalled();
+});
+
+it('keeps a creation failure and the entered details beside the retry button', async () => {
+  vi.mocked(createTeamsMeeting).mockRejectedValueOnce(new Error('The meeting could not be saved. Please try again.'));
+  open('MOD-3');
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('combobox', { name: 'Organizer' });
+  await userEvent.type(dialog.getByLabelText(/Details/), 'Keep these meeting details');
+  const create = dialog.getByRole('button', { name: 'Create' });
+  await userEvent.click(create);
+  await waitFor(() => expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveTextContent('The meeting could not be saved. Please try again.'));
+  expect(create.parentElement).toContainElement(dialog.getByRole('status', { name: 'Teams calendar action' }));
+  expect(dialog.getByLabelText(/Details/)).toHaveValue('Keep these meeting details');
+  expect(create).toBeEnabled();
+  expect(createTeamsMeeting).toHaveBeenCalledTimes(1);
+});
+
+it('clears the save reminder when the module is saved without clearing the meeting form', async () => {
+  const { rerender, onClose } = open('MOD-3', { unsavedChanges: true });
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('combobox', { name: 'Organizer' });
+  await userEvent.type(dialog.getByLabelText(/Details/), 'Keep these meeting details');
+  await userEvent.click(dialog.getByRole('button', { name: 'Create' }));
+  expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveTextContent('unsaved changes');
+  rerender(<MemoryRouter><TeamsMeetingModal module={{ catalogueId: 'MOD-3', title: 'Module' } as never} unsavedChanges={false} onClose={onClose} /></MemoryRouter>);
+  await waitFor(() => expect(dialog.queryByRole('status', { name: 'Teams calendar action' })).not.toBeInTheDocument());
+  expect(dialog.getByRole('button', { name: 'Create' })).toHaveAttribute('aria-disabled', 'false');
+  expect(dialog.getByLabelText(/Details/)).toHaveValue('Keep these meeting details');
+  expect(createTeamsMeeting).not.toHaveBeenCalled();
+});
+
+it('explains a missing Microsoft connection beside Create without making a request', async () => {
+  vi.mocked(loadTeamsMeetingConfiguration).mockResolvedValueOnce({
+    configured: false, defaultOrganizer: '', timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
+  } as never);
+  open('MOD-3');
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('combobox', { name: 'Organizer' });
+  await userEvent.click(dialog.getByRole('button', { name: 'Create' }));
+  expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveTextContent('Microsoft Teams is not connected.');
+  expect(dialog.getByRole('status', { name: 'Teams calendar action' })).toHaveFocus();
+  expect(createTeamsMeeting).not.toHaveBeenCalled();
+});
+
 it('reads the module back from the server after a write', async () => {
-  // Teams still holds an old second date, so the update has something to write;
-  // a calendar that already matches the plan is answered with "No changes to save".
-  fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => [{
-    ...summaries[0], occurrenceDates: ['2026-09-02T08:30:00Z', '2026-09-16T08:30:00Z'],
-  }]);
-  try {
-    const { onRestored } = open('MOD-1');
-    const dialog = within(await screen.findByRole('dialog'));
-    const update = await dialog.findByRole('button', { name: 'Update Teams calendar' });
-    await waitFor(() => expect(update).toBeEnabled());
-    await userEvent.click(update);
-    // The first press only opens the confirmation; nothing is sent until it is confirmed.
-    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
-    await userEvent.click(dialog.getByRole('button', { name: 'Confirm update' }));
-    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(onRestored).toHaveBeenCalledWith(freshModule));
-    expect(loadModuleStructure).toHaveBeenCalledWith('MOD-1', { skipCache: true });
-  } finally {
-    fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => summaries);
-  }
+  const { onRestored } = open('MOD-1');
+  const dialog = within(await screen.findByRole('dialog'));
+  await waitFor(() => expect(dialog.getByRole('button', { name: 'Remove learner@example.invalid' })).toBeInTheDocument());
+  const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+  fireEvent.change(attendees, { target: { value: 'new@example.invalid' } });
+  fireEvent.keyDown(attendees, { key: 'Enter' });
+  const update = await dialog.findByRole('button', { name: 'Update Teams calendar' });
+  await waitFor(() => expect(update).toBeEnabled());
+  await userEvent.click(update);
+  await userEvent.click(await dialog.findByRole('button', { name: 'Confirm update' }));
+  await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(onRestored).toHaveBeenCalledWith(freshModule));
+  expect(loadModuleStructure).toHaveBeenCalledWith('MOD-1', { skipCache: true });
 });
 
 // A date the reader cannot name is a date they cannot check. "Session 1" is the
@@ -250,8 +328,8 @@ it('shows the invitation fields under the dates, every role filled, and saves on
   fireEvent.change(attendees, { target: { value: 'new@example.invalid' } });
   fireEvent.keyDown(attendees, { key: 'Enter' });
   await waitFor(() => expect(save).toBeEnabled());
-  // Adding someone says, before saving, that this button tells them nothing.
-  expect(dialog.getByText(/added people will be saved to the Teams meeting but will not receive an invitation or LMS email/))
+  // The choice controls LMS mail; it must not promise Microsoft inbox delivery.
+  expect(dialog.getByText(/Save without notifying saves added people without an LMS email\. Microsoft may still send a calendar update/))
     .toBeInTheDocument();
   await act(async () => { await userEvent.click(save); });
   await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
@@ -266,7 +344,7 @@ it('shows the invitation fields under the dates, every role filled, and saves on
   expect((payload.scheduledOccurrences as Array<{ startDateTimeUtc: string }>).map(item => item.startDateTimeUtc))
     .toEqual(['2026-09-02T08:30:00.000Z', '2026-09-09T08:30:00.000Z']);
   await waitFor(() => expect(showCurriculumAlert).toHaveBeenCalledWith(expect.objectContaining({
-    title: 'Saved without notifying', text: expect.stringContaining('Nobody was emailed, including the 1 person you added'),
+    title: 'Saved without notifying', text: expect.stringContaining('No LMS email was sent. Microsoft may send a calendar update.'),
   })));
   expect(finishTeamsUpdate).not.toHaveBeenCalled();
 });

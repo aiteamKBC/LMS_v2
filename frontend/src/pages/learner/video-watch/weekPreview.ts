@@ -13,7 +13,8 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import { dateKey } from '@/pages/learner/training-plan-timeline/model';
+import type { PlanCurriculumSlot } from '@/api/trainingPlanDashboard';
+import { deliveryDateKey, deliveryWeekEnd, sessionDeliveryDate } from '@/lib/deliveryWeek';
 
 /** One week as the sidebar lists it. */
 export interface SidebarWeek {
@@ -85,30 +86,39 @@ export function weekDisplayLabel(weeks: { week: string }[], index: number): stri
     : title;
 }
 
-/** Name each four-week block from the module's training-plan start month. */
-export function weekMonthHeadings(weeks: { week: string }[], moduleStartDate?: string | null): (string | null)[] {
-  const start = dateKey(moduleStartDate);
-  let teachingWeeks = 0;
-  let previousMonth = 0;
-  return weeks.map(({ week }) => {
-    if (/^(?:introduction|induction|extra\b|additional\b|undated\b|module assessments?\b|assessments?\b)/i.test(week.trim())) {
-      previousMonth = 0;
-      return null;
-    }
-    teachingWeeks += 1;
-    const month = Math.ceil(teachingWeeks / 4);
-    let heading: string | null = null;
-    if (month !== previousMonth) {
-      if (start) {
-        // Anchor to day 1 so starts on the 29th–31st cannot skip February.
-        const date = new Date(`${start.slice(0, 7)}-01T12:00:00Z`);
-        date.setUTCMonth(date.getUTCMonth() + month - 1);
-        heading = date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-      } else {
-        heading = `Month ${month}`;
-      }
-    }
-    previousMonth = month;
+type DatedWeek = { week: string; weekId?: string; components?: JourneyComponent[] };
+const separateWeek = (week: string) => /^(?:introduction|induction|extra\b|additional\b|undated\b|module assessments?\b|assessments?\b)/i.test(week.trim());
+
+/** Native players use the same primary-session date as the curriculum, never a four-week month. */
+export function sidebarWeekRanges(weeks: DatedWeek[], slots: PlanCurriculumSlot[] = []) {
+  const ranges = weeks.map(week => {
+    if (separateWeek(week.week)) return { start: '', end: null as string | null };
+    const primary = week.components?.find(component => (component.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_') === 'live_session' && !component.additionalMeeting);
+    const weekId = week.weekId || week.components?.find(component => component.weekId)?.weekId;
+    const matches = slots.filter(slot => weekId ? slot.weekId === weekId : slot.weekTitle?.trim().toLowerCase() === week.week.trim().toLowerCase());
+    const unambiguous = !!weekId || matches.length === 1 || (matches.every(slot => !!slot.weekId) && new Set(matches.map(slot => slot.weekId)).size === 1);
+    const planned = unambiguous ? matches.map(slot => deliveryDateKey(slot.date)).filter(Boolean).sort()[0] : '';
+    const start = (primary && sessionDeliveryDate(primary)) || planned || '';
+    return { start, end: start ? deliveryWeekEnd(start) : null };
+  });
+  const starts = [...new Set(ranges.map(range => range.start).filter(Boolean))].sort();
+  return ranges.map(range => {
+    const next = starts.find(start => start > range.start);
+    return next && range.start && range.end && next <= range.end
+      ? { ...range, end: new Date(Date.parse(`${next}T12:00:00Z`) - 86400000).toISOString().slice(0, 10) } : range;
+  });
+}
+
+/** Undated content stays visible without inventing calendar months from its position. */
+export function weekMonthHeadings(weeks: DatedWeek[], slots: PlanCurriculumSlot[] = []): (string | null)[] {
+  const ranges = sidebarWeekRanges(weeks, slots);
+  let previous = '';
+  return weeks.map((week, index) => {
+    if (separateWeek(week.week)) { previous = ''; return null; }
+    const month = ranges[index].start.slice(0, 7) || 'undated';
+    const heading = month === previous ? null : month === 'undated' ? 'Dates not scheduled yet'
+      : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    previous = month;
     return heading;
   });
 }
@@ -145,8 +155,8 @@ export function placeActivity(
         weekLabel: weekDisplayLabel(module.weeks, module.weeks.indexOf(week)),
         weekComponents: week.components,
         weeks: module.weeks.map((w, index) => ({
-          key: w.components[0]?.weekId || `week-${index}`,
-          weekId: w.components.find((c) => c.weekId)?.weekId || undefined,
+          key: w.weekId || w.components[0]?.weekId || `week-${index}`,
+          weekId: w.weekId || w.components.find((c) => c.weekId)?.weekId || undefined,
           week: w.week,
           count: w.components.length,
           completed: w.components.filter((c) => isComponentComplete(c, completedIds)).length,

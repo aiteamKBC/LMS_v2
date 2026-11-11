@@ -188,6 +188,10 @@ def _submit_reflection(request):
     learner_id = _text(payload.get("learnerId"))
     activity_type = _text(payload.get("activityType"))
     activity_id = _text(payload.get("activityId"))
+    if getattr(request, "coach_learner_action", False) and (
+        activity_type.lower() == "extra_activity" or activity_id.lower().startswith("extra:")
+    ):
+        return _error("Extra activities must be recorded by the learner. Coaches can review and approve submitted work.", 403)
     learning_reflection = _text(payload.get("learningReflection"))
     submission_mode = "draft" if _text(payload.get("submissionMode")).lower() == "draft" else "submit"
     if submission_mode == "submit":
@@ -273,6 +277,11 @@ def _submit_reflection(request):
         except (TypeError, ValueError, OverflowError):
             return _error("assignmentElapsedSeconds must be a non-negative number.")
     full_submission = dict(payload)
+    # KSB review requests and corrections are staff-owned audit metadata.
+    full_submission.pop('ksbReview', None)
+    full_submission.pop('coachCreation', None)
+    # The receipt for credited lecture time is server-owned, including on drafts.
+    full_submission.pop('lectureReflectionTime', None)
     full_submission.pop("selectAssignmentTopic", None)
     lineage = _reflection_lineage(learner_id, activity_id)
     if assignment_topic and submission_mode == "draft":
@@ -286,6 +295,11 @@ def _submit_reflection(request):
     try:
         with transaction.atomic(using="enrolment"):
             with connections["enrolment"].cursor() as cur:
+                if activity_type in {'session', 'recording', 'video'} or 'additionalReflectionSeconds' in payload:
+                    # Serialize the first save too, when no submission row exists.
+                    # Older open tabs omit the new field but must take this same
+                    # lock so their first upsert cannot erase a new time receipt.
+                    cur.execute('SELECT id FROM enrolment."Created_users" WHERE id::text=%s FOR UPDATE', [learner_id])
                 if activity_type == "assignment":
                     from .assignment_hours import lock_assignment_hours
                     lock_assignment_hours(cur, learner_kind, learner_id)
@@ -295,7 +309,7 @@ def _submit_reflection(request):
                     full_submission.update({key: payload[key] for key in ("assignmentTopicId", "assignmentTopicName", "assignmentQuestion", "monthlyAssignment") if key in payload})
                 cur.execute(
                     """
-                    select status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at
+                    select status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at, id
                     from "Learner"."learning_reflection_submissions"
                     where learner_kind = %s
                       and learner_id = %s
@@ -316,6 +330,19 @@ def _submit_reflection(request):
                     except (TypeError, ValueError):
                         stored = {}
                 stored = _dict(stored)
+                from .lecture_reflection_operations import replayed_receipt, preserve_time_history
+                replay = replayed_receipt(payload, stored)
+                if replay:
+                    # A lost response or delayed draft may arrive after a later
+                    # save/coach decision. Never downgrade or overwrite that work.
+                    return JsonResponse({'id': str(existing[6]), 'status': existing[0],
+                        'lectureReflectionTime': replay, 'submissionAttempts': []})
+                if (activity_type in {'session', 'recording', 'video'} and existing
+                        and existing[0] == 'submitted_for_tutor_review' and submission_mode == 'draft'
+                        and not payload.get('reflectionTimeOperation') and payload.get('reflectionDraftIntent') != 'manual'):
+                    return _error('This reflection is already submitted for tutor review. Refresh to view its saved status before editing.', 409)
+                if stored.get('submissionOrigin') == 'coach' and activity_type == 'extra_activity':
+                    return _error('This activity was recorded by your coach and cannot be edited here.', 409)
                 imported = stored.get("submissionOrigin") == "imported_legacy"
                 full_submission["submissionOrigin"] = "imported_legacy" if imported else "learner"
                 if is_assignment_form and imported:
@@ -325,6 +352,12 @@ def _submit_reflection(request):
                         "This reflection has been accepted by the coach and can no longer be changed.",
                         409,
                     )
+                if not is_assignment_form and submission_mode == 'submit' and _list(payload.get('ksbCodes')):
+                    from .reflection_ksbs import programme_catalogue, checked_codes, KsbReviewError
+                    try:
+                        checked_codes(payload['ksbCodes'], programme_catalogue(learner_kind, learner_id))
+                    except KsbReviewError as exc:
+                        return _error(str(exc), exc.status)
                 if (
                     existing
                     and existing[0] == "submitted_for_tutor_review"
@@ -376,6 +409,19 @@ def _submit_reflection(request):
                     quality_score = 100
                     full_submission["qualityScore"] = quality_score
                     full_submission["qualityChecks"] = checks
+
+                from .lecture_reflection_time import add_reflection_time
+                time_receipt = add_reflection_time(payload, stored, submission_mode=submission_mode)
+                preserve_time_history(full_submission, stored, time_receipt,
+                    status=existing[0] if existing else None, submitted_at=existing[5] if existing else None,
+                    feedback=existing[2] if existing else None, reviewer=existing[3] if existing else None,
+                    reviewed_at=existing[4] if existing else None)
+                if payload.get('reflectionTimeOperation') and stored.get('ksbReview') and payload.get('ksbCodes') == stored.get('ksbCodes'):
+                    full_submission['ksbReview'] = stored['ksbReview']
+                if time_receipt:
+                    full_submission['lectureReflectionTime'] = time_receipt
+                    payload['actualTimeHours'] = str(time_receipt['countedSeconds'] / 3600)
+                    full_submission['actualTimeHours'] = payload['actualTimeHours']
 
                 cur.execute(
                 """
@@ -493,6 +539,9 @@ def _submit_reflection(request):
                 stored_id = stored[0]
                 record_submission_row(stored)
     except ValueError as exc:
+        from .working_rules import DeclaredCompletionError, validation_response_payload
+        if isinstance(exc, DeclaredCompletionError):
+            return JsonResponse(validation_response_payload(exc), status=409)
         return _error(str(exc), 409)
     except DatabaseError:
         logger.exception("Could not save learner reflection submission.")
@@ -502,6 +551,7 @@ def _submit_reflection(request):
         {
             "id": str(stored_id),
             "status": submission_status,
+            **({'lectureReflectionTime': time_receipt} if time_receipt else {}),
             "submissionAttempts": submission_attempts(full_submission, submission_status) if is_assignment_form else [],
         },
         status=201,

@@ -1,0 +1,211 @@
+app,migration,file,status,operations
+audit_api,0001_initial,backend/audit_api/migrations/0001_initial.py,recorded,"[""CreateModel"", ""CreateModel""]"
+chat,0001_initial,backend/chat/migrations/0001_initial.py,recorded,"[""swappable_dependency"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""AddIndex"", ""AddIndex"", ""AddConstraint"", ""AddIndex"", ""AddIndex"", ""AddIndex"", ""AddConstraint""]"
+chat,0002_alter_messagereceipt_read_at,backend/chat/migrations/0002_alter_messagereceipt_read_at.py,recorded,"[""AlterField""]"
+chat,0003_alter_conversation_options_alter_message_options_and_more,backend/chat/migrations/0003_alter_conversation_options_alter_message_options_and_more.py,recorded,"[""RunPython""]"
+chat,0004_map_existing_chat_schema,backend/chat/migrations/0004_map_existing_chat_schema.py,recorded,"[""SeparateDatabaseAndState"", ""DeleteModel"", ""DeleteModel"", ""DeleteModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""AddConstraint"", ""AddIndex"", ""AddIndex"", ""AddIndex"", ""AddIndex""]"
+chat,0005_message_deletion,backend/chat/migrations/0005_message_deletion.py,recorded,"[""RunSQL"", ""CreateModel"", ""AddConstraint"", ""AddIndex""]"
+chat,0006_chat_coach_from_staff_directory,backend/chat/migrations/0006_chat_coach_from_staff_directory.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""AlterModelTable"", ""AlterField"", ""AlterField"", ""AlterField"", ""AlterField"", ""AddField"", ""AlterField"", ""AlterField"", ""AlterField""]"
+coach_api,0001_initial,backend/coach_api/migrations/0001_initial.py,recorded,"[""CreateModel""]"
+coach_api,0002_move_calendar_event_to_coach_schema,backend/coach_api/migrations/0002_move_calendar_event_to_coach_schema.py,recorded,"[""SeparateDatabaseAndState"", ""RunSQL"", ""AlterModelTable""]"
+coach_api,0003_sync_learner_absence_counts,backend/coach_api/migrations/0003_sync_learner_absence_counts.py,recorded,"[""RunSQL""]"
+coach_api,0004_normalize_absence_report_status,backend/coach_api/migrations/0004_normalize_absence_report_status.py,recorded,"[""RunSQL""]"
+coach_api,0005_coachcalendarevent_manager_signed_at_and_more,backend/coach_api/migrations/0005_coachcalendarevent_manager_signed_at_and_more.py,recorded,"[""AddField"", ""AddField"", ""AddField"", ""AddField"", ""AlterField"", ""CreateModel""]"
+coach_api,0006_coachcalendarevent_graph_organizer_email,backend/coach_api/migrations/0006_coachcalendarevent_graph_organizer_email.py,recorded,"[""AddField""]"
+coach_api,0007_performance_indexes,backend/coach_api/migrations/0007_performance_indexes.py,recorded,"[""AddIndex"", ""AddIndex"", ""AddIndex"", ""AddIndex""]"
+coach_api,0008_calendar_idempotency_state,backend/coach_api/migrations/0008_calendar_idempotency_state.py,recorded,"[""SeparateDatabaseAndState"", ""RunSQL"", ""CreateModel"", ""AddField"", ""AddField"", ""AddField"", ""AddField"", ""AddField"", ""AddConstraint"", ""AddConstraint"", ""AddConstraint""]"
+coach_api,0009_coachabsencereport_coach_absence_report_status_valid_and_more,backend/coach_api/migrations/0009_coachabsencereport_coach_absence_report_status_valid_and_more.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""AddConstraint"", ""AddConstraint""]"
+coach_api,0010_absence_report_meeting_attendance_ids,backend/coach_api/migrations/0010_absence_report_meeting_attendance_ids.py,recorded,"[""RunSQL""]"
+coach_api,0010_coachabsencereport_catchup_event_key_and_more,backend/coach_api/migrations/0010_coachabsencereport_catchup_event_key_and_more.py,recorded,"[""AddField"", ""AddField"", ""AddField"", ""AddField"", ""AddField""]"
+coach_api,0011_merge_20260914_1633,backend/coach_api/migrations/0011_merge_20260914_1633.py,recorded,[]
+coach_api,0012_coachcalendarcolorpreference,backend/coach_api/migrations/0012_coachcalendarcolorpreference.py,recorded,"[""CreateModel"", ""AddIndex"", ""AddConstraint"", ""AddConstraint"", ""AddConstraint""]"
+coach_api,0013_dashboard_review_read_indexes,backend/coach_api/migrations/0013_dashboard_review_read_indexes.py,recorded,"[""RunSQL"", ""RunSQL""]"
+coach_api,0014_coachdashboardsnapshot,backend/coach_api/migrations/0014_coachdashboardsnapshot.py,recorded,"[""CreateModel"", ""AddIndex""]"
+coach_api,0015_importedreviewinstance,backend/coach_api/migrations/0015_importedreviewinstance.py,recorded,"[""CreateModel"", ""AddConstraint"", ""AddConstraint""]"
+coach_api,0016_booking_seq_uniq_uln_privacy,backend/coach_api/migrations/0016_booking_seq_uniq_uln_privacy.py,recorded,"[""SeparateDatabaseAndState"", ""RunSQL"", ""RemoveConstraint"", ""AddConstraint""]"
+coach_api,0017_coachmanualattendance,backend/coach_api/migrations/0017_coachmanualattendance.py,recorded,"[""CreateModel""]"
+coach_api,0018_coachattendancesourceadjustment,backend/coach_api/migrations/0018_coachattendancesourceadjustment.py,recorded,"[""CreateModel""]"
+coach_api,0019_catchupreminder,backend/coach_api/migrations/0019_catchupreminder.py,recorded,"[""CreateModel""]"
+coach_api,0019_migrated_review_foundation,backend/coach_api/migrations/0019_migrated_review_foundation.py,recorded,"[""CreateModel"", ""AddConstraint"", ""AddConstraint"", ""AddField"", ""AddField"", ""AddField"", ""AlterField"", ""RemoveConstraint"", ""AddConstraint"", ""AddConstraint"", ""AddConstraint"", ""RunSQL""]"
+coach_api,0020_migrated_review_completion,backend/coach_api/migrations/0020_migrated_review_completion.py,recorded,"[""AddField"", ""CreateModel"", ""AddConstraint"", ""CreateModel""]"
+coach_api,0021_migrated_meeting_intelligence,backend/coach_api/migrations/0021_migrated_meeting_intelligence.py,recorded,"[""AddField""]"
+coach_api,0022_migrated_template_scopes,backend/coach_api/migrations/0022_migrated_template_scopes.py,recorded,"[""AddField"", ""AddField"", ""AlterField"", ""RemoveConstraint"", ""RemoveConstraint"", ""AlterField"", ""AddConstraint"", ""AddConstraint"", ""AddConstraint"", ""AddConstraint""]"
+coach_api,0023_remove_legacy_migrated_template_index,backend/coach_api/migrations/0023_remove_legacy_migrated_template_index.py,recorded,"[""RunSQL""]"
+coach_api,0024_imported_review_progress_snapshot,backend/coach_api/migrations/0024_imported_review_progress_snapshot.py,recorded,"[""AddField""]"
+curriculum_api,0001_ksb_mapping_source_metadata,backend/curriculum_api/migrations/0001_ksb_mapping_source_metadata.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+curriculum_api,0002_training_plan_module_catalogue_link,backend/curriculum_api/migrations/0002_training_plan_module_catalogue_link.py,recorded,"[""RunPython""]"
+curriculum_api,0003_rename_clear_curriculum_tables,backend/curriculum_api/migrations/0003_rename_clear_curriculum_tables.py,recorded,"[""RunPython""]"
+curriculum_api,0004_rename_selected_curriculum_tables,backend/curriculum_api/migrations/0004_rename_selected_curriculum_tables.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""AlterModelTable"", ""AlterModelTable"", ""AlterModelTable"", ""AlterModelTable"", ""AlterModelTable""]"
+curriculum_api,0005_create_groups_table,backend/curriculum_api/migrations/0005_create_groups_table.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""CreateModel""]"
+curriculum_api,0006_backfill_curriculum_parent_relationships,backend/curriculum_api/migrations/0006_backfill_curriculum_parent_relationships.py,recorded,"[""RunPython""]"
+curriculum_api,0007_remove_workplace_evidence_components,backend/curriculum_api/migrations/0007_remove_workplace_evidence_components.py,recorded,"[""RunPython""]"
+curriculum_api,0008_create_staff_profile_tables,backend/curriculum_api/migrations/0008_create_staff_profile_tables.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""CreateModel"", ""CreateModel""]"
+curriculum_api,0009_staff_profile_group_assignments,backend/curriculum_api/migrations/0009_staff_profile_group_assignments.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""AddField""]"
+curriculum_api,0010_clean_staff_profile_assignment_columns,backend/curriculum_api/migrations/0010_clean_staff_profile_assignment_columns.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""RemoveField""]"
+curriculum_api,0011_module_staff_assignment_columns,backend/curriculum_api/migrations/0011_module_staff_assignment_columns.py,recorded,"[""RunPython""]"
+curriculum_api,0012_livesession_livesessionartifact_and_more,backend/curriculum_api/migrations/0012_livesession_livesessionartifact_and_more.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""DeleteModel"", ""DeleteModel"", ""DeleteModel"", ""DeleteModel"", ""AlterModelTable""]"
+curriculum_api,0013_drop_unused_group_columns,backend/curriculum_api/migrations/0013_drop_unused_group_columns.py,recorded,"[""RunPython""]"
+curriculum_api,0014_drop_unused_module_columns,backend/curriculum_api/migrations/0014_drop_unused_module_columns.py,recorded,"[""RunPython""]"
+curriculum_api,0015_drop_group_mode_column,backend/curriculum_api/migrations/0015_drop_group_mode_column.py,recorded,"[""RunPython""]"
+curriculum_api,0016_rebuild_staff_assignment_ids,backend/curriculum_api/migrations/0016_rebuild_staff_assignment_ids.py,recorded,"[""RunPython""]"
+curriculum_api,0017_ensure_staff_profiles_from_curriculum_assignments,backend/curriculum_api/migrations/0017_ensure_staff_profiles_from_curriculum_assignments.py,recorded,"[""RunPython""]"
+curriculum_api,0018_drop_staff_status_specialisms_columns,backend/curriculum_api/migrations/0018_drop_staff_status_specialisms_columns.py,recorded,"[""RunPython""]"
+curriculum_api,0019_drop_ksb_profile_legacy_programme_columns,backend/curriculum_api/migrations/0019_drop_ksb_profile_legacy_programme_columns.py,recorded,"[""RunPython""]"
+curriculum_api,0020_drop_ksb_profile_scope_columns,backend/curriculum_api/migrations/0020_drop_ksb_profile_scope_columns.py,recorded,"[""RunPython""]"
+curriculum_api,0021_drop_module_coach_name,backend/curriculum_api/migrations/0021_drop_module_coach_name.py,recorded,"[""RunPython""]"
+curriculum_api,0022_normalise_ksb_profile_source_ids,backend/curriculum_api/migrations/0022_normalise_ksb_profile_source_ids.py,recorded,"[""RunPython""]"
+curriculum_api,0023_drop_group_tutor_name,backend/curriculum_api/migrations/0023_drop_group_tutor_name.py,recorded,"[""RunPython""]"
+curriculum_api,0024_split_group_schedule_drop_group_dates,backend/curriculum_api/migrations/0024_split_group_schedule_drop_group_dates.py,recorded,"[""RunPython""]"
+curriculum_api,0025_drop_group_training_plan_ids,backend/curriculum_api/migrations/0025_drop_group_training_plan_ids.py,recorded,"[""RunPython""]"
+curriculum_api,0026_drop_staff_profile_status_specialisms_again,backend/curriculum_api/migrations/0026_drop_staff_profile_status_specialisms_again.py,recorded,"[""RunPython""]"
+curriculum_api,0027_clean_blank_staff_profiles_normalise_ids,backend/curriculum_api/migrations/0027_clean_blank_staff_profiles_normalise_ids.py,recorded,"[""RunPython""]"
+curriculum_api,0028_timestamp_staff_profile_ids,backend/curriculum_api/migrations/0028_timestamp_staff_profile_ids.py,recorded,"[""RunPython""]"
+curriculum_api,0029_rename_free_programme_modules_to_free_courses,backend/curriculum_api/migrations/0029_rename_free_programme_modules_to_free_courses.py,recorded,"[""RunPython""]"
+curriculum_api,0030_free_courses_week_link_and_ids,backend/curriculum_api/migrations/0030_free_courses_week_link_and_ids.py,recorded,"[""RunPython""]"
+curriculum_api,0031_free_courses_course_name_global,backend/curriculum_api/migrations/0031_free_courses_course_name_global.py,recorded,"[""RunPython""]"
+curriculum_api,0032_drop_free_courses_status_color,backend/curriculum_api/migrations/0032_drop_free_courses_status_color.py,recorded,"[""RunPython""]"
+curriculum_api,0033_free_courses_cover_image_url,backend/curriculum_api/migrations/0033_free_courses_cover_image_url.py,recorded,"[""RunPython""]"
+curriculum_api,0034_split_free_courses_and_weeks,backend/curriculum_api/migrations/0034_split_free_courses_and_weeks.py,recorded,"[""RunPython""]"
+curriculum_api,0035_repair_free_course_week_split,backend/curriculum_api/migrations/0035_repair_free_course_week_split.py,recorded,"[""RunPython""]"
+curriculum_api,0036_drop_week_columns_from_free_courses,backend/curriculum_api/migrations/0036_drop_week_columns_from_free_courses.py,recorded,"[""RunPython""]"
+curriculum_api,0037_free_courses_week_builder_week_ids,backend/curriculum_api/migrations/0037_free_courses_week_builder_week_ids.py,recorded,"[""RunPython""]"
+curriculum_api,0038_programme_foreign_keys,backend/curriculum_api/migrations/0038_programme_foreign_keys.py,recorded,"[""RunPython""]"
+curriculum_api,0039_programme_deleted_flags,backend/curriculum_api/migrations/0039_programme_deleted_flags.py,recorded,"[""RunPython""]"
+curriculum_api,0040_component_lineage_and_soft_delete_flags,backend/curriculum_api/migrations/0040_component_lineage_and_soft_delete_flags.py,recorded,"[""RunPython""]"
+curriculum_api,0041_curriculum_deleted_at_and_component_weight,backend/curriculum_api/migrations/0041_curriculum_deleted_at_and_component_weight.py,recorded,"[""RunPython""]"
+curriculum_api,0042_component_owned_ksb_mappings,backend/curriculum_api/migrations/0042_component_owned_ksb_mappings.py,recorded,"[""RunPython""]"
+curriculum_api,0043_backfill_component_ksb_mappings_from_projection,backend/curriculum_api/migrations/0043_backfill_component_ksb_mappings_from_projection.py,recorded,"[""RunPython""]"
+curriculum_api,0044_programme_draft_status,backend/curriculum_api/migrations/0044_programme_draft_status.py,recorded,"[""RunPython""]"
+curriculum_api,0045_normalise_programme_archive_flags,backend/curriculum_api/migrations/0045_normalise_programme_archive_flags.py,recorded,"[""RunPython""]"
+curriculum_api,0046_delete_blank_staff_profiles,backend/curriculum_api/migrations/0046_delete_blank_staff_profiles.py,recorded,"[""RunPython""]"
+curriculum_api,0047_programme_required_otjh,backend/curriculum_api/migrations/0047_programme_required_otjh.py,recorded,"[""RunPython""]"
+curriculum_api,0048_cohort_epa_period,backend/curriculum_api/migrations/0048_cohort_epa_period.py,recorded,"[""RunPython""]"
+curriculum_api,0049_tutor_module_notifications,backend/curriculum_api/migrations/0049_tutor_module_notifications.py,recorded,"[""RunPython""]"
+curriculum_api,0050_cohort_apprenticeship_end_override,backend/curriculum_api/migrations/0050_cohort_apprenticeship_end_override.py,recorded,"[""RunPython""]"
+curriculum_api,0051_live_session_occurrence_online_meeting_id,backend/curriculum_api/migrations/0051_live_session_occurrence_online_meeting_id.py,recorded,"[""AddField"", ""RunPython""]"
+curriculum_api,0052_drop_curriculum_staff_profile_tables,backend/curriculum_api/migrations/0052_drop_curriculum_staff_profile_tables.py,recorded,"[""RunPython""]"
+curriculum_api,0053_curriculum_content_library,backend/curriculum_api/migrations/0053_curriculum_content_library.py,recorded,"[""RunPython""]"
+curriculum_api,0054_component_reflection_question,backend/curriculum_api/migrations/0054_component_reflection_question.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""AddField""]"
+curriculum_api,0054_module_tutor_email,backend/curriculum_api/migrations/0054_module_tutor_email.py,recorded,"[""RunPython""]"
+curriculum_api,0055_recording_events_artifact_fk_cascade,backend/curriculum_api/migrations/0055_recording_events_artifact_fk_cascade.py,recorded,"[""RunPython""]"
+curriculum_api,0056_ksb_profile_standard_source,backend/curriculum_api/migrations/0056_ksb_profile_standard_source.py,recorded,"[""RunPython""]"
+curriculum_api,0056_merge_component_reflection_and_recording_fk,backend/curriculum_api/migrations/0056_merge_component_reflection_and_recording_fk.py,recorded,[]
+curriculum_api,0056_programme_audit_assets,backend/curriculum_api/migrations/0056_programme_audit_assets.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""CreateModel""]"
+curriculum_api,0057_merge_curriculum_api_0056s,backend/curriculum_api/migrations/0057_merge_curriculum_api_0056s.py,recorded,[]
+curriculum_api,0058_unique_active_teams_calendar,backend/curriculum_api/migrations/0058_unique_active_teams_calendar.py,recorded,"[""RunPython""]"
+curriculum_api,0059_live_session_join_launches,backend/curriculum_api/migrations/0059_live_session_join_launches.py,recorded,"[""RunPython""]"
+curriculum_api,0060_live_session_join_launches_updated_at,backend/curriculum_api/migrations/0060_live_session_join_launches_updated_at.py,recorded,"[""RunPython""]"
+curriculum_api,0061_cohort_excluded_holiday_ids,backend/curriculum_api/migrations/0061_cohort_excluded_holiday_ids.py,recorded,"[""RunPython""]"
+curriculum_api,0062_englandholiday,backend/curriculum_api/migrations/0062_englandholiday.py,recorded,"[""CreateModel""]"
+curriculum_api,0063_module_weekly_schedule,backend/curriculum_api/migrations/0063_module_weekly_schedule.py,recorded,"[""RunPython""]"
+curriculum_api,0064_module_session_holidays,backend/curriculum_api/migrations/0064_module_session_holidays.py,recorded,"[""RunPython""]"
+curriculum_api,0065_direct_entry_lobby_policy,backend/curriculum_api/migrations/0065_direct_entry_lobby_policy.py,recorded,"[""RunPython""]"
+curriculum_api,0066_live_session_recording_views,backend/curriculum_api/migrations/0066_live_session_recording_views.py,recorded,"[""RunPython""]"
+curriculum_api,0067_livesessionabsence_livesessionattendancealias_and_more,backend/curriculum_api/migrations/0067_livesessionabsence_livesessionattendancealias_and_more.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+curriculum_api,0068_module_learner_roster_mode,backend/curriculum_api/migrations/0068_module_learner_roster_mode.py,recorded,"[""RunPython""]"
+curriculum_api,0069_module_ksb_remap_report,backend/curriculum_api/migrations/0069_module_ksb_remap_report.py,recorded,"[""RunPython""]"
+curriculum_api,0070_learner_activity_display_overrides,backend/curriculum_api/migrations/0070_learner_activity_display_overrides.py,recorded,"[""RunPython""]"
+curriculum_api,0071_attendance_identity_rules,backend/curriculum_api/migrations/0071_attendance_identity_rules.py,recorded,"[""RunPython""]"
+engagement_api,0001_initial,backend/engagement_api/migrations/0001_initial.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+engagement_api,0002_attendanceintervention_clubmeetingattendance_and_more,backend/engagement_api/migrations/0002_attendanceintervention_clubmeetingattendance_and_more.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+engagement_api,0003_shared_reward_evidence,backend/engagement_api/migrations/0003_shared_reward_evidence.py,recorded,"[""RunPython"", ""RunSQL""]"
+engagement_api,0004_all_course_learning_policy,backend/engagement_api/migrations/0004_all_course_learning_policy.py,recorded,"[""RunPython"", ""RunSQL""]"
+engagement_api,0004_eventemailsetting_eventemailtemplate_and_more,backend/engagement_api/migrations/0004_eventemailsetting_eventemailtemplate_and_more.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+enrolment_api,0001_initial,backend/enrolment_api/migrations/0001_initial.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+enrolment_api,0002_wizardilrlearnerdetails,backend/enrolment_api/migrations/0002_wizardilrlearnerdetails.py,recorded,"[""CreateModel""]"
+learner_api,0001_initial,backend/learner_api/migrations/0001_initial.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+learner_api,0002_apprenticeshipagreement_ilrdocument_and_more,backend/learner_api/migrations/0002_apprenticeshipagreement_ilrdocument_and_more.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+learner_api,0003_progress_curriculum_snapshot,backend/learner_api/migrations/0003_progress_curriculum_snapshot.py,recorded,"[""RunPython""]"
+learner_api,0004_repair_progress_lineage_columns,backend/learner_api/migrations/0004_repair_progress_lineage_columns.py,recorded,"[""RunPython""]"
+learner_api,0005_apply_progress_lineage_repair,backend/learner_api/migrations/0005_apply_progress_lineage_repair.py,recorded,"[""RunPython""]"
+learner_api,0006_backfill_lineage_by_source_identity,backend/learner_api/migrations/0006_backfill_lineage_by_source_identity.py,recorded,"[""RunPython""]"
+learner_api,0007_classify_and_repair_legacy_component_refs,backend/learner_api/migrations/0007_classify_and_repair_legacy_component_refs.py,recorded,"[""RunPython""]"
+learner_api,0008_progress_time_tracking_provenance,backend/learner_api/migrations/0008_progress_time_tracking_provenance.py,recorded,"[""SeparateDatabaseAndState"", ""AddField"", ""AddField"", ""AddField"", ""AddField"", ""AddField"", ""AddField""]"
+learner_api,0008_remove_learner_attendance_projection,backend/learner_api/migrations/0008_remove_learner_attendance_projection.py,recorded,"[""RunPython""]"
+learner_api,0009_merge_learner_api_0008s,backend/learner_api/migrations/0009_merge_learner_api_0008s.py,recorded,[]
+learner_api,0010_learnerfreecourse_learnerfreecourseprogress,backend/learner_api/migrations/0010_learnerfreecourse_learnerfreecourseprogress.py,recorded,"[""CreateModel"", ""CreateModel""]"
+learner_api,0011_inside_working_hours_declaration,backend/learner_api/migrations/0011_inside_working_hours_declaration.py,recorded,"[""SeparateDatabaseAndState"", ""AddField"", ""AddField""]"
+learner_api,0012_progress_reflection_skipped,backend/learner_api/migrations/0012_progress_reflection_skipped.py,recorded,"[""SeparateDatabaseAndState"", ""AddField""]"
+learner_api,0013_declared_completion,backend/learner_api/migrations/0013_declared_completion.py,recorded,"[""SeparateDatabaseAndState"", ""AddField"", ""AddField""]"
+learner_api,0014_legacy_lms_identity_aliases,backend/learner_api/migrations/0014_legacy_lms_identity_aliases.py,recorded,"[""RunPython""]"
+learner_api,0015_assignment_topics,backend/learner_api/migrations/0015_assignment_topics.py,recorded,"[""RunPython""]"
+learner_api,0016_ulnprivacyreviewdetail,backend/learner_api/migrations/0016_ulnprivacyreviewdetail.py,recorded,"[""CreateModel""]"
+learner_api,0017_quiz_question_image_snapshot,backend/learner_api/migrations/0017_quiz_question_image_snapshot.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""AddField""]"
+learner_api,0018_quiz_result_snapshot,backend/learner_api/migrations/0018_quiz_result_snapshot.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""AddField""]"
+learner_api,0019_quiz_grade_corrections,backend/learner_api/migrations/0019_quiz_grade_corrections.py,recorded,"[""RunPython""]"
+learner_api,0020_progress_soft_archive_state,backend/learner_api/migrations/0020_progress_soft_archive_state.py,not_recorded,"[""SeparateDatabaseAndState"", ""AddField""]"
+login,0001_initial,backend/login/migrations/0001_initial.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+login,0002_advancedadminlearnerscope,backend/login/migrations/0002_advancedadminlearnerscope.py,recorded,"[""CreateModel""]"
+mobile_comms,0001_initial,backend/mobile_comms/migrations/0001_initial.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel"", ""CreateModel""]"
+quiz_api,0001_normalize_quiz_course_links_module_ids,backend/quiz_api/migrations/0001_normalize_quiz_course_links_module_ids.py,recorded,"[""RunPython""]"
+quiz_api,0002_rename_quiz_course_links_module_catalogue_id,backend/quiz_api/migrations/0002_rename_quiz_course_links_module_catalogue_id.py,recorded,"[""RunPython""]"
+quiz_api,0003_initial,backend/quiz_api/migrations/0003_initial.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel""]"
+quiz_api,0004_question_image,backend/quiz_api/migrations/0004_question_image.py,recorded,"[""SeparateDatabaseAndState"", ""RunPython"", ""AddField""]"
+read_models,0001_initial,backend/read_models/migrations/0001_initial.py,recorded,"[""CreateModel"", ""CreateModel"", ""CreateModel"", ""AddConstraint"", ""AddIndex"", ""AddIndex"", ""AddIndex"", ""AddIndex""]"
+read_models,0002_optimize_outbox_claim_index,backend/read_models/migrations/0002_optimize_outbox_claim_index.py,recorded,"[""RemoveIndex"", ""AddIndex""]"
+admin,0001_initial,,recorded_outside_repository_migrations,[]
+admin,0002_logentry_remove_auto_add,,recorded_outside_repository_migrations,[]
+admin,0003_logentry_add_action_flag_choices,,recorded_outside_repository_migrations,[]
+aptem,0001_initial,,recorded_outside_repository_migrations,[]
+aptem,0002_aptemevidence_is_under_word_count_threshold_and_more,,recorded_outside_repository_migrations,[]
+aptem,0003_link_processing_to_source_evidence_items,,recorded_outside_repository_migrations,[]
+aptem,0004_ensure_fetching_evidence_processing_fk,,recorded_outside_repository_migrations,[]
+aptem,0005_review_learner_identity,,recorded_outside_repository_migrations,[]
+aptem,0006_review_documents,,recorded_outside_repository_migrations,[]
+aptem,0007_review_pdf_sync_lease,,recorded_outside_repository_migrations,[]
+aptem,0008_review_identity_unique,,recorded_outside_repository_migrations,[]
+aptem,0009_cacherefreshcontrol,,recorded_outside_repository_migrations,[]
+audit_api,0002_assignment_classification_tables,,recorded_outside_repository_migrations,[]
+audit_api,0003_assignment_backfill_queue,,recorded_outside_repository_migrations,[]
+audit_api,0004_alter_mreactivity_table,,recorded_outside_repository_migrations,[]
+auth,0001_initial,,recorded_outside_repository_migrations,[]
+auth,0002_alter_permission_name_max_length,,recorded_outside_repository_migrations,[]
+auth,0003_alter_user_email_max_length,,recorded_outside_repository_migrations,[]
+auth,0004_alter_user_username_opts,,recorded_outside_repository_migrations,[]
+auth,0005_alter_user_last_login_null,,recorded_outside_repository_migrations,[]
+auth,0006_require_contenttypes_0002,,recorded_outside_repository_migrations,[]
+auth,0007_alter_validators_add_error_messages,,recorded_outside_repository_migrations,[]
+auth,0008_alter_user_username_max_length,,recorded_outside_repository_migrations,[]
+auth,0009_alter_user_last_name_max_length,,recorded_outside_repository_migrations,[]
+auth,0010_alter_group_name_max_length,,recorded_outside_repository_migrations,[]
+auth,0011_update_proxy_permissions,,recorded_outside_repository_migrations,[]
+auth,0012_alter_user_first_name_max_length,,recorded_outside_repository_migrations,[]
+coach_api,0003_coachabsencereport,,recorded_outside_repository_migrations,[]
+coach_api,0004_coachabsencereport_attendance_rate_and_more,,recorded_outside_repository_migrations,[]
+coach_api,0005_calendar_event_review_responses,,recorded_outside_repository_migrations,[]
+coach_api,0005_coachcalendarevent_review_completed_at_and_more,,recorded_outside_repository_migrations,[]
+coach_api,0005_reset_cancelled_calendar_events,,recorded_outside_repository_migrations,[]
+coach_api,0005_session_attendance,,recorded_outside_repository_migrations,[]
+coach_api,0006_progress_review_signature_flow,,recorded_outside_repository_migrations,[]
+coach_api,0006_session_attendance_approval_status,,recorded_outside_repository_migrations,[]
+coach_api,0007_session_attendance_report_details,,recorded_outside_repository_migrations,[]
+coach_api,0008_move_calendar_event_to_learner_ssot,,recorded_outside_repository_migrations,[]
+coach_api,0008_sync_session_attendance_reported_at,,recorded_outside_repository_migrations,[]
+coach_api,0009_calendar_event_legacy_compatibility_view,,recorded_outside_repository_migrations,[]
+coach_api,0009_link_absence_reports_to_attendance,,recorded_outside_repository_migrations,[]
+coach_api,0009_schema_hygiene,,recorded_outside_repository_migrations,[]
+coach_api,0025_coach_performance,,recorded_outside_repository_migrations,[]
+coach_api,0025_migrated_review_otjh,,recorded_outside_repository_migrations,[]
+contenttypes,0001_initial,,recorded_outside_repository_migrations,[]
+contenttypes,0002_remove_content_type_name,,recorded_outside_repository_migrations,[]
+curriculum_api,0001_initial,,recorded_outside_repository_migrations,[]
+curriculum_api,0012_create_live_sessions,,recorded_outside_repository_migrations,[]
+curriculum_api,0012_weektemplate_weektemplatecomponent_delete_coach_and_more,,recorded_outside_repository_migrations,[]
+curriculum_api,0013_live_session_occurrences_and_artifacts,,recorded_outside_repository_migrations,[]
+curriculum_api,0014_live_session_presenters,,recorded_outside_repository_migrations,[]
+curriculum_api,0066_livesessionabsence_livesessionattendancealias_and_more,,recorded_outside_repository_migrations,[]
+documents,0001_written_agreement_date_override,,recorded_outside_repository_migrations,[]
+documents,0002_planned_off_the_job_hours,,recorded_outside_repository_migrations,[]
+documents,0003_separate_planned_otj_hours_sources,,recorded_outside_repository_migrations,[]
+documents,0004_remove_combined_planned_otj_hours,,recorded_outside_repository_migrations,[]
+documents,0005_written_agreement_funding,,recorded_outside_repository_migrations,[]
+documents,0006_apprenticeship_agreement_date_override,,recorded_outside_repository_migrations,[]
+documents,0007_apprenticeship_agreement_selected_version,,recorded_outside_repository_migrations,[]
+documents,0008_written_agreement_refetch_jobs,,recorded_outside_repository_migrations,[]
+evidence,0001_initial,,recorded_outside_repository_migrations,[]
+learner_api,0003_kbcattendancesnapshot,,recorded_outside_repository_migrations,[]
+learner_api,0008_learner_attendance_projection,,recorded_outside_repository_migrations,[]
+learner_api,0014_ulnprivacyreviewdetail,,recorded_outside_repository_migrations,[]
+learner_api,0015_ulnprivacyreviewdetail,,recorded_outside_repository_migrations,[]
+quiz_api,0001_initial,,recorded_outside_repository_migrations,[]
+sessions,0001_initial,,recorded_outside_repository_migrations,[]

@@ -4,12 +4,12 @@ import Swal from 'sweetalert2';
 import { feedbackApi, type FeedbackFormType, type LearnerFeedbackListItem, type LearnerFeedbackStatus } from '@/api/feedback';
 import { ThemedSelect, type ThemedSelectOption } from '@/components/feature/ThemedSelect';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { roleNavMap } from '@/mocks/navigation';
 
-type FeedbackCategory = 'mid-module' | 'end-module' | 'lecture' | 'mcm' | 'progress-review' | 'event' | 'general';
+type FeedbackCategory = 'mid-module' | 'end-module' | 'lecture' | 'mcm' | 'progress-review' | 'epa' | 'event' | 'general';
 type CategoryFilter = 'all' | FeedbackCategory;
 type StatusFilter = 'all' | LearnerFeedbackStatus;
 
@@ -23,11 +23,12 @@ interface FeedbackCategoryConfig {
 }
 
 const CATEGORIES: FeedbackCategoryConfig[] = [
-  { id: 'mid-module', title: 'Mid-module Feedback', shortTitle: 'Mid-module', icon: 'ri-calendar-check-line', tone: 'bg-teal-100 text-teal-700 ring-teal-200', bar: 'bg-teal-500' },
+  { id: 'mid-module', title: 'Wellbeing', shortTitle: 'Wellbeing', icon: 'ri-calendar-check-line', tone: 'bg-teal-100 text-teal-700 ring-teal-200', bar: 'bg-teal-500' },
   { id: 'end-module', title: 'End-module Feedback', shortTitle: 'End-module', icon: 'ri-flag-line', tone: 'bg-indigo-100 text-indigo-700 ring-indigo-200', bar: 'bg-indigo-500' },
   { id: 'lecture', title: 'Live Sessions Feedback', shortTitle: 'Live Sessions', icon: 'ri-presentation-line', tone: 'bg-violet-100 text-violet-700 ring-violet-200', bar: 'bg-violet-500' },
   { id: 'mcm', title: 'MCM Feedback', shortTitle: 'MCM', icon: 'ri-user-voice-line', tone: 'bg-fuchsia-100 text-fuchsia-700 ring-fuchsia-200', bar: 'bg-fuchsia-500' },
   { id: 'progress-review', title: 'Progress Review Feedback', shortTitle: 'Progress review', icon: 'ri-line-chart-line', tone: 'bg-amber-100 text-amber-700 ring-amber-200', bar: 'bg-amber-500' },
+  { id: 'epa', title: 'EPA Feedback', shortTitle: 'EPA', icon: 'ri-award-line', tone: 'bg-rose-100 text-rose-700 ring-rose-200', bar: 'bg-rose-500' },
   { id: 'event', title: 'Event Feedback', shortTitle: 'Event', icon: 'ri-calendar-event-line', tone: 'bg-blue-100 text-blue-700 ring-blue-200', bar: 'bg-blue-500' },
   { id: 'general', title: 'General Feedback', shortTitle: 'General', icon: 'ri-survey-line', tone: 'bg-emerald-100 text-emerald-700 ring-emerald-200', bar: 'bg-emerald-500' },
 ];
@@ -226,6 +227,7 @@ function categoryFor(form: LearnerFeedbackListItem): FeedbackCategory {
   if (type === 'end_module') return 'end-module';
   if (type === 'post_mcm_review') return 'mcm';
   if (type === 'post_progress_review') return 'progress-review';
+  if (type === 'post_epa_review') return 'epa';
   if (type === 'post_event') return 'event';
   return 'general';
 }

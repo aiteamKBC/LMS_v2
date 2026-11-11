@@ -19,7 +19,7 @@ from django.conf import settings
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, IntegrityError, connection, transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -30,14 +30,17 @@ from learner_api import evidence_storage
 from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
-from .feedback_delivery import ensure_delivery_questions, lecture_after_form_creation
+from .feedback_delivery import QR_SCHEDULE_SOURCE, ensure_delivery_questions, lecture_after_form_creation
 from .feedback_analytics import lecture_analytics_options, question_analytics
 from .feedback_scoring import validate_analytics_settings
+from .feedback_question_overrides import effective_question_ids
 from .module_feedback import MODULE_FORM_TYPES, assigned_active_module_ids, module_delivery_accessible, sync_module_feedback
+from .review_feedback import ALL_REVIEW_FORM_TYPES, EMPLOYER_REVIEW_FORM_TYPE, sync_review_feedback
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
+    FeedbackDeliveryQuestionOverride,
     FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse,
-    FeedbackReviewDelivery, FeedbackSection, FeedbackUpload,
+    FeedbackReviewDelivery, FeedbackEmployerReviewDelivery, FeedbackSection, FeedbackUpload,
 )
 from .permissions import (
     actor_name, learner_identity, learner_read_scope, require_learner_identity,
@@ -50,12 +53,8 @@ QUESTION_TYPES = {
     'name', 'email', 'photo_upload',
 }
 CHOICE_TYPES = {'single_choice', 'multiple_choice', 'dropdown', 'likert'}
-REVIEW_FORM_TYPES = {
-    'post_mcm_review': 'Monthly Coaching Meeting',
-    'post_progress_review': 'Progress Review',
-}
-VERSIONED_FORM_TYPES = {'post_lecture', *REVIEW_FORM_TYPES, *MODULE_FORM_TYPES}
-FORM_TYPES = {'general', 'post_lecture', 'post_event', 'event_rsvp', *REVIEW_FORM_TYPES, *MODULE_FORM_TYPES}
+VERSIONED_FORM_TYPES = {'post_lecture', *ALL_REVIEW_FORM_TYPES, *MODULE_FORM_TYPES}
+FORM_TYPES = {'general', 'post_lecture', 'post_event', 'event_rsvp', *ALL_REVIEW_FORM_TYPES, *MODULE_FORM_TYPES}
 SECTION_ICONS = {
     'ri-file-list-3-line', 'ri-user-line', 'ri-book-open-line',
     'ri-star-line', 'ri-chat-3-line', 'ri-lightbulb-line',
@@ -151,7 +150,8 @@ def _assigned_count(form):
     delivery_count = FeedbackDeliveryRecipient.objects.filter(
         delivery__form_id__in=family_ids, revoked_at__isnull=True,
     ).count()
-    review_count = FeedbackReviewDelivery.objects.filter(form_id__in=family_ids).count()
+    review_model = FeedbackEmployerReviewDelivery if form.form_type == EMPLOYER_REVIEW_FORM_TYPE else FeedbackReviewDelivery
+    review_count = review_model.objects.filter(form_id__in=family_ids).count()
     return manual_count + delivery_count + review_count
 
 
@@ -198,10 +198,11 @@ def _form_version_dict(form):
         if any(item.target_type == 'all_learners' for item in assignments)
         else len({item.target_id for item in assignments if item.target_type == 'learner'})
     )
-    delivery_count = FeedbackDelivery.objects.filter(form=form).count() + FeedbackReviewDelivery.objects.filter(form=form).count()
+    review_model = FeedbackEmployerReviewDelivery if form.form_type == EMPLOYER_REVIEW_FORM_TYPE else FeedbackReviewDelivery
+    delivery_count = FeedbackDelivery.objects.filter(form=form).count() + review_model.objects.filter(form=form).count()
     assigned_count = manual_count + FeedbackDeliveryRecipient.objects.filter(
         delivery__form=form, revoked_at__isnull=True,
-    ).count() + FeedbackReviewDelivery.objects.filter(form=form).count()
+    ).count() + review_model.objects.filter(form=form).count()
     responses = FeedbackResponse.objects.filter(form=form)
     return {
         'id': form.id, 'title': form.title, 'version': form.version,
@@ -227,6 +228,7 @@ def _form_has_history(form):
     return (
         form.responses.exists() or form.deliveries.exists()
         or FeedbackReviewDelivery.objects.filter(form=form).exists()
+        or (form.form_type == EMPLOYER_REVIEW_FORM_TYPE and FeedbackEmployerReviewDelivery.objects.filter(form=form).exists())
     )
 
 
@@ -243,7 +245,7 @@ def _post_lecture_publish_conflict(form):
 
 
 def _review_publish_conflict(form):
-    if form.form_type not in REVIEW_FORM_TYPES:
+    if form.form_type not in ALL_REVIEW_FORM_TYPES:
         return False
     return FeedbackForm.objects.filter(
         form_type=form.form_type, is_current=True, status='published',
@@ -348,7 +350,7 @@ def _apply_curriculum_scope(form, payload):
     if requested_type not in FORM_TYPES:
         raise ValueError('Unsupported feedback form type.')
     form.form_type = requested_type
-    if requested_type in {'general', 'post_event', 'event_rsvp', *REVIEW_FORM_TYPES}:
+    if requested_type in {'general', 'post_event', 'event_rsvp', *ALL_REVIEW_FORM_TYPES}:
         form.delivery_scope = 'manual'
         for field in (
             'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
@@ -526,7 +528,7 @@ def forms_collection(request):
                 'totalForms': len(forms),
                 'publishedForms': sum(f.status == 'published' for f in forms),
                 'draftForms': sum(f.status == 'draft' for f in forms),
-                'totalResponses': sum(sum(r.status == 'completed' for r in f.responses.all()) for f in forms),
+                'totalResponses': FeedbackResponse.objects.filter(status='completed').count(),
             },
         })
     if request.method != 'POST':
@@ -677,7 +679,7 @@ def form_status(request, pk):
             if _post_lecture_publish_conflict(form):
                 target = 'all modules' if form.delivery_scope == 'all_modules' else form.module_name or form.module_catalogue_id
                 return json_error(f'Another current feedback form of this type is already published for {target}.', status=409)
-        if form.form_type in REVIEW_FORM_TYPES and _review_publish_conflict(form):
+        if form.form_type in ALL_REVIEW_FORM_TYPES and _review_publish_conflict(form):
             return json_error('Another current feedback form is already published for this review type.', status=409)
         form.published_at = form.published_at or timezone.now()
     elif status == 'draft' and form.responses.exists():
@@ -802,21 +804,111 @@ def assignment_dict(assignment):
     }
 
 
-def _response_dict(response, *, include_answers=False):
+def _response_review_coaches(responses):
+    """Read source reviewer names once for the list's pinned review deliveries."""
+    source_ids = set()
+    for response in responses:
+        if response.form.form_type not in ALL_REVIEW_FORM_TYPES:
+            continue
+        field = 'employer_review_delivery' if response.form.form_type == EMPLOYER_REVIEW_FORM_TYPE else 'review_delivery'
+        delivery = getattr(response, field, None) if getattr(response, f'{field}_id', None) else None
+        if delivery is not None:
+            source_ids.add(delivery.source_review_id)
+    if not source_ids:
+        return {}
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT id, reviewer_name FROM "Learner".reviews WHERE id = ANY(%s)', [sorted(source_ids)])
+        return {source_id: str(name or '').strip() for source_id, name in cursor.fetchall()}
+
+
+def _response_activity(response, review_coaches=None):
+    """List-only context from the response's own delivery/recipient, without syncing."""
+    kind = response.form.form_type
+    activity = {'kind': 'general', 'title': 'General feedback', 'date': None, 'tutorName': ''}
+    delivery = response.delivery if response.delivery_id else None
+    if kind == 'post_lecture':
+        activity.update(kind='lecture', title=(getattr(delivery, 'session_title', '') or 'Lecture details not recorded'),
+                        date=_iso(getattr(delivery, 'starts_at', None)), tutorName=getattr(delivery, 'tutor_name', '') or '')
+    elif kind in MODULE_FORM_TYPES:
+        activity.update(kind='module', title=getattr(delivery, 'module_name', '') or 'Module details not recorded')
+    elif kind in ALL_REVIEW_FORM_TYPES:
+        field = 'employer_review_delivery' if kind == EMPLOYER_REVIEW_FORM_TYPE else 'review_delivery'
+        review = getattr(response, field, None) if getattr(response, f'{field}_id', None) else None
+        activity.update(kind='review', title=(getattr(review, 'review_name', '')
+                                             or getattr(review, 'review_type', '') or 'Review details not recorded'),
+                        date=_iso(getattr(review, 'completed_at', None)),
+                        coachName=(review_coaches or {}).get(getattr(review, 'source_review_id', None), ''))
+        if kind == EMPLOYER_REVIEW_FORM_TYPE and not response.form.anonymous_responses:
+            activity['relatedLearnerName'] = getattr(review, 'learner_name', '') or ''
+    elif kind in {'post_event', 'event_rsvp'}:
+        event = None
+        if kind == 'post_event' and getattr(response, 'event_recipient_id', None):
+            event = response.event_recipient.event
+        elif kind == 'event_rsvp' and getattr(response, 'rsvp_recipient_id', None):
+            event = response.rsvp_recipient.campaign.event
+        activity.update(kind='event', title=getattr(event, 'title', '') or 'Event details not recorded',
+                        date=_iso(getattr(event, 'event_date', None)))
+        if activity['date'] is None and getattr(event, 'date', ''):
+            # Older events store a display date rather than a DateField. Keep
+            # that recorded label without inventing/parsing a timestamp.
+            activity['dateText'] = event.date
+    return activity
+
+
+def _response_assigned_at(response):
+    """Recorded assignment time, independent of activity/response dates."""
+    kind = response.form.form_type
+    if response.delivery_id:
+        recipients = response.delivery.response_assignment_recipients
+        return next((item.assigned_at for item in recipients
+                     if str(item.learner_id) == str(response.learner_id)), None)
+    field = 'employer_review_delivery' if kind == EMPLOYER_REVIEW_FORM_TYPE else 'review_delivery'
+    if getattr(response, f'{field}_id', None):
+        return getattr(getattr(response, field), 'assigned_at', None)
+    if kind == 'post_event' and response.event_recipient_id:
+        recipient = response.event_recipient
+        campaign = next((item for item in recipient.event.response_assignment_campaigns
+                         if item.form_id == response.form_id), None)
+        # The event roster is shared by forms. Both the recipient and this
+        # form's campaign must exist before the form is assigned to the person.
+        dates = (recipient.created_at, campaign.created_at if campaign else None)
+        return max(dates) if all(dates) else None
+    if kind == 'event_rsvp' and response.rsvp_recipient_id:
+        return response.rsvp_recipient.created_at
+    if kind == 'general':
+        dates = [item.assigned_at for item in response.form.response_assignments
+                 if item.target_type == 'all_learners' or (
+                     item.target_type == 'learner' and str(item.target_id) == str(response.learner_id))]
+        return min(dates) if dates else None
+    return None
+
+
+def _response_dict(response, *, include_answers=False, include_activity=False, review_coaches=None):
     anonymous = response.form.anonymous_responses
+    anonymous_name = 'Anonymous employer' if response.form.form_type == EMPLOYER_REVIEW_FORM_TYPE else 'Anonymous learner'
     data = {
         'id': response.id, 'formId': response.form_id, 'formTitle': response.form.title,
+        'templateKey': str(response.form.template_key),
+        'formType': response.form.form_type,
         'learnerId': None if anonymous else response.learner_id,
-        'learnerName': 'Anonymous learner' if anonymous else response.learner_name,
+        'learnerName': anonymous_name if anonymous else response.learner_name,
         'programme': '' if anonymous else response.programme,
         'deliveryId': response.delivery_id,
         'sessionTitle': response.delivery.session_title if response.delivery_id else '',
+        'sessionStartsAt': _iso(response.delivery.starts_at) if response.delivery_id else None,
+        'tutorName': (response.delivery.tutor_name if response.delivery_id and response.form.form_type == 'post_lecture' else ''),
         'status': response.status, 'startedAt': _iso(response.started_at),
         'updatedAt': _iso(response.updated_at), 'submittedAt': _iso(response.submitted_at),
     }
+    if include_activity:
+        data['activity'] = _response_activity(response, review_coaches)
+        data['assignedAt'] = _iso(_response_assigned_at(response))
     if include_answers:
         by_question = {a.question_id: a.answer for a in response.answers.all()}
-        selected_ids = _selected_delivery_question_ids(response.delivery)
+        recipient = (FeedbackDeliveryRecipient.objects.filter(
+            delivery_id=response.delivery_id, learner_id=response.learner_id,
+        ).first() if response.delivery_id else None)
+        selected_ids = _selected_delivery_question_ids(response.delivery, recipient, response)
         data['sections'] = [{
             'id': s.id, 'title': s.title,
             'questions': [{**_question_dict(q), 'answer': by_question.get(q.id)} for q in s.questions.all()
@@ -829,14 +921,28 @@ def _response_dict(response, *, include_answers=False):
 def responses_collection(request):
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
-    responses = FeedbackResponse.objects.select_related('form', 'delivery').order_by('-updated_at')
+    responses = FeedbackResponse.objects.select_related(
+        'form', 'delivery', 'review_delivery', 'employer_review_delivery',
+        'event_recipient__event', 'rsvp_recipient__campaign__event',
+    ).prefetch_related(
+        Prefetch('delivery__recipients', queryset=FeedbackDeliveryRecipient.objects.only(
+            'delivery_id', 'learner_id', 'assigned_at'), to_attr='response_assignment_recipients'),
+        Prefetch('form__assignments', queryset=FeedbackAssignment.objects.only(
+            'form_id', 'target_type', 'target_id', 'assigned_at'), to_attr='response_assignments'),
+        Prefetch('event_recipient__event__feedback_campaigns', queryset=FeedbackEventCampaign.objects.only(
+            'event_id', 'form_id', 'created_at'), to_attr='response_assignment_campaigns'),
+    ).order_by('-updated_at')
     if request.GET.get('formId'):
         responses = responses.filter(form_id=request.GET['formId'])
     if request.GET.get('status'):
         responses = responses.filter(status=request.GET['status'])
     if request.GET.get('learner'):
         responses = responses.filter(learner_name__icontains=request.GET['learner'])
-    return JsonResponse({'responses': [_response_dict(r) for r in responses]})
+    responses = list(responses)
+    review_coaches = _response_review_coaches(responses)
+    return JsonResponse({'responses': [
+        _response_dict(r, include_activity=True, review_coaches=review_coaches) for r in responses
+    ]})
 
 
 @require_staff
@@ -988,43 +1094,7 @@ def _assignment_for(form, learner_id):
 
 
 def _sync_review_feedback_deliveries(learner_id):
-    """Pin newly completed MCM/Progress reviews to the active templates.
-
-    ``published_at`` is the launch boundary: reviews completed before a
-    template was first published are deliberately never backfilled.
-    """
-    templates = {}
-    for form in FeedbackForm.objects.filter(
-        form_type__in=REVIEW_FORM_TYPES, status='published', is_current=True,
-        published_at__isnull=False,
-    ).order_by('-published_at', '-id'):
-        templates.setdefault(form.form_type, form)
-    if not templates:
-        return
-
-    pending = []
-    table_name = '"Learner".reviews'
-    with connection.cursor() as cursor:
-        for form_type, form in templates.items():
-            cursor.execute(
-                f'''SELECT id, aptem_review_id, learner_id, learner_name,
-                           review_type, review_name, completed_date
-                      FROM {table_name}
-                     WHERE learner_id = %s
-                       AND review_type = %s
-                       AND status = 'Completed'
-                       AND completed_date IS NOT NULL
-                       AND completed_date >= %s''',
-                [learner_id, REVIEW_FORM_TYPES[form_type], form.published_at],
-            )
-            for row in cursor.fetchall():
-                pending.append(FeedbackReviewDelivery(
-                    form=form, source_review_id=row[0], aptem_review_id=row[1] or '',
-                    learner_id=str(row[2]), learner_name=row[3] or '',
-                    review_type=row[4], review_name=row[5] or '', completed_at=row[6],
-                ))
-    if pending:
-        FeedbackReviewDelivery.objects.bulk_create(pending, ignore_conflicts=True)
+    return sync_review_feedback(learner_id)
 
 
 def learner_forms(request):
@@ -1084,8 +1154,15 @@ def learner_forms(request):
     accessible_modules = None
     for recipient in recipients:
         delivery, form = recipient.delivery, recipient.delivery.form
+        if form.form_type == 'post_lecture' and getattr(delivery, 'attendance_source', '') == QR_SCHEDULE_SOURCE:
+            continue
         if form.form_type == 'post_lecture' and not lecture_after_form_creation(form, delivery.starts_at):
             continue
+        if form.form_type == 'post_lecture' and getattr(recipient, 'public_claimed_at', None) is not None:
+            if accessible_modules is None:
+                accessible_modules = assigned_active_module_ids(learner_id)
+            if delivery.module_catalogue_id not in accessible_modules:
+                continue
         if form.form_type in MODULE_FORM_TYPES:
             if accessible_modules is None:
                 accessible_modules = assigned_active_module_ids(learner_id)
@@ -1204,8 +1281,9 @@ def _form_recipient_rows(form):
             revoked_at__isnull=True,
         ).distinct().order_by('-invitation_sent_at', '-updated_at', '-id'))
     review_deliveries = []
-    if form.form_type in REVIEW_FORM_TYPES:
-        review_deliveries = list(FeedbackReviewDelivery.objects.select_related('form').filter(
+    if form.form_type in ALL_REVIEW_FORM_TYPES:
+        review_model = FeedbackEmployerReviewDelivery if form.form_type == EMPLOYER_REVIEW_FORM_TYPE else FeedbackReviewDelivery
+        review_deliveries = list(review_model.objects.select_related('form').filter(
             form_id__in=family_ids,
         ).order_by('-completed_at', '-id'))
 
@@ -1214,7 +1292,10 @@ def _form_recipient_rows(form):
     learner_ids.update(str(item.learner_id) for item in event_recipients if item.learner_id)
     learner_ids.update(str(item.learner_id) for item in review_deliveries)
     all_assignment = next((item for item in manual_assignments if item.target_type == 'all_learners'), None)
-    learners_query = EnrolmentUser.all_learners.all()
+    # Created_users contains many large JSON/document columns.  The recipient
+    # report only needs these four scalar fields; selecting the full model for
+    # a busy lecture form can exceed the database statement timeout.
+    learners_query = EnrolmentUser.all_learners.only('id', 'username', 'email', 'programme')
     if all_assignment is None:
         learners_query = learners_query.filter(id__in=learner_ids)
     learners = {str(item.id): item for item in learners_query}
@@ -1234,10 +1315,9 @@ def _form_recipient_rows(form):
         (item.form_id, item.event_recipient_id): item.status
         for item in responses if getattr(item, 'event_recipient_id', None) is not None
     }
-    review_status = {
-        item.review_delivery_id: item.status
-        for item in responses if getattr(item, 'review_delivery_id', None) is not None
-    }
+    review_response_field = 'employer_review_delivery_id' if form.form_type == EMPLOYER_REVIEW_FORM_TYPE else 'review_delivery_id'
+    review_status = {getattr(item, review_response_field): item.status
+                     for item in responses if getattr(item, review_response_field, None) is not None}
     rows = []
     for recipient in delivery_recipients:
         learner_id = str(recipient.learner_id)
@@ -1259,6 +1339,13 @@ def _form_recipient_rows(form):
             'sourceTitle': delivery.session_title,
             'sourceSubtitle': delivery.module_name,
             'sourceStartsAt': _iso(recipient.available_at if is_module else delivery.starts_at),
+            'programmeId': delivery.programme_id,
+            'programmeName': delivery.programme_name,
+            'cohortId': delivery.cohort_id,
+            'cohortName': delivery.cohort_name,
+            'groupId': delivery.group_id,
+            'groupName': delivery.group_name,
+            'moduleCatalogueId': delivery.module_catalogue_id,
             'sessionTitle': delivery.session_title,
             'sessionStartsAt': _iso(recipient.available_at if is_module else delivery.starts_at),
             'moduleName': delivery.module_name,
@@ -1329,25 +1416,30 @@ def _form_recipient_rows(form):
     for review_delivery in review_deliveries:
         learner_id = str(review_delivery.learner_id)
         learner = learners.get(learner_id)
+        is_employer = form.form_type == EMPLOYER_REVIEW_FORM_TYPE
+        learner_name = review_delivery.learner_name or getattr(learner, 'username', '') or f'Learner {learner_id}'
         rows.append({
             'key': f'review-{review_delivery.id}',
             'deliveryId': None, 'occurrenceKey': str(review_delivery.source_review_id),
             'learnerId': learner_id,
-            'learnerName': review_delivery.learner_name or getattr(learner, 'username', '') or f'Learner {learner_id}',
-            'email': getattr(learner, 'email', '') or '',
+            'learnerName': (review_delivery.employer_name or 'Employer awaiting link') if is_employer else learner_name,
+            'relatedLearnerName': learner_name,
+            'recipientType': 'employer' if is_employer else 'learner',
+            'pendingReason': review_delivery.pending_reason if is_employer else '',
+            'email': review_delivery.employer_email if is_employer else getattr(learner, 'email', '') or '',
             'programme': getattr(learner, 'programme', '') or '',
             'source': 'completed_review',
             'sourceKey': f'review:{review_delivery.source_review_id}',
             'sourceType': 'review',
             'sourceLabel': 'Completed review',
             'sourceTitle': review_delivery.review_name or review_delivery.review_type,
-            'sourceSubtitle': review_delivery.review_type,
+            'sourceSubtitle': f'{review_delivery.review_type} · {learner_name}' if is_employer else review_delivery.review_type,
             'sourceStartsAt': _iso(review_delivery.completed_at),
             'sessionTitle': review_delivery.review_name or review_delivery.review_type,
             'sessionStartsAt': _iso(review_delivery.completed_at),
             'moduleName': '', 'assignedAt': _iso(review_delivery.assigned_at),
             'dueDate': _iso(review_delivery.form.due_date),
-            'responseStatus': review_status.get(review_delivery.id, 'not_started'),
+            'responseStatus': ('pending_link' if is_employer and review_delivery.employer_id is None else review_status.get(review_delivery.id, 'not_started')),
             'formVersion': review_delivery.form.version,
         })
     return rows
@@ -1370,6 +1462,16 @@ def _recipient_source_summaries(rows):
             'assignedCount': 0,
             'responseCount': 0,
         })
+        if source['type'] == 'lecture':
+            source.update({
+                'programmeId': row.get('programmeId') or '',
+                'programmeName': row.get('programmeName') or '',
+                'cohortId': row.get('cohortId') or '',
+                'cohortName': row.get('cohortName') or '',
+                'groupId': row.get('groupId') or '',
+                'groupName': row.get('groupName') or '',
+                'moduleCatalogueId': row.get('moduleCatalogueId') or '',
+            })
         source['assignedCount'] += 1
         if row.get('responseStatus') == 'completed':
             source['responseCount'] += 1
@@ -1489,6 +1591,8 @@ def _learner_feedback_context(
         except FeedbackDeliveryRecipient.DoesNotExist:
             return None, None, None
         form, delivery = recipient.delivery.form, recipient.delivery
+        if form.form_type == 'post_lecture' and getattr(delivery, 'attendance_source', '') == QR_SCHEDULE_SOURCE:
+            return None, None, None
         if lecture_only and form.form_type != 'post_lecture':
             return None, None, None
         if form.form_type in MODULE_FORM_TYPES and not module_delivery_accessible(delivery, learner_id):
@@ -1505,6 +1609,8 @@ def _learner_feedback_context(
         if form.form_type == 'post_lecture':
             if not lecture_after_form_creation(form, delivery.starts_at):
                 return None, None, None
+            if getattr(recipient, 'public_claimed_at', None) is not None and delivery.module_catalogue_id not in assigned_active_module_ids(learner_id):
+                return None, None, None
             ensure_delivery_questions(delivery)
         return form, delivery, recipient
     try:
@@ -1513,13 +1619,22 @@ def _learner_feedback_context(
         return None, None, None
     if (form.start_date and form.start_date > now) or not _assignment_for(form, learner_id):
         return None, None, None
+    if form.form_type == EMPLOYER_REVIEW_FORM_TYPE:
+        return None, None, None
     return form, None, None
 
 
-def _selected_delivery_question_ids(delivery):
+def _selected_delivery_question_ids(delivery, recipient=None, response=None):
     if delivery is None or not getattr(delivery, 'question_set_pinned', False):
         return None  # Existing deliveries predate the bank and retain every question.
-    return set(delivery.selected_questions.values_list('question_id', flat=True))
+    selected = set(delivery.selected_questions.values_list('question_id', flat=True))
+    if recipient is None:
+        return selected
+    replacements = FeedbackDeliveryQuestionOverride.objects.filter(
+        recipient_id=recipient.id,
+    ).values_list('original_question_id', 'replacement_question_id', 'effective_at')
+    return effective_question_ids(selected, replacements, response.started_at if response else None,
+                                  as_of=timezone.now())
 
 
 def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=None, review_delivery_id=None):
@@ -1556,7 +1671,7 @@ def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=N
     response = FeedbackResponse.objects.filter(**response_filter).prefetch_related('answers').first()
     answers = {str(a.question_id): a.answer for a in response.answers.all()} if response else {}
     data = form_dict(form, include_structure=True)
-    selected_ids = _selected_delivery_question_ids(delivery)
+    selected_ids = _selected_delivery_question_ids(delivery, recipient, response)
     if selected_ids is not None:
         for section in data['sections']:
             section['questions'] = [question for question in section['questions'] if question['id'] in selected_ids]
@@ -1647,6 +1762,16 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
     disabled = _learner_feedback_disabled_response(request, form=form, delivery=delivery)
     if disabled:
         return disabled
+    return save_owned_response(
+        request, learner_id=learner_id, learner_name=learner_name, form=form,
+        delivery=delivery, recipient=recipient, event_recipient_id=event_recipient_id,
+        review_delivery_id=review_delivery_id,
+    )
+
+
+def save_owned_response(request, *, learner_id, learner_name, form, delivery, recipient,
+                        event_recipient_id=None, review_delivery_id=None, employer_review_delivery_id=None):
+    """Shared validation/persistence after a role-specific endpoint verifies ownership."""
     payload = json_body(request) or {}
     answers = payload.get('answers')
     submit = bool(payload.get('submit'))
@@ -1654,16 +1779,10 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
         return json_error('This form does not allow saving before submission.', status=409)
     if not isinstance(answers, dict):
         return json_error('Answers must be an object keyed by question ID.')
-    selected_ids = _selected_delivery_question_ids(delivery)
-    questions = {str(q.id): q for q in FeedbackQuestion.objects.filter(section__form=form)
-                 if selected_ids is None or q.id in selected_ids}
-    if any(str(question_id) not in questions for question_id in answers):
-        return json_error('One or more question IDs do not belong to this form.')
-    for question_id, value in answers.items():
-        if not _valid_answer(questions[str(question_id)], value):
-            return json_error(f'Invalid answer for question {question_id}.')
     response_filter = {'form': form, 'learner_id': learner_id}
-    if event_recipient_id is not None:
+    if employer_review_delivery_id is not None:
+        response_filter['employer_review_delivery'] = recipient
+    elif event_recipient_id is not None:
         response_filter['event_recipient'] = recipient
     elif review_delivery_id is not None:
         response_filter['review_delivery'] = recipient
@@ -1673,6 +1792,14 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
             'rsvp_recipient__isnull': True, 'review_delivery__isnull': True,
         })
     existing_response = FeedbackResponse.objects.filter(**response_filter).prefetch_related('answers').first()
+    selected_ids = _selected_delivery_question_ids(delivery, recipient, existing_response)
+    questions = {str(q.id): q for q in FeedbackQuestion.objects.filter(section__form=form)
+                 if selected_ids is None or q.id in selected_ids}
+    if any(str(question_id) not in questions for question_id in answers):
+        return json_error('One or more question IDs do not belong to this form.')
+    for question_id, value in answers.items():
+        if not _valid_answer(questions[str(question_id)], value):
+            return json_error(f'Invalid answer for question {question_id}.')
     if existing_response and existing_response.status == 'completed' and not form.allow_edit_after_submission:
         return json_error('This response has already been submitted.', status=409)
     effective_answers = {str(a.question_id): a.answer for a in existing_response.answers.all()} if existing_response else {}
@@ -1695,7 +1822,9 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
         if not _module_recipient_open_for_write(form, recipient):
             return json_error('Feedback form not found.', status=404)
         create_identity = {'form': form, 'learner_id': learner_id}
-        if event_recipient_id is not None:
+        if employer_review_delivery_id is not None:
+            create_identity['employer_review_delivery'] = recipient
+        elif event_recipient_id is not None:
             create_identity['event_recipient'] = recipient
         elif review_delivery_id is not None:
             create_identity['review_delivery'] = recipient
@@ -1742,11 +1871,23 @@ def learner_photo_upload(request, pk=None, question_id=None, delivery_id=None, r
     disabled = _learner_feedback_disabled_response(request, form=form, delivery=delivery)
     if disabled:
         return disabled
+    return upload_owned_photo(
+        request, learner_id=learner_id, learner_name=learner_name, form=form,
+        delivery=delivery, recipient=recipient, question_id=question_id, review_delivery_id=review_delivery_id,
+    )
+
+
+def upload_owned_photo(request, *, learner_id, learner_name, form, delivery, recipient, question_id,
+                       review_delivery_id=None, employer_review_delivery_id=None):
+    """Store a photo after the learner/employer endpoint checks its assigned owner."""
     try:
         question = FeedbackQuestion.objects.get(pk=question_id, section__form=form, question_type='photo_upload')
     except FeedbackQuestion.DoesNotExist:
         return json_error('Feedback form or photo question not found.', status=404)
-    selected_ids = _selected_delivery_question_ids(delivery)
+    existing_response = (FeedbackResponse.objects.filter(
+        form=form, delivery=delivery, learner_id=learner_id,
+    ).first() if delivery is not None else None)
+    selected_ids = _selected_delivery_question_ids(delivery, recipient, existing_response)
     if selected_ids is not None and question.id not in selected_ids:
         return json_error('Feedback form or photo question not found.', status=404)
     if not evidence_storage.azure_configured():
@@ -1764,6 +1905,8 @@ def learner_photo_upload(request, pk=None, question_id=None, delivery_id=None, r
     response_identity = {'form': form, 'delivery': delivery, 'learner_id': learner_id}
     if review_delivery_id is not None:
         response_identity['review_delivery'] = recipient
+    if employer_review_delivery_id is not None:
+        response_identity['employer_review_delivery'] = recipient
     with transaction.atomic():
         if not _module_recipient_open_for_write(form, recipient):
             return json_error('Feedback form not found.', status=404)
@@ -1830,7 +1973,7 @@ def feedback_upload_content(request, upload_id):
     if disabled:
         return disabled
     try:
-        upload = FeedbackUpload.objects.select_related('response__form', 'response__delivery').get(pk=upload_id)
+        upload = FeedbackUpload.objects.select_related('response__form', 'response__delivery', 'response__employer_review_delivery').get(pk=upload_id)
     except FeedbackUpload.DoesNotExist:
         return json_error('Photo not found.', status=404)
     disabled = _learner_feedback_disabled_response(
@@ -1838,7 +1981,11 @@ def feedback_upload_content(request, upload_id):
     )
     if disabled:
         return disabled
-    error = require_self_or_staff(request, upload.response.learner_id)
+    if getattr(upload.response, 'employer_review_delivery_id', None) is not None:
+        from .employer_feedback import employer_scope
+        _, error = employer_scope(request, upload.response.employer_review_delivery.employer_id)
+    else:
+        error = require_self_or_staff(request, upload.response.learner_id)
     if error:
         return error
     if not evidence_storage.azure_configured():

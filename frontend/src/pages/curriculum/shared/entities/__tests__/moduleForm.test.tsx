@@ -19,6 +19,14 @@ import {
 } from '@/lib/curriculumApi';
 import { createNewModule } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { ModuleFormDrawer } from '../moduleForm';
+import { fetchModuleHoursTarget, saveModuleHoursTarget } from '@/api/moduleHours';
+
+vi.mock('@/api/moduleHours', async original => ({ ...(await original<typeof import('@/api/moduleHours')>()), fetchModuleHoursTarget: vi.fn(), saveModuleHoursTarget: vi.fn() }));
+beforeEach(() => {
+  vi.mocked(fetchModuleHoursTarget).mockImplementation(async moduleId => ({ moduleId, targetMinutes: null, revision: 0, canMatch: false }));
+  vi.mocked(saveModuleHoursTarget).mockReset();
+  vi.mocked(saveModuleHoursTarget).mockImplementation(async (moduleId, targetMinutes, revision) => ({ moduleId, targetMinutes, revision: revision + 1, canMatch: true }));
+});
 
 /**
  * The one form that creates and places a module, in place of the six-step
@@ -169,6 +177,86 @@ describe('ModuleFormDrawer', () => {
     createNewModuleMock.mockClear();
     sendTutorAssignmentEmailMock.mockClear();
     tutorEmailStatusMock.mockClear();
+  });
+
+  it('creates a standalone free course without inheriting placement or scheduling defaults', async () => {
+    const { onSaved } = renderDrawer({ freeCourse: true, defaults: {
+      programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1',
+    } });
+    expect(screen.getByRole('heading', { name: 'Free course' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /programme|cohort|tutor/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Assign later|Group A/i })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: /Course name/i }), 'Independent study');
+    await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(createNewModuleMock).toHaveBeenCalledWith(expect.objectContaining({
+      isFreeCourse: true, learnerRosterMode: 'manual', title: 'Independent study',
+      programmeId: '', cohortId: '', startDate: '', endDate: '',
+    }));
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(previewModuleSessionPlanMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('reopens a free course as self-study even without the creation prop', () => {
+    renderDrawer({ module: { id: 'MOD-FREE', name: 'Independent study', isFreeCourse: true, weeks: 3 } });
+    expect(screen.getByRole('heading', { name: 'Edit free course' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /Course name/i })).toHaveValue('Independent study');
+    expect(screen.getByRole('spinbutton', { name: /weeks/i })).toHaveValue(3);
+    expect(screen.queryByRole('combobox', { name: /programme|cohort|tutor/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save free course' })).toBeInTheDocument();
+  });
+
+  it('requires a positive price with at most two decimals before creating a course for sale', async () => {
+    renderDrawer({ freeCourse: true });
+    await userEvent.type(screen.getByRole('textbox', { name: /Course name/i }), 'Paid standalone course');
+    expect(screen.queryByRole('textbox', { name: /Price \(GBP\)/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Available for sale' }));
+    const price = screen.getByRole('textbox', { name: /Price \(GBP\)/ });
+    for (const invalid of ['', '0', '-10', '12.345', '1e2']) {
+      await userEvent.clear(price);
+      if (invalid) await userEvent.type(price, invalid);
+      await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
+      expect(createNewModuleMock).not.toHaveBeenCalled();
+      expect(screen.getByText(/Enter a GBP price between/)).toBeInTheDocument();
+    }
+    await userEvent.clear(price);
+    await userEvent.type(price, '49.99');
+    await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
+    await waitFor(() => expect(createNewModuleMock).toHaveBeenCalledWith(expect.objectContaining({
+      isFreeCourse: true, isForSale: true, price: '49.99', currency: 'GBP',
+    })));
+  });
+
+  it('loads the saved sale price and saves an edited price without resizing weeks', async () => {
+    renderDrawer({ module: { id: 'MOD-FREE', name: 'Paid course', isFreeCourse: true,
+      isForSale: true, price: '49.99', currency: 'GBP', weeks: 3 } });
+    expect(screen.getByRole('checkbox', { name: 'Available for sale' })).toBeChecked();
+    const price = screen.getByRole('textbox', { name: /Price \(GBP\)/ });
+    expect(price).toHaveValue('49.99');
+    await userEvent.clear(price);
+    await userEvent.type(price, '75.50');
+    await userEvent.click(screen.getByRole('button', { name: 'Save free course' }));
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledWith('MOD-FREE', expect.objectContaining({
+      isForSale: true, price: '75.50', currency: 'GBP',
+    })));
+    expect(updateCurriculumModuleMock.mock.calls[0][1]).not.toHaveProperty('weeks');
+  });
+
+  it('clears the saved price when sale is disabled', async () => {
+    renderDrawer({ module: { id: 'MOD-FREE', name: 'Paid course', isFreeCourse: true,
+      isForSale: true, price: '49.99', currency: 'GBP', weeks: 3 } });
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Available for sale' }));
+    expect(screen.queryByRole('textbox', { name: /Price \(GBP\)/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Save free course' }));
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledWith('MOD-FREE', expect.objectContaining({
+      isForSale: false, price: null, currency: 'GBP',
+    })));
+  });
+
+  it('keeps pricing out of the ordinary module form', () => {
+    renderDrawer({ module: { id: 'MOD-NORMAL', name: 'Normal module', weeks: 3 } });
+    expect(screen.queryByRole('checkbox', { name: 'Available for sale' })).not.toBeInTheDocument();
   });
 
   it('reopens imported session rows as eight teaching weeks and keeps the module closure in its preview', async () => {
@@ -334,6 +422,93 @@ describe('ModuleFormDrawer', () => {
     total: 1, emailed: 1, lastSentAt: '2026-10-01T09:30:00Z',
     deliveries: [{ moduleId: 'MOD-1', emailed: true, lastSent: { status: 'sent', at: '2026-10-01T09:30:00Z' } }],
   };
+
+  it('saves only the fixed hours target without rescheduling or emailing the tutor', async () => {
+    vi.mocked(fetchModuleHoursTarget).mockResolvedValue({ moduleId: 'MOD-1', targetMinutes: null, revision: 0, canMatch: true });
+    const { onClose } = renderDrawer({ module: assignedModule() });
+    await userEvent.click(await screen.findByRole('button', { name: /Fixed planned hours/ }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Set a fixed hours target/ }));
+    await userEvent.type(screen.getByRole('spinbutton', { name: 'Target hours' }), '500');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(saveModuleHoursTarget).toHaveBeenCalledWith('MOD-1', 30000, 0);
+    expect(updateCurriculumModuleMock).not.toHaveBeenCalled();
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves an explicitly requested tutor notification when saving the hours target', async () => {
+    vi.mocked(fetchModuleHoursTarget).mockResolvedValue({ moduleId: 'MOD-1', targetMinutes: null, revision: 0, canMatch: true });
+    renderDrawer({ module: assignedModule() });
+    await userEvent.click(await screen.findByRole('button', { name: /Fixed planned hours/ }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Set a fixed hours target/ }));
+    await userEvent.type(screen.getByRole('spinbutton', { name: 'Target hours' }), '500');
+    await userEvent.click(screen.getByRole('checkbox', { name: /Email Tutor One about this module/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(sendTutorAssignmentEmailMock).toHaveBeenCalledWith(['MOD-1']));
+    expect(saveModuleHoursTarget).toHaveBeenCalledWith('MOD-1', 30000, 0);
+  });
+
+  it('keeps a failed hours draft and reports partial success when module details saved first', async () => {
+    vi.mocked(fetchModuleHoursTarget).mockResolvedValue({ moduleId: 'MOD-1', targetMinutes: null, revision: 0, canMatch: true });
+    vi.mocked(saveModuleHoursTarget).mockRejectedValueOnce(new Error('Hours target unavailable'));
+    const { onClose, onSaved } = renderDrawer({ module: assignedModule() });
+    await userEvent.click(await screen.findByRole('button', { name: /Fixed planned hours/ }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Set a fixed hours target/ }));
+    await userEvent.type(screen.getByRole('spinbutton', { name: 'Target hours' }), '500');
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), ' updated');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await screen.findByText('Module details were saved, but the hours target was not saved. Hours target unavailable');
+    expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('spinbutton', { name: 'Target hours' })).toHaveValue(500);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('uploads the cover through Edit module without replacing content or creating a module', async () => {
+    const { onSaved } = renderDrawer({ module: assignedModule() });
+    await userEvent.upload(screen.getByLabelText('Upload image'), new File(['cover'], 'cover.png', { type: 'image/png' }));
+    const image = await screen.findByAltText('Data Foundations cover');
+    const cover = image.getAttribute('src');
+    expect(cover).toMatch(/^data:image\/png;base64,/);
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1));
+    const [id, payload] = updateCurriculumModuleMock.mock.calls[0];
+    expect(id).toBe('MOD-1');
+    expect(payload).toMatchObject({ coverImage: cover });
+    expect(payload).not.toHaveProperty('weekStructure');
+    expect(payload).not.toHaveProperty('teamsEventId');
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(createNewModuleMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-1' })));
+  });
+
+  it('keeps the uploaded cover and drawer open when the module save fails', async () => {
+    updateCurriculumModuleMock.mockRejectedValueOnce(new Error('Could not save the module image.'));
+    const { onSaved, onClose } = renderDrawer({ module: assignedModule() });
+    await userEvent.upload(screen.getByLabelText('Upload image'), new File(['cover'], 'cover.png', { type: 'image/png' }));
+    const image = await screen.findByAltText('Data Foundations cover');
+    const cover = image.getAttribute('src');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    expect(await screen.findByText('Could not save the module image.')).toBeInTheDocument();
+    expect(screen.getByAltText('Data Foundations cover')).toHaveAttribute('src', cover);
+    expect(screen.getByRole('button', { name: 'Save module' })).toBeEnabled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('renames the same module without submitting inherited delivery fields or emailing its tutor', async () => {
+    renderDrawer({ module: assignedModule() });
+    const name = screen.getByPlaceholderText('e.g. Data Modelling');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Renamed foundations');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledWith('MOD-1', { name: 'Renamed foundations' }));
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
 
   it('still shows the tick for a tutor who has not changed, reading its state from the ledger', async () => {
     tutorEmailStatusMock.mockResolvedValue(emailedStatus as never);
@@ -816,13 +991,8 @@ describe('ModuleFormDrawer', () => {
     expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1);
     const [id, payload] = updateCurriculumModuleMock.mock.calls[0];
     expect(id).toBe('MOD-1');
-    expect(payload).toMatchObject({
-      name: 'Data Foundations II',
-      status: 'published',
-      tutor: 'Tutor One',
-      groupId: 'GROUP-1',
-      cohortId: 'COHORT-1',
-    });
+    // A rename addresses the same record without re-authoring its delivery.
+    expect(payload).toEqual({ name: 'Data Foundations II' });
     expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-1', name: 'Data Foundations II', created: false }));
   });
 

@@ -12,7 +12,9 @@ vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<
   qualityForms: vi.fn(), qualityContext: vi.fn(), qualityDefinition: vi.fn(), createQualityForm: vi.fn(), saveQualityDefinition: vi.fn(), saveQualityReview: vi.fn(), uploadQualityEvidence: vi.fn() }));
 const kinds = ['PROGRESS_REVIEW','COMMITMENT','FIRST_SESSION','GATEWAY','INFORMATION','MONTHLY_COACHING','TEACHING','BARRIERS','BRITISH_VALUES','CIAG','EPA','MARKING_FEEDBACK','SAFEGUARDING','TARGET_SETTING'];
 const cards = kinds.map((kind, index) => ({ reviewType: 'FORM_' + kind, title: kind.replaceAll('_', ' ') + ' Feedback Form', group: index < 7 ? 'Session forms' : 'Themed observations', published: true, revision: 0, legacy: false }));
+cards.push({ reviewType: 'FORM_PORTFOLIO_SAMPLING', title: 'Portfolio Sampling Feedback Form', group: 'Portfolio sampling', published: true, revision: 0, legacy: false });
 const definition = (kind: string): QualityTemplate => ({ id: 'feedback-' + kind.toLowerCase(), reviewType: kind, title: cards.find(row => row.reviewType === kind)?.title || 'Custom form', version: 1,
+  ...(kind === 'FORM_PORTFOLIO_SAMPLING' ? { purpose: 'Review the quality of the learner experience throughout their apprenticeship journey.' } : {}),
   ratings: { gold: 'Gold guidance', green: 'Green guidance', amber: 'Amber guidance', red: 'Red guidance', na: 'Not applicable' },
   sections: [{ id: 'observation', title: 'Session observation', screenshots: false, criteria: [{ id: 'criterion-1', text: 'Specific observation', type: 'rating', allowNa: false, descriptors: { green: 'Complete original criterion guidance.' } }] }] });
 const templateState = (kind: string) => ({ id: definition(kind).id, reviewType: kind, revision: 0, draft: definition(kind), published: definition(kind), publishedAt: null, updatedAt: null });
@@ -31,9 +33,9 @@ describe('Feedback forms and original evidence', () => {
     vi.mocked(saveQualityDefinition).mockReset().mockImplementation(async payload => ({ ...templateState(payload.definition.reviewType!), revision: 1, draft: payload.definition, published: { ...payload.definition, version: 2 } }));
   });
 
-  it('lists all fourteen cards, groups and searches them locally without auto-selection or typing requests', async () => {
+  it('lists the original forms and portfolio, groups and searches them without auto-selection or typing requests', async () => {
     const select = vi.fn(); render(<QualityFormCards value="" onChange={select} />);
-    expect(await screen.findAllByRole('radio')).toHaveLength(14);
+    expect(await screen.findAllByRole('radio')).toHaveLength(15);
     expect(screen.getAllByRole('radio').every(row => !(row as HTMLInputElement).checked)).toBe(true);
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'SAFEGUARDING' } });
     expect(screen.getAllByRole('radio')).toHaveLength(1); expect(qualityForms).toHaveBeenCalledOnce();
@@ -46,16 +48,16 @@ describe('Feedback forms and original evidence', () => {
     render(<QualityFormCards value="" onChange={vi.fn()} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Library temporarily unavailable');
     fireEvent.click(screen.getByRole('button', { name: 'Retry form library' }));
-    expect(await screen.findAllByRole('radio')).toHaveLength(14);
+    expect(await screen.findAllByRole('radio')).toHaveLength(15);
   });
 
   it('opens the chosen form, saves a draft once, and uploads multiple original file formats sequentially', async () => {
     render(<MemoryRouter><QualityReviewDialog initialLearnerId="1" initialReviewType="MCM" onClose={vi.fn()} /></MemoryRouter>);
-    expect(await screen.findAllByRole('radio')).toHaveLength(14);
+    expect(await screen.findAllByRole('radio')).toHaveLength(15);
     expect(screen.queryByRole('radio', { name: 'Green' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: 'SAFEGUARDING Feedback Form' }));
     await screen.findByRole('radio', { name: 'Green' });
-    expect(screen.queryByRole('radio', { name: 'N/A' })).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'N/A' })).not.toBeChecked();
     const files = [new File(['spreadsheet'], 'evidence.xlsx'), new File(['video'], 'evidence.mp4')];
     fireEvent.change(screen.getByLabelText('Attach evidence files: evidence'), { target: { files } });
     await screen.findByText('evidence.mp4');
@@ -66,6 +68,40 @@ describe('Feedback forms and original evidence', () => {
     expect(vi.mocked(saveQualityReview).mock.calls[1][0].form.attachments?.evidence).toEqual(['evidence.xlsx','evidence.mp4']);
     expect(vi.mocked(saveQualityReview).mock.calls[1][0].reviewType).toBe('FORM_SAFEGUARDING');
     expect(qualityContext).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(cards)('completes $reviewType with N/A even when its saved template disallows it', async card => {
+    render(<MemoryRouter><QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('radio', { name: card.title }));
+    const na = await screen.findByRole('radio', { name: 'N/A' });
+    expect(na).not.toBeChecked();
+    fireEvent.click(na);
+    expect(na).toBeChecked();
+    expect(screen.getByText('1 of 1 criteria rated')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+    await screen.findByText('Completed · Version 1 saved');
+    expect(saveQualityReview).toHaveBeenCalledOnce();
+    expect(vi.mocked(saveQualityReview).mock.calls[0][0]).toMatchObject({
+      learnerId: '1', reviewType: card.reviewType, status: 'completed',
+      form: { criteria: { 'criterion-1': { rating: 'na', evidence: '' } } },
+    });
+    expect(screen.getByRole('radio', { name: 'N/A' })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Preview PDF' })).toBeEnabled();
+  });
+
+  it('finds the existing portfolio by its clear name and shows its purpose before saving', async () => {
+    render(<MemoryRouter><QualityReviewDialog initialLearnerId="1" onClose={vi.fn()} /></MemoryRouter>);
+    await screen.findByRole('radio', { name: 'Portfolio Sampling Feedback Form' });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'portfolio' } });
+    expect(screen.getAllByRole('radio')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('radio', { name: 'Portfolio Sampling Feedback Form' }));
+    expect(await screen.findByText('Review the quality of the learner experience throughout their apprenticeship journey.')).toBeVisible();
+    expect(saveQualityReview).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Evidence observed and impact on the learner' }), { target: { value: 'Verified portfolio evidence.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+    await screen.findByText('Completed · Version 1 saved');
+    expect(vi.mocked(saveQualityReview).mock.calls[0][0]).toMatchObject({ reviewType: 'FORM_PORTFOLIO_SAMPLING', status: 'completed' });
   });
 
   it('keeps entered observations when an evidence upload fails or exceeds its bound', async () => {

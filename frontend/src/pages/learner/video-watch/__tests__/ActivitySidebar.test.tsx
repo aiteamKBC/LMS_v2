@@ -57,11 +57,14 @@ describe('module activity sidebar', () => {
   it('loads month names from the matching training-plan module even when another module has the same title', async () => {
     const plan = { modules: [
       { id: 'OTHER', title: 'Leadership', start_date: '2026-01-01' },
-      { id: 'M1', title: 'Leadership', start_date: '2026-08-03' },
+      { id: 'M1', title: 'Leadership', start_date: '2026-08-03', curriculumSlots: weeks.map((week, index) => {
+        const date = new Date('2026-08-03T12:00:00Z'); date.setUTCDate(date.getUTCDate() + index * 7);
+        return { date: date.toISOString().slice(0, 10), weekId: week.key, weekTitle: week.week, type: 'live-session', sessionNumber: index + 1, slotNumber: index + 1, day: 'Monday', holidays: [] };
+      }) },
     ] } as TrainingPlanDashboard;
     vi.spyOn(learningSchedule, 'peek').mockReturnValue(undefined);
     const read = vi.spyOn(learningSchedule, 'read').mockResolvedValue(plan);
-    const assignedWeeks = weeks.map(week => ({ ...week, components: week.components.map(component => ({ ...component, moduleId: 'M1' })) }));
+    const assignedWeeks = weeks.map(week => ({ ...week, weekId: week.key, components: week.components.map(component => ({ ...component, moduleId: 'M1', weekId: week.key })) }));
     render(<MemoryRouter><ActivitySidebar kind="commercial" id="132" weekComponents={assignedWeeks[5].components} weekTitle="Week 6"
       moduleTitle="Leadership" weeks={assignedWeeks} completedIds={new Set()} currentComponentId="C6" routeFor={c => `/activity/${c.componentId}`} /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'August 2026' })).toBeVisible();
@@ -70,12 +73,12 @@ describe('module activity sidebar', () => {
     expect(read).toHaveBeenCalledWith('commercial', '132', expect.any(AbortSignal), false);
   });
 
-  it('shows the open week above all ten weeks with a month heading for each four weeks', () => {
+  it('keeps all ten undated weeks visible without inventing four-week months', () => {
     render(<MemoryRouter><ActivitySidebar weekComponents={weeks[5].components} weekTitle="Week 6" moduleTitle="Leadership"
       weeks={weeks} completedIds={new Set(['C1'])} currentComponentId="C6" routeFor={c => `/activity/${c.componentId}`} /></MemoryRouter>);
     const sidebar = screen.getByRole('complementary', { name: 'Module activities' });
     expect(within(sidebar).getAllByRole('heading').map(heading => heading.textContent))
-      .toEqual(['Week 6', 'Leadership', 'Month 1', 'Month 2', 'Month 3']);
+      .toEqual(['Week 6', 'Leadership', 'Dates not scheduled yet']);
     for (let number = 1; number <= 10; number++) {
       expect(within(sidebar).getByRole('button', { name: new RegExp(`^Week ${number}\\b`) })).toBeVisible();
     }

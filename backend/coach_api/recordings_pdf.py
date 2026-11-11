@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import re
 from threading import Lock
+from types import SimpleNamespace
 
 from reportlab import __file__ as reportlab_file
 from reportlab.lib import colors
@@ -227,26 +228,31 @@ def _ai_sections(report):
     return sections
 
 
-def _render(record, evidence, analysis, kind):
+def _render(record, evidence, analysis, kind, *, lecture=None, turns=None):
     _fonts()
     saved = (analysis or {}).get('session') or {}
     report = _report(analysis['report']) if kind == 'analysis' else {}
     context = {**{key: report.get(key) for key in ('learner', 'coach', 'programme')}, **saved}
     name = context.get('learner_name') or (analysis or {}).get('learnerName') or context.get('learner') or 'Meeting'
+    if lecture:
+        name = lecture['title']
     title = 'Coach Workspace Report' if kind == 'analysis' else 'Full Transcript'
     stream = BytesIO()
     doc = SimpleDocTemplate(stream, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
         topMargin=14 * mm, bottomMargin=16 * mm, title=f'{title} - {name}', author='Kent Business College')
-    logo = Path(__file__).resolve().parents[2] / 'frontend' / 'public' / 'assets' / 'kbc-logo.png'
+    logo = Path(__file__).resolve().parents[1] / 'curriculum_api' / 'templates' / 'kbc-logo.png'
     heading = _p(title, size=11, bold=True)
     heading.style.alignment = TA_RIGHT
     brand = Table([[Image(str(logo), width=48 * mm, height=23 * mm, kind='proportional'), heading]], colWidths=[WIDTH / 2] * 2)
     brand.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('LINEBELOW', (0, 0), (-1, -1), 1.5, PURPLE),
                               ('BOTTOMPADDING', (0, 0), (-1, -1), 10)]))
     begin, end = session_window(record)
-    hero = [_p(name, size=17, bold=True), _p(context.get('program_name') or context.get('programme'), size=9),
-            _p(saved.get('component_name') or saved.get('meeting_subject') or (analysis or {}).get('type') or 'Meeting transcript', size=9),
-            _p(f"Coach: {context.get('case_owner') or context.get('coach') or record.owner_email}", size=8),
+    programme = lecture.get('programme') if lecture else context.get('program_name') or context.get('programme')
+    subject = (f"Cohort: {lecture.get('cohort') or 'Not recorded'} | Group: {lecture.get('group') or 'Not recorded'}"
+               if lecture else saved.get('component_name') or saved.get('meeting_subject') or (analysis or {}).get('type') or 'Meeting transcript')
+    facilitator = (f"Tutor: {lecture.get('tutor') or 'Not recorded'}" if lecture
+                   else f"Coach: {context.get('case_owner') or context.get('coach') or record.owner_email}")
+    hero = [_p(name, size=17, bold=True), _p(programme, size=9), _p(subject, size=9), _p(facilitator, size=8),
             _p(f"Occurrence (UTC): {begin.isoformat()} - {end.isoformat()}", size=7, color=MUTED)]
     panel = Table([[hero]], colWidths=[WIDTH], splitInRow=1)
     panel.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), SOFT), ('BOX', (0, 0), (-1, -1), .5, colors.HexColor('#DDD6FE')),
@@ -254,7 +260,7 @@ def _render(record, evidence, analysis, kind):
         ('TOPPADDING', (0, 0), (-1, -1), 12), ('BOTTOMPADDING', (0, 0), (-1, -1), 8)]))
     story = [brand, Spacer(1, 14), panel, Spacer(1, 16)]
     raw = (evidence.get('transcript') or {}).get('content') or ''
-    turns = transcript_turns(raw)
+    turns = transcript_turns(raw) if turns is None else turns
     if kind == 'analysis':
         story.extend([_columns(_details('Learner & Programme', [(label, saved.get(key)) for label, key in (
             ('Learner', 'learner_name'), ('Email', 'learner_email'), ('Status', 'learner_status'),
@@ -284,11 +290,33 @@ def _render(record, evidence, analysis, kind):
         canvas.saveState()
         canvas.setFont('CoachingPDF', 6.5)
         canvas.setFillColor(MUTED)
-        canvas.drawString(15 * mm, 9 * mm, 'Kent Business College | Coaching Session | Confidential')
+        workspace = 'Tutor Session' if lecture else 'Coaching Session'
+        canvas.drawString(15 * mm, 9 * mm, f'Kent Business College | {workspace} | Confidential')
         canvas.drawRightString(A4[0] - 15 * mm, 9 * mm, f'Page {document.page}')
         canvas.restoreState()
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     return stream.getvalue()
+
+
+def lecture_transcript_pdf(lecture, parts):
+    """Use the coaching transcript layout for all saved parts of one lecture."""
+    def timecode(seconds):
+        millis = round(float(seconds) * 1000)
+        sign = '-' if millis < 0 else ''
+        hours, rest = divmod(abs(millis), 3600000)
+        minutes, rest = divmod(rest, 60000)
+        seconds, millis = divmod(rest, 1000)
+        return f'{sign}{hours:02}:{minutes:02}:{seconds:02}.{millis:03}'
+
+    turns = []
+    for part in parts:
+        if part.get('cues'):
+            turns.extend((cue.get('speaker') or '', f"{timecode(cue['start'])} - {timecode(cue['end'])}", cue['text'])
+                         for cue in part['cues'] if cue.get('text'))
+        else:
+            turns.extend(transcript_turns(part['content']))
+    record = SimpleNamespace(owner_email='', calendar_window=(lecture['startsAt'], lecture['endsAt']))
+    return _render(record, {}, None, 'transcript', lecture=lecture, turns=turns)
 
 
 def evidence_pdf(record, evidence, *, kind, analysis=None):

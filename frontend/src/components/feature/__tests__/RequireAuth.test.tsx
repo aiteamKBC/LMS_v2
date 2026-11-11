@@ -11,7 +11,7 @@ const session = vi.hoisted(() => ({
   retryInitialization: vi.fn(),
 }));
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => session }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => session }));
 vi.mock('@/features/old-otjh/hooks', () => ({
   OldOtjhGate: ({ children }: { children: ReactNode }) => children,
 }));

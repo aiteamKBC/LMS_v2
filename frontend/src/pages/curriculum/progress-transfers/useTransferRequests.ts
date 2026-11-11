@@ -102,7 +102,7 @@ export function useTransferRequests() {
       const latest = current.current!;
       update({ ...latest, requests: latest.requests.map(row => row.requestId === requestId ? { ...row, ...result } : row) });
       setNeedsRefresh(true);
-      setNotice('Transfer approved. The learner can now open the new modules.');
+      setNotice('Transfer approved. The learner can now open the new modules. Progress merged successfully. Completed matches from the old LMS and existing completions in the new LMS now count together, once per component. The old percentage and recorded hours are retained in the transfer record.');
       // Approval changes the service's pending-first order: restart pagination.
       await read(0);
       return true;

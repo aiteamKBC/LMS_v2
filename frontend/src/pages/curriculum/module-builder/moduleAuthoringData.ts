@@ -1,5 +1,8 @@
 import { requestSessionSync } from '@/api/sessionResults';
-import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
+import { coachFetch } from '@/lib/coachFetch';
+import { localClockToUtcIso, zoneOffsetMs } from '@/lib/timeZones';
+import { sessionDeliveryDate } from '@/lib/deliveryWeek';
+import type { CoursePricing, CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
 import {
   CurriculumApiError,
   clearCurriculumGetCache,
@@ -190,11 +193,16 @@ export interface ModuleMonthGroup {
  * Returns [] when no week has a date: there is no month to name, and a single
  * "Unscheduled" heading over the whole list tells a reader nothing.
  */
+export function moduleWeekDeliveryDate(week: ModuleWeek): string {
+  const primary = week.components.find(component => component.type === 'live-session' && !component.settings?.extraTeamsMeetingUrl);
+  return (primary && sessionDeliveryDate(primary.settings || {})) || sessionDeliveryDate({ sessionDate: week.sessionDate });
+}
+
 export function groupWeeksByMonth(weeks: ModuleWeek[]): ModuleMonthGroup[] {
-  if (!weeks.some(week => monthKeyOf(week.sessionDate))) return [];
+  if (!weeks.some(week => monthKeyOf(moduleWeekDeliveryDate(week)))) return [];
   const groups: ModuleMonthGroup[] = [];
   weeks.forEach(week => {
-    const key = monthKeyOf(week.sessionDate);
+    const key = monthKeyOf(moduleWeekDeliveryDate(week));
     const current = groups[groups.length - 1];
     // Only ever extends the run in progress, so the weeks stay in module order:
     // a heading is a stretch of the timetable, not a bucket to file weeks into.
@@ -786,16 +794,11 @@ export function replaceLiveSessionLinksInWeeks(
           if (
             component.type !== 'live-session'
             || String(component.settings.extraTeamsMeetingUrl || '').trim()
-            || !String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim()
+            || component.settings.teamsMeetingScope === 'additional'
           ) return component;
           return {
             ...component,
-            settings: {
-              ...component.settings,
-              liveSessionUrl: nextLink,
-              teamsMeetingUrl: nextLink,
-              liveSessionLinkOverride: nextLink,
-            },
+            settings: manualLiveSessionLinkSettings(component.settings, nextLink),
           };
         }),
       };
@@ -826,7 +829,7 @@ export function applyLiveSessionLinkToComponents(
           ...week,
           components: week.components.map(component => (
             ids.has(component.id)
-              ? { ...component, settings: { ...component.settings, liveSessionUrl: nextLink, teamsMeetingUrl: nextLink, liveSessionLinkOverride: nextLink } }
+              ? { ...component, settings: manualLiveSessionLinkSettings(component.settings, nextLink) }
               : component
           )),
         }
@@ -870,6 +873,73 @@ export async function replaceModuleTeamsLinks(
   // The components the cached module views describe have just changed.
   if (result.updated) invalidateCurriculumCacheByEntity('module');
   return result;
+}
+
+export interface ExistingTeamsSeriesReview {
+  previewToken: string;
+  matched: number;
+  unmatched: number;
+  organizer: string;
+  timeZone: string;
+  structureRevision: string;
+  sessions: Array<{ componentId: string; weekId: string; title: string; date: string; status: 'matched' | 'missing' | 'ambiguous'; holidays: unknown[] }>;
+}
+
+export async function previewExistingTeamsSeries(moduleId: string, input: { link: string; weekIds: string[]; calendarMailbox: string }) {
+  return apiJson<ExistingTeamsSeriesReview>(`/curriculum/modules/${encodeURIComponent(moduleId)}/teams-existing-series/`, {
+    method: 'POST', body: JSON.stringify({ action: 'preview', ...input }), timeoutMs: 120000,
+  }, coachFetch);
+}
+
+export async function linkExistingTeamsSeries(moduleId: string, previewToken: string) {
+  const result = await apiJson<{ module: ModuleCatalogueItem; matched: number; unmatched: number; alreadyLinked: boolean }>(
+    `/curriculum/modules/${encodeURIComponent(moduleId)}/teams-existing-series/`, {
+      method: 'POST', body: JSON.stringify({ action: 'apply', previewToken }), timeoutMs: 120000,
+    }, coachFetch,
+  );
+  invalidateCurriculumCacheByEntity('module');
+  return { ...result, module: recalculateModule(result.module) };
+}
+
+/** Editing one session's link must never change another week or retain the
+ * previous meeting's IDs as proof for an unrelated URL. */
+export function manualLiveSessionLinkSettings(
+  settings: ComponentSettings, link: string,
+  previousLink = String(settings.liveSessionUrl || settings.teamsMeetingUrl || '').trim(),
+): ComponentSettings {
+  if (String(settings.extraTeamsMeetingUrl || '').trim() || settings.teamsMeetingScope === 'additional') return settings;
+  if (previousLink === link.trim()) return settings;
+  const next = { ...settings };
+  const identityKeys = ['teamsLiveSessionId', 'teamsOccurrenceId', 'teamsSessionNumber', 'teamsEventId',
+    'teamsOnlineMeetingId', 'teamsStartDateTimeUtc', 'teamsCalendarSeries', 'teamsWebLink', 'teamsMeetingOptionsUrl'];
+  identityKeys.forEach(key => { delete next[key]; });
+  if (typeof next.legacySettings === 'string') {
+    try {
+      const legacy = JSON.parse(next.legacySettings);
+      if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+        identityKeys.forEach(key => { delete legacy[key]; });
+        next.legacySettings = JSON.stringify(legacy);
+      }
+    } catch { /* Malformed legacy data cannot supply a provider identity. */ }
+  }
+  return { ...next, liveSessionUrl: link, teamsMeetingUrl: link,
+    liveSessionLinkOverride: link, teamsCalendarBinding: 'unverified' };
+}
+
+export function applyModuleComponentUpdate(module: ModuleCatalogueItem, componentId: string, updates: Partial<ModuleComponent>) {
+  return { ...module, weekStructure: module.weekStructure.map(week => ({
+    ...week, components: week.components.map(component => {
+      if (component.id !== componentId) return component;
+      const incoming = updates.settings;
+      const linkChanged = component.type === 'live-session' && incoming
+        && Object.prototype.hasOwnProperty.call(incoming, 'liveSessionUrl')
+        && String(incoming.liveSessionUrl || '').trim() !== String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim();
+      return { ...component, ...updates, ...(linkChanged
+        ? { settings: manualLiveSessionLinkSettings({ ...component.settings, ...incoming }, String(incoming.liveSessionUrl || '').trim(),
+            String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim()) }
+        : {}) };
+    }),
+  })) };
 }
 
 /**
@@ -1215,7 +1285,8 @@ export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
   ));
 }
 
-export interface ModuleCatalogueItem {
+export interface ModuleCatalogueItem extends CoursePricing {
+  isFreeCourse?: boolean;
   learnerRosterMode?: 'inherited' | 'manual' | string;
   teamsSharedSourceModuleId?: string;
   ksbRemapReport?: KsbRemapReport | null;
@@ -1433,7 +1504,7 @@ export function weekExpectedOtjhTotal(week: Pick<ModuleWeek, 'components'>): num
   return roundedMinutesToHours(totalMinutes);
 }
 
-export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string }): ModuleCatalogueItem {
+export function createLocalModuleDraft(input: CoursePricing & { isFreeCourse?: boolean; programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
   const weekCount = Math.max(0, Math.round(Number(input.weeks) || 0));
@@ -1441,6 +1512,10 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   return recalculateModule({
     id,
     catalogueId,
+    isFreeCourse: input.isFreeCourse,
+    isForSale: input.isForSale,
+    price: input.price,
+    currency: input.currency,
     // An unassigned draft carries an EMPTY programmeId, never a placeholder
     // string. 'programme-local' used to be sent here and the backend accepted
     // it as a real identifier, creating junk programme rows. A programme NAME
@@ -1484,7 +1559,10 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   });
 }
 
-export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
+export async function createNewModule(input: CoursePricing & { isFreeCourse?: boolean; programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
+  if (input.isFreeCourse) {
+    input = { ...input, programme: '', programmeId: '', programmeStatus: '', cohortId: '', cohortName: '', groupId: '', groupName: '', learnerRosterMode: 'manual', teamsSharedSourceModuleId: '', startDate: '', endDate: '' };
+  }
   const draft = createLocalModuleDraft(input);
   try {
     const response = await apiJson<{ created: boolean; moduleCatalogueId?: string; module?: ModuleCatalogueItem }>('/curriculum/modules/', {
@@ -1492,6 +1570,10 @@ export async function createNewModule(input: { programme: string; title: string;
       body: JSON.stringify({
         title: draft.title,
         moduleType: 'authoring',
+        ...(input.isFreeCourse ? { isFreeCourse: true, catalogueId: draft.catalogueId } : {}),
+        isForSale: draft.isForSale,
+        price: draft.price,
+        currency: draft.currency,
         sourceType: 'authoring',
         description: draft.description,
         coverImage: draft.coverImage || '',
@@ -1634,9 +1716,21 @@ export async function duplicateModuleStructure(
   source: ModuleCatalogueItem,
   options: DuplicateModuleStructureOptions = {},
 ) {
+  if (source.isFreeCourse) {
+    options = { ...options, keepDates: false, programmeId: '', programmeName: '', cohortId: '', cohortName: '', groupId: '', groupName: '', startDate: '', learnerRosterMode: 'manual', teamsCopyMode: 'independent', deliveryMetadata: {} };
+  }
   const { keepDates = false, renameCopy = true } = options;
   const learnerRosterMode = options.learnerRosterMode || (keepDates ? 'inherited' : 'manual');
   const teamsCopyMode = options.teamsCopyMode || 'independent';
+  const copyDeliverySettings = (settings: ComponentSettings) => {
+    const next = independentCopySettings(structuredClone(settings), { keepDates });
+    if (learnerRosterMode === 'manual') {
+      // These are people on the source delivery, not reusable teaching content.
+      // Leaving them here preselects the old class when a new meeting is made.
+      for (const key of ['teamsAttendees', 'teamsPresenters', 'teamsCoOrganizers']) delete next[key];
+    }
+    return next;
+  };
   const copyId = `copy-${Date.now().toString(36)}`;
   const cloneMappings = (mappings: KsbMapping[] = [], scope: string) => mappings.map((mapping, index) => ({
     ...mapping,
@@ -1648,6 +1742,7 @@ export async function duplicateModuleStructure(
     catalogueId: makeAuthoringId('MOD'),
     title: renameCopy ? `${source.title} copy` : source.title,
     status: 'draft',
+    assignedLearnerCount: 0,
     sourceModule: undefined,
     // The copy is an authored module in its own right, never a second claim on
     // whatever the original was made from. `source_id` is how a training-plan
@@ -1656,7 +1751,7 @@ export async function duplicateModuleStructure(
     // one answered was whichever the candidate scan reached first. `sourceId` is
     // re-pointed at the copy's OWN catalogue id below, once the row exists --
     // which is how an authored module names itself.
-    sourceType: 'module_authoring',
+    sourceType: source.isFreeCourse ? 'free_course' : 'module_authoring',
     // The fingerprint of the STORED structure this object was read from -- the
     // original's. The copy has not been stored yet, and carrying a revision that
     // belongs to another module's row is only ever wrong.
@@ -1673,7 +1768,7 @@ export async function duplicateModuleStructure(
     // attendance, recordings, the sync) followed the meeting to the copy.
     // Stripped the same way the components are, and for the same reason.
     deliveryMetadata: (options.deliveryMetadata || source.deliveryMetadata)
-      ? independentCopySettings(structuredClone(options.deliveryMetadata || source.deliveryMetadata), { keepDates })
+      ? copyDeliverySettings(options.deliveryMetadata || source.deliveryMetadata)
       : source.deliveryMetadata,
     // The run the source is on is the source's, not the copy's. `createNewModule`
     // below already withholds these, but the structure save right after it sends
@@ -1735,7 +1830,7 @@ export async function duplicateModuleStructure(
           // lists. The source here is the object `loadModuleStructure` cached,
           // so an edit through the copy would reach both the original on screen
           // and everything else reading that cache entry.
-          settings: independentCopySettings(structuredClone(component.settings || {}), { keepDates }),
+          settings: copyDeliverySettings(component.settings || {}),
         }))),
       };
     }),
@@ -1758,6 +1853,10 @@ export async function duplicateModuleStructure(
   try {
     const created = await createNewModule({
       programme: preparedDuplicate.programmeName,
+      ...(source.isFreeCourse ? { isFreeCourse: true } : {}),
+      isForSale: preparedDuplicate.isForSale,
+      price: preparedDuplicate.price,
+      currency: preparedDuplicate.currency,
       title: preparedDuplicate.title,
       description: preparedDuplicate.description,
       weeks: Math.max(1, preparedDuplicate.weekStructure.length),
@@ -1777,7 +1876,7 @@ export async function duplicateModuleStructure(
       ksbRemapReport: preparedDuplicate.ksbRemapReport,
       moduleKsbMappings: preparedDuplicate.moduleKsbMappings,
       weekStructure: preparedDuplicate.weekStructure,
-      duplicateDestination: true,
+      duplicateDestination: !source.isFreeCourse,
     });
     let payload = recalculateModule({
       ...preparedDuplicate,
@@ -1792,7 +1891,7 @@ export async function duplicateModuleStructure(
         ? (source.catalogueId || source.id)
         : '',
       ksbRemapReport: preparedDuplicate.ksbRemapReport || null,
-      duplicateDestination: true,
+      duplicateDestination: !source.isFreeCourse,
     });
     const saved = await saveModuleStructure(payload.catalogueId, payload);
     return saved;
@@ -2421,7 +2520,11 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
   return recalculateModule({
     id,
     catalogueId,
-    programmeId: module.programmeId || module.programme || 'programme',
+    isFreeCourse: module.isFreeCourse,
+    isForSale: module.isForSale,
+    price: module.price,
+    currency: module.currency,
+    programmeId: module.isFreeCourse ? '' : module.programmeId || module.programme || 'programme',
     programmeName: module.programme || 'Unassigned programme',
     cohortId: module.cohortId || '',
     cohort: module.cohort || '',
@@ -2438,7 +2541,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     lastUpdated: module.lastUpdated || '',
     status: module.status || 'draft',
     authoringStatus: module.authoringStatus || module.status || 'draft',
-    sourceType: undefined,
+    sourceType: module.isFreeCourse ? 'free_course' : undefined,
     sourceId: undefined,
     deliveryStatus: module.deliveryStatus,
     ksbProfileSourceId: module.ksbProfileSourceId || '',
@@ -2714,6 +2817,11 @@ export interface ModuleSaveConflict {
   remote?: unknown;
 }
 
+export class ModuleEditReservedError extends Error {
+  readonly fields: string[];
+  constructor(message: string, fields: string[]) { super(message); this.name = 'ModuleEditReservedError'; this.fields = fields; }
+}
+
 export class ModuleStructureConflictError extends Error {
   /** What the server holds now, so the workspace can show it or re-open it. */
   currentRevision: string;
@@ -2843,6 +2951,8 @@ export async function saveModuleStructure(
   options: {
     expectedRevision?: string;
     source?: 'auto-save' | 'manual';
+    /** Explicit Save also requests Bunny storage for the open video. */
+    importVideoComponentIds?: string[];
     /**
      * The copy last agreed with the server at `expectedRevision`. With both,
      * only what changed since is sent and written -- see moduleStructureDelta.
@@ -2861,6 +2971,7 @@ export async function saveModuleStructure(
      * server finds deleted is a conflict, never a silent restore.
      */
     restoreIds?: string[];
+    collaboration?: { editorId: string; proofs: Record<string, string> };
   } = {},
 ) {
   const recalculated = recalculateModule(payload);
@@ -2887,7 +2998,9 @@ export async function saveModuleStructure(
       weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
       ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
     };
-  const serialized = JSON.stringify(body);
+  const serialized = JSON.stringify({ ...body,
+    ...(options.importVideoComponentIds?.length ? { importVideoComponentIds: options.importVideoComponentIds } : {}),
+    ...(options.collaboration ? { collaboration: options.collaboration } : {}) });
   const sizeBytes = new Blob([serialized]).size;
   const componentCount = recalculated.weekStructure.reduce((total, week) => total + week.components.length, 0);
   // Refused here rather than sent: the server would only answer with an HTML
@@ -2908,6 +3021,11 @@ export async function saveModuleStructure(
       err.status === 413 || (err.status === 400 && sizeBytes > DJANGO_DEFAULT_UPLOAD_LIMIT_BYTES)
     )) {
       throw new ModuleStructureTooLargeError(sizeBytes, componentCount, false);
+    }
+    if (err instanceof ApiError && err.status === 409 && err.data?.code === 'module_edit_reserved') {
+      const fields = Array.isArray(err.data.blockedFields) ? err.data.blockedFields.flatMap(item =>
+        item && typeof item === 'object' && typeof item.key === 'string' ? [item.key] : []) : [];
+      throw new ModuleEditReservedError(String(err.data.error || 'Reserved fields remain in your draft.'), fields);
     }
     if (!(err instanceof ApiError) || err.status !== 409 || !err.data?.conflict) throw err;
     const server = err.data.module as ModuleCatalogueItem | undefined;
@@ -3322,20 +3440,6 @@ export function getCalendarTimeZone() {
   return calendarTimeZone;
 }
 
-function zoneOffsetMs(instant: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(instant).reduce<Record<string, number>>((acc, part) => {
-    if (part.type !== 'literal') acc[part.type] = Number(part.value);
-    return acc;
-  }, {});
-  const wallClock = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour % 24, parts.minute, parts.second);
-  return wallClock - instant.getTime();
-}
-
 /**
  * A stored timestamp as an instant, reading an offset-less string as UTC.
  *
@@ -3356,22 +3460,12 @@ export function parseUtcInstant(value: unknown): Date {
 
 /** Read a naive `YYYY-MM-DDTHH:mm` wall clock as a time in `timeZone`, as UTC ISO. */
 export function zonedNaiveToUtcIso(naiveLocal: string, timeZone = calendarTimeZone) {
-  const [datePart, timePart = '00:00'] = (naiveLocal || '').split('T');
-  const [year, month, day] = (datePart || '').split('-').map(Number);
-  const [hour, minute] = timePart.split(':').map(Number);
-  if ([year, month, day, hour, minute].some(value => !Number.isFinite(value))) {
-    return new Date(naiveLocal).toISOString();
-  }
-  const wallClock = Date.UTC(year, month - 1, day, hour, minute);
-  // Guess the instant as if the wall clock were UTC, then subtract the offset the zone
-  // actually had there. A second pass settles the hour a DST jump adds or removes.
-  let instant = wallClock;
-  for (let pass = 0; pass < 2; pass += 1) {
-    const corrected = wallClock - zoneOffsetMs(new Date(instant), timeZone);
-    if (corrected === instant) break;
-    instant = corrected;
-  }
-  return new Date(instant).toISOString();
+  return localClockToUtcIso(naiveLocal, timeZone);
+}
+
+/** A schedule preview can show an invalid clock without crashing its page. */
+export function previewZonedNaiveToUtcIso(naiveLocal: string, timeZone = calendarTimeZone) {
+  try { return zonedNaiveToUtcIso(naiveLocal, timeZone); } catch { return ''; }
 }
 
 /**
@@ -3827,7 +3921,7 @@ function peopleAddedBySave(
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean; invitationsOnly?: boolean }, options: { onSubmitted?: () => void } = {}) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean; invitationsOnly?: boolean; originalSourceToken?: string }, options: { onSubmitted?: () => void } = {}) {
   // `settingsOnly` only labels the review ("meeting settings" rather than
   // "invitations"); the transport is the same people-only update either way.
   const { settingsOnly, ...sent } = input;
@@ -4112,13 +4206,13 @@ export class ApiError extends Error {
   }
 }
 
-async function apiJson<T>(path: string, init?: { method?: string; body?: string; headers?: Record<string, string>; timeoutMs?: number }): Promise<T> {
+async function apiJson<T>(path: string, init?: { method?: string; body?: string; headers?: Record<string, string>; timeoutMs?: number }, request: typeof fetch = fetch): Promise<T> {
   const controller = init?.timeoutMs ? new AbortController() : undefined;
   const timeout = controller && init?.timeoutMs
     ? window.setTimeout(() => controller.abort(), init.timeoutMs)
     : undefined;
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await request(`${API_BASE_URL}${path}`, {
       ...init,
       signal: controller?.signal,
       headers: {

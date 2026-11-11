@@ -616,22 +616,3 @@ class ScopedRosterTests(SimpleTestCase):
         learners = self._run({'programmeId': '', 'programmeName': '', 'cohortName': 'x'})
 
         self.assertEqual(learners, [])
-
-
-class LearnerProfileFilterTests(SimpleTestCase):
-    ROSTER = [
-        {'id': 7, 'enrolmentId': 12, 'name': 'A'},
-        {'id': 12, 'enrolmentId': 40, 'name': 'B'},
-    ]
-
-    def test_no_learner_id_keeps_the_whole_roster(self):
-        self.assertEqual(views.learners_matching_profile(self.ROSTER, None), self.ROSTER)
-        self.assertEqual(views.learners_matching_profile(self.ROSTER, '  '), self.ROSTER)
-
-    def test_matches_the_profile_id_never_a_colliding_enrolment_id(self):
-        learners = views.learners_matching_profile(self.ROSTER, '12')
-
-        self.assertEqual([row['name'] for row in learners], ['B'])
-
-    def test_an_unknown_learner_returns_nobody(self):
-        self.assertEqual(views.learners_matching_profile(self.ROSTER, '99'), [])

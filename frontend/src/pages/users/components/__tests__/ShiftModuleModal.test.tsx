@@ -13,7 +13,7 @@ vi.mock('@/api/learningPlan', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/learningPlan')>(),
   fetchLearningPlan: mocks.fetchLearningPlan,
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => mocks }));
+vi.mock("@/hooks/useToast", () => ({ useToast: () => mocks }));
 
 const source: LearningPlanModule = {
   moduleId: 'SOURCE', moduleTitle: 'Original module', groupName: 'First cohort group',

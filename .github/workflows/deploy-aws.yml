@@ -1,0 +1,474 @@
+# ------------------------------------------------------------
+# CI/CD for https://lms.kentbusinesscollege.org (AWS London)
+#
+# Runs only when main is updated (a merged PR) or by hand (Run workflow):
+# every check below, then - after approval in the "aws-staging" environment -
+# the deploy. Pull requests do not run it.
+#
+#   backend        Docker image, Django checks, no-database tests (each
+#                  module in its own process: they stub parts of Django),
+#                  /health/ smoke test, image vulnerability scan (Trivy)
+#   backend-db     Django tests against a throwaway Neon branch holding the
+#                  production *schema only* (no data); deleted afterwards.
+#                  Report-only until the suite is green (needs NEON_API_KEY)
+#   frontend       lint, type-check, build (blocking); unit tests (report)
+#   security       leaked-secret scan of the new commits (gitleaks),
+#                  dependency audits (npm audit, pip-audit)
+#   deploy         push image -> roll ECS services (new tasks start before
+#                  old ones stop) -> wait healthy -> upload frontend ->
+#                  smoke test -> watch errors/latency for 5 min -> mark the
+#                  image "last-good". Any failure puts back the exact
+#                  last-good image and the previous frontend page.
+#
+# Security gates (Trivy, npm audit) only warn until the repo variable
+# SECURITY_GATE is set to "block" - main already has known findings that
+# must be fixed first.
+#
+# AWS access: OpenID Connect into the role made by LMS_infrastructure
+# (github_actions.tf); no AWS keys in GitHub. Settings are repo variables
+# printed by `terraform output github_actions_variables`.
+# Not done here: database migrations (the production database is shared
+# and migrations are applied deliberately).
+# Manual rollback: Actions > this workflow > Run workflow > "ref" = an older
+# commit of main.
+# ------------------------------------------------------------
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit of main to deploy (empty = latest main)"
+        required: false
+        default: ""
+
+# No run-level queue: every push runs its checks straight away. Only the
+# deploy job takes turns (see its concurrency): a deploy in progress is never
+# interrupted, and if several pushes wait, only the newest deploys - it
+# already contains everything merged before it. (A FIFO queue of whole runs
+# made merges wait hours behind each other.)
+
+permissions:
+  contents: read
+
+env:
+  CHECKOUT_REF: ${{ inputs.ref || github.sha }}
+  GATE: ${{ vars.SECURITY_GATE || 'warn' }}
+
+jobs:
+  # ------------------------------------------------------- what changed
+  # Compared with the commit of the last fully successful run on main (what
+  # is live), not just the previous push: if a deploy was skipped or failed,
+  # its changes are still included next time. CI changes (.github/), manual
+  # runs and an unknown base deploy everything.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      backend: ${{ steps.diff.outputs.backend }}
+      frontend: ${{ steps.diff.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          all() { echo "backend=true" >> "$GITHUB_OUTPUT"; echo "frontend=true" >> "$GITHUB_OUTPUT"; echo "Deploying everything: $1"; exit 0; }
+          [ "$EVENT" = "workflow_dispatch" ] && all "manual run"
+          BASE=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/deploy-aws.yml/runs?branch=main&status=success&per_page=1" \
+            | python3 -c 'import json,sys;r=json.load(sys.stdin)["workflow_runs"];print(r[0]["head_sha"] if r else "")') || BASE=""
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then all "no earlier successful deploy found"; fi
+          FILES=$(git diff --name-only "$BASE" "$CHECKOUT_REF")
+          echo "Changed since $BASE (last successful deploy):"; echo "$FILES" | sed 's/^/  /' | head -50
+          echo "$FILES" | grep -q '^\.github/' && all "CI files changed"
+          b=false; f=false
+          echo "$FILES" | grep -q '^backend/' && b=true
+          echo "$FILES" | grep -q '^frontend/' && f=true
+          echo "backend=$b" >> "$GITHUB_OUTPUT"; echo "frontend=$f" >> "$GITHUB_OUTPUT"
+          echo "backend=$b frontend=$f"
+
+  # ---------------------------------------------------------------- backend
+  backend:
+    name: Backend - image, checks, scan
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          tags: lms-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Django system checks
+        run: |
+          docker run --rm -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
+            --entrypoint python lms-backend:ci manage.py check
+
+      - name: Other fast tests (not named *_no_db)
+        run: |
+          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
+            --entrypoint python lms-backend:ci manage.py test --noinput \
+            curriculum_api.test_youtube_download
+
+      - name: Container answers /health/
+        run: |
+          docker run -d --name smoke -e PORT=8000 -e WEB_CONCURRENCY=1 \
+            -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false -p 8000:8000 lms-backend:ci
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/health/ && exit 0
+            sleep 2
+          done
+          docker logs smoke
+          exit 1
+
+      - name: Image vulnerability scan (fixable CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: lms-backend:ci
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: ${{ env.GATE == 'block' && '1' || '0' }}
+
+      - name: Python dependency audit (report)
+        continue-on-error: true
+        run: |
+          docker run --rm -u 0 --entrypoint sh lms-backend:ci -c \
+            "pip install -q pip-audit >/dev/null 2>&1 && pip-audit --progress-spinner off" \
+            | tee pip-audit.txt
+          { echo '### Python dependency audit'; echo '```'; cat pip-audit.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save image for the deploy job
+        run: docker save lms-backend:ci | gzip > image.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-image
+          path: image.tar.gz
+          retention-days: 1
+
+  # No-database tests split over 4 machines at once; each machine rebuilds
+  # the image from the shared build cache (fast) and runs every 4th module
+  backend-tests:
+    name: Backend - tests ${{ matrix.shard }}/4
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (from cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          tags: lms-backend:ci
+          cache-from: type=gha
+
+      - name: No-database tests, part ${{ matrix.shard }} of 4
+        run: |
+          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
+            -e SHARD=${{ matrix.shard }} -e SHARDS=4 \
+            -v "$PWD/.github/ci:/ci:ro" --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
+
+  # ------------------------------------------- backend tests with a database
+  backend-db:
+    name: Backend - database tests (Neon schema branch)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    # Report-only until the suite passes; then remove continue-on-error and
+    # add this job to deploy.needs
+    continue-on-error: true
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      NEON_PARENT_BRANCH_ID: ${{ vars.NEON_PARENT_BRANCH_ID }}
+    steps:
+      - name: Skip when Neon is not configured
+        if: env.NEON_API_KEY == '' || env.NEON_PROJECT_ID == ''
+        run: echo "::notice::NEON_API_KEY / NEON_PROJECT_ID not set - database tests skipped"
+
+      - uses: actions/checkout@v4
+        if: env.NEON_API_KEY != '' && env.NEON_PROJECT_ID != ''
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Create a schema-only Neon branch (no data)
+        if: env.NEON_API_KEY != '' && env.NEON_PROJECT_ID != ''
+        id: neon
+        run: bash .github/ci/neon_branch.sh create
+
+      - name: Run Django tests on the branch
+        if: steps.neon.outcome == 'success'
+        env:
+          BRANCH_URL: ${{ steps.neon.outputs.url }}
+          BRANCH_ID: ${{ steps.neon.outputs.id }}
+        run: |
+          set -o pipefail
+          cd backend
+          python3 -m pip install -q -r requirements.txt
+          # DATABASE_URL is only compared (by host) to prove the branch is not
+          # production; settings never connect to it in branch mode
+          export DATABASE_URL="postgresql://ci@${{ vars.NEON_PRODUCTION_HOST || 'production.invalid' }}/neondb"
+          export security_Database_url="$BRANCH_URL" SECURITY_TEST_BRANCH_ID="$BRANCH_ID"
+          export USE_SECURITY_TEST_BRANCH=true DJANGO_SECRET_KEY=ci DJANGO_DEBUG=false DB_POOL=false
+          python3 manage.py test --keepdb --noinput --pattern="tests*.py" \
+            --testrunner=login.test_runner.EnrolmentTestRunner 2>&1 | tee ../db-tests.txt
+      - name: Summary
+        if: always() && steps.neon.outcome == 'success'
+        run: |
+          { echo '### Database tests'; echo '```'; tail -5 db-tests.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the Neon branch
+        if: always() && steps.neon.outputs.id != ''
+        env:
+          BRANCH_ID: ${{ steps.neon.outputs.id }}
+        run: bash .github/ci/neon_branch.sh delete "$BRANCH_ID"
+
+  # --------------------------------------------------------------- frontend
+  frontend:
+    name: Frontend - lint, types, build
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-out
+          path: frontend/out
+          retention-days: 1
+
+  # Report-only until the failing files on main are fixed, so it runs beside
+  # the deploy instead of delaying it (~10 minutes)
+  frontend-tests:
+    name: Frontend - unit tests (report)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          npx vitest run --reporter=dot 2>&1 | tee vitest.txt
+      - name: Test summary
+        if: always()
+        run: |
+          { echo '### Frontend unit tests'; echo '```'; grep -E "Test Files|Tests  " vitest.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------- security
+  security:
+    name: Security - secrets and dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+          fetch-depth: 0
+
+      - name: Leaked-secret scan of the new commits (gitleaks)
+        env:
+          BASE: ${{ github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          # Only the commits this push adds; history is not rescanned
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BASE" 2>/dev/null; then
+            RANGE="$HEAD~1..$HEAD"
+          else
+            RANGE="$BASE..$HEAD"
+          fi
+          echo "Scanning $RANGE"
+          docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.21.2 \
+            git --redact --no-banner --log-opts="$RANGE" .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: npm audit (CRITICAL)
+        working-directory: frontend
+        run: |
+          npm audit --omit=dev --audit-level=critical && exit 0
+          if [ "$GATE" = "block" ]; then exit 1; fi
+          echo "::warning::npm audit found critical vulnerabilities (SECURITY_GATE=warn)"
+
+  # ------------------------------------------------------------------ deploy
+  deploy:
+    name: Deploy to AWS
+    needs: [changes, backend, backend-tests, frontend, security]
+    # Runs when the changed parts passed; parts that didn't change are skipped
+    if: >-
+      !cancelled()
+      && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      && needs.changes.result == 'success'
+      && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
+      && !contains(needs.*.result, 'failure')
+      && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    # Required reviewers on this environment = the approval gate
+    environment:
+      name: aws-staging
+      url: ${{ vars.SITE_URL }}
+    # One deploy at a time. A running deploy is never cancelled; while it
+    # runs, only the newest waiting deploy is kept (older waiting ones are
+    # skipped - the newest commit already includes their changes)
+    concurrency:
+      group: deploy-aws
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      IMAGE_TAG: ${{ vars.IMAGE_TAG }}
+      BUCKET: ${{ vars.FRONTEND_BUCKET }}
+      DISTRIBUTION: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+      SITE_URL: ${{ vars.SITE_URL }}
+      ALB_METRIC_ID: ${{ vars.ALB_METRIC_ID }}
+      COMMIT: ${{ inputs.ref || github.sha }}
+      BACKEND: ${{ needs.changes.outputs.backend }}
+      FRONTEND: ${{ needs.changes.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+          sparse-checkout: .github/ci
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # ---- backend (only when backend/ changed) ----
+      - id: ecr
+        if: env.BACKEND == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: actions/download-artifact@v4
+        if: env.BACKEND == 'true'
+        with:
+          name: backend-image
+
+      - name: Push image and remember the exact last-good one
+        if: env.BACKEND == 'true'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: bash .github/ci/deploy.sh push
+
+      - name: Roll the API services onto the new image
+        if: env.BACKEND == 'true'
+        run: bash .github/ci/deploy.sh roll
+
+      - name: Wait until every service is healthy
+        if: env.BACKEND == 'true'
+        id: wait
+        run: bash .github/ci/deploy.sh wait
+
+      - name: Inspect recording worker image and configuration names
+        if: env.BACKEND == 'true'
+        run: python3 .github/ci/recording-runtime.py
+
+      # ---- frontend (only when frontend/ changed) ----
+      - uses: actions/download-artifact@v4
+        if: env.FRONTEND == 'true'
+        with:
+          name: frontend-out
+          path: out
+
+      - name: Upload the frontend (previous page kept for rollback)
+        if: env.FRONTEND == 'true'
+        id: frontend
+        run: bash .github/ci/deploy.sh frontend
+
+      - name: Smoke test the live site
+        run: bash .github/ci/deploy.sh smoke
+
+      # Watches the API servers, so only after a backend rollout
+      - name: Watch errors and response time for 5 minutes
+        if: env.BACKEND == 'true'
+        run: bash .github/ci/deploy.sh watch
+
+      - name: Mark this image as last-good
+        if: env.BACKEND == 'true'
+        run: bash .github/ci/deploy.sh mark-good
+
+      # Runs on any failure; it only undoes what was already changed
+      # (image pushed -> last-good image back; page uploaded -> previous page)
+      - name: Roll back to the last-good image and previous page
+        if: failure()
+        run: bash .github/ci/deploy.sh rollback

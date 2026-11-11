@@ -1,8 +1,8 @@
-import { useWizard } from '../WizardContext';
+import { useWizard } from "../WizardContext";
 import { POLICY_DOCS_KBC } from '@/mocks/enrolment-console';
 import { StepHeading } from './fields';
 import { useText } from '../layout/textsContext';
-import { useShowStepErrors } from '../stepErrors';
+import { useShowStepErrors } from "../stepErrors";
 
 export default function Policies() {
   const { draft, setSection } = useWizard();

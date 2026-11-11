@@ -7,7 +7,7 @@ import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
 const state = vi.hoisted(() => ({ role: 'learner', result: {
   real: { learningAccess: { blocked: true, startDate: '2026-10-01' } }, loading: false, loadError: '', refresh: vi.fn(),
 } }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: {
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: {
   role: state.role, subjectId: 499, learnerType: 'commercial',
 } } }) }));
 vi.mock('@/hooks/useLearnerSummaryParam', () => ({ useLearnerSummaryParam: vi.fn(() => state.result) }));

@@ -14,7 +14,9 @@ from django.views.decorators.http import require_GET
 from learner_api.models import LearnerProfile
 
 from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
+from .bulk_attendance_live_recovery import parallel_recovery_links
 from .session_results_policy import instant
+from .bulk_attendance_recorded import apply_recorded_outcomes
 
 
 def _local_date(value):
@@ -111,13 +113,15 @@ def bulk_attendance_live_day_records(request):
 
         register_rows = list(
             LiveSessionLearnerAttendance.objects.using(database)
-            .filter(occurrence_id__in=occurrence_ids)
+            .filter(occurrence_id__in=occurrence_ids,
+                    module_catalogue_id__in=set(module_by_live_session.values()))
             .values(
                 "id", "occurrence_id", "module_catalogue_id",
                 "learner_profile_id", "attendance_status",
             )
         )
         aptem_by_profile = _aptem_ids_by_profile({row["learner_profile_id"] for row in register_rows})
+        covered, guests = parallel_recovery_links(register_rows, database=database)
         records = [
             {
                 "recordKey": f"live:{row['id']}",
@@ -125,11 +129,13 @@ def bulk_attendance_live_day_records(request):
                 "moduleCatalogueId": row["module_catalogue_id"],
                 "occurrenceId": row["occurrence_id"],
                 "attendance": row["attendance_status"],
+                **covered.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
+                **guests.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
             }
             for row in register_rows
             if row["learner_profile_id"] in aptem_by_profile
         ]
-        return JsonResponse({"records": records})
+        return JsonResponse({"records": apply_recorded_outcomes(records)})
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except DatabaseError:
@@ -188,12 +194,13 @@ def bulk_attendance_live_month_records(request):
         occurrence_ids = [row["id"] for row in occurrences]
         register_rows = list(
             LiveSessionLearnerAttendance.objects.using(database)
-            .filter(occurrence_id__in=occurrence_ids)
-            .values("id", "occurrence_id", "learner_profile_id", "attendance_status")
+            .filter(occurrence_id__in=occurrence_ids,
+                    module_catalogue_id__in={session['module_catalogue_id'] for session in sessions})
+            .values("id", "occurrence_id", "module_catalogue_id", "learner_profile_id", "attendance_status")
         ) if occurrence_ids else []
-        occurrence_by_id = {row["id"]: row for row in occurrences}
         aptem_by_profile = _aptem_ids_by_profile({row["learner_profile_id"] for row in register_rows})
-        return JsonResponse({
+        covered, guests = parallel_recovery_links(register_rows, database=database)
+        payload = {
             "occurrences": [
                 {
                     "id": row["id"],
@@ -208,14 +215,18 @@ def bulk_attendance_live_month_records(request):
                 {
                     "recordKey": f"live:{row['id']}",
                     "occurrenceId": row["occurrence_id"],
-                    "moduleCatalogueId": session_by_id[occurrence_by_id[row["occurrence_id"]]["live_session_id"]]["module_catalogue_id"],
+                    "moduleCatalogueId": row["module_catalogue_id"],
                     "learnerId": aptem_by_profile[row["learner_profile_id"]],
                     "attendance": row["attendance_status"],
+                    **covered.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
+                    **guests.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
                 }
                 for row in register_rows
                 if row["learner_profile_id"] in aptem_by_profile
             ],
-        })
+        }
+        payload['records'] = apply_recorded_outcomes(payload['records'])
+        return JsonResponse(payload)
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except DatabaseError:

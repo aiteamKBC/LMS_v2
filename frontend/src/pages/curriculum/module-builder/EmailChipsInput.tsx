@@ -1,10 +1,6 @@
+import { emailList } from './EmailChipsInput.helpers';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-
-/** Split a newline/comma/semicolon/space-separated string into trimmed emails. */
-export function emailList(value: string): string[] {
-  return value.split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
-}
 
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 

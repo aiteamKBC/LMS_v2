@@ -10,16 +10,13 @@ import { useCalendarMatches } from './calendarMatches';
 import LectureDetailsPanel from './components/LectureDetailsPanel';
 import MiniCalendar from './components/MiniCalendar';
 import SearchAndFilters from './components/SearchAndFilters';
-import LibrarySummary from './components/LibrarySummary';
-import DayAgenda from './components/DayAgenda';
-import styles from './RecordingsPage.module.css';
-import { AppIcon } from '@/components/feature/AppIcon';
+import SummaryChips from './components/SummaryChips';
 import RecordingDownloadButton from './components/RecordingDownloadButton';
 import ModuleDirectory from './components/ModuleDirectory';
 import { buildCalendarLectures } from './model';
 import { agendaMatches, matchesLectureQuery, periodBounds, type AgendaFilter, type Period } from './filters';
 import type { Lecture, RecordingFilter } from './types';
-import { addDays, CALENDAR_TIME_ZONES, formatCompactDate, formatFullDate, formatMonthLabel, lectureReadyCount, lectureOverallStatus, STATUS_META, parseIsoDate, TIME_ZONE_LABEL, todayIso } from './utils';
+import { addDays, CALENDAR_TIME_ZONES, formatCompactDate, formatFullDate, formatMonthLabel, lectureNeedsAttention, lectureReadyCount, parseIsoDate, TIME_ZONE_LABEL, todayIso } from './utils';
 
 const TIME_ZONE_STORAGE_KEY = 'lms-recordings-calendar-zone';
 function savedTimeZone() {
@@ -40,13 +37,12 @@ export default function CurriculumRecordingsPage() {
   const [selectedDate, setSelectedDate] = useState(() => todayIso(savedTimeZone()));
   const [view, setView] = useState(() => { const { year, month } = parseIsoDate(todayIso(savedTimeZone())); return { year, month }; });
   const lastLoad = useRef(0);
-  const loadSequence = useRef(0);
   const [selectedLectureId, setSelectedLectureId] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [programme, setProgramme] = useState('all');
   const [agendaFilter, setAgendaFilter] = useState<AgendaFilter>('ready');
-  const statusFilter: RecordingFilter = agendaFilter === 'ended' || agendaFilter === 'notEnded' ? 'all' : agendaFilter;
+  const statusFilter: RecordingFilter = agendaFilter === 'ready' || agendaFilter === 'attention' ? agendaFilter : 'all';
   const periodOnly = agendaFilter === 'ended' || agendaFilter === 'notEnded';
   const [includeInactive, setIncludeInactive] = useState(true);
   const [mobileCalendarOpen, setMobileCalendarOpen] = useState(false);
@@ -64,19 +60,18 @@ export default function CurriculumRecordingsPage() {
   const [viewMode, setViewMode] = useState<'calendar' | 'modules'>('calendar');
 
   const load = useCallback((signal?: AbortSignal) => {
-    const sequence = ++loadSequence.current;
     lastLoad.current = Date.now();
     setLoading(true);
     setError('');
-    void loadRecordingsLibrary(signal).then(value => { if (!signal?.aborted && sequence === loadSequence.current) setLibrary(value); })
-      .catch(caught => { if (!signal?.aborted && sequence === loadSequence.current) setError(caught instanceof Error ? caught.message : 'Recordings could not be loaded.'); })
-      .finally(() => { if (!signal?.aborted && sequence === loadSequence.current) setLoading(false); });
+    void loadRecordingsLibrary(signal).then(setLibrary)
+      .catch(caught => { if (!signal?.aborted) setError(caught instanceof Error ? caught.message : 'Recordings could not be loaded.'); })
+      .finally(() => { if (!signal?.aborted) setLoading(false); });
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     load(controller.signal);
-    return () => { loadSequence.current += 1; controller.abort(); };
+    return () => controller.abort();
   }, [load]);
 
   useEffect(() => {
@@ -133,17 +128,10 @@ export default function CurriculumRecordingsPage() {
   const rangeLabel = period === 'day' ? formatFullDate(selectedDate)
     : period === 'month' ? formatMonthLabel(selectedParts.year, selectedParts.month)
       : `${formatCompactDate(bounds.start)}${startYear !== endYear ? ` ${startYear}` : ''} - ${formatCompactDate(bounds.end)} ${endYear}`;
-  const filterCounts = Object.fromEntries((['all', 'ready', 'attention', 'ended', 'notEnded', 'pending', 'missing', 'unsynced', 'archiveFailed', 'review'] as const).map(value =>
+  const filterCounts = Object.fromEntries((['all', 'ready', 'attention', 'ended', 'notEnded'] as const).map(value =>
     [value, countPool.filter(item => agendaMatches(item, value, now)).length])) as Record<AgendaFilter, number>;
-  const indicatorLectures = scopedLectures.filter(item => agendaMatches(item, agendaFilter, now) && matchesLectureQuery(item, query));
-  const dateStatuses = new Map<string, Set<Lecture['status']>>();
-  indicatorLectures.forEach(item => {
-    const statuses = dateStatuses.get(item.date) || new Set<Lecture['status']>();
-    statuses.add(lectureOverallStatus(item)); dateStatuses.set(item.date, statuses);
-  });
-  const latestRecordedDate = indicatorLectures.filter(item => item.recordings.some(file => file.source.recordedAt))
-    .map(item => item.date).sort().at(-1);
-  const agendaLabel = (value: AgendaFilter) => value === 'all' ? 'All lectures' : value === 'ready' ? 'Ready to download' : value === 'attention' ? 'Needs attention' : value === 'ended' ? 'Ended' : value === 'notEnded' ? 'Not ended' : STATUS_META[value].label;
+  const readyCount = filterCounts.ready;
+  const attentionCount = filterCounts.attention;
   const chooseFilter = (value: AgendaFilter) => {
     setAgendaFilter(value);
     if (value === 'ended' || value === 'notEnded') setSearchEverywhere(false);
@@ -193,20 +181,20 @@ export default function CurriculumRecordingsPage() {
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio" pageTitle="Session Recordings"
       pageSubtitle="Find a lecture and download its saved recordings">
-      <main id="curriculum-recordings-page" className={styles.page}>
-        <nav aria-label="Recording libraries" className="mb-5 flex flex-wrap gap-2 text-sm font-semibold">
+      <main className="min-h-full bg-background-100 px-4 py-5 sm:px-6 lg:px-7">
+        <nav aria-label="Recording libraries" className="mb-5 flex gap-2 text-sm font-semibold">
           <span aria-current="page" className="rounded-lg bg-primary-600 px-3 py-2 text-white">Lecture recordings</span>
           <Link to="/curriculum/coaching-recordings" className="rounded-lg border border-background-200 bg-white px-3 py-2 hover:bg-primary-50">Coach Meetings &amp; Recordings</Link>
         </nav>
-        <div className="mx-auto w-full min-w-0">
-          <section className={styles.intro}>
-            <nav className={styles.breadcrumb} aria-label="Breadcrumb"><Link to="/workspace/curriculum">Curriculum</Link><span aria-hidden="true">/</span><Link to="/curriculum/module-builder">Modules</Link><span aria-hidden="true">/</span><span>Recordings</span></nav>
-            <div className={styles.introLine}>
-              <div><h1>Session recordings</h1><p>Find a lecture, check its saved recordings and download an available file. Browse the same library by day or by module.</p></div>
-              <Link to="/curriculum/session-calendar" className={styles.calendarLink}><AppIcon name="ri-calendar-line" size={14} />Session calendar</Link>
+        <div className="mx-auto w-full">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h1 className="font-heading text-2xl font-extrabold tracking-tight text-foreground-950 md:text-3xl">Session Recordings</h1>
+              <p className="mt-1.5 max-w-2xl text-sm text-foreground-600">Find a lecture, review its recordings, and download the saved files. Jump to any day to see what was captured.</p>
             </div>
-          </section>
-          <div className="mt-4"><LibrarySummary library={library} lectures={visible} includeInactive={includeInactive} loading={loading} /></div>
+            {<SummaryChips dayIso={selectedDate} isToday={selectedDate === todayIso(timeZone)} lecturesToday={countPool.length} periodLabel={viewMode === 'modules' || allDateSearch ? 'Lectures across all dates' : `Lectures in selected ${periodName}`}
+              readyCount={readyCount} attentionCount={attentionCount} />}
+          </div>
 
           {loading && !library && <p role="status" className="mt-5 rounded-lg border border-background-200 bg-background-50 p-4 text-sm text-foreground-600">Loading sessions and recordings…</p>}
           {error && <div role="alert" className="mt-5 flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
@@ -219,26 +207,32 @@ export default function CurriculumRecordingsPage() {
           </div>}
 
           {library && <>
-            <div className={styles.viewTabs} role="group" aria-label="Recordings view">
+            <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Recordings view">
               <button type="button" aria-pressed={viewMode === 'calendar'} onClick={() => setViewMode('calendar')}
-                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'calendar' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}>By day</button>
+                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'calendar' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}>Calendar</button>
               <button type="button" aria-pressed={viewMode === 'modules'} onClick={() => { closePanel(); setViewMode('modules'); setAgendaFilter(statusFilter); setCohort('all'); setGroup('all'); setModuleId('all'); }}
-                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'modules' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}>By module ({library.modules?.length ?? 0})</button>
+                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'modules' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}>All LMS modules ({library.modules?.length ?? 0})</button>
             </div>
-            <div className={styles.filterPanel}>
+            <div className="mt-5">
               <SearchAndFilters query={query} onQueryChange={setQuery} programmes={programmes} programme={programme}
-                onReset={clearFilters} onProgrammeChange={value => { setProgramme(value); setCohort('all'); setGroup('all'); setModuleId('all'); closePanel(); }} statusFilter={statusFilter} onStatusFilterChange={chooseFilter}
+                onProgrammeChange={value => { setProgramme(value); setCohort('all'); setGroup('all'); setModuleId('all'); closePanel(); }} statusFilter={statusFilter} onStatusFilterChange={chooseFilter}
                 results={searchResults} searchScope={viewMode === 'modules' || allDateSearch ? 'all dates' : `selected ${periodName}`} onSelectResult={selectResult} />
-              <label className={styles.filterCheckbox}>
+              <label className="mt-2.5 inline-flex items-center gap-2 text-xs font-medium text-foreground-700">
                 <input type="checkbox" checked={includeInactive} onChange={event => { setIncludeInactive(event.target.checked); closePanel(); }} />
                 Include draft programmes and archived modules
               </label>
             </div>
 
-
+            {viewMode === 'calendar' && !allDateSearch && <CalendarMatchesPanel data={matchData} error={match.error} onChoose={value => { match.chooseMailbox(value); closePanel(); }} onRetry={match.retry} />}
             {allDateSearch && <p role="status" className="mt-3 text-sm text-foreground-600">All dates search uses saved LMS meetings from all organizers.</p>}
-            {viewMode === 'calendar' && <div className={styles.advancedFilters}>
-
+            {viewMode === 'calendar' && <div className="mt-3 space-y-3 rounded-lg border border-background-200 bg-background-50 p-3">
+              <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Lecture status">
+                {(['all', 'ready', 'ended', 'notEnded', 'attention'] as const).map(value => <button key={value} type="button" aria-pressed={agendaFilter === value}
+                  onClick={() => chooseFilter(value)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${agendaFilter === value ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-200 text-foreground-700'}`}>
+                  {value === 'all' ? 'All lectures' : value === 'ready' ? 'Ready to download' : value === 'ended' ? 'Ended' : value === 'notEnded' ? 'Not ended' : 'Needs attention'} ({filterCounts[value]})
+                </button>)}
+                <span className="text-xs text-foreground-500">{allDateSearch ? 'Counts across all search dates' : `Counts in selected ${periodName}`}; select one filter</span>
+              </div>
               <div className="flex flex-wrap items-center gap-3">
                 <label className="inline-flex items-center gap-2 text-xs text-foreground-700">Search in
                   <select aria-label="Search date scope" value={searchEverywhere ? 'all' : 'period'} onChange={event => { setSearchEverywhere(event.target.value === 'all'); closePanel(); }} className="rounded-md border border-background-200 bg-background-50 px-2 py-1.5">
@@ -259,14 +253,14 @@ export default function CurriculumRecordingsPage() {
 
             {viewMode === 'modules' ? <ModuleDirectory modules={library.modules ?? []} deliveries={library.deliveries}
               lectures={calendar.lectures} query={query} programme={programme} statusFilter={statusFilter} includeInactive={includeInactive}
-              onOpenLecture={selectResult} /> : <div className={expandedCalendar ? "fixed inset-0 z-30 flex gap-4 overflow-auto bg-background-100 p-3" : styles.layout}>
+              onOpenLecture={selectResult} /> : <div className={expandedCalendar ? "fixed inset-0 z-30 flex gap-4 overflow-auto bg-background-100 p-3" : "mt-4 flex items-start gap-5"}>
               <aside className="sticky top-4 hidden w-[252px] shrink-0 lg:block" aria-label="Choose lecture date">
-                <MiniCalendar dateStatuses={dateStatuses} latestRecordedDate={latestRecordedDate} onLatest={() => { if (latestRecordedDate) { setPeriod('day'); goToDate(latestRecordedDate); } }} selectedDate={selectedDate} viewYear={view.year} viewMonth={view.month} lectureDates={lectureDates}
+                <MiniCalendar selectedDate={selectedDate} viewYear={view.year} viewMonth={view.month} lectureDates={lectureDates}
                   timeZone={timeZone} onSelectDate={iso => { setPeriod('day'); goToDate(iso); }} onMonthChange={moveMonth} onToday={() => { setPeriod('day'); goToDate(todayIso(timeZone)); }}
                   onPrevDay={() => goToDate(addDays(selectedDate, -1))} onNextDay={() => goToDate(addDays(selectedDate, 1))} compact />
               </aside>
-              <section className={`${styles.agenda} min-w-0 flex-1 ${expandedCalendar ? "flex min-h-0 flex-col" : ""}`} aria-label="Recordings calendar">
-                <div className={styles.agendaHeader}>
+              <section className={`min-w-0 flex-1 ${expandedCalendar ? "flex min-h-0 flex-col" : ""}`} aria-label="Recordings calendar">
+                <div className="rounded-lg border border-background-200 bg-background-50 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-primary-600">{periodName} agenda</p>
@@ -281,7 +275,7 @@ export default function CurriculumRecordingsPage() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       {expandedCalendar && <select aria-label="Lecture filter" value={agendaFilter} onChange={event => chooseFilter(event.target.value as AgendaFilter)} className="rounded-md border border-background-200 bg-background-50 px-3 py-2 text-sm font-semibold">
-                        {(['all', 'ready', 'ended', 'notEnded', 'attention', 'pending', 'missing', 'unsynced', 'archiveFailed', 'review'] as const).map(value => <option key={value} value={value}>{agendaLabel(value)} ({filterCounts[value]})</option>)}
+                        {(['all', 'ready', 'ended', 'notEnded', 'attention'] as const).map(value => <option key={value} value={value}>{value === 'all' ? 'All lectures' : value === 'ready' ? 'Ready to download' : value === 'ended' ? 'Ended' : value === 'notEnded' ? 'Not ended' : 'Needs attention'} ({filterCounts[value]})</option>)}
                       </select>}
                       <button type="button" aria-pressed={expandedCalendar} onClick={() => setExpandedCalendar(value => !value)} className="rounded-md border border-background-200 px-3 py-2 text-sm font-semibold">{expandedCalendar ? 'Exit full screen' : 'Full screen'}</button>
                       <button type="button" onClick={() => { setPeriod('day'); goToDate(todayIso(timeZone)); }}
@@ -299,27 +293,20 @@ export default function CurriculumRecordingsPage() {
                       </label>
                     </div>
                   </div>
-              <div className={styles.statusTabs} role="group" aria-label="Lecture status">
-                {(['all', 'ready', 'attention', 'pending', 'missing', 'unsynced', 'archiveFailed', 'review', 'ended', 'notEnded'] as const).map(value => <button key={value} type="button" aria-pressed={agendaFilter === value}
-                  onClick={() => chooseFilter(value)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${agendaFilter === value ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-200 text-foreground-700'}`}>
-                  {agendaLabel(value)} ({filterCounts[value]})
-                </button>)}
-                <span className={styles.statusHint}>{allDateSearch ? 'Counts across all search dates' : `Counts in selected ${periodName}`}; select one filter</span>
-              </div>
                 </div>
                 <div className="mt-3 lg:hidden">
                   <button type="button" aria-expanded={mobileCalendarOpen} onClick={() => setMobileCalendarOpen(open => !open)}
                     className="w-full rounded-lg border border-background-200 bg-background-50 px-4 py-3 text-left text-sm font-semibold">
                     {mobileCalendarOpen ? 'Hide calendar' : 'Change date'}
                   </button>
-                  {mobileCalendarOpen && <div className="mt-3"><MiniCalendar dateStatuses={dateStatuses} latestRecordedDate={latestRecordedDate} onLatest={() => { if (latestRecordedDate) { setPeriod('day'); goToDate(latestRecordedDate); } }} selectedDate={selectedDate} viewYear={view.year} viewMonth={view.month}
+                  {mobileCalendarOpen && <div className="mt-3"><MiniCalendar selectedDate={selectedDate} viewYear={view.year} viewMonth={view.month}
                     lectureDates={lectureDates} timeZone={timeZone} onSelectDate={iso => { setPeriod('day'); goToDate(iso); }} onMonthChange={moveMonth} onToday={() => { setPeriod('day'); goToDate(todayIso(timeZone)); }}
                     onPrevDay={() => goToDate(addDays(selectedDate, -1))} onNextDay={() => goToDate(addDays(selectedDate, 1))} /></div>}
                 </div>
-                <div className={`${styles.agendaBody} ${expandedCalendar ? "flex min-h-0 flex-1 flex-col" : ""}`}>
+                <div className={`mt-3 ${expandedCalendar ? "flex min-h-0 flex-1 flex-col" : ""}`}>
                   {library.calendarAvailable !== false && <>
-                    <p role="status" className={styles.agendaCount}>{resultLectures.length} lectures{allDateSearch ? ' across all dates' : ` in selected ${periodName}`}{query.trim() ? ` matching "${query.trim()}"` : ''}</p>
-                    {!allDateSearch && period === 'day' ? <DayAgenda lectures={resultLectures} selectedLectureId={selectedLectureId} onSelectLecture={lecture => setSelectedLectureId(lecture.id)} onClearFilters={clearFilters} /> : !allDateSearch && period !== 'month' ? <CalendarTimeline startDate={bounds.start} endDate={bounds.end} lectures={resultLectures}
+                    <p role="status" className="mb-3 text-xs text-foreground-600">{resultLectures.length} lectures{allDateSearch ? ' across all dates' : ` in selected ${periodName}`}{query.trim() ? ` matching "${query.trim()}"` : ''}</p>
+                    {!allDateSearch && period !== 'month' ? <CalendarTimeline startDate={bounds.start} endDate={bounds.end} lectures={resultLectures}
                       selectedLectureId={selectedLectureId} onSelectLecture={lecture => setSelectedLectureId(lecture.id)} expanded={expandedCalendar}
                       emptyMessage={searchPool.length ? 'No lectures match your filters' : 'No linked LMS meetings in this period'} /> : resultDates.length ? resultDates.map(date => <section key={date} className="mb-4" aria-label={`Lectures on ${date}`}>
                       <h3 className="mb-2 font-heading text-sm font-bold text-foreground-900">{formatFullDate(date)}</h3>
@@ -339,8 +326,6 @@ export default function CurriculumRecordingsPage() {
                   onPlay={(_lecture, recording) => setPlayingId(current => current === recording.id ? null : recording.id)} />
               </>}
             </div>}
-
-            {viewMode === 'calendar' && !allDateSearch && <CalendarMatchesPanel data={matchData} error={match.error} onChoose={value => { match.chooseMailbox(value); closePanel(); }} onRetry={match.retry} />}
 
             {viewMode === 'calendar' && undated.length > 0 && <section className="mt-5 rounded-lg border border-background-200 bg-background-50 p-4" aria-label="Undated recordings">
               <h2 className="font-heading text-sm font-bold text-foreground-950">Recordings without a session date</h2>

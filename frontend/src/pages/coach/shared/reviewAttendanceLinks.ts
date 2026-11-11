@@ -15,6 +15,7 @@ export interface AttendanceLinkAudit {
 
 export interface AttendanceLinkContext {
   attendance: CoachMeetingAttendanceSummary;
+  canReschedule?: boolean;
   version: string;
   learner: { id: number; name: string } | null;
   targets: { key: string; role: 'learner' | 'employer'; name: string }[];

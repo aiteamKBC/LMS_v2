@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { roleNavMap } from '@/mocks/navigation';
 
 interface StarredMessage {

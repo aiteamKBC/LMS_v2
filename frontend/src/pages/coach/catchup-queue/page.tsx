@@ -1,3 +1,4 @@
+import { ukOffsetForDate } from '@/lib/timeZones';
 import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -144,7 +145,7 @@ export default function CoachCatchupQueue() {
         scheduledDate: scheduleDate,
         scheduledTime: scheduleTime,
         durationMinutes: scheduleDuration,
-        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        timezoneOffsetMinutes: ukOffsetForDate(scheduleDate),
         notes: `Catch-up for lecture: ${selectedCandidate.lecture}\nLecture date: ${selectedCandidate.lectureDate}`,
       });
       setScheduleOpen(false);

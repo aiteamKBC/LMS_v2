@@ -54,6 +54,9 @@ def link_for(record, attendance, **overrides):
 
 
 class AttendanceLinkProjectionTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('coach_api.review_rescheduling.previous_bookings', return_value=[]))
+
     def test_links_without_changing_raw_report_and_counts_person_once(self):
         record, attendance = booking(), snapshot()['attendance']
         original = deepcopy(attendance)
@@ -66,6 +69,41 @@ class AttendanceLinkProjectionTests(SimpleTestCase):
         self.assertEqual(result['extraCount'], 0)
         self.assertEqual(result['tracker'][0]['totalAttendanceSeconds'], 1200)
         self.assertEqual(result['tracker'][0]['coachVerification']['confirmedBy'], 'coach@example.invalid')
+
+    def test_confirmed_identity_below_ten_minutes_is_not_attendance(self):
+        record, attendance = booking(), snapshot()['attendance']
+        person = attendance['reports'][0]['records'][0]
+        person['totalAttendanceSeconds'] = 599
+        person['intervals'][0]['leaveDateTime'] = '2026-10-27T10:09:59Z'
+        attendance['tracker'][1]['totalAttendanceSeconds'] = 599
+        result = api.project_attendance(record, attendance, [link_for(record, attendance)])
+        self.assertEqual((result['expectedAttendedCount'], result['expectedAbsentCount']), (0, 1))
+        self.assertFalse(result['tracker'][0]['attended'])
+        self.assertEqual(result['tracker'][0]['totalAttendanceSeconds'], 599)
+        self.assertIsNotNone(result['tracker'][0]['coachVerification'])
+
+    def test_direct_and_linked_short_visits_combine_without_overlap(self):
+        record, attendance = booking(), snapshot()['attendance']
+        extra = attendance['reports'][0]['records'][0]
+        extra['totalAttendanceSeconds'] = 300
+        extra['intervals'][0]['joinDateTime'] = '2026-10-27T10:05:00Z'
+        extra['intervals'][0]['leaveDateTime'] = '2026-10-27T10:10:00Z'
+        attendance['tracker'][1]['totalAttendanceSeconds'] = 300
+        learner = attendance['tracker'][0]
+        learner.update(totalAttendanceSeconds=300, actualRecordIds=['direct'], reportIds=['report-1'])
+        attendance['reports'][0]['records'].append(dict(
+            id='direct', email='student@example.invalid', attended=True,
+            totalAttendanceSeconds=300, intervals=[dict(
+                joinDateTime='2026-10-27T10:00:00Z', leaveDateTime='2026-10-27T10:05:00Z')]))
+        result = api.project_attendance(record, attendance, [link_for(record, attendance)])
+        self.assertTrue(result['tracker'][0]['attended'])
+        self.assertEqual(result['tracker'][0]['totalAttendanceSeconds'], 600)
+        self.assertEqual(set(result['tracker'][0]['actualRecordIds']), {'direct', 'person-1'})
+        extra['intervals'][0]['joinDateTime'] = '2026-10-27T10:00:00Z'
+        extra['intervals'][0]['leaveDateTime'] = '2026-10-27T10:05:00Z'
+        overlap = api.project_attendance(record, attendance, [link_for(record, attendance)])
+        self.assertEqual(overlap['tracker'][0]['totalAttendanceSeconds'], 300)
+        self.assertFalse(overlap['tracker'][0]['attended'])
 
     def test_other_learner_or_rebooked_session_cannot_inherit_link(self):
         record, attendance = booking(), snapshot()['attendance']

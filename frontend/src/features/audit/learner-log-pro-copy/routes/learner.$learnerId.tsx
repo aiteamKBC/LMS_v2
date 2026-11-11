@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from '@tanstack/react-router';
+import { AuditLink as Link } from '@/features/audit/auditNavigation';
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, FileText, ListChecks, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
 import {

@@ -130,6 +130,10 @@ def _fill_remaining(template):
 
 
 class ExcludedTests(SimpleTestCase):
+    def test_public_lecture_qr_is_excluded(self):
+        self.assertTrue(pages.excluded('/lecture-feedback'))
+        self.assertFalse(pages.excluded('/learner/feedback'))
+
     def test_public_booking_is_excluded_but_coach_administration_is_recorded(self):
         self.assertTrue(pages.excluded('/coach-booking/example-coach?session=support#booking'))
         self.assertFalse(pages.excluded('/admin/coach_directory'))

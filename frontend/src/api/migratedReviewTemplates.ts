@@ -8,7 +8,7 @@ export interface MigratedField {
   key: string; name?: string; title: string; aptemType: number; order: number;
   mandatory?: boolean; description?: string; options?: string[];
   ifTrue?: MigratedField[]; ifFalse?: MigratedField[];
-  semanticKey?: 'meeting_summary';
+  semanticKey?: 'meeting_summary' | 'skills_radar';
   respondentRoles?: Array<'participant' | 'employer'>;
 }
 export interface MigratedDefinition {

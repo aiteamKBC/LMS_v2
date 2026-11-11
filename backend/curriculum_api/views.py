@@ -1,3 +1,4 @@
+from config.time_zones import calendar_zone, local_clock_to_utc
 import base64
 import contextlib
 import functools
@@ -39,7 +40,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
-from .course_types import CourseTypeError, course_types_for_modules
+from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
@@ -107,12 +108,11 @@ CURRICULUM_LEARNER_DATA_TTL_SECONDS = 60
 # load -- it asks for `?visibility=all` and the default in the same burst, and
 # each used to pay for its own full read.
 #
-# The TTL is deliberately short. The win is entirely within one page load, so a
-# minute covers it, while keeping the window in which a write from another
-# worker could be missed far below the payload TTL. A write in this process
-# clears the rows with everything else; a write in another one bumps the shared
-# epoch, which invalidates them here too whenever Redis is configured.
-CURRICULUM_ROWS_CACHE_TTL_SECONDS = 60
+# Shared between processes (Valkey) and compressed, with the payload TTL: the
+# shared epoch is what retires them after a write, in this process or another,
+# so the TTL only bounds how long an unused generation lingers. It used to be a
+# 60 s process-local copy, which every worker re-read from Neon each minute.
+CURRICULUM_ROWS_CACHE_TTL_SECONDS = CURRICULUM_CACHE_TTL_SECONDS
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
 # One lock per payload key, so concurrent misses on the same key rebuild once
@@ -740,7 +740,7 @@ def curriculum_build_lock(key):
         return lock
 
 
-def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None):
+def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None, compress=False):
     """The cached payload for ``key``, rebuilding it when it is not there.
 
     ``force`` skips both cache layers and rebuilds from the database, then stores
@@ -753,11 +753,11 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
     new group or programme that does not appear until the page is reloaded enough
     times to land on the worker that took the write.
 
-    ``shared=False`` keeps a value in this process only, for one that is large
-    and cheap to reassemble but expensive to fetch -- the raw curriculum rows.
-    Round-tripping those through Redis costs more in pickling than the read it
-    saves, and every worker warms its own copy in a second anyway. The shared
-    epoch is still honoured, so a write elsewhere still invalidates it.
+    ``shared=False`` keeps a value in this process only. The shared epoch is
+    still honoured, so a write elsewhere still invalidates it.
+
+    ``compress`` stores the shared copy zlib-compressed (the process copy stays
+    as built), for a large value such as the raw curriculum rows.
 
     ``scope`` is a programme id for a payload about that programme alone. Its
     generation is then the programme's own counter plus the unscoped one (see
@@ -821,6 +821,8 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
     shared_key = shared_curriculum_cache_key(key, shared_epoch)
     try:
         shared_value = None if (force or not shared) else cache.get(shared_key)
+        if shared_value is not None and compress:
+            shared_value = _unpack_shared(shared_value)
     except Exception:
         logger.warning('Unable to read shared curriculum payload cache.', exc_info=True)
         shared_value = None
@@ -872,6 +874,12 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                 if acquired:
                     break
                 waited, holder_gone = shared_build.wait_for_value(cache, shared_key)
+                if waited is not None and compress:
+                    try:
+                        waited = _unpack_shared(waited)
+                    except Exception:
+                        logger.warning('Discarding an unreadable shared curriculum payload.', exc_info=True)
+                        waited, holder_gone = None, True
                 if waited is not None:
                     with _CURRICULUM_CACHE_LOCK:
                         _CURRICULUM_CACHE[key] = {
@@ -916,7 +924,7 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                 # This key includes the generation: a concurrent invalidation
                 # retires it even if this network write finishes afterwards.
                 try:
-                    cache.set(shared_key, value, timeout=ttl)
+                    cache.set(shared_key, _pack_shared(value) if compress else value, timeout=ttl)
                 except Exception:
                     logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
         finally:
@@ -924,6 +932,18 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
             # value already there.
             shared_build.release(cache, shared_key, build_token)
     return value
+
+
+def _pack_shared(value):
+    import pickle
+    import zlib
+    return zlib.compress(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL), 1)
+
+
+def _unpack_shared(blob):
+    import pickle
+    import zlib
+    return pickle.loads(zlib.decompress(blob))
 
 
 def request_bypasses_curriculum_cache(request):
@@ -2057,8 +2077,8 @@ def link_live_session_series_to_module(module_catalogue_id, payload):
     for live_session_id in live_session_ids:
         update_authoring_rows(
             LIVE_SESSIONS_TABLE,
-            'id = %s',
-            [live_session_id],
+            "id = %s AND (module_catalogue_id IS NULL OR module_catalogue_id = '' OR module_catalogue_id = %s)",
+            [live_session_id, module_catalogue_id],
             {'module_catalogue_id': module_catalogue_id, 'updated_at': datetime.utcnow()},
         )
 
@@ -2304,6 +2324,15 @@ def teams_event_payload(payload, graph_settings):
     # Convert each instant in the business zone. A fixed UTC offset changes
     # midnight Thursday into two different weekdays across the autumn clock change.
     zone_name = graph_timezone_iana(graph_settings)
+    if utc_start.tzinfo is None:
+        raise ValueError('The meeting UTC start must include an offset.')
+    expected_local = utc_start.astimezone(calendar_zone(zone_name))
+    # Older clients used localStartDateTime for the browser's clock. Only the
+    # explicit scheduleTimeZone contract names the calendar's civil clock.
+    if payload.get('scheduleTimeZone') and (
+            local_start.replace(tzinfo=None) != expected_local.replace(tzinfo=None)
+            or (local_start.tzinfo is not None and local_start.astimezone(timezone.utc) != utc_start)):
+        raise ValueError('The meeting local time and UTC time do not match the selected calendar time zone. Review the session time.')
     graph_zone = graph_settings.get('timezone') or 'GMT Standard Time'
     targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, zone_name)
     event = {
@@ -2458,7 +2487,7 @@ def graph_timezone_iana(graph_settings):
     override = clean_str(os.environ.get('MICROSOFT_GRAPH_TIMEZONE_IANA'))
     if override:
         return override
-    return GRAPH_WINDOWS_TO_IANA.get(clean_str(graph_settings.get('timezone')), 'Europe/London')
+    return calendar_zone(clean_str(graph_settings.get('timezone')) or 'Europe/London').key
 
 
 def teams_schedule_settings(graph_settings, payload=None, series=None):
@@ -2467,10 +2496,10 @@ def teams_schedule_settings(graph_settings, payload=None, series=None):
     if selected and selected not in ('Africa/Cairo', 'Europe/London'):
         raise ValueError('Choose Egypt or England as the schedule time zone.')
     stored = clean_str((series or {}).get('timezone'))
-    zone = GRAPH_WINDOWS_TO_IANA.get(stored) if stored else selected
+    zone = calendar_zone(stored).key if stored else selected
     if not zone:
         return graph_settings
-    windows = next((key for key, value in GRAPH_WINDOWS_TO_IANA.items() if value == zone), stored)
+    windows = next((key for key, value in GRAPH_WINDOWS_TO_IANA.items() if value == zone), zone)
     return {**graph_settings, 'timezone': windows, '_schedule_timezone_iana': zone}
 
 
@@ -3579,6 +3608,8 @@ def curriculum_teams_meeting(request):
         if requested_catalogue_id
         else ''
     )
+    if resolved_catalogue_id and (authoring_module_exists(resolved_catalogue_id) or {}).get('source_type') == 'free_course':
+        return json_error('Free courses contain self-study content only.', status=400)
     # A shared duplicate points at the source calendar. Treat the source as
     # the owner before checking for an active series so this path cannot create
     # a second Graph event for the alias.
@@ -3662,6 +3693,15 @@ def curriculum_teams_meeting(request):
         event = microsoft_graph_request('POST', f'users/{owner_key}/events', payload={**event_payload, 'attendees': []})
     except RuntimeError as exc:
         logger.warning('Unable to create Module Builder Teams event: %s', exc)
+        from .teams_graph_failure_log import EVENT_SAVE, record_graph_failure
+        record_graph_failure(EVENT_SAVE, str(exc), organizer=organizer)
+        if getattr(exc, 'uncertain', False):
+            return json_error(
+                'Microsoft could not confirm the creation request. Check its status and the organizer calendar before creating again.',
+                status=502, code='teams_calendar_create_uncertain', verificationRequired=True,
+                graphStatus=getattr(exc, 'status_code', None), retryAfterSeconds=getattr(exc, 'retry_after', None),
+                requestId=getattr(exc, 'request_id', ''),
+            )
         return json_error('Microsoft Teams could not create the meeting.', status=502, detail=str(exc))
 
     event_id = clean_str(event.get('id'))
@@ -4208,7 +4248,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         )
     if request.method != 'PATCH':
         return json_error('Method not allowed.', status=405)
-    if module_has_external_teams_calendar(clean_str(series_rows[0].get('module_catalogue_id')), series_rows[0]):
+    from .teams_original_calendar import calendar_authorized, original_calendar_request
+    if series_rows[0].get('meeting_type') == 'linked-external' and not calendar_authorized(live_session_id):
+        return original_calendar_request(curriculum_teams_meeting_schedule)(request, live_session_id)
+    if module_has_external_teams_calendar(clean_str(series_rows[0].get('module_catalogue_id')), series_rows[0]) and not calendar_authorized(live_session_id):
         return json_error(
             'This imported meeting is managed in its original Teams calendar. Update its dates and invitations '
             'there. Reattaching saved LMS data preserves the existing link but does not fetch new Teams dates.',
@@ -4248,6 +4291,18 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         weekday_groups = [] if payload.get('peopleOnly') else calendar_groups(payload, graph_settings)
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
+    if not people_only and clean_str(series.get('module_catalogue_id')):
+        from .teams_update_preservation import unresolved_saved_bindings
+        components = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s',
+                                         [series['module_catalogue_id']])
+        saved_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id])
+        unresolved = unresolved_saved_bindings(live_session_id,
+            [{'id': row['id'], 'settings': component_builder_settings(row)} for row in active_component_rows(components)
+             if frontend_component_type(row.get('type')) == 'live-session'], saved_rows,
+            join_url=clean_str(series.get('join_url')))
+        if unresolved:
+            return json_error('Some saved week links could not be matched to their original sessions. No Teams change was sent. Review Calendar health before updating these dates.',
+                              status=409, code='teams_component_binding_unresolved')
     if stored_calendar_series(series) or weekday_groups:
         return with_schedule_change_notice(save_weekday_calendar(payload, graph_settings, series), live_session_id, schedule_before,
                                            request=None if invitations_only else request, notify=notify_attendees, series_before=series)
@@ -4362,6 +4417,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'session_number asc',
     )
     current_occurrences = [row for row in slot_rows if clean_str(row.get('status')).lower() != 'superseded']
+    from .teams_update_preservation import calendar_occurrence_details
+    current_occurrences = calendar_occurrence_details(series, current_occurrences)
     dates_already_verified = False
     # Sessions the last save already reported missing from the series. They are
     # under review in Calendar health, so their absence is not re-read as drift
@@ -4705,7 +4762,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'updated_at': datetime.utcnow(),
     }
     if payload.get('peopleOnly'):
-        for field in ('module_title', 'start_datetime', 'duration_minutes', 'repeat_pattern', 'repeat_occurrences'):
+        for field in ('module_title', 'start_datetime', 'duration_minutes', 'repeat_pattern', 'repeat_occurrences',
+                      'join_url', 'online_meeting_id', 'web_link'):
             series_update.pop(field, None)
     if people_changed:
         series_update['attendees'] = json_db_value(attendees)
@@ -4713,10 +4771,15 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         series_update['co_organizers'] = json_db_value(co_organizers)
     update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], series_update)
     module_id = clean_str(series.get('module_catalogue_id'))
-    if module_id:
+    unresolved_components = []
+    if module_id and not people_only:
         saved = {**series, **series_update}
         attach_teams_meeting_to_module_weeks(module_id, saved, live_session_row_to_component_settings(saved),
-                                             occurrence_rows if payload.get('peopleOnly') else saved_live_session_occurrences(live_session_id))
+                                             saved_live_session_occurrences(live_session_id),
+                                             unresolved_components=unresolved_components)
+    if unresolved_components:
+        warnings.append({'code': 'teams_component_binding_missing',
+                         'message': f'{len(unresolved_components)} existing session link(s) were preserved because their calendar occurrence could not be matched. Review Calendar health before changing those sessions.'})
     return with_schedule_change_notice(JsonResponse({
         'updated': True,
         'meeting': {
@@ -4821,6 +4884,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         metadata = dict(artifact)
         metadata.pop('lmsHiddenFromLearners', None)
         metadata.pop('lmsTranscriptTimeline', None)
+        metadata.pop('lmsBunnyRecording', None)
         same_recording = None if existing else _same_artifact_under_new_graph_id(cursor, lock, payload)
         if same_recording:
             # Teams re-issued the id of an artifact already saved (same call and
@@ -4831,6 +4895,8 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
                 metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            if 'lmsBunnyRecording' in saved_metadata:
+                metadata['lmsBunnyRecording'] = saved_metadata['lmsBunnyRecording']
             cursor.execute(
                 f'UPDATE {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} SET graph_artifact_id=%s, content_url=%s, '
                 'content_correlation_id=%s, metadata=%s, updated_at=%s WHERE id=%s',
@@ -4843,6 +4909,8 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
                 metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            if 'lmsBunnyRecording' in saved_metadata:
+                metadata['lmsBunnyRecording'] = saved_metadata['lmsBunnyRecording']
         payload['metadata'] = json_db_value(metadata)
         authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], payload)
     return True
@@ -5366,7 +5434,36 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     if not endpoint:
         return json_error('Unsupported meeting artifact.', status=400)
 
+    occurrence = next(
+        (row for row in occurrences if clean_str(row.get('id')) == clean_str(artifact.get('occurrence_id'))),
+        {},
+    )
     if artifact_type == 'recording':
+        from .session_bunny_policy import bunny_recording, recording_uses_bunny
+        if bunny_recording(artifact.get('metadata')) or recording_uses_bunny(occurrence, artifact):
+            from .bunny_stream import VideoImportError
+            from .session_bunny import recording_player
+            if bunny_recording(artifact.get('metadata')).get('state') != 'ready':
+                return json_error('This Bunny recording is still being prepared. Please try again later.', status=409)
+            if request.GET.get('preview') != '1':
+                # Curriculum's existing Download links use this older endpoint.
+                # Share the staff-authenticated original-file delivery; a DRM
+                # rendition is only a playback source, not a downloadable MP4.
+                from copy import copy
+                from .session_results import admin_content
+                download_request = copy(request)
+                download_request.GET = request.GET.copy()
+                download_request.GET['download'] = '1'
+                return admin_content(download_request, live_session_id, artifact_id)
+            try:
+                # Legacy callers expect an MP4, including native video previews.
+                # Serve Bunny's protected rendition without reverting to Microsoft/Azure.
+                url = recording_player(artifact, download=True, referrer=request.build_absolute_uri('/'))
+            except VideoImportError as failure:
+                return json_error(str(failure), status=503)
+            response = HttpResponseRedirect(url)
+            response['Cache-Control'] = 'private, no-store'
+            return response
         # Prefer the archived copy. Graph is an availability risk and deletes
         # recordings on its own retention schedule; once a recording is in the
         # container that is the copy worth serving, and redirecting hands the
@@ -5383,10 +5480,6 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     # A recreated session's transcript and recording live under its own meeting,
     # so the identifiers come from the occurrence the artifact belongs to and fall
     # back to the series only for the sessions that share the series' meeting.
-    occurrence = next(
-        (row for row in occurrences if clean_str(row.get('id')) == clean_str(artifact.get('occurrence_id'))),
-        {},
-    )
     occurrence_meeting_id = clean_str(occurrence.get('online_meeting_id'))
     organizer = clean_str(series.get('organizer_email'))
     meeting_id = occurrence_meeting_id or clean_str(series.get('online_meeting_id'))
@@ -11028,6 +11121,8 @@ def authoring_session_links_by_catalogue(
                     'weekId': week_id,
                     'componentId': clean_str(component.get('id')),
                     'title': component.get('title') or week_row.get('title') or '',
+                    'weekTitle': (clean_str(week_row.get('title'))
+                                  if clean_str(component.get('module_catalogue_id')) == catalogue_id else ''),
                     # Delivered by its own additional meeting rather than by the
                     # module's calendar. Flagged, never dropped: the week still runs
                     # a live session and every screen that lists sessions must still
@@ -11616,6 +11711,7 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 # the row the author is looking at.
                 'weekId': clean_str(link.get('weekId')),
                 'componentId': clean_str(link.get('componentId')),
+                'weekTitle': clean_str(link.get('weekTitle')),
                 # The live session's own name, as its author typed it on the
                 # component. The module's name and a number are what is left
                 # when a component carries no title of its own.
@@ -12090,11 +12186,10 @@ def calendar_clock_to_utc_iso(date_value, time_value, time_zone=None):
         return ''
     naive = datetime(day.year, day.month, day.day) + timedelta(minutes=minutes)
     try:
-        zone = ZoneInfo(time_zone or graph_timezone_iana({}))
-    except Exception:
-        logger.debug('Unknown calendar timezone; falling back to UTC.', exc_info=True)
-        zone = timezone.utc
-    return naive.replace(tzinfo=zone).astimezone(timezone.utc).isoformat()
+        return local_clock_to_utc(naive, time_zone or graph_timezone_iana({})).isoformat()
+    except ValueError:
+        logger.warning('Calendar clock cannot name a unique instant in its saved time zone.')
+        return ''
 
 
 def module_schedule_view(module, tutor_name=None):
@@ -12808,7 +12903,8 @@ def get_cached_curriculum_rows(compact=False, force=False):
         lambda: get_curriculum_rows(compact=compact),
         force=force,
         ttl=CURRICULUM_ROWS_CACHE_TTL_SECONDS,
-        shared=False,
+        shared=True,
+        compress=True,
     )
 
 
@@ -14274,7 +14370,8 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     # Scope. Filters, the programme/cohort/group chain on the card, and the
     # `moduleBelongsToVisibleProgramme()` gate.
     'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
-    'learnerRosterMode', 'teamsSharedSourceModuleId', 'ksbRemapReport', 'isProgrammeDeleted',
+    'learnerRosterMode', 'teamsSharedSourceModuleId', 'ksbRemapReport', 'isProgrammeDeleted', 'isFreeCourse',
+    'isForSale', 'price', 'currency',
     # Counts the catalogue card and the OTJH input render.
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes',
     'totalOtjh', 'declaredTotalOtjh', 'assignments',
@@ -14791,6 +14888,11 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
         if resolved:
             return resolved
 
+    # Standalone courses have no placement to disambiguate a shared title.
+    # Only an explicit existing id can identify an existing free course.
+    if payload.get('isFreeCourse') is True:
+        return ''
+
     try:
         ensure_module_authoring_tables()
         title = first_clean_payload_value(payload, 'title', 'name')
@@ -14823,6 +14925,10 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
         )
         for row in rows:
             if normalise(row.get('title')) != normalise(title):
+                continue
+            # A standalone course and an unplaced module may share a title.
+            # Creation must never adopt the other kind's content or identity.
+            if (row.get('source_type') == 'free_course') != (payload.get('isFreeCourse') is True):
                 continue
             # An archived module is not "the same module" a create is asking
             # for. Adopting it handed a fresh copy the archived row's id, the
@@ -15531,6 +15637,10 @@ def provision_module_authoring_tables():
     ensure_columns(AUTHORING_ADVANCED_TABLE, {
         AI_MATERIAL_COLUMN: json_type,
     })
+    from .course_pricing_schema import provision as provision_course_pricing
+    provision_course_pricing(connection)
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{AUTHORING_MODULES_TABLE}', None)
+    _TABLE_COLUMNS_CACHE.pop(AUTHORING_MODULES_TABLE, None)
     _AUTHORING_TABLES_READY = True
 
 
@@ -15563,7 +15673,6 @@ def provision_free_programme_tables():
             create table if not exists {authoring_table_name(FREE_COURSES_TABLE)} (
                 id varchar(128) primary key,
                 course_name text not null default '',
-                course_type varchar(16) not null default 'free' check (course_type in ('free', 'apprentices')),
                 description text,
                 cover_image_url text,
                 week_builder_week_ids {json_type} not null default '[]',
@@ -15616,11 +15725,6 @@ def provision_free_programme_tables():
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
                 add column if not exists course_name text not null default ''
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(FREE_COURSES_TABLE)}
-                add column if not exists course_type varchar(16) not null default 'free'
-                check (course_type in ('free', 'apprentices'))
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
@@ -15711,8 +15815,6 @@ def provision_free_programme_tables():
             module_columns = {row[1] for row in cursor.fetchall()}
             cursor.execute(f'pragma table_info({quote_ident(FREE_COURSES_TABLE)})')
             course_columns = {row[1] for row in cursor.fetchall()}
-            if 'course_type' not in course_columns:
-                cursor.execute(f"alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_type varchar(16) not null default 'free' check (course_type in ('free', 'apprentices'))")
             if 'course_name' not in course_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name text not null default ""')
             if 'description' not in course_columns:
@@ -17065,10 +17167,17 @@ SHARED_TEAMS_DELIVERY_SETTING_KEYS = {
 
 def strip_shared_teams_delivery_settings(settings):
     """Remove source-owned Teams identity from a shared-module payload."""
-    return {
+    result = {
         key: value for key, value in (settings or {}).items()
         if key not in SHARED_TEAMS_DELIVERY_SETTING_KEYS
     }
+    # A newly pasted URL is an explicit lack of proof, not a source-owned ID.
+    # Learner readers must retain that fact instead of reviving a positional
+    # source occurrence after the next full save.
+    if ((settings or {}).get('teamsCalendarBinding') == 'unverified'
+            and clean_str((settings or {}).get('liveSessionLinkOverride'))):
+        result['teamsCalendarBinding'] = 'unverified'
+    return result
 
 
 class ModuleAuthoringValidationError(ValueError):
@@ -17088,6 +17197,17 @@ def http_url(value):
 def component_resource_url(value):
     text = clean_str(value)
     return text.startswith('/curriculum_api/curriculum/uploads/') or http_url(text)
+
+
+def component_uploaded_video_url(value):
+    """Existing LMS MP4 resources may predate the generated video-import path."""
+    from urllib.parse import unquote
+    parsed = urlparse(clean_str(value))
+    path = unquote(parsed.path)
+    return (not parsed.scheme and not parsed.netloc and not parsed.query and not parsed.fragment
+            and path.startswith('/curriculum_api/curriculum/uploads/')
+            and path.lower().endswith('.mp4') and '\\' not in path
+            and not any(part in {'.', '..'} for part in path.split('/')))
 
 
 def host_matches(value, allowed_hosts):
@@ -17203,7 +17323,9 @@ def validate_component_authoring_payload(component, path):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid YouTube URL.'})
         if video_url and source_type == 'Vimeo' and not host_matches(video_url, {'vimeo.com'}):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid Vimeo URL.'})
-        if video_url and source_type in {'External Link', 'HTML (MP4)'} and not http_url(video_url):
+        from .video_uploads import stored_video_path
+        saved_mp4 = source_type == 'HTML (MP4)' and (bool(stored_video_path(video_url)) or component_uploaded_video_url(video_url))
+        if video_url and source_type in {'External Link', 'HTML (MP4)'} and not (http_url(video_url) or saved_mp4):
             errors.append({'path': f'{path}.settings.videoUrl', 'message': 'Enter a valid URL.'})
         if status != 'Draft' and source_type == 'Embed' and not clean_str(settings.get('embedCode')):
             errors.append({'path': f'{path}.settings.embedCode', 'message': 'Embed content is required before QA or approval.'})
@@ -17845,6 +17967,11 @@ def component_context_for_payload(payload):
             None,
         )
         module_catalogue_id = clean_str((module_row or {}).get('module_catalogue_id'))
+
+    if (module_row or {}).get('source_type') == 'free_course' and stored_component_type(payload.get('type')) == 'live_session':
+        from .free_course_policy import retained_live_component_ids
+        if clean_str(payload.get('id')) not in retained_live_component_ids(module_row):
+            raise ModuleAuthoringValidationError([{'path': 'type', 'message': 'Free courses contain self-study content only.'}])
 
     if not module_catalogue_id:
         module_catalogue_id = unique_module_catalogue_id()
@@ -18732,17 +18859,57 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
         return weeks
     source_id = teams_module_owner_id(source_id)
     source_settings = shared_teams_component_settings(source_id)
-    if not source_settings:
-        return weeks
+    source_settings = [settings for settings in source_settings
+                       if not clean_str(settings.get('extraTeamsMeetingUrl'))
+                       and clean_str(settings.get('teamsMeetingScope')).lower() != 'additional']
     index = 0
     for week in weeks or []:
         for component in week.get('components') or []:
             if normalise_component_type(component.get('type')) != 'live_session':
                 continue
-            if index >= len(source_settings):
-                return weeks
             current = component.get('settings') if isinstance(component.get('settings'), dict) else {}
-            source = source_settings[index]
+            if (clean_str(current.get('extraTeamsMeetingUrl'))
+                    or clean_str(current.get('teamsMeetingScope')).lower() == 'additional'):
+                extra_link = clean_str(current.get('extraTeamsMeetingUrl') or current.get('liveSessionLinkOverride')
+                                       or current.get('liveSessionUrl') or current.get('teamsMeetingUrl'))
+                if extra_link:
+                    component['settings'] = {**current, 'liveSessionUrl': extra_link, 'teamsMeetingUrl': extra_link}
+                continue
+            if index >= len(source_settings) and current.get('teamsCalendarBinding') != 'unverified':
+                index += 1
+                continue
+            source = source_settings[index] if index < len(source_settings) else {}
+            own_link = clean_str(current.get('liveSessionLinkOverride'))
+            if current.get('teamsCalendarBinding') == 'unverified':
+                planned_date = clean_str(current.get('sessionDate') or week.get('sessionDate'))[:10]
+                matching = [item for item in source_settings
+                            if planned_date and clean_str(item.get('sessionDate'))[:10] == planned_date
+                            and (not clean_str(current.get('sessionTime'))
+                                 or clean_str(item.get('sessionTime'))[:5] == clean_str(current.get('sessionTime'))[:5])
+                            and clean_str(item.get('liveSessionUrl') or item.get('teamsMeetingUrl')) == own_link
+                            and clean_str(item.get('teamsOccurrenceId'))
+                            and clean_str(item.get('teamsLiveSessionId'))
+                            and item.get('teamsCalendarBinding') not in ('unverified', 'missing', 'ambiguous')]
+                if len(matching) != 1:
+                    # No positional guess for a newly pasted link. Legacy
+                    # shared copies keep their established projection below.
+                    if own_link:
+                        from .teams_external_calendar import manual_link_settings
+                        component['settings'] = manual_link_settings(
+                            {**current, 'liveSessionUrl': own_link, 'teamsMeetingUrl': own_link}, current,
+                        )
+                    index += 1
+                    continue
+                source = matching[0]
+            source_link = clean_str(source.get('liveSessionUrl') or source.get('teamsMeetingUrl'))
+            if own_link and own_link != source_link:
+                from .teams_external_calendar import manual_link_settings
+                component['settings'] = manual_link_settings(
+                    {**current, 'liveSessionUrl': own_link, 'teamsMeetingUrl': own_link},
+                    {'liveSessionUrl': source_link},
+                )
+                index += 1
+                continue
             merged = {
                 **current,
                 **{
@@ -18759,6 +18926,8 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
             if own_link:
                 merged['liveSessionUrl'] = own_link
                 merged['teamsMeetingUrl'] = own_link
+            if current.get('teamsCalendarBinding') == 'unverified':
+                merged['teamsCalendarBinding'] = 'matched'
             component['settings'] = merged
             index += 1
     return weeks
@@ -18799,7 +18968,7 @@ def live_session_row_to_component_settings(row):
         'teamsDurationMinutes': parse_int(row.get('duration_minutes'), 60),
         'durationMinutes': parse_int(row.get('duration_minutes'), 60),
         'teamsProvider': clean_str(row.get('provider')) or 'Microsoft Teams',
-        'sessionTimeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
+        'sessionTimeZone': graph_timezone_iana(teams_schedule_settings({}, series=row)),
         'teamsRepeat': clean_str(row.get('repeat_pattern')) or 'none',
         'teamsRepeatOccurrences': parse_int(row.get('repeat_occurrences'), 1),
         'teamsLobbyBypass': clean_str(row.get('lobby_bypass')) or 'invited',
@@ -19023,7 +19192,7 @@ def preserve_additional_meeting_settings(payload_settings, stored_row):
     return {**payload_settings, **kept, 'liveSessionUrl': join_url, 'teamsMeetingUrl': join_url}
 
 
-def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False):
+def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None):
     """Write a tracked Teams meeting onto the weeks of a module.
 
     A module's live sessions and its meeting's sessions are one list, read in
@@ -19133,8 +19302,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         tracked = next((row for row in occurrence_rows if (
             clean_str(row.get('id')) not in claimed_occurrence_ids
             and (
-                (tracked_id and clean_str(row.get('id')) == tracked_id)
-                or (
+                (clean_str(row.get('id')) == tracked_id) if tracked_id else (
                     tracked_series == clean_str(series_row.get('id'))
                     and tracked_number > 0
                     and parse_int(row.get('session_number'), 0) == tracked_number
@@ -19154,7 +19322,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             return found
         return next((row for row in occurrence_rows if clean_str(row.get('id')) not in claimed_occurrence_ids), None)
 
-    def settings_for_session(slot_index, occurrence, existing_settings=None):
+    def settings_for_session(slot_index, occurrence, existing_settings=None, existing_link=''):
         """Everything that belongs to one live session.
 
         ``slot_index`` is the position in the module's dated plan. A
@@ -19165,6 +19333,14 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
         if not occurrence and stored_calendar_series(series_row):
+            saved_link = clean_str(existing_settings.get('liveSessionUrl') or existing_settings.get('teamsMeetingUrl') or existing_link)
+            if saved_link:
+                # A failed match is not an instruction to erase an existing
+                # booking. Keep its identity/history and expose the unresolved
+                # binding; a later verified update can match it again.
+                return {**existing_settings, 'liveSessionUrl': saved_link,
+                        'teamsMeetingUrl': clean_str(existing_settings.get('teamsMeetingUrl')) or saved_link,
+                        'teamsCalendarBinding': 'missing'}
             empty_settings = {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
             if 'teamsCalendarBinding' in existing_settings:
                 empty_settings['teamsCalendarBinding'] = 'missing'
@@ -19233,6 +19409,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for live_index, row in enumerate(live_rows):
             existing_settings = component_builder_settings(row)
+            # Updating the main calendar does not adopt a different meeting
+            # explicitly selected for this component (for example a master class).
+            explicit_link = clean_str(existing_settings.get('liveSessionLinkOverride'))
+            if explicit_link and explicit_link != clean_str(series_row.get('join_url')):
+                session_index += 1
+                handled_component_ids.add(clean_str(row.get('id')))
+                continue
             # A live session delivered by its own additional meeting is not part
             # of this series. It is never sent to the module's calendar, so it
             # owns no occurrence here and must keep ITS meeting's link rather
@@ -19289,7 +19472,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             occurrence = occurrence_for_component(existing_settings, session_index)
             if occurrence:
                 claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
-            settings_for_week = settings_for_session(session_index, occurrence, existing_settings)
+            settings_for_week = settings_for_session(session_index, occurrence, existing_settings, row.get('live_sessions_link'))
+            if not occurrence and settings_for_week.get('teamsCalendarBinding') == 'missing' and unresolved_components is not None:
+                unresolved_components.append(clean_str(row.get('id')))
             session_index += 1
             handled_component_ids.add(clean_str(row.get('id')))
             if not dry_run:
@@ -19546,7 +19731,8 @@ def replaceable_live_session(row, *, shared=False):
     if frontend_component_type(row.get('type')) != 'live-session':
         return False
     settings = component_builder_settings(row)
-    if clean_str(settings.get('extraTeamsMeetingUrl')):
+    if (clean_str(settings.get('extraTeamsMeetingUrl'))
+            or clean_str(settings.get('teamsMeetingScope')).lower() == 'additional'):
         return False
     # A newly authored live session has no link yet.  It is still a legitimate
     # target for Replace Teams links; requiring an old link here made the
@@ -19669,6 +19855,20 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
                 # environment has not yet provisioned recording tracking.
                 # There can be no saved recording to attach in that state.
                 logger.info('Teams result tracking is not provisioned; saved link without recording association.')
+            # A module-level alias affects EVERY week. A single pasted link
+            # must not silently switch the calendar/evidence of the unselected
+            # weeks to another module.
+            if source_module_id:
+                main_rows = [row for row in active_component_rows(authoring_fetch_all(
+                    AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [resolved_id],
+                )) if replaceable_live_session(row)]
+                if (not any(clean_str(row.get('week_id')) in week_ids for row in main_rows)
+                        or any(clean_str(row.get('week_id')) not in week_ids
+                               and clean_str(component_builder_settings(row).get('liveSessionLinkOverride')
+                                             or component_builder_settings(row).get('liveSessionUrl')
+                                             or component_builder_settings(row).get('teamsMeetingUrl')) != link
+                               for row in main_rows)):
+                    source_module_id = ''
             effective_shared = shared or bool(source_module_id)
             if source_module_id and source_module_id != clean_str(module_row.get('teams_shared_source_module_id')):
                 update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [resolved_id], {
@@ -19693,6 +19893,8 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
                     # alias.  The source's current identity is projected on
                     # reads, while this component retains the chosen join URL.
                     settings = strip_shared_teams_delivery_settings(settings)
+                from .teams_external_calendar import manual_link_settings
+                settings = manual_link_settings({**settings, 'liveSessionUrl': link, 'teamsMeetingUrl': link}, settings)
                 update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
                     'settings_json': json_db_value({
                         **settings,
@@ -20133,7 +20335,7 @@ def curriculum_teams_meeting_summary(request):
             'eventId': clean_str(row.get('graph_event_id')),
             'onlineMeetingId': clean_str(row.get('online_meeting_id')),
             'organizerEmail': clean_str(row.get('organizer_email')),
-            'timeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
+            'timeZone': graph_timezone_iana(teams_schedule_settings({}, series=row)),
             'presenters': teams_series_email_list(row.get('presenters')),
             'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'attendees': teams_series_email_list(row.get('attendees')),
@@ -21038,6 +21240,14 @@ def requested_expected_revision(request, payload):
     )
 
 
+def curriculum_name_only_patch(payload, *, allow_title=False):
+    """Revision metadata does not turn a display-name edit into a delivery save."""
+    fields = {'name', 'title'} if allow_title else {'name'}
+    return any(clean_str(payload.get(key)) for key in fields) and set(payload).issubset(
+        fields | {'expectedRevision', 'expected_revision'},
+    )
+
+
 def record_conflict_response(expected_revision, current_revision, **extra):
     """The 409 a stale guarded save is refused with.
 
@@ -21374,6 +21584,8 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         'coverImage': module.get('cover_image_url') or '',
         'status': module.get('status') or 'draft',
         'sourceType': module.get('source_type') or '',
+        'isFreeCourse': module.get('source_type') == 'free_course',
+        **pricing_payload(module),
         'sourceId': module.get('source_id') or '',
         'isProgrammeDeleted': is_programme_deleted,
         'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
@@ -21840,6 +22052,8 @@ def get_authoring_structure_payloads(
             'coverImage': module.get('cover_image_url') or '',
             'status': module.get('status') or 'draft',
             'sourceType': module.get('source_type') or '',
+            'isFreeCourse': module.get('source_type') == 'free_course',
+            **pricing_payload(module),
             'sourceId': module.get('source_id') or '',
             'isProgrammeDeleted': is_programme_deleted,
             'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
@@ -22089,6 +22303,8 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             'coverImage': row.get('cover_image_url') or '',
             'status': row.get('status') or 'draft',
             'sourceType': row.get('source_type') or '',
+            'isFreeCourse': row.get('source_type') == 'free_course',
+            **pricing_payload(row),
             'sourceId': row.get('source_id') or '',
             'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or ''),
             'tutor': row.get('tutor_name') or '',
@@ -22259,6 +22475,8 @@ def authoring_summary_catalogue_item(summary):
         'status': summary['status'],
         'authoringStatus': summary['status'],
         'sourceType': summary.get('sourceType') or 'authoring',
+        'isFreeCourse': summary.get('isFreeCourse', False),
+        **{key: summary.get(key) for key in COURSE_PRICING_FIELDS},
         'ksbProfileSourceId': summary.get('ksbProfileSourceId') or '',
         'deliveryStatus': summary.get('deliveryStatus') or 'unknown',
         'author': '',
@@ -22481,6 +22699,8 @@ def enrich_modules_with_authoring(modules, include_programme_deleted=False, incl
                     'status': module_status,
                     'authoringStatus': saved['status'],
                     'sourceType': module_source_type,
+                    'isFreeCourse': saved.get('isFreeCourse', False),
+                    **{key: saved.get(key) for key in COURSE_PRICING_FIELDS},
                     'ksbProfileSourceId': saved.get('ksbProfileSourceId') or module.get('ksbProfileSourceId') or '',
                     'deliveryStatus': module.get('deliveryStatus') or saved.get('deliveryStatus') or 'unknown',
                     'notes': saved['description'],
@@ -23283,6 +23503,7 @@ MODULE_ARCHIVED_SAVE_REFUSED = (
 def save_module_authoring_structure(
     module_catalogue_id, payload, *, repair_links=True, write_changed_only=False,
     light=False, stored_rows=None, stored_structure=None, build_result=True,
+    _legacy_live_ids=None,
 ):
     """Persist one module's structure.
 
@@ -23333,6 +23554,20 @@ def save_module_authoring_structure(
     else:
         existing_module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) if module_catalogue_id else []
     existing_module_row = existing_module_rows[0] if existing_module_rows else {}
+    try:
+        course_pricing = pricing_values(payload, existing_module_row)
+    except ValueError as error:
+        raise ModuleAuthoringValidationError([{'path': error.args[0], 'message': error.args[1]}]) from error
+    is_free_course = (existing_module_row.get('source_type') == 'free_course'
+                      or payload.get('isFreeCourse') is True
+                      or payload.get('sourceType', payload.get('source_type')) == 'free_course')
+    if is_free_course:
+        from .free_course_policy import free_course_errors, retained_live_component_ids
+        allowed_live_ids = retained_live_component_ids(existing_module_row) if _legacy_live_ids is None else set(_legacy_live_ids)
+        errors = free_course_errors(payload, existing_module_row, allowed_live_ids=allowed_live_ids)
+        if errors:
+            raise ModuleAuthoringValidationError(errors)
+        payload = {**payload, 'sourceType': 'free_course', 'learnerRosterMode': 'manual'}
     # An editor that still believes an archived module is live sends
     # `isProgrammeDeleted: false` (the Builder derives it from the copy it
     # loaded). Honouring that cleared the archive on the module row alone: the
@@ -23357,14 +23592,18 @@ def save_module_authoring_structure(
         weeks = without_retired_components(current_structure.get('weekStructure') or [])
     else:
         weeks = []
+    if is_free_course:
+        errors = free_course_errors({**payload, 'weekStructure': weeks}, existing_module_row, allowed_live_ids=allowed_live_ids)
+        if errors:
+            raise ModuleAuthoringValidationError(errors)
     checklist, quality_score = module_authoring_quality_check({**payload, 'weekStructure': weeks})
     all_components = [component for week in weeks for component in (week.get('components') or [])]
     total_otjh = otjh_hours_from_minutes(sum(component_expected_otjh_minutes(component) for component in all_components))
     # total_otjh is the persisted aggregate used by catalogue/list views.
     # Keep it derived from components so stale frontend payloads cannot pin it to 0.
     declared_total = total_otjh
-    programme_name = payload.get('programmeName') or payload.get('programme') or existing_module_row.get('programme_name') or 'Unassigned programme'
-    programme = ensure_programme_config_for_authoring(
+    programme_name = '' if is_free_course else payload.get('programmeName') or payload.get('programme') or existing_module_row.get('programme_name') or 'Unassigned programme'
+    programme = None if is_free_course else ensure_programme_config_for_authoring(
         programme_name,
         payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id'),
         payload.get('programmeStatus') or payload.get('programme_status'),
@@ -23373,7 +23612,7 @@ def save_module_authoring_structure(
     # placeholder name: programme_id is a foreign key into programmes, so
     # falling back to programme_name made the insert fail on
     # modules_programme_id_fkey with key (programme_id)=(Unassigned programme).
-    programme_id = (programme or {}).get('sourceId') or persistable_programme_id(
+    programme_id = None if is_free_course else (programme or {}).get('sourceId') or persistable_programme_id(
         payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id')
     ) or None
     delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
@@ -23509,6 +23748,7 @@ def save_module_authoring_structure(
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
             'module_catalogue_id': module_catalogue_id,
+            **course_pricing,
             'programme_id': programme_id,
             'programme_name': programme_name,
             'is_programme_deleted': is_programme_deleted,
@@ -23553,7 +23793,7 @@ def save_module_authoring_structure(
             'weekly_schedule': json_db_value(weekly_schedule),
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
-        })
+        }, allow_null_columns={'price'})
         # Written only when the share itself changed. The `modules` column above
         # and this table say the same thing; rewriting the table on every save
         # meant every save could delete a share, which is how one went missing.
@@ -23570,7 +23810,7 @@ def save_module_authoring_structure(
         # the live_sessions row away from its canonical module, breaking the
         # original's calendar, attendance and recordings.  The alias resolves
         # the source row on reads instead.
-        if not teams_shared_source_module_id:
+        if not teams_shared_source_module_id and not is_free_course:
             link_live_session_series_to_module(module_catalogue_id, {**payload, 'weekStructure': weeks})
         # Read before the withdraw-and-rewrite below, because the assurance
         # flags a payload does not mention must survive this save - see
@@ -23641,6 +23881,14 @@ def save_module_authoring_structure(
                 component_settings = preserve_additional_meeting_settings(
                     component_settings, stored_components_by_id.get(component_id),
                 )
+                if (not is_free_course and frontend_component_type(component.get('type')) == 'live-session'
+                        and (not teams_shared_source_module_id
+                             or clean_str(component_settings.get('liveSessionLinkOverride')))):
+                    from .teams_external_calendar import manual_link_settings
+                    stored_row = stored_components_by_id.get(component_id)
+                    component_settings = manual_link_settings(
+                        component_settings, component_builder_settings(stored_row) if stored_row else {},
+                    )
                 if teams_shared_source_module_id:
                     component_settings = strip_shared_teams_delivery_settings(component_settings)
                 component_ksb_items, component_mapping_payloads = normalise_component_ksb_mappings(
@@ -23793,7 +24041,7 @@ def save_module_authoring_structure(
         # programme_id on groups whose cohort is missing and the foreign key
         # then rejects the write.
         repair_curriculum_parent_links(programme_id)
-    if not light or module_live_sessions_affected(stored_structure, {**payload, 'weekStructure': weeks}):
+    if not is_free_course and (not light or module_live_sessions_affected(stored_structure, {**payload, 'weekStructure': weeks})):
         calendars = authoring_fetch_all(LIVE_SESSIONS_TABLE, "module_catalogue_id = %s and status = 'active'", [module_catalogue_id])
         if calendars and (stored_calendar_series(calendars[0]) or clean_str(calendars[0].get('meeting_type')) == 'linked-external'):
             calendar = calendars[0]
@@ -23939,7 +24187,6 @@ def free_programme_module_response(row, components, course=None):
     return {
         'id': module_id,
         'courseId': row.get('course_id') or course.get('id') or module_id,
-        'courseType': course.get('course_type') or 'free',
         'weekId': row.get('week_id') or '',
         'weekNumber': parse_int(row.get('week_number'), 1),
         'weekTitle': row.get('week_title') or '',
@@ -23978,7 +24225,10 @@ def get_free_programme_modules_payload(programme_id):
         [programme_id],
         'display_order, title',
     ))
-    return [free_programme_module_response(module, components, courses.get(clean_str(module.get('course_id')))) for module in modules]
+    from .legacy_free_course_adoption import adopted_courses
+    adopted = adopted_courses()
+    return [free_programme_module_response(module, components, courses.get(clean_str(module.get('course_id'))))
+            for module in modules if clean_str(module.get('course_id')) not in adopted]
 
 
 def free_programme_owned_ids(programme_id):
@@ -24037,7 +24287,18 @@ def delete_free_programme_data(programme_id):
         logger.warning('Refusing to delete free programme data without a programme id.')
         return set(), set()
     week_ids, course_ids = free_programme_owned_ids(programme_id)
-    free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id])
+    from .legacy_free_course_adoption import adopted_courses
+    protected = set(adopted_courses())
+    protected_weeks = {row['id'] for row in free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE,
+        columns=['id', 'course_id']) if row.get('course_id') in protected}
+    week_ids -= protected_weeks
+    course_ids -= protected
+    if protected_weeks:
+        placeholders = ', '.join(['%s'] * len(protected_weeks))
+        free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE,
+            f'programme_id = %s and free_module_id not in ({placeholders})', [programme_id, *protected_weeks])
+    else:
+        free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id])
     if week_ids:
         placeholders = ', '.join(['%s'] * len(week_ids))
         free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, f'id in ({placeholders})', list(week_ids))
@@ -24056,12 +24317,13 @@ def save_free_programme_modules(programme_id, payload):
     if not isinstance(modules, list):
         modules = []
 
+    from .legacy_free_course_adoption import adopted_courses
+    protected = adopted_courses()
+    if any(clean_str(module.get('courseId') or module.get('course_id')) in protected
+           for module in modules if isinstance(module, dict)):
+        raise ValueError('This free course is now edited in Module Builder. Reload the course catalogue.')
+
     with transaction.atomic():
-        existing_types = {
-            clean_str(course.get('id')): course.get('course_type') or 'free'
-            for course in free_programme_fetch_all(FREE_COURSES_TABLE, columns=['id', 'course_type'])
-        }
-        course_types = course_types_for_modules(modules, existing_types)
         # Scope the rewrite to this programme's own free courses/weeks. This
         # used to delete every row in both tables, destroying other
         # programmes' free-course data on every save.
@@ -24086,13 +24348,11 @@ def save_free_programme_modules(programme_id, payload):
         for module_index, module in enumerate(modules):
             if not isinstance(module, dict):
                 continue
-            course_type = course_types[module_index]
             course_key = (
                 clean_str(module.get('courseId') or module.get('course_id')),
                 clean_str(module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name')),
                 clean_str(module.get('description') or ''),
                 clean_str(module.get('coverImageUrl') or module.get('cover_image_url') or ''),
-                course_type,
             )
             course_id = course_key[0]
             if not course_id:
@@ -24148,7 +24408,6 @@ def save_free_programme_modules(programme_id, payload):
                 'total_otjh': total_otjh,
             })
             group = course_groups.setdefault(course_id, {
-                'course_type': course_type,
                 'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {len(course_groups) + 1}',
                 'description': module.get('description') or '',
                 'cover_image_url': cover_image_url,
@@ -25778,6 +26037,8 @@ def curriculum_programme_detail(request, identifier):
                 'is_archived': programme_status_is_archived(programme_status),
                 'updated_at': datetime.utcnow(),
             }
+            if curriculum_name_only_patch(payload):
+                updates = {'name': name, 'updated_at': updates['updated_at']}
             try:
                 key_column = programme_config_key_column()
             except Exception:
@@ -25793,7 +26054,7 @@ def curriculum_programme_detail(request, identifier):
             # Propagate the new programme name to the denormalized programme_name
             # carried on child cohorts/groups/modules, keeping the canonical
             # programme_id (and every relationship) unchanged.
-            if name and normalise(name) != normalise(config.get('name')):
+            if name and name != clean_str(config.get('name')):
                 propagate_programme_name(clean_str(config.get('program_id') or key_value), name)
             # Learner records carry the name too; renamed through their profile's
             # programme id, never moved. See placement_rename.
@@ -26480,8 +26741,11 @@ def curriculum_modules(request):
                 return compact_module_list_rows(enriched)
 
             payload = {'schema': CURRICULUM_SCHEMA}
+            # v2 entries can predate the free-course/pricing projection. They
+            # survive a deploy in the shared cache and otherwise make existing
+            # standalone courses look like ordinary modules until expiry.
             modules = cached_curriculum_value(
-                f'modules:{visibility}:list-v2', build_list, force=bypass_cache,
+                f'modules:{visibility}:list-v3', build_list, force=bypass_cache,
             )
         elif bypass_cache:
             payload = build_curriculum_payload(visibility, compact=True, force=True)
@@ -26545,6 +26809,8 @@ def curriculum_module_collection(request):
             # is the archive's Restore, which brings its weeks back with it.
             module_catalogue_id = unique_module_catalogue_id()
         existing_live_module = authoring_module_exists(module_catalogue_id)
+        if existing_live_module and (existing_live_module.get('source_type') == 'free_course') != (payload.get('isFreeCourse') is True):
+            return json_error('This identifier belongs to a different course type. Create a new course instead.', status=400)
         if existing_live_module and truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')):
             # A duplicate is its own module. Matching it to a same-titled module
             # already in the destination group used to replace that module's
@@ -26569,6 +26835,8 @@ def curriculum_module_collection(request):
             }, status=200)
         module_payload = {
             'catalogueId': module_catalogue_id,
+            'isFreeCourse': payload.get('isFreeCourse') is True,
+            **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload},
             'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'),
             'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme',
             'programmeStatus': payload.get('programmeStatus') or payload.get('programme_status') or '',
@@ -27058,6 +27326,7 @@ def curriculum_module_structure(request, module_catalogue_id):
         )
         if archived_error:
             return archived_error
+    from .module_collaboration import enabled as collaboration_enabled, check_structure_save, announce_saved
     # Optimistic concurrency. A caller that read the structure sends the
     # revision it read back as ``expectedRevision`` (or an ``If-Match`` header),
     # and this save is refused unless the stored material is still exactly that.
@@ -27107,8 +27376,9 @@ def curriculum_module_structure(request, module_catalogue_id):
         merge_summary = None
         item_merge = partial_save and isinstance(payload.get('structureBase'), dict)
         with transaction.atomic():
-            if expected_revision:
+            if expected_revision or collaboration_enabled(resolved_catalogue_id):
                 lock_module_structure_row(resolved_catalogue_id)
+            if expected_revision:
                 if partial_save:
                     # Read once, under the lock, for both the guard and the
                     # merge: the revision and the stored structure then
@@ -27197,12 +27467,20 @@ def curriculum_module_structure(request, module_catalogue_id):
                         currentRevision=module_structure_revision(resolved_catalogue_id),
                         module=stamp_revision_after_write(stored_structure, resolved_catalogue_id),
                     )
+                lease_error = check_structure_save(request, resolved_catalogue_id, stored_structure, full_payload, payload)
+                if lease_error is not None:
+                    return lease_error
                 result = save_module_authoring_structure(
                     resolved_catalogue_id, full_payload, write_changed_only=True,
                     light=source_rows is not None, stored_rows=source_rows,
                     stored_structure=stored_structure, build_result=False,
                 )
             else:
+                if collaboration_enabled(resolved_catalogue_id):
+                    stored_guard = get_authoring_structure_payload(resolved_catalogue_id) or {}
+                    lease_error = check_structure_save(request, resolved_catalogue_id, stored_guard, payload, payload)
+                    if lease_error is not None:
+                        return lease_error
                 result = save_module_authoring_structure(resolved_catalogue_id, payload)
             if module_catalogue_id.startswith('training-module-'):
                 link_training_row_to_catalogue(
@@ -27210,6 +27488,7 @@ def curriculum_module_structure(request, module_catalogue_id):
                     result.get('catalogueId') or resolved_catalogue_id,
                 )
             saved_catalogue_id = result.get('catalogueId') or resolved_catalogue_id
+            announce_saved(saved_catalogue_id)
     except ModuleAuthoringValidationError as exc:
         return json_error('Module authoring validation failed.', status=400, validationErrors=exc.errors)
     except Exception as exc:
@@ -27307,8 +27586,6 @@ def curriculum_free_programme_modules(request, programme_id):
         return json_error('Invalid JSON body.')
     try:
         modules = save_free_programme_modules(programme_id, payload)
-    except CourseTypeError as exc:
-        return json_error(str(exc), status=400)
     except Exception as exc:
         logger.exception('Unable to save free programme modules for %s.', programme_id)
         return json_error('Unable to save free programme modules.', status=500, detail=str(exc))
@@ -27579,7 +27856,6 @@ def _free_module_response_to_input(module):
     return {
         'id': module.get('id'),
         'courseId': module.get('courseId'),
-        'courseType': module.get('courseType') or 'free',
         'weekId': module.get('weekId'),
         'weekNumber': module.get('weekNumber'),
         'weekTitle': module.get('weekTitle'),
@@ -29145,11 +29421,14 @@ def programme_identity_candidates(programme_id):
     return [value for value in unique(candidates) if value]
 
 
-def assigned_learners_for_programme(programme_id, lifecycle_status=''):
+@scoped_curriculum_read
+def assigned_learners_for_programme(programme_id, lifecycle_status='', *, strict=False):
     # Read once: both the placement query and the name filter below need the
     # same candidates, and resolving them reads the programme's module rows.
     candidates = programme_identity_candidates(programme_id)
     if connection.vendor != 'postgresql' or not learner_schema_table_exists('learners'):
+        if strict:
+            raise DatabaseError('The learner directory is unavailable.')
         canonical_rows = []
     else:
         canonical_rows = []
@@ -29226,6 +29505,8 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
                 )
                 canonical_rows = rows_as_dicts(cursor)
         except Exception as exc:
+            if strict:
+                raise
             logger.warning('Could not load assigned learners for programme %s: %s', programme_id, exc)
             canonical_rows = []
     if not candidates:
@@ -29435,7 +29716,7 @@ def narrow_learners_to_placement(learners, id_key, scope_id, name_key, scope_nam
     return kept
 
 
-def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=None):
+def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=None, *, strict=False):
     """The learners enrolment placed inside a curriculum scope.
 
     One read of the programme roster, then narrowed to the cohort/group the
@@ -29450,6 +29731,7 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
     wrong group's list rather than no list at all.
     """
     lineage = lineage or scope_placement_lineage(scope, identifier)
+    read_options = {'strict': True} if strict else {}
     programme_ident = scope_programme_identifier(lineage)
     module_id = clean_str(lineage.get('moduleCatalogueId')) if scope in {'module', 'week', 'component'} else ''
     if not programme_ident and not module_id:
@@ -29462,7 +29744,7 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
             # plan entries only; never seed the group placement learners.
             learners = module_assignment_roster(module_id, [], lifecycle_status)
         else:
-            learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
+            learners = assigned_learners_for_programme(programme_ident, lifecycle_status, **read_options) if programme_ident else []
             learners = narrow_learners_to_placement(
                 learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
             )
@@ -29471,7 +29753,7 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
             )
             learners = module_assignment_roster(module_id, learners, lifecycle_status)
     else:
-        learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
+        learners = assigned_learners_for_programme(programme_ident, lifecycle_status, **read_options) if programme_ident else []
         learners = narrow_learners_to_placement(
             learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
         )
@@ -31221,18 +31503,6 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
     }
 
 
-def learners_matching_profile(learners, learner_id):
-    """Narrow a scope roster to one learner by profile id; no id keeps them all.
-
-    Profile ids and enrolment ids are separate sequences that can collide, so
-    only the profile ``id`` is matched, never ``enrolmentId``.
-    """
-    learner_id = clean_str(learner_id)
-    if not learner_id:
-        return learners
-    return [row for row in learners if clean_str(row.get('id')) == learner_id]
-
-
 def scope_learner_ksb_impact_payload(request, scope, identifier):
     """The one read behind every scope's achievement view.
 
@@ -31279,10 +31549,6 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
         '' if learner_status.lower() in {'', 'all'} else learner_status,
         lineage=lineage,
     )
-    # The module learners dialog reads one learner's programme-wide progress.
-    # Narrowing before any progress read keeps every learner-shaped read below
-    # to that learner instead of the programme's whole roster.
-    learners = learners_matching_profile(learners, request.GET.get('learnerId'))
     learner_ids = [
         int(row.get('sourceId') if row.get('sourceKind') == 'learner' else row.get('id'))
         for row in learners
@@ -32295,6 +32561,10 @@ def curriculum_module_component_detail(request, module_catalogue_id, component_i
         refused = refuse_stale_module_write(request, payload or {}, module_catalogue_id)
         if refused is not None:
             return refused
+        from .module_collaboration import check_removal
+        refused = check_removal(request, module_catalogue_id, 'component', component_id, payload or {})
+        if refused is not None:
+            return refused
         authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s and component_id = %s', [module_catalogue_id, component_id], via_parent=component_id, deleted_by='component-delete')
         authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and id = %s', [module_catalogue_id, component_id], deleted_by='component-delete')
     invalidate_curriculum_cache()
@@ -32310,6 +32580,10 @@ def curriculum_module_week_detail(request, module_catalogue_id, week_id):
     payload = json_body(request) if request.body else {}
     with transaction.atomic():
         refused = refuse_stale_module_write(request, payload or {}, module_catalogue_id)
+        if refused is not None:
+            return refused
+        from .module_collaboration import check_removal
+        refused = check_removal(request, module_catalogue_id, 'week', week_id, payload or {})
         if refused is not None:
             return refused
         # Read under the lock: a component added to this week after the caller
@@ -32377,26 +32651,47 @@ def curriculum_module_detail(request, identifier):
     existing_authoring = authoring_module_exists(module_catalogue_id) if module_catalogue_id else None
     if existing_authoring:
         if request.method == 'DELETE':
-            # Opt-in per request, exactly as the programme, cohort and group
-            # deletes read it: a bare DELETE still archives.
-            if request_wants_permanent_delete(request):
-                return permanent_module_delete_response(existing_authoring)
-            # Never archive past a running Teams calendar, and never cancel it
-            # on the author's behalf: they cancel it, then archive.
-            blocked = module_teams_calendar_block_response(module_catalogue_id)
-            if blocked is not None:
-                return blocked
-            delete_module_authoring_structure(module_catalogue_id)
-            log_curriculum_decision(
-                'module.archive', outcome='soft_deleted', entity_id=module_catalogue_id,
-                parent_id=clean_str(existing_authoring.get('group_id')),
-            )
-            repair_curriculum_parent_links(clean_str(existing_authoring.get('programme_id')))
-            invalidate_curriculum_cache()
-            return JsonResponse({'deleted': True, 'deletedAuthoring': True, 'id': identifier})
+            from .module_collaboration import enabled as collaboration_enabled, check_removal
+            from contextlib import nullcontext
+            with transaction.atomic() if collaboration_enabled(module_catalogue_id) else nullcontext():
+                if collaboration_enabled(module_catalogue_id):
+                    lock_module_structure_row(module_catalogue_id)
+                    refused = check_removal(request, module_catalogue_id, 'module', module_catalogue_id, {})
+                    if refused is not None:
+                        return refused
+                # Opt-in per request, exactly as the programme, cohort and group
+                # deletes read it: a bare DELETE still archives.
+                if request_wants_permanent_delete(request):
+                    return permanent_module_delete_response(existing_authoring)
+                # Never archive past a running Teams calendar, and never cancel it
+                # on the author's behalf: they cancel it, then archive.
+                blocked = module_teams_calendar_block_response(module_catalogue_id)
+                if blocked is not None:
+                    return blocked
+                delete_module_authoring_structure(module_catalogue_id)
+                log_curriculum_decision(
+                    'module.archive', outcome='soft_deleted', entity_id=module_catalogue_id,
+                    parent_id=clean_str(existing_authoring.get('group_id')),
+                )
+                repair_curriculum_parent_links(clean_str(existing_authoring.get('programme_id')))
+                invalidate_curriculum_cache()
+                return JsonResponse({'deleted': True, 'deletedAuthoring': True, 'id': identifier})
         payload = json_body(request)
         if payload is None:
             return json_error('Invalid JSON body.')
+        rename_only = curriculum_name_only_patch(payload, allow_title=True)
+        try:
+            pricing_values(payload, existing_authoring)
+        except ValueError as error:
+            return json_error(error.args[1], status=400, fields=[error.args[0]],
+                              validationErrors=[{'path': error.args[0], 'message': error.args[1]}])
+        if (existing_authoring.get('source_type') == 'free_course'
+                or payload.get('isFreeCourse') is True
+                or payload.get('sourceType', payload.get('source_type')) == 'free_course'):
+            from .free_course_policy import free_course_errors
+            errors = free_course_errors(payload, existing_authoring)
+            if errors:
+                return json_error('Free course validation failed.', status=400, validationErrors=errors)
         try:
             module_weekly_schedule(payload)
         except ValueError as exc:
@@ -32434,6 +32729,7 @@ def curriculum_module_detail(request, identifier):
             resolved_weeks_number = len(resolved_week_structure) or requested_weeks_number
         structure_payload = {
             **current,
+            **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload},
             'catalogueId': module_catalogue_id,
             'programmeId': payload.get('programmeId') or current.get('programmeId'),
             'programmeName': payload.get('programmeName') or payload.get('programme') or current.get('programmeName') or current.get('programme'),
@@ -32504,13 +32800,14 @@ def curriculum_module_detail(request, identifier):
         # tutor the module already carries, and one that only changes the tutor
         # against the schedule it already has.
         candidate = {**module_schedule_view(structure_payload), 'module_catalogue_id': module_catalogue_id}
-        delivery_day_error = tutor_assignment_delivery_day_error(
+        delivery_day_error = None if rename_only else tutor_assignment_delivery_day_error(
             candidate, before=module_schedule_view(existing_authoring),
         )
         if delivery_day_error:
             return delivery_day_error
         if (
-            not tutor_conflict_override_requested(payload)
+            not rename_only
+            and not tutor_conflict_override_requested(payload)
             and module_schedule_assignment_changed(module_schedule_view(existing_authoring), candidate)
         ):
             conflicts = tutor_schedule_conflicts_created(module_schedule_view(existing_authoring), candidate)
@@ -32526,6 +32823,7 @@ def curriculum_module_detail(request, identifier):
         # moves the revision, so the save is refused rather than performed on a
         # structure it no longer matches.
         expected_revision = requested_expected_revision(request, payload)
+        from .module_collaboration import check_structure_save, announce_saved
         with transaction.atomic():
             if expected_revision or implicit_revision:
                 lock_module_structure_row(module_catalogue_id)
@@ -32538,7 +32836,31 @@ def curriculum_module_detail(request, identifier):
                             get_authoring_structure_payload(module_catalogue_id)
                         ),
                     )
-            result = save_module_authoring_structure(module_catalogue_id, structure_payload)
+            lease_error = check_structure_save(request, module_catalogue_id, current, structure_payload, payload)
+            if lease_error is not None:
+                return lease_error
+            if rename_only:
+                # Do not re-save weeks/components or reconcile their dates for
+                # a display-name edit. The canonical id and all links stand.
+                update_authoring_rows(
+                    AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id],
+                    {'title': structure_payload['title'], 'updated_at': datetime.utcnow()},
+                )
+                group_id = clean_str(existing_authoring.get('group_id'))
+                if group_id:
+                    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])
+                    update_group_fields(group_id, {
+                        'module_names': json_db_value(unique([
+                            clean_str(row.get('title')) for row in surviving_authoring_module_rows(module_rows)
+                            if row.get('title')
+                        ])),
+                    })
+                invalidate_curriculum_cache()
+                result = get_authoring_structure_payload(module_catalogue_id)
+                result['qualityChecklist'] = module_authoring_quality_check(result)[0]
+            else:
+                result = save_module_authoring_structure(module_catalogue_id, structure_payload)
+            announce_saved(module_catalogue_id)
         # A tutor change made straight against one module has to mirror onto the
         # raise the assignment notification, exactly as the tree save and the
         # group-modules endpoint do. Without this the module row carried the new
@@ -33272,6 +33594,9 @@ def curriculum_cohort_detail(request, identifier):
         start_date,
         end_date,
     )
+    if curriculum_name_only_patch(payload):
+        # Stored dates, EPA boundaries and status are not authored by a rename.
+        updates = {'cohort_name': updates['cohort_name']}
 
     nullable = ['apprenticeship_end_date']
     if epa_sent:
@@ -33798,7 +34123,8 @@ def curriculum_group_detail(request, identifier):
                     'programme_name': clean_str(updated_group.get('programme_name')),
                     'group_name': clean_str(updated_group.get('group_name')),
                 })
-        repair_curriculum_parent_links(clean_str(updated_group.get('programme_id')))
+        if not curriculum_name_only_patch(payload):
+            repair_curriculum_parent_links(clean_str(updated_group.get('programme_id')))
 
     if 'coach' in payload or 'tutor' in payload:
         next_group_id = clean_str(updated_group.get('group_id')) or group_id

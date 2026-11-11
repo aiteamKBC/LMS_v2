@@ -2,15 +2,23 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 import { fetchCurriculumDeliveryScope } from '@/lib/curriculumApi';
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(['MOD-1', 'MOD-2', 'MOD-3'].map(id => [id, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 /**
  * Back from a learner's progress page is one step in history, so everything the
  * reader had set on the catalogue has to live in its address: the programme,
  * cohort, group and tutor filters, the search text and the open learner list.
  */
+
+vi.mock('@/api/assignedLearners', () => ({
+  fetchLearnerStatusCounts: vi.fn(async (_scope: string, ids: string[]) => Object.fromEntries(ids.map(id => [id, { total: 1, statuses: { active: 1 } }]))),
+  fetchAssignedLearners: vi.fn(async () => ({ scope: 'module', id: 'MOD-1', status: 'active', total: 1, filteredTotal: 1, page: 1, pageSize: 25,
+    learners: [{ id: 'learner-1', name: 'A Learner', email: 'learner@example.com', status: 'active' }] })),
+}));
 
 const fetchLearnerAssignments = vi.fn();
 const fetchCurriculumScopeLearnerKsbImpact = vi.fn();
@@ -34,7 +42,7 @@ vi.mock('@/api/curriculumLearnerAssignments', async importOriginal => ({
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: null }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: null }) }));
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumAlert: vi.fn(async () => undefined),
   showCurriculumConfirm: vi.fn(async () => undefined),
@@ -120,6 +128,7 @@ function address() {
 
 describe('Module Builder keeps the reader\'s place in its address', { timeout: 15000 }, () => {
   beforeEach(() => {
+    clearAllCachedResources();
     modulesStore.set(false);
     vi.mocked(fetchCurriculumDeliveryScope).mockClear();
     fetchLearnerAssignments.mockReset().mockResolvedValue({
@@ -159,6 +168,20 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
     }
   });
 
+  it('restores All modules from the address and changes it without losing delivery filters', async () => {
+    const user = userEvent.setup();
+    await renderCatalogue('?catalogue=all&programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1');
+    await screen.findByText('Data Foundations');
+    expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'true');
+    await user.type(screen.getByPlaceholderText('Search modules, tutors, cohorts...'), 'Foundations');
+    await waitFor(() => expect(address().get('catalogue')).toBe('all'));
+    await user.click(screen.getByRole('button', { name: 'Active' }));
+    await waitFor(() => expect(address().has('catalogue')).toBe(false));
+    expect(address().get('cohort')).toBe('COHORT-1');
+    expect(address().get('group')).toBe('GROUP-1');
+    expect(address().get('q')).toBe('Foundations');
+  });
+
   it.each(['programme', 'programmeId'])('clears a restored %s filter and its dependent filters with Reset', async key => {
     const user = userEvent.setup();
     const { unmount } = await renderCatalogue(`?${key}=PROG-DATA&programmeName=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One&q=Foundations`);
@@ -183,9 +206,10 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
   });
 
   it('returns with the same search, filters and learner list open', async () => {
-    await renderCatalogue('?programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One&q=Foundations&learners=MOD-1');
+    await renderCatalogue('?programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One&q=Foundations&learners=MOD-1&learnerStatus=withdrawn');
 
     expect(await screen.findByRole('dialog', { name: 'Data Foundations learner progress' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Learner status')).toHaveValue('withdrawn');
     expect(fetchLearnerAssignments).toHaveBeenCalledWith(expect.objectContaining({ scope: 'module', id: 'MOD-1' }));
     expect(screen.getByPlaceholderText('Search modules, tutors, cohorts...')).toHaveValue('Foundations');
     expect(within(screen.getByLabelText('Programme')).getByText('Data Analyst')).toBeInTheDocument();
@@ -217,14 +241,17 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
     await waitFor(() => expect(address().get('q')).toBe('Foundations'));
 
     const card = screen.getByText('Data Foundations').closest('article')!;
-    await user.click(within(card).getByRole('button', { name: /^(Assign learners|Learners)/ }));
+    await user.click(await within(card).findByRole('button', { name: /Data Foundations: \d+ learners/ }));
     await screen.findByRole('dialog', { name: 'Data Foundations learner progress' });
     await waitFor(() => expect(address().get('learners')).toBe('MOD-1'));
+    await user.selectOptions(screen.getByLabelText('Learner status'), 'on break');
+    await waitFor(() => expect(address().get('learnerStatus')).toBe('on break'));
     // Each change replaces the current entry: Back still leaves in one step.
     expect(address().get('q')).toBe('Foundations');
 
     await user.click(screen.getByRole('button', { name: 'Close learner progress' }));
     await waitFor(() => expect(address().has('learners')).toBe(false));
+    expect(address().has('learnerStatus')).toBe(false);
     expect(address().get('q')).toBe('Foundations');
   });
 

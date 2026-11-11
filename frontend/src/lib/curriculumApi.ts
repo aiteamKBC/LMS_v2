@@ -350,7 +350,16 @@ export interface CurriculumWeeklySession {
   endTime: string;
 }
 
-export interface CurriculumModule {
+export interface CoursePricing {
+  isForSale?: boolean;
+  /** GBP decimal string, preserving pence without floating-point arithmetic. */
+  price?: string | null;
+  currency?: 'GBP';
+}
+
+export interface CurriculumModule extends CoursePricing {
+  /** Standalone self-study course, assigned directly to learners. */
+  isFreeCourse?: boolean;
   id: string;
   // Temporary compatibility: moduleId may be a canonical ID or legacy delivery ID.
   // Prefer moduleCatalogueId for canonical authoring identity and deliveryRowId for allocation identity.
@@ -986,6 +995,8 @@ export interface CurriculumScopeKsbTypeSummary {
 }
 
 export interface CurriculumScopeKsbAchievement {
+  historicalAchievedWeightTotal?: number;
+  unallocatedPlannedWeightTotal?: number;
   learnerCount: number;
   requiredCount: number;
   ksbCount: number;
@@ -1139,6 +1150,8 @@ export interface CurriculumLearnerKsbConsumptionItem {
 }
 
 export interface CurriculumLearnerKsbConsumption {
+  historicalConsumedWeightTotal?: number;
+  unallocatedPlannedWeight?: number;
   learnerId: number | string;
   learnerName: string;
   email: string;
@@ -1350,10 +1363,19 @@ export interface CurriculumScopeLearnerRosterResponse {
 export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRosterResponse;
 
 export interface CurriculumScopeLearnerKsbImpactResponse {
+  moduleProgressBasis?: 'current_activities';
+  activityLogProgress?: {
+    learners: Array<{ learnerId: number | string; totalActivities: number; completedActivities: number;
+      inProgressActivities: number; earlierRecords: number; earlierCompleted: number; earlierOtjh?: number }>;
+    completedActivities: number; totalActivities: number; earlierRecords: number; source?: string;
+  };
   activityLogOtjh?: {
-    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number }>;
+    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number;
+      historicalOtjh?: number; historicalUnallocatedRecords?: number }>;
     achievedTotal: number | null; plannedTotal: number; source: string;
     unallocatedAcceptedRecords?: number;
+    historicalTotal?: number;
+    historicalUnallocatedRecords?: number;
   };
   scope: CurriculumLearnerScope | string;
   identifier: string;
@@ -1562,6 +1584,8 @@ export interface CurriculumSession {
   componentId?: string;
   /** The live-session component's own title, when the caller matched one. Display only. */
   componentTitle?: string;
+  /** Owning authored week; display metadata, never a Teams meeting subject. */
+  weekTitle?: string;
   title: string;
   type: string;
   date: string;
@@ -2399,12 +2423,9 @@ export interface FreeProgrammeComponent {
   settings?: Record<string, unknown>;
 }
 
-export type CurriculumCourseType = 'free' | 'apprentices';
-
 export interface FreeProgrammeModule {
   id: string;
   courseId?: string;
-  courseType?: CurriculumCourseType;
   weekId?: string;
   weekNumber?: number;
   weekTitle?: string;
@@ -3512,11 +3533,7 @@ export function fetchCurriculumScopeLearnerRoster(
 export function fetchCurriculumScopeLearnerKsbImpact(
   scope: CurriculumLearnerScope,
   identifier: string,
-  params: {
-    sourceType?: string; sourceId?: string; learnerStatus?: string; moduleProgress?: boolean;
-    /** Narrow the read to one learner by profile id (never an enrolment id). */
-    learnerId?: string;
-  } = {},
+  params: { sourceType?: string; sourceId?: string; learnerStatus?: string; moduleProgress?: boolean } = {},
   signal?: AbortSignal,
 ): Promise<CurriculumScopeLearnerKsbImpactResponse> {
   const query = new URLSearchParams();
@@ -3524,7 +3541,6 @@ export function fetchCurriculumScopeLearnerKsbImpact(
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
   if (params.moduleProgress) query.set('moduleProgress', '1');
-  if (params.learnerId) query.set('learnerId', params.learnerId);
   return fetchJson<CurriculumScopeLearnerKsbImpactResponse>(
     scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
     { signal },
@@ -3737,6 +3753,8 @@ export interface ImportedCalendarUpdateResult {
 export interface ImportedCalendarConnection {
   connected: boolean;
   configured?: boolean;
+  calendarKind?: 'user' | 'group';
+  organizationManaged?: boolean;
   expiresAt?: string;
   message?: string;
 }
@@ -3753,7 +3771,7 @@ async function importedCalendarPost<T>(liveSessionId: string, action: string, bo
     });
     const data = await response.json();
     if (!response.ok) throw new CurriculumApiError(data?.error || data?.message || 'The calendar request could not be completed.', response.status, path, data);
-    if (action === 'confirm' || action === 'status') {
+    if (action === 'confirm' || action === 'status' || action === 'edit-confirm' || action === 'edit-status') {
       mutationEpoch += 1;
       clearCurriculumGetCache();
     }
@@ -3771,8 +3789,32 @@ export async function fetchImportedCalendarConnection(liveSessionId: string): Pr
   return data;
 }
 
-export function connectImportedCalendar(liveSessionId: string, calendarKind: 'group' | 'user') {
-  return importedCalendarPost<{ authorizationUrl: string; callbackOrigin: string }>(liveSessionId, 'connect', { calendarKind });
+export interface OrganizationCalendarConnection extends ImportedCalendarConnection {
+  applicable: boolean;
+  available: boolean;
+  state: 'active' | 'disconnected' | 'reauth_required' | 'migration_required' | 'not_applicable';
+  canManageOrganization: boolean;
+  revision?: string;
+}
+
+export async function fetchOrganizationCalendarConnection(liveSessionId: string): Promise<OrganizationCalendarConnection> {
+  const path = `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/imported-calendar/connection/?organization=1`;
+  const response = await coachFetch(`${API_BASE_URL}${path}`, { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok) throw new CurriculumApiError(data?.error || data?.message || 'The organization calendar connection could not be read.', response.status, path, data);
+  return data;
+}
+
+export function disconnectOrganizationCalendar(liveSessionId: string, revision: string) {
+  return importedCalendarPost<{ disconnected: boolean }>(liveSessionId, 'connect', {
+    calendarKind: 'group', organizationManaged: true, action: 'disconnect', organizationRevision: revision,
+  });
+}
+
+export function connectImportedCalendar(liveSessionId: string, calendarKind: 'group' | 'user', organizationManaged = false) {
+  return importedCalendarPost<{ authorizationUrl: string; callbackOrigin: string }>(liveSessionId, 'connect', {
+    calendarKind, ...(organizationManaged ? { organizationManaged: true } : {}),
+  });
 }
 
 export function previewImportedCalendarUpdate(liveSessionId: string) {
@@ -3786,6 +3828,54 @@ export function confirmImportedCalendarUpdate(liveSessionId: string, previewToke
 /** Recover a result by reading Microsoft; never repeats the calendar update. */
 export function checkImportedCalendarUpdate(liveSessionId: string, operationId?: string) {
   return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'status', { operationId });
+}
+
+export interface ImportedMeetingEditor {
+  status: 'editable' | 'blocked' | 'verification_pending';
+  message: string;
+  code?: string;
+  sourceToken?: string;
+  operationId?: string;
+  organizer?: string;
+  joinUrl?: string;
+  timeZone?: string;
+  attendees?: string[];
+  presenters?: string[];
+  coOrganizers?: string[];
+  rolesEditable?: boolean;
+  options?: { recordAutomatically?: boolean; allowTranscription?: boolean;
+    lobbyBypassSettings?: { scope?: string }; meetingSpokenLanguageTag?: string } | null;
+  sessions?: { sessionNumber: number; start: string; end: string; editable: boolean }[];
+  connectionRequired?: boolean;
+  connectionKind?: 'group' | 'user';
+}
+
+export interface ImportedMeetingEdits {
+  attendees?: string[];
+  presenters?: string[];
+  coOrganizers?: string[];
+  recording?: string;
+  lobby?: string;
+  language?: string;
+  sessions?: { sessionNumber: number; start: string; durationMinutes: number }[];
+}
+
+export async function readImportedMeetingEditor(liveSessionId: string, options?: { standard: boolean }) {
+  const result = await importedCalendarPost<ImportedMeetingEditor>(liveSessionId, 'edit-read', options?.standard ? { standard: true } : {});
+  if (options?.standard && result.status === 'editable') clearCurriculumGetCache();
+  return result;
+}
+
+export function previewImportedMeetingEdit(liveSessionId: string, sourceToken: string, changes: ImportedMeetingEdits, notify: boolean) {
+  return importedCalendarPost<ImportedCalendarPreview>(liveSessionId, 'edit-preview', { sourceToken, changes, notify });
+}
+
+export function confirmImportedMeetingEdit(liveSessionId: string, previewToken: string) {
+  return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'edit-confirm', { previewToken, acknowledge: true }, 120000);
+}
+
+export function checkImportedMeetingEdit(liveSessionId: string, operationId?: string) {
+  return importedCalendarPost<ImportedCalendarUpdateResult>(liveSessionId, 'edit-status', { operationId });
 }
 
 export function fetchCurriculumTeamsMeetingSummaries(
@@ -4173,7 +4263,7 @@ export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' 
    */
   requiredOtjh?: number | string | null;
 };
-export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes' | 'coverImage'>> & {
+export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes' | 'coverImage'>> & CoursePricing & {
   programmeId?: string;
   programmeName?: string;
   programme?: string;
@@ -4244,7 +4334,6 @@ export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
 export type FreeProgrammeModuleInput = {
   id?: string;
   courseId?: string;
-  courseType?: CurriculumCourseType;
   weekId?: string;
   weekNumber?: number;
   weekTitle?: string;
@@ -4889,6 +4978,19 @@ export interface StaleTeamsCalendar {
 
 export function updateCurriculumModule(id: string, input: CurriculumModuleInput) {
   return patchJson<{ updated: boolean; module: CurriculumModule; revision?: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
+}
+
+export interface FreeCourseConversionDestination {
+  programmeId: string;
+  cohortId: string;
+  groupId: string;
+}
+
+export function convertFreeCourseToModule(id: string, destination: FreeCourseConversionDestination) {
+  return postJson<FreeCourseConversionDestination & {
+    converted: boolean; moduleCatalogueId: string;
+    programmeName: string; cohortName: string; groupName: string;
+  }>(`/curriculum/modules/${encodeURIComponent(id)}/convert-free-course/`, destination);
 }
 
 /**

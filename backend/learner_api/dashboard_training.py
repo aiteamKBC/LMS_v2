@@ -11,6 +11,7 @@ from math import floor
 from django.db import connections
 from django.utils import timezone
 from old_otjh.service import ServiceError
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from . import canonical_learning as canonical, training_plan_dashboard as schedule
 from .dashboard_monthly import day, display_subjects, review_day
@@ -148,7 +149,7 @@ def module_rows(cur, ids, *, rich_id=None, identity_metadata=None):
         SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
         FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
-          AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>'')
+          AND {visible_child_sql('c')}
         GROUP BY c.module_catalogue_id,c.week_id
     ) SELECT w.id,w.module_catalogue_id,w.week_number,w.title{week_order},
         CASE WHEN w.module_catalogue_id=%s THEN w.learning_outcomes ELSE '[]'::jsonb END AS learning_outcomes,
@@ -157,7 +158,7 @@ def module_rows(cur, ids, *, rich_id=None, identity_metadata=None):
         FROM curriculum.weeks w LEFT JOIN live_counts
           ON live_counts.module_catalogue_id=w.module_catalogue_id AND live_counts.week_id=w.id
         WHERE w.module_catalogue_id=ANY(%s)
-          AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>'')
+          AND {visible_week_sql('w')}
         ORDER BY w.display_order,w.week_number,w.id''', [ids, rich_id, ids])
     counts, weeks = defaultdict(int), {}
     week_rows = schedule.rows(cur)

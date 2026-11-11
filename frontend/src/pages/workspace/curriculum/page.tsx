@@ -1,13 +1,13 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { useCurriculumHome, type HomeModule, type ProgrammeFocus } from './useCurriculumHome';
 import { curriculumNavItems } from '@/mocks/navigation';
-import styles from './page.module.css';
-import { LiveTotalsSection } from './LiveTotalsSection';
 
 type AttentionTone = 'rose' | 'amber' | 'sky';
 type AttentionIssue = { key: string; title: string; detail: string; count: number; href: string; action: string; icon: string; tone: AttentionTone };
@@ -124,77 +124,64 @@ export default function CurriculumStudio() {
       { key: 'module-mapping', title: 'Modules have no KSB mappings', detail: 'Open coverage and map each gap to the right component.', count: counts?.['module-mapping'] ?? 0, href: '/curriculum/ksb-mapping', action: 'Open coverage', icon: 'ri-link-unlink', tone: 'amber' },
       { key: 'draft-content', title: 'Modules are still in draft', detail: 'Continue authoring the content that is not yet published.', count: counts?.['draft-content'] ?? 0, href: '/curriculum/module-builder', action: 'Continue authoring', icon: 'ri-draft-line', tone: 'sky' },
       { key: 'group-coach', title: 'Groups have no coach', detail: 'Assign a coach before the delivery setup is complete.', count: counts?.['group-coach'] ?? 0, href: '/curriculum/groups', action: 'Assign coaches', icon: 'ri-user-search-line', tone: 'amber' },
-      { key: 'module-tutor', title: 'Modules have no tutor', detail: 'A scheduled module needs an owner for its live sessions.', count: counts?.['module-tutor'] ?? 0, href: '/curriculum/module-builder', action: 'Review modules', icon: 'ri-user-settings-line', tone: 'amber' },
+      { key: 'module-tutor', title: 'Modules have no tutor', detail: 'A scheduled module needs an owner for its live sessions.', count: counts?.['module-tutor'] ?? 0, href: '/curriculum/delivery', action: 'Review delivery', icon: 'ri-user-settings-line', tone: 'amber' },
     ];
     return issues.filter(issue => issue.count > 0).sort((left, right) => right.count - left.count);
   }, [counts]);
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Curriculum Home" pageSubtitle="Your next curriculum actions, in priority order" userName="Rachel Myers" userRole="Curriculum Designer">
-      <PageContainer className={styles.page}>
-        <div className={styles.content}>
-          <header className={styles.pageHeading}>
-            <div>
-              <h1 className={styles.pageTitle}>Curriculum home</h1>
-              <p className={styles.pageSubtitle}>Your next curriculum actions, in priority order.</p>
-              {!loading && !unavailable && (
-                <div className={styles.overviewMeta}>
-                  <span className={openIssueCount ? styles.actionBadge : styles.clearBadge}>
-                    <span className={styles.statusDot} aria-hidden="true" />
-                    {openIssueCount ? openIssueCount + ' open actions' : 'Everything looks clear'}
-                  </span>
-                  <span>{attentionIssues.length} types of action across {data?.stats.programmes ?? 0} programmes</span>
-                </div>
-              )}
-            </div>
-            <div className={styles.pageActions}>
-              <Link to="/curriculum/programmes?create=programme" className={styles.primaryAction}><AppIcon className="ri-add-line" aria-hidden="true" />Create programme</Link>
-              <Link to="/curriculum/module-builder" className={styles.secondaryAction}><AppIcon className="ri-edit-box-line" aria-hidden="true" />Continue authoring</Link>
-            </div>
-          </header>
+      <PageContainer className="curriculum-home-page">
+        <div className="mx-auto max-w-[1560px] space-y-4">
+          <WorkspaceHeroBanner
+            eyebrow="Curriculum"
+            title="What needs your attention?"
+            description="Start with a blocker, continue your latest module, or create a programme. Supporting reports stay out of the way until you need them."
+            icon="ri-book-open-line"
+            footer={<div className="mt-3">{!loading && !unavailable && <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-semibold ${openIssueCount ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{openIssueCount ? `${openIssueCount} open actions` : 'Everything looks clear'}</span>}</div>}
+            actions={              <div className="flex max-w-full flex-wrap gap-2">
+                <Link to="/curriculum/programmes?create=programme" className="inline-flex h-10 min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl bg-[#b27715] px-3 py-2 text-center text-[12px] font-extrabold leading-4 text-white shadow-[0_8px_18px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/30 transition-all duration-200 hover:bg-[#965f0d] hover:shadow-[0_10px_24px_rgba(178,119,21,0.4)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-add-circle-line shrink-0 text-lg" />Create programme</Link>
+                <Link to="/curriculum/module-builder" className="curriculum-home-continue-button inline-flex h-10 min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl border border-primary-200/70 bg-white/80 px-3 py-2 text-center text-[12px] font-bold leading-4 text-primary-800 transition-all duration-200 hover:border-primary-300 hover:bg-white hover:text-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-edit-box-line shrink-0 text-lg" />Continue authoring</Link>
+                <button type="button" onClick={() => setGuideOpen(true)} className="inline-flex h-10 min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl border border-primary-300/70 bg-primary-50/85 px-3 py-2 text-center text-[12px] font-bold leading-4 text-primary-800 transition-all duration-200 hover:border-primary-400 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-road-map-line shrink-0 text-lg" />How to build a programme</button>
+              </div>}
+          />
 
-          <section className={styles.attentionBanner} aria-labelledby="curriculum-attention-title">
-            <div className={styles.bannerCopy}>
-              <p className={styles.eyebrow}>Curriculum</p>
-              <h2 id="curriculum-attention-title" className={styles.bannerTitle}>What needs your attention?</h2>
-              <p className={styles.bannerDescription}>Start with a blocker, continue your latest module, or create a programme. Supporting reports stay out of the way until you need them.</p>
-            </div>
-            <button type="button" onClick={() => setGuideOpen(true)} className={styles.secondaryAction}><AppIcon className="ri-compass-3-line" aria-hidden="true" />How to build a programme</button>
+          {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-700">Curriculum data could not be refreshed: {error} <button type="button" onClick={() => { void reload(); }} className="ml-2 underline">Retry</button></div>}
+
+          <section className="grid gap-3 sm:grid-cols-3">
+            <SummaryCard label="Programmes" value={data?.stats.programmes ?? 0} detail="Open programme workspaces" href="/curriculum/programmes" icon="ri-stack-line" loading={loading || unavailable} />
+            <SummaryCard label="Active delivery" value={data?.stats.activeCohorts ?? 0} detail={data ? `${data.stats.groups} groups across all cohorts` : 'Groups across all cohorts'} href="/curriculum/delivery" icon="ri-calendar-check-line" loading={loading || unavailable} />
+            <SummaryCard label="Needs attention" value={openIssueCount} detail={unavailable ? 'Summary unavailable' : attentionIssues.length ? `${attentionIssues.length} types of action` : 'No blockers found'} href="/curriculum/quality" icon="ri-error-warning-line" loading={loading || unavailable} warning={openIssueCount > 0} />
           </section>
 
-          {error && <div className={styles.error} role="alert">Curriculum data could not be refreshed: {error} <button type="button" onClick={() => { void reload(); }} className={styles.retry}>Retry</button></div>}
-
-          <LiveTotalsSection />
-
-          <section className={styles.workingPanel} aria-label="Curriculum priorities and recent modules">
-            <div className={styles.attentionColumn}>
+          <section className="grid items-stretch gap-4 xl:grid-cols-2">
+            <div className="h-full rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Needs attention" detail="Live gaps, ordered by impact. Each row opens where it can be fixed." href="/curriculum/quality" action="View Quality" />
-              <div className={styles.rows}>
-                {loading ? <LoadingRows count={4} /> : unavailable ? null : attentionIssues.length ? attentionIssues.map(issue => <AttentionRow key={issue.key} issue={issue} />) : <EmptyState icon="ri-checkbox-circle-line" title="No curriculum blockers found" detail="You can continue authoring or review an active programme." />}
+              <div className="p-3">
+                {loading ? <LoadingRows count={4} /> : unavailable ? null : attentionIssues.length ? <div className="space-y-2">{attentionIssues.map(issue => <AttentionRow key={issue.key} issue={issue} />)}</div> : <EmptyState icon="ri-checkbox-circle-line" title="No curriculum blockers found" detail="You can continue authoring or review an active programme." />}
               </div>
             </div>
-            <aside className={styles.continueColumn}>
+            <aside className="h-full rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Continue working" detail="Draft and recently updated modules." href="/curriculum/library" action="Open Library" />
-              <div className={styles.rows}>
-                {loading ? <LoadingRows count={4} /> : unavailable ? null : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={module.id} module={module} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
+              <div className="p-3">
+                <div className="overflow-hidden rounded-xl border border-background-200 bg-background-100/35 divide-y divide-background-200/80">
+                  {loading ? <LoadingRows count={4} /> : unavailable ? null : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={module.id} module={module} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
+                </div>
               </div>
             </aside>
           </section>
 
-          <section className={styles.reviewPanel} aria-label="Programmes to review">
+          <section className="rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
             <SectionHeader title="Programmes to review" detail="Programme-level gaps grouped together, so you do not have to hunt across separate lists." href="/curriculum/programmes" action="All programmes" />
-            <div className={styles.programmeGrid}>
-              {loading ? Array.from({ length: 3 }).map((_, index) => <div key={index} className={styles.cardSkeleton} />) : unavailable ? null : programmeFocus.length ? programmeFocus.map(item => <ProgrammeFocusCard key={item.programme.id} item={item} />) : <div className={styles.fullWidth}><EmptyState icon="ri-shield-check-line" title="All programmes are clear" detail="No missing structure, KSB source or staffing gaps were found in the current data." /></div>}
+            <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
+              {loading ? Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-xl bg-background-100" />) : unavailable ? null : programmeFocus.length ? programmeFocus.map(item => <ProgrammeFocusCard key={item.programme.id} item={item} />) : <div className="md:col-span-2 xl:col-span-3"><EmptyState icon="ri-shield-check-line" title="All programmes are clear" detail="No missing structure, KSB source or staffing gaps were found in the current data." /></div>}
             </div>
           </section>
 
-          <section className={styles.workflowPanel} aria-labelledby="curriculum-workflow-title">
-            <h2 id="curriculum-workflow-title" className={styles.workflowTitle}>How to build a programme</h2>
-            <div className={styles.workflowGrid}>
-              <WorkflowCard step="1" title="Set up cohorts" detail="Create the programme cohorts and groups, then confirm dates and staff." href="/curriculum/cohorts" icon="ri-calendar-schedule-line" />
-              <WorkflowCard step="2" title="Design learning" detail="Build the modules, weeks and components those delivery groups will use." href="/curriculum/library" icon="ri-layout-4-line" />
-              <WorkflowCard step="3" title="Check quality" detail="Resolve KSB and readiness gaps before learners depend on the content." href="/curriculum/quality" icon="ri-shield-check-line" />
-            </div>
+          <section className="grid gap-3 md:grid-cols-3">
+            <WorkflowCard step="1" title="Set up cohorts" detail="Create the programme cohorts and groups, then confirm dates and staff." href="/curriculum/delivery" icon="ri-calendar-schedule-line" />
+            <WorkflowCard step="2" title="Design learning" detail="Build the modules, weeks and components those delivery groups will use." href="/curriculum/library" icon="ri-layout-4-line" />
+            <WorkflowCard step="3" title="Check quality" detail="Resolve KSB and readiness gaps before learners depend on the content." href="/curriculum/quality" icon="ri-shield-check-line" />
           </section>
         </div>
       </PageContainer>
@@ -308,78 +295,45 @@ function CurriculumGuideModal({ open, onClose }: { open: boolean; onClose: () =>
   );
 }
 
-function AttentionRow({ issue }: { issue: AttentionIssue }) {
+function SummaryCard({ label, value, detail, href, icon, loading, warning = false }: { label: string; value: number; detail: string; href: string; icon: string; loading: boolean; warning?: boolean }) {
   return (
-    <Link to={issue.href} className={styles.attentionRow}>
-      <span className={styles.issueIcon}><AppIcon className={issue.icon} aria-hidden="true" /></span>
-      <span className={styles.issueBody}>
-        <span className={styles.issueHeading}><span>{issue.title}</span><span className={styles.issueCount}>{issue.count}</span></span>
-        <span className={styles.issueDetail}>{issue.detail}</span>
-      </span>
-      <span className={styles.rowAction}>{issue.action}<AppIcon className="ri-arrow-right-line" aria-hidden="true" /></span>
+    <Link to={href} className="card-premium flex min-h-[88px] items-center rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
+      <WorkspaceMetricContent label={label} value={loading ? '—' : value} note={detail} icon={icon}
+        iconClassName={warning ? '!bg-amber-50 !text-amber-700' : ''} />
     </Link>
   );
 }
 
+function AttentionRow({ issue }: { issue: AttentionIssue }) {
+  const tones: Record<AttentionTone, string> = { rose: 'bg-amber-50 text-amber-700', amber: 'bg-amber-50 text-amber-700', sky: 'bg-amber-50 text-amber-700' };
+  return <Link to={issue.href} className="group grid gap-2.5 rounded-xl border border-foreground-200/70 bg-background-50 p-3 transition-all duration-200 hover:border-primary-200 hover:bg-primary-50/25 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${tones[issue.tone]}`}><AppIcon className={`${issue.icon} text-base`} /></span><span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><span className="text-[12px] font-bold text-foreground-900">{issue.title}</span><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{issue.count}</span></span><span className="mt-1 block text-[11px] leading-5 text-foreground-500">{issue.detail}</span></span><span className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700">{issue.action}<AppIcon className="ri-arrow-right-line transition-transform duration-200 group-hover:translate-x-0.5" /></span></Link>;
+}
+
 function ContinueModuleRow({ module }: { module: HomeModule }) {
-  const href = '/curriculum/module-builder?module=' + encodeURIComponent(module.id);
+  const href = `/curriculum/module-builder?module=${encodeURIComponent(module.id)}`;
   const published = normalise(module.status) === 'published';
-  return (
-    <Link to={href} className={styles.moduleRow}>
-      <span className={published ? styles.publishedIcon : styles.draftIcon}><AppIcon className="ri-file-text-line" aria-hidden="true" /></span>
-      <span className={styles.moduleBody}>
-        <span className={styles.moduleName}>{clean(module.name) || 'Untitled module'}</span>
-        <span className={styles.moduleDetail}>{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span>
-      </span>
-      <span className={published ? styles.publishedStatus : styles.draftStatus}>{published ? 'Published' : 'Draft'}</span>
-      <AppIcon className="ri-arrow-right-s-line" aria-hidden="true" />
-    </Link>
-  );
+  return <Link to={href} className="group flex min-h-[58px] items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 hover:bg-primary-50/35 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-layout-4-line" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{clean(module.name) || 'Untitled module'}</span><span className="mt-0.5 block truncate text-[10px] leading-4 text-foreground-500">{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span></span><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold uppercase ${published ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{published ? 'Published' : 'Draft'}</span><AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-colors group-hover:text-primary-600" /></Link>;
 }
 
 function ProgrammeFocusCard({ item }: { item: ProgrammeFocus }) {
   const id = item.programme.id;
-  return (
-    <Link to={'/curriculum/programmes/' + encodeURIComponent(id)} className={styles.programmeCard}>
-      <span className={styles.programmeCardTop}>
-        <span className={styles.programmeIcon}><AppIcon className="ri-stack-line" aria-hidden="true" /></span>
-        <span className={styles.programmeBadge}>{item.issueCount} {item.issueCount === 1 ? 'action' : 'actions'}</span>
-      </span>
-      <h3 className={styles.programmeName}><span className={styles.statusDot} aria-hidden="true" />{item.programme.name}</h3>
-      <p className={styles.programmeDetail}>{item.issues.join(' · ')}</p>
-      <span className={styles.programmeLink}>Open programme<AppIcon className="ri-arrow-right-line" aria-hidden="true" /></span>
-    </Link>
-  );
+  return <Link to={`/curriculum/programmes/${encodeURIComponent(id)}`} className="group flex min-h-[128px] flex-col rounded-[14px] border border-foreground-200/70 bg-background-50 p-4 shadow-[0_4px_14px_-12px_rgba(31,14,59,0.25)] transition-all duration-200 hover:border-primary-200 hover:shadow-[0_10px_20px_-14px_rgba(68,30,115,0.28)] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"><div className="flex items-start justify-between gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-stack-line" /></span><span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold text-amber-700">{item.issueCount} {item.issueCount === 1 ? 'action' : 'actions'}</span></div><h3 className="mt-2 line-clamp-1 text-[13px] font-bold text-foreground-950">{item.programme.name}</h3><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-foreground-500">{item.issues.join(' · ')}</p><span className="mt-auto inline-flex items-center gap-1 pt-2 text-[10px] font-bold text-primary-700">Open programme <AppIcon className="ri-arrow-right-line transition-transform duration-200 group-hover:translate-x-0.5" /></span></Link>;
 }
 
 function WorkflowCard({ step, title, detail, href, icon }: { step: string; title: string; detail: string; href: string; icon: string }) {
-  return (
-    <Link to={href} className={styles.workflowCard}>
-      <span className={styles.workflowIcon}><AppIcon className={icon} aria-hidden="true" /></span>
-      <span className={styles.workflowBody}>
-        <span className={styles.workflowStep}>Step {step}</span>
-        <span className={styles.workflowName}>{title}</span>
-        <span className={styles.workflowDetail}>{detail}</span>
-      </span>
-    </Link>
-  );
+  return <Link to={href} className="group flex min-h-[88px] items-center gap-3 rounded-[14px] border border-foreground-200/75 bg-background-50 p-4 shadow-[0_5px_16px_-12px_rgba(31,14,59,0.28)] transition-all duration-200 hover:border-primary-200 hover:shadow-[0_10px_22px_-14px_rgba(68,30,115,0.3)] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className={`${icon} text-lg`} /></span><span className="min-w-0"><span className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-primary-600">Step {step}</span><span className="mt-0.5 block text-[12px] font-bold text-foreground-900">{title}</span><span className="mt-1 block text-[11px] leading-4 text-foreground-500">{detail}</span></span></Link>;
 }
 
 function SectionHeader({ title, detail, href, action }: { title: string; detail: string; href: string; action: string }) {
-  return (
-    <div className={styles.sectionHeader}>
-      <div className={styles.sectionCopy}><h2 className={styles.sectionTitle}>{title}</h2><p className={styles.sectionDetail}>{detail}</p></div>
-      <Link to={href} className={styles.sectionAction}><AppIcon className={action === 'Open Library' ? 'ri-folder-open-line' : action === 'All programmes' ? 'ri-stack-line' : 'ri-shield-check-line'} aria-hidden="true" />{action}</Link>
-    </div>
-  );
+  return <div className="flex flex-col gap-2.5 border-b border-background-200 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-heading text-lg font-bold leading-tight text-foreground-950">{title}</h2><p className="mt-1 text-[11px] leading-4 text-foreground-500">{detail}</p></div><Link to={href} className="compact-action rounded-md text-[11px] font-bold text-primary-700 transition-colors duration-200 hover:text-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">{action}<AppIcon className="ri-arrow-right-line" /></Link></div>;
 }
 
 function EmptyState({ icon, title, detail, compact = false }: { icon: string; title: string; detail: string; compact?: boolean }) {
-  return <div className={compact ? styles.compactEmptyState : styles.emptyState}><span className={styles.emptyIcon}><AppIcon className={icon} aria-hidden="true" /></span><p className={styles.emptyTitle}>{title}</p><p className={styles.emptyDetail}>{detail}</p></div>;
+  return <div className={`flex flex-col items-center justify-center text-center ${compact ? 'py-6' : 'py-8'}`}><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><AppIcon className={`${icon} text-xl`} /></span><p className="mt-3 text-[12px] font-bold text-foreground-900">{title}</p><p className="mt-1 max-w-md text-[11px] leading-5 text-foreground-500">{detail}</p></div>;
 }
 
 function LoadingRows({ count }: { count: number }) {
-  return <div className={styles.loadingRows} role="status" aria-label="Loading curriculum data">{Array.from({ length: count }).map((_, index) => <div key={index} className={styles.rowSkeleton} />)}</div>;
+  return <div className="space-y-2 py-1">{Array.from({ length: count }).map((_, index) => <div key={index} className="h-14 animate-pulse rounded-xl bg-background-100" />)}</div>;
 }
 
 function clean(value: unknown) { return String(value ?? '').trim(); }

@@ -199,7 +199,7 @@ describe('Transfer Progress list and supported operations', () => {
     vi.mocked(api.getTransferRequests).mockResolvedValueOnce(response([request()], 50)).mockResolvedValueOnce(response([approved()])).mockResolvedValueOnce(response([approved('R1'), approved()]));
     vi.mocked(api.approveTransferRequest).mockResolvedValue(approved('R1')); show();
     await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled()); await openReview(); await approveInDialog();
-    await screen.findByText('Transfer approved. The learner can now open the new modules.');
+    await screen.findByText(/Transfer approved\. The learner can now open the new modules\./);
     expect(api.getTransferRequests).toHaveBeenCalledTimes(3); expect(api.getTransferRequests).toHaveBeenLastCalledWith(0, expect.any(AbortSignal));
     expect(pendingTab()).toHaveTextContent('0 retrieved'); expect(approvedTab()).toHaveTextContent('2 retrieved');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument()); expect(pendingTab()).toHaveFocus();
@@ -208,7 +208,7 @@ describe('Transfer Progress list and supported operations', () => {
   it('keeps a committed approval truthful if refresh fails and pauses approval until a fresh list', async () => {
     vi.mocked(api.getTransferRequests).mockResolvedValueOnce(response([request(), request('R2')])).mockRejectedValueOnce(new Error('Refresh unavailable')).mockResolvedValueOnce(response([request('R2'), approved('R1')]));
     vi.mocked(api.approveTransferRequest).mockResolvedValue(approved('R1')); show(); await openReview(); await approveInDialog();
-    expect(await screen.findByText('Transfer approved. The learner can now open the new modules.')).toBeVisible(); expect(await screen.findByRole('alert')).toHaveTextContent('Refresh unavailable');
+    expect(await screen.findByText(/Transfer approved\. The learner can now open the new modules\./)).toBeVisible(); expect(await screen.findByRole('alert')).toHaveTextContent('Refresh unavailable');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument()); expect(approvedTab()).toHaveTextContent('1 retrieved');
     await openReview('R2'); await waitFor(() => expect(api.getTransferReview).toHaveBeenCalledTimes(2)); expect(dialog().getByRole('button', { name: 'Approve transfer' })).toBeDisabled();
     fireEvent.click(dialog().getByRole('button', { name: 'Cancel' })); fireEvent.click(screen.getByRole('button', { name: 'Retry refresh' }));

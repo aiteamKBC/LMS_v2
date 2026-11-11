@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { loadDailyResults, type DailyResults } from '../dailyResults';
 import { SessionRecordingPlayer } from '@/components/feature/SessionRecordingPlayer';
 import { resolveRecordingUrl, sessionFileUrl } from '@/api/sessionResults';
-import { attendanceSheetRows } from '../../shared/entities/liveSessionArtifacts';
+import { attendanceSheetRows } from "../../shared/entities/liveSessionArtifacts.helpers";
 import type { Lecture } from '../types';
 
 const labels = { present: 'Present', absent: 'Absent', pending: 'Attendance not confirmed', review: 'Identity needs review' };

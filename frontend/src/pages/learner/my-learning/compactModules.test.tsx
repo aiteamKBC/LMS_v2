@@ -10,7 +10,7 @@ import { buildUnifiedLearningSummary } from './learningSummary';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import contractFixture from '@/test/myLearningFixtures.json';
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'staff', id: 1 } }, isInitialized: true }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { role: 'staff', id: 1 } }, isInitialized: true }) }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: (kind: string, id: string) => ({ kind, id }) }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: false, showReadOnlyNotice: false }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
@@ -52,6 +52,26 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each([
+    ['commercial', false], ['commercial', true], ['apprenticeship', false], ['apprenticeship', true],
+  ] as const)('uses saved component completion inside the module and hides the old percentage (%s, completed=%s)', async (kind, completed) => {
+    const reference = { percent: 100, capturedAt: '2026-10-30T12:00:00+00:00' };
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].legacyProgressReference = reference;
+    const module = makeModule();
+    const detail = { ...module,
+      detail: { ...module.detail, componentProgress: completed ? [{ componentId: 'C1', kind: 'reading', passed: true }] : [] },
+      metadata: { ...module.metadata, legacy_progress_references: { 'current:M1': reference } } };
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : String(input).includes('/modules/') ? detail : catalogue));
+    route(`/learner/my-learning/${kind}/7?subject=current%3AM1`);
+    const progress = within(await screen.findByRole('region', { name: 'Module progress' }));
+    expect(screen.queryByText(/Old LMS progress:/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Historical course progress')).not.toBeInTheDocument();
+    expect(progress.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', completed ? '100' : '0');
+    expect(progress.getByText(`${completed ? 1 : 0} of 1 completed`)).toBeVisible();
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('shows each module cohort independently of the learner cohort (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.learner.cohort = 'Account cohort';
@@ -166,9 +186,24 @@ describe('compact My Learning route', () => {
       ? reply({ template: null, csrfToken: '' }) : String(input).includes('/modules/')
         ? reply(contractFixture.module) : reply(contractFixture.catalogue));
     route();
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Teaching status' }), { target: { value: 'all' } });
     fireEvent.click(await screen.findByRole('button', { name: /New LMS.*Example module.*Open subject/ }));
     await waitFor(() => expect(urls().filter(url => url.includes('/modules/'))).toHaveLength(1));
     expect(urls().find(url => url.includes('/modules/'))).toContain('current%3AM1');
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('defaults to active cards and opens an older subject through All (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.moduleActivity = { 'current:M1': { startDate: '2000-01-01', lastLiveDate: '2099-12-31' } };
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : String(input).includes('/modules/') ? makeModule('legacy:50') : catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    const card = (await screen.findByRole('heading', { name: 'One' })).closest('article')!;
+    expect(within(card).getByText('Active')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Old' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Teaching status' }), { target: { value: 'all' } });
+    fireEvent.click(screen.getByRole('button', { name: /Old LMS.*Old.*Open subject/ }));
+    await waitFor(() => expect(urls().some(url => url.includes('/modules/legacy%3A50/'))).toBe(true));
   });
 
   it('loads only the opened module and reuses its cache on revisits', async () => {

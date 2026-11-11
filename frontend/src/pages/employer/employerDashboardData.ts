@@ -46,8 +46,13 @@ export function reviewState(event: LearnerCalendarEvent) {
 
 export const reviewLabels = { signature: 'Your signature needed', completed: 'Completed', signatures: 'Waiting for signatures', 'in-progress': 'In progress', scheduled: 'Scheduled', planned: 'Planned', cancelled: 'Cancelled' };
 export const isOpenReview = (event: LearnerCalendarEvent) => ['planned', 'scheduled', 'in-progress'].includes(reviewState(event));
+export function isGatewayReview(event: LearnerCalendarEvent): boolean {
+  if (event.importedReviewType != null) return event.importedReviewType.trim().toLowerCase() === 'gateway review';
+  const code = event.reviewTypeCode?.trim().toLowerCase();
+  return code ? ['gateway', 'gateway_review'].includes(code) : event.source === 'gateway';
+}
 export function progressReviews(events: LearnerCalendarEvent[]) {
-  return events.filter(event => reviewCategory(event) === 'progress-review' && reviewState(event) !== 'cancelled')
+  return events.filter(event => (reviewCategory(event) === 'progress-review' || isGatewayReview(event)) && reviewState(event) !== 'cancelled')
     .sort((a, b) => (reviewDate(a) || '9999').localeCompare(reviewDate(b) || '9999') || a.sequence - b.sequence);
 }
 

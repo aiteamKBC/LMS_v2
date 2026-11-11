@@ -17,7 +17,7 @@ export interface JourneyComponent {
   type?: string | null;
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
-  /** The author flagged this as the monthly (eight-step) assignment. */
+  /** Legacy author flag; every assignment now uses monthly submission. */
   monthlyAssignment?: boolean;
   assignmentBrief?: string | null;
   assignmentBriefHtml?: string | null;
@@ -45,6 +45,7 @@ export interface JourneyComponent {
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
   teamsSessionNumber?: number | null;
+  additionalMeeting?: boolean;
   recordingSeriesId?: string | null;
   recordingSessionNumber?: number | null;
   recordingDate?: string | null;
@@ -112,22 +113,15 @@ export function componentRequiresEvidence(type: string | null | undefined): bool
 
 type MonthlyAssignmentCandidate = { type?: string | null; monthlyAssignment?: boolean | null };
 
-/** Has an author flagged any assignment in this learner's plan as the monthly assignment? */
-export function monthlyAssignmentFlagsInUse(components: readonly MonthlyAssignmentCandidate[] | null | undefined): boolean {
-  return Boolean(components?.some(component => componentRequiresEvidence(component.type) && component.monthlyAssignment === true));
-}
-
-/** Is this the assignment learners submit through the eight-step monthly
- * submission (and list under Monthly submission)? Until an author flags one,
- * every assignment is. Once any assignment in the plan is flagged, only the
- * flagged ones are and the others are completed like any other activity.
- * learner_api.assignment_settings applies the same rule on completion. */
+/** Every assignment appears in Monthly submission and uses its eight-step
+ * submission, regardless of legacy author flags elsewhere in the plan.
+ * Keep the plan argument for existing callers; eligibility depends only on type.
+ * learner_api.components enforces the same rule using the master component type. */
 export function isMonthlyAssignment(
   component: MonthlyAssignmentCandidate | null | undefined,
-  components: readonly MonthlyAssignmentCandidate[] | null | undefined,
+  _components?: readonly MonthlyAssignmentCandidate[] | null,
 ): boolean {
-  if (!component || !componentRequiresEvidence(component.type)) return false;
-  return component.monthlyAssignment === true || !monthlyAssignmentFlagsInUse(components);
+  return Boolean(component && componentRequiresEvidence(component.type));
 }
 
 export interface ComponentCriteria {
@@ -451,6 +445,7 @@ export function isOpenableComponent(c: JourneyComponent): boolean {
   return hasComponentContent(c);
 }
 export interface JourneyWeek {
+  weekId?: string;
   week: string;
   otjh: number;
   components: JourneyComponent[];
@@ -709,6 +704,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             teamsSessionNumber: c.teamsSessionNumber,
+            additionalMeeting: c.additionalMeeting,
             recordingSeriesId: c.recordingSeriesId,
             recordingSessionNumber: c.recordingSessionNumber,
             recordingDate: c.recordingDate,
@@ -723,6 +719,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
           }));
         return {
           week: w.week,
+          ...(w.weekId ? { weekId: w.weekId } : {}),
           // Quiz duration remains available to the quiz runner and is credited
           // as actual learner time after submission. It is not planned OTJH.
           otjh: components.reduce(

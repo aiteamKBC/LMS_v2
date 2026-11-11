@@ -32,6 +32,9 @@ def _utc(value):
 
 
 def _render(review, images, attachments=()):
+    if review.get('pdfLayoutVersion', 1) in (2, 3):
+        from .quality_review_pdf_layout import render
+        return render(review, images, attachments)
     _fonts()
     definition=definition_for(review)
     data=clean_answers(review['form'],'completed',definition)
@@ -121,8 +124,8 @@ def _render(review, images, attachments=()):
     if not data['actions']:
         story.append(_p('No follow-up actions were recorded by the reviewer.',size=8.5))
     for index,action in enumerate(data['actions'],1):
-        story.append(_p(f'Action {index} - due {action["dueDate"]}',size=10,bold=True,color=PURPLE))
-        for key,label in [('action','Target / action (SMART)'),('outcome','Planned outcome and learner impact'),('supportedBy','Supported by')]:
+        story.append(_p(f'Action {index}',size=10,bold=True,color=PURPLE))
+        for key,label in [('action','Target / action (SMART)'),('outcome','Planned outcome and learner impact'),('supportedBy','Supported by'),('dueDate','By when')]:
             story += [_p(label,size=7,bold=True,color=MUTED),_p(action[key],size=8.5)]
         story.append(Spacer(1,10))
 
@@ -137,14 +140,16 @@ def _render(review, images, attachments=()):
 
 
 def review_pdf(review):
-    if review['status']!='completed' or review['templateId']!=TEMPLATE_ID:
+    teaching = (review.get('scope') == 'teaching' and review['templateId'] == 'teaching-session-v1'
+                and review.get('reviewType') == 'FORM_TEACHING' and review.get('learner') is None)
+    if review['status']!='completed' or (review['templateId']!=TEMPLATE_ID and not teaching):
         raise store.ReviewConflict('Complete and save this review before exporting its PDF.')
     def load():
         images=store.read_images(review['id'],review['form']['images'])
         attachments=store.read_evidence(review['id'],review['form'].get('attachments',{})) if review['form'].get('attachments') else []
         return _render(review,images,attachments)
     from .recordings_saved_evidence import source_dsn
-    return recent_read('quality-review-pdf',[store.digest(source_dsn()),review['id'],review['version'],store.digest(definition_for(review)),2],load,timeout=600)
+    return recent_read('quality-review-pdf',[store.digest(source_dsn()),review['id'],review['version'],store.digest(definition_for(review)),review.get('pdfLayoutVersion',1),3],load,timeout=600)
 
 
 def stored_review_pdf(review):

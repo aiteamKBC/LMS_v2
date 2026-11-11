@@ -8,12 +8,12 @@ import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from math import isfinite
-from zoneinfo import ZoneInfo
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import DatabaseError, connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
+from config.working_hours import UK, WORKING_DAY_START, WORKING_DAY_END, WORKING_WEEKDAYS, WORKING_HOURS_LABEL
 
 from login.permissions import require_access, _accesses_of
 from old_otjh.service import ServiceError
@@ -21,8 +21,8 @@ from learner_api.canonical_learning import counts_as_completed, input_activity_d
 from learner_api.current_learning import source_payload_metadata
 from . import schema_gate
 from . import learner_activity_attendance as attendance
+from .module_progress_metrics import completion_records, apply_ksb_metrics
 
-UK = ZoneInfo('Europe/London')
 TABLES = ('learner_activity_display_overrides', 'learner_activity_display_audit')
 
 
@@ -52,7 +52,7 @@ def lock():
 
 
 def component_reference(row):
-    return row.get('curriculum_component_ref') or row.get('component_ref')
+    return str(row.get('curriculum_component_ref') or '').strip() or str(row.get('component_ref') or '').strip()
 
 
 def allowed(account, owner, module, grants=None):
@@ -106,7 +106,7 @@ def recorded_hour_rows(records):
     return result + list(pending.values())
 
 
-def facts(records, override=None, *, hour_rows=None):
+def facts(records, override=None, *, hour_rows=None, completion_rows=None):
     # Hours come only from persisted fields in learner_progress_entries.
     # Multiple durable allocations still require manual review before editing.
     current = recorded_hour_rows(records) if hour_rows is None else hour_rows
@@ -143,8 +143,8 @@ def facts(records, override=None, *, hour_rows=None):
         'progressId': selected['id'] if selected else None,
         'accepted': selected.get('accepted') if selected else None,
         'multipleRecordedAllocations': sum(row.get('actual_seconds') is not None for row in records) > 1,
-        'calculatedStatus': 'completed' if any(counts_as_completed(row) for row in records)
-        else 'in_progress' if records else 'not_started',
+        'calculatedStatus': 'completed' if any(counts_as_completed(row) for row in (records if completion_rows is None else completion_rows))
+        else 'in_progress' if (records if completion_rows is None else completion_rows) else 'not_started',
     }
 
 
@@ -155,12 +155,13 @@ def load_records(learner_ids, component_ids, module_id=None):
         return []
     learner_slots = ','.join(['%s'] * len(learner_ids))
     component_slots = ','.join(['%s'] * len(component_ids))
-    matches = [f'coalesce(curriculum_component_ref,component_ref) IN ({component_slots})'] if component_ids else []
+    matches = [f"coalesce(nullif(trim(curriculum_component_ref),''),nullif(trim(component_ref),'')) IN ({component_slots})"] if component_ids else []
     if module_id:
         matches.append('module_ref=%s')
     return query(f'''SELECT * FROM {table('learner_progress_entries')}
         WHERE learner_id IN ({learner_slots}) AND ({' OR '.join(matches)})
-          AND deleted_at IS NULL ORDER BY id''', [*learner_ids, *component_ids, *([module_id] if module_id else [])])
+          AND deleted_at IS NULL AND coalesce(kind,'') <> 'activity_event'
+          ORDER BY id''', [*learner_ids, *component_ids, *([module_id] if module_id else [])])
 
 
 def earlier_progress(rows, linked_keys, *, hour_rows=None):
@@ -200,13 +201,6 @@ def enrich(payload, account):
             earlier_rows[str(row['learner_id'])].append(row)
     hour_rows = defaultdict(list)
     earlier_hour_rows = defaultdict(list)
-    # Project once across the module so retained references can suppress a
-    # native original even when its imported copy has another component ID.
-    for row in recorded_hour_rows(loaded_records):
-        if component_reference(row) in current_components:
-            hour_rows[(str(row['learner_id']), component_reference(row))].append(row)
-        else:
-            earlier_hour_rows[str(row['learner_id'])].append(row)
     overrides = {}
     if learner_ids:
         slots = ','.join(['%s'] * len(learner_ids))
@@ -215,8 +209,24 @@ def enrich(payload, account):
             WHERE learner_id IN ({slots}) AND module_id=%s''', [*learner_ids, payload['identifier']])}
     # The existing assignment roster is the membership authority. Ownership is
     # verified again on POST; this capability is only a UI hint.
-    owners = {str(row['id']): row for row in query(f'''SELECT id,coach_email FROM {table('learners')}
+    owners = {str(row['id']): row for row in query(f'''SELECT id,enrolment_id,learner_type,coach_email FROM {table('learners')}
         WHERE id IN ({','.join(['%s'] * len(learner_ids))})''', learner_ids)} if learner_ids else {}
+    canonical_records = completion_records(loaded_records, owners, query, table)
+    completion_by_component = defaultdict(list)
+    hour_rows.clear()
+    earlier_rows.clear()
+    earlier_hour_rows.clear()
+    for record in canonical_records:
+        learner = str(record['learner_id'])
+        if component_reference(record) in current_components:
+            completion_by_component[(learner, component_reference(record))].append(record)
+        else:
+            earlier_rows[learner].append(record)
+    for record in recorded_hour_rows(canonical_records):
+        if component_reference(record) in current_components:
+            hour_rows[(str(record['learner_id']), component_reference(record))].append(record)
+        else:
+            earlier_hour_rows[str(record['learner_id'])].append(record)
     from . import views
     modules = query(f'SELECT * FROM {table("modules", "curriculum")} WHERE module_catalogue_id=%s', [payload['identifier']])
     module = modules[0] if modules else {}
@@ -230,8 +240,7 @@ def enrich(payload, account):
     grants = _accesses_of(account) if account else frozenset()
     for row in plan:
         key = (str(row['learnerId']), row['componentId'])
-        state = facts(records[key], overrides.get(key), hour_rows=hour_rows[key])
-        state['calculatedStatus'] = row.get('calculatedStatus') or state['calculatedStatus']
+        state = facts(records[key], overrides.get(key), hour_rows=hour_rows[key], completion_rows=completion_by_component[key])
         row['logState'] = state
         row['calculatedStatus'] = state['calculatedStatus']
         row['displayStatus'] = state['displayStatus'] or state['calculatedStatus']
@@ -242,7 +251,8 @@ def enrich(payload, account):
             row['lectureDate'] = lecture.get('date') or state.get('lectureDate')
             if lecture.get('unresolved'):
                 row['canChangeStatus'] = False
-    payload['moduleProgressHoursSource'] = 'Activity Log · accepted learner_progress_entries.actual_seconds, otherwise verified_seconds for native saves (current components and module_ref)'
+    payload['moduleProgressBasis'] = 'current_activities'
+    payload['moduleProgressHoursSource'] = 'Activity Log · accepted saved/verified seconds for current activities; module history reported separately'
     totals = defaultdict(float)
     unallocated = defaultdict(int)
     completion = defaultdict(lambda: {'totalActivities': 0, 'completedActivities': 0, 'inProgressActivities': 0})
@@ -265,8 +275,6 @@ def enrich(payload, account):
     for learner_id in learner_ids:
         learner = str(learner_id)
         earlier = earlier_progress(earlier_rows.get(learner, []), linked_keys[learner], hour_rows=earlier_hour_rows[learner])
-        totals[learner] += earlier['earlierOtjh']
-        unallocated[learner] += earlier['unallocatedAcceptedRecords']
         progress_rows.append({'learnerId': learner_id, **completion[learner], **earlier})
     payload['activityLogProgress'] = {
         'learners': progress_rows,
@@ -275,9 +283,12 @@ def enrich(payload, account):
         'earlierRecords': sum(row['earlierRecords'] for row in progress_rows),
         'source': 'learner_progress_entries',
     }
+    historical_by_learner = {str(row['learnerId']): row for row in progress_rows}
     hours_rows = [{
         'learnerId': row['learnerId'], 'plannedOtjh': row['plannedOtjh'],
         'achievedOtjh': totals[str(row['learnerId'])],
+        'historicalOtjh': historical_by_learner.get(str(row['learnerId']), {}).get('earlierOtjh', 0),
+        'historicalUnallocatedRecords': historical_by_learner.get(str(row['learnerId']), {}).get('unallocatedAcceptedRecords', 0),
         'unallocatedAcceptedRecords': unallocated[str(row['learnerId'])],
     } for row in payload.get('otjhAchievement', {}).get('learners', [])]
     payload['activityLogOtjh'] = {
@@ -285,8 +296,11 @@ def enrich(payload, account):
         'achievedTotal': sum(row['achievedOtjh'] for row in hours_rows),
         'unallocatedAcceptedRecords': sum(row['unallocatedAcceptedRecords'] for row in hours_rows),
         'plannedTotal': sum(row['plannedOtjh'] for row in hours_rows),
+        'historicalTotal': sum(row['historicalOtjh'] for row in hours_rows),
+        'historicalUnallocatedRecords': sum(row['historicalUnallocatedRecords'] for row in hours_rows),
         'source': payload['moduleProgressHoursSource'],
     }
+    apply_ksb_metrics(payload, canonical_records, query, table, connection)
 
 
 def resolve(account, module_id, learner_id, component_id):
@@ -336,8 +350,10 @@ def interval(payload, owner):
         raise ServiceError('A valid start date and time with timezone is required.')
     end = start + timedelta(seconds=seconds)
     local, finish = start.astimezone(UK), end.astimezone(UK)
-    if local.date() != finish.date() or local.weekday() > 4 or local.hour < 9 or finish.time().replace(tzinfo=None) > datetime.strptime('17:00', '%H:%M').time():
-        raise ServiceError('Enter a weekday interval within 09:00–17:00 UK time.')
+    if (local.date() != finish.date() or local.weekday() not in WORKING_WEEKDAYS
+            or not (WORKING_DAY_START <= local.time() < WORKING_DAY_END)
+            or finish.time() > WORKING_DAY_END):
+        raise ServiceError(f'Enter a weekday interval within {WORKING_HOURS_LABEL}.')
     validate_date(local.date(), owner)
     if end > datetime.now(timezone.utc):
         raise ServiceError('Completed activity time cannot be in the future.')
@@ -345,7 +361,7 @@ def interval(payload, owner):
 
 
 def validate_date(activity_date, owner):
-    if activity_date.weekday() > 4:
+    if activity_date.weekday() not in WORKING_WEEKDAYS:
         raise ServiceError('Enter a weekday activity date.')
     for field, too_early in (('start_date', True), ('end_date', False)):
         if owner.get(field):
@@ -395,7 +411,8 @@ def save(account, module_id, learner_id, component_id, payload):
         if not is_attendance and 'attendanceMode' in payload:
             raise ServiceError('Attendance choices apply only to a lecture activity.')
         records = query(f'''SELECT * FROM {table('learner_progress_entries')}
-            WHERE learner_id=%s AND coalesce(curriculum_component_ref,component_ref)=%s AND deleted_at IS NULL ORDER BY id{lock()}''', [learner_id, component_id])
+            WHERE learner_id=%s AND coalesce(nullif(trim(curriculum_component_ref),''),nullif(trim(component_ref),''))=%s
+              AND deleted_at IS NULL AND coalesce(kind,'') <> 'activity_event' ORDER BY id{lock()}''', [learner_id, component_id])
         rows = query(f'''SELECT * FROM {table(TABLES[0], 'curriculum')}
             WHERE learner_id=%s AND module_id=%s AND component_id=%s{lock()}''', [learner_id, module_id, component_id])
         override = rows[0] if rows else None
@@ -452,7 +469,7 @@ def save(account, module_id, learner_id, component_id, payload):
                 # same occurrence. Staff confirmations are evidence only.
                 other_records = query(f'''SELECT id,source_payload,time_tracking_session_ref FROM {table('learner_progress_entries')}
                     WHERE learner_id=%s AND deleted_at IS NULL AND actual_seconds>0 AND accepted IS TRUE
-                    AND coalesce(curriculum_component_ref,component_ref) IS DISTINCT FROM %s''', [learner_id, component_id])
+                    AND coalesce(nullif(trim(curriculum_component_ref),''),nullif(trim(component_ref),'')) IS DISTINCT FROM %s''', [learner_id, component_id])
                 if any(row.get('time_tracking_session_ref') == lecture['lectureId'] or
                        source_payload_metadata(row.get('source_payload')).get('original_source_ref') == lecture['sourceRef'] or
                        source_payload_metadata(row.get('source_payload')).get('staff_time_entry', {}).get('lecture_id') == lecture['lectureId']
@@ -472,7 +489,7 @@ def save(account, module_id, learner_id, component_id, payload):
             if len(durable) > 1:
                 raise ServiceError('Multiple recorded allocations require a separate Activity Log review.', 'ambiguous_activity', 409)
             overlap = query(f'''SELECT id FROM {table('learner_progress_entries')}
-                WHERE learner_id=%s AND deleted_at IS NULL AND coalesce(curriculum_component_ref,component_ref) IS DISTINCT FROM %s
+                WHERE learner_id=%s AND deleted_at IS NULL AND coalesce(nullif(trim(curriculum_component_ref),''),nullif(trim(component_ref),'')) IS DISTINCT FROM %s
                 AND reporting_started_at < %s AND reporting_ended_at > %s LIMIT 1''', [learner_id, component_id, end, start]) if start else []
             if overlap:
                 raise ServiceError('This time overlaps another recorded activity.', 'time_overlap', 409)
@@ -488,7 +505,7 @@ def save(account, module_id, learner_id, component_id, payload):
                         reporting_started_at=%s,reporting_ended_at=%s,reporting_month=%s,
                         reporting_timestamp_label=%s,source_payload=%s,accepted=CASE WHEN %s THEN true ELSE accepted END,
                         ssot_updated_at=CURRENT_TIMESTAMP
-                    WHERE id=%s AND learner_id=%s AND coalesce(curriculum_component_ref,component_ref)=%s AND deleted_at IS NULL''',
+                    WHERE id=%s AND learner_id=%s AND coalesce(nullif(trim(curriculum_component_ref),''),nullif(trim(component_ref),''))=%s AND deleted_at IS NULL''',
                     [seconds, start, end, month, timestamp_label, encode(source_payload), is_attendance, selected['id'], learner_id, component_id])
             else:
                 # Staff-declared hours are labelled, not a quiz attempt/mark or

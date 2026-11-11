@@ -1,5 +1,7 @@
 import type { AttendanceStatus } from "@/types/bulkAttendance";
 
+type ManualStatus = Extract<AttendanceStatus, 'present' | 'absent' | 'unmarked'>;
+
 interface StatCardsProps {
   total: number;
   present: number;
@@ -14,7 +16,7 @@ const CARD_BASE =
   "flex items-center gap-4 rounded-lg border border-background-300 bg-background-50 p-5";
 
 const STATUS_CARDS: Array<{
-  status: AttendanceStatus;
+  status: ManualStatus;
   label: string;
   icon: string;
   color: string;
@@ -52,7 +54,7 @@ export default function StatCards({
   onLearnersClick,
   onStatusClick,
 }: StatCardsProps) {
-  const counts: Record<AttendanceStatus, number> = { present, absent, unmarked };
+  const counts: Record<ManualStatus, number> = { present, absent, unmarked };
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

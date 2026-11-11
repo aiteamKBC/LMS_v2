@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import StudentHome from './page';
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
 import { studentWorkspaceRoutes } from '@/router/studentWorkspaceRoutes';
-import { homeSummary, upcomingSchedule, type OverviewWeek, type UpcomingEvent } from '@/api/learnerOverview';
+import { homeSummary, upcomingSchedule, currentLearningWeek, type OverviewWeek, type UpcomingEvent } from '@/api/learnerOverview';
 import { feedbackApi, type LearnerFeedbackListItem } from '@/api/feedback';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
@@ -13,13 +13,14 @@ import { resetFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedi
 
 const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', learnerType: 'apprenticeship', firstLoginRequired: false, programmeStatus: 'Active', events: [] as UpcomingEvent[], scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
 const featureFlags = vi.hoisted(() => ({ fullFeedback: true, lectureFeedback: true }));
+const progressState = vi.hoisted(() => ({ error: '' }));
 vi.mock('@/lib/featureFlags', () => ({
   CHAT_ENABLED: false,
   get LEARNER_FEEDBACK_ENABLED() { return featureFlags.fullFeedback; },
   get LEARNER_POST_LECTURE_FEEDBACK_ENABLED() { return featureFlags.lectureFeedback; },
 }));
-beforeEach(() => { featureFlags.fullFeedback = true; featureFlags.lectureFeedback = true; });
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
+beforeEach(() => { featureFlags.fullFeedback = true; featureFlags.lectureFeedback = true; progressState.error = ''; });
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
 vi.mock('@/components/SupportChatWidget', () => ({ SupportChatWidget: () => null }));
 vi.mock('@/api/feedback', () => ({ feedbackApi: { myForms: vi.fn() } }));
 vi.mock('@/api/firstLoginDetails', () => ({ fetchFirstLoginDetails: vi.fn(async () => ({ required: state.firstLoginRequired })) }));
@@ -30,7 +31,7 @@ vi.mock('@/hooks/useLiveLearnerRead', () => ({ useLiveLearnerRead: vi.fn((_kind,
   otjh: { actual: 42, submitted: 10, planned: 100, percent: 42, missingPlannedActivities: 0 },
   activities: { completed: 21, total: 50 }, assignments: { completed: 3, total: 6 },
   lectures: { completed: 8, total: 10 }, modules: { completed: 1, total: 5 }, undatedActivities: 0,
-} }, loading: false, error: read === homeSummary.read ? '' : state.scheduleError, refresh: vi.fn() })) }));
+} }, loading: false, error: read === homeSummary.read ? progressState.error : read === upcomingSchedule.read ? state.scheduleError : '', refresh: vi.fn() })) }));
 vi.mock('@/pages/workspace/learner/page', () => ({ default: function MockDashboard() {
   const { kind, id } = useParams();
   return <><aside aria-label="Learner sidebar"><Link to={kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner'}>Return home</Link></aside><h1>Dashboard console</h1></>;
@@ -42,6 +43,19 @@ function workspace(path: string) { return render(<MemoryRouter initialEntries={[
 beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.events = []; state.scheduleError = ''; state.modules = []; vi.mocked(feedbackApi.myForms).mockResolvedValue({ forms: [] }); rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); localStorage.clear(); });
 describe('connected student home', () => {
+  it('continues to the current module when the independent progress card times out', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-09T12:00:00Z'));
+    progressState.error = 'Progress request timed out';
+    state.modules = [{ id: 'current:M1', title: 'Leadership', weekLabels: ['Week 2'], completed: 0, total: 3,
+      percent: 0, ksbCodes: [], ksbMappingMissing: false }];
+    page();
+    expect(useLiveLearnerRead).toHaveBeenCalledWith('apprenticeship', '71', true, currentLearningWeek.read, currentLearningWeek.peek);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue Learning' }));
+    expect(screen.getByTestId('destination')).toHaveTextContent('subject=current%3AM1');
+    expect(screen.getByTestId('destination')).toHaveTextContent('week=2026-09-07');
+    expect(screen.queryByText('We could not check your learning for this week.')).not.toBeInTheDocument();
+  });
   it('uses only the authenticated identity, with real progress and empty events', () => {
     localStorage.setItem('my_learner', JSON.stringify({ kind: 'commercial', id: 999 }));
     page();

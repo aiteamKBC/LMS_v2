@@ -87,7 +87,7 @@
 .status { display: inline-flex; max-width: 100%; padding: 5px 10px; border-radius: 7px; font-size: 13px; font-weight: 650; line-height: 1.5; white-space: normal; }
 .status[data-status="present"] { background: #e7f5ee; color: #196346; }
 .status[data-status="absent"] { background: #fcebef; color: #a92847; }
-.status[data-status="awaiting_recording"] { background: #fff3d6; color: #805609; }
+.status[data-status="awaiting_recording"], .status[data-status="recorded"] { background: #fce7f3; color: #9d174d; }
 .report a { display: inline-block; margin-left: 6px; color: var(--attendance-accent); text-decoration: underline; text-underline-offset: 3px; }
 .rowActions { display: flex; justify-content: flex-end; gap: 8px; }
 .rowActions button { min-height: 36px; padding: 8px 11px; font-size: 13px; }
@@ -129,7 +129,7 @@
 :global(html[data-theme="dark"]) .actions button:first-child, :global(html[data-theme="dark"]) .formActions button[type="submit"] { border-color: #8253cb; background: #7544be; color: #fff; }
 :global(html[data-theme="dark"]) .status[data-status="present"] { background: #234637; color: #b3e5c7; }
 :global(html[data-theme="dark"]) .status[data-status="absent"] { background: #4c2937; color: #f5b7c7; }
-:global(html[data-theme="dark"]) .status[data-status="awaiting_recording"] { background: #493c1d; color: #f3d28d; }
+:global(html[data-theme="dark"]) .status[data-status="awaiting_recording"], :global(html[data-theme="dark"]) .status[data-status="recorded"] { background: #500724; color: #fbcfe8; }
 :global(html[data-theme="dark"]) .rowActions button:last-child { border-color: #714254; color: #f5b7c7; }
 :global(html[data-theme="dark"]) .rowActions button:last-child:hover:not(:disabled) { background: #4c2937; }
 :global(html[data-theme="dark"]) .error { color: #f5b7c7; }
@@ -222,7 +222,7 @@
   .printTable th:nth-child(5), .printTable td:nth-child(5) { text-align: center; font-size: 6.8pt; font-weight: 700; white-space: nowrap; }
   .printTable td[data-status="present"] { background: #e7f8ef; color: #08794c; }
   .printTable td[data-status="absent"] { background: #fdebed; color: #ce2538; }
-  .printTable td[data-status="awaiting_recording"] { background: #fff7db; color: #825b09; white-space: normal; }
+  .printTable td[data-status="awaiting_recording"], .printTable td[data-status="recorded"] { background: #fce7f3; color: #9d174d; white-space: normal; }
   .printNote { margin: 0 0 4mm; color: #525c70; line-height: 1.4; }
   .printFooter { display: flex; justify-content: space-between; margin-top: 4mm; padding-top: 2mm; border-top: .25mm solid #e2e5eb; color: #757d8d; font-size: 6.5pt; }
   .pageNumber::after { content: counter(page); }

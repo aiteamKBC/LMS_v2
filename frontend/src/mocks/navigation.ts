@@ -37,6 +37,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-monthly-submission', label: 'Monthly Submission', icon: 'ri-file-upload-line', href: '/learner/monthly-submission' },
+      { id: 'learner-extra-activities', label: 'Extra activities', icon: 'ri-add-circle-line', href: '/learner/extra-activities' },
       { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
       { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
@@ -114,6 +115,7 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-edit-line',
     href: '/coach/marking-queue',
   },
+  { id: 'coach-extra-activities', label: 'Extra activities', icon: 'ri-add-circle-line', href: '/coach/extra-activities' },
   {
     id: 'coach-monthly-logs',
     label: 'Monthly Logs',
@@ -235,26 +237,25 @@ export const curriculumNavItems: SidebarNavItem[] = [
   },
   {
     id: 'curriculum-delivery',
-    // Retain the existing permission ID for the module authoring destinations.
-    label: 'Module Builder',
-    icon: 'ri-layout-4-line',
-    href: '/curriculum/module-builder',
+    label: 'Delivery',
+    icon: 'ri-calendar-schedule-line',
+    href: '/curriculum/delivery',
     matchPaths: [
       '/curriculum/module-builder',
       '/curriculum/cohorts',
       '/curriculum/groups',
       '/curriculum/modules',
       '/curriculum/teams-meetings',
-      '/curriculum/recordings',
       '/curriculum/session-calendar',
       '/curriculum/england-holidays',
     ],
   },
   {
     id: 'curriculum-coaching-recordings',
-    label: 'Coach Meetings & Recordings',
+    label: 'Coach & Tutor Recordings',
     icon: 'ri-video-line',
-    href: '/curriculum/coaching-recordings',
+    href: '/curriculum/recordings-hub',
+    matchPaths: ['/curriculum/coaching-recordings', '/curriculum/recordings'],
   },
   {
     id: 'curriculum-bulk-attendance',
@@ -269,19 +270,13 @@ export const curriculumNavItems: SidebarNavItem[] = [
     href: '/curriculum/library',
     matchPaths: [
       '/curriculum/week-builder',
+      '/curriculum/free-courses',
       '/curriculum/standards',
       '/curriculum/quiz-xml',
       '/curriculum/knowledge-base',
       '/curriculum/question-bank',
       '/curriculum/checkpoints',
     ],
-  },
-  {
-    id: 'curriculum-courses',
-    label: 'Courses',
-    icon: 'ri-graduation-cap-line',
-    href: '/curriculum/courses',
-    matchPaths: ['/curriculum/free-courses'],
   },
   {
     id: 'curriculum-quality',
@@ -659,6 +654,7 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-evidence', label: 'Evidence', icon: 'ri-folder-shield-2-line', href: '/admin/evidence' },
       { id: 'admin-certificates', label: 'Certificates', icon: 'ri-award-line', href: '/workspace/admin/certificates' },
       { id: 'admin-notifications', label: 'Email Delivery', icon: 'ri-mail-send-line', href: '/admin/notifications' },
+      { id: 'admin-announcements', label: 'Announcements', icon: 'ri-megaphone-line', href: '/admin/announcements' },
       { id: 'admin-system', label: 'System Status', icon: 'ri-pulse-line', href: '/admin/system' },
     ],
   },

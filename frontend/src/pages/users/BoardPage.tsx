@@ -16,7 +16,7 @@ import { fetchIlrDocument, issueIlrDocument, signIlrDocument, type IlrDocument }
 import { SignaturePad } from './wizard/steps/SignaturePad';
 import { LearnerHeaderDates } from './components/LearnerHeaderDates';
 import { FirstSessionReschedule } from './components/FirstSessionReschedule';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { renderIlrPdf, ilrFilename } from '@/lib/ilrDocumentPdf';
 import {
   fetchTrainingPlanDocument,
@@ -1591,6 +1591,7 @@ function BoardView({
   };
 
   const signature = board.contact.signatureUrl || board.contact.savedSignature;
+  const active = (board.programme.status || '').trim().toLowerCase() === 'active';
   const withdrawn = (board.programme.status || '').trim().toLowerCase() === 'withdrawn';
   // Older imports' data: shown only for the learners who have some.
   const fs = board.functionalSkills;
@@ -1610,7 +1611,7 @@ function BoardView({
             programme={board.programme.name}
             employer={board.user.employer}
             cohort={board.programme.cohort}
-            onboardingStatus={board.programme.onboardingStatus}
+            onboardingStatus={active ? '' : board.programme.onboardingStatus}
             dates={
               <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
                 <LearnerHeaderDates learnerId={userId} startDate={board.programme.learnerStartDate} endDate={board.programme.learnerEndDate} />

@@ -11,6 +11,14 @@ const pending: api.ProgressTransferRequest = { requestId: 'R1', status: 'pending
 afterEach(() => vi.resetAllMocks());
 
 describe('Transfer Progress', () => {
+  it('shows a merge confirmation only for approved transfers', async () => {
+    vi.mocked(api.getTransferPreview).mockResolvedValue({ eligible: [], requests: [{ ...pending, status: 'approved' }], csrfToken: 'csrf' });
+    render(<TransferProgress kind="commercial" learnerId="7" onRequested={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer Progress' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Progress merged.'));
+    expect(screen.getByRole('status')).toHaveTextContent('once per component');
+    expect(api.submitTransferRequest).not.toHaveBeenCalled();
+  });
   it('identifies a rehearsal before the learner confirms it', async () => {
     vi.mocked(api.getTransferPreview).mockResolvedValue({ eligible: [{ ...eligible[0], demoProgress: true }], requests: [], csrfToken: 'csrf' });
     render(<TransferProgress kind="commercial" learnerId="7" onRequested={vi.fn()} />);
@@ -59,6 +67,7 @@ describe('Transfer Progress', () => {
     render(<TransferProgress kind="commercial" learnerId="7" onRequested={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Transfer Progress' }));
     expect(await screen.findByText(/Awaiting administrator approval/)).toBeVisible();
+    expect(screen.queryByText(/Progress merged/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
     expect(api.submitTransferRequest).not.toHaveBeenCalled();
   });

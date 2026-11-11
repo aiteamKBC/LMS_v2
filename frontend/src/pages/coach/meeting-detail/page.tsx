@@ -1,3 +1,4 @@
+import { ukOffsetForDate } from '@/lib/timeZones';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -15,7 +16,7 @@ import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
-import { adoptMigratedReviewBooking, bookMigratedReview, rescheduleMigratedReview, markReviewInstanceInProgressManually, openReviewInstanceForEvent, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
+import { adoptMigratedReviewBooking, bookMigratedReview, fetchReviewInstanceForm, rescheduleMigratedReview, markReviewInstanceInProgressManually, openReviewInstanceForEvent, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 import { MonthlyCoachingCompletionModal } from '../meetings/MonthlyCoachingCompletionModal';
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import { MigratedMeetingIntelligence } from '../shared/MigratedMeetingIntelligence';
@@ -24,6 +25,7 @@ import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTim
 import { loadImportedReviewForBooking } from '../shared/importedReviewBooking';
 import { useImportedMeetingJoin } from '../shared/useImportedMeetingJoin';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
+import { reviewAttendanceLinks } from '../shared/reviewAttendanceLinks';
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
@@ -191,8 +193,11 @@ export default function CoachMeetingDetail() {
   const [importedReviewReload, setImportedReviewReload] = useState(0);
   const [importedReviewLoading, setImportedReviewLoading] = useState(false);
   const [importedReviewError, setImportedReviewError] = useState<string | null>(null);
+  const [nativeRescheduleAllowed, setNativeRescheduleAllowed] = useState<boolean | null>(null);
+  const [nativeAttendanceReload, setNativeAttendanceReload] = useState(0);
   const bookingInFlightRef = useRef(false);
   const importedRequestGeneration = useRef(0);
+  const attendanceBookingRefresh = useRef(0);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -244,6 +249,18 @@ export default function CoachMeetingDetail() {
   // The server may resolve a legacy form key. Associate its response with the
   // request that loaded it, not an assumed equality with the calendar key.
   const importedReview = importedReviewId && loadedReviewKey === importedRequestKey ? importedReviewData : null;
+  const nativeAttendanceKey = event?.reviewSource !== 'aptem' && !event?.aptemReviewId && event?.status === 'in-progress'
+    && ['mcr', 'progress-review'].includes(event.source || '') && event.reviewInstanceId
+    ? event.eventKey : '';
+  useEffect(() => {
+    setNativeRescheduleAllowed(null);
+    if (!nativeAttendanceKey) return;
+    const controller = new AbortController();
+    reviewAttendanceLinks(nativeAttendanceKey, undefined, controller.signal)
+      .then(context => { if (!controller.signal.aborted) setNativeRescheduleAllowed(context.canReschedule === true); })
+      .catch(() => { if (!controller.signal.aborted) setNativeRescheduleAllowed(false); });
+    return () => controller.abort();
+  }, [nativeAttendanceKey, nativeAttendanceReload]);
   useEffect(() => {
     importedRequestGeneration.current += 1;
     setImportedReview(null);
@@ -336,6 +353,30 @@ export default function CoachMeetingDetail() {
     }
   };
 
+  const onImportedAttendanceLinkChange = () => {
+    const reviewId = importedReview?.instance.id;
+    if (!reviewId) return;
+    const generation = importedRequestGeneration.current;
+    const revision = ++attendanceBookingRefresh.current;
+    setImportedReview(current => current?.instance.id === reviewId && current.booking
+      ? { ...current, booking: { ...current.booking, canReschedule: false } } : current);
+    setImportedReviewError(null);
+    void fetchReviewInstanceForm(reviewId).then(updated => {
+      if (generation !== importedRequestGeneration.current || revision !== attendanceBookingRefresh.current) return;
+      setImportedReview(current => current?.instance.id === reviewId
+        ? { ...current, booking: updated.booking } : current);
+    }).catch(() => {
+      if (generation === importedRequestGeneration.current && revision === attendanceBookingRefresh.current) {
+        setImportedReviewError('Attendance was saved, but booking eligibility could not refresh. Refresh the booking.');
+      }
+    });
+  };
+
+  const onNativeAttendanceLinkChange = () => {
+    setNativeRescheduleAllowed(false);
+    setNativeAttendanceReload(value => value + 1);
+  };
+
   // The imported review's own booking action. It keeps the Aptem review's
   // identity as the booking key, so the meeting this creates is the same one
   // the Review workspace would have created, never a second appointment.
@@ -353,7 +394,7 @@ export default function CoachMeetingDetail() {
         scheduledDate: useExistingMeeting ? booking.scheduledDate || '' : scheduleForm.date,
         scheduledTime: useExistingMeeting ? booking.scheduledTime || '' : scheduleForm.time,
         durationMinutes: useExistingMeeting ? booking.durationMinutes || 60 : scheduleForm.durationMinutes,
-        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        timezoneOffsetMinutes: ukOffsetForDate(useExistingMeeting ? booking.scheduledDate || '' : scheduleForm.date),
       };
       const updated = useExistingMeeting
         ? await adoptMigratedReviewBooking(importedReview.instance.id)
@@ -512,7 +553,9 @@ export default function CoachMeetingDetail() {
   const scheduledDate = event?.reviewSource === 'aptem' && event.status === 'not-scheduled'
     ? null
     : event?.scheduledDate;
-  const canEditBooking = event?.reviewSource !== 'aptem' && (event?.status === 'not-scheduled' || event?.status === 'scheduled');
+  const canEditBooking = event?.reviewSource !== 'aptem' && (event?.status === 'not-scheduled' || event?.status === 'scheduled'
+    || (event?.status === 'in-progress' && ['mcr', 'progress-review'].includes(event.source || '') && Boolean(event.reviewInstanceId)
+      && nativeRescheduleAllowed === true));
   // Aptem bookings are authorized by the imported review itself, not by the
   // calendar row, and an admin reading another workspace never books.
   const importedBooking = event?.reviewSource === 'aptem' ? importedReview?.booking : undefined;
@@ -616,7 +659,7 @@ export default function CoachMeetingDetail() {
                   </p>
                 ) : null}
                 <div className={cn('flex flex-wrap items-center gap-2', showScheduleFields && 'mt-5 border-t border-foreground-100 pt-4')}>
-                  {canEditBooking ? <RowAction label={event.status === 'scheduled' ? 'Reschedule' : 'Schedule'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy} onClick={() => { void handleSchedule(); }} /> : null}
+                  {canEditBooking ? <RowAction label={event.status === 'not-scheduled' ? 'Schedule' : 'Reschedule'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy} onClick={() => { void handleSchedule(); }} /> : null}
                   {canBookImported || canRescheduleImported ? <RowAction label={canRescheduleImported ? 'Reschedule' : isProgressReview ? 'Book Review' : 'Book Meeting'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy || !scheduleForm.date || !scheduleForm.time} onClick={() => { void bookImportedReview(false); }} /> : null}
                   {canAttachImported ? <RowAction label="Retry linking meeting" icon="ri-link" disabled={busy} onClick={() => { void bookImportedReview(true); }} /> : null}
                   {event.reviewSource === 'aptem' ? <RowAction label="Open Review" icon="ri-file-list-3-line" emphasis="primary" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
@@ -675,6 +718,7 @@ export default function CoachMeetingDetail() {
                         instance: { ...current.instance, status: 'in-progress' } } : current);
                     }
                   }}
+                  onAttendanceLinkChange={onImportedAttendanceLinkChange}
                 />
               ) : (
                 <Panel className="bg-white">
@@ -685,7 +729,8 @@ export default function CoachMeetingDetail() {
                   </p>
                 </Panel>
               ) : <CoachMeetingArtifactsPanel event={event} onEventStatusChange={handleArtifactsStatusChange}
-                attendanceLinkKey={!coach.isViewingAsCoach && ['mcr', 'progress-review'].includes(event.source) ? event.eventKey : undefined} />
+                attendanceLinkKey={!coach.isViewingAsCoach && ['mcr', 'progress-review'].includes(event.source) ? event.eventKey : undefined}
+                onAttendanceLinkChange={onNativeAttendanceLinkChange} />
             ) : (
               <Panel className="bg-white">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

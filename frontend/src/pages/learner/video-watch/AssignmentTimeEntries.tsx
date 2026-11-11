@@ -1,3 +1,4 @@
+import { assignmentDateRestriction, assignmentMonthBounds, assignmentTimeHours } from './AssignmentTimeEntries.helpers';
 import type { MonthlyAssignment } from '@/api/monthlyAssignment';
 import { useEffect, useId, useState } from 'react';
 import { fetchLearnerCalendarEvents, type BookingCalendarRules } from '@/api/learnerCalendar';
@@ -22,13 +23,6 @@ function HoursInput({ label, value, onChange, maximum }: { label: string; value:
       <button type="button" className={button} aria-label={`Increase ${label} by half an hour`} disabled={hours >= maximum} onClick={() => adjust(1)}>+</button>
     </div>
   </div>;
-}
-
-export function assignmentDateRestriction(date: string, rules: BookingCalendarRules | null) {
-  const day = new Date(`${date}T12:00:00Z`).getUTCDay();
-  if (day === 0 || day === 6) return 'Weekend';
-  if (!rules || !rules.coveredYears.includes(Number(date.slice(0, 4)))) return 'Holiday calendar unavailable';
-  return rules.bankHolidays.find(item => item.date === date)?.title || '';
 }
 
 function WorkingDatePicker({ month, value, label, rules, disabled, onChange }: {
@@ -64,20 +58,6 @@ function WorkingDatePicker({ month, value, label, rules, disabled, onChange }: {
   </div>;
 }
 
-export function assignmentMonthBounds(month: string) {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return null;
-  const [year, number] = month.split('-').map(Number);
-  const days = new Date(Date.UTC(year, number, 0)).getUTCDate();
-  return { min: `${month}-01`, max: `${month}-${days}` };
-}
-
-export function assignmentTimeHours(entries: MonthlyAssignment['timeEntries']) {
-  return (entries || []).reduce((sum, row) => {
-    const hours = Number(row.hours);
-    return sum + (Number.isFinite(hours) && hours > 0 ? hours : 0);
-  }, 0);
-}
-
 function assignmentDailyTimeHours(entries: MonthlyAssignment['timeEntries']) {
   const totals: Record<string, number> = {};
   for (const row of entries || []) {
@@ -87,14 +67,15 @@ function assignmentDailyTimeHours(entries: MonthlyAssignment['timeEntries']) {
   return totals;
 }
 
-export function AssignmentTimeEntries({ month, entries, onChange, disabled, kind, learnerId, dailyLimit = true }: {
-  kind: LearnerKind; learnerId: string; dailyLimit?: boolean;
+export function AssignmentTimeEntries({ month, entries, onChange, disabled, kind, learnerId, dailyLimit = true, showInitialTopic = true }: {
+  kind: LearnerKind; learnerId: string; dailyLimit?: boolean; showInitialTopic?: boolean;
   month: string; entries: NonNullable<MonthlyAssignment['timeEntries']>;
   onChange: (entries: NonNullable<MonthlyAssignment['timeEntries']>) => void; disabled: boolean;
 }) {
   const [rules, setRules] = useState<BookingCalendarRules | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const [emptyRowDismissed, setEmptyRowDismissed] = useState(false);
   useEffect(() => {
     let active = true;
     setRules(null); setError('');
@@ -106,7 +87,7 @@ export function AssignmentTimeEntries({ month, entries, onChange, disabled, kind
   }, [kind, learnerId, retry]);
   const bounds = assignmentMonthBounds(month);
   const dailyTotals = assignmentDailyTimeHours(entries);
-  const rows = entries.length ? entries : [{ topic: '', hours: '', date: '' }];
+  const rows = entries.length ? entries : emptyRowDismissed || !showInitialTopic ? [] : [{ topic: '', hours: '', date: '' }];
   const update = (index: number, key: 'topic' | 'hours' | 'date', value: string) =>
     onChange(rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
   const input = 'mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 disabled:bg-slate-100';
@@ -118,7 +99,7 @@ export function AssignmentTimeEntries({ month, entries, onChange, disabled, kind
         maximum={dailyLimit && row.date ? Math.max(0, Number((8 - (dailyTotals[row.date] || 0) + (Number(row.hours) > 0 && Number.isFinite(Number(row.hours)) ? Number(row.hours) : 0)).toFixed(10))) : 8}
         onChange={value => update(index, 'hours', value)} />
       <WorkingDatePicker month={month} value={row.date} label={`Date ${index + 1}`} rules={rules} disabled={disabled} onChange={value => update(index, 'date', value)} />
-      <button type="button" className="self-end rounded-lg px-3 py-2 text-sm text-red-700 disabled:opacity-40" onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remove topic {index + 1}</button>
+      <button type="button" className="self-end rounded-lg px-3 py-2 text-sm text-red-700 disabled:opacity-40" onClick={() => { if (rows.length === 1) setEmptyRowDismissed(true); onChange(rows.filter((_, i) => i !== index)); }}>Remove topic {index + 1}</button>
       {Number(row.hours) > 8 && (!dailyLimit || !row.date) && <p role="alert" className="text-sm text-red-700 sm:col-span-4">{dailyLimit ? 'Maximum 8 hours per day across all assignments, including saved drafts.' : 'Each topic can have a maximum of 8 hours.'}</p>}
       {row.date && bounds && (row.date < bounds.min || row.date > bounds.max) && <p role="alert" className="text-sm text-red-700 sm:col-span-4">Choose a date within the assignment month ({month}).</p>}
       {row.date && rules && assignmentDateRestriction(row.date, rules) && <p role="alert" className="text-sm text-red-700 sm:col-span-4">{assignmentDateRestriction(row.date, rules)}: choose a working day.</p>}
@@ -128,7 +109,8 @@ export function AssignmentTimeEntries({ month, entries, onChange, disabled, kind
     {dailyLimit && <p className="text-sm text-slate-600">Maximum 8 hours per day across all your assignments, including saved drafts. Hours entered on different dates have separate daily limits.</p>}
     {!rules && !error && <p role="status">Loading bank holidays…</p>}
     {error && <p role="alert">{error} <button type="button" onClick={() => setRetry(value => value + 1)}>Retry calendar</button></p>}
-    <button type="button" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => onChange([...rows, { topic: '', hours: '', date: '' }])}>Add topic</button>
+    {rows.length === 0 && <p className="text-sm text-slate-600">No learning time added. Add a topic and record its hours before submitting.</p>}
+    <button type="button" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => { setEmptyRowDismissed(false); onChange([...entries, { topic: '', hours: '', date: '' }]); }}>Add topic</button>
     <p className="text-sm font-semibold" aria-live="polite">Total learning time: {Number(assignmentTimeHours(entries).toFixed(2))} hours</p>
     <p className="text-xs text-slate-600">Dates must be within the assignment month: {month}. Use the plus and minus buttons to adjust by half an hour, or type hours directly: 1 = 1 hour, 1.5 = 1 hour 30 minutes.</p>
   </fieldset>;

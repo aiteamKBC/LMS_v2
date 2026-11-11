@@ -58,7 +58,7 @@ def response_classifications(rows, question_answers, completed_responses=()):
             records.append({
                 'responseId': identifier, 'formId': response.form_id, 'formTitle': form.title,
                 'formType': kind, 'version': form.version,
-                'respondent': 'Anonymous learner' if getattr(form, 'anonymous_responses', False) else getattr(response, 'learner_name', ''),
+                'respondent': ('Anonymous employer' if getattr(form, 'form_type', '') == 'post_progress_review_employer' else 'Anonymous learner') if getattr(form, 'anonymous_responses', False) else getattr(response, 'learner_name', ''),
                 'score': round(score, 2) if score is not None else None, 'classification': classification,
                 'scoredQuestions': len(values), 'submittedAt': submitted.isoformat() if submitted else None,
                 'contextTitle': (getattr(delivery, 'session_title', '') or getattr(delivery, 'module_name', '') or form.title),

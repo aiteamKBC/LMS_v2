@@ -6,7 +6,18 @@ from . import imported_meeting_ownership as meeting_ownership
 from .models import CoachCalendarEvent, ImportedReviewInstance
 
 
-def can_reschedule(overlay, calendar):
+def can_reschedule(overlay, calendar, *, family=None):
+    if overlay and calendar and overlay.status == 'in-progress':
+        if family not in {'MCM', 'PR', 'PR_SKILLS_RADAR'} or getattr(overlay, 'completed_at', None):
+            return False
+        from django.db import DatabaseError
+        from .review_rescheduling import require_started_reschedule
+        from .views import LearnerCalendarConflict
+        try:
+            require_started_reschedule(calendar, overlay.status, overlay=overlay)
+            return True
+        except (LearnerCalendarConflict, DatabaseError):
+            return False
     return bool(
         overlay and overlay.status == ImportedReviewInstance.STATUS_SCHEDULED
         and calendar and calendar.status == CoachCalendarEvent.STATUS_SCHEDULED
@@ -61,8 +72,9 @@ def reschedule(request, instance_id):
         # excluding this appointment, then revalidate identity/slot under locks.
         preview_overlay = v._owned_migrated_overlay(owner, definition)
         preview_record = booking_for_overlay(preview_overlay) if preview_overlay else None
-        if not can_reschedule(preview_overlay, preview_record) or definition.get("readOnly"):
-            return conflict("Only an existing Scheduled review booking can be rescheduled.")
+        family = v.migrated_review_family((definition.get('historicalReview') or {}).get('type'))
+        if not can_reschedule(preview_overlay, preview_record, family=family) or definition.get("readOnly"):
+            return conflict("This booking cannot be rescheduled. Check its status and learner attendance.")
         learner = next((row for row in v.fetch_caseload_dashboard_profiles(owner)
                         if int(getattr(row, "id", 0) or 0) == preview_overlay.learner_id), None)
         if learner is None:
@@ -95,20 +107,20 @@ def reschedule(request, instance_id):
                 return conflict("The imported review association changed. Reload it.")
             record = booking_for_overlay(overlay, lock=True)
             family = v.migrated_review_family((definition.get("historicalReview") or {}).get("type"))
-            if (not can_reschedule(overlay, record)
+            if (not can_reschedule(overlay, record, family=family)
                     or record.owner_email.casefold() != owner
                     or record.learner_id != overlay.learner_id
                     or record.event_type != v.migrated_booking_event_type(family)
                     or definition.get("booking", {}).get("conflict")
                     or not v.snapshot_assignment_valid(overlay, family, definition.get("migratedProgrammeKey"))):
-                return conflict("Only an existing Scheduled review booking can be rescheduled. Reload to check its status.")
+                return conflict("This booking cannot be rescheduled. Reload to check its status and learner attendance.")
             source = read_source(overlay.source_review_id)
             if (source.get("learner_id") != overlay.learner_id
                     or f"imported-review:{source.get('aptem_review_id')}" != overlay.event_key
                     or v.migrated_review_family(source.get("review_type")) != family
                     or source.get("completed_date") or not v.initial_local_status(source.get("status"))):
                 return conflict("The Aptem review is historical or its source association changed.")
-            require_schedulable(record)
+            require_schedulable(record, allow_started=True)
             desired_slot = (scheduled_date, scheduled_time, duration)
             current_slot = (record.scheduled_date, record.scheduled_time, record.duration_minutes)
             if current_slot != desired_slot and current_slot != previous_slot:
@@ -126,7 +138,8 @@ def reschedule(request, instance_id):
             record.scheduled_date, record.scheduled_time, record.duration_minutes = desired_slot
             # Reuse normal availability/weekly rules and the existing reservation.
             # No overlay, source, answers, lifecycle or meeting identity is written.
-            record = v.persist_calendar_sync_reservation(record, review_event=base_event)
+            record = v.persist_calendar_sync_reservation(record, review_event=base_event,
+                coach_reschedule=True, expected_booking=previous_slot, overlay=overlay)
     except (v.LearnerCalendarConflict, ReviewIdentityConflict, v.CalendarSyncInProgress,
             ReconciliationConflict, meeting_ownership.MeetingOwnershipError) as exc:
         return conflict(str(exc))

@@ -1,0 +1,38 @@
+name: Aptem learner synchronization
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aptem-learner-details-sync
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile existing LMS learners
+    if: github.ref == 'refs/heads/main' && github.repository == 'aiteamKBC/LMS_v2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: aws-staging
+    env:
+      APTEM_SYNC_DATABASE_URL: ${{ secrets.APTEM_SYNC_DATABASE_URL }}
+      APTEM_SYNC_EXPECTED_DATABASE: ${{ vars.APTEM_SYNC_EXPECTED_DATABASE }}
+      APTEM_SYNC_EXPECTED_BRANCH: ${{ vars.APTEM_SYNC_EXPECTED_BRANCH }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Verify runner safety and failure handling
+        run: python -m unittest discover -s .github/ci -p test_aptem_learner_sync.py
+      - name: Install the existing backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Verify the database and reconcile names, statuses and programme dates
+        run: python .github/ci/aptem_learner_sync.py

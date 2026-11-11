@@ -28,9 +28,10 @@ from django.utils import timezone
 
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
+from curriculum_api import content_cache
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
 
-from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
+from .active_users import fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
@@ -309,6 +310,16 @@ def _display_component_title(type_, title):
     return f"{type_label} · {title}" if show_title else (type_label or title)
 
 
+def _cached_expected_otjh(cur):
+    try:
+        return content_cache.expected_otjh_map(cur)
+    except DatabaseError:
+        raise
+    except Exception:
+        logger.warning("Curriculum content cache unavailable for expected_otjh.", exc_info=True)
+        return None
+
+
 def _otjh_by_component_id(components):
     """Exact expected_otjh lookup for components saved with the structured
     plan format (they carry the real curriculum.components id)."""
@@ -317,6 +328,12 @@ def _otjh_by_component_id(components):
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
+            # Every component's value, shared per curriculum generation; None
+            # when the cache is off, and then the by-id read below as before.
+            known = _cached_expected_otjh(cur)
+            if known is not None:
+                return {cid: (float(known[cid]) if known[cid] is not None else None)
+                        for cid in ids if cid in known}
             cur.execute(
                 "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
                 [ids],
@@ -1151,22 +1168,16 @@ def _review_otjh_hours(learner_profile):
 
 
 def _live_otjh_snapshot(detail, learner_profile=None):
-    # Reviews are off-the-job training in their own right when Curriculum says
-    # so, so they land in the same two totals as curriculum components rather
-    # than a figure of their own: planned grows when a review is scheduled,
-    # completed when it is signed off.
-    review_planned, review_completed = _review_otjh_hours(learner_profile)
+    from .canonical_hours import profile_actual_hours
+    # Keep the established plan projection; actuals use the same accepted
+    # ledger as the dashboard, including retained history and current saves.
+    review_planned, _ = _review_otjh_hours(learner_profile)
     planned = fmt_hours(float(detail.get("totalExpectedOtjh") or 0) + review_planned)
-    completed = (
-        completed_hours_from_progress(
-            learner_profile.training_plan_progress,
-            detail.get("components"),
-        )
-        if learner_profile
-        else "0"
-    )
-    if review_completed:
-        completed = fmt_hours(float(completed or 0) + review_completed)
+    completed_num = profile_actual_hours(learner_profile) if learner_profile else 0
+    if completed_num is None:
+        from old_otjh.service import ServiceError
+        raise ServiceError('Current accepted OTJ hours are unavailable.', 'hours_unavailable', 503)
+    completed = fmt_hours(completed_num)
 
     learner_start_date = getattr(learner_profile, "start_date", None)
     target_num = _cumulative_week_target(detail, learner_start_date=learner_start_date)
@@ -1566,26 +1577,36 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 master_module_title = {mid: title for mid, title in resolved_metadata['module_titles'].items() if mid in module_ids}
                 master_weeks = [row for row in resolved_metadata['weeks'] if row[1] in master_module_title]
             else:
-                cur.execute(
+                module_sql = (
                     "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
                     "WHERE m.module_catalogue_id = ANY(%s) "
                     # An assignment is a learner-owned snapshot. Keep content that
                     # was cascade-hidden with its parent programme available to an
                     # already-assigned learner; a row deleted on its own remains
                     # excluded. ``deleted_via_parent`` distinguishes the two cases.
-                    "AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')",
-                    [module_ids],
+                    "AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')"
                 )
-                master_module_title = {mid: title for mid, title in cur.fetchall()}
-
-                cur.execute(
+                week_sql = (
                     "SELECT id, module_catalogue_id, title, week_number, display_order "
                     "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
                     f"AND {visible_week_sql('weeks')} "
-                    "ORDER BY module_catalogue_id, display_order, week_number, id",
-                    [module_ids],
+                    "ORDER BY module_catalogue_id, display_order, week_number, id"
                 )
-                master_weeks = cur.fetchall()  # [(week_id, module_id, title, week_number, display_order)]
+                # Read live: one row per module, and the statement has no ORDER
+                # BY, so its heap order (which reaches identities-only module
+                # lists) could not be reproduced from cached rows.
+                cur.execute(module_sql, [module_ids])
+                master_module_title = {mid: title for mid, title in cur.fetchall()}
+
+                # Shared per-module rows (curriculum_api.content_cache); None
+                # means read live with the statement above, unchanged.
+                cached_weeks = content_cache.module_rows(cur, 'wk', week_sql, module_ids, 1)
+                if cached_weeks is not None:
+                    # ORDER BY module_catalogue_id first: whole modules, in id order.
+                    master_weeks = [row for mid in sorted(cached_weeks) for row in cached_weeks[mid]]
+                else:
+                    cur.execute(week_sql, [module_ids])
+                    master_weeks = cur.fetchall()  # [(week_id, module_id, title, week_number, display_order)]
 
             settings_sql = (
                 "CASE WHEN jsonb_typeof(settings_json::jsonb) = 'object' "
@@ -1676,23 +1697,40 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 # Keep ->> text semantics for dates independent of the native
                 # identity projection's JSON types and display overrides.
                 schedule_column = ', ' + COMPONENT_SCHEDULE_SETTINGS.replace('c.settings_json', 'settings_json')
-            cur.execute(
-                "SELECT id, week_id, module_catalogue_id, type, title, "
-                f"{description_sql} AS description, "
-                f"{settings_sql} AS settings_json, "
-                f"{detail_columns}"
-                f"{', expected_otjh' if expected_otjh else ''}{schedule_column} "
-                "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
-                f"{'AND week_id = ANY(%s) ' if week_ids is not None else ''}"
-                f"AND {visible_child_sql('components')} "
-                + (f"AND (week_id IS NULL OR EXISTS (SELECT 1 FROM curriculum.weeks visible_parent "
-                   f"WHERE visible_parent.id=components.week_id "
-                   f"AND visible_parent.module_catalogue_id=components.module_catalogue_id "
-                   f"AND {visible_week_sql('visible_parent')})) " if catalogue_facts else '') +
-                "ORDER BY week_id, display_order, id",
-                [module_ids, *([week_ids] if week_ids is not None else [])],
-            )
-            master_components = cur.fetchall()
+            def component_sql(week_filter):
+                return (
+                    "SELECT id, week_id, module_catalogue_id, type, title, "
+                    f"{description_sql} AS description, "
+                    f"{settings_sql} AS settings_json, "
+                    f"{detail_columns}"
+                    f"{', expected_otjh' if expected_otjh else ''}{schedule_column} "
+                    "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
+                    f"{'AND week_id = ANY(%s) ' if week_filter else ''}"
+                    f"AND {visible_child_sql('components')} "
+                    + (f"AND (week_id IS NULL OR EXISTS (SELECT 1 FROM curriculum.weeks visible_parent "
+                       f"WHERE visible_parent.id=components.week_id "
+                       f"AND visible_parent.module_catalogue_id=components.module_catalogue_id "
+                       f"AND {visible_week_sql('visible_parent')})) " if catalogue_facts else '') +
+                    "ORDER BY week_id, display_order, id"
+                )
+
+            # Cached per module without the week filter; ``week_id = ANY`` is
+            # then applied here, which only drops rows. Not with caller-supplied
+            # metadata: that path reads its own rows and fills the dict.
+            cached_components = None
+            if resolved_metadata is None and (week_ids is None or all(isinstance(w, str) for w in week_ids)):
+                cached_components = content_cache.module_rows(cur, 'comp', component_sql(False), module_ids, 2)
+            if cached_components is not None:
+                wanted_weeks = set(week_ids) if week_ids is not None else None
+                master_components = sorted(
+                    (row for rows in cached_components.values() for row in rows
+                     if wanted_weeks is None or row[1] in wanted_weeks),
+                    key=lambda row: (content_cache.null_last(row[1]), content_cache.null_last(row[8]), row[0]),
+                )
+            else:
+                cur.execute(component_sql(week_ids is not None),
+                            [module_ids, *([week_ids] if week_ids is not None else [])])
+                master_components = cur.fetchall()
             if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
                 # Preserve the date reader's ordering and module-level
                 # components; empty weeks are still supplied independently.
@@ -1853,7 +1891,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
                                                'teamsLiveSessionId': (_s(settings.get('extraTeamsLiveSessionId'))
                                                    if _s(settings.get('extraTeamsMeetingUrl')) else '')
-                                                   or _s(settings.get('teamsLiveSessionId')) or None} if catalogue_facts else {})})
+                                                   or _s(settings.get('teamsLiveSessionId')) or None,
+                                               **({'additionalMeeting': True} if _s(ctype).strip().lower().replace('-', '_') == 'live_session'
+                                                  and _s(settings.get('extraTeamsMeetingUrl')) else {})} if catalogue_facts else {})})
                 titles = list(dict.fromkeys(_s(value) for value in master_module_title.values()))
                 if catalogue_facts:
                     # Preserve the same id-less rows as the full reader in a
@@ -1877,22 +1917,50 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # automatically (see components.py), so the UI shows what will be
             # credited rather than asking.
             if component_ids and not routing_only:
-                ksb_description = 'NULL AS ksb_description' if compact_content else 'mapping.ksb_description'
-                component_scope = ('WHERE mapping.component_id=ANY(%s) '
-                    if compact_content else
-                    'JOIN curriculum.components component ON component.id = mapping.component_id '
-                    'WHERE component.module_catalogue_id = ANY(%s) AND component.id = ANY(%s) '
-                    f"AND {visible_child_sql('component')} ")
-                cur.execute(
-                    f"SELECT mapping.component_id, mapping.ksb_code, {ksb_description}, "
-                    "mapping.classification, mapping.weight, mapping.weight_class "
-                    "FROM curriculum.ksb_mappings mapping "
-                    + component_scope +
-                    f"AND {visible_child_sql('mapping')} "
-                    "ORDER BY mapping.component_id, mapping.ksb_code",
-                    [component_ids] if compact_content else [module_ids, component_ids],
-                )
-                for comp_id, code, description, classification, weight, weight_class in cur.fetchall():
+                # Cached per module: the mappings of every visible component of
+                # the module, which is a superset of component_ids (those passed
+                # the same module and visibility predicates). Filtering to
+                # component_ids gives the rows either statement below returns.
+                mapping_rows = None
+                if cached_components is not None:
+                    by_module = content_cache.module_rows(
+                        cur, 'ksbm',
+                        "SELECT mapping.component_id, mapping.ksb_code, mapping.ksb_description, "
+                        "mapping.classification, mapping.weight, mapping.weight_class, component.module_catalogue_id "
+                        "FROM curriculum.ksb_mappings mapping "
+                        "JOIN curriculum.components component ON component.id = mapping.component_id "
+                        "WHERE component.module_catalogue_id = ANY(%s) "
+                        f"AND {visible_child_sql('component')} "
+                        f"AND {visible_child_sql('mapping')} "
+                        "ORDER BY mapping.component_id, mapping.ksb_code",
+                        module_ids, 6,
+                    )
+                    if by_module is not None:
+                        wanted = set(component_ids)
+                        mapping_rows = sorted(
+                            ((cid, code, None if compact_content else desc, cls, weight, weight_class)
+                             for rows in by_module.values()
+                             for cid, code, desc, cls, weight, weight_class, _module in rows if cid in wanted),
+                            key=lambda row: (content_cache.null_last(row[0]), content_cache.null_last(row[1])),
+                        )
+                if mapping_rows is None:
+                    ksb_description = 'NULL AS ksb_description' if compact_content else 'mapping.ksb_description'
+                    component_scope = ('WHERE mapping.component_id=ANY(%s) '
+                        if compact_content else
+                        'JOIN curriculum.components component ON component.id = mapping.component_id '
+                        'WHERE component.module_catalogue_id = ANY(%s) AND component.id = ANY(%s) '
+                        f"AND {visible_child_sql('component')} ")
+                    cur.execute(
+                        f"SELECT mapping.component_id, mapping.ksb_code, {ksb_description}, "
+                        "mapping.classification, mapping.weight, mapping.weight_class "
+                        "FROM curriculum.ksb_mappings mapping "
+                        + component_scope +
+                        f"AND {visible_child_sql('mapping')} "
+                        "ORDER BY mapping.component_id, mapping.ksb_code",
+                        [component_ids] if compact_content else [module_ids, component_ids],
+                    )
+                    mapping_rows = cur.fetchall()
+                for comp_id, code, description, classification, weight, weight_class in mapping_rows:
                     if comp_id in ksbs_by_component:
                         continue
                     ksbs_by_component.setdefault(comp_id, []).append({
@@ -1960,16 +2028,18 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         live_session_url = (
             _s(delivery.get('liveSessionUrl')) if delivery else _s(stored_live_link)
         ) or (
-            _s(settings.get("liveSessionUrl"))
+            _s(settings.get("liveSessionLinkOverride"))
+            or _s(settings.get("liveSessionUrl"))
             or _s(settings.get("teamsMeetingUrl"))
             or None
         )
         normalised_type = _s(ctype).strip().lower().replace("-", "_")
+        unconfirmed_calendar = not delivery and settings.get('teamsCalendarBinding') in {'unverified', 'missing', 'ambiguous'}
         fallback = (
             live_session_fallbacks.get((_s(_mid), _s(settings.get("sessionDate"))[:10]))
-            if normalised_type == "live_session" else None
+            if normalised_type == "live_session" and not unconfirmed_calendar else None
         )
-        stored_series_id = _s(settings.get("teamsLiveSessionId"))
+        stored_series_id = '' if unconfirmed_calendar else _s(settings.get("teamsLiveSessionId"))
         extra_series_id = (
             _s(settings.get("extraTeamsLiveSessionId"))
             if normalised_type == "live_session" and _s(settings.get("extraTeamsMeetingUrl")) else ""
@@ -1984,7 +2054,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             teams_session_number = settings.get("teamsSessionNumber") or fallback["teamsSessionNumber"]
         else:
             teams_live_session_id = stored_series_id or None
-            teams_session_number = settings.get("teamsSessionNumber") or None
+            teams_session_number = None if unconfirmed_calendar else settings.get("teamsSessionNumber") or None
         # Use the shared resolver, not a bare settings["videoUrl"] read: a video
         # can be authored as an embed snippet instead of a plain URL, and the
         # removal check below must not treat that as "video removed".
@@ -2116,6 +2186,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "resourceUrl": resource_url,
             "liveSessionUrl": live_session_url,
             "teamsLiveSessionId": teams_live_session_id,
+            "additionalMeeting": normalised_type == "live_session" and bool(_s(settings.get("extraTeamsMeetingUrl"))),
             "teamsSessionNumber": teams_session_number,
             "recordingSeriesId": recording_series_id or None,
             "recordingSessionNumber": recording_session_number if has_recording_source else None,
@@ -2207,6 +2278,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "resourceUrl": comp["resourceUrl"],
                     "liveSessionUrl": comp["liveSessionUrl"],
                     "teamsLiveSessionId": comp["teamsLiveSessionId"],
+                    **({"additionalMeeting": True} if comp.get("additionalMeeting") else {}),
                     "teamsSessionNumber": comp["teamsSessionNumber"],
                     "recordingSeriesId": comp["recordingSeriesId"],
                     "recordingSessionNumber": comp["recordingSessionNumber"],
@@ -2364,8 +2436,14 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
 
     # Carry earned completion into an explicitly verified replacement without
     # manufacturing attempts or changing the persisted hours/attendance above.
-    from .replacement_learning import annotate_replacement_learning
+    from .replacement_learning import annotate_replacement_learning, approved_retained_components
     detail['components'] = annotate_replacement_learning(detail['components'], pk)
+    # Explicitly retained (unmatched) old components have no destination
+    # component to attach to; add them the same way My Learning does.
+    from . import progress_transfer_store
+    current_module_ids = {c.get('moduleId') for c in detail['components'] if c.get('moduleId')}
+    detail['retiredQuizComponents'] = [*detail.get('retiredQuizComponents', []),
+        *approved_retained_components(progress_transfer_store.read_state(pk)['items'], current_module_ids)]
 
     from .live_session_progress import read_live_credits, supplement_component_progress
     detail['componentProgress'] = supplement_component_progress(

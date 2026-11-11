@@ -369,6 +369,8 @@ def progress_records_with_completion(records, current):
     cannot introduce additional accepted-hour records on a read.
     Server-measured, persisted legacy attempts are separate timed evidence;
     their stable placement IDs prevent retries from duplicating those hours.
+    Untimed persisted course completions also survive, but never become OTJ
+    reporting rows or accepted hours.
 
     The exception is a stored direct LMS save that nothing has given seconds
     yet: its projected time and decision are the only record of that learning,
@@ -388,10 +390,30 @@ def progress_records_with_completion(records, current):
                        'retake_timing_applied', 'completion_reporting_date')
         result.append({**record, **{key: latest[key] for key in fields if key in latest}})
     existing = {str(record['id']) for record in records}
-    result.extend(({**record, 'hours_only': True} if record.get('actual_basis') == 'extra_activity_input' else record)
-                  for record in current
-                  if record.get('actual_basis') in {'legacy_activity_verified_timer', 'extra_activity_input'}
-                  and str(record['id']) not in existing)
+    timed_routes = {recorded_source_key(source) for record in current
+                    if record.get('actual_basis') in {'legacy_activity_verified_timer', 'legacy_activity_manual_time'}
+                    for source in record.get('sources', [])}
+    for record in current:
+        ident = str(record['id'])
+        if ident in existing:
+            continue
+        basis = record.get('actual_basis')
+        if basis in {'legacy_activity_verified_timer', 'legacy_activity_manual_time', 'extra_activity_input'}:
+            result.append({**record, 'hours_only': True} if basis == 'extra_activity_input' else record)
+        else:
+            # merge_attempts creates these identities only from the owner's
+            # saved subject attempts. Do not promote arbitrary submissions.
+            match = re.fullmatch(r'subject:(quiz:)?([1-9]\d*):([1-9]\d*)', ident)
+            if not match or record.get('completed') is not True or record.get('accepted') is not False \
+                    or record.get('actual_seconds') is not None:
+                continue
+            route = (match[2], ('quiz:' if match[1] else 'material:') + match[3])
+            if route in timed_routes or not any(
+                    source.get('source_system') == 'old_lms' and recorded_source_key(source) == route
+                    for source in record.get('sources', [])):
+                continue
+            result.append({**record, 'completion_only': True})
+        existing.add(ident)
     return result
 
 
@@ -401,6 +423,8 @@ def allocations(entry):
     This is a read projection: original audit timestamps, seconds, acceptance,
     historical allocations and reporting segments are never rewritten.
     """
+    if entry.get('completion_only'):
+        return []
     if entry.get('retake_timing_applied'):
         return [entry]
     submitted = completion_reporting_instant(entry.get('submitted_at'))
@@ -488,7 +512,10 @@ def input_activity_date(entry):
 
 def rows_for(owner, records=None):
     result = []
-    for entry in (part for record in (records if records is not None else entries_for(owner)) for part in allocations(record)):
+    # Untimed completions belong in the activity log for review. They still
+    # contribute no allocations/hours to metrics or the monthly charts.
+    for entry in (part for record in (records if records is not None else entries_for(owner))
+                  for part in ([record] if record.get('completion_only') else allocations(record))):
         source = source_payload_metadata(entry.get('source_payload'))
         at = local_instant(entry.get('reporting_started_at') or entry.get('reporting_ended_at'))
         ref = f"canonical:{entry['id']}"
@@ -838,7 +865,14 @@ def source_quiz_parts(item, owner, record):
 def content(item, owner=None, record=None):
     if owner is not None and record is None:
         record = next((r for r in entries_for(owner) if str(r['id']) == str(item.get('progress_id'))), None)
-    if owner is not None and record is not None and record.get('actual_basis') == 'legacy_activity_verified_timer':
+    if record is not None and record.get('completion_only'):
+        # These owned attempt projections have no numeric progress ID. Do not
+        # send their synthetic IDs to the historical-progress SQL readers.
+        return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
+            'category': item['category'], 'url': None, 'quiz': None,
+            'html': '<p>This activity was completed without a recorded study duration. '
+                    'The duration is unavailable for review.</p>'}]}
+    if owner is not None and record is not None and record.get('actual_basis') in {'legacy_activity_verified_timer', 'legacy_activity_manual_time'}:
         # This evidence belongs to a persisted subject attempt, not a numeric
         # learner_progress_entries ID. Keep its preview in that owned store.
         from .monthly_log_sources import _answers_html
@@ -850,7 +884,8 @@ def content(item, owner=None, record=None):
             raise ServiceError('Activity not found.', 'not_found', 404)
         saved = attempts[0]
         seconds = int(record.get('actual_seconds') or 0)
-        html = f'<p>Measured study time: {seconds // 60}m {seconds % 60}s. Activity completed.</p>'
+        label = 'Manual study time' if record.get('actual_basis') == 'legacy_activity_manual_time' else 'Measured study time'
+        html = f'<p>{label}: {seconds // 60}m {seconds % 60}s. Activity completed.</p>'
         html += _answers_html(decoded(saved['definition'], {}), decoded(saved['answers'], {}))
         return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
             'category': item['category'], 'url': None, 'quiz': None, 'html': html}]}
@@ -878,6 +913,7 @@ def owned_source_courses(owner, *, course_ids=None, module_ids=None):
     if scoped:
         params.extend([[str(value) for value in (course_ids or [])], list(module_ids or [])])
     courses = query(f'''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
+        m.source_learner_id,m.source_payload->'legacy_course_progress' AS legacy_course_progress,
         CASE WHEN m.source_relationship='historical'
             THEN m.source_payload->'verified_catalogue_scope' END AS verified_catalogue_scope
         FROM "Learner".learner_source_course_memberships m
@@ -885,6 +921,12 @@ def owned_source_courses(owner, *, course_ids=None, module_ids=None):
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
           AND c.source_course_ref ~ '^[0-9]+$'{selection}
         ORDER BY c.source_course_title,c.id''', params)
+    from learner_api.legacy_course_progress import public_reference
+    for course in courses:
+        reference = public_reference(course.pop('legacy_course_progress', None), owner, course)
+        course.pop('source_learner_id', None)
+        if reference is not None:
+            course['legacyProgressReference'] = reference
     return courses
 
 
@@ -1159,6 +1201,8 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
         if not activity and not include_catalogue:
             continue
         subjects.append({'id': int(ref), 'name': course['source_course_title'],
+            **({'legacyProgressReference': course['legacyProgressReference']}
+               if course.get('legacyProgressReference') is not None else {}),
             'module_id': course.get('curriculum_module_ref'),
             **({} if overview_only else {
                 'catalogue_count': catalogue_counts.get(ref, 0),
@@ -1229,7 +1273,8 @@ def read_ksb_point_counts(learner_id):
     records (progress_records_with_completion), so no evidence hydration is
     needed to reproduce its KSB counts here.
     """
-    return query('''WITH links AS (
+    from .progress_cache import value
+    sql = '''WITH links AS (
         SELECT DISTINCT ON (k.ksb_code,p.id) k.ksb_code AS code,p.id,
             k.ksb_description AS description,k.position,p.accepted,
             (p.activity_status='completed' AND p.accepted IS TRUE) AS achieved
@@ -1241,7 +1286,9 @@ def read_ksb_point_counts(learner_id):
     ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
         count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,
         count(*) FILTER (WHERE accepted IS TRUE) AS "pointsAchieved"
-        FROM links GROUP BY code ORDER BY min(id),code''', [learner_id])
+        FROM links GROUP BY code ORDER BY min(id),code'''
+    alias = repository._query_alias.get() or repository.DB
+    return value(sql, [alias], learner_id, lambda: query(sql, [learner_id]))
 
 
 def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
@@ -1323,7 +1370,7 @@ def otjh_summary_bulk(learner_ids):
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """
-    from .canonical_hours import pending_hour_records
+    from .canonical_hours import full_hour_projection_ids, pending_hour_records
     enrolment_ids = list(dict.fromkeys(int(value) for value in learner_ids if value is not None))
     if not enrolment_ids:
         return {}
@@ -1348,17 +1395,7 @@ def otjh_summary_bulk(learner_ids):
     if not owners:
         return result
     profile_ids = [int(owner['id']) for owner in owners.values()]
-    retake_profiles = {int(item['learner_id']) for item in query('''
-        SELECT DISTINCT learner_id FROM "Learner".learner_progress_entries
-        WHERE learner_id=ANY(%s) AND deleted_at IS NULL
-          AND source_payload->>'retakeTimeChoice' IN ('keep','new')''', [profile_ids])}
-    relation = query('SELECT to_regclass(%s) AS name', ['"Learner".subject_activity_attempts'])
-    if relation and relation[0].get('name'):
-        selected_enrolments = {int(item['enrolment_id']) for item in query('''
-            SELECT DISTINCT enrolment_id FROM "Learner".subject_activity_attempts
-            WHERE enrolment_id=ANY(%s) AND submitted_at IS NOT NULL AND completed IS TRUE
-              AND definition->'studyTime'->>'retakeTimeChoice' IN ('keep','new')''', [list(owners)])}
-        retake_profiles.update(int(owner['id']) for key, owner in owners.items() if key in selected_enrolments)
+    projected_profiles = full_hour_projection_ids(owners.values())
     records = {profile_id: [] for profile_id in profile_ids}
     # Aggregate before transfer: full caseloads can contain many historical rows.
     # Mirror number(): ignore non-finite values and clamp negative seconds to 0.
@@ -1387,7 +1424,7 @@ def otjh_summary_bulk(learner_ids):
             targets[int(item['learner_id'])][item['report_month']] = float(item['target_hours'])
     for enrolment_id, owner in owners.items():
         profile_id = int(owner['id'])
-        if owner.get('progress_transfer_active') or profile_id in retake_profiles:
+        if profile_id in projected_profiles:
             records[profile_id] = entries_for(owner, lineage_only=True)
         result[enrolment_id] = {
             'profile_id': profile_id,
@@ -1405,7 +1442,7 @@ def otjh_summary_bulk(learner_ids):
     return result
 
 
-def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=False):
+def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=False, as_of=None):
     """Return canonical metrics for a caseload without per-learner queries.
 
     Keys present with ``None`` identify a canonical record that failed identity
@@ -1544,6 +1581,9 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
                     for source in record.get('sources') or [])
         if owner.get('progress_transfer_active'):
             records = entries_for(owner, lineage_only=True)
+        if as_of is not None:
+            from .progress_cutoff import records_as_of
+            records = records_as_of(records, as_of)
         result[enrolment_id] = metrics_from_records(
             records,
             targets_by_learner.get(int(owner['id']), {}),

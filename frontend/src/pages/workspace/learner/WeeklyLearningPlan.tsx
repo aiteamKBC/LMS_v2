@@ -1,10 +1,13 @@
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useWebPointPlan } from '@/hooks/useWebPointPlan';
+import { webPointGroups } from '@/utils/webPointActivities';
 import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { Link } from 'react-router-dom';
 import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Users, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { WeeklyLearningDetail } from '@/api/weeklyLearning';
 import { selectedNavigation, studentWeekId } from '@/api/weeklyLearningContract';
+import type { ReflectionKsbSelection } from '@/api/weeklyLearningContract';
 import { useWeeklyLearning, useWeeklyLearningWeek } from '@/hooks/useWeeklyLearning';
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import { learningToday } from '@/pages/learner/my-learning/subjectLearning';
@@ -271,6 +274,8 @@ function WeeklyLearningPlanView({ kind, learnerId, canOpenActivities = true, act
                 : null}
             {<div hidden={!weekRead.data || !!weekRead.error}>
               <ActivitiesTableModern components={components} completedIds={completedIds} kind={kind} learnerId={learnerId}
+                reflectionKsbs={Object.fromEntries(canonicalDetail?.activities.map(activity => [activity.id, activity.reflectionKsbs ?? []]) ?? [])}
+                recordedKsbs={Object.fromEntries(canonicalDetail?.activities.map(activity => [activity.id, activity.recordedKsbCodes ?? []]) ?? [])}
                 week={selectedWeek.weekTitle} canOpenActivities={canOpenActivities} actualHours={actualHours} />
             </div>}
           </div>
@@ -446,10 +451,40 @@ function ActivitiesHeading({ count, controls }: { count: number; controls?: Reac
   </div>;
 }
 
-export const ActivitiesTableModern = memo(function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries, actualHours }: {
+export function ActivityKsbs({ mapped, reflections = [], recorded = [] }: {
+  mapped: string[]; reflections?: ReflectionKsbSelection[]; recorded?: string[];
+}) {
+  const statusLabels: Record<string, string> = {
+    draft: 'Draft', submitted_for_tutor_review: 'Awaiting tutor review', accepted: 'Accepted',
+    rejected: 'Rejected', referred: 'Referred', needs_revision: 'Needs revision',
+    partial: 'Partially accepted', escalated: 'Escalated', changes_requested: 'Changes requested',
+  };
+  const shown = new Set([...mapped, ...reflections.flatMap(selection => selection.codes)].map(code => code.trim().toUpperCase()));
+  const additionalRecorded = recorded.filter(code => !shown.has(code.trim().toUpperCase()));
+  return <div className="space-y-2 text-left">
+    <div role="group" aria-label="Curriculum KSBs">
+      <p className="mb-1 text-[10px] text-foreground-500">Curriculum</p>
+      <KsbChips codes={mapped} />
+    </div>
+    {reflections.filter(selection => selection.codes.length > 0).map(selection => (
+      <div role="group" aria-label={`Your reflection KSBs: ${statusLabels[selection.status] || selection.status}`} key={selection.status}>
+        <p className="mb-1 text-[10px] text-foreground-600">Your reflection · {statusLabels[selection.status] || selection.status}</p>
+        <KsbChips codes={selection.codes} />
+      </div>
+    ))}
+    {additionalRecorded.length > 0 && <div role="group" aria-label="Recorded KSBs">
+      <p className="mb-1 text-[10px] text-foreground-600">Recorded for you</p>
+      <KsbChips codes={additionalRecorded} />
+    </div>}
+  </div>;
+}
+
+export const ActivitiesTableModern = memo(function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries, actualHours, reflectionKsbs, recordedKsbs }: {
   components: JourneyComponent[]; completedIds: Set<string>; kind: LearnerKind; learnerId: string; week?: string;
   canOpenActivities: boolean;
   actualHours?: Record<string, number | null>;
+  reflectionKsbs?: Record<string, ReflectionKsbSelection[]>;
+  recordedKsbs?: Record<string, string[]>;
   summaries?: Record<string, { status: ActivityStatus; expectedTimeLabel: string; ksbCodes: string[] }>;
 }) {
   const [query, setQuery] = useState('');
@@ -466,10 +501,14 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
     });
   }, [components, completedIds, query, statusFilter, typeFilter, summaries]);
   const componentPageKey = components.map(component => component.componentId || component.title).join('|');
+  const webPoints = useWebPointPlan(kind, learnerId, components.some(component => !!component.weekId && !!component.moduleId));
+  const groupedComponents = webPointGroups(filteredComponents, webPoints.data).flatMap(group =>
+    group.components.map(component => ({ component, point: group.point })));
   const [page, setPage] = useState(0);
   const pageCount = Math.max(1, Math.ceil(filteredComponents.length / ACTIVITY_PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const visibleComponents = filteredComponents.slice(safePage * ACTIVITY_PAGE_SIZE, safePage * ACTIVITY_PAGE_SIZE + ACTIVITY_PAGE_SIZE);
+  const visibleGroups = groupedComponents.slice(safePage * ACTIVITY_PAGE_SIZE, safePage * ACTIVITY_PAGE_SIZE + ACTIVITY_PAGE_SIZE);
+  const visibleComponents = visibleGroups.map(row => row.component);
   useEffect(() => { setPage(0); }, [componentPageKey]);
   useEffect(() => { setPage(0); }, [query, typeFilter, statusFilter]);
   useEffect(() => { if (page >= pageCount) setPage(Math.max(0, pageCount - 1)); }, [page, pageCount]);
@@ -499,6 +538,7 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
 
   return <div className="overflow-hidden bg-background-50">
     <ActivitiesHeading count={components.length} controls={controls} />
+    {webPoints.error && <p role="status" className="px-4 py-2 text-xs text-amber-800">Point grouping could not load. Activities are shown below. <button type="button" onClick={webPoints.refresh} className="underline">Retry Points</button></p>}
     {!filteredComponents.length ? <EmptyState size="sm" title="No matching activities" description="Try changing your search or filters." className="m-4" /> : <>
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
       <table className="w-full min-w-[760px] table-fixed text-left text-[10px]">
@@ -517,13 +557,20 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
           </tr>
         </thead>
         <tbody>
-          {visibleComponents.map((component, index) => {
+          {visibleGroups.map(({ component, point }, index) => {
             const status = summaries?.[component.componentId || '']?.status ?? activityStatus(component, completedIds);
             const href = canOpenActivities ? activityHref(component, week, kind, learnerId, status === 'completed') : null;
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
             const recordedHours = actualHours?.[component.componentId || ''];
-            return <tr key={component.componentId || component.title} className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
+            return <Fragment key={component.componentId || component.title}>
+              {point && (index === 0 || visibleGroups[index - 1].point !== point) && <tr className="border-t border-primary-100 bg-primary-50">
+                <th scope="rowgroup" colSpan={canOpenActivities ? 8 : 7} className="px-4 py-3 text-sm font-bold text-primary-900" title={point.title}>{point.title}</th>
+              </tr>}
+              {!point && groupedComponents.some(row => row.point) && (index === 0 || visibleGroups[index - 1].point) && <tr className="border-t border-primary-100 bg-primary-50">
+                <th scope="rowgroup" colSpan={canOpenActivities ? 8 : 7} className="px-4 py-3 text-sm font-bold text-primary-900">Other activities</th>
+              </tr>}
+              <tr className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
               <td className="px-2 py-2 text-center align-middle font-semibold tabular-nums text-foreground-500">{safePage * ACTIVITY_PAGE_SIZE + index + 1}</td>
               <td className="px-2 py-2 align-middle">
                 <div className="flex min-w-0 items-center gap-1.5">
@@ -544,7 +591,9 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
                   <Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{recordedHours == null ? '—' : formatHoursMinutes(recordedHours)}
                 </span>
               </td>
-              <td className="px-2 py-2 text-center align-middle"><div className="flex justify-center"><KsbChips codes={summaries?.[component.componentId || '']?.ksbCodes ?? activityKsbCodes(component)} /></div></td>
+              <td className="px-2 py-2 text-center align-middle"><ActivityKsbs
+                mapped={summaries?.[component.componentId || '']?.ksbCodes ?? activityKsbCodes(component)}
+                reflections={reflectionKsbs?.[component.componentId || '']} recorded={recordedKsbs?.[component.componentId || '']} /></td>
               <td className="px-2 py-2 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
               {canOpenActivities && <td className="px-2 py-2 text-center align-middle">
                 {href ? <Link to={href} className={cn(
@@ -552,7 +601,7 @@ export const ActivitiesTableModern = memo(function ActivitiesTableModern({ compo
                   status === 'in-progress' ? 'bg-primary-600 text-white shadow-sm hover:bg-primary-700' : 'border border-primary-200 bg-background-50 text-primary-700 hover:border-primary-300 hover:bg-primary-50',
                 )}>{activityActionLabel(status)}</Link> : <span className="inline-block whitespace-nowrap text-[10px] text-foreground-400">Not available</span>}
               </td>}
-            </tr>;
+            </tr></Fragment>;
           })}
         </tbody>
       </table>

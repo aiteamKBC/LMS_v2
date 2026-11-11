@@ -5,6 +5,7 @@ import re
 import time
 from uuid import UUID
 
+from .response_cache import cached_learner_read
 from .journal_sources import learner_journal_view
 from django.db import DatabaseError, connections
 from django.http import JsonResponse, HttpResponseRedirect
@@ -27,6 +28,7 @@ from .student_activity_data import (summarize_activities, read_curriculum_schedu
                                     apply_curriculum_schedules, read_activity_sources,
                                     read_activity_source_issues)
 from . import subject_store, subject_source
+from . import subject_cache
 import logging
 from .subject_content import (ContentUnavailable, build_material, public_quiz, as_list)
 from .builder_activity_dates import read_builder_activity_dates
@@ -205,21 +207,20 @@ def _live_subjects(source, aptem_id):
 
 def _activity_sources(enrolment_id, group_ids):
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
-        module_ids = [row[0] for row in cursor.fetchall()]
+        module_ids = [row[0] for row in subject_cache.subject_rows(cursor, CURRENT_SUBJECTS_SQL, enrolment_id)]
         return read_activity_sources(cursor, group_ids, module_ids)
 
 
 def _activity_source_issues(enrolment_id, group_ids):
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
-        module_ids = [row[0] for row in cursor.fetchall()]
+        module_ids = [row[0] for row in subject_cache.subject_rows(cursor, CURRENT_SUBJECTS_SQL, enrolment_id)]
         return read_activity_source_issues(cursor, group_ids, module_ids)
 
 
 @require_GET
 @learner_self_or_staff(kwarg="pk")
 @learner_journal_view
+@cached_learner_read('student-activity')
 def student_activity(request, kind, pk):
     """Return LMS activities for the requested learner, never for a client id.
 
@@ -433,6 +434,19 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
     row = stored['_source']
     definition = _local_pdf_urls(_definition_for(stored, group_id, attachment_resolver=attachment_resolver),
                                  kind, pk, group_id, row['activity_id'])
+    part = request.GET.get('activity_part')
+    reading_completed = None
+    if part is not None:
+        if part != 'reading':
+            return _error('Invalid activity part.', 400)
+        from .combined_activity import reading_part
+        from . import canonical_learning
+        try:
+            definition, reading_completed = reading_part(pk, aptem_id, group_id, row['activity_id'], definition)
+        except canonical_learning.ServiceError as error:
+            return _error(str(error), error.status)
+        except DatabaseError:
+            return _error('Could not load reading progress. Please retry.', 503)
     try:
         saved = subject_store.state(pk, aptem_id, row['activity_id'], group_id=group_id)
     except DatabaseError:
@@ -461,6 +475,13 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                    or staff_owns_learner(account, pk)
                )),
                'csrf_token': get_token(request)}
+    if part == 'reading':
+        # Retained combined quiz answers stay on the quiz. A reading-only save
+        # must neither reset them nor appear as another quiz attempt.
+        payload.update(completed=reading_completed,
+            history=[attempt for attempt in saved['history'] if attempt.get('kind') == 'activity'],
+            historical={'score': None, 'maximum_score': None, 'passed': None,
+                'attempt_number': None, 'answers': [], 'status': 'completed' if reading_completed else None})
     return _private(payload)
 
 
@@ -580,11 +601,14 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
     from . import canonical_learning
     try:
         catalogue_kind = request.GET.get('catalogue_kind', 'material')
+        part = request.GET.get('activity_part')
+        if part is not None and (part != 'reading' or catalogue_kind != 'material'):
+            return _error('Invalid activity part.', 400)
         if catalogue_kind == 'quiz':
             from .subject_content import quiz_definition
             from .subject_quiz import imported_quiz
             aptem_id, stored = _owned_quiz(kind, pk, group_id, activity_id)
-            if stored['completed']:
+            if stored['completed'] and not stored.get('can_retake'):
                 return _error('This quiz is already complete. You can review its saved results.', 409)
             with _connection().cursor() as cursor:
                 original = imported_quiz(cursor, group_id, activity_id)
@@ -592,9 +616,16 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
                 return _error('The original quiz is not available for grading yet.', 409)
             definition = {'title': stored['title'], 'quiz': quiz_definition(original),
                 'catalogue_kind': 'quiz', 'has_reading': False, 'available': True, 'media': [], 'reading_html': ''}
+            if stored['completed']:
+                definition['retakeRequired'] = True
         elif catalogue_kind == 'material':
             aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
             definition = _definition_for(stored, group_id)
+            if part == 'reading':
+                from .combined_activity import reading_part
+                definition, completed = reading_part(pk, aptem_id, group_id, activity_id, definition)
+                if completed:
+                    return _error('This reading is already complete. You can review it.', 409)
         else:
             return _error('Invalid activity kind.', 400)
         if definition.get('quiz') and not definition['quiz']['ready']:
@@ -616,7 +647,7 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
                                 attempt_id=attempt_id, timing_session=timing)
         else:
             attempt_id = subject_store.start(pk, aptem_id, group_id, activity_id, definition)
-        public = _local_pdf_urls(definition, kind, pk, group_id, activity_id)
+        public = _local_pdf_urls({key: value for key, value in definition.items() if key != 'retakeRequired'}, kind, pk, group_id, activity_id)
         return _private({'attempt_id': attempt_id, 'definition': {**public, 'quiz': public_quiz(definition['quiz'])},
                          **({'timing': timing} if timing else {})}, 201)
     except canonical_learning.ServiceError as error:
@@ -646,11 +677,15 @@ def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id)
         catalogue_kind = request.GET.get('catalogue_kind', 'material')
         if catalogue_kind not in {'material', 'quiz'}:
             return _error('Invalid activity kind.', 400)
+        part = request.GET.get('activity_part')
+        if part is not None and (part != 'reading' or catalogue_kind != 'material'):
+            return _error('Invalid activity part.', 400)
         reader = _owned_quiz if catalogue_kind == 'quiz' else _owned_material
         aptem_id, _stored = reader(kind, pk, group_id, activity_id)
         result = subject_store.finish(pk, aptem_id, group_id, activity_id, str(attempt_id),
                                       payload.get('answers', {}), payload.get('reading_confirmed') is True,
-                                      catalogue_kind=catalogue_kind, learner_kind=kind, timing_payload=payload)
+                                      catalogue_kind=catalogue_kind, learner_kind=kind, timing_payload=payload,
+                                      **({'activity_part': part} if part else {}))
         return _private(result)
     except canonical_learning.ServiceError as error:
         return _error(str(error), error.status)

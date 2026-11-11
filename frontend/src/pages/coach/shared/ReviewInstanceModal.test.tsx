@@ -14,8 +14,13 @@ import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedRe
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 const coachMode = vi.hoisted(() => ({ email: 'coach@example.invalid', isInitialized: true, isViewingAsCoach: false }));
+const nativeArtifacts = vi.hoisted(() => vi.fn());
+vi.mock('./calendarEvents', async importOriginal => ({
+  ...await importOriginal<typeof import('./calendarEvents')>(),
+  fetchCoachMeetingArtifacts: nativeArtifacts,
+}));
 vi.mock('@/features/monthly-logs/page', () => ({ LearnerLogs: () => null }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => coachMode }));
 vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
@@ -106,6 +111,7 @@ function mount(instanceId = 'instance-1') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  nativeArtifacts.mockResolvedValue({ artifacts: [], attendance: null, meetingSummary: null });
   vi.mocked(fetchCoachReviewSlots).mockResolvedValue(['09:00', '10:00', '10:30', '11:00', '12:00', '14:30', '15:00']);
   account.name = 'Sam Coach';
   coachMode.email = 'coach@example.invalid';
@@ -124,6 +130,44 @@ beforeEach(() => {
     transcriptText: '',
     transcriptAvailable: false,
     transcriptTruncated: false,
+  });
+});
+
+describe('Native Review Teams resources', () => {
+  it.each(['mcr', 'progress-review', 'review'])('checks the linked %s meeting without losing unsaved answers', async source => {
+    const data = definition('scheduled');
+    data.calendarMeeting = { eventKey: 'native:exact-meeting', source, status: 'scheduled',
+      meetingLink: 'https://example.invalid/teams', graphWebLink: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    nativeArtifacts.mockResolvedValue({ artifacts: [], attendance: null, meetingSummary: null,
+      event: { eventKey: 'native:exact-meeting', status: 'in-progress' } });
+    mount();
+    const answer = await screen.findByDisplayValue('Review the next module');
+    fireEvent.change(answer, { target: { value: 'Unsaved answer' } });
+    const check = await screen.findByRole('button', { name: 'Check Teams' });
+    await waitFor(() => expect(check).toBeEnabled());
+    fireEvent.click(check);
+    await waitFor(() => expect(nativeArtifacts).toHaveBeenCalledWith('native:exact-meeting', undefined, { refresh: true }));
+    expect(answer).toHaveValue('Unsaved answer');
+  });
+
+  it('does not expose a check without a linked meeting', async () => {
+    mount();
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.queryByRole('button', { name: 'Check Teams' })).not.toBeInTheDocument();
+    expect(nativeArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('disables checking in coach view-as mode', async () => {
+    coachMode.isViewingAsCoach = true;
+    const data = definition('scheduled');
+    data.calendarMeeting = { eventKey: 'native:exact-meeting', source: 'mcr', status: 'scheduled',
+      meetingLink: 'https://example.invalid/teams', graphWebLink: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    mount();
+    const check = await screen.findByRole('button', { name: 'Check Teams' });
+    await waitFor(() => expect(check).toBeDisabled());
+    expect(nativeArtifacts.mock.calls.every(call => call[2]?.refresh === false)).toBe(true);
   });
 });
 
@@ -1528,13 +1572,49 @@ describe('coach review signature workflow', () => {
     expect(completeMigratedReview).not.toHaveBeenCalled();
   });
 
-  it('retains the existing Scheduled start guidance for Native reviews', async () => {
+  it('explains that Native submission does not require attendance', async () => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(definition('scheduled'));
     mount();
-    expect(await screen.findByText('Not yet in progress')).toBeVisible();
-    expect(screen.getByText('Start the review from the meeting actions before completing this form.')).toBeVisible();
+    expect(await screen.findByText('Complete the review form')).toBeVisible();
+    expect(screen.getByText('You can submit this form when all required questions are answered. A booking or attendance confirmation is not required.')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Submit Review' })).not.toBeInTheDocument();
     expect(startMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR'] as const)('submits an unscheduled %s only after required answers, without booking', async family => {
+    const initial = family === 'MCM' ? migratedDefinition('not-scheduled') : migratedPrDefinition('not-scheduled', family);
+    initial.sourceStatus = 'Not Scheduled';
+    initial.booking = { booked: false, conflict: false, canBook: true, eventKey: null,
+      scheduledDate: null, scheduledTime: null, durationMinutes: null, meetingLink: null, syncState: null };
+    initial.sections[0].fields[0] = { ...initial.sections[0].fields[0], answer: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    vi.mocked(submitMigratedReview).mockResolvedValue({ ...initial, localStatus: 'awaiting-signature', readOnly: true,
+      instance: { ...initial.instance, status: 'awaiting-signature' } });
+    mount(initial.instance.id);
+    const submit = await screen.findByRole('button', { name: 'Submit Review' });
+    fireEvent.click(submit);
+    expect(submitMigratedReview).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Approved review answers' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(submitMigratedReview).toHaveBeenCalledWith(initial.instance.id,
+      { 'field-1': 'Approved review answers' }));
+    await waitFor(() => expect(screen.getByRole('textbox')).toBeDisabled());
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(startMigratedReview).not.toHaveBeenCalled();
+    expect(completeMigratedReview).not.toHaveBeenCalled();
+    expect(completeReviewInstance).not.toHaveBeenCalled();
+  });
+
+  it('sends an unscheduled Native form for signatures without a meeting', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(definition('not-scheduled'));
+    vi.mocked(completeReviewInstance).mockResolvedValue(definition('awaiting-signature'));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Send for signatures' }));
+    await waitFor(() => expect(completeReviewInstance).toHaveBeenCalledWith('instance-1',
+      { 'field-1': 'Review the next module' }));
+    expect(await screen.findByRole('heading', { name: 'Coach signature required' })).toBeVisible();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
   });
 
   it('submits migrated answers and shows the frozen signature progress', async () => {
@@ -1675,6 +1755,40 @@ describe('coach review signature workflow', () => {
     expect(await screen.findByText('Your part is complete. The review is waiting for the remaining required signatures.')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Send for signatures' })).not.toBeInTheDocument();
+  });
+
+  it('does not show pending signatures on a completed historical summary', async () => {
+    const saved = migratedDefinition('completed');
+    saved.migratedForm = false;
+    saved.formAvailable = false;
+    saved.summaryOnly = true;
+    saved.sections = [];
+    saved.signatures = { advisor: { required: false, signed: false }, participant: { required: false, signed: false },
+      employer: { required: false, signed: false }, referrer: { required: false, signed: false } };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(saved);
+    mount(saved.instance.id);
+    expect(await screen.findByText('Review completed')).toBeVisible();
+    expect(screen.queryByText(/waiting for the remaining required signatures/)).not.toBeInTheDocument();
+  });
+
+  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'])('shows a completed %s LMS form whose source is completed without unlocking it', async family => {
+    const saved = family === 'PR' || family === 'PR_SKILLS_RADAR' ? migratedPrDefinition('completed', family) : migratedDefinition('completed');
+    saved.sourceStatus = 'Completed';
+    saved.canReopen = true;
+    if (family === 'PSP') saved.template.reviewTypeCode = 'aptem_psp';
+    saved.signatures.advisor = { required: true, signed: true, signedName: 'Synthetic coach' };
+    saved.signatures.participant = { required: true, signed: true, signedName: 'Synthetic learner' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(saved);
+    mount(saved.instance.id);
+    expect(await screen.findByText('Review completed')).toBeVisible();
+    expect(screen.getByText('Review the next module')).toBeVisible();
+    expect(screen.getByText('Synthetic learner')).toBeVisible();
+    expect(screen.getByRole('button', { name: family === 'PSP' ? 'Download PDF' : 'Download signed PDF' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Reopen review' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/waiting for the remaining required signatures/)).not.toBeInTheDocument();
+    expect(initializeMigratedReview).not.toHaveBeenCalled();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
   });
 
   it('shows direct completion for templates with no required signatures', async () => {
@@ -1963,8 +2077,11 @@ describe('Review Meeting Summary integration', () => {
 });
 
 describe('migrated signed PDF lifecycle', () => {
-  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR'] as const)('reopens %s with its saved version and retains previous PDF access', async family => {
-    const original = family === 'MCM' ? migratedDefinition('completed') : migratedPrDefinition('completed', family);
+  it.each(['MCM', 'PR', 'PR_SKILLS_RADAR', 'PSP'] as const)('reopens %s with its saved version and retains previous PDF access', async family => {
+    const original = family === 'MCM' || family === 'PSP' ? migratedDefinition('completed') : migratedPrDefinition('completed', family);
+    original.sourceStatus = 'Completed';
+    original.canReopen = true;
+    if (family === 'PSP') original.template.reviewTypeCode = 'aptem_psp';
     original.answerVersion = 'signed-version';
     original.reviewRevision = 0;
     const updated = { ...original, readOnly: false, localStatus: 'in-progress', reviewRevision: 1,
@@ -1977,7 +2094,7 @@ describe('migrated signed PDF lifecycle', () => {
     const { onStatusChange } = mount(original.instance.id);
     fireEvent.click(await screen.findByRole('button', { name: 'Reopen review' }));
     const dialog = screen.getByRole('dialog', { name: 'Edit this completed Review?' });
-    expect(within(dialog).getByText(/Recorded hours and Monthly Log signatures will not change/)).toBeVisible();
+    if (family !== 'PSP') expect(within(dialog).getByText(/Recorded hours and Monthly Log signatures will not change/)).toBeVisible();
     fireEvent.change(within(dialog).getByLabelText('Reason'), { target: { value: 'incorrect-answer' } });
     fireEvent.change(within(dialog).getByLabelText(/Correction details/), { target: { value: 'Correct the action owner' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
@@ -1986,6 +2103,8 @@ describe('migrated signed PDF lifecycle', () => {
     }));
     expect(reopenReviewInstance).not.toHaveBeenCalled();
     await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith('in-progress'));
+    expect(screen.getByDisplayValue('Review the next module')).toBeEnabled();
+    expect(screen.getByRole('button', { name: family === 'PSP' ? 'Save & send for signatures' : 'Save draft' })).toBeEnabled();
     fireEvent.click(screen.getByText('Previous review versions (1)'));
     fireEvent.click(screen.getByRole('button', { name: 'Download version 1 PDF' }));
     await waitFor(() => expect(downloadMigratedReviewRevision).toHaveBeenCalledWith(original.instance.id, 1));
@@ -2114,6 +2233,55 @@ describe('migrated signed PDF lifecycle', () => {
   });
 });
 
+describe('Monthly Coaching Meeting completion without a booking', () => {
+  it.each(['mcm', 'aptem_mcm'].flatMap(typeCode => ['not-scheduled', 'scheduled', 'in-progress'].map(status => [typeCode, status])))(
+    'keeps %s completion beside the steps when %s and validates before requesting signatures', async (typeCode, status) => {
+    const review = mcmDefinition(status);
+    review.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };
+    review.template.reviewTypeCode = typeCode;
+    if (typeCode === 'aptem_mcm') {
+      Object.assign(review, { source: 'aptem', migratedForm: true, localStatus: status, readOnly: false });
+      review.instance.id = 'imported-review:synthetic';
+      review.meetingSummarySource = undefined;
+    }
+    review.sections[1].fields[0].answer = null;
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(review);
+    const pending = structuredClone(review);
+    pending.instance.status = 'awaiting-signature';
+    pending.localStatus = 'awaiting-signature';
+    vi.mocked(submitMigratedReview).mockResolvedValue(pending);
+    vi.mocked(completeReviewInstance).mockResolvedValue(pending);
+    render(<MemoryRouter><ReviewInstanceModal instanceId={review.instance.id} presentation="page" onClose={vi.fn()} /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Next steps' });
+    const completeButton = await screen.findByRole('button', { name: 'Complete review' });
+    expect(completeButton.closest('section')).toHaveAttribute('id', 'review-section-section-1');
+    fireEvent.click(completeButton);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please complete every required field');
+    expect(completeReviewInstance).not.toHaveBeenCalled();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Meeting Summary' })).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: typeCode === 'mcm' ? 'Meeting Summary' : 'Summary' }), { target: { value: 'Coach-approved summary' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+    const submit = typeCode === 'mcm' ? completeReviewInstance : submitMigratedReview;
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(review.instance.id,
+      { 'field-1': 'Review the next module', 'summary-field': 'Coach-approved summary' }));
+    expect(await screen.findByRole('heading', { name: 'Coach signature required' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+    expect(startMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('offers explicit unbooked %s submission without submitting on open', async family => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migratedPrDefinition('not-scheduled', family));
+    mount('imported-review:synthetic');
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.getByRole('button', { name: 'Submit Review' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+  });
+});
+
 describe('Monthly Coaching Meeting signature summary + signed PDF', () => {
   it('does not offer migrated generation when a historical original PDF is unavailable', async () => {
     const imported = mcmDefinition('completed');
@@ -2221,13 +2389,17 @@ function snapshotFixture(overrides: Partial<ReviewProgressSnapshot> = {}): Revie
 }
 
 describe('Progress Review learning progress snapshot', () => {
-  it.each([false, true])('keeps Native admin calculation hidden with snapshot=%s', async hasSnapshot => {
+  it.each([false, true])('lets the admin calculate a native review with snapshot=%s', async hasSnapshot => {
     coachMode.isViewingAsCoach = true;
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(progressReviewDefinition('in-progress', hasSnapshot ? snapshotFixture() : null));
+    vi.mocked(calculateReviewInstanceProgress).mockResolvedValue(progressReviewDefinition('in-progress', snapshotFixture()));
     mount();
     await screen.findByRole('region', { name: 'Learning progress' });
-    expect(screen.queryByRole('button', { name: /^(Calculate|Recalculate)$/ })).not.toBeInTheDocument();
+    const button = screen.getByRole('button', { name: hasSnapshot ? 'Recalculate' : 'Calculate' });
+    expect(button).toBeEnabled();
     expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await waitFor(() => expect(calculateReviewInstanceProgress).toHaveBeenCalledWith('instance-1'));
   });
 
   it('offers Calculate only on a Progress Review, and never calculates on its own when the form opens', async () => {
@@ -2265,7 +2437,7 @@ describe('Progress Review learning progress snapshot', () => {
     expect(screen.getByText('64%')).toBeVisible();
     expect(screen.getByText('12% Above')).toBeVisible();
     expect(screen.getByText('2% Below')).toBeVisible();
-    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%' })).toBeVisible();
+    expect(screen.getByRole('img', { name: /Learning Plan Progress: 28%; target/ })).toBeVisible();
     expect(screen.getByText('27% Below')).toBeVisible();
   });
 
@@ -2307,7 +2479,7 @@ describe('Progress Review learning progress snapshot', () => {
     mount();
     expect(await screen.findByText('Review completed')).toBeVisible();
     expect(screen.getByText('64%')).toBeVisible();
-    expect(screen.getAllByText('28%')).toHaveLength(2);
+    expect(screen.getByText('28%')).toBeVisible();
     expect(screen.getByText('Green')).toBeVisible();
     // A past review that captured no RAG still appears, as "None".
     expect(screen.getByText('None')).toBeVisible();
@@ -2352,7 +2524,7 @@ describe('migrated progress snapshot', () => {
     expect(button).toBeVisible();
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('disabled');
-    expect(button).toHaveAccessibleDescription('Available to the assigned Coach only.');
+    expect(button).toHaveAccessibleDescription('Available when this Progress Review is editable.');
     expect(screen.queryByText('No progress was calculated for this review.')).not.toBeInTheDocument();
     const readsBefore = vi.mocked(fetchReviewInstanceForm).mock.calls.length;
     await user.click(button);
@@ -2459,32 +2631,28 @@ describe('migrated progress snapshot', () => {
 
   it.each([
     ['PR', false], ['PR', true], ['PR_SKILLS_RADAR', false], ['PR_SKILLS_RADAR', true],
-  ] as const)('shows inert admin %s calculation with snapshot=%s', async (family, hasSnapshot) => {
-    const user = userEvent.setup();
+  ] as const)('lets the admin calculate an initialized %s review with snapshot=%s', async (family, hasSnapshot) => {
     coachMode.isViewingAsCoach = true;
     const initial = { ...migratedProgress(family, 'in-progress', hasSnapshot ? snapshotFixture() : null),
-      readOnly: true, canCalculateProgress: false };
+      readOnly: true, canCalculateProgress: true };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    vi.mocked(calculateMigratedReviewProgress).mockResolvedValue({ ...initial, progressSnapshot: snapshotFixture(), progressVersion: 'v2' });
     mount(initial.instance.id);
     const button = await screen.findByRole('button', { name: hasSnapshot ? 'Recalculate' : 'Calculate' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAccessibleDescription('Available to the assigned Coach only.');
-    await user.click(button);
-    button.focus();
-    expect(button).not.toHaveFocus();
-    await user.keyboard('{Enter} ');
-    expect(calculateMigratedReviewProgress).not.toHaveBeenCalled();
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(calculateMigratedReviewProgress).toHaveBeenCalledWith(initial.instance.id, 'v1'));
     expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
     expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
-    if (hasSnapshot) expect(screen.getByText('64%')).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
   });
 
-  it.each(['not-scheduled', 'scheduled'])('shows disabled admin calculation on an initialized %s review', async status => {
+  it.each(['not-scheduled', 'scheduled'])('allows admin calculation on an initialized %s review', async status => {
     coachMode.isViewingAsCoach = true;
-    const initial = { ...migratedProgress('PR', status), canCalculateProgress: false };
+    const initial = { ...migratedProgress('PR', status), readOnly: true };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
     mount(initial.instance.id);
-    expect(await screen.findByRole('button', { name: 'Calculate' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Calculate' })).toBeEnabled();
     expect(startMigratedReview).not.toHaveBeenCalled();
     expect(bookMigratedReview).not.toHaveBeenCalled();
   });

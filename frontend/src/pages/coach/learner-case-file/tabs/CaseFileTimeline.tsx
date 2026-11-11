@@ -3,7 +3,7 @@ import { CalendarDays, Maximize2, Minimize2, MessageSquareText } from 'lucide-re
 import { Modal } from '@/pages/users/components/Modal';
 import type { LearningPlanProjection } from '@/features/coach/case-file/hooks/useCaseFileLearningPlan';
 import { barPosition, weeklyPosition, timelineMonthKeys, timelineWeekKeys, timelinePeriodYear, timelineYears } from '@/pages/learner/training-plan-timeline/model';
-import { dateLabel, monthLabel } from '@/pages/learner/training-plan-timeline/presentation';
+import { dateLabel, monthLabel } from "@/pages/learner/training-plan-timeline/presentation.helpers";
 import layout from '@/pages/learner/training-plan-timeline/ModuleTimeline.module.css';
 
 /** Same timeline geometry/styles, with compact facts and read-only selection. */

@@ -3,6 +3,7 @@ import io
 from django.test import SimpleTestCase
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.text import MSO_AUTO_SIZE
 
 from .pptx_generator import generate_progress_review_pptx
 from .review_pack import NOT_AVAILABLE
@@ -105,6 +106,21 @@ def _deck_texts(prs) -> str:
 
 
 class GenerateProgressReviewPptxTests(SimpleTestCase):
+    def test_long_focus_actions_fit_fixed_card_without_losing_text(self):
+        pack = _sample_pack()
+        pack['actions'] = [
+            {'title': f'Action {i}', 'detail': 'Review the learner progress and agree evidence and a realistic plan for the next period.',
+             'owner': 'Coach and learner', 'due_by': '2026-09-01'}
+            for i in range(5)
+        ]
+        prs = Presentation(io.BytesIO(generate_progress_review_pptx(pack, fetch_image=lambda _url: None)))
+        card = prs.slides[1].shapes[33]
+        self.assertEqual(card.text_frame.auto_size, MSO_AUTO_SIZE.NONE)
+        self.assertLess(card.text_frame.paragraphs[1].runs[0].font.size.pt, 22)
+        for i in range(5):
+            self.assertIn(f'Action {i}', card.text_frame.text)
+        self.assertIn('Overall:', _slide_texts(prs.slides[1]))
+
     def test_builds_exactly_nineteen_slides(self):
         data = generate_progress_review_pptx(_sample_pack(), fetch_image=lambda url: None)
         prs = Presentation(io.BytesIO(data))

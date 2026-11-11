@@ -109,22 +109,45 @@ function KsbBar({ metric }: { metric: ReviewKsbProgress | null | undefined }) {
   return <MetricBar label={label} metric={{ actual: null, expected: null, planned: null, ...metric, variancePercent: metric.variancePercent ?? metric.actualPercent - metric.expectedPercent, varianceDirection: metric.varianceDirection ?? (metric.actualPercent >= metric.expectedPercent ? 'above' : 'below') }} tone="blue" />;
 }
 
-function LearningPlanDonut({ percent }: { percent: number | null }) {
+function LearningPlanDonut({ metric }: { metric: ReviewProgressMetric }) {
+  const percent = metric?.actualPercent ?? null;
+  const target = clamp(metric?.expectedPercent ?? null);
   const visible = clamp(percent);
   const radius = 66;
   const circumference = 2 * Math.PI * radius;
   return (
     <div className="flex flex-col items-center">
       <p className="mb-5 text-center text-[18px] font-medium text-[#174c67]">Learning Plan Progress</p>
-      <svg width="176" height="176" viewBox="0 0 176 176" role="img" aria-label={`Learning Plan Progress: ${percentLabel(percent)}`} className="shrink-0">
+      <svg width="176" height="176" viewBox="0 0 176 176" role="img" aria-label={`Learning Plan Progress: ${percentLabel(percent)}; target ${percentLabel(metric?.expectedPercent ?? null)}`} className="shrink-0">
         <circle cx="88" cy="88" r={radius} fill="none" stroke="#dce4ec" strokeWidth="22" />
         {visible === null ? null : (
           <circle cx="88" cy="88" r={radius} fill="none" stroke="#174ed4" strokeWidth="22" strokeDasharray={`${circumference * visible / 100} ${circumference}`} transform="rotate(-90 88 88)" />
         )}
+        {target === null ? null : <line data-testid="donut-target-marker" x1="88" y1="8" x2="88" y2="36" stroke="black" strokeWidth="3" transform={`rotate(${target * 3.6} 88 88)`} />}
         <text x="88" y="96" textAnchor="middle" className="fill-[#111827] text-[29px] font-medium">{percentLabel(percent)}</text>
       </svg>
+      <p className="mt-2 text-sm text-[#30383d]">Target: {percentLabel(metric?.expectedPercent ?? null)} · <span>{varianceLabel(metric)}</span></p>
     </div>
   );
+}
+
+function ProgrammeTimeline({ timeline }: { timeline: ReviewProgressSnapshot['programmeTimeline'] }) {
+  if (!timeline) return <div><p className="text-[14px] font-semibold text-[#123f5a]">Programme timeline</p><p className="mt-2 text-sm text-foreground-500">Programme timeline dates were not recorded in this snapshot.</p></div>;
+  const day = (value: string | null) => value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? Date.parse(`${value}T00:00:00Z`) : NaN;
+  const start = day(timeline.startDate), end = day(timeline.endDate), today = day(timeline.asOfDate), gateway = day(timeline.gatewayDate);
+  const valid = Number.isFinite(start) && Number.isFinite(end) && end > start && Number.isFinite(today);
+  const position = (value: number) => Math.max(0, Math.min(100, (value - start) / (end - start) * 100));
+  return <div aria-label="Programme timeline">
+    <p className="text-[14px] font-semibold text-[#123f5a]">Programme timeline</p>
+    <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-[#526d80]"><span>Start: {dateLabel(timeline.startDate)}</span><span>Planned end: {dateLabel(timeline.endDate)}</span></div>
+    {valid ? <div className="relative mx-2 mt-7 h-2 rounded bg-[#cbd3e0]" role="img" aria-label={`Programme timeline at calculation: ${dateLabel(timeline.asOfDate)}`}>
+      <div className="h-full rounded bg-[#4265e8]" style={{ width: `${position(today)}%` }} />
+      <span className="absolute -top-3 h-8 w-[3px] bg-[#174ed4]" style={markerStyle(position(today))} />
+      <span className="absolute -right-2 -top-2 h-6 w-6 rounded-full border border-[#526d80] bg-white" />
+      {Number.isFinite(gateway) && gateway >= start && gateway <= end ? <span className="absolute -top-2 h-6 w-6 rounded-full border border-[#526d80] bg-white" style={markerStyle(position(gateway))} /> : null}
+    </div> : <p className="mt-3 text-sm text-foreground-500">A valid start and planned end are needed to show the timeline.</p>}
+    <div className="mt-4 flex flex-wrap justify-between gap-2 text-xs text-[#526d80]"><span>At calculation: {dateLabel(timeline.asOfDate)}</span><span>Gateway: {dateLabel(timeline.gatewayDate)}</span></div>
+  </div>;
 }
 
 function RagHistory({ entries }: { entries: ReviewRagHistoryEntry[] }) {
@@ -196,18 +219,18 @@ export function ReviewProgressPanel({
           </button>
         ) : null}
       </div>
-      {showCalculateAction && !canCalculate && <p id={actionHelpId} className="mt-1 text-xs text-foreground-500 sm:text-right">Available to the assigned Coach only.</p>}
+      {showCalculateAction && !canCalculate && <p id={actionHelpId} className="mt-1 text-xs text-foreground-500 sm:text-right">Available when this Progress Review is editable.</p>}
 
       {snapshot ? (
         <div className="mt-5 overflow-hidden border border-[#ccd5df] bg-white">
           <div className="grid md:grid-cols-[34%_66%]">
             <div className="flex min-h-[350px] items-center justify-center px-5 py-8 md:border-r md:border-[#ccd5df]">
-              <LearningPlanDonut percent={snapshot.programmeProgress?.actualPercent ?? null} />
+              <LearningPlanDonut metric={snapshot.programmeProgress} />
             </div>
             <div className="grid gap-7 border-t border-[#ccd5df] px-5 py-7 md:border-t-0 md:px-7">
               <KsbBar metric={snapshot.ksbProgress} />
               <MetricBar label="Off-the-job hours progress" metric={snapshot.offTheJobHours} />
-              <MetricBar label="Programme progress" metric={snapshot.programmeProgress} />
+              <ProgrammeTimeline timeline={snapshot.programmeTimeline} />
             </div>
           </div>
         </div>

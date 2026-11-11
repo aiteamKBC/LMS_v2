@@ -128,7 +128,8 @@ def can_report_absence_status(status, session_date):
 NATIVE_OCCURRENCES_SQL = f'''SELECT o.id AS session_id,o.id AS occurrence_id,
             COALESCE(replaced_attendance.occurrence_id,o.id) AS attendance_source_occurrence_id,
             s.id AS live_session_id,s.module_catalogue_id,m.title AS module_title,
-            o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
+            COALESCE(replaced_attendance.scheduled_start,o.scheduled_start) AS scheduled_start,
+            COALESCE(replaced_attendance.scheduled_end,o.scheduled_end) AS scheduled_end,o.updated_at,o.session_number,
             s.status AS live_session_status,o.status AS occurrence_status,
             COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
             CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
@@ -418,6 +419,12 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
             occurrence_id = str(row.get('occurrence_id') or row['session_id'])
             target_ids = ([occurrence_id] if occurrence_id in by_occurrence else []) + by_attendance_source.get(occurrence_id, [])
             target_ids = list(dict.fromkeys(target_ids))
+            if row.get('source') == 'live-register':
+                # A saved outcome belongs to its delivery. Raw evidence may
+                # feed several modules, but one module's correction may not.
+                target_ids = [target for target in target_ids
+                              if by_occurrence.get(target, {}).get('module_catalogue_id')
+                              == row.get('module_catalogue_id')]
             if not target_ids:
                 # Another group's occurrence joined as an approved alternative
                 # recovers the original absence; it is not a lecture of its own.
@@ -798,7 +805,7 @@ def read_native_components(source, module_refs=None, *, monthly=False):
         cur.execute(ATTENDANCE_SUBJECTS_SQL, [effective_assigned_module_ids(source)])
         modules = [row[0] for row in cur.fetchall() if module_refs is None or row[0] in module_refs]
         description = "''::text" if monthly else 'c.description'
-        cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.type,c.title,{description} AS description,
+        cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,w.title AS week_title,c.type,c.title,{description} AS description,
             jsonb_build_object(
                 'teamsOccurrenceId',c.settings_json->'teamsOccurrenceId',
                 'teamsLiveSessionId',c.settings_json->'teamsLiveSessionId',
@@ -945,7 +952,9 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             component = _component_for(row, module_activities)
             linked = []
             if component:
-                lecture['title'] = component['title'] or lecture['title']
+                # Weekly Learning names the lecture's authored week. Reuse that
+                # label only after resolving the exact occurrence and module.
+                lecture['title'] = _text(component.get('week_title')) or component['title'] or lecture['title']
                 lecture['contentSummary'] = component['description'] or component['settings'].get('sessionPurpose') or ''
                 lecture['componentHref'] = f"/learner/component/{kind}/{learner_id}/{component['id']}"
                 lecture['ksbs'] = _component_ksbs(component)

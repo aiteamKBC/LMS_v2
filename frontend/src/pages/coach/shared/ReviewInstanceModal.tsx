@@ -2,7 +2,8 @@ import { initialReviewBookingDate, initialReviewBookingDuration } from './import
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { ReviewFormRenderer, computeMissingRequiredFields, computeVisibleRequiredFields } from '@/components/reviews/ReviewFormRenderer';
+import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
+import { computeMissingRequiredFields, computeVisibleRequiredFields } from "@/components/reviews/ReviewFormRenderer.helpers";
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { MigratedReviewHistory } from '@/components/reviews/MigratedReviewHistory';
@@ -40,10 +41,11 @@ import {
 import { ModalHeader, ModalShell } from './ModalHeader';
 import { formatDateLabel } from './calendarEvents';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useImportedMeetingJoin } from './useImportedMeetingJoin';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
+import { CoachMeetingArtifactsPanel } from './CoachMeetingArtifactsPanel';
 import { MigratedSummaryActions } from './MigratedSummaryActions';
 import type { CoachMeetingArtifactsResponse } from './calendarEvents';
 import { adoptExistingMigratedMeeting, canInitializeMigratedReview } from './importedReviewBooking';
@@ -299,6 +301,15 @@ function ReviewInstanceContent({
     setAnswers(merged);
     setDefinition(current => current ? { ...current, answerVersion: result.answerVersion, summaryBinding: result.summaryBinding } : current);
   }, [onStatusChanged]);
+  const onNativeMeetingStatusChange = useCallback((status: string) => {
+    if (status !== 'in-progress') return;
+    setDefinition(current => current ? {
+      ...current,
+      instance: current.instance.status === 'scheduled' ? { ...current.instance, status } : current.instance,
+      calendarMeeting: current.calendarMeeting ? { ...current.calendarMeeting, status } : undefined,
+    } : current);
+    onStatusChanged?.(status);
+  }, [onStatusChanged]);
   const onMigratedSummaryComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
     if (!reviewActive.current) return;
     onMigratedCheckComplete(result);
@@ -326,6 +337,24 @@ function ReviewInstanceContent({
   const [reopenNote, setReopenNote] = useState('');
   const signatureSaveInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const attendanceBookingRefresh = useRef(0);
+  const onAttendanceLinkChange = useCallback(() => {
+    const reviewId = definition?.instance.id;
+    if (!reviewId) return;
+    const revision = ++attendanceBookingRefresh.current;
+    // Keep the coach's unsaved answers while the server recalculates booking eligibility.
+    setDefinition(current => current?.instance.id === reviewId && current.booking
+      ? { ...current, booking: { ...current.booking, canReschedule: false } } : current);
+    void fetchReviewInstanceForm(reviewId).then(updated => {
+      if (!reviewActive.current || revision !== attendanceBookingRefresh.current) return;
+      setDefinition(current => current?.instance.id === reviewId
+        ? { ...current, booking: updated.booking } : current);
+    }).catch(() => {
+      if (reviewActive.current && revision === attendanceBookingRefresh.current) {
+        setError('Attendance was saved, but booking eligibility could not refresh. Reload this review.');
+      }
+    });
+  }, [definition?.instance.id]);
   const joinMeeting = useImportedMeetingJoin({
     contextKey: `${coachIdentity.email}:${isViewingAsCoach}:${instanceId}`, readOnly: isViewingAsCoach,
     onError: setError,
@@ -504,8 +533,7 @@ function ReviewInstanceContent({
         ? reason.message : 'Could not check the coach calendar. Retry before booking.');
     }).finally(() => { if (active) setBookingAvailabilityLoading(false); });
     return () => { active = false; controller.abort(); };
-  }, [bookingOpen, definition?.instance.learnerId, definition?.booking?.canAttach,
-    definition?.booking?.canReschedule, definition?.booking?.eventKey, bookingDate, bookingDuration, bookingAvailabilityRetry]);
+  }, [bookingOpen, definition, bookingDate, bookingDuration, bookingAvailabilityRetry]);
 
   const missingFieldIds = useMemo(
     () => (definition ? computeMissingRequiredFields(definition.sections, answers) : new Set<string>()),
@@ -520,6 +548,8 @@ function ReviewInstanceContent({
     [definition],
   );
   const meetingSummaryFieldId = meetingSummaryField?.id;
+  const meetingSummaryMaxLength = meetingSummaryField?.configuration?.migrated === true
+    && !['mcm', 'aptem_mcm'].includes(definition?.template.reviewTypeCode || '') ? 4000 : undefined;
   const isMigratedTemplatePreview = definition?.source === 'aptem' && Boolean(definition.previewOnly);
   const migratedSummaryBinding = useMemo(() => {
     if (definition?.migratedForm) return definition.summaryBinding;
@@ -555,12 +585,14 @@ function ReviewInstanceContent({
   const advisorSignatureSaved = Boolean(definition && advisorSignature?.required && advisorSignature.signed);
   const requiredSignatures = definition ? Object.values(definition.signatures).filter(state => state.required) : [];
   const personalSupportForm = Boolean(definition?.migratedForm && definition.template.reviewTypeCode === 'aptem_psp');
+  const isMonthlyCoachingMeeting = ['mcm', 'aptem_mcm'].includes(definition?.template.reviewTypeCode || '');
   const signatureFreePersonalSupport = personalSupportForm && requiredSignatures.length === 0;
   const allRequiredSignaturesSaved = requiredSignatures.length > 0 && requiredSignatures.every(state => state.signed);
   const waitingForOtherSignatures = Boolean(
     definition
     && !signatureFreePersonalSupport
-    && isSignatureStage
+    && definition.instance.status === 'awaiting-signature'
+    && requiredSignatures.length > 0
     && !advisorSignaturePending
     && !allRequiredSignaturesSaved,
   );
@@ -770,7 +802,7 @@ function ReviewInstanceContent({
   };
 
   const reopen = async () => {
-    if (!definition || reopening || isViewingAsCoach) return;
+    if (!definition || definition.canReopen === false || reopening || isViewingAsCoach) return;
     setReopening(true);
     setError(null);
     try {
@@ -836,7 +868,7 @@ function ReviewInstanceContent({
   /** Calculating is an explicit action and never happens on load, reload or
    *  reopen -- the snapshot below is whatever the backend already stored. */
   const calculateProgress = async () => {
-    if (!definition || calculating || isViewingAsCoach) return;
+    if (!definition || calculating || isSignatureStage) return;
     const migratedVersion = definition.answerVersion || definition.progressVersion;
     if (definition.source === 'aptem' && (progressRequestRef.current || !definition.migratedForm
       || !definition.canCalculateProgress || !migratedVersion
@@ -908,13 +940,24 @@ function ReviewInstanceContent({
   const hasPreviousOccurrence = previousOccurrenceNumber !== null && previousOccurrenceNumber >= 1;
   const hasImportedPreviousContext = definition?.source === 'aptem'
     && (definition.migratedForm || ['aptem_mcm', 'aptem_progress_review'].includes(definition.template.reviewTypeCode || ''));
+  const inlineCompletionAction = pageMode && isMonthlyCoachingMeeting
+    && Boolean(definition?.sections.some(section => section.enabled));
+  const canSubmitReview = !formReadOnly && !personalSupportForm
+    && definition && ['not-scheduled', 'scheduled', 'in-progress'].includes(
+      definition.migratedForm ? definition.localStatus || '' : definition.instance.status);
+  const completionAction = canSubmitReview ? (
+    <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
+      <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
+      {saving ? 'Saving...' : inlineCompletionAction ? 'Complete review' : definition?.migratedForm ? 'Submit Review' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
+    </button>
+  ) : null;
 
   if (expandedSummaryFieldId && meetingSummaryField) {
     return (
       <ModalShell busy={busy} onClose={closeExpandedSummary}>
         <ExpandedMeetingSummaryEditor
           reviewLabel={headingLabel}
-          maxLength={meetingSummaryField.configuration?.migrated === true ? 4000 : undefined}
+          maxLength={meetingSummaryMaxLength}
           value={answers[expandedSummaryFieldId]}
           onChange={(value) => handleAnswerChange(expandedSummaryFieldId, value)}
           readOnly={formReadOnly || (checkingSession && !generatingMigratedSummary)}
@@ -1046,7 +1089,7 @@ function ReviewInstanceContent({
                   : 'Admin view-as mode is read-only. Open the learner as the assigned coach to change this review.'}
               </section>
             ) : null}
-            {definition.migratedForm && isSignatureStage && !isViewingAsCoach && (
+            {definition.migratedForm && definition.canReopen !== false && isSignatureStage && !isViewingAsCoach && (
               <section aria-label="Reopen review" className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <p className="font-semibold text-amber-950">Correct this review</p>
                 <p className="mt-1 text-sm text-amber-900">{signatureFreePersonalSupport ? 'Reopen the form to correct its answers. Previous versions are retained.' : 'Reopen the form and collect new signatures. Previous versions are retained. Recorded hours and Monthly Log signatures stay unchanged.'}</p>
@@ -1088,6 +1131,18 @@ function ReviewInstanceContent({
                 checkBlocked={hasUnsavedMigratedAnswers || busy || templateSyncConflict}
                 onCheckComplete={onMigratedCheckComplete}
                 onCheckingChange={setCheckingSession}
+                onAttendanceLinkChange={onAttendanceLinkChange}
+              />
+            ) : null}
+            {!definition.migratedForm && definition.source !== 'aptem' && definition.calendarMeeting ? (
+              <CoachMeetingArtifactsPanel
+                event={{ id: definition.instance.id, ...definition.calendarMeeting }}
+                canCheck={!isViewingAsCoach}
+                showCheckAction
+                canEditSummary={!isViewingAsCoach}
+                onEventStatusChange={onNativeMeetingStatusChange}
+                attendanceLinkKey={!isViewingAsCoach && ['mcr', 'progress-review'].includes(definition.calendarMeeting.source)
+                  ? definition.calendarMeeting.eventKey : undefined}
               />
             ) : null}
             {definition.migratedForm && definition.booking?.canAttach && !formReadOnly ? (
@@ -1098,7 +1153,7 @@ function ReviewInstanceContent({
             ) : null}
             {hasImportedBooking && (definition.booking?.canBook || definition.booking?.canReschedule) && !bookingReadOnly ? (
               <section aria-label={definition.booking.canReschedule ? 'Reschedule migrated review meeting' : 'Book migrated review meeting'} className="rounded-xl border border-primary-200 bg-white p-4">
-                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(initialReviewBookingDate(definition, definition.template.reviewTypeCode === 'aptem_mcm' || definition.template.name.toLowerCase().includes('monthly coaching'))); setBookingTime(definition.booking?.scheduledTime || ''); setBookingDuration(initialReviewBookingDuration(definition)); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
+                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(initialReviewBookingDate(definition)); setBookingTime(definition.booking?.scheduledTime || ''); setBookingDuration(initialReviewBookingDuration(definition)); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
                   <div className="flex flex-wrap items-end gap-3">
                     <label className="text-xs font-semibold">Date<input aria-label="Meeting date" type="date" required value={bookingDate} onChange={(event) => { setBookingDate(event.target.value); setBookingTime(''); }} className="mt-1 block rounded-lg border px-3 py-2" /></label>
                     <label className="text-xs font-semibold">Time · UK time (Europe/London)<select aria-label="Meeting time" required value={bookingTime} disabled={bookingAvailabilityLoading || Boolean(bookingAvailabilityError) || !bookingTimes.length} onChange={(event) => setBookingTime(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2">
@@ -1125,7 +1180,7 @@ function ReviewInstanceContent({
               <p className="text-sm text-primary-800">{signatureFreePersonalSupport ? 'Save your answers to complete this Personal Support Plan once all required questions are answered.' : 'Save all required answers to send this Personal Support Plan for the selected signatures.'}</p>
             ) : null}
             {definition.migratedForm && !personalSupportForm && definition.localStatus === 'not-scheduled' && !isViewingAsCoach ? (
-              <p className="text-sm text-amber-800">This form can be saved as a draft. Starting the review requires a scheduled state.</p>
+              <p className="text-sm text-amber-800">Complete all required questions to submit this review. A booking is not required.</p>
             ) : null}
             {definition.migratedForm && definition.fieldWarnings?.length ? (
               <p role="status" className="text-sm text-amber-800">
@@ -1203,7 +1258,9 @@ function ReviewInstanceContent({
                 : templateSyncConflict
                 ? 'Saved answers remain available for reference while the template conflict is resolved.'
                 : isImportedReadOnly
-                ? definition.migratedForm ? 'Submitted answers are locked while the required parties sign this review.' : 'These historical review answers are read-only and cannot be changed here.'
+                ? definition.migratedForm
+                  ? definition.instance.status === 'completed' ? 'This completed review is read-only. Its saved answers and signatures are shown below.' : 'Submitted answers are locked while the required parties sign this review.'
+                  : 'These historical review answers are read-only and cannot be changed here.'
                 : definition.migratedForm ? 'Save your answers as a draft, then submit the review when it is ready for signatures.'
                 : `These answers are saved to this ${definition.template.name} and follow the sections/questions configured in Curriculum.`}</span>
             </div>
@@ -1311,12 +1368,12 @@ function ReviewInstanceContent({
               </section>
             ) : null}
 
-            {definition.instance.status === 'scheduled' && !definition.migratedForm ? (
+            {definition.instance.status === 'scheduled' && !definition.migratedForm && !isMonthlyCoachingMeeting ? (
               <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-[13px] font-bold text-amber-900">Not yet in progress</p>
+                  <p className="text-[13px] font-bold text-amber-900">Complete the review form</p>
                   <p className="mt-0.5 text-[12px] text-amber-800">
-                    Start the review from the meeting actions before completing this form.
+                    You can submit this form when all required questions are answered. A booking or attendance confirmation is not required.
                   </p>
                 </div>
               </div>
@@ -1335,7 +1392,7 @@ function ReviewInstanceContent({
                 snapshot={definition.progressSnapshot}
                 ragHistory={definition.ragHistory}
                 showCalculateAction={showMigratedCoachActions ? true : undefined}
-                canCalculate={!isViewingAsCoach && !isSignatureStage && (definition.source !== 'aptem'
+                canCalculate={!isSignatureStage && (definition.source !== 'aptem'
                   || Boolean(definition.migratedForm && definition.canCalculateProgress
                     && (definition.answerVersion || definition.progressVersion)))}
                 calculating={calculating}
@@ -1472,7 +1529,7 @@ function ReviewInstanceContent({
                 <MeetingSummaryInlineEditor
                   fieldId={field.id}
                   label={definition.source === 'aptem' ? field.title : 'Meeting Summary'}
-                  maxLength={field.configuration?.migrated === true ? 4000 : undefined}
+                  maxLength={meetingSummaryMaxLength}
                   value={context.value}
                   onChange={(value) => context.onChange(value)}
                   readOnly={context.readOnly}
@@ -1486,6 +1543,7 @@ function ReviewInstanceContent({
                 ? <ImportedValue value={context.value} label={field.title} fieldType={field.fieldType} />
                 : undefined}
               variant={pageMode ? 'steps' : 'accordion'}
+              stepActions={inlineCompletionAction ? completionAction : undefined}
             />
             {advisorSignaturePending && !isViewingAsCoach ? (
               <section aria-label="Review signature step" tabIndex={-1} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
@@ -1580,10 +1638,7 @@ function ReviewInstanceContent({
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>{personalSupportForm ? missingFieldIds.size ? 'Save draft' : signatureFreePersonalSupport ? 'Save & complete' : 'Save & send for signatures' : 'Save draft'}
           </button>
-          {!personalSupportForm && (!definition?.migratedForm || definition.localStatus === 'scheduled' || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
-            <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
-            {saving ? 'Saving...' : definition?.migratedForm ? 'Submit Review' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
-          </button> : null}
+          {!inlineCompletionAction ? completionAction : null}
         </div> : null}
       </footer>
     </>

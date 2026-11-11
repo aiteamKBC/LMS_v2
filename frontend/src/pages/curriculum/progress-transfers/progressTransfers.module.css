@@ -220,6 +220,8 @@
 .componentMenu > p { padding: 2px 4px 8px; font-size: 12px; color: #776783; }
 .clearMatch { flex-shrink: 0; padding: 5px 0; font-size: 12px; font-weight: 600; color: #633c97; text-decoration: underline; }
 .clearMatch:disabled { color: #8c819a; cursor: default; text-decoration: none; }
+.matchRow .retainToggle { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; font-size: 12.5px; font-weight: 600; color: #49345e; cursor: pointer; }
+.retainToggle > input { flex-shrink: 0; margin-top: 3px; accent-color: #7446b7; }
 .componentWeeks { display: grid; gap: 8px; }
 .componentWeek { min-width: 0; border: 1px solid #e7def2; border-radius: 8px; overflow: hidden; }
 .componentChoices .weekToggle { display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; padding: 10px 12px; text-align: left; background: #f7f3fc; color: #49345e; font-size: 13px; font-weight: 600; cursor: pointer; }

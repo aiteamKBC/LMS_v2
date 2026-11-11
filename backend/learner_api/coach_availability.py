@@ -1,4 +1,4 @@
-"""Read-only coach free slots, combining Outlook working hours and LMS bookings."""
+"""Read-only coach slots using booking hours, Outlook free/busy and LMS bookings."""
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -92,7 +92,14 @@ def free_slots(owner_email, day, offset, *, exclude_event_key='', exclude_record
         schedule = next((s for s in schedules if str(s.get('scheduleId', '')).lower() == owner_email.lower()), None)
         if not schedule or schedule.get('error'):
             raise ValueError('Missing schedule')
-        if uk_working_hours:
+        if review_hours:
+            # All coaches offer Reviews in the college's London working day.
+            # Personal Outlook hours/days/timezones must not narrow that window;
+            # Outlook free/busy and LMS reservations still protect occupied time.
+            zone = ZoneInfo('Europe/London')
+            work_start, work_end = REVIEW_DAY_START, REVIEW_DAY_END
+            days = {'monday', 'tuesday', 'wednesday', 'thursday', 'friday'}
+        elif uk_working_hours:
             # The college's UK working day, whatever the coach's own Outlook hours say.
             zone, (work_start, work_end) = ZoneInfo('Europe/London'), CATCHUP_WORKING_HOURS
             days = {'monday', 'tuesday', 'wednesday', 'thursday', 'friday'}
@@ -289,10 +296,8 @@ def coach_available_slots(request, kind, pk):
         unconfirmed = str(exc)
     # ``collegeDay`` asks for the first-session shape: the college's own
     # 09:00-16:00 working day, on the hour, every hour reported with a flag.
-    # Without it the answer stays the 15-minute grid of the coach's own hours,
-    # which is what the MCM picker wants -- a learner rearranging a monthly
-    # meeting around their job is well served by 10:15, and their coach's
-    # working day is the one that meeting happens in.
+    # Without it the answer stays on a 15-minute grid. Reviews use the college's
+    # London hours; legacy callers retain the coach's Outlook working hours.
     #
     # A first session is a different thing: it is the meeting that starts the
     # programme, held in Kent, and it is offered as a short list of hours the

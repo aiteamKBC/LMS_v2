@@ -1,0 +1,64 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    fetching_evidence__active_evidence_items {
+        bigint evidence_id PK
+    }
+    fetching_evidence__active_learner_assignments
+    fetching_evidence__app_settings {
+        text key PK
+    }
+    fetching_evidence__aptem_aptemevidence {
+        bigint id PK
+        integer evidence_id FK
+    }
+    fetching_evidence__aptem_cacherefreshcontrol {
+        bigint id PK
+    }
+    fetching_evidence__aptem_cv_certifications {
+        bigint id PK
+    }
+    fetching_evidence__aptem_cv_contracts_probe {
+        bigint id PK
+    }
+    fetching_evidence__aptem_import_job_leases {
+        text job_name PK
+    }
+    fetching_evidence__aptem_learner_subject_assignments {
+        bigint learner_id PK
+        bigint subject_id FK
+    }
+    fetching_evidence__aptem_plr_probe {
+        bigint id PK
+    }
+    fetching_evidence__aptem_skills_radar_probe {
+        bigint id PK
+    }
+    fetching_evidence__aptem_subject_funding_catalog {
+        bigint id PK
+    }
+    fetching_evidence__assessment_fetch {
+        bigint id PK
+    }
+    fetching_evidence__assignment_classification_evaluations {
+        bigint id PK
+        bigint run_id FK
+        bigint learner_id FK
+    }
+    fetching_evidence__assignment_classification_jobs {
+        bigint id PK
+        bigint run_id FK
+        bigint learner_id FK
+    }
+    fetching_evidence__assignment_classification_runs {
+        bigint id PK
+    }
+    fetching_evidence__evidence_items {
+        bigint evidence_id PK
+    }
+    fetching_evidence__evidence_items ||..o| fetching_evidence__aptem_aptemevidence : "aptem_aptemevidence_evidence_id_source_fk"
+    fetching_evidence__aptem_subject_funding_catalog ||..o{ fetching_evidence__aptem_learner_subject_assignments : "aptem_learner_subject_assignments_subject_id_fkey"
+    fetching_evidence__assignment_classification_runs ||..o{ fetching_evidence__assignment_classification_evaluations : "assignment_classification_evaluations_run_id_fkey"
+    fetching_evidence__assignment_classification_runs ||..o{ fetching_evidence__assignment_classification_evaluations : "assignment_classification_evaluations_run_learner_fk UNVALIDATED"
+    fetching_evidence__assignment_classification_runs ||..o{ fetching_evidence__assignment_classification_jobs : "assignment_classification_jobs_run_id_fkey"
+    fetching_evidence__assignment_classification_runs ||..o{ fetching_evidence__assignment_classification_jobs : "assignment_classification_jobs_run_learner_fk"

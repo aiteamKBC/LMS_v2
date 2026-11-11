@@ -33,12 +33,13 @@ import {
  * count" would bury the one collision that is real. `recalculateModule` puts
  * every one of them back once the content is settled.
  */
-const DERIVED_MODULE_FIELDS = new Set([
+export const DERIVED_MODULE_FIELDS = new Set([
   'structureRevision',
   'lastUpdated',
   'createdAt',
   'weeks',
   'totalOtjh',
+  'declaredTotalOtjh',
   'ksbCount',
   'lessonCount',
   'quizCount',
@@ -62,7 +63,7 @@ const DERIVED_MODULE_FIELDS = new Set([
  * of the planner. Mirrors DERIVED_WEEK_FIELDS in curriculum_api/module_merge.py;
  * the next save re-derives them from the merged order.
  */
-const DERIVED_WEEK_FIELDS = new Set([
+export const DERIVED_WEEK_FIELDS = new Set([
   'weekNumber',
   'moduleId',
   'sessionDate',

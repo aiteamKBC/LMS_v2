@@ -22,7 +22,7 @@ function module(): ModuleCatalogueItem {
 }
 
 describe('applyLiveSessionLinkToComponents', () => {
-  it('changes only the components the server rewrote, keeping their meeting identity', () => {
+  it('changes only the components the server rewrote without carrying another meeting identity', () => {
     const source = module();
     const next = applyLiveSessionLinkToComponents(source, ['LIVE-SAVED'], ' https://new.example/join ');
     const [saved, unsaved] = next.weekStructure[0].components;
@@ -31,8 +31,9 @@ describe('applyLiveSessionLinkToComponents', () => {
       liveSessionUrl: 'https://new.example/join',
       teamsMeetingUrl: 'https://new.example/join',
       liveSessionLinkOverride: 'https://new.example/join',
-      teamsEventId: 'EVENT-1',
+      teamsCalendarBinding: 'unverified',
     });
+    expect(saved.settings.teamsEventId).toBeUndefined();
     expect(unsaved.settings.liveSessionUrl).toBe('https://old.example/join');
     expect(next.weekStructure[1]).toBe(source.weekStructure[1]);
   });

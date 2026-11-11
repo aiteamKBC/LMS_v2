@@ -122,6 +122,9 @@ class ProgressPersistenceTests(unittest.TestCase):
         issues = jobs[0]['issues']
         self.assertEqual(issues[0]['sessionTitle'], 'Join the LIVE session')
         self.assertEqual(issues[0]['week'], {'number': 3, 'title': 'Governance'})
+        links = ns['linked_session_items'](['S'])
+        self.assertEqual(links[('S', 3)]['weekTitle'], 'Governance')
+        self.assertEqual(links[('S', 5)]['weekTitle'], '')
         # Two items in two weeks claim session 5: neither name is guessed.
         self.assertEqual((issues[1]['sessionTitle'], issues[1]['week']), (None, None))
         self.assertEqual((issues[2]['sessionTitle'], issues[2]['week']), (None, None))

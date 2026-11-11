@@ -14,10 +14,12 @@ from coach_api.migrated_completion_views import (
 )
 from coach_api.migrated_reopening_views import party_revision_pdf
 from coach_api.personal_support_access import prepare_learner_personal_support
+from coach_api.learner_review_prepare import prepare_learner_review, preview_learner_review
 from curriculum_api import recording_views
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
 from .overview_week import overview_week
+from .web_week_points import web_points
 from .rewards_summary import learner_rewards_summary
 from .profile_photo import learner_profile_photo
 from .attendance_lectures import attendance_lectures
@@ -39,11 +41,15 @@ from . import module_progress, extra_activities, absence_reports, apprenticeship
 from .my_learning import my_learning
 from . import progress_transfer
 from . import support_tickets
+from . import reading_ocr
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('web-points/<str:kind>/<int:pk>/', web_points, name='learner-web-points'),
+    path('reading/ocr/csrf/', reading_ocr.reading_ocr_csrf),
+    path('reading/ocr/', reading_ocr.reading_ocr),
     path('support/tickets/', support_tickets.learner_tickets),
     path('support/tickets/<uuid:ticket_id>/', support_tickets.learner_ticket),
     path('support/tickets/<uuid:ticket_id>/attachments/<uuid:attachment_id>/', support_tickets.learner_attachment),
@@ -58,6 +64,8 @@ urlpatterns = [
     path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
     path('migrated-reviews/<str:review_id>/prepare-psp', prepare_learner_personal_support, name='learner-prepare-personal-support'),
+    path('migrated-reviews/<str:review_id>/prepare-review', prepare_learner_review, name='learner-prepare-migrated-review'),
+    path('migrated-reviews/<str:review_id>/preview-review/<str:kind>/<int:pk>', preview_learner_review, name='admin-preview-migrated-review'),
     path('migrated-reviews/<str:review_id>/party-pdf', migrated_review_party_pdf, name='migrated-review-party-pdf'),
     path('migrated-reviews/<str:review_id>/revisions/<int:number>/pdf', party_revision_pdf, name='migrated-review-party-revision-pdf'),
     path('migrated-reviews/<str:review_id>/party-sign', migrated_review_party_sign, name='migrated-review-party-sign'),
@@ -79,6 +87,7 @@ urlpatterns = [
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
     path('monthly-logs/<int:learner_id>/canonical-documents/<int:file_id>/', monthly_logs.canonical_document, name='monthly-log-canonical-document'),
     path('monthly-logs/<int:learner_id>/<str:month>/', monthly_logs.detail, name='monthly-log-detail'),
+    path('monthly-logs/<int:learner_id>/<str:month>/manual-time/<int:progress_id>/', monthly_logs.correct_manual_time, name='monthly-log-manual-time'),
     path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
     path('monthly-logs/<int:learner_id>/<str:month>/complete/', monthly_logs.complete, name='monthly-log-complete'),
     path('monthly-logs/<int:learner_id>/<str:month>/unlock/', monthly_logs.unlock, name='monthly-log-unlock'),

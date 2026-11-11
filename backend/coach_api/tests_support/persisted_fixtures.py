@@ -10,6 +10,18 @@ from django.db import connection
 from django.utils import timezone
 
 
+def review_source(source_id, *, learner_id, aptem_review_id, review_type="Monthly Coaching Meeting", status="Not Scheduled"):
+    """Persist the source parent required by the PostgreSQL overlay FK."""
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'INSERT INTO "Learner".reviews (id,learner_id,aptem_review_id,review_type,status) '
+            'VALUES (%s,%s,%s,%s,%s)',
+            [source_id, learner_id, aptem_review_id, review_type, status],
+        )
+
+
 def fixed_identity(model, **values):
     """Persist a named fixture ID even on GENERATED ALWAYS identity columns.
 

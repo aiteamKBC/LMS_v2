@@ -70,7 +70,7 @@ class ImportedCourseOriginTests(unittest.TestCase):
         self.cursor.fetchall.return_value = [('M1', '50')]
         self.assertEqual(read_replacement_courses(self.cursor, [{'id': 'M1'}], 12), {'current:M1': 'legacy:50'})
         sql, params = self.cursor.execute.call_args.args
-        self.assertEqual(params, [12, ['M1']])
+        self.assertEqual(params, [False, 12, ['M1']])
         for condition in ("mapping_method='verified_source_replacement'", "mapping_status='matched'",
                           "source_system='old_lms'", "l.enrolment_id=%s", "m.deleted_at IS NULL",
                           "c.deleted_at IS NULL", "'{verified_replacement,module_id}'=c.curriculum_module_ref"):
@@ -80,6 +80,21 @@ class ImportedCourseOriginTests(unittest.TestCase):
         self.cursor.fetchall.return_value = [('M1', '50'), ('M1', '51'), ('FOREIGN', '60'), ('M2', 'bad'), ('M3', '050'), ('M3', '50')]
         self.assertEqual(read_replacement_courses(self.cursor, [{'id': key} for key in ('M1', 'M2', 'M3')], 12),
                          {'current:M3': 'legacy:50'})
+
+    def test_personal_replacement_is_bound_to_membership_owner_and_course(self):
+        self.cursor.fetchall.return_value = [('M1', '50')]
+        self.assertEqual(read_replacement_courses(self.cursor, [{'id': 'M1'}], 12, include_personal=True), {'current:M1': 'legacy:50'})
+        sql, params = self.cursor.execute.call_args.args
+        self.assertEqual(params, [True, 12, ['M1']])
+        for condition in (
+            "'{verified_replacement,scope}'='learner'",
+            "'{verified_replacement,learner_id}'=m.learner_id::text",
+            "'{verified_replacement,enrolment_id}'=l.enrolment_id::text",
+            "'{verified_replacement,source_course_ref}'=c.source_course_ref",
+            "'{verified_replacement,verified_by}' ~ '^[1-9][0-9]*$'",
+            'COALESCE(personal.module_id,c.curriculum_module_ref)=ANY(%s)',
+        ):
+            self.assertIn(condition, sql)
 
     def test_no_assignments_never_queries_replacements(self):
         self.assertEqual(read_replacement_courses(self.cursor, [], 12), {})

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useToast } from '@/hooks/useToast';
+import { useToast } from "@/hooks/useToast";
 import { useResetWorkspaceScroll } from '@/hooks/useResetWorkspaceScroll';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from '../presentation/EnrolmentWorkspaceShell';
 import design from '../presentation/EnrolmentWorkspace.module.css';
@@ -12,7 +12,8 @@ import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard, updateCommercialBoard } from '@/api/commercialUsers';
 import type { EnrolmentBoard } from '../types';
 import { btnSecondary } from '../components/ui';
-import { WizardProvider, useWizard } from './WizardContext';
+import { WizardProvider } from './WizardContext';
+import { useWizard } from "./WizardContext";
 import { WizardShell } from './WizardShell';
 import { DEFAULT_LAYOUT, visibleSteps } from './layout/resolve';
 

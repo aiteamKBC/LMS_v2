@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from "@/hooks/useAuth";
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -21,7 +21,9 @@ import design from '@/features/old-otjh/design.module.css';
 import journal from '@/features/old-otjh/journal.module.css';
 import reportStyles from '@/features/old-otjh/report.module.css';
 import { completeLogMonth, getLogContent, getLogMonth, getLogSummary, signLogMonth, unlockLogMonth, type LogSummary, type LogPerspective, type LogDetail } from './api';
-import type { ActivityContent } from '@/features/old-otjh/api';
+import type { Activity, ActivityContent } from '@/features/old-otjh/api';
+import { correctLogManualTime } from './api';
+import { ManualTimeCorrectionDialog } from './ManualTimeCorrectionDialog';
 import styles from './monthlyLogs.module.css';
 import { MonthList, MonthIndexSkeleton } from './MonthList';
 import { CoachLearnerLogs } from '@/features/coach/monthly-logs/components/CoachLearnerLogs';
@@ -124,6 +126,13 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
     : mcmWorkflow ? getLogMonth(id, selected, signal, perspective, false, workflowKey) : getLogMonth(id, selected, signal, perspective);
   const selectMonth = (selected: string) => onMonthChange ? onMonthChange(selected) : navigate(`${base}/${selected}`);
   const query = useQuery({ queryKey: [...key, workflowKey], queryFn: ({ signal }) => loadMonth(month, signal), refetchInterval: loadedDetail ? false : 7000, enabled: !futureMonth && !loadedDetail, initialData: loadedDetail });
+  const [correctionRow, setCorrectionRow] = useState<Activity | null>(null);
+  const [correctedDetail, setCorrectedDetail] = useState<LogDetail | null>(null);
+  const correctionScope = `${id}:${month}:${perspective}`;
+  const activeCorrectionScope = useRef(correctionScope);
+  activeCorrectionScope.current = correctionScope;
+  useEffect(() => { setCorrectedDetail(null); }, [loadedDetail, query.data]);
+  useEffect(() => { setCorrectionRow(null); setCorrectedDetail(null); }, [id, month, perspective]);
   const draftDigest = useRef<string | null>(null);
   const [captureVersion, setCaptureVersion] = useState(0);
   const [message, setMessage] = useState('');
@@ -147,7 +156,7 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
   if (query.isPending && !loadedDetail) return <MonthReportSkeleton />;
   if (query.error && !query.data && !loadedDetail) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   if (!query.data && !loadedDetail) return null;
-  const data = loadedDetail ?? query.data!;
+  const data = correctedDetail ?? loadedDetail ?? query.data!;
   // Training-plan values come only from the canonical monthly-log response;
   // this view must not overwrite them from a second frontend contract.
   // Sort a presentation copy so the saved report and signing digest stay intact.
@@ -162,6 +171,9 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
   // to diverge from the MCM signature that will be mirrored here.
   const awaitingMcmSignature = mcmWorkflow && perspective === 'learner' && !data.student_signature;
   const readOnly = observer || embedded || !!data.is_open || summary.read_only || (perspective === 'learner' && !canActAsStudent) || awaitingMcmSignature;
+  const canCorrectTime = !observer && !embedded && !reader && !summary.read_only && data.source === 'lms'
+    && !data.locked && !data.student_signature && !data.coach_signature
+    && (perspective === 'coach' ? !coachViewAs() : canActAsStudent);
   const index = summary.months.findIndex(m => m.month === month);
   const previous = summary.months[index - 1], next = summary.months[index + 1];
   const signatureRows = embedded
@@ -184,8 +196,11 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
     <LearnerInformation summary={summary} data={displayData} actions={!embedded ? <JournalDownloads summary={summary} month={month} disabled={signing.isPending || (data.source === 'lms' && !(data.student_signature && data.coach_signature))} loadMonth={loadMonth} /> : undefined} />
     {displayData.target_warning && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Target hours: Unavailable. {displayData.target_warning}</p>}
     <MonthlyHours data={displayData} />
-    <ActivityLog key={sourceRef ?? 'all'} data={displayData} initialSourceRef={sourceRef}
+    <ActivityLog key={sourceRef ?? 'all'} data={displayData} initialSourceRef={sourceRef} onCorrectTime={canCorrectTime ? setCorrectionRow : undefined}
       contentScope={reader?.cacheScope ?? `monthly-logs:${perspective}:${id}`} loadContent={rowId => reader ? reader.content(month, rowId) : mcmWorkflow ? getLogContent(id, month, rowId, perspective, workflowKey) : getLogContent(id, month, rowId, perspective)} />
+    {correctionRow && <ManualTimeCorrectionDialog key={`${id}:${month}:${correctionRow.id}`} row={correctionRow} canSave={canCorrectTime} onClose={() => setCorrectionRow(null)}
+      onSave={input => correctLogManualTime(id, month, correctionRow.manual_time!.progress_id, input, summary.csrf_token, perspective)}
+      onSaved={updated => { if (activeCorrectionScope.current !== correctionScope) return; setCorrectedDetail(updated); setCorrectionRow(null); setMessage('Manual time corrected. This entry and its totals have been updated.'); void client.invalidateQueries({ queryKey: ['monthly-logs'] }); }} />}
     <section className={`${journal.card} ${journal.signoff}`} aria-label={embedded ? 'Learner monthly sign-off' : 'Monthly sign-off'}>
       <div className={journal.sectionHeading}><div><h2 className="font-heading">{embedded ? 'Learner sign-off' : 'Report sign-off'}</h2><p>{data.is_open ? 'This month is still updating. Signatures become available after month-end.' : embedded ? 'The learner signature is captured on the Monthly Coaching Meeting.' : 'Your learner and coach signatures for this month’s record.'}</p></div></div>
       <div className={journal.signoffBody}><div className={reportStyles.reportTableWrap}><table className={reportStyles.signTable} aria-label="Report sign-off">

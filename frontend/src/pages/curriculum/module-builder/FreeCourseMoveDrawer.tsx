@@ -1,0 +1,93 @@
+import { useEffect, useState } from 'react';
+import { SelectMenu } from '@/components/feature/SelectField';
+import {
+  convertFreeCourseToModule, curriculumErrorMessage, fetchCurriculumDeliveryScope,
+  type CurriculumProgramme, type CurriculumCohort, type CurriculumGroup,
+} from '@/lib/curriculumApi';
+import { EntityDrawer, FormField } from '../shared/entities/ui';
+
+type MoveResult = Awaited<ReturnType<typeof convertFreeCourseToModule>>;
+
+export function FreeCourseMoveDrawer({ module, programmes, onClose, onMoved }: {
+  module: { catalogueId: string; title: string };
+  programmes: CurriculumProgramme[];
+  onClose: () => void;
+  onMoved: (result: MoveResult) => void | Promise<void>;
+}) {
+  const [programmeId, setProgrammeId] = useState('');
+  const [cohortId, setCohortId] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [scope, setScope] = useState<{ cohorts: CurriculumCohort[]; groups: CurriculumGroup[] }>({ cohorts: [], groups: [] });
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [retry, setRetry] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [moved, setMoved] = useState<MoveResult | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError('');
+    fetchCurriculumDeliveryScope().then(value => { if (active) setScope(value); })
+      .catch(reason => { if (active) setLoadError(curriculumErrorMessage(reason, reason instanceof Error ? reason.message : 'Unable to load destinations.')); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [retry]);
+  const activeProgrammes = programmes.filter(item => !item.isArchived && item.status !== 'archived');
+  const programme = activeProgrammes.find(item => (item.sourceId || item.id) === programmeId);
+  const belongsToProgramme = (item: { programmeId?: string; programme?: string }) => Boolean(programme && (
+    item.programmeId ? [programme.id, programme.sourceId].includes(item.programmeId) : item.programme === programme.name
+  ));
+  const cohorts = scope.cohorts.filter(item => belongsToProgramme(item) && item.status !== 'archived');
+  const cohort = cohorts.find(item => item.id === cohortId);
+  const groups = scope.groups.filter(item => belongsToProgramme(item) && item.cohortId === cohortId && item.status !== 'archived');
+  const valid = Boolean(programme && cohort && groups.some(item => item.id === groupId));
+  const locked = saving || Boolean(moved);
+  const submit = async () => {
+    if (saving || (!moved && (!valid || loading || loadError))) return;
+    setSaving(true);
+    setError('');
+    let result = moved;
+    try {
+      result = result || await convertFreeCourseToModule(module.catalogueId, { programmeId, cohortId, groupId });
+      setMoved(result);
+      await onMoved(result);
+    } catch (reason) {
+      setError(result
+        ? 'The course was moved, but the catalogue could not be refreshed. Retry the refresh.'
+        : curriculumErrorMessage(reason, reason instanceof Error ? reason.message : 'The course could not be moved. Please try again.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <EntityDrawer open title="Move to module" subtitle={module.title}
+    onClose={onClose} onSubmit={submit} saving={saving}
+    submitLabel={moved ? 'Refresh catalogue' : 'Move to module'}
+    submitDisabled={!moved && (!valid || loading || Boolean(loadError))}
+    dirty={!moved && Boolean(programmeId || cohortId || groupId)} error={error || loadError}>
+    <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-[12px] leading-6 text-foreground-700">
+      This course will become a regular module and leave Free courses. Its content, hours,
+      assigned learners and their progress stay intact. Learners in the selected group receive
+      it through their normal learning plan. Live sessions and Teams become available from the usual module tools.
+    </p>
+    {loading && <p role="status" className="text-[12px] text-foreground-500">Loading destinations...</p>}
+    {loadError && <button type="button" onClick={() => setRetry(value => value + 1)} className="text-[12px] font-bold text-primary-700 underline">Retry destinations</button>}
+    <FormField label="Programme" required>
+      <SelectMenu ariaLabel="Destination programme" value={programmeId} disabled={locked || loading}
+        placeholder={activeProgrammes.length ? 'Choose programme' : 'No active programmes'}
+        options={activeProgrammes.map(item => ({ value: item.sourceId || item.id, label: item.name }))}
+        onChange={value => { setProgrammeId(value); setCohortId(''); setGroupId(''); }} />
+    </FormField>
+    <FormField label="Cohort" required>
+      <SelectMenu ariaLabel="Destination cohort" value={cohortId} disabled={locked || loading || !programme}
+        placeholder={!programme ? 'Choose programme first' : cohorts.length ? 'Choose cohort' : 'No active cohorts'}
+        options={cohorts.map(item => ({ value: item.id, label: item.name }))}
+        onChange={value => { setCohortId(value); setGroupId(''); }} />
+    </FormField>
+    <FormField label="Group" required>
+      <SelectMenu ariaLabel="Destination group" value={groupId} disabled={locked || loading || !cohort}
+        placeholder={!cohort ? 'Choose cohort first' : groups.length ? 'Choose group' : 'No active groups'}
+        options={groups.map(item => ({ value: item.id, label: item.name }))} onChange={setGroupId} />
+    </FormField>
+  </EntityDrawer>;
+}

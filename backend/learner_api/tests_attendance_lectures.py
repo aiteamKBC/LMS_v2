@@ -325,6 +325,20 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result[0]['source'], 'microsoft-teams')
         self.assertEqual(result[0]['attendance_report_id'], 'report-1')
 
+    def test_saved_shared_outcome_cannot_be_replaced_by_the_source_register(self):
+        now = timezone.now()
+        native = register_row(source='microsoft-teams', session_id='occ', occurrence_id='occ',
+            module_catalogue_id='source', scheduled_start=now-timedelta(hours=2),
+            scheduled_end=now-timedelta(hours=1), attendance_status='present', attendance_report_id='report')
+        shared = {**native, 'session_id': 'occ:destination', 'occurrence_id': 'occ:destination',
+                  'module_catalogue_id': 'destination', 'attendance_source_occurrence_id': 'occ'}
+        records = [{**native, 'source': 'live-register'},
+                   {**shared, 'source': 'live-register', 'attendance_status': 'absent'}]
+        result = lecture_register(SimpleNamespace(id=12), records=records,
+                                  scheduled=[native, shared], apply_adjustments=False)
+        self.assertEqual({row['module_catalogue_id']: row['attendance_status'] for row in result},
+                         {'source': 'present', 'destination': 'absent'})
+
     def test_schedule_excludes_deleted_modules_and_superseded_or_failed_series_and_occurrences(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
@@ -436,6 +450,49 @@ class AttendanceLectureTests(SimpleTestCase):
         result = build_lectures([row], {}, [activity, other], [], 'commercial', 12)[0]
         self.assertEqual(result['ksbs'], [])
         self.assertEqual(result['activities'], [])
+
+    def test_native_lecture_uses_its_linked_week_title_for_both_learner_types(self):
+        row = register_row(source='microsoft-teams', session_id='occ-2', module_catalogue_id='m',
+                           session_title='Scheduled session')
+        component = {'id': 'c1', 'type': 'live_session', 'module_catalogue_id': 'm', 'week_id': 'w2',
+                     'week_title': 'L2: Customer adoption', 'title': 'Live Teams Session 1',
+                     'description': '', 'completed': False, 'settings': {'teamsOccurrenceId': 'occ-2'}}
+        other_week = {**component, 'id': 'c2', 'week_id': 'w1', 'week_title': 'L1: Introduction',
+                      'settings': {'teamsOccurrenceId': 'occ-1'}}
+        other_module = {**component, 'id': 'c3', 'module_catalogue_id': 'other', 'week_title': 'Other course'}
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                baseline = build_lectures([row], {}, [], [{k: v for k, v in component.items() if k != 'week_title'}], kind, 12)[0]
+                result = build_lectures([row], {}, [], [other_week, other_module, component], kind, 12)[0]
+                self.assertEqual(result['title'], 'L2: Customer adoption')
+                self.assertEqual({**result, 'title': baseline['title']}, baseline)
+                self.assertEqual(component['title'], 'Live Teams Session 1')
+                self.assertEqual(row['session_title'], 'Scheduled session')
+
+    def test_native_lecture_keeps_existing_title_without_a_week_title(self):
+        row = register_row(source='microsoft-teams', session_id='occ-2', module_catalogue_id='m')
+        component = {'id': 'c1', 'type': 'live_session', 'module_catalogue_id': 'm', 'week_id': 'w2',
+                     'title': 'Authored lecture', 'description': '', 'completed': False,
+                     'settings': {'teamsOccurrenceId': 'occ-2'}}
+        for week_title in (None, '', '   '):
+            for title in ('Authored lecture', ''):
+                with self.subTest(week_title=week_title, title=title):
+                    linked = {**component, 'week_title': week_title, 'title': title}
+                    result = build_lectures([row], {}, [], [linked], 'commercial', 12)[0]
+                    self.assertEqual(result['title'], title or row['session_title'])
+
+    def test_native_lecture_does_not_guess_a_week_without_a_unique_link(self):
+        row = register_row(source='microsoft-teams', session_id='occ-2', module_catalogue_id='m')
+        component = {'id': 'c1', 'type': 'live_session', 'module_catalogue_id': 'm', 'week_id': 'w2',
+                     'week_title': 'Customer adoption', 'title': 'Live Teams Session 1',
+                     'description': '', 'completed': False, 'settings': {'teamsOccurrenceId': 'occ-2'}}
+        cases = ([], [{**component, 'settings': {'teamsOccurrenceId': 'occ-1'}}],
+                 [component, {**component, 'id': 'c2', 'week_id': 'w3', 'week_title': 'Another week'}])
+        for components in cases:
+            with self.subTest(components=components):
+                result = build_lectures([row], {}, [], components, 'commercial', 12)[0]
+                self.assertEqual(result['title'], row['session_title'])
+                self.assertNotIn('componentHref', result)
 
     def test_native_ksbs_fall_back_to_linked_week_then_assigned_module(self):
         row = register_row(source='microsoft-teams', session_id='occ-2', module_catalogue_id='m', live_session_id='live')
@@ -697,6 +754,8 @@ class AttendanceLectureTests(SimpleTestCase):
              patch('learner_api.attendance_lectures._direct_progress_records', return_value=[]):
             read_native_components(SimpleNamespace(id=12), {'assigned', 'not-assigned'})
         self.assertEqual(cur.execute.call_args.args[1], [['assigned']])
+        self.assertIn('w.title AS week_title', cur.execute.call_args.args[0])
+        self.assertIn('w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id', cur.execute.call_args.args[0])
 
     def test_ambiguous_groups_skip_materials_without_choosing_another_course(self):
         conn = MagicMock()
@@ -1122,10 +1181,9 @@ class AttendanceModeTests(SimpleTestCase):
             self.assertEqual(response.status_code, 400)
             state.assert_not_called()
 
-    def _post_mode(self, body, role, before):
-        """Drive the mode view past its auth gate with the enrolment DB mocked."""
+    def _post_mode(self, body, role, before, kind='apprenticeship', learner_id=12):
+        """Exercise the authenticated route with database and email writes mocked."""
         from .attendance_mode import attendance_mode
-        view = inspect.unwrap(attendance_mode)
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         model = MagicMock()
         model.all_learners.filter.return_value.first.return_value = source
@@ -1133,10 +1191,22 @@ class AttendanceModeTests(SimpleTestCase):
         cur = conn.cursor.return_value.__enter__.return_value
         request = RequestFactory().post('/', json.dumps(body), content_type='application/json',
                                         HTTP_X_REQUESTED_WITH='XMLHttpRequest')
-        request.login_account = SimpleNamespace(role=role)
-        with patch('learner_api.attendance_mode.SOURCE_MODELS', {'apprenticeship': model}),              patch('learner_api.attendance_mode.connections', {'enrolment': conn}),              patch('learner_api.attendance_mode.transaction.atomic', return_value=nullcontext()),              patch('learner_api.attendance_mode._ready', return_value=True),              patch('learner_api.attendance_mode._state', side_effect=[before, {**before, 'mode': body['mode'],
-                   'requested_mode': None, 'status': 'active'}]),              patch('learner_api.attendance_mode._manager', return_value='manager@example.test') as manager,              patch('learner_api.attendance_mode.is_configured', return_value=True),              patch('learner_api.attendance_mode._send_request', return_value=True) as send:
-            response = view(request, kind='apprenticeship', learner_id=12)
+        request.login_account = SimpleNamespace(role=role, subject_id=12) if role else None
+        with patch('login.permissions._auth_gate_enabled', return_value=True), \
+             patch('login.permissions.authenticate_request', return_value=request.login_account), \
+             patch('login.permissions.audit_admin_learner_action'), \
+             patch('login.permissions.coach_owns_learner', return_value=False), \
+             patch('login.permissions.staff_owns_learner', return_value=role == 'staff'), \
+             patch('learner_api.attendance_mode.SOURCE_MODELS', {'apprenticeship': model, 'commercial': model}), \
+             patch('learner_api.attendance_mode.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_mode.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.attendance_mode._ready', return_value=True), \
+             patch('learner_api.attendance_mode._state', side_effect=[before, {**before, 'mode': body['mode'],
+                   'requested_mode': None, 'status': 'active'}]), \
+             patch('learner_api.attendance_mode._manager', return_value='manager@example.test') as manager, \
+             patch('learner_api.attendance_mode.is_configured', return_value=True), \
+             patch('learner_api.attendance_mode._send_request', return_value=True) as send:
+            response = attendance_mode(request, kind=kind, learner_id=learner_id)
         return response, cur, manager, send
 
     def test_admin_direct_recorded_mode_applies_without_manager_approval_or_email(self):
@@ -1152,20 +1222,52 @@ class AttendanceModeTests(SimpleTestCase):
         manager.assert_not_called()
         send.assert_not_called()
 
-    def test_learner_cannot_skip_manager_approval(self):
-        before = {'mode': 'live', 'status': 'active', 'email_sent': False}
-        response, cur, manager, send = self._post_mode({'mode': 'lazy', 'direct': True}, 'learner', before)
-        self.assertEqual(response.status_code, 403)
-        cur.execute.assert_not_called()
-        send.assert_not_called()
+    def test_learners_cannot_change_mode_or_request_approval(self):
+        for kind in ('apprenticeship', 'commercial'):
+            for saved_mode, requested_mode in (('live', None), ('lazy', None), ('live', 'lazy')):
+                before = {'mode': saved_mode, 'requested_mode': requested_mode,
+                          'status': 'pending' if requested_mode else 'active', 'email_sent': False}
+                for mode in ('live', 'lazy'):
+                    for direct in (False, True):
+                        with self.subTest(kind=kind, saved=before, mode=mode, direct=direct):
+                            body = {'mode': mode, 'role': 'admin'}
+                            if direct:
+                                body['direct'] = True
+                            response, cur, manager, send = self._post_mode(body, 'learner', before, kind)
+                            self.assertEqual(response.status_code, 403)
+                            self.assertIn('managed by your learning team', json.loads(response.content)['error'])
+                            cur.execute.assert_not_called()
+                            manager.assert_not_called()
+                            send.assert_not_called()
 
-    def test_learner_recorded_request_still_asks_the_manager(self):
+    def test_authorized_staff_recorded_request_still_asks_the_manager(self):
         before = {'mode': 'live', 'status': 'active', 'email_sent': False, 'request_id': None}
-        response, cur, manager, send = self._post_mode({'mode': 'lazy'}, 'learner', before)
+        response, cur, manager, send = self._post_mode({'mode': 'lazy'}, 'staff', before)
         self.assertEqual(response.status_code, 200)
         self.assertIn("status='pending'", cur.execute.call_args_list[-1].args[0])
         manager.assert_called_once()
         send.assert_called_once()
+
+    def test_admin_can_set_either_mode_for_both_learner_kinds(self):
+        for kind in ('apprenticeship', 'commercial'):
+            for mode in ('live', 'lazy'):
+                with self.subTest(kind=kind, mode=mode):
+                    before = {'mode': 'lazy' if mode == 'live' else 'live', 'status': 'active', 'email_sent': False}
+                    response, cur, manager, send = self._post_mode({'mode': mode, 'direct': True}, 'admin', before, kind)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(json.loads(response.content)['mode'], mode)
+                    self.assertEqual(cur.execute.call_args_list[-1].args[1], [mode, 12])
+                    manager.assert_not_called()
+                    send.assert_not_called()
+
+    def test_mode_writes_keep_authentication_and_ownership_checks(self):
+        for role, learner_id, status in ((None, 12, 401), ('learner', 99, 404), ('employer', 12, 403)):
+            with self.subTest(role=role, learner_id=learner_id):
+                response, cur, manager, send = self._post_mode({'mode': 'live'}, role, {}, learner_id=learner_id)
+                self.assertEqual(response.status_code, status)
+                cur.execute.assert_not_called()
+                manager.assert_not_called()
+                send.assert_not_called()
 
     def test_bulk_mode_read_is_staff_or_admin_and_returns_saved_modes(self):
         from .attendance_mode import attendance_modes

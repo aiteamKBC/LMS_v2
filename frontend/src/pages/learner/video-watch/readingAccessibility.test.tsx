@@ -4,6 +4,9 @@ import type { JourneyComponent } from '@/utils/learnerJourney';
 import type { ModuleCatalogueItem } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { LearnerPreview } from '@/pages/curriculum/module-builder/LearnerPreview';
 import { ComponentBody } from './page';
+import { extractScannedPage } from './readingOcr';
+
+vi.mock('./readingOcr', () => ({ extractScannedPage: vi.fn() }));
 
 const pdfText = vi.hoisted(() => vi.fn());
 vi.mock('pdfjs-dist', () => ({
@@ -203,9 +206,54 @@ it('explains a scanned page and allows the learner to return to the original PDF
   pdfText.mockResolvedValue({ items: [] });
   render(reading({ contentHtml: '', resourceUrl: '/scan.pdf' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Text reading view' }));
-  expect(await screen.findByText(/Scanned pages need a text version/)).toHaveAttribute('role', 'status');
+  expect(await screen.findByText(/Extract text from this scanned page/)).toHaveAttribute('role', 'status');
+  expect(extractScannedPage).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Original PDF' }));
   expect(screen.getByRole('region', { name: 'Original PDF page' }).querySelector('canvas')).toBeVisible();
+});
+
+it('extracts a scanned page on demand, applies tools, escapes markup and retains page text across views', async () => {
+  const speak = vi.fn();
+  vi.stubGlobal('speechSynthesis', { speak, cancel: vi.fn() });
+  vi.stubGlobal('SpeechSynthesisUtterance', class { text: string; constructor(text: string) { this.text = text; } });
+  pdfText.mockResolvedValue({ items: [] });
+  vi.mocked(extractScannedPage).mockResolvedValue('Scanned <script>content</script>\n\nSecond paragraph.');
+  render(reading({ contentHtml: '', resourceUrl: '/scan.pdf' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Text reading view' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Extract page text' }));
+  const surface = await screen.findByRole('region', { name: 'PDF text, page 1' });
+  expect(surface).toHaveTextContent('Scanned <script>content</script>');
+  expect(surface.querySelector('script')).toBeNull();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Read aloud' })));
+  await waitFor(() => expect(speak).toHaveBeenCalledOnce());
+  expect(speak.mock.calls[0][0].text).toBe('Scanned <script>content</script> Second paragraph.');
+  await act(async () => speak.mock.calls[0][0].onend());
+  expect(screen.getByRole('button', { name: 'Read aloud' })).toHaveAttribute('aria-pressed', 'false');
+  changePreferences();
+  expectPreferences(surface);
+  selectText(surface.querySelector('[data-reading-text]') as HTMLElement);
+  fireEvent.click(screen.getByRole('button', { name: 'Original PDF' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Text reading view' }));
+  expect((await screen.findByRole('region', { name: 'PDF text, page 1' })).querySelector('mark')).not.toBeNull();
+  expect(extractScannedPage).toHaveBeenCalledTimes(1);
+});
+
+it('keeps OCR failures retryable and aborts a pending extraction when the reader changes page', async () => {
+  pdfText.mockResolvedValue({ items: [] });
+  vi.mocked(extractScannedPage).mockRejectedValueOnce(new Error('Please retry extraction.'));
+  render(reading({ contentHtml: '', resourceUrl: '/scan.pdf' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Text reading view' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Extract page text' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Please retry extraction.');
+  let finish!: (text: string) => void;
+  vi.mocked(extractScannedPage).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole('button', { name: 'Extract page text' }));
+  const signal = vi.mocked(extractScannedPage).mock.calls.at(-1)![2];
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(signal.aborted).toBe(true);
+  await act(async () => finish('Previous page text.'));
+  expect(screen.queryByText('Previous page text.')).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Extract page text' })).toBeEnabled();
 });
 
 it('shows extraction errors, allows retry and renders PDF markup as harmless text', async () => {

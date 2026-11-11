@@ -52,3 +52,43 @@ it('exports the saved KBC and live attendance history for one learner', () => {
   expect(mocks.autoTable).toHaveBeenCalledTimes(3);
   expect(mocks.doc.save).toHaveBeenCalledWith('attendance-history_alex-example.pdf');
 });
+
+it('exports completed and awaiting recordings with their actual outcomes', () => {
+  downloadLearnerAttendancePdf({
+    learner: { id: '301', name: 'Synthetic Learner', email: 'synthetic@example.test',
+      programmeId: '', cohortId: '', groupId: '', endDate: '' },
+    cohortName: '', moduleLabel: '',
+    history: [
+      { id: '1', sessionDate: '2026-10-14', moduleName: 'Module', lectureName: 'Session 1', source: 'live', attendance: 'recorded' },
+      { id: '2', sessionDate: '2026-10-21', moduleName: 'Module', lectureName: 'Session 2', source: 'kbc', attendance: 'awaiting_recording' },
+    ],
+  });
+  expect(mocks.autoTable).toHaveBeenLastCalledWith(mocks.doc, expect.objectContaining({
+    body: [
+      [expect.any(String), 'Module', 'Session 1', 'Live register', 'Recording completed'],
+      [expect.any(String), 'Module', 'Session 2', 'KBC', 'Awaiting recording'],
+    ],
+  }));
+});
+
+it('lists make-up evidence while counting only the original lecture in the PDF', () => {
+  downloadLearnerAttendancePdf({
+    learner: {
+      id: 'kbc:42', kbcId: '42', name: 'Alex Example', email: 'alex@example.invalid',
+      programmeId: 'P1', cohortId: 'C1', groupId: 'G1', endDate: '',
+    },
+    cohortName: 'Autumn', moduleLabel: 'Module A',
+    history: [
+      { id: 'live:6', sessionDate: '2026-10-06', moduleName: 'Module A',
+        lectureName: 'Session 1', attendance: 'present', source: 'live' },
+      { id: 'live:9', sessionDate: '2026-10-09', moduleName: 'Module A',
+        lectureName: 'Session 1', attendance: 'present', source: 'live',
+        makeupForDate: '2026-10-06', countsAsSession: false },
+    ],
+  });
+
+  expect(mocks.doc.text).toHaveBeenCalledWith('1 session', expect.anything(), 92);
+  expect(mocks.autoTable).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({
+    body: expect.arrayContaining([expect.arrayContaining([expect.stringContaining('make-up for')])]),
+  }));
+});

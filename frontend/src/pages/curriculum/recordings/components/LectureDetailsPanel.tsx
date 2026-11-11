@@ -5,7 +5,10 @@ import {
   lectureReadyCount,
 } from "@/pages/curriculum/recordings/utils";
 import LectureAttendance from './LectureAttendance';
+import LectureTranscript from './LectureTranscript';
 import RecordingItem from "@/pages/curriculum/recordings/components/RecordingItem";
+import { lazy, Suspense, useMemo, useState } from 'react';
+const QualityReviewDialog = lazy(() => import('@/pages/coaching-recordings/QualityReviewDialog'));
 
 interface LectureDetailsPanelProps {
   lecture: Lecture;
@@ -22,6 +25,10 @@ export default function LectureDetailsPanel({
   onClose,
   onPlay,
 }: LectureDetailsPanelProps) {
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const teachingLecture = useMemo(() => lecture.seriesId && lecture.occurrenceId
+    ? { moduleId: lecture.moduleId, seriesId: lecture.seriesId, occurrenceId: lecture.occurrenceId } : undefined,
+  [lecture.moduleId, lecture.seriesId, lecture.occurrenceId]);
   const readyCount = lectureReadyCount(lecture);
   const total = lecture.recordings.length;
 
@@ -36,7 +43,7 @@ export default function LectureDetailsPanel({
   ];
 
   return (
-    <aside
+    <><aside
       aria-label="Lecture details"
       className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-hidden border-l border-background-200 bg-background-50 shadow-2xl animate-slide-in-right"
     >
@@ -102,7 +109,16 @@ export default function LectureDetailsPanel({
           )}
         </div>
 
+        {teachingLecture && <LectureTranscript key={`${teachingLecture.moduleId}:${teachingLecture.seriesId}:${teachingLecture.occurrenceId}`} scope={teachingLecture} />}
+
         <div className="mt-5"><LectureAttendance key={`${lecture.id}:${timeZone}`} lecture={lecture} timeZone={timeZone} /></div>
+
+        <section className="mt-5 rounded-xl border border-primary-200 bg-primary-50 p-4" aria-label="Teaching quality check">
+          <h3 className="text-sm font-bold text-foreground-950">Teaching Quality Check</h3>
+          <p className="mt-1 text-xs leading-5 text-foreground-600">Teaching Session Feedback Form · One review for the lecture and tutor.</p>
+          {teachingLecture ? <button type="button" onClick={() => setQualityOpen(true)} className="mt-3 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700">Open teaching quality check</button>
+            : <p className="mt-2 text-xs text-foreground-600">A saved lecture is required before its teaching review can be opened.</p>}
+        </section>
 
         <p className="mt-5 flex items-start gap-2 rounded-md bg-secondary-50 px-3 py-2.5 text-[11px] leading-relaxed text-secondary-900">
           <i className="ri-shield-check-line mt-0.5 text-sm" aria-hidden="true"></i>
@@ -111,5 +127,8 @@ export default function LectureDetailsPanel({
         </p>
       </div>
     </aside>
+    {qualityOpen && teachingLecture && <Suspense fallback={<p role="status" className="fixed inset-0 z-[90] flex items-center justify-center bg-white/95">Loading teaching quality check…</p>}>
+      <QualityReviewDialog key={`${teachingLecture.moduleId}:${teachingLecture.occurrenceId}`} teachingLecture={teachingLecture} timeZone={timeZone} onClose={() => setQualityOpen(false)} />
+    </Suspense>}</>
   );
 }

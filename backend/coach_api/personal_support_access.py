@@ -63,7 +63,7 @@ def prepare_learner_personal_support(request, review_id):
             history = (definition or {}).get("historicalReview") or {}
             if (not definition or definition["instance"]["learnerId"] != profile.pk
                     or review_family(history.get("type")) != "PSP"
-                    or source_is_completed(history)):
+                    or (source_is_completed(history) and not definition.get("migratedForm"))):
                 return JsonResponse({"detail": "Personal Support Plan not found for this account."}, status=404)
             key = definition["instance"]["id"]
             overlays = list(ImportedReviewInstance.objects.filter(

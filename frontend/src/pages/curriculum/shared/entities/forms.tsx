@@ -44,6 +44,7 @@ import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
 import { useFormFieldMerge, useFormSeedGuard, useRecordGuard, useRecordRebaseRetry } from './useDrawerState';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DatePickerField } from '@/components/feature/DatePickerField';
+import { isNameOnlyEdit } from './nameOnlyEdit';
 
 // The names these fields go by on screen. A notice that says "you both changed
 // the programmeId" is our vocabulary, not the reader's.
@@ -175,8 +176,9 @@ export function ProgrammeFormDrawer({
       };
       let created: CurriculumProgramme | null = null;
       if (programme) {
+        const patch = isNameOnlyEdit(liveValues, baseline.current) ? { name: payload.name } : payload;
         const outcome = await guard.save(
-          expectedRevision => updateCurriculumProgramme(programmeIdentity(programme), guardedInput(payload, expectedRevision)),
+          expectedRevision => updateCurriculumProgramme(programmeIdentity(programme), guardedInput(patch, expectedRevision)),
         );
         // Somebody saved first. Their programme is merging into this form now,
         // and the retry sends the result; nothing has been written yet.
@@ -532,9 +534,10 @@ export function CohortFormDrawer({
   );
 
   const submit = async () => {
+    const renameOnly = Boolean(cohort && isNameOnlyEdit(liveValues, baseline.current));
     if (!name.trim()) { setError('Give the cohort a name.'); return; }
-    if (!programmeId) { setError('Choose the programme this cohort belongs to.'); return; }
-    if (!startDate) { setError('Set the cohort start date.'); return; }
+    if (!renameOnly && !programmeId) { setError('Choose the programme this cohort belongs to.'); return; }
+    if (!renameOnly && !startDate) { setError('Set the cohort start date.'); return; }
 
     const programme = programmes.find(item => sameIdentifier(programmeIdentity(item), programmeId))
       || programmes.find(item => sameIdentifier(item.name, programmeId));
@@ -562,8 +565,9 @@ export function CohortFormDrawer({
       // drawer opened on, with the dates the preview has already worked out.
       let saved: CurriculumCohort | null = null;
       if (cohort) {
+        const patch = renameOnly ? { name: payload.name } : payload;
         const outcome = await guard.save(
-          expectedRevision => updateCurriculumCohort(cohort.id, guardedInput(payload, expectedRevision)),
+          expectedRevision => updateCurriculumCohort(cohort.id, guardedInput(patch, expectedRevision)),
         );
         // Somebody saved first. Their cohort is now merging into this form, and
         // the retry below sends the result; nothing has been written yet.
@@ -584,6 +588,7 @@ export function CohortFormDrawer({
           holidayIds,
           excludedHolidayIds,
         };
+        if (renameOnly) saved = { ...(guard.stored || cohort), name: payload.name };
       } else {
         saved = (await createCurriculumCohort(payload)).cohort || null;
       }
@@ -1091,8 +1096,9 @@ export function GroupFormDrawer({
   };
 
   const submit = async () => {
+    const renameOnly = Boolean(group && isNameOnlyEdit(liveValues, baseline.current));
     if (!name.trim()) { setError('Give the group a name.'); return; }
-    if (!cohortId) { setError('Choose the cohort this group belongs to.'); return; }
+    if (!renameOnly && !cohortId) { setError('Choose the cohort this group belongs to.'); return; }
 
     setSaving(true);
     setError(null);
@@ -1109,15 +1115,16 @@ export function GroupFormDrawer({
       // save says which ones, for the notice below.
       let staleTeamsCalendars: StaleTeamsCalendar[] = [];
       if (group) {
+        const patch = renameOnly ? { name: payload.name } : payload;
         const outcome = await guard.save(
-          expectedRevision => updateCurriculumGroup(group.id, guardedInput(payload, expectedRevision)),
+          expectedRevision => updateCurriculumGroup(group.id, guardedInput(patch, expectedRevision)),
         );
         // Somebody saved first. Their group is merging into this form now, and
         // the retry sends the result; nothing has been written yet, so no
         // calendar has been left behind to warn about either.
         if (!outcome.saved) return;
         staleTeamsCalendars = outcome.result?.teamsCalendarsToUpdate || [];
-        saved = { ...group, ...payload };
+        saved = renameOnly ? { ...(guard.stored || group), name: payload.name } : { ...group, ...payload };
       } else {
         saved = (await createCurriculumGroup(payload)).group || null;
       }

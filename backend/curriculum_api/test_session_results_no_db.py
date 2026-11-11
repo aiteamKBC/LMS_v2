@@ -1,5 +1,6 @@
 """Direct regression runner: stdlib/AST only; no Django setup, DB or network."""
 import ast
+import copy
 import functools
 import hashlib
 import httpx
@@ -146,7 +147,9 @@ class ModuleCalendarLinkingTests(unittest.TestCase):
         })
 
         self.assertEqual(len(self.updates), 1)
-        self.assertEqual(self.updates[0][2], ['LIVE-COPY'])
+        self.assertEqual(self.updates[0][2], ['LIVE-COPY', 'MOD-COPY'])
+        self.assertIn('module_catalogue_id IS NULL', self.updates[0][1])
+        self.assertIn('module_catalogue_id = %s', self.updates[0][1])
 
     def test_legacy_partial_save_keeps_metadata_fallback(self):
         self.ns['link_live_session_series_to_module']('MOD-LEGACY', {
@@ -154,7 +157,7 @@ class ModuleCalendarLinkingTests(unittest.TestCase):
         })
 
         self.assertEqual(len(self.updates), 1)
-        self.assertEqual(self.updates[0][2], ['LIVE-LEGACY'])
+        self.assertEqual(self.updates[0][2], ['LIVE-LEGACY', 'MOD-LEGACY'])
 
 
 def visit(start, end):
@@ -355,6 +358,8 @@ class StorageUrlTests(unittest.TestCase):
         ns = {'datetime': datetime, 'timezone': timezone, 'timedelta': timedelta,
             'settings': types.SimpleNamespace(AZURE_STORAGE_ACCOUNT='synthetic', AZURE_STORAGE_KEY='test-only', AZURE_SAS_TTL_MINUTES=15),
             'generate_blob_sas': sign, 'BlobSasPermissions': lambda **values: values,
+            # Azure mode; the S3 branch is covered by learner_api.test_s3_storage_no_db.
+            'blob_storage': types.SimpleNamespace(s3_enabled=lambda: False),
             'blob_url': lambda container, name: f'https://storage.invalid/{container}/{name}'}
         functions(ROOT.parent / 'learner_api/evidence_storage.py', {'get_read_sas'}, ns)
         before = datetime.now(timezone.utc)
@@ -493,7 +498,7 @@ class SharedSessionRosterQueryTests(unittest.TestCase):
     def test_shared_module_without_occurrences_uses_its_plan_roster(self):
         read = Mock(side_effect=[[], [{
             'id': 'SOURCE-O', 'attendance_report_id': 'R', 'actual_end': '2026-10-01',
-        }]])
+        }], []])
         effective = Mock(return_value=[{'source_occurrence_id': 'SOURCE-O', 'learner_profile_id': 33,
                                        'learner_email': 'destination@example.invalid'}])
         namespace = {'read': read, 'effective_module_register_rows': effective}
@@ -511,6 +516,9 @@ class SharedSessionRosterQueryTests(unittest.TestCase):
         self.assertNotIn('learner_training_plan_modules', query)
         self.assertEqual(params, ['DEST', ['SOURCE-O']])
         effective.assert_called_once_with('DEST', [{'id': 'SOURCE-O', 'attendance_report_id': 'R', 'actual_end': '2026-10-01'}])
+        saved_query, saved_params = read.call_args_list[2].args
+        self.assertIn('module_catalogue_id=%s', saved_query)
+        self.assertEqual(saved_params, ['DEST', ['SOURCE-O']])
 
 
 class KnownLearnerEmailTests(unittest.TestCase):
@@ -1135,10 +1143,13 @@ class EndpointTests(unittest.TestCase):
         self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
             [{'id': 'O1', 'seriesId': 'S', 'sessionNumber': 1, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': True, 'fileCount': 2},
              {'id': 'O2', 'seriesId': 'S', 'sessionNumber': 2, 'startsAt': None, 'endsAt': None, 'syncedAt': None, 'reportReady': False, 'fileCount': 0}], []]
-        self.ns['linked_session_items'].return_value = {('S', 1): {'title': 'Week 01 | Join the LIVE session', 'week': None}}
+        self.ns['linked_session_items'].return_value = {('S', 1): {'title': 'Week 01 | Join the LIVE session', 'week': None, 'weekTitle': 'Pricing'}}
         response = self.ns['module_results'](self.req(), module_id='M')
         sessions = response['series'][0]['sessions']
         self.assertEqual([item['itemTitle'] for item in sessions], ['Week 01 | Join the LIVE session', None])
+        self.assertEqual([item['itemWeekTitle'] for item in sessions], ['Pricing', None])
+        self.assertEqual([(item['id'], item['seriesId'], item['sessionNumber']) for item in sessions],
+                         [('O1', 'S', 1), ('O2', 'S', 2)])
         self.ns['linked_session_items'].assert_called_once_with(['S'])
         # A failed name lookup never hides the sessions.
         self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
@@ -1173,6 +1184,18 @@ class EndpointTests(unittest.TestCase):
         self.assertNotIn('url', rows[0]['artifacts'][0])
         self.ns['apply_recovery'].assert_called_once_with(rows)
         self.assertEqual(self.ns['read'].call_args.args[1], [['O']])
+        self.cursor.execute.assert_not_called()
+
+    def test_cutover_file_list_does_not_advertise_a_ready_azure_archive_as_playable(self):
+        self.ns['apply_recovery'] = Mock()
+        self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 7, 'status': 'completed',
+            'scheduled_start': '2026-11-06T09:00Z', 'scheduled_end': '2026-11-06T11:00Z'}],
+            [], [], [], [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': 'recording',
+                         'created_datetime': None, 'archive_status': 'ready', 'transcript_text': None,
+                         'metadata': {}}]]
+        rows = self.ns['result_rows']({'id': 'S', 'attendees': []}, session_number=7)
+        artifact = rows[0]['artifacts'][0]
+        self.assertEqual((artifact['state'], artifact['playbackProvider']), ('pending', 'bunny'))
         self.cursor.execute.assert_not_called()
 
     def test_missing_archive_queue_never_claims_success(self):
@@ -1211,6 +1234,127 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240,
             content_type='video/mp4', content_disposition='attachment; filename="Module-session-1-2026-09-07.mp4"')
+
+    def test_bunny_recording_resolves_authorized_iframe_without_azure_signing(self):
+        bunny = types.ModuleType('curriculum_api.session_bunny')
+        bunny.recording_player = Mock(return_value='https://player.mediadelivery.net/embed/798153/synthetic')
+        self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording',
+            'metadata': {'lmsBunnyRecording': {'state': 'ready', 'libraryId': '798153', 'videoId': 'synthetic'}}}]
+        req = self.req(); req.GET = {'format': 'player'}
+        with patch.dict(sys.modules, {'curriculum_api.session_bunny': bunny}):
+            response = self.ns['stored_content'](req, 'S', 'A')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['provider'], 'bunny')
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.assertEqual(self.ns['read'].call_args.args[1], ['A', 'S'])
+        bunny.recording_player.assert_called_once()
+
+    def test_bunny_pending_never_falls_back_to_retained_azure_video(self):
+        self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording',
+            'container': 'session-recordings', 'blob_name': 'old.mp4',
+            'metadata': {'lmsBunnyRecording': {'state': 'pending'}}}]
+        self.assertEqual(self.ns['stored_content'](self.req(), 'S', 'A').status_code, 409)
+
+    def test_cutover_recording_without_bunny_pointer_cannot_sign_an_azure_video(self):
+        storage = types.ModuleType('learner_api.evidence_storage')
+        storage.get_read_sas = Mock(side_effect=AssertionError('Azure playback forbidden after cutover'))
+        for day in ('2026-11-05T00:00:00Z', '2026-11-06T09:00:00Z'):
+            with self.subTest(day=day), patch.dict(sys.modules, {'learner_api.evidence_storage': storage}):
+                self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording',
+                    'scheduled_start': day, 'metadata': {}, 'container': 'session-recordings',
+                    'blob_name': '798153/saved-bunny-video'}]
+                response = self.ns['stored_content'](self.req(), 'S', 'A')
+            self.assertEqual(response.status_code, 409)
+        storage.get_read_sas.assert_not_called()
+
+    def personal_session_reader(self):
+        namespace = {'__package__': 'learner_api', 'copy': copy, 're': re}
+        functions(ROOT.parent / 'learner_api/personal_learning_reads.py', {'session_read'}, namespace)
+        personal = types.ModuleType('learner_api.personal_learning')
+        functions(ROOT.parent / 'learner_api/personal_learning.py', {'ensure_open'}, personal.__dict__)
+        results = types.ModuleType('curriculum_api.session_results')
+        results.read = self.ns['read']
+        results.result_rows = self.ns['result_rows']
+        results.stored_content = self.ns['stored_content']
+        bunny = types.ModuleType('curriculum_api.session_bunny')
+        bunny.recording_player = Mock(return_value='https://player.mediadelivery.net/embed/798153/synthetic')
+        modules = patch.dict(sys.modules, {'learner_api.personal_learning': personal,
+            'curriculum_api.session_results': results, 'curriculum_api.session_bunny': bunny})
+        modules.start(); self.addCleanup(modules.stop)
+        context = {'id': 'pl.7.preview.MOD-A', 'module_id': 'MOD-A', 'mode': 'preview'}
+        detail = {'learningAccess': {'blocked': False},
+            'components': [{'teamsLiveSessionId': 'S', 'teamsSessionNumber': 7}]}
+        self.ns['read'].side_effect = [[{'id': 'S'}], [{'session_number': 7}],
+            [{'id': 'A', 'artifact_type': 'recording'}],
+            [{'status': 'ready', 'artifact_type': 'recording',
+              'metadata': {'lmsBunnyRecording': {'state': 'ready', 'videoId': 'synthetic'}}}]]
+        return namespace['session_read'], context, detail, bunny.recording_player
+
+    def test_personal_course_bunny_player_returns_json_in_every_mode(self):
+        for mode in ('preview', 'study', 'all'):
+            with self.subTest(mode=mode):
+                reader, context, detail, player = self.personal_session_reader()
+                context.update(mode=mode, id=f'pl.7.{mode}.MOD-A')
+                path = f"/learner_api/session-results/commercial/{context['id']}/S/artifacts/A/"
+                request = self.req(); request.GET = {'path': path + '?format=player'}
+                response = reader(request, context, detail, path, {'format': 'player'})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response['provider'], 'bunny')
+                self.assertEqual(response['url'], player.return_value)
+                self.assertEqual(response['Cache-Control'], 'private, no-store')
+                self.assertEqual(request.GET, {'path': path + '?format=player'})
+                self.assertEqual(self.ns['read'].call_args_list[-4].args[1], ['S', 'MOD-A'])
+
+    def test_personal_course_bunny_player_rejects_unassigned_session(self):
+        reader, context, detail, player = self.personal_session_reader()
+        self.ns['read'].side_effect = [[{'id': 'S'}], [{'session_number': 99}]]
+        path = f"/learner_api/session-results/commercial/{context['id']}/S/artifacts/A/"
+        with self.assertRaisesRegex(LookupError, 'File not found in this course'):
+            reader(self.req(), context, detail, path, {'format': 'player'})
+        player.assert_not_called()
+        self.assertEqual(self.ns['read'].call_count, 2)
+
+    def test_personal_course_bunny_player_keeps_hidden_recordings_private(self):
+        reader, context, detail, player = self.personal_session_reader()
+        self.ns['read'].side_effect = [[{'id': 'S'}], [{'session_number': 7}],
+            [{'id': 'A', 'artifact_type': 'recording', 'metadata': {'lmsHiddenFromLearners': True}}]]
+        path = f"/learner_api/session-results/commercial/{context['id']}/S/artifacts/A/"
+        response = reader(self.req(), context, detail, path, {'format': 'player'})
+        self.assertEqual(response.status_code, 404)
+        player.assert_not_called()
+        self.assertEqual(self.ns['read'].call_count, 3)
+
+    def test_personal_course_player_preserves_the_cohort_access_gate(self):
+        reader, context, detail, player = self.personal_session_reader()
+        detail['learningAccess'] = {'blocked': True, 'startDate': '2027-01-01'}
+        path = f"/learner_api/session-results/commercial/{context['id']}/S/artifacts/A/"
+        with self.assertRaises(PermissionError):
+            reader(self.req(), context, detail, path, {'format': 'player'})
+        self.ns['read'].assert_not_called()
+        player.assert_not_called()
+
+    def test_personal_course_native_video_request_keeps_its_redirect(self):
+        reader, context, detail, player = self.personal_session_reader()
+        path = f"/learner_api/session-results/commercial/{context['id']}/S/artifacts/A/"
+        response = reader(self.req(), context, detail, path, {})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['location'], player.return_value)
+
+    def test_personal_course_transcript_formats_are_preserved(self):
+        for format in ('txt', 'cues'):
+            with self.subTest(format=format):
+                reader, context, detail, player = self.personal_session_reader()
+                cues = [{'start': 1, 'end': 3, 'speaker': '', 'text': 'Saved words'}]
+                self.ns['read'].side_effect = [[{'id': 'S'}], [{'session_number': 7}],
+                    [{'id': 'T', 'artifact_type': 'transcript'}],
+                    [{'status': 'ready', 'artifact_type': 'transcript', 'transcript_text': 'Saved words',
+                      'metadata': {'lmsTranscriptTimeline': {'version': 1, 'cues': cues}}}]]
+                path = f"/learner_api/session-results/commercial/{context['id']}/S/artifacts/T/"
+                response = reader(self.req(), context, detail, path, {'format': format})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response['cues'] if format == 'cues' else response.content,
+                                 cues if format == 'cues' else 'Saved words')
+                player.assert_not_called()
 
     def test_staff_resolves_inline_and_download_urls_without_exposing_unauthenticated_file(self):
         storage = types.ModuleType('learner_api.evidence_storage')
@@ -1332,17 +1476,20 @@ class EndpointTests(unittest.TestCase):
             response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
         self.assertJoinError(response, 'unavailable')
 
-    def learner_series(self, assigned, shared, series_row):
+    def learner_series(self, assigned, shared, series_row, additional=(), kind='commercial'):
         learner = types.SimpleNamespace(email='a@example.invalid')
         model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
             filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
-        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {kind: model}
         lectures = types.ModuleType('learner_api.attendance_lectures')
         lectures.read_assigned_modules = lambda source: [{'id': module_id} for module_id in assigned]
         lectures.shared_teams_sources = Mock(return_value=shared)
-        self.ns['read'].return_value = [series_row] if series_row else []
+        self.ns['read'].side_effect = lambda sql, params=(): (
+            [{'module_catalogue_id': module_id} for module_id in additional]
+            if "c.settings_json->>'extraTeamsLiveSessionId'=%s" in sql
+            else [series_row] if series_row else [])
         with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
-            return self.ns['learner_series']('commercial', 7, 'S'), lectures.shared_teams_sources
+            return self.ns['learner_series'](kind, 7, 'S'), lectures.shared_teams_sources
 
     def test_learner_series_accepts_a_learner_on_a_shared_teams_duplicate(self):
         series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'Active'}
@@ -1359,6 +1506,68 @@ class EndpointTests(unittest.TestCase):
         self.assertIs(found, series)
         shared.assert_not_called()
         self.assertEqual(self.learner_series(['SOURCE'], {}, None)[0], (None, None))
+
+    def test_booked_shared_additional_meeting_is_limited_to_its_single_session(self):
+        series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'week-meeting',
+                  'meeting_type': 'week-additional', 'join_url': 'https://teams.example/masterclass'}
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                (learner, found), _ = self.learner_series(['ALIAS'], {}, series, additional=['ALIAS'], kind=kind)
+                self.assertIsNotNone(learner)
+                self.assertEqual(found, {**series, 'learner_shared_module_ids': ['ALIAS'],
+                                       'linked_session_numbers': {1}, 'additional_meeting_access': True})
+        self.assertEqual(self.learner_series(['OTHER'], {}, series)[0], (None, None))
+        regular = {**series, 'status': 'active', 'meeting_type': 'linked-external'}
+        self.assertEqual(self.learner_series(['ALIAS'], {}, regular, additional=['ALIAS'])[0], (None, None))
+
+    def test_booked_additional_results_keep_only_the_learners_own_attendance(self):
+        learner = types.SimpleNamespace(email=' A@EXAMPLE.invalid ')
+        series = {'id': 'S', 'learner_shared_module_ids': ['ALIAS'],
+                  'linked_session_numbers': {1}, 'additional_meeting_access': True}
+        self.ns['learner_series'] = Mock(return_value=(learner, series))
+        self.ns['result_rows'] = Mock(return_value=[{'attendance': [{'email': 'a@example.invalid'}]}])
+        recorded = types.ModuleType('learner_api.recorded_attendance')
+        recorded.saved_delivery_mode = Mock(return_value='live')
+        recorded.apply_recorded_attendance = Mock()
+        rules = types.ModuleType('learner_api.attendance_rules'); rules.attendance_outcome = Mock()
+        with patch.dict(sys.modules, {'learner_api.recorded_attendance': recorded, 'learner_api.attendance_rules': rules}):
+            response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['sessions'][0]['attendance'], [{'email': 'a@example.invalid'}])
+        self.ns['result_rows'].assert_called_once_with(series, session_number=1, email='a@example.invalid')
+        self.ns['result_rows'].reset_mock()
+        response = self.ns['learner_results'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=2)
+        self.assertEqual(response.status_code, 404)
+        self.ns['result_rows'].assert_not_called()
+
+    def test_booked_additional_join_cannot_open_a_different_session(self):
+        self.ns['learner_series'] = Mock(return_value=(object(), {
+            'id': 'S', 'linked_session_numbers': {1}, 'additional_meeting_access': True}))
+        self.ns['read'].reset_mock()
+        response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=2)
+        self.assertJoinError(response, 'not-found')
+        self.ns['read'].assert_not_called()
+
+    def test_booked_additional_join_keeps_the_verified_oneoff_link(self):
+        response = self.join(series={'linked_session_numbers': {1}, 'additional_meeting_access': True},
+                             occurrence={'join_url': 'https://teams.microsoft.com/meet/masterclass'})
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/masterclass')
+        self.assertIn('live_session_join_launches', self.cursor.execute.call_args.args[0])
+
+    def test_booked_additional_content_does_not_grant_another_sessions_artifact(self):
+        access = types.ModuleType('curriculum_api.linked_recording_access')
+        access.linked_artifact_allowed = Mock(return_value=False)
+        series = {'id': 'S', 'linked_session_numbers': {1}, 'additional_meeting_access': True}
+        self.ns['learner_series'] = Mock(return_value=(object(), series))
+        self.ns['stored_content'] = Mock(return_value=Response({'url': 'https://storage.invalid/recording'}))
+        with patch.dict(sys.modules, {'curriculum_api.linked_recording_access': access}):
+            self.assertEqual(self.ns['learner_content'](self.req('learner'), kind='commercial', learner_id=7,
+                                                      series_id='S', artifact_id='OTHER').status_code, 404)
+            self.ns['stored_content'].assert_not_called()
+            access.linked_artifact_allowed.return_value = True
+            self.assertEqual(self.ns['learner_content'](self.req('learner'), kind='commercial', learner_id=7,
+                                                      series_id='S', artifact_id='OWN').status_code, 200)
+            self.ns['stored_content'].assert_called_once()
 
     def test_linked_recording_grants_only_the_linked_sessions_and_never_join(self):
         access = types.ModuleType('curriculum_api.linked_recording_access')
@@ -1565,6 +1774,7 @@ class ArchiveWorkerTests(unittest.TestCase):
                   'saved_name': 'existing/module/session/recording.mp4' if exists else None}]]),
             'storage_client': lambda: client, 'CONTAINER': 'session-recordings', 'archive_prefix': archive_prefix,
             'transcript_text': transcript_text, 'transcript_timing_ready': lambda artifact: timed,
+            'artifact_metadata': artifact_metadata,
             'save_transcript_timing': Mock(), 'TransferProgress': Mock(), 'byte_count': byte_count,
             'save_archive': Mock(), 'tempfile': tempfile, 'sleep': Mock(),
             'copy_matched_recording': Mock(return_value=False),

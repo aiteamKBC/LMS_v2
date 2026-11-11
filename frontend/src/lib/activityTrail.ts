@@ -58,8 +58,10 @@ const EXCLUDED_PREFIXES = [
   // audit write here would call the authenticated Curriculum API and its 401
   // would look like an expired LMS session to the global session handler.
   '/event-check-in',
+  '/qr-attendance',
   '/event-feedback',
   '/event-rsvp',
+  '/lecture-feedback',
   // Public booking pages must not call the authenticated audit endpoint.
   '/coach-booking/',
   // Neither must the public apprenticeship application.

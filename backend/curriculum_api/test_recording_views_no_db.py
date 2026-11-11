@@ -1,5 +1,6 @@
 import inspect
 import json
+from datetime import datetime, timezone
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -58,6 +59,31 @@ class RecordingWatchTests(SimpleTestCase):
 
 
 class FullyWatchedTests(SimpleTestCase):
+    def test_completion_evidence_separates_ready_recordings_from_completed_watching(self):
+        available = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
+        watched_at = datetime(2026, 11, 10, 12, tzinfo=timezone.utc)
+        artifacts = [self.recording('R1', archive_updated_at=available)]
+        views = [{'artifact_id': 'R1', 'watched_seconds': 300, 'duration_seconds': 600,
+                  'last_heartbeat_at': watched_at}]
+        def read(sql, params=()):
+            return views if 'live_session_recording_views' in sql else artifacts
+        with patch.object(recording_views, 'read', side_effect=read) as query:
+            result = recording_views.recording_completion_evidence('commercial', 101, ['OCC-1'])
+            self.assertEqual(result, {'OCC-1': {'ready': True, 'completed': False,
+                                              'availableAt': available, 'completedAt': None}})
+            self.assertEqual(query.call_args.args[1], ['commercial', 101, ['OCC-1']])
+            views[0]['watched_seconds'] = 600
+            self.assertEqual(recording_views.recording_completion_evidence('commercial', 101, ['OCC-1'])['OCC-1'],
+                             {'ready': True, 'completed': True, 'availableAt': available, 'completedAt': watched_at})
+
+    def test_pending_bunny_recording_grants_neither_ready_nor_watched_evidence(self):
+        artifacts = [self.recording('R1', metadata={'lmsBunnyRecording': {'state': 'pending'}})]
+        views = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        with patch.object(recording_views, 'read', side_effect=lambda sql, params=():
+                          views if 'live_session_recording_views' in sql else artifacts):
+            result = recording_views.recording_completion_evidence('apprenticeship', 202, ['OCC-1'])
+        self.assertEqual(result['OCC-1'], {'ready': False, 'completed': False, 'availableAt': None, 'completedAt': None})
+
     def check(self, artifacts, views):
         def fake_read(sql, params=()):
             return list(views) if 'live_session_recording_views' in sql else list(artifacts)
@@ -84,6 +110,41 @@ class FullyWatchedTests(SimpleTestCase):
         meta = '{"callId": "C1", "createdDateTime": "2026-09-17T10:50:39Z", "endDateTime": "2026-09-17T12:55:09Z"}'
         artifacts = [self.recording('R1', metadata=meta), self.recording('R2', metadata=meta)]
         watched = [{'artifact_id': 'R2', 'watched_seconds': 7470, 'duration_seconds': 7470}]
+        self.assertEqual(self.check(artifacts, watched), {'OCC-1'})
+
+    def test_ready_bunny_recording_keeps_credit_when_the_retained_azure_archive_is_failed(self):
+        artifacts = [self.recording('R1', archive_status='failed',
+                     metadata={'lmsBunnyRecording': {'state': 'ready'}})]
+        watched = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), {'OCC-1'})
+
+    def test_pending_bunny_copy_cannot_use_azure_readiness_for_viewing_credit(self):
+        artifacts = [self.recording('R1', metadata={'lmsBunnyRecording': {'state': 'pending'}})]
+        watched = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), set())
+
+    def test_pending_bunny_alias_blocks_credit_from_a_ready_azure_duplicate(self):
+        identity = {'callId': 'C1', 'createdDateTime': '2026-11-06T09:00:00Z',
+                    'endDateTime': '2026-11-06T10:00:00Z'}
+        artifacts = [self.recording('R1', metadata={**identity, 'lmsBunnyRecording': {'state': 'pending'}}),
+                     self.recording('R2', metadata=identity)]
+        watched = [{'artifact_id': 'R2', 'watched_seconds': 600, 'duration_seconds': 600}]
+        for aliases in (artifacts, list(reversed(artifacts))):
+            with self.subTest(order=[row['id'] for row in aliases]):
+                self.assertEqual(self.check(aliases, watched), set())
+
+    def test_post_cutover_recording_without_bunny_metadata_cannot_borrow_azure_credit(self):
+        artifacts = [self.recording('R1', scheduled_start='2026-11-06T09:00:00Z')]
+        watched = [{'artifact_id': 'R1', 'watched_seconds': 600, 'duration_seconds': 600}]
+        self.assertEqual(self.check(artifacts, watched), set())
+
+    def test_ready_bunny_alias_preserves_watch_evidence_on_the_same_recordings_other_id(self):
+        identity = {'callId': 'C1', 'createdDateTime': '2026-11-06T09:00:00Z',
+                    'endDateTime': '2026-11-06T10:00:00Z'}
+        artifacts = [self.recording('R1', archive_status='failed',
+                                   metadata={**identity, 'lmsBunnyRecording': {'state': 'ready'}}),
+                     self.recording('R2', archive_status='failed', metadata=identity)]
+        watched = [{'artifact_id': 'R2', 'watched_seconds': 600, 'duration_seconds': 600}]
         self.assertEqual(self.check(artifacts, watched), {'OCC-1'})
 
     def test_hidden_or_unarchived_recordings_are_not_required_and_nothing_to_watch_is_not_complete(self):

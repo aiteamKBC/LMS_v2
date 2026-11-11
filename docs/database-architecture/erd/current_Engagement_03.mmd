@@ -1,0 +1,10 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Engagement__rewards {
+        integer id PK
+    }
+    Engagement__voucher_claims {
+        integer id PK
+        integer reward_id FK
+    }
+    Engagement__rewards ||..o{ Engagement__voucher_claims : "voucher_claims_reward_id_fkey"

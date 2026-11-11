@@ -143,10 +143,10 @@ def counted_history(source, learner_profile_id):
         awaiting_recording = status == 'awaiting_recording' and row.get('session_date') and not any(
             str(row.get(key) or '').strip().lower() in INVALID
             for key in ('status', 'session_status', 'occurrence_status', 'attendance_status'))
-        # Coach View/PDF counts unfinished recordings as absences. Keep the
-        # shared learner rule and persisted attendance evidence unchanged.
+        # Pending recordings remain visible in history, outside the attendance
+        # denominator, using the same rule as the learner register.
         if eligible or awaiting_recording:
-            counted_total += 1
+            counted_total += bool(eligible)
             present += status == 'present'
             awaiting_total += bool(awaiting_recording)
             history.append((row, status))
@@ -183,6 +183,8 @@ def detail_records(source, learner_profile_id, params):
         # This warning has a verified visible consumer; omit it on normal rows.
         if row.get('legacy_ambiguity'):
             record['legacyAmbiguity'] = row['legacy_ambiguity']
+        if row.get('attendance_basis'):
+            record['attendanceBasis'] = row['attendance_basis']
         records.append(record)
     return {'attendanceMode': recorded_attendance.saved_delivery_mode(source.id),
             'awaitingRecording': awaiting_total,

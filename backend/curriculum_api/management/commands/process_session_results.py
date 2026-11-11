@@ -151,6 +151,14 @@ class Command(BaseCommand):
                     WHERE live_session_id=%s AND lease_id=%s''', ['failed' if error else 'complete', error[:1500], series_id, lease])
             processed += 1
             failed += bool(error)
+        # Captions may arrive after a recording is ready, including older lectures
+        # whose normal Graph discovery is no longer due on this pass.
+        try:
+            from curriculum_api.session_captions import sync_pending_captions
+            sync_pending_captions(limit=options['limit'], series_ids=requested_ids)
+        except Exception as caption_failure:
+            logging.getLogger(__name__).warning('Pending caption check is unavailable (%s); existing session jobs are unchanged.',
+                                                type(caption_failure).__name__)
         self.stdout.write(f'Processed {processed} session jobs; {failed} need retry.')
         if failed:
             error = CommandError('Some session jobs need retry; saved results remain available.')

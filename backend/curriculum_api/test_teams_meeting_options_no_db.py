@@ -16,6 +16,10 @@ ROOT = Path(__file__).parent
 package = types.ModuleType('curriculum_api')
 package.__path__ = [str(ROOT)]
 sys.modules['curriculum_api'] = package
+original = types.ModuleType('curriculum_api.teams_original_calendar')
+original.original_calendar_read = lambda view: view
+original.current_calendar = lambda: None
+sys.modules[original.__name__] = original
 for name, attrs in {'django': {}, 'django.http': {'JsonResponse': dict},
                     'django.views': {}, 'django.views.decorators': {},
                     'django.views.decorators.http': {'require_GET': lambda view: view},

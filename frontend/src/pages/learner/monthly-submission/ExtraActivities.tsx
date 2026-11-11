@@ -14,11 +14,12 @@ export function ExtraActivities({ kind, learnerId, month }: { kind: string; lear
     {activities.map(activity => <article key={activity.activityId} className={styles.submissionAttempt}>
       <div className={styles.sectionHeading}><h4>{activity.title || 'Untitled extra activity'}</h4><span className={styles.status} data-status={activity.status}>{labels[activity.status] || activity.status}</span></div>
       <p>{activity.hours || '0'} claimed hours{activity.ksbs.length ? ` | ${activity.ksbs.join(', ')}` : ''}</p>
+      {activity.addedBy && <p>Added by coach: {activity.addedBy}{activity.reviewedBy ? ` · Reviewed by: ${activity.reviewedBy}` : ''}</p>}
       {activity.month && <p>Activity month: {monthName(activity.month)}</p>}
       {activity.submittedAt && activity.status !== 'draft' && <p>Submitted: {formatSystemTimestamp(activity.submittedAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)</p>}
       <p className="whitespace-pre-wrap">{activity.reflection || activity.answer}</p>
       {activity.coachFeedback && <p className="whitespace-pre-wrap"><strong>Coach feedback: </strong>{activity.coachFeedback}</p>}
-      <Link className={styles.secondary} to={`/learner/monthly-submission/${kind}/${learnerId}/extra-activities?activity=${encodeURIComponent(activity.activityId)}`}>{activity.status === 'draft' ? 'Continue draft' : activity.status === 'rejected' ? 'Revise extra activity' : 'View extra activity'}</Link>
+      <Link className={styles.secondary} to={`/learner/monthly-submission/${kind}/${learnerId}/extra-activities?activity=${encodeURIComponent(activity.activityId)}`}>{activity.addedBy ? 'View extra activity' : activity.status === 'draft' ? 'Continue draft' : activity.status === 'rejected' ? 'Revise extra activity' : 'View extra activity'}</Link>
     </article>)}
   </section>;
 }
