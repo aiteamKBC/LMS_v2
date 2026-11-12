@@ -8,6 +8,7 @@ import LectureAttendance from './LectureAttendance';
 import LectureTranscript from './LectureTranscript';
 import RecordingItem from "@/pages/curriculum/recordings/components/RecordingItem";
 import { lazy, Suspense, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 const QualityReviewDialog = lazy(() => import('@/pages/coaching-recordings/QualityReviewDialog'));
 
 interface LectureDetailsPanelProps {
@@ -60,7 +61,7 @@ export default function LectureDetailsPanel({
           aria-label="Close details panel"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-foreground-500 transition-colors hover:bg-background-100 hover:text-foreground-900"
         >
-          <i className="ri-close-line text-lg" aria-hidden="true"></i>
+          <X size={18} aria-hidden="true" />
         </button>
       </div>
 

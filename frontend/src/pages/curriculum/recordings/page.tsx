@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ArrowLeft, CalendarDays, Folder, Globe2, Maximize2, Minimize2 } from 'lucide-react';
 import { loadRecordingsLibrary, type RecordingsLibrary } from '@/api/sessionResults';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -17,6 +18,7 @@ import { buildCalendarLectures } from './model';
 import { agendaMatches, matchesLectureQuery, periodBounds, type AgendaFilter, type Period } from './filters';
 import type { Lecture, RecordingFilter } from './types';
 import { addDays, CALENDAR_TIME_ZONES, formatCompactDate, formatFullDate, formatMonthLabel, lectureNeedsAttention, lectureReadyCount, parseIsoDate, TIME_ZONE_LABEL, todayIso } from './utils';
+import styles from './Recordings.module.css';
 
 const TIME_ZONE_STORAGE_KEY = 'lms-recordings-calendar-zone';
 function savedTimeZone() {
@@ -181,16 +183,23 @@ export default function CurriculumRecordingsPage() {
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio" pageTitle="Session Recordings"
       pageSubtitle="Find a lecture and download its saved recordings">
-      <main className="min-h-full bg-background-100 px-4 py-5 sm:px-6 lg:px-7">
-        <nav aria-label="Recording libraries" className="mb-5 flex gap-2 text-sm font-semibold">
-          <span aria-current="page" className="rounded-lg bg-primary-600 px-3 py-2 text-white">Lecture recordings</span>
-          <Link to="/curriculum/coaching-recordings" className="rounded-lg border border-background-200 bg-white px-3 py-2 hover:bg-primary-50">Coach Meetings &amp; Recordings</Link>
-        </nav>
+      <main className={`${styles.page} min-h-full bg-background-100 px-4 py-5 sm:px-6 lg:px-7`}>
         <div className="mx-auto w-full">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h1 className="font-heading text-2xl font-extrabold tracking-tight text-foreground-950 md:text-3xl">Session Recordings</h1>
-              <p className="mt-1.5 max-w-2xl text-sm text-foreground-600">Find a lecture, review its recordings, and download the saved files. Jump to any day to see what was captured.</p>
+          <div className={`${styles.hero} flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between`}>
+            <nav aria-label="Breadcrumb" className={styles.breadcrumb}>
+              <Link to="/curriculum">Curriculum</Link><span aria-hidden="true">›</span>
+              <Link to="/curriculum/recordings-hub">Recordings hub</Link><span aria-hidden="true">›</span>
+              <span aria-current="page">Tutor session recordings</span>
+            </nav>
+            <div className={styles.heroHeading}>
+              <div>
+                <h1 className="font-heading text-2xl font-extrabold tracking-tight text-foreground-950 md:text-3xl">Tutor session recordings</h1>
+                <p className="mt-1.5 max-w-2xl text-sm text-foreground-600">Find a teaching session, check its recording was saved, and open the transcript, attendance and quality check without leaving the calendar.</p>
+              </div>
+              <nav aria-label="Recording libraries" className="flex flex-wrap gap-2 text-sm font-semibold">
+                <Link to="/curriculum/recordings-hub"><ArrowLeft size={14} aria-hidden="true" />Recordings hub</Link>
+                <Link to="/curriculum/coaching-recordings">Coach Meetings &amp; Recordings</Link>
+              </nav>
             </div>
             {<SummaryChips dayIso={selectedDate} isToday={selectedDate === todayIso(timeZone)} lecturesToday={countPool.length} periodLabel={viewMode === 'modules' || allDateSearch ? 'Lectures across all dates' : `Lectures in selected ${periodName}`}
               readyCount={readyCount} attentionCount={attentionCount} />}
@@ -209,11 +218,11 @@ export default function CurriculumRecordingsPage() {
           {library && <>
             <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Recordings view">
               <button type="button" aria-pressed={viewMode === 'calendar'} onClick={() => setViewMode('calendar')}
-                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'calendar' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}>Calendar</button>
+                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'calendar' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}><CalendarDays size={13} aria-hidden="true" />Calendar</button>
               <button type="button" aria-pressed={viewMode === 'modules'} onClick={() => { closePanel(); setViewMode('modules'); setAgendaFilter(statusFilter); setCohort('all'); setGroup('all'); setModuleId('all'); }}
-                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'modules' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}>All LMS modules ({library.modules?.length ?? 0})</button>
+                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'modules' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}><Folder size={13} aria-hidden="true" />All LMS modules ({library.modules?.length ?? 0})</button>
             </div>
-            <div className="mt-5">
+            <div className={`${styles.search} mt-5`}>
               <SearchAndFilters query={query} onQueryChange={setQuery} programmes={programmes} programme={programme}
                 onProgrammeChange={value => { setProgramme(value); setCohort('all'); setGroup('all'); setModuleId('all'); closePanel(); }} statusFilter={statusFilter} onStatusFilterChange={chooseFilter}
                 results={searchResults} searchScope={viewMode === 'modules' || allDateSearch ? 'all dates' : `selected ${periodName}`} onSelectResult={selectResult} />
@@ -223,9 +232,8 @@ export default function CurriculumRecordingsPage() {
               </label>
             </div>
 
-            {viewMode === 'calendar' && !allDateSearch && <CalendarMatchesPanel data={matchData} error={match.error} onChoose={value => { match.chooseMailbox(value); closePanel(); }} onRetry={match.retry} />}
             {allDateSearch && <p role="status" className="mt-3 text-sm text-foreground-600">All dates search uses saved LMS meetings from all organizers.</p>}
-            {viewMode === 'calendar' && <div className="mt-3 space-y-3 rounded-lg border border-background-200 bg-background-50 p-3">
+            {viewMode === 'calendar' && <div className={`${styles.filters} mt-3 space-y-3 rounded-lg border border-background-200 bg-background-50 p-3`}>
               <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Lecture status">
                 {(['all', 'ready', 'ended', 'notEnded', 'attention'] as const).map(value => <button key={value} type="button" aria-pressed={agendaFilter === value}
                   onClick={() => chooseFilter(value)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${agendaFilter === value ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-200 text-foreground-700'}`}>
@@ -253,46 +261,45 @@ export default function CurriculumRecordingsPage() {
 
             {viewMode === 'modules' ? <ModuleDirectory modules={library.modules ?? []} deliveries={library.deliveries}
               lectures={calendar.lectures} query={query} programme={programme} statusFilter={statusFilter} includeInactive={includeInactive}
-              onOpenLecture={selectResult} /> : <div className={expandedCalendar ? "fixed inset-0 z-30 flex gap-4 overflow-auto bg-background-100 p-3" : "mt-4 flex items-start gap-5"}>
+              onOpenLecture={selectResult} /> : <div className={`${styles.calendarLayout} ${expandedCalendar ? "fixed inset-0 z-30 flex gap-4 overflow-auto bg-background-100 p-3" : "mt-4 flex items-start gap-5"}`}>
               <aside className="sticky top-4 hidden w-[252px] shrink-0 lg:block" aria-label="Choose lecture date">
                 <MiniCalendar selectedDate={selectedDate} viewYear={view.year} viewMonth={view.month} lectureDates={lectureDates}
                   timeZone={timeZone} onSelectDate={iso => { setPeriod('day'); goToDate(iso); }} onMonthChange={moveMonth} onToday={() => { setPeriod('day'); goToDate(todayIso(timeZone)); }}
                   onPrevDay={() => goToDate(addDays(selectedDate, -1))} onNextDay={() => goToDate(addDays(selectedDate, 1))} compact />
               </aside>
               <section className={`min-w-0 flex-1 ${expandedCalendar ? "flex min-h-0 flex-col" : ""}`} aria-label="Recordings calendar">
-                <div className="rounded-lg border border-background-200 bg-background-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-primary-600">{periodName} agenda</p>
-                      <h2 title={`${formatFullDate(bounds.start)} - ${formatFullDate(bounds.end)}`} className="mt-1 font-heading text-lg font-bold text-foreground-950 md:text-xl">{rangeLabel}</h2>
-                      <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground-600">
-                        Calendar time zone
-                        <select aria-label="Calendar time zone" value={timeZone} onChange={event => changeTimeZone(event.target.value)}
-                          className="rounded-md border border-background-200 bg-background-50 px-2 py-1 text-xs text-foreground-900">
-                          {CALENDAR_TIME_ZONES.map(zone => <option key={zone} value={zone}>{zone}{zone === TIME_ZONE_LABEL ? ' (device)' : ''}</option>)}
-                        </select>
-                      </label>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {expandedCalendar && <select aria-label="Lecture filter" value={agendaFilter} onChange={event => chooseFilter(event.target.value as AgendaFilter)} className="rounded-md border border-background-200 bg-background-50 px-3 py-2 text-sm font-semibold">
-                        {(['all', 'ready', 'ended', 'notEnded', 'attention'] as const).map(value => <option key={value} value={value}>{value === 'all' ? 'All lectures' : value === 'ready' ? 'Ready to download' : value === 'ended' ? 'Ended' : value === 'notEnded' ? 'Not ended' : 'Needs attention'} ({filterCounts[value]})</option>)}
-                      </select>}
-                      <button type="button" aria-pressed={expandedCalendar} onClick={() => setExpandedCalendar(value => !value)} className="rounded-md border border-background-200 px-3 py-2 text-sm font-semibold">{expandedCalendar ? 'Exit full screen' : 'Full screen'}</button>
-                      <button type="button" onClick={() => { setPeriod('day'); goToDate(todayIso(timeZone)); }}
-                        className="rounded-md border border-background-200 bg-background-50 px-3 py-2 text-sm font-semibold text-foreground-800 shadow-none hover:bg-background-100">Today</button>
-                      <div className="flex items-center" role="group" aria-label="Navigate calendar period">
-                        <button type="button" aria-label={`Previous ${periodName}`} onClick={() => movePeriod(-1)} className="flex h-9 w-9 items-center justify-center rounded-md text-xl text-foreground-700 shadow-none hover:bg-background-100">&lsaquo;</button>
-                        <button type="button" aria-label={`Next ${periodName}`} onClick={() => movePeriod(1)} className="flex h-9 w-9 items-center justify-center rounded-md text-xl text-foreground-700 shadow-none hover:bg-background-100">&rsaquo;</button>
-                      </div>
-                      <label className="inline-flex items-center gap-2 border-l border-background-200 pl-3 text-xs text-foreground-600">
-                        <span className="sr-only">Calendar view</span>
-                        <select aria-label="Calendar view" value={period} onChange={event => { setPeriod(event.target.value as Period); setSearchEverywhere(false); closePanel(); }}
-                          className="rounded-md border border-background-200 bg-background-50 px-3 py-2 text-sm font-semibold text-foreground-800 shadow-none focus:ring-2 focus:ring-primary-200">
-                          <option value="day">Day</option><option value="workWeek">Work week</option><option value="week">Week</option><option value="month">Month</option>
-                        </select>
-                      </label>
-                    </div>
+                <div className={styles.calendarToolbar}>
+                  <p className="sr-only">{periodName} agenda</p>
+                  <div className={styles.calendarViews} role="group" aria-label="Calendar views">
+                    {(['day', 'workWeek', 'week', 'month'] as const).map(value => <button key={value} type="button" aria-pressed={period === value}
+                      onClick={() => { setPeriod(value); setSearchEverywhere(false); closePanel(); }}>
+                      {value === 'day' ? 'Day' : value === 'workWeek' ? 'Work week' : value === 'week' ? 'Week' : 'Month'}
+                    </button>)}
                   </div>
+                  <div className={styles.periodNavigation} role="group" aria-label="Navigate calendar period">
+                    <button type="button" aria-label={'Previous ' + periodName} onClick={() => movePeriod(-1)}>&lsaquo;</button>
+                    <button type="button" onClick={() => { setPeriod('day'); goToDate(todayIso(timeZone)); }}>Today</button>
+                    <button type="button" aria-label={'Next ' + periodName} onClick={() => movePeriod(1)}>&rsaquo;</button>
+                  </div>
+                  <h2 title={formatFullDate(bounds.start) + ' - ' + formatFullDate(bounds.end)} className={styles.rangeLabel}>{rangeLabel}</h2>
+                  <label className={styles.timeZone}>
+                    <Globe2 size={13} aria-hidden="true" /><span className="sr-only">Calendar time zone</span>
+                    <select aria-label="Calendar time zone" value={timeZone} onChange={event => changeTimeZone(event.target.value)}>
+                      {CALENDAR_TIME_ZONES.map(zone => <option key={zone} value={zone}>{zone}{zone === TIME_ZONE_LABEL ? ' (device)' : ''}</option>)}
+                    </select>
+                  </label>
+                  {expandedCalendar && <select aria-label="Lecture filter" value={agendaFilter} onChange={event => chooseFilter(event.target.value as AgendaFilter)} className="rounded-md border border-background-200 bg-background-50 px-3 py-2 text-sm font-semibold">
+                    {(['all', 'ready', 'ended', 'notEnded', 'attention'] as const).map(value => <option key={value} value={value}>{value === 'all' ? 'All lectures' : value === 'ready' ? 'Ready to download' : value === 'ended' ? 'Ended' : value === 'notEnded' ? 'Not ended' : 'Needs attention'} ({filterCounts[value]})</option>)}
+                  </select>}
+                  <button type="button" aria-label={expandedCalendar ? 'Exit full screen' : 'Full screen'} title={expandedCalendar ? 'Exit full screen' : 'Full screen'} aria-pressed={expandedCalendar} onClick={() => setExpandedCalendar(value => !value)} className={styles.expandCalendar}>
+                    {expandedCalendar ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
+                  </button>
+                  <label className={styles.calendarViewSelect}>
+                    <span className="sr-only">Calendar view</span>
+                    <select aria-label="Calendar view" value={period} onChange={event => { setPeriod(event.target.value as Period); setSearchEverywhere(false); closePanel(); }}>
+                      <option value="day">Day</option><option value="workWeek">Work week</option><option value="week">Week</option><option value="month">Month</option>
+                    </select>
+                  </label>
                 </div>
                 <div className="mt-3 lg:hidden">
                   <button type="button" aria-expanded={mobileCalendarOpen} onClick={() => setMobileCalendarOpen(open => !open)}
@@ -307,7 +314,7 @@ export default function CurriculumRecordingsPage() {
                   {library.calendarAvailable !== false && <>
                     <p role="status" className="mb-3 text-xs text-foreground-600">{resultLectures.length} lectures{allDateSearch ? ' across all dates' : ` in selected ${periodName}`}{query.trim() ? ` matching "${query.trim()}"` : ''}</p>
                     {!allDateSearch && period !== 'month' ? <CalendarTimeline startDate={bounds.start} endDate={bounds.end} lectures={resultLectures}
-                      selectedLectureId={selectedLectureId} onSelectLecture={lecture => setSelectedLectureId(lecture.id)} expanded={expandedCalendar}
+                      selectedLectureId={selectedLectureId} selectedDate={selectedDate} onSelectLecture={lecture => setSelectedLectureId(lecture.id)} expanded={expandedCalendar}
                       emptyMessage={searchPool.length ? 'No lectures match your filters' : 'No linked LMS meetings in this period'} /> : resultDates.length ? resultDates.map(date => <section key={date} className="mb-4" aria-label={`Lectures on ${date}`}>
                       <h3 className="mb-2 font-heading text-sm font-bold text-foreground-900">{formatFullDate(date)}</h3>
                       <DayGrid date={date} lectures={resultLectures.filter(item => item.date === date)} selectedLectureId={selectedLectureId}
@@ -326,6 +333,8 @@ export default function CurriculumRecordingsPage() {
                   onPlay={(_lecture, recording) => setPlayingId(current => current === recording.id ? null : recording.id)} />
               </>}
             </div>}
+
+            {viewMode === 'calendar' && !allDateSearch && <CalendarMatchesPanel data={matchData} error={match.error} onChoose={value => { match.chooseMailbox(value); closePanel(); }} onRetry={match.retry} />}
 
             {viewMode === 'calendar' && undated.length > 0 && <section className="mt-5 rounded-lg border border-background-200 bg-background-50 p-4" aria-label="Undated recordings">
               <h2 className="font-heading text-sm font-bold text-foreground-950">Recordings without a session date</h2>

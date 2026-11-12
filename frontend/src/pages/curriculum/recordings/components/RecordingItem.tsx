@@ -5,6 +5,7 @@ import StatusBadge from "@/pages/curriculum/recordings/components/StatusBadge";
 import { loadSessionResult, resolveRecordingUrl, type SessionFile } from '@/api/sessionResults';
 import { SessionRecordingPlayer } from '@/components/feature/SessionRecordingPlayer';
 import RecordingDownloadButton from './RecordingDownloadButton';
+import styles from '../Recordings.module.css';
 
 interface RecordingItemProps {
   lecture: Lecture;
@@ -61,7 +62,7 @@ export default function RecordingItem({
   }, [isPlaying, isReady, seriesId, artifactId, occurrenceId, sessionNumber, moduleId, transcriptRetry]);
 
   return (
-    <div className="rounded-lg border border-background-200 bg-background-50 p-3.5">
+    <div className={`${styles.recordingCard} rounded-lg border border-background-200 bg-background-50 p-3.5`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-heading text-sm font-bold text-foreground-950">{recording.label}</p>

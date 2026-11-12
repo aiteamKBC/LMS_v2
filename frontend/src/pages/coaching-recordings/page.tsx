@@ -13,6 +13,7 @@ import MeetingCalendar from './MeetingCalendar';
 import CoachLearnersDialog from './CoachLearnersDialog';
 import SyncReviewDrawer from './SyncReviewDrawer';
 import { readLocation, writeLocation, type CoachingLocation } from './location';
+import styles from './CurriculumRecordings.module.css';
 
 const control = 'max-w-full min-w-0 rounded-lg border border-background-200 bg-white px-3 py-2 text-sm text-foreground-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
 const phaseLabels = { ended: 'Ended', upcoming: 'Upcoming', 'in-progress': 'Within scheduled time', cancelled: 'Cancelled' };
@@ -258,12 +259,12 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
     workspaceLabel={workspace === 'coach' ? 'Coach Workspace' : 'Curriculum Studio'}
     navItems={workspace === 'coach' ? coachNavItems : curriculumNavItems}
     pageTitle="Coach Meetings & Recordings" pageSubtitle="Coach calendars, learners, meeting recordings and attendance">
-    <main className="min-h-full bg-background-100 px-4 py-5 sm:px-6 lg:px-7">
+    <main className={`${workspace === 'curriculum' ? styles.page : ''} min-h-full bg-background-100 px-4 py-5 sm:px-6 lg:px-7`}>
       {workspace === 'curriculum' && <nav aria-label="Recording libraries" className="mb-5 flex gap-2 text-sm font-semibold">
         <Link to="/curriculum/recordings" className={`${control} hover:bg-primary-50`}>Lecture recordings</Link>
         <span aria-current="page" className="rounded-lg bg-primary-600 px-3 py-2 text-white">Coach Meetings &amp; Recordings</span>
       </nav>}
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className={`${styles.hero} flex flex-wrap items-start justify-between gap-3`}>
         <div><p className="mb-2 text-xs font-bold uppercase tracking-widest text-primary-600">Coaching workspace</p><h1 className="font-heading text-2xl font-extrabold text-foreground-950">Coach Meetings &amp; Recordings</h1>
           <p className="mt-1 text-sm text-foreground-600">See every meeting on a coach's calendar by its original title. Filter by coach, learner, date or status.</p></div>
         <div className="flex flex-wrap gap-2">
@@ -314,7 +315,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         {!rosterCoach && <p className="w-full text-xs text-foreground-500">Choose one coach to view their learners.</p>}
       </section>
       {!coach && !loading && !error && <p role="status" className="mt-4 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">Choose a coach to view their meetings. Calendars load only after a coach is selected.</p>}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className={`${styles.period} mt-4 flex flex-wrap items-center gap-2`}>
         <button className={control} aria-label="Previous period" onClick={() => shift(-1)}>‹</button>
         <button className={control} onClick={() => setDate(todayIso(zone))}>Today</button>
         <button className={control} aria-label="Next period" onClick={() => shift(1)}>›</button>

@@ -5,6 +5,7 @@ import {
   parseIsoDate,
   todayIso,
 } from "@/pages/curriculum/recordings/utils";
+import styles from '../Recordings.module.css';
 
 interface MiniCalendarProps {
   compact?: boolean;
@@ -36,6 +37,7 @@ export default function MiniCalendar({
   const cells = getMonthMatrix(viewYear, viewMonth);
 
   return (
+    <div className={styles.miniCalendar}>
     <div className="rounded-lg border border-background-200 bg-background-50 p-4">
       {!compact && <div className="flex items-center gap-2">
         <button
@@ -137,7 +139,8 @@ export default function MiniCalendar({
         })}
       </div>
 
-      <div className="mt-4 space-y-2 border-t border-background-200 pt-4">
+      </div>
+      <div className={`${styles.legend} mt-4 space-y-2 rounded-lg border border-background-200 bg-background-50 p-4`}>
         <p className="text-[11px] text-foreground-500">A purple dot marks a day with a lecture.</p>
         <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-400">
           Recording status
@@ -153,7 +156,7 @@ export default function MiniCalendar({
             <span className="h-2.5 w-2.5 rounded-full bg-rose-500"></span> Not recorded
           </li>
           <li className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-rose-500"></span> Archive failed
+            <span className="h-2.5 w-2.5 rounded-full bg-rose-700"></span> Archive failed
           </li>
           <li className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full bg-secondary-500"></span> Awaiting sync

@@ -1,0 +1,123 @@
+/* Scoped layer overrides legacy shell rules only on matched elements.
+   Readdy has no dark reference: existing dark styling stays unchanged. */
+@layer recordings-ui {/* This root is applied only for workspace="curriculum", never /coach/recordings. */
+.page:where(:not(:global([data-theme='dark']) *)) {
+  --coaching-surface: oklch(0.998 0.002 305 / 0.62);
+  --coaching-line: oklch(0.895 0.021 305);
+  --coaching-control-line: oklch(0.84 0.028 305);
+  --coaching-purple: oklch(0.402 0.145 305);
+  background: oklch(0.968 0.005 305) !important;
+}
+
+.page:where(:not(:global([data-theme='dark']) *)) .hero {
+  gap: 20px !important;
+  padding: 20px 24px !important;
+  overflow: hidden !important;
+  border: 1px solid oklch(0.235 0.089 305) !important;
+  border-radius: 26px !important;
+  background:
+    radial-gradient(circle at 95% 5%, oklch(0.968 0.005 305 / 0.1) 0 140px, transparent 143px),
+    radial-gradient(circle at 65% 110%, oklch(0.795 0.145 85 / 0.1) 0 130px, transparent 134px),
+    linear-gradient(135deg, oklch(0.345 0.131 305), oklch(0.288 0.111 305), oklch(0.182 0.07 305)) !important;
+}
+
+.page:where(:not(:global([data-theme='dark']) *)) .hero h1 { font-family: inherit !important; color: oklch(0.968 0.005 305) !important; font-size: 30px !important; font-weight: 600 !important; line-height: 1.25 !important; letter-spacing: -0.01em !important; }
+.page:where(:not(:global([data-theme='dark']) *)) .hero > div:first-child > p:last-child { max-width: 590px !important; color: oklch(0.968 0.005 305 / 0.8) !important; font-size: 13.5px !important; line-height: 1.65 !important; }
+
+/* Edit quality forms has no matching Readdy control and keeps its appearance. */
+.page:where(:not(:global([data-theme='dark']) *)) .hero a[href='/curriculum/coaching-recordings/reviews'],
+.page:where(:not(:global([data-theme='dark']) *)) .hero button {
+  min-height: 36px !important;
+  padding: 8px 12px !important;
+  border-color: oklch(0.968 0.005 305 / 0.3) !important;
+  border-radius: 16px !important;
+  background: oklch(0.968 0.005 305 / 0.1) !important;
+  color: oklch(0.968 0.005 305) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+}
+
+.page:where(:not(:global([data-theme='dark']) *)) .hero a[href='/curriculum/coaching-recordings/reviews']:hover,
+.page:where(:not(:global([data-theme='dark']) *)) .hero button:hover { background: oklch(0.968 0.005 305 / 0.2) !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] { flex-wrap: wrap !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > * { border-radius: 12px !important; font-size: 13px !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > [aria-current='page'] { background: var(--coaching-purple) !important; }
+
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] {
+  gap: 12px !important;
+  border-color: var(--coaching-line) !important;
+  border-radius: 16px !important;
+  background: var(--coaching-surface) !important;
+}
+
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] label { min-width: 0 !important; max-width: 100% !important; font-size: 12px !important; font-weight: 600 !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] input[type='search'],
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] select,
+.page:where(:not(:global([data-theme='dark']) *)) .period > :is(input, select, button) {
+  min-height: 40px !important;
+  border-color: var(--coaching-control-line) !important;
+  border-radius: 16px !important;
+  background-color: var(--coaching-surface) !important;
+  color: oklch(0.15 0.015 52) !important;
+  font-size: 13px !important;
+  font-weight: 400 !important;
+}
+
+.page:where(:not(:global([data-theme='dark']) *)) .period {
+  padding: 16px !important;
+  gap: 10px !important;
+  border: 1px solid var(--coaching-line) !important;
+  border-radius: 16px !important;
+  background: var(--coaching-surface) !important;
+}
+
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] { width: 100% !important; gap: 8px !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] > button {
+  min-height: 36px !important;
+  padding: 8px 14px !important;
+  border-color: var(--coaching-control-line) !important;
+  border-radius: 12px !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+}
+
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] > button[aria-pressed='true'] { background: var(--coaching-purple) !important; color: oklch(0.968 0.005 305) !important; }
+
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] {
+  gap: 12px 20px !important;
+  padding: 10px 14px !important;
+  border: 1px solid var(--coaching-line) !important;
+  border-radius: 16px !important;
+  background: oklch(0.94 0.014 305 / 0.6) !important;
+}
+
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] > div { padding: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; font-size: 11.5px !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] svg { color: var(--coaching-purple) !important; }
+
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] h2 { font-size: 12px !important; font-weight: 600 !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] button[aria-current='date'] { background: var(--coaching-purple) !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] > p { font-size: 10px !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] > div:last-child { font-size: 10.5px !important; }
+
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] > div:first-child h2 { font-size: 12.5px !important; font-weight: 600 !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] > p { font-size: 10px !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly coach meeting calendar'] { border-color: var(--coaching-line) !important; border-radius: 12px !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly coach meeting calendar'] article > button { border-radius: 8px !important; box-shadow: none !important; }
+.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; }
+
+@media (min-width: 768px) {
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > label { flex: 1 1 25% !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > div { flex: 1 1 100% !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > div > label { flex: 1 1 25% !important; }
+}
+
+@media (max-width: 639px) {
+  .page:where(:not(:global([data-theme='dark']) *)) .hero { padding: 16px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero h1 { font-size: 26px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > label { flex: 1 1 100% !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > div { width: 100% !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > div > label { flex: 1 1 100% !important; }
+}
+}

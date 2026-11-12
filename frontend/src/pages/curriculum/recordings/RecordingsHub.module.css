@@ -1,0 +1,269 @@
+/* Readdy V521 hub. The local layer wins over legacy shell !important rules;
+   every rule stays scoped to this page, its two links and decorative assets. */
+@layer recordings-ui {
+  .page {
+    --hub-primary: .402 .145 305;
+    --hub-secondary: .55 .055 200;
+    --hub-surface: .998 .002 305;
+    --hub-background: .968 .005 305;
+    --hub-line: .895 .021 305;
+    position: relative !important;
+    display: flex !important;
+    min-height: calc(100dvh - 7rem) !important;
+    width: 100% !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    padding: 24px !important;
+    background: oklch(var(--hub-background)) !important;
+    color: oklch(.15 .015 52) !important;
+    font-family: 'Roboto', system-ui, sans-serif !important;
+    line-height: 1.55 !important;
+  }
+
+  .page .introduction {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    clip-path: inset(50%) !important;
+    white-space: nowrap !important;
+  }
+
+  .page .cards {
+    position: relative !important;
+    z-index: 1 !important;
+    display: grid !important;
+    width: 100% !important;
+    max-width: 1024px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 24px !important;
+    margin: 0 auto !important;
+    padding: 0 4px !important;
+  }
+
+  .page .card {
+    --hub-tone: var(--hub-primary);
+    --hub-tone-middle: .345 .131 305;
+    --hub-tone-end: .288 .111 305;
+    --hub-eyebrow: .288 .111 305;
+    --hub-hover-line: .79 .099 305;
+    position: relative !important;
+    display: flex !important;
+    min-width: 0 !important;
+    min-height: 600px !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    border: 1px solid oklch(var(--hub-line)) !important;
+    border-radius: 16px !important;
+    background: oklch(var(--hub-surface) / .62) !important;
+    color: oklch(.15 .015 52) !important;
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / .72), inset 0 0 0 1px oklch(1 0 0 / .26) !important;
+    backdrop-filter: blur(18px) saturate(1.55) !important;
+    text-decoration: none !important;
+    transition: transform 300ms, border-color 300ms !important;
+  }
+
+  .page .card[href='/curriculum/coaching-recordings'] {
+    --hub-tone: var(--hub-secondary);
+    --hub-tone-middle: .47 .05 200;
+    --hub-tone-end: .312 .034 200;
+    --hub-eyebrow: .392 .042 200;
+    --hub-hover-line: .808 .042 200;
+  }
+
+  .page .hoverFill {
+    position: absolute !important;
+    inset: 0 !important;
+    pointer-events: none !important;
+    background: linear-gradient(135deg, oklch(var(--hub-tone)), oklch(var(--hub-tone-middle)), oklch(var(--hub-tone-end))) !important;
+    opacity: 0 !important;
+    transition: opacity 300ms !important;
+  }
+
+  .page .illustration {
+    position: absolute !important;
+    right: -48px !important;
+    bottom: -48px !important;
+    width: 220px !important;
+    height: 220px !important;
+    overflow: hidden !important;
+    border-radius: 50% !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+    transition: opacity 500ms !important;
+  }
+
+  .page .illustration img { display: block !important; width: 100% !important; height: 100% !important; object-fit: cover !important; }
+  .page .content { position: relative !important; display: flex !important; min-width: 0 !important; flex: 1 !important; flex-direction: column !important; padding: 32px !important; }
+
+  .page .eyebrow {
+    margin: 0 !important;
+    color: oklch(var(--hub-eyebrow)) !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    line-height: 1.55 !important;
+    letter-spacing: .16em !important;
+    text-transform: uppercase !important;
+    transition: color 300ms !important;
+  }
+
+  .page .title {
+    margin: 6px 0 0 !important;
+    color: oklch(.15 .015 52) !important;
+    font-family: inherit !important;
+    font-size: 25px !important;
+    font-weight: 600 !important;
+    line-height: 1.375 !important;
+    letter-spacing: -.025em !important;
+    transition: color 300ms !important;
+  }
+
+  .page .description {
+    margin: 16px 0 0 !important;
+    color: oklch(.335 .018 58) !important;
+    font-size: 13.5px !important;
+    font-weight: 400 !important;
+    line-height: 1.625 !important;
+    transition: color 300ms !important;
+  }
+
+  .page .features { display: grid !important; grid-template-columns: minmax(0, 1fr) !important; gap: 10px !important; margin: 24px 0 0 !important; padding: 0 !important; list-style: none !important; }
+  .page .features li {
+    display: flex !important;
+    min-width: 0 !important;
+    align-items: center !important;
+    gap: 10px !important;
+    margin: 0 !important;
+    padding: 10px 14px !important;
+    border: 1px solid oklch(var(--hub-line)) !important;
+    border-radius: 12px !important;
+    background: oklch(var(--hub-surface) / .62) !important;
+    color: oklch(.27 .017 56) !important;
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / .72) !important;
+    backdrop-filter: blur(14px) saturate(1.45) !important;
+    font-size: 12.5px !important;
+    font-weight: 400 !important;
+    line-height: 1.55 !important;
+    transition: color 300ms, background-color 300ms, border-color 300ms !important;
+  }
+
+  .page .features svg { flex-shrink: 0 !important; color: oklch(.5 .018 62) !important; transition: color 300ms !important; }
+  .page .features li > span { min-width: 0 !important; font: inherit !important; }
+  .page .featureIcon { display: inline-flex !important; width: 14px !important; height: 21.7px !important; flex-shrink: 0 !important; align-items: center !important; }
+
+  .page .footer {
+    position: relative !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    margin-top: auto !important;
+    padding: 16px 28px !important;
+    border-top: 1px solid oklch(var(--hub-line)) !important;
+    background: transparent !important;
+    transition: border-color 300ms !important;
+  }
+
+  .page .meta { display: flex !important; min-width: 0 !important; align-items: flex-start !important; gap: 6px !important; margin: 0 !important; color: oklch(.5 .018 62) !important; font-size: 11.5px !important; font-weight: 400 !important; line-height: 1.375 !important; transition: color 300ms !important; }
+  .page .dot { width: 6px !important; height: 6px !important; flex-shrink: 0 !important; margin-top: 6px !important; border-radius: 50% !important; background: oklch(var(--hub-tone)) !important; transition: background-color 300ms !important; }
+  .page .meta > span:last-child { font: inherit !important; }
+  .page .action {
+    display: inline-flex !important;
+    min-height: 40px !important;
+    flex-shrink: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    padding: 0 16px !important;
+    border: 0 !important;
+    border-radius: 12px !important;
+    background: oklch(var(--hub-tone)) !important;
+    color: oklch(var(--hub-background)) !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    line-height: 1.55 !important;
+    white-space: nowrap !important;
+    transition: color 300ms, background-color 300ms !important;
+  }
+
+  .page .card:is(:hover, :focus-visible) { z-index: 2 !important; transform: translateY(-4px) !important; border-color: oklch(var(--hub-hover-line)) !important; }
+  .page .card:is(:hover, :focus-visible) .hoverFill { opacity: 1 !important; }
+  .page .card:is(:hover, :focus-visible) .illustration { opacity: .15 !important; }
+  .page .card:is(:hover, :focus-visible) :is(.eyebrow, .description, .meta) { color: oklch(var(--hub-background) / .85) !important; }
+  .page .card:is(:hover, :focus-visible) .title { color: oklch(var(--hub-background)) !important; }
+  .page .card:is(:hover, :focus-visible) .features li { border-color: oklch(var(--hub-background) / .25) !important; background: oklch(var(--hub-background) / .15) !important; color: oklch(var(--hub-background)) !important; }
+  .page .card:is(:hover, :focus-visible) .features svg { color: oklch(var(--hub-background) / .8) !important; }
+  .page .card:is(:hover, :focus-visible) .footer { border-color: oklch(var(--hub-background) / .25) !important; }
+  .page .card:is(:hover, :focus-visible) .dot { background: oklch(var(--hub-background)) !important; }
+  .page .card:is(:hover, :focus-visible) .action { background: oklch(var(--hub-background)) !important; color: oklch(var(--hub-tone-end)) !important; }
+  .page .card:focus-visible { outline: 2px solid oklch(var(--hub-tone)) !important; outline-offset: 4px !important; }
+
+  .page .backdrop { position: absolute !important; z-index: 0 !important; inset: 0 !important; overflow: hidden !important; pointer-events: none !important; }
+  .page .backdrop > span { position: absolute !important; display: block !important; }
+  .page .backdrop > span:first-child {
+    bottom: -88% !important; left: -58% !important; width: 215% !important; height: 200% !important;
+    background: repeating-radial-gradient(ellipse 72% 62% at 30% 89%, oklch(var(--hub-primary) / .82) 0, oklch(var(--hub-primary) / .82) 1.8px, transparent 1.8px, transparent 24px) !important;
+    mask-image: radial-gradient(78% 72% at 29% 91%, #000 14%, rgb(0 0 0 / .85) 44%, transparent 82%) !important;
+    animation: wave-drift 32s ease-in-out infinite alternate !important;
+  }
+  .page .backdrop > span:nth-child(2) {
+    top: -78% !important; right: -52% !important; width: 185% !important; height: 175% !important;
+    background: repeating-radial-gradient(ellipse 68% 58% at 74% 13%, oklch(.655 .124 85 / .42) 0, oklch(.655 .124 85 / .42) 1.5px, transparent 1.5px, transparent 22px) !important;
+    mask-image: radial-gradient(72% 66% at 76% 12%, #000 5%, rgb(0 0 0 / .62) 34%, transparent 72%) !important;
+    animation: wave-drift-alt 41s ease-in-out infinite alternate !important;
+  }
+  .page .backdrop > span:nth-child(3) {
+    bottom: -62% !important; left: -30% !important; width: 165% !important; height: 150% !important; opacity: .85 !important;
+    background: repeating-radial-gradient(ellipse 64% 56% at 52% 112%, oklch(var(--hub-secondary) / .38) 0, oklch(var(--hub-secondary) / .38) 1.4px, transparent 1.4px, transparent 30px) !important;
+    mask-image: radial-gradient(70% 64% at 50% 108%, #000 6%, rgb(0 0 0 / .5) 36%, transparent 74%) !important;
+    animation: wave-drift 46s ease-in-out infinite alternate-reverse !important;
+  }
+  .page .backdrop > span:nth-child(4) {
+    top: 50% !important; left: 50% !important; width: 860px !important; height: 620px !important; margin: -310px 0 0 -430px !important; border-radius: 50% !important; filter: blur(14px) !important;
+    background: radial-gradient(ellipse at center, oklch(var(--hub-background) / .82) 0%, oklch(.945 .03 305 / .55) 28%, oklch(.885 .063 305 / .42) 52%, transparent 76%) !important;
+  }
+  .page .backdrop > span:nth-child(5) {
+    inset: -35% !important; opacity: .8 !important; filter: blur(38px) !important;
+    background: linear-gradient(112deg, transparent 32%, oklch(.945 .03 305 / .5) 44%, oklch(.96 .04 85 / .48) 49%, oklch(var(--hub-background) / .55) 53%, oklch(.96 .04 85 / .32) 59%, transparent 70%) !important;
+    animation: sheen 27s ease-in-out infinite alternate !important;
+  }
+
+  @keyframes wave-drift { from { transform: translate(-34px, 26px) scale(1); } to { transform: translate(48px, -60px) scale(1.1); } }
+  @keyframes wave-drift-alt { from { transform: translate(40px, -24px) scale(1.08); } to { transform: translate(-52px, 44px) scale(.96); } }
+  @keyframes sheen { from { opacity: .45; transform: translate(-9%, 6%) rotate(-2deg); } to { opacity: .9; transform: translate(9%, -6%) rotate(2.5deg); } }
+
+  @media (max-width: 1023px) {
+    .page .cards { grid-template-columns: minmax(0, 1fr) !important; }
+    .page .card { min-height: 440px !important; }
+  }
+  @media (max-width: 767px) {
+    .page { padding: 20px 16px !important; }
+    .page .content { padding: 28px !important; }
+    .page .footer { padding-inline: 24px !important; }
+    .page .backdrop > span:is(:first-child, :nth-child(2)) { opacity: .6 !important; }
+    .page .backdrop > span:nth-child(4) { width: 520px !important; height: 420px !important; margin: -210px 0 0 -260px !important; }
+  }
+  @media (max-width: 639px) {
+    .page .content { padding: 20px !important; }
+    .page .title { font-size: 20px !important; }
+    .page .footer { flex-direction: column !important; align-items: stretch !important; padding: 16px 20px !important; }
+    .page .action { width: 100% !important; white-space: normal !important; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .page .backdrop > span:nth-child(n) { animation: none !important; }
+    .page .card, .page .card * { transition: none !important; }
+    .page .card:is(:hover, :focus-visible) { transform: none !important; }
+  }
+
+  /* Retain the application's existing dark palette rather than the light reference. */
+  :global([data-theme='dark']) .page { background: var(--theme-bg, #0a0a0f) !important; color: var(--theme-text-primary) !important; }
+  :global([data-theme='dark']) .page .backdrop { display: none !important; }
+  :global([data-theme='dark']) .page .card { background: var(--theme-surface) !important; border-color: var(--theme-border) !important; box-shadow: none !important; }
+  :global([data-theme='dark']) .page .card:not(:hover):not(:focus-visible) :is(.title, .eyebrow) { color: var(--theme-text-primary) !important; }
+  :global([data-theme='dark']) .page .card:not(:hover):not(:focus-visible) :is(.description, .meta) { color: var(--theme-text-muted) !important; }
+  :global([data-theme='dark']) .page .card:not(:hover):not(:focus-visible) .features li { background: var(--theme-surface) !important; color: var(--theme-text-primary) !important; border-color: var(--theme-border) !important; box-shadow: none !important; }
+  :global([data-theme='dark']) .page .card:not(:hover):not(:focus-visible) .features svg { color: var(--theme-text-muted) !important; }
+  :global([data-theme='dark']) .page .footer { border-color: var(--theme-border) !important; }
+}

@@ -1,3 +1,4 @@
+import { Search, X, PlayCircle, Layers, Filter, ChevronDown } from 'lucide-react';
 import { useState, type KeyboardEvent } from "react";
 import type { Lecture, RecordingFilter } from "@/pages/curriculum/recordings/types";
 import { formatCompactDate, lectureStatusSummary } from "@/pages/curriculum/recordings/utils";
@@ -58,7 +59,7 @@ export default function SearchAndFilters({
           onBlur={() => setFocused(false)}
         >
           <span className="pointer-events-none absolute left-3 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center text-foreground-400">
-            <i className="ri-search-line text-base" aria-hidden="true"></i>
+            <Search size={14} className="text-base" aria-hidden="true" />
           </span>
           <input
             type="text"
@@ -79,7 +80,7 @@ export default function SearchAndFilters({
               aria-label="Clear search"
               className="absolute right-2.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-foreground-500 transition-colors hover:bg-background-100 hover:text-foreground-800"
             >
-              <i className="ri-close-line" aria-hidden="true"></i>
+              <X size={14} className="" aria-hidden="true" />
             </button>
           ) : null}
 
@@ -103,7 +104,7 @@ export default function SearchAndFilters({
                     }`}
                   >
                     <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-100 text-primary-700">
-                      <i className="ri-play-circle-line text-lg" aria-hidden="true"></i>
+                      <PlayCircle size={14} className="text-lg" aria-hidden="true" />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold text-foreground-950">
@@ -126,10 +127,7 @@ export default function SearchAndFilters({
         <div className="flex flex-wrap items-center gap-2">
           <label className="relative inline-flex items-center">
             <span className="sr-only">Filter by programme</span>
-            <i
-              className="ri-graduation-cap-line pointer-events-none absolute left-3 text-base text-foreground-500"
-              aria-hidden="true"
-            ></i>
+            <Layers size={14} className="pointer-events-none absolute left-3 text-base text-foreground-500" aria-hidden="true" />
             <select
               value={programme}
               onChange={(event) => onProgrammeChange(event.target.value)}
@@ -142,18 +140,12 @@ export default function SearchAndFilters({
                 </option>
               ))}
             </select>
-            <i
-              className="ri-arrow-down-s-line pointer-events-none absolute right-2.5 text-base text-foreground-500"
-              aria-hidden="true"
-            ></i>
+            <ChevronDown size={14} className="pointer-events-none absolute right-2.5 text-base text-foreground-500" aria-hidden="true" />
           </label>
 
           <label className="relative inline-flex items-center">
             <span className="sr-only">Filter by recording status</span>
-            <i
-              className="ri-filter-3-line pointer-events-none absolute left-3 text-base text-foreground-500"
-              aria-hidden="true"
-            ></i>
+            <Filter size={14} className="pointer-events-none absolute left-3 text-base text-foreground-500" aria-hidden="true" />
             <select
               value={statusFilter}
               onChange={(event) => onStatusFilterChange(event.target.value as RecordingFilter)}
@@ -163,10 +155,7 @@ export default function SearchAndFilters({
               <option value="ready">Ready to download</option>
               <option value="attention">Needs attention</option>
             </select>
-            <i
-              className="ri-arrow-down-s-line pointer-events-none absolute right-2.5 text-base text-foreground-500"
-              aria-hidden="true"
-            ></i>
+            <ChevronDown size={14} className="pointer-events-none absolute right-2.5 text-base text-foreground-500" aria-hidden="true" />
           </label>
         </div>
       </div>
