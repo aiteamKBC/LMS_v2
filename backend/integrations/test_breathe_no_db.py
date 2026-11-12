@@ -9,6 +9,7 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.urls import resolve
 
 from .breathe import BreatheApiError, BreatheClient
 from .permissions import integration_access
@@ -68,6 +69,21 @@ class SecretReferenceTests(SimpleTestCase):
 
 
 class ConnectorIsolationTests(SimpleTestCase):
+    @override_settings(BREATHE_INTEGRATIONS_ENABLED=False)
+    @patch('integrations.permissions.authenticate_request')
+    def test_forwarded_and_legacy_routes_share_the_disabled_gate(self, authenticate):
+        for prefix in ['/login_api/hr-integrations', '/integrations_api']:
+            path = prefix + '/breathe/connections'
+            response = resolve(path).func(RequestFactory().get(path))
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(json.loads(response.content)['code'], 'breathe_not_enabled')
+        authenticate.assert_not_called()
+
+    def test_only_the_new_integration_subtree_uses_its_own_session_or_hmac_gate(self):
+        from login.api_gate import rule_for
+        self.assertIsNone(rule_for('/login_api/hr-integrations/breathe/connections'))
+        self.assertIsNotNone(rule_for('/learner_api/learners/'))
+
     @override_settings(BREATHE_INTEGRATIONS_ENABLED=False)
     @patch('integrations.permissions.authenticate_request')
     def test_disabled_connector_does_not_touch_auth_or_database(self, authenticate):

@@ -26,7 +26,11 @@ Manager fetcher is not implemented. Never put key values in frontend code or Git
 Only the official production and sandbox HTTPS origins are accepted;
 pagination stays on that origin and redirects are refused.
 
-Browser writes obtain a CSRF token from `GET /integrations_api/breathe/csrf`.
+The browser API uses `/login_api/hr-integrations/breathe` so production's
+existing edge routing forwards it to Django. `/integrations_api/breathe`
+remains a compatibility alias for callers that already reach Django directly.
+Browser writes obtain a CSRF token from
+`GET /login_api/hr-integrations/breathe/csrf`.
 Identity approvals and signing-grant administration require integration staff or
 super-admin access. Existing employer signatures do not call these new grants.
 
@@ -35,7 +39,7 @@ super-admin access. Existing employer signatures do not call these new grants.
 AWS can call:
 
 ```text
-POST /integrations_api/breathe/connections/{connection_id}/sync
+POST /login_api/hr-integrations/breathe/connections/{connection_id}/sync
 ```
 
 with JSON such as:

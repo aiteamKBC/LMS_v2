@@ -49,6 +49,9 @@ urlpatterns = [
     path('manual_audit_api/', include('manual_audit_api.urls')),
     path('engagement_api/', include('engagement_api.urls')),
     path('enrolment_api/', include('enrolment_api.urls')),
+    # Reuse an established edge-forwarded prefix; unknown API prefixes can
+    # otherwise be served the SPA index before a request reaches Django.
+    path('login_api/hr-integrations/', include('integrations.urls')),
     path('login_api/', include('login.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/calendar/', include('learner_api.calendar_urls')),

@@ -15,7 +15,7 @@ describe('Breathe integration API', () => {
     const preview = await getBreathePreview('c1');
 
     expect(preview.pendingMatches).toEqual([]);
-    expect(fetch).toHaveBeenCalledWith('/integrations_api/breathe/connections/c1/preview', expect.objectContaining({ credentials: 'include' }));
+    expect(fetch).toHaveBeenCalledWith('/login_api/hr-integrations/breathe/connections/c1/preview', expect.objectContaining({ credentials: 'include' }));
   });
 
   it('queues an idempotent sync request with the selected resources', async () => {
@@ -25,7 +25,7 @@ describe('Breathe integration API', () => {
 
     await triggerBreatheSync('c1', ['employees']);
 
-    expect(fetch).toHaveBeenCalledWith('/integrations_api/breathe/connections/c1/sync', expect.objectContaining({
+    expect(fetch).toHaveBeenCalledWith('/login_api/hr-integrations/breathe/connections/c1/sync', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({ 'X-CSRFToken': 'test-csrf' }),
       body: JSON.stringify({ resources: ['employees'], idempotency_key: 'job-1' }),
@@ -37,8 +37,8 @@ describe('Breathe integration API', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ csrfToken: 'test-csrf' })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'c1' }), { status: 201 }));
     await createBreatheConnection({ tenantKey: 'demo', externalAccountId: '42', secretRef: 'env:BREATHE_API_KEY_DEMO' });
-    expect(fetch).toHaveBeenNthCalledWith(1, '/integrations_api/breathe/csrf', expect.objectContaining({ credentials: 'include' }));
-    expect(fetch).toHaveBeenNthCalledWith(2, '/integrations_api/breathe/connections/create', expect.objectContaining({
+    expect(fetch).toHaveBeenNthCalledWith(1, '/login_api/hr-integrations/breathe/csrf', expect.objectContaining({ credentials: 'include' }));
+    expect(fetch).toHaveBeenNthCalledWith(2, '/login_api/hr-integrations/breathe/connections/create', expect.objectContaining({
       headers: expect.objectContaining({ 'X-CSRFToken': 'test-csrf', 'X-Requested-With': 'XMLHttpRequest' }),
     }));
   });
