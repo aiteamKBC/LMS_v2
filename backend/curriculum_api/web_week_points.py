@@ -76,11 +76,14 @@ def save_configuration(module_id, week_id, points, revision, actor_id, *, db=con
 def saved_week(module_id, week_id):
     from . import views
     week = views.fetch_all(f'''SELECT id FROM {views.table_name('weeks')}
-        WHERE id = %s AND module_catalogue_id = %s AND deleted_at IS NULL''', [week_id, module_id])
+        WHERE id = %s AND module_catalogue_id = %s
+          AND lower(btrim(coalesce(status, ''))) <> 'inactive'
+        ''', [week_id, module_id])
     if not week:
         return None
     rows = views.fetch_all(f'''SELECT id, title, type FROM {views.table_name('components')}
-        WHERE week_id = %s AND module_catalogue_id = %s AND deleted_at IS NULL
+        WHERE week_id = %s AND module_catalogue_id = %s
+          AND lower(btrim(coalesce(status, ''))) <> 'inactive'
         ORDER BY display_order, id''', [week_id, module_id])
     return [{'id': row['id'], 'title': row['title'], 'type': row['type']} for row in rows]
 

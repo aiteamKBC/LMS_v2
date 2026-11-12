@@ -477,10 +477,7 @@ class Command(BaseCommand):
                     'week_number': order or len(week_payloads) + 1,
                     'title': views.clean_str(section.get('section_title')) or f'Week {order}',
                     'display_order': order,
-                    'is_programme_deleted': False,
-                    'deleted_at': None,
-                    'deleted_by': None,
-                    'deleted_via_parent': None,
+                    'status': 'active',
                 })
                 for index, material in enumerate(section.get('materials') or [], start=1):
                     component_id = views.clean_str(material.get('component_id'))
@@ -511,17 +508,12 @@ class Command(BaseCommand):
                         'display_order': views.parse_int(material.get('component_order'), index),
                         'settings_json': views.json_db_value(settings),
                         'live_sessions_link': views.clean_str(settings.get('liveSessionUrl')),
-                        'ksb_mappings': views.json_db_value([]),
-                        'is_programme_deleted': False,
-                        'deleted_at': None,
-                        'deleted_by': None,
-                        'deleted_via_parent': None,
+                        'status': 'active',
                     })
 
             module_payload = {
                 'module_catalogue_id': module_id,
                 'programme_id': programme['programme_id'],
-                'programme_name': programme['name'],
                 'title': course_label(record),
                 'description': views.clean_str(record.get('course_category')),
                 'tutor_name': views.clean_str(record.get('tutor_name')),
@@ -532,10 +524,7 @@ class Command(BaseCommand):
                 'sessions_number': len(week_payloads),
                 'source_type': 'mba-legacy',
                 'source_id': str(record.get('course_id')),
-                'is_programme_deleted': False,
-                'deleted_at': None,
-                'deleted_by': None,
-                'deleted_via_parent': None,
+                'status': 'active',
             }
 
             if self.dry_run:

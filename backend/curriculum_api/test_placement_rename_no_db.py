@@ -142,24 +142,18 @@ class GroupRenameTests(RenameSqlGuard, SimpleTestCase):
             placement_rename.propagate_group_name_to_learners(group or self.GROUP, name)
         return _statements(cursor), modules, audit, refresh
 
-    def test_module_copy_is_renamed_and_learners_are_found_by_group_id(self):
-        from . import views
-
-        statements, modules, audit, refresh = self.rename()
-        modules.assert_called_once_with(
-            views.AUTHORING_MODULES_TABLE, "group_id = %s and coalesce(group_name, '') <> %s",
-            ['GRP-1', 'G1 Tuesday'], {'group_name': 'G1 Tuesday'},
-        )
-        self.assertEqual(audit.call_args.kwargs['metadata'],
-                         {'recalculated_from': 'group_rename', 'reason_code': 'group_name_propagation'})
+    def test_no_module_row_is_written_and_learners_are_found_by_group_id(self):
+        # Modules hold the group id and read its name through it.
+        statements, modules, _, refresh = self.rename()
+        modules.assert_not_called()
         self.assertEqual(statements, [('SELECT enrolment_id, learner_type FROM "Learner".learners '
                                        'WHERE group_id = %s', ['GRP-1'])])
         self.assert_no_removed_columns(statements)
         self.assertCountEqual(refresh.call_args_list, _refreshes('group-rename'))
 
-    def test_zero_matching_learners_still_renames_the_module_copy(self):
+    def test_zero_matching_learners_queues_nothing(self):
         statements, modules, _, refresh = self.rename(rows=[])
-        modules.assert_called_once()
+        modules.assert_not_called()
         self.assertEqual(len(statements), 1)
         refresh.assert_not_called()
 
@@ -170,9 +164,9 @@ class GroupRenameTests(RenameSqlGuard, SimpleTestCase):
                 self.assertFalse(any('curriculum.groups' in sql for sql, _ in statements))
                 self.assertEqual(statements[0][1], ['GRP-1'])
 
-    def test_an_unnamed_group_renames_modules_but_keeps_the_previous_no_refresh_rule(self):
+    def test_an_unnamed_group_keeps_the_previous_no_refresh_rule(self):
         statements, modules, _, refresh = self.rename(group={**self.GROUP, 'group_name': ''})
-        modules.assert_called_once()
+        modules.assert_not_called()
         self.assertEqual(statements, [])
         refresh.assert_not_called()
 
@@ -184,7 +178,8 @@ class GroupRenameTests(RenameSqlGuard, SimpleTestCase):
 
 
 class CohortRenameTests(RenameSqlGuard, SimpleTestCase):
-    COHORT = {'cohort_id': 'COH-1', 'cohort_name': 'Oct 2026', 'programme_name': 'Programme'}
+    COHORT = {'cohort_id': 'COH-1', 'cohort_name': 'Oct 2026', 'programme_id': 'PROG-1',
+              'programme_name': 'Programme'}
 
     def rename(self, name='October 2026', conflict=None, rows=LEARNERS, vendor='postgresql', atomic=True):
         connection, cursor = _connection(lookup=conflict, rows=rows)
@@ -200,23 +195,17 @@ class CohortRenameTests(RenameSqlGuard, SimpleTestCase):
                 error = exc
         return _statements(cursor), copies, audit, refresh, error
 
-    def test_conflict_lock_then_read_only_lookup_then_copies_and_refresh(self):
-        from . import views
-
-        statements, copies, audit, refresh, error = self.rename()
+    def test_conflict_lock_then_read_only_lookup_then_refresh(self):
+        statements, copies, _, refresh, error = self.rename()
         self.assertIsNone(error)
         (conflict_sql, conflict_params), (lookup_sql, lookup_params) = statements
         self.assertIn('FOR UPDATE', conflict_sql)                                      # lock kept
-        self.assertEqual(conflict_params, ['Programme', 'Oct 2026', 'October 2026', 'COH-1'])
+        self.assertIn('c.programme_id = %s', conflict_sql)                           # scoped by id
+        self.assertEqual(conflict_params, ['PROG-1', 'Oct 2026', 'October 2026', 'COH-1'])
         self.assertEqual((lookup_sql, lookup_params), (
             'SELECT enrolment_id, learner_type FROM "Learner".learners WHERE cohort_id = %s', ['COH-1']))
         self.assert_no_removed_columns(statements)
-        self.assertEqual(copies.call_args_list, [
-            call(table, "cohort_id = %s and coalesce(cohort_name, '') <> %s", ['COH-1', 'October 2026'],
-                 {'cohort_name': 'October 2026'})
-            for table in (views.GROUPS_TABLE, views.AUTHORING_MODULES_TABLE)])
-        self.assertEqual(audit.call_args.kwargs['metadata'],
-                         {'recalculated_from': 'cohort_rename', 'reason_code': 'cohort_name_propagation'})
+        copies.assert_not_called()                     # groups/modules read the name by id
         self.assertCountEqual(refresh.call_args_list, _refreshes('cohort-rename'))
 
     def test_duplicate_name_raises_conflict_before_any_copy_or_refresh(self):
@@ -226,20 +215,11 @@ class CohortRenameTests(RenameSqlGuard, SimpleTestCase):
         copies.assert_not_called()
         refresh.assert_not_called()
 
-    def test_zero_matching_learners_still_renames_the_copies(self):
+    def test_zero_matching_learners_queues_nothing(self):
         statements, copies, _, refresh, error = self.rename(rows=[])
         self.assertIsNone(error)
         self.assertEqual(len(statements), 2)
-        self.assertEqual(copies.call_count, 2)
-        refresh.assert_not_called()
-
-    def test_a_failed_copy_write_queues_no_refresh(self):
-        connection, cursor = _connection()
-        with patch.object(cohort_rename, 'connection', connection), \
-                patch('curriculum_api.views.update_authoring_rows', side_effect=RuntimeError('synthetic')), \
-                patch('learner_api.read_model.enqueue_learner_home_refresh') as refresh, \
-                self.assertRaises(RuntimeError):
-            cohort_rename.propagate_cohort_name(self.COHORT, 'October 2026')
+        copies.assert_not_called()
         refresh.assert_not_called()
 
     def test_unchanged_name_does_nothing_and_a_rename_requires_the_parent_transaction(self):
@@ -250,12 +230,12 @@ class CohortRenameTests(RenameSqlGuard, SimpleTestCase):
         self.assertIsInstance(error, RuntimeError)
         self.assertEqual(statements, [])
 
-    def test_sqlite_checks_conflicts_and_copies_without_learner_lookup(self):
+    def test_sqlite_checks_conflicts_without_learner_lookup(self):
         statements, copies, _, refresh, error = self.rename(vendor='sqlite')
         self.assertIsNone(error)
         self.assertEqual(len(statements), 1)
         self.assertNotIn('FOR UPDATE', statements[0][0])
-        self.assertEqual(copies.call_count, 2)
+        copies.assert_not_called()
         refresh.assert_not_called()
 
 
@@ -398,15 +378,6 @@ class RenameTransactionTests(SimpleTestCase):
             self.raw.execute("UPDATE curriculum.groups SET group_name='New group' WHERE group_id='G'")
             placement_rename.propagate_group_name_to_learners(self.group, 'New group')
 
-    def add_legacy_copies(self):
-        self.raw.executescript("""
-            ALTER TABLE curriculum.groups ADD COLUMN cohort_name TEXT;
-            ALTER TABLE curriculum.modules ADD COLUMN cohort_name TEXT;
-            ALTER TABLE curriculum.modules ADD COLUMN group_name TEXT;
-            UPDATE curriculum.groups SET cohort_name='Old cohort' WHERE cohort_id='C';
-            UPDATE curriculum.modules SET cohort_name='Old cohort', group_name='Old group' WHERE module_id='M';
-        """)
-
     def test_canonical_renames_change_display_without_touching_placements(self):
         before = self.placements()
         with self.raw:
@@ -419,21 +390,7 @@ class RenameTransactionTests(SimpleTestCase):
         self.assertEqual(self.raw.execute('SELECT learner_id, reason FROM refresh_events').fetchall(),
                          [(1, 'cohort-rename'), (1, 'group-rename')])
 
-    def test_legacy_curriculum_copies_update_only_the_matching_entity(self):
-        self.add_legacy_copies()
-        before = self.placements()
-        with self.raw:
-            self.rename('cohort')
-            self.rename('group')
-        self.assertEqual(self.placements(), before)
-        self.assertEqual(self.raw.execute('SELECT cohort_name, group_name FROM curriculum.modules '
-                                         'ORDER BY module_id').fetchall(),
-                         [('New cohort', 'New group'), (None, None)])
-        self.assertEqual(self.raw.execute("SELECT cohort_name FROM curriculum.groups WHERE group_id='G'").fetchone(),
-                         ('New cohort',))
-
-    def test_failure_rolls_back_parent_child_copies_and_refresh_requests(self):
-        self.add_legacy_copies()
+    def test_failure_rolls_back_parent_and_refresh_requests(self):
         before = self.placements(), self.displayed()
         for kind in ('cohort', 'group'):
             with self.subTest(kind=kind):
@@ -442,16 +399,6 @@ class RenameTransactionTests(SimpleTestCase):
                     raise RuntimeError('after refresh')
                 self.assertEqual((self.placements(), self.displayed()), before)
                 self.assertEqual(self.raw.execute('SELECT * FROM refresh_events').fetchall(), [])
-                self.assertEqual(self.raw.execute("SELECT cohort_name, group_name FROM curriculum.modules WHERE module_id='M'").fetchone(),
-                                 ('Old cohort', 'Old group'))
-
-    def test_missing_schema_metadata_fails_before_refresh(self):
-        from django.db import DatabaseError
-        self.raw.execute('DROP TABLE curriculum.modules')
-        with self.assertRaises(DatabaseError), self.raw:
-            self.rename('group')
-        self.assertEqual(self.raw.execute('SELECT * FROM refresh_events').fetchall(), [])
-        self.assertEqual(self.displayed()[0], (1, 'Old cohort', 'Old group'))
 
     def test_duplicate_in_same_programme_blocks_rename(self):
         self.raw.execute("UPDATE curriculum.cohorts SET cohort_name='New cohort' WHERE cohort_id='OTHER'")

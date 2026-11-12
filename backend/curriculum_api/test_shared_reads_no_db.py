@@ -163,8 +163,8 @@ class SharedWeekIndexTests(SimpleTestCase):
     def test_columns_cover_everything_the_readers_use(self):
         used = {
             'id', 'module_catalogue_id', 'display_order', 'week_number', 'title',
-            # active_week_rows() / programme_deleted_row() / is_library_row()
-            'deleted_at', 'is_programme_deleted', 'is_deleted', 'library_state',
+            # active_week_rows() / programme_deleted_row(): the archive state
+            'status',
         }
         self.assertEqual(set(views.WEEK_INDEX_COLUMNS), used)
 

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearCurriculumGetCache, fetchCurriculumDeliveryScope, fetchCurriculumKsbSets,
-  fetchCurriculumKsbSetSummaries, fetchCurriculumKsbSourceDefinitions,
-  updateCurriculumGroup, updateCurriculumProgramme, updateCurriculumKsbFramework,
+  fetchCurriculumKsbSetSummaries,
+  updateCurriculumGroup, updateCurriculumProgramme,
   fetchCurriculumProgrammeDetailModules,
 } from '@/lib/curriculumApi';
 
@@ -20,16 +20,14 @@ describe('lightweight curriculum reads', () => {
     vi.unstubAllGlobals();
   });
 
-  it('keeps summary, full-library and selected-source responses in separate cache entries', async () => {
+  it('keeps summary and full-library responses in separate cache entries', async () => {
     await fetchCurriculumKsbSetSummaries();
     await fetchCurriculumKsbSets(undefined, { all: true });
-    await fetchCurriculumKsbSourceDefinitions('KSBP/ONE');
     await fetchCurriculumKsbSetSummaries();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(urls[0]).toContain('ksb-sets/?view=summary&visibility=all');
     expect(urls[1]).toContain('ksb-sets/?visibility=all');
-    expect(urls[2]).toContain('ksb-sets/KSBP%2FONE/definitions/?visibility=all');
   });
 
   it.each(['group', 'programme'])('invalidates delivery scope after a %s update', async entity => {
@@ -40,15 +38,6 @@ describe('lightweight curriculum reads', () => {
     else await updateCurriculumProgramme('P1', { name: 'Updated' });
     await fetchCurriculumDeliveryScope();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/delivery-scope/'))).toHaveLength(2);
-  });
-
-  it('invalidates both source counts and definitions after updating a profile', async () => {
-    await fetchCurriculumKsbSetSummaries();
-    await fetchCurriculumKsbSourceDefinitions('KSBP-ONE');
-    await updateCurriculumKsbFramework('KSBP-ONE', { name: 'Updated' });
-    await fetchCurriculumKsbSetSummaries();
-    await fetchCurriculumKsbSourceDefinitions('KSBP-ONE');
-    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it('separates the programme workspace projection from full detail and invalidates both after a save', async () => {

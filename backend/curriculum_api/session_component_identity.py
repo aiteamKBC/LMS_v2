@@ -106,19 +106,9 @@ def _eligible(settings, live_link, identity, meeting):
 
 
 def _live_child_sql():
-    """Live (not withdrawn, not library) component ``c`` in week ``w``.
-
-    A row-locking statement, so it is written against the real columns rather
-    than adapted: the legacy stamps where they exist, ``status`` on the
-    normalised schema (whose weeks/components have no library state).
-    """
-    from .schema_compat import active_condition, columns_of, uses_status_lifecycle
-    if uses_status_lifecycle('components', columns_of('curriculum', 'components')):
-        return f"{active_condition('c')} AND {active_condition('w')}"
-    return ("c.status NOT IN ('inactive','archived') "
-            "AND COALESCE(c.library_state,'')<>'library' "
-            "AND w.status NOT IN ('inactive','archived') "
-            "AND COALESCE(w.library_state,'')<>'library'")
+    """Live (not archived) component ``c`` in week ``w``; ``status`` is the archive record."""
+    from .canonical_read_sql import current_status_sql
+    return f"{current_status_sql('c')} AND {current_status_sql('w')}"
 
 
 def reconcile_component_links(series_id):

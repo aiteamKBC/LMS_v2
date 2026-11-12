@@ -1,8 +1,8 @@
 """Refresh the learners placed on a renamed programme or group.
 
 The canonical name lives only in its owning curriculum table. Curriculum
-children hold the parent's id. Older curriculum schemas may also carry a
-name copy; only those existing columns are refreshed.
+children hold the parent's id and read the name through it, so a rename
+writes no curriculum child row either.
 Learner records do not: "Learner".learners and enrolment."Created_users" keep
 only the placement ids, and the learner and enrolment models read the name
 through those ids (learner_api.models._learner_placement_names). A rename
@@ -58,38 +58,6 @@ def placed_learners(id_column, placement_id, db=None, *, connection=None):
         return set(cursor.fetchall())
 
 
-def curriculum_columns(table, db):
-    """Inspect physical columns on the rename connection, never a cached alias.
-
-    Missing/unreadable metadata must fail the parent transaction rather than
-    guess that a removed name column is safe to write. SQLite supports the
-    isolated curriculum test harness; no learner tables are needed there.
-    """
-    with db.cursor() as cursor:
-        if db.vendor == 'postgresql':
-            cursor.execute(
-                'SELECT column_name FROM information_schema.columns '
-                'WHERE table_schema = %s AND table_name = %s',
-                ['curriculum', table],
-            )
-            columns = {row[0] for row in cursor.fetchall()}
-        else:
-            columns = {column.name for column in db.introspection.get_table_description(cursor, table)}
-    if not columns:
-        raise DatabaseError(f'Cannot inspect curriculum rename table: {table}')
-    return columns
-
-
-def rename_child_copy(views, table, id_column, placement_id, column, name, db):
-    """Keep existing legacy curriculum copies in sync; never create a copy."""
-    if column not in curriculum_columns(table, db):
-        return
-    views.update_authoring_rows(
-        table, f"{id_column} = %s and coalesce({column}, '') <> %s",
-        [placement_id, name], {column: name},
-    )
-
-
 def propagate_programme_name_to_learners(programme_id, old_name, name):
     """Refresh the learners placed on a renamed programme; their rows keep the id."""
     programme_id, old_name, name = _s(programme_id), _s(old_name), _s(name)
@@ -103,26 +71,15 @@ def propagate_programme_name_to_learners(programme_id, old_name, name):
 
 
 def propagate_group_name_to_learners(group, name):
-    """Rename a group on its modules' copy of the name and refresh its learners.
+    """Refresh the learners placed on a renamed group.
 
     ``group`` is the row as it was before the rename.
     """
-    from . import views, versioning
-
     group_id, old_name, name = _s(group.get('group_id')), _s(group.get('group_name')), _s(name)
     if not group_id or not name or name == old_name:
         return
     if not connection.in_atomic_block:
         raise RuntimeError('Group name propagation requires the parent transaction.')
-    # Refresh a legacy curriculum copy only when it physically exists.
-    with versioning.audit_context(
-        actor_type=versioning.ACTOR_SYSTEM, source='recalculation', action='recalculated',
-        metadata={'recalculated_from': 'group_rename', 'reason_code': 'group_name_propagation'},
-    ):
-        rename_child_copy(
-            views, views.AUTHORING_MODULES_TABLE, 'group_id', group_id,
-            'group_name', name, connection,
-        )
     if not old_name or connection.vendor != 'postgresql':
         return
     _refresh(placed_learners('group_id', group_id, connection),

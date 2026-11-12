@@ -35,10 +35,10 @@ class ProgrammeListTests(SimpleTestCase):
         self.cohorts = [{'cohort_id': 'COHORT-1', 'cohort_name': 'Cohort', 'programme_id': 'PROG-1',
                          'programme_name': 'Alpha', 'status': 'active'}]
         self.configs = [
-            {'programme_id': 'PROG-1', 'name': 'Alpha', 'status': 'published', 'is_active': True,
+            {'programme_id': 'PROG-1', 'name': 'Alpha', 'status': 'published',
              'description': 'Description', 'level': '4', 'color': '#123456',
              'ksb_profile_source_id': 'standard:std-one', 'required_otjh': 300, 'display_order': 2},
-            {'programme_id': 'PROG-2', 'name': 'Empty', 'status': 'published', 'is_active': True},
+            {'programme_id': 'PROG-2', 'name': 'Empty', 'status': 'published'},
         ]
         self.weeks = []
         self.profiles = []
@@ -87,12 +87,11 @@ class ProgrammeListTests(SimpleTestCase):
         self.assertEqual(card['ksbProfileSourceId'], 'standard:std-one')
         self.assertEqual(result[1]['modules'], 0)
 
-    def test_week_fallback_excludes_deleted_and_library_rows(self):
+    def test_week_fallback_excludes_archived_rows(self):
         self.weeks.extend([
-            {'id': 'W1', 'module_catalogue_id': 'MOD-2'},
-            {'id': 'W2', 'module_catalogue_id': 'MOD-2'},
-            {'id': 'W3', 'module_catalogue_id': 'MOD-2', 'library_state': 'library'},
-            {'id': 'W4', 'module_catalogue_id': 'MOD-2', 'deleted_at': '2026-10-01'},
+            {'id': 'W1', 'module_catalogue_id': 'MOD-2', 'status': 'active'},
+            {'id': 'W2', 'module_catalogue_id': 'MOD-2', 'status': 'active'},
+            {'id': 'W4', 'module_catalogue_id': 'MOD-2', 'status': 'inactive'},
         ])
         self.assert_same_list()
         self.assertEqual(programme_list.build_programme_list('operational')[0]['weeks'], 7)
@@ -109,20 +108,20 @@ class ProgrammeListTests(SimpleTestCase):
                              'programme_id': 'PROG-3', 'programme_name': 'Module only', 'weeks_number': 3})
         self.assert_same_list()
         self.assertIn('PROG-3', [card['id'] for card in programme_list.build_programme_list('all')])
-        self.modules[-1]['deleted_at'] = '2026-10-01'
+        self.modules[-1]['status'] = 'inactive'
         self.assert_same_list()
 
     def test_archived_draft_inactive_and_duplicate_config_visibility(self):
-        for status, active in [('archived', True), ('draft', True), ('published', False)]:
-            with self.subTest(status=status, active=active):
-                self.configs[0].update(status=status, is_active=active)
+        for status in ('archived', 'draft', 'inactive'):
+            with self.subTest(status=status):
+                self.configs[0].update(status=status)
                 self.assert_same_list()
         self.configs.append({'programme_id': 'PROG-OLD', 'name': 'Alpha', 'status': 'archived'})
         self.assert_same_list()
 
     def test_parent_deletion_and_module_soft_delete_preserve_counts(self):
-        self.groups[0]['is_programme_deleted'] = True
-        self.modules[1]['deleted_at'] = '2026-10-01'
+        self.groups[0]['status'] = 'inactive'
+        self.modules[1]['status'] = 'inactive'
         self.assert_same_list()
 
     def test_legacy_catalogue_uses_existing_matching_without_library_or_calendar_reads(self):

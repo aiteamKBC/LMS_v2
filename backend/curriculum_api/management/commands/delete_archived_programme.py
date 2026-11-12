@@ -11,7 +11,7 @@ which is what ``views.permanently_delete_programme_structure`` does.
 
 Archived only
 -------------
-``is_archived = true`` is the switch that turns an irreversible delete on. A live
+An archived programme (``status`` inactive) is the switch that turns an irreversible delete on. A live
 programme is refused; archive it first (the ordinary delete in the UI).
 
 Learner data
@@ -59,7 +59,7 @@ class Command(BaseCommand):
             if not archived:
                 raise CommandError(
                     f'{identifier} ({name}) is not archived. Archive it first - this command only '
-                    'removes programmes already flagged is_archived = true.'
+                    'removes programmes that are already archived.'
                 )
 
             plan = views.programme_permanent_delete_plan(identifier, programme, config)

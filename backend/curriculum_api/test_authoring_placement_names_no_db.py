@@ -5,7 +5,8 @@ longer stores programme_name, and modules no longer stores programme_name,
 cohort_name or group_name. authoring_select_sql() reads each through its id.
 
 No Django database connection: the generated SQL is executed against an
-in-memory sqlite3 database (curriculum tables attached as schema "curriculum").
+in-memory sqlite3 database whose tables are unqualified, as the SQLite test
+schema creates them (authoring_table_name).
 """
 import sqlite3
 from types import SimpleNamespace
@@ -33,15 +34,9 @@ def select_sql(table, schema=CANONICAL, **kwargs):
 def database():
     db = sqlite3.connect(':memory:')
     db.create_function('btrim', 1, lambda value: value.strip() if isinstance(value, str) else value)
-    db.execute("ATTACH DATABASE ':memory:' AS curriculum")
     db.executescript('''
-        CREATE TABLE curriculum.programmes (programme_id TEXT, name TEXT);
-        CREATE TABLE curriculum.cohorts (cohort_id TEXT, cohort_name TEXT, programme_id TEXT, start_date TEXT);
-        CREATE TABLE curriculum.groups (group_id TEXT, group_name TEXT, cohort_id TEXT, programme_id TEXT);
-        INSERT INTO curriculum.programmes VALUES ('P1','Marketing'),('P2','Accounting'),('DUP','One'),('DUP','Two');
-        INSERT INTO curriculum.cohorts VALUES ('C1','October 2026','P1','2026-10-01'),('C2','April 2026','P2','2026-04-01');
-        INSERT INTO curriculum.groups VALUES ('G1','Group A','C1','P1'),('G2','Group B','C2','P2');
-        -- The outer authoring table (sqlite tests keep it unqualified in main).
+        CREATE TABLE main.programmes (programme_id TEXT, name TEXT);
+        INSERT INTO main.programmes VALUES ('P1','Marketing'),('P2','Accounting'),('DUP','One'),('DUP','Two');
         CREATE TABLE main.groups (group_id TEXT, group_name TEXT, cohort_id TEXT, programme_id TEXT);
         INSERT INTO main.groups VALUES
           ('g-1','Group A','C1','P1'),('g-2','Group B','C2','P2'),('g-3','Group C','C1','P1'),
@@ -49,7 +44,7 @@ def database():
         CREATE TABLE main.cohorts (cohort_id TEXT, cohort_name TEXT, programme_id TEXT, start_date TEXT);
         INSERT INTO main.cohorts VALUES ('C1','October 2026','P1','2026-10-01'),('C2','April 2026','P2','2026-04-01');
         CREATE TABLE main.modules (module_catalogue_id TEXT, title TEXT, programme_id TEXT, cohort_id TEXT, group_id TEXT);
-        INSERT INTO main.modules VALUES ('M1','Module','P1','C1','G1'),('M2','Loose','','','');
+        INSERT INTO main.modules VALUES ('M1','Module','P1','C1','g-1'),('M2','Loose','','','');
     ''')
     return db
 
@@ -68,7 +63,7 @@ class DerivedPlacementNamesSqlTests(SimpleTestCase):
             self.assertNotIn(column, select_list)
         self.assertIn('AS programme_name', sql)
         self.assertIn('AS cohort_name', sql)
-        self.assertIn('curriculum.programmes', sql)
+        self.assertIn(f'{views.authoring_table_name("programmes")} programme_name_source', sql)
         self.assertIn('placement_source.cohort_id', sql)
         self.assertTrue(sql.endswith(f'order by {views.GROUP_ROWS_ORDER}'))
 
@@ -82,16 +77,21 @@ class DerivedPlacementNamesSqlTests(SimpleTestCase):
         for name in ('programme_name', 'cohort_name', 'group_name'):
             self.assertIn(f'AS {name}', sql)
 
-    def test_a_schema_that_still_has_the_columns_is_read_unchanged(self):
+    def test_a_stale_physical_copy_is_never_read(self):
         for table in ('groups', 'cohorts', 'modules'):
             with self.subTest(table=table):
-                self.assertEqual(select_sql(table, schema=LEGACY), f'select * from {views.authoring_table_name(table)}')
+                sql = select_sql(table, schema=LEGACY)
+                self.assertIn('AS programme_name', sql)
+                inner = sql.split('(select ', 1)[1].split(' from ', 1)[0]
+                for column in ('"programme_name"', '"cohort_name"' if table != 'cohorts' else '"programme_name"'):
+                    self.assertNotIn(column, inner)
 
     def test_narrow_and_excluded_reads_derive_only_what_is_asked(self):
         narrow = select_sql('groups', columns=('group_id', 'cohort_name'))
         self.assertIn('AS cohort_name', narrow)
         self.assertNotIn('AS programme_name', narrow)
-        self.assertNotIn('"cohort_name"', narrow.split(' from ', 1)[0])
+        # The name is the derived one: the inner select reads no physical copy.
+        self.assertNotIn('"cohort_name"', narrow.split('(select ', 1)[1].split(' from ', 1)[0])
         excluded = select_sql('groups', exclude_columns=('notes', 'programme_name'))
         self.assertIn('AS cohort_name', excluded)
         self.assertNotIn('AS programme_name', excluded)

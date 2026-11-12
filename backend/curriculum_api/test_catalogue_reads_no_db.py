@@ -87,25 +87,13 @@ class KsbSourceReadTests(SimpleTestCase):
         self.assertEqual(json.loads(response.content)['results'], payload['ksbSets'])
         self.assertTrue(fetch.call_args.kwargs['compact'])
 
-    def test_definitions_read_only_selected_profile_and_keep_hierarchy(self):
-        with patch.object(views, 'fetch_all', return_value=[profile()]) as fetch, \
-             patch.object(views, 'get_cached_payload', side_effect=AssertionError('no overview')), \
-             patch.object(views, 'get_ksb_profile_rows', side_effect=AssertionError('no whole library')):
-            response = views.curriculum_ksb_set_definitions(RequestFactory().get('/definitions/?visibility=all'), 'KSBP-ONE')
-        self.assertEqual(fetch.call_args.args[1], ['KSBP-ONE', 'KSBP-ONE'])
-        entries = json.loads(response.content)['ksbs']
-        self.assertEqual(entries[1]['parentCode'], 'S1')
-        self.assertEqual(entries[1]['code'], 'S1.1')
-        self.assertEqual(entries[0]['description'], 'Explain the method')
-        self.assertNotIn('activities', entries[0])
-        self.assertNotIn('status', entries[0])
-
-    def test_archived_definitions_need_all_visibility_and_missing_is_404(self):
-        with patch.object(views, 'fetch_all', return_value=[profile(active=False)]):
-            self.assertEqual(views.curriculum_ksb_set_definitions(RequestFactory().get('/definitions/'), 'KSBP-ONE').status_code, 404)
-            self.assertEqual(views.curriculum_ksb_set_definitions(RequestFactory().get('/definitions/?visibility=all'), 'KSBP-ONE').status_code, 200)
-        with patch.object(views, 'fetch_all', return_value=[]), patch.object(views, 'get_ksb_profile_rows', return_value=[]):
-            self.assertEqual(views.curriculum_ksb_set_definitions(RequestFactory().get('/definitions/'), 'missing').status_code, 404)
+    def test_definitions_are_not_found_and_read_nothing(self):
+        # A KSB set was one stored KSB profile; none are stored any more
+        # (curriculum.ksb_profiles was removed), so no id has definitions.
+        with patch.object(views, 'fetch_all', side_effect=AssertionError('no read')),              patch.object(views, 'get_ksb_profile_rows', side_effect=AssertionError('no read')):
+            for url in ('/definitions/', '/definitions/?visibility=all'):
+                response = views.curriculum_ksb_set_definitions(RequestFactory().get(url), 'KSBP-ONE')
+                self.assertEqual(response.status_code, 404)
 
     def test_library_summary_size_does_not_grow_with_definition_text(self):
         source = profile()

@@ -31,16 +31,16 @@ WEEKS = [
     {'id': 'W-2', 'module_catalogue_id': 'MOD-1', 'week_number': 2, 'title': ''},
     {'id': 'W-3', 'module_catalogue_id': 'MOD-2', 'week_number': 1, 'title': 'Kick-off'},
     # Archived week: its components fall back to "Week 1" exactly as the full read does.
-    {'id': 'W-OLD', 'module_catalogue_id': 'MOD-2', 'week_number': 5, 'title': 'Gone', 'deleted_at': '2026-01-01'},
+    {'id': 'W-OLD', 'module_catalogue_id': 'MOD-2', 'week_number': 5, 'title': 'Gone', 'status': 'inactive'},
 ]
 
 
-def component(cid, module, week, otjh, *, status=None, order=0, title='', **extra):
+def component(cid, module, week, otjh, *, status=None, archive='active', order=0, title='', **extra):
     settings = {'componentBuilderStatus': status} if status is not None else {}
     return {
         'id': cid, 'module_catalogue_id': module, 'week_id': week, 'type': 'reading',
         'title': title or cid, 'display_order': order, 'expected_otjh': otjh,
-        'deleted_at': None, 'is_programme_deleted': False, 'library_state': None,
+        'status': archive,
         'settings_json': settings, **extra,
     }
 
@@ -59,14 +59,13 @@ COMPONENTS = [
     component('C-10', 'MOD-2', 'W-3', 0.75, settings_json=json.dumps({'componentBuilderStatus': 'published'})),
     # Filtered out by active_component_rows(), as the full read filters them.
     component('C-RETIRED', 'MOD-1', 'W-1', 9, type='workplace-evidence'),
-    component('C-LIBRARY', 'MOD-1', 'W-1', 9, library_state=views.LIBRARY_STATE_DETACHED),
-    component('C-DELETED', 'MOD-1', 'W-1', 9, deleted_at='2026-02-02'),
-    component('C-PROG-DELETED', 'MOD-1', 'W-1', 9, is_programme_deleted=True),
+    component('C-DELETED', 'MOD-1', 'W-1', 9, archive='inactive'),
+    component('C-PROG-DELETED', 'MOD-1', 'W-1', 9, archive='archived'),
 ]
 IDS = ['MOD-1', 'MOD-2', 'MOD-3']
 COLUMNS = {
     'id', 'module_catalogue_id', 'week_id', 'type', 'title', 'display_order', 'expected_otjh',
-    'deleted_at', 'is_programme_deleted', 'library_state', 'settings_json',
+    'status', 'settings_json',
 }
 
 
@@ -108,7 +107,7 @@ def grouped_like_postgres(sql, params=None):
     """What the two summary statements return, computed from COMPONENTS."""
     live = [
         row for row in COMPONENTS
-        if row['module_catalogue_id'] in set(params or []) and row['deleted_at'] is None and row['is_programme_deleted'] is not True
+        if row['module_catalogue_id'] in set(params or []) and row['status'] not in ('inactive', 'archived')
     ]
     if 'group by' in sql:
         groups = {}
@@ -117,17 +116,17 @@ def grouped_like_postgres(sql, params=None):
             if not (settings is None or isinstance(settings, dict)):
                 continue
             published = isinstance(settings, dict) and settings.get('componentBuilderStatus') == 'published'
-            key = (row['module_catalogue_id'], row['week_id'], row['type'], row['library_state'],
-                   row['is_programme_deleted'], None, row['expected_otjh'], published)
+            key = (row['module_catalogue_id'], row['week_id'], row['type'],
+                   row['status'], row['expected_otjh'], published)
             group = groups.setdefault(key, {'rows': []})
             group['rows'].append(row)
         out = []
         for key, group in groups.items():
             first = min(group['rows'], key=lambda r: (r['display_order'], r['title']))
             out.append({
-                'module_catalogue_id': key[0], 'week_id': key[1], 'type': key[2], 'library_state': key[3],
-                'is_programme_deleted': key[4], 'is_deleted': key[5], 'expected_otjh': key[6],
-                '_published_flag': key[7], '_count': len(group['rows']),
+                'module_catalogue_id': key[0], 'week_id': key[1], 'type': key[2],
+                'status': key[3], 'expected_otjh': key[4],
+                '_published_flag': key[5], '_count': len(group['rows']),
                 'display_order': first['display_order'], 'title': first['title'],
             })
         return out
