@@ -10,6 +10,38 @@ const entry = (id: string, date: string, completed = false): SubjectEntry => ({
 const subject = (id: string, activities: SubjectEntry[]): Subject => ({ id, title: id, source: 'current', activities });
 
 describe('resume saved learning', () => {
+  it('resumes later saved work while leaving an unfinished masterclass available', () => {
+    const active = { ...entry('lecture-4', '2026-10-21'), lastActivityAt: '2026-11-11T10:00:00Z' };
+    const course = subject('current:M1', [entry('masterclass', '2026-09-01'), active, entry('next', '2026-10-21')]);
+    expect(nextIncompleteActivity(course)?.activity.id).toBe('lecture-4');
+    active.completed = true;
+    expect(nextIncompleteActivity(course)?.activity.id).toBe('next');
+    expect(course.activities[0].completed).toBe(false);
+  });
+  it('keeps authored teaching order after the latest completion and skips unavailable work', () => {
+    const finished = { ...entry('finished', '2026-10-21', true), lastActivityAt: '2026-11-11T10:00:00Z' };
+    const unavailable = entry('empty', '2026-10-21');
+    unavailable.native!.contentAvailable = false;
+    const course = subject('current:M1', [entry('old-gap', '2026-09-01'), finished, unavailable, entry('next', '2026-10-28')]);
+    expect(nextIncompleteActivity(course)?.activity.id).toBe('next');
+  });
+  it('uses UTC instants for offsets and ignores invalid saved timestamps', () => {
+    const older = { ...entry('older', '2026-09-01'), lastActivityAt: '2026-11-11T12:30:00+03:00' };
+    const latest = { ...entry('latest', '2026-10-21'), lastActivityAt: '2026-11-11T10:00:00' };
+    const invalid = { ...entry('invalid', '2026-11-10'), lastActivityAt: 'invalid' };
+    expect(nextIncompleteActivity(subject('current:M1', [older, latest, invalid]))?.activity.id).toBe('latest');
+  });
+  it('chooses the recently studied module before older incomplete modules', () => {
+    const old = { ...subject('current:old', [entry('old', '2026-09-01')]), card: {
+      activityCount: 2, completedActivityCount: 1, progress: 50, status: 'In progress' as const, finalTestPassed: false,
+      lastActivityAt: '2026-10-01T10:00:00Z',
+    } };
+    const recent = { ...old, id: 'current:recent', card: { ...old.card, lastActivityAt: '2026-11-11T10:00:00Z' } };
+    expect(nextIncompleteSubject([old, recent], { [old.id]: '2026-09-01', [recent.id]: '2026-09-30' })).toBe(recent);
+    recent.card.completedActivityCount = 2;
+    const following = subject('current:following', [entry('new', '2026-12-01')]);
+    expect(nextIncompleteSubject([old, recent, following], { [old.id]: '2026-09-01', [recent.id]: '2026-09-30', [following.id]: '2026-12-01' })).toBe(following);
+  });
   it('opens an unfinished earlier week ahead of the calendar week', () => {
     const course = subject('current:M1', [entry('done', '2026-09-01', true), entry('catch-up', '2026-09-01'), entry('current', '2026-11-10')]);
     expect(nextIncompleteActivity(course)?.activity.id).toBe('catch-up');

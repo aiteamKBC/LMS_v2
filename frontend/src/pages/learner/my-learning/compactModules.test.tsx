@@ -52,6 +52,22 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('resumes the most recently studied assigned module for %s', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].lastActivityAt = '2026-10-01T10:00:00Z';
+    catalogue.modules.push({ ...catalogue.modules[0], id: 'current:M2', moduleId: 'M2', title: 'Recent module',
+      lastActivityAt: '2026-11-11T10:00:00Z',
+      planModule: { ...catalogue.modules[0].planModule!, start_date: '2026-11-01', end_date: '2026-11-30' } });
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
+      if (url.includes('/modules/')) return reply(makeModule());
+      return reply(catalogue);
+    });
+    route(`/learner/my-learning/${kind}/7?resume=1`);
+    await waitFor(() => expect(urls()).toContain(`/learner_api/my-learning/${kind}/7/modules/current%3AM2/`));
+    expect(urls().some(url => url.includes('/modules/current%3AM1/'))).toBe(false);
+  });
   it('keeps the catalogue available when all assigned learning is complete', async () => {
     const catalogue = makeCatalogue();
     catalogue.modules = catalogue.modules.map(card => ({ ...card, completedActivityCount: card.activityCount,
