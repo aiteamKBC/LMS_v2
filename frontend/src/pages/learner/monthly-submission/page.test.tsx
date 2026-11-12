@@ -253,27 +253,50 @@ it('shows an empty overdue state when no assignments have an authored due date',
   expect(screen.queryByRole('link', { name: 'Continue assignment' })).toBeNull();
 });
 
-it('starts on the current UK month even when its assignments have not been scheduled yet', async () => {
+it('starts on the next assignment month without adding an empty current month', async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-08-15T12:00:00Z'));
   mount('');
   const monthSelect = await screen.findByRole('combobox', { name: 'Choose month' });
-  expect(monthSelect).toHaveValue('2026-08');
-  expect(screen.getByRole('status')).toHaveTextContent('No assignments for this month.');
-  fireEvent.change(monthSelect, { target: { value: '2026-09' } });
+  expect(monthSelect).toHaveValue('2026-09');
+  expect(within(monthSelect).getAllByRole('option').map(option => (option as HTMLOptionElement).value))
+    .toEqual(['2026-09', '2026-10', '']);
   expect(screen.getByRole('link', { name: 'Continue assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A1?month=2026-09');
 });
 
+it.each(['commercial', 'apprenticeship'] as const)('orders assignment months across years and ignores an empty saved month for %s', async kind => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-12T12:00:00Z'));
+  vi.mocked(useResolvedLearner).mockReturnValue({ kind, id: '125' });
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [component('A1'), component('A2'), component('A3')] },
+    loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  sessionStorage.setItem(`monthly-assignment-selection:${kind}:125`, JSON.stringify({ month: '2026-11' }));
+  mockRequests({ dates: { covers: {}, activity_dates: {
+    A1: { date: '2027-09-01', month: '2027-09', date_source: 'builder_week' },
+    A2: { date: '2026-12-01', month: '2026-12', date_source: 'builder_week' },
+    A3: { date: '2027-07-01', month: '2027-07', date_source: 'builder_week' },
+  } } });
+  mount('');
+  const monthSelect = await screen.findByRole('combobox', { name: 'Choose month' });
+  expect(within(monthSelect).getAllByRole('option').map(option => option.textContent))
+    .toEqual(['December 2026', 'July 2027', 'September 2027']);
+  expect(monthSelect).toHaveValue('2026-12');
+  fireEvent.change(monthSelect, { target: { value: '2027-09' } });
+  expect(screen.getByRole('link', { name: 'Continue assignment' }))
+    .toHaveAttribute('href', `/learner/monthly-submission/${kind}/125/A1?month=2027-09`);
+});
+
 it('keeps undated work available through the month chooser', async () => {
-  // This scenario's default month is September; it must not depend on today's date.
+  // Unscheduled work stays accessible without inventing a current-month group.
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
   vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [component('A4', { component: 'Undated assignment' })] },
     loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
   mount('');
   const monthSelect = await screen.findByRole('combobox', { name: 'Choose month' });
-  expect(monthSelect).toHaveValue('2026-09');
-  fireEvent.change(monthSelect, { target: { value: '' } });
+  expect(monthSelect).toHaveValue('');
+  expect(within(monthSelect).getAllByRole('option')).toHaveLength(1);
+  expect(within(monthSelect).getByRole('option', { name: 'Not scheduled' })).toBeVisible();
   expect(screen.getByRole('link', { name: 'Start assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A4');
 });
 
