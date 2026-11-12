@@ -405,6 +405,7 @@ INSTALLED_APPS = [
     'knowledge_base',
     'chat',
     'mobile_comms',
+    'integrations',
     # One shared projection table, one transactional outbox and one short-lived
     # performance-sample table for aggregate screens across every workspace.
     'read_models',
@@ -482,6 +483,7 @@ ROOT_URLCONF = 'config.urls'
 
 # Enable only after the owner applies the reviewed SQL metadata tables.
 OLD_OTJH_ENABLED = os.environ.get('OLD_OTJH_ENABLED', 'false').lower() == 'true'
+INTEGRATIONS_TEST_MODE = USE_SQLITE_FOR_TESTS
 # Optional email-keyed overrides for the bundled public coach booking catalogue.
 # Parsing/validation stays local so links never delay record access.
 OLD_OTJH_COACH_BOOKING_URLS = os.environ.get('OLD_OTJH_COACH_BOOKING_URLS', '{}')

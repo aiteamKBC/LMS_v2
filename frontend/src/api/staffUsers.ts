@@ -41,7 +41,7 @@ export const ADMIN_POSITION = 'Admin';
 export const TUTOR_POSITION = 'Tutor';
 
 /** Supported access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
-export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'record-monitor' | 'advanced-admin' | 'super-admin' | 'support';
+export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'record-monitor' | 'integrations' | 'advanced-admin' | 'super-admin' | 'support';
 
 /**
  * What each access permits, and where it lands on sign-in.
@@ -97,6 +97,13 @@ export const ACCESS_OPTIONS: {
     description: 'The tutor workspace — their teaching groups and session delivery.',
     home: '/workspace/tutor',
     icon: 'ri-presentation-line',
+  },
+  {
+    id: 'integrations',
+    label: 'HR integrations access',
+    description: 'Manage Breathe HR connections, identity review and sync health.',
+    home: '/workspace/integrations/breathe',
+    icon: 'ri-links-line',
   },
   {
     id: 'super-admin',

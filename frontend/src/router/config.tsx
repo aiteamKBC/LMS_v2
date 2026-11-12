@@ -153,6 +153,7 @@ const LearnerFeedbackPage = lazyRoute(() => import("../pages/learner/feedback/pa
 const LearnerFeedbackFormPage = lazyRoute(() => import("../pages/learner/feedback/form/page"));
 const FinanceReportsPage = lazyRoute(() => import("../pages/finance/reports/page"));
 const FinanceWorkspace = lazyRoute(() => import("../pages/workspace/finance/page"));
+const BreatheIntegrationWorkspace = lazyRoute(() => import("../pages/workspace/integrations/breathe/page"));
 const FlashCardsPage = lazyRoute(() => import("../pages/engagement/flash-cards/page"));
 const ForgotPasswordPage = lazyRoute(() => import("../pages/forgot-password/page"));
 const LoginPage = lazyRoute(() => import("../pages/login/page"));
@@ -904,6 +905,10 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/employer",
     element: <EmployerDashboard />,
+  },
+  {
+    path: "/workspace/integrations/breathe",
+    element: <BreatheIntegrationWorkspace />,
   },
   
   {

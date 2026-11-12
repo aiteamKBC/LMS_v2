@@ -67,6 +67,7 @@ const RULES: ReadonlyArray<readonly [string, readonly Role[]]> = [
   // Workspaces, which do not share one audience.
   ['/workspace/learner', LEARNER_AND_STAFF],
   ['/workspace/employer', EMPLOYER_AND_STAFF],
+  ['/workspace/integrations', [...STAFF, 'employer']],
   ['/workspace/admin', ADMIN],
   ['/workspace', STAFF],
 
