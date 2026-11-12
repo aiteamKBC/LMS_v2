@@ -2,17 +2,30 @@ import { Fragment, type ReactNode } from 'react';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import type { WebPointPlan } from '@/api/webWeekPoints';
 import { webPointGroups } from '@/utils/webPointActivities';
+import { sessionActivityGroups } from '@/utils/sessionActivityGroups';
 
 /** Children keep their own routes, availability and completion controls. */
 export function PointActivityRows({ components, renderRow, plan = null, current, pointIdentityFor }: {
   components: JourneyComponent[];
-  renderRow: (component: JourneyComponent) => ReactNode;
+  renderRow: (component: JourneyComponent, sessionPart?: 'live' | 'recording') => ReactNode;
   plan?: WebPointPlan | null;
   current?: (component: JourneyComponent) => boolean;
   pointIdentityFor?: (component: JourneyComponent) => string | undefined;
 }) {
-  const rows = (items: JourneyComponent[]) => items.map((component, index) =>
-    <Fragment key={component.componentId || `activity:${index}`}>{renderRow(component)}</Fragment>);
+  const rows = (items: JourneyComponent[]) => sessionActivityGroups(items, item => item).map(({ primary, recordings }, index) => recordings.length
+    ? <li key={primary.componentId} className="p-2" data-session-activity={primary.componentId}>
+      <section aria-label={`${primary.title} live session and recording`} className="overflow-hidden rounded-xl border border-primary-200 bg-white shadow-sm">
+        <header className="bg-primary-50 px-3 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-primary-600">Live session &amp; recording</p>
+          <h3 className="mt-1 break-words text-sm font-semibold text-primary-900">{primary.title}</h3>
+        </header>
+        <ul className="divide-y divide-primary-100 border-t border-primary-100">
+          {renderRow(primary, 'live')}
+          {recordings.map(recording => <Fragment key={recording.componentId}>{renderRow(recording, 'recording')}</Fragment>)}
+        </ul>
+      </section>
+    </li>
+    : <Fragment key={primary.componentId || `activity:${index}`}>{renderRow(primary)}</Fragment>);
   const groups = webPointGroups(components, plan, pointIdentityFor);
   const hasPoints = groups.some(group => group.point);
   return groups.map((group, index) => group.point

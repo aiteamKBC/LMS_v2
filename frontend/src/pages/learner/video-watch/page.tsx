@@ -1,4 +1,5 @@
 import { fileProbe } from './page.helpers';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { ActivityRetakeTimeDialog, ActivityTimeLimitNotice } from '@/components/feature/ActivityRetakeTimeDialog';
@@ -863,13 +864,7 @@ export default function ComponentViewPage() {
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError ? (
-          <div role="alert" className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6">
-            <EmptyState text={loadError} />
-            <button type="button" onClick={() => setLoadRevision(value => value + 1)}
-              className="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">
-              Try again
-            </button>
-          </div>
+          <LearnerLoadError title="Could not load this learning activity" error={loadError} onRetry={() => setLoadRevision(value => value + 1)} />
         ) : !component ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
         ) : !canProgress ? (

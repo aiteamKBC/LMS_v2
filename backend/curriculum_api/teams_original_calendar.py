@@ -347,7 +347,8 @@ def update_original_schedule(request, live_id, access, view, args, kwargs):
     change_id = str(operation.get('id') or result.get('operationId') or body.get('changeId') or '')
     body.update(announced=notify and changed, changeId=change_id,
                 changeNotice=issue_change_notice(live_id, before, after, notice_id=change_id or None))
-    if notify and changed and body['changeNotice'] and may_send_schedule_email(request):
+    from .teams_notification_preferences import lms_email_requested
+    if notify and changed and body['changeNotice'] and lms_email_requested(request) and may_send_schedule_email(request):
         # The ordinary save already invited/emailed the added people. They
         # receive no second change email; the shared notice ledger dedupes retries.
         body['scheduleEmail'] = send_change_emails(live_id, body['changeNotice'], exclude=body.get('addedPeople') or [])

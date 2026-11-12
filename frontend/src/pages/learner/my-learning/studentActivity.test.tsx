@@ -935,7 +935,7 @@ describe('subject months, weeks and completion', () => {
     await act(async () => { finish(completeResult); });
     expect(await screen.findByText('Activity completed.')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Activity completion' })).getByText('Complete')).toBeVisible();
-    expect(await screen.findByText(/Refresh unavailable/)).toBeInTheDocument();
+    expect(await screen.findByText('Your learning information could not be refreshed')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByRole('complementary', { name: 'Module activities' })).toHaveTextContent(/2 components\s*\u00b7\s*2 done/);

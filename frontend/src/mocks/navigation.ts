@@ -223,6 +223,14 @@ export const employerNavItems: SidebarNavItem[] = [
   { id: 'employer-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/employer/reports' },
 ];
 
+// HR INTEGRATIONS WORKSPACE
+export const integrationsNavItems: SidebarNavItem[] = [
+  { id: 'integrations-home', label: 'Breathe HR', icon: 'ri-links-line', href: '/workspace/integrations/breathe' },
+  { id: 'integrations-matches', label: 'Identity review', icon: 'ri-user-search-line', href: '/workspace/integrations/breathe?view=matches' },
+  { id: 'integrations-conflicts', label: 'Scheduling conflicts', icon: 'ri-calendar-close-line', href: '/workspace/integrations/breathe?view=conflicts' },
+  { id: 'integrations-runs', label: 'Sync history', icon: 'ri-history-line', href: '/workspace/integrations/breathe?view=runs' },
+];
+
 // ============================================================================
 // CURRICULUM STUDIO — Grouped sidebar
 // ============================================================================
@@ -827,6 +835,7 @@ const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; w
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },
   tutor: { items: tutorNavItems, label: 'Tutor', workspaceLabel: 'Tutor Workspace' },
   employer: { items: employerNavItems, label: 'Employer', workspaceLabel: 'Employer Workspace' },
+  integrations: { items: integrationsNavItems, label: 'HR Integrations', workspaceLabel: 'Breathe HR Workspace' },
   curriculum: { items: curriculumNavItems, label: 'Curriculum Designer', workspaceLabel: 'Curriculum Studio' },
   engagement: { items: engagementNavItems, label: 'Engagement Manager', workspaceLabel: 'Engagement Command Centre' },
   compliance: { items: enrolmentNavItems, label: 'Enrolment Officer', workspaceLabel: 'Enrolment Workspace' },

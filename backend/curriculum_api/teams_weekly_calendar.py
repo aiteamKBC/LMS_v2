@@ -219,6 +219,13 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 verify_calendar(microsoft_graph_request, owner, event_id, targets, previous.get('joinUrl') or '',
                                 day_payload['repeat'] != 'none')
             except CalendarMismatch as mismatch:
+                if mismatch.code == 'teams_attendee_privacy_unconfirmed':
+                    return v.json_error(
+                        'Attendee email privacy is not confirmed on the original Teams calendar. '
+                        'The invitations were not saved and no invitation was sent. '
+                        'Updating session dates does not resolve this privacy check.',
+                        status=409, code=mismatch.code, detail=str(mismatch), liveSessionId=live_id,
+                    )
                 return v.json_error(
                     'The Teams calendar dates no longer match the dates saved here, so the invitations were not '
                     'saved. Nothing was changed in Teams. Update the Teams calendar dates first, then save the '

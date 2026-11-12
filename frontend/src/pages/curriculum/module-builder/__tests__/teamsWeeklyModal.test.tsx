@@ -354,11 +354,11 @@ it('invites only the people added when asked to, without moving a date', async (
   const dialog = within(await screen.findByRole('dialog'));
   await waitFor(() => expect(dialog.getByRole('button', { name: 'Remove learner@example.invalid' })).toBeInTheDocument());
   // Offered only once somebody is added: with nobody new there is nobody to invite.
-  expect(dialog.queryByRole('button', { name: 'Save and invite added people' })).toBeNull();
+  expect(dialog.queryByRole('button', { name: 'Save and email added people' })).toBeNull();
   const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
   fireEvent.change(attendees, { target: { value: 'new@example.invalid' } });
   fireEvent.keyDown(attendees, { key: 'Enter' });
-  const invite = await dialog.findByRole('button', { name: 'Save and invite added people' });
+  const invite = await dialog.findByRole('button', { name: 'Save and email added people' });
   await waitFor(() => expect(invite).toBeEnabled());
   await act(async () => { await userEvent.click(invite); });
   await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));

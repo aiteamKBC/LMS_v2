@@ -1,4 +1,5 @@
 import { formatDate, matchesSessionGroup, sessionGroups } from './page.helpers';
+import { Notice } from '@/components/ui/Notice';
 import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -420,10 +421,10 @@ export default function SessionCalendarPage() {
             )}
 
             {error && (
-              <div className="mx-4 mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-700">
-                <AppIcon className="ri-wifi-off-line mr-2"></AppIcon>
-                Live LMS data is unavailable, so no generated session schedule is shown.
-              </div>
+              <Notice tone="attention" role="alert" className="mx-4 mt-3" title="The session calendar could not be loaded"
+                actions={<button type="button" onClick={() => void reload()} className="min-h-9 rounded-lg border border-primary-200 px-3 py-2 text-[13px] font-semibold text-primary-700">Try again</button>}>
+                Session dates are unavailable right now. Please try again before making schedule changes.
+              </Notice>
             )}
 
             {showFilters && (
@@ -596,7 +597,7 @@ function TeamsTimelineView({ days, hours, selectedSession, draggedSession, dragO
             <p className={`text-[20px] font-bold leading-tight ${isToday(day) ? 'text-primary-700' : 'text-slate-950'}`}>{day.getDate()}</p>
             <p className={`text-[11px] font-semibold ${isToday(day) ? 'text-primary-700' : 'text-slate-600'}`}>{day.toLocaleDateString('en-GB', { weekday: 'long' })}</p>
             {getHolidaysForDay(day).slice(0, 1).map(holiday => (
-              <span key={holiday.id} className="mt-1 block truncate rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-200" title={holiday.label}>{holiday.label}</span>
+              <span key={holiday.id} className="mt-1 block truncate rounded-full bg-primary-50 px-2 py-0.5 text-[12px] font-semibold text-primary-700 ring-1 ring-primary-200" title={holiday.label}>{holiday.label}</span>
             ))}
           </div>
         ))}
@@ -618,7 +619,7 @@ function TeamsTimelineView({ days, hours, selectedSession, draggedSession, dragO
               <div key={day.toISOString()} onDragOver={event => onDragOver(event, day)} onDragLeave={onDragLeave} onDrop={event => onDrop(event, day)} className={`relative border-r border-slate-200 bg-white ${isToday(day) ? 'bg-primary-50/30' : ''} ${dragOverDate === dateString ? 'ring-1 ring-inset ring-primary-500' : ''}`} style={{ height: timelineHeight }}>
                 {hours.map(hour => <div key={hour} className="h-[72px] border-b border-slate-100 bg-[linear-gradient(to_bottom,transparent_0,transparent_35px,rgba(148,163,184,0.15)_36px,transparent_37px)]"></div>)}
                 {dayHolidays.length > 0 && (
-                  <div className="absolute left-2 right-2 top-2 z-10 rounded-md border border-amber-200 bg-amber-50/95 px-2 py-1 text-[10px] font-bold text-amber-800 shadow-sm">
+                  <div className="absolute left-2 right-2 top-2 z-10 rounded-md border border-primary-200 bg-primary-50/95 px-2 py-1 text-[12px] font-semibold text-primary-700 shadow-sm">
                     <AppIcon className="ri-suitcase-line mr-1"></AppIcon>
                     {dayHolidays[0].label}{dayHolidays.length > 1 ? ` +${dayHolidays.length - 1}` : ''}
                   </div>
@@ -672,7 +673,7 @@ function TeamsMonthView({ days, currentDate, isToday, isCurrentMonth, getSession
               <button onClick={() => onPickDate(day)} className={`mb-2 inline-grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${formatDate(day) === formatDate(currentDate) ? 'bg-primary-600 text-white' : isCurrentMonth(day) ? 'text-slate-700' : 'text-slate-400'}`}>{day.getDate()}</button>
               <div className="space-y-1">
                 {dayHolidays.slice(0, 2).map(holiday => (
-                  <div key={holiday.id} className="truncate rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-800">
+                  <div key={holiday.id} className="truncate rounded-md border border-primary-200 bg-primary-50 px-2 py-1 text-[12px] font-semibold text-primary-700">
                     <AppIcon className="ri-suitcase-line mr-1"></AppIcon>{holiday.label}
                   </div>
                 ))}

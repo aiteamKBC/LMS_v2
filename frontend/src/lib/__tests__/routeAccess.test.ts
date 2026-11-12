@@ -19,6 +19,19 @@ const as = (role: Role) => ({ role });
  * would be reported ("a learner pasted a curriculum URL").
  */
 describe('mayAccessRoute', () => {
+  it('limits HR System to administrators and explicitly granted integration staff', () => {
+    const path = '/workspace/hr-system';
+    expect(mayAccessRoute(path, as('admin'))).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'integrations' })).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'coach', accessWorkspaces: [{ access: 'integrations', home: path }] })).toBe(true);
+    for (const role of ['staff', 'learner', 'employer'] as const) {
+      expect(mayAccessRoute(path, as(role))).toBe(false);
+    }
+    expect(mayAccessRoute(path, { role: 'learner', access: 'integrations' })).toBe(false);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'advanced-admin' })).toBe(false);
+    // The existing employer integration route keeps its own audience.
+    expect(mayAccessRoute('/workspace/integrations/breathe', as('employer'))).toBe(true);
+  });
   it('keeps Advanced Admin inside its scoped workspace', () => {
     const account = { role: 'staff' as const, access: 'advanced-admin' };
     for (const path of ['/workspace/advanced-admin', '/workspace/advanced-admin/learners/12',

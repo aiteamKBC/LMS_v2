@@ -3113,44 +3113,15 @@ def teams_newly_invited(stored, invited):
 
 
 def forward_teams_invitation(request, owner_key, event_ids, recipients, comment=''):
-    """Send the meeting to the people a people-only save just added.
+    """Microsoft forwarding is disabled; optional email is sent by the LMS.
 
-    Microsoft's invitation preference is per write, never per person: the silent
-    attendee patch that keeps an update out of every existing invitee's mailbox
-    keeps it out of the new learner's too, and a meeting only reaches somebody's
-    calendar when something is sent to them. Forwarding is the one call Graph
-    offers that reaches named recipients alone, so the people already invited
-    stay unbothered while the person just added still gets a real Teams
-    invitation rather than only a link in an email.
-
-    Failures come back as warnings instead of raising: the calendar is already
-    saved and verified by the time this runs, and a mailbox refusing a forward
-    must not undo it or hide itself.
+    This prevents explicit /forward calls. It does not certify suppression of
+    the messages Exchange may generate from an event PATCH.
     """
-    warnings = []
     if not recipients:
-        return warnings
-    payload = {'ToRecipients': [{'emailAddress': {'address': clean_str(email)}} for email in recipients]}
-    if comment:
-        payload['Comment'] = comment
-    for event_id in dict.fromkeys(clean_str(value) for value in event_ids):
-        if not event_id:
-            continue
-        try:
-            request(
-                'POST',
-                f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}/forward',
-                payload=payload,
-            )
-        except (RuntimeError, ValueError) as exc:
-            warnings.append({
-                'code': 'teams_invitation_not_forwarded',
-                'message': 'Microsoft did not send the meeting invitation to everyone this save added. '
-                           'They are on the meeting and receive the LMS schedule email; forward the '
-                           'invitation from the calendar if it is still missing from theirs.',
-                'detail': str(exc),
-            })
-    return warnings
+        return []
+    return [{'code': 'teams_calendar_mail_disabled',
+             'message': 'No Microsoft invitation was requested. Use the LMS email option if you want to email the people added.'}]
 
 
 def reschedule_single_live_session_occurrence(
@@ -4239,7 +4210,9 @@ def with_schedule_change_notice(response, live_session_id, before, request=None,
     body['changeNotice'] = issue_change_notice(live_session_id, before, held_schedule_snapshot(live_session_id),
                                                notice_id=clean_str(body.get('changeId')) or None)
     from .teams_week_meeting import may_send_schedule_email
-    if request is not None and may_send_schedule_email(request):
+    from .teams_notification_preferences import lms_email_requested
+    body['lmsEmailRequested'] = bool(lms_email_requested(request) and may_send_schedule_email(request))
+    if body['lmsEmailRequested']:
         from .teams_schedule_delivery import send_change_emails, send_creation_emails
         added = []
         if series_before is not None:
@@ -4476,6 +4449,13 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         except CalendarMismatch as mismatch:
             # A known difference is the reason to update. Read failures still abort.
             if people_only:
+                if mismatch.code == 'teams_attendee_privacy_unconfirmed':
+                    return json_error(
+                        'Attendee email privacy is not confirmed on the original Teams calendar. '
+                        'The invitations were not saved and no invitation was sent. '
+                        'Updating session dates does not resolve this privacy check.',
+                        status=409, code=mismatch.code, detail=str(mismatch), liveSessionId=live_session_id,
+                    )
                 # Except on a people-only save, which must never touch a date.
                 # Repairing the drift here would move, or re-create, sessions
                 # as a side effect of saving who is invited. Nothing has been
@@ -4813,6 +4793,9 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if unresolved_components:
         warnings.append({'code': 'teams_component_binding_missing',
                          'message': f'{len(unresolved_components)} existing session link(s) were preserved because their calendar occurrence could not be matched. Review Calendar health before changing those sessions.'})
+    # Keep actual permission/settings failures ahead of the informational mail policy notice.
+    mail_notices = [item for item in warnings if item.get('code') == 'teams_calendar_mail_disabled']
+    warnings = [item for item in warnings if item.get('code') != 'teams_calendar_mail_disabled']
     return with_schedule_change_notice(JsonResponse({
         'updated': True,
         'meeting': {
@@ -4829,7 +4812,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'presenters': presenters,
             'coOrganizers': co_organizers,
         },
-        'warnings': [*warnings, *[reported_failure(item) for item in option_failures]],
+        'warnings': [*warnings, *[reported_failure(item) for item in option_failures], *mail_notices],
         # The onlineMeeting options, reported apart from the invitation: which
         # groups this save sent, whether Microsoft took them, and what is still
         # unapplied from this or an earlier save.

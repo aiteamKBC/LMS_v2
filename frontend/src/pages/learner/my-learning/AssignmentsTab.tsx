@@ -1,6 +1,7 @@
 import { assignmentMonth } from './assignmentMonth';
 import { readLearnerJson } from '@/api/learnerRead';
 import { useEffect, useMemo, useState } from 'react';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { Link } from 'react-router-dom';
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -80,7 +81,7 @@ function AssignedList({ real, kind, id, canTake }: {
       { value: 'submitted', label: 'Submitted', count: rows.filter(row => assignmentFilter(row.status) === 'submitted').length },
       { value: 'completed', label: 'Completed', count: rows.filter(row => assignmentFilter(row.status) === 'completed').length, tone: 'positive' },
     ]} />
-    {error && <p role="alert" className="text-sm text-red-700">{error} <button className="underline" onClick={() => setRetry(value => value + 1)}>Retry statuses</button></p>}
+    {error && <LearnerLoadError error={error} onRetry={() => setRetry(value => value + 1)} title="Assignment statuses could not be loaded" retryLabel="Retry statuses" />}
     {datesError && <p role="alert" className="text-sm text-red-700">Could not load assignment dates. <button className="underline" onClick={retryDates}>Retry dates</button></p>}
     {filtered.length === 0 ? <Panel><EmptyState size="sm" title="No assignments match this filter" /></Panel> :
       <Panel padding="none"><div className="overflow-x-auto"><table className="w-full text-left text-sm">
@@ -144,10 +145,10 @@ export function AssignmentsTab({ kind, id, real = null, loading: planLoading = f
 
   return <div className="space-y-4">
     <SectionHeader title="Assignments" description="Your assigned work, drafts and previous submissions" icon="ri-file-list-3-line" />
-    {planLoading && !real ? <RowsSkeleton /> : loadError ? <Panel><div role="alert" className="text-sm text-red-700">{loadError}</div>{onRetry && <button className="mt-3 text-sm underline" onClick={onRetry}>Retry assignments</button>}</Panel> : null}
+    {planLoading && !real ? <RowsSkeleton /> : loadError ? <LearnerLoadError error={loadError} onRetry={onRetry} title="Your assignments could not be loaded" retryLabel="Retry assignments" /> : null}
     {hasAssigned && real && <AssignedList key={`${kind}:${id}`} real={real} kind={kind} id={id} canTake={canTake} />}
     {!planLoading && !loadError && !hasAssigned && !loading && !error && months.length === 0 && <Panel><EmptyState size="sm" title="No assignments linked yet" description="Assignments linked to your training plan will appear here." /></Panel>}
-    {loading ? <p role="status" className="text-sm text-slate-500">Loading previous assignments…</p> : error ? <Panel><div role="alert" className="text-sm text-red-700">{error}</div><button className="mt-3 text-sm underline" onClick={() => setRetry(n => n + 1)}>Retry</button></Panel>
+    {loading ? <p role="status" className="text-sm text-slate-500">Loading previous assignments…</p> : error ? <LearnerLoadError error={error} onRetry={() => setRetry(n => n + 1)} title="Previous assignments could not be loaded" retryLabel="Retry" />
       : months.length > 0 && <section aria-label="Previous assignments" className="space-y-3"><h2 className="text-base font-semibold text-slate-900">Previous assignments</h2>{months.map(([month, assignments], index) => <details key={month} open={index === 0} className="overflow-hidden rounded-2xl border border-purple-100 bg-white">
         <summary className="cursor-pointer bg-purple-50/50 px-5 py-4 font-semibold text-slate-900">
           {month ? new Date(`${month}-01T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : 'Undated assignments'}
