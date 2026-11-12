@@ -229,6 +229,7 @@ class EditableReviewDefinitionSyncTests(SimpleTestCase):
 
         refresh.assert_called_once()
         payload = insert.call_args.args[1]
+        self.assertEqual(payload['review_template_id'], self.instance()['review_template_id'])
         self.assertEqual(payload['field_id'], 'SUMMARY-FIELD')
         self.assertEqual(payload['answer'], 'Generated summary')
 

@@ -79,8 +79,8 @@ class CoachCalendarEvent(models.Model):
     # types (catch-up, student-support, ...), which have no Curriculum Review
     # behind them. See curriculum_api.review_instances for the engine that
     # resolves recurrence/eligibility/sections/fields from these ids.
-    review_template_id = models.CharField(max_length=128, blank=True)
-    review_instance_id = models.CharField(max_length=128, blank=True)
+    review_template_id = models.CharField(max_length=128, null=True, blank=True)
+    review_instance_id = models.CharField(max_length=128, null=True, blank=True)
     occurrence_number = models.PositiveIntegerField(null=True, blank=True)
     manager_signed_at = models.DateTimeField(null=True, blank=True)
     manager_signed_by = models.CharField(max_length=255, blank=True)

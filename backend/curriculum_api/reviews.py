@@ -45,7 +45,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -251,6 +251,34 @@ def get_review_field_rows(review_id):
         f'where review_id = %s order by display_order asc',
         [review_id],
     )
+
+
+def _review_has_saved_answers(review_id):
+    """Whether a template already has answer rows that protect its fields.
+
+    The database deliberately uses ``ON DELETE RESTRICT`` for the
+    answer-to-field relationship. The editor historically replaced the whole
+    field tree, so check this before entering that path and return a useful
+    conflict instead of allowing PostgreSQL to turn it into a 500.
+    """
+    try:
+        rows = curriculum_views.fetch_all(
+            f'''select 1
+                  from {curriculum_views.table_name('review_instance_answers')} a
+                  join {curriculum_views.table_name('review_instances')} i
+                    on i.id = a.review_instance_id
+                 where i.review_template_id = %s
+                 limit 1''',
+            [review_id],
+        )
+    except DatabaseError as exc:
+        # Lightweight template-only sqlite tests provision only the template
+        # tables. Production schema checks still require the instance tables;
+        # this fallback keeps those isolated tests focused on template CRUD.
+        if 'does not exist' in str(exc).lower() or 'no such table' in str(exc).lower():
+            return False
+        raise
+    return bool(rows)
 
 
 # ------------------------------------------------------------------ payload
@@ -959,6 +987,11 @@ def update_review(review_id, payload, *, actor='system'):
         return None, errors
 
     sections = cleaned.pop('_sections')
+    if sections is not None and _review_has_saved_answers(review_id):
+        return None, {
+            '_': 'This Review has saved answers. Create a new template or archive this one before changing its Sections or Fields.',
+            'code': 'REVIEW_TEMPLATE_LOCKED',
+        }
     updates = dict(cleaned)
     if 'applicable_statuses' in updates:
         updates['applicable_statuses'] = curriculum_views.json_db_value(updates['applicable_statuses'])
@@ -1155,7 +1188,12 @@ def curriculum_review_detail(request, review_id):
 
     _, errors = update_review(review_id, payload, actor=_actor(request))
     if errors:
-        status = 404 if errors.get('_') == 'Review not found.' else 400
+        if errors.get('_') == 'Review not found.':
+            status = 404
+        elif errors.get('code') == 'REVIEW_TEMPLATE_LOCKED':
+            status = 409
+        else:
+            status = 400
         return curriculum_views.json_error(errors.get('_') or 'Please fix the highlighted fields.', status=status, fields=errors)
 
     curriculum_views.log_curriculum_decision('review.update', outcome='updated', entity_id=review_id)

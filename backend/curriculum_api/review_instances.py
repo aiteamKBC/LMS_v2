@@ -48,7 +48,7 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from coach_api.reconciliation_links import native_write
 
 from . import reviews
@@ -355,6 +355,7 @@ def provision_review_instance_tables():
             create table if not exists {curriculum_views.authoring_table_name(REVIEW_INSTANCE_ANSWERS_TABLE)} (
                 id varchar(128) primary key,
                 review_instance_id varchar(128) not null,
+                review_template_id varchar(128) not null,
                 field_id varchar(128) not null,
                 answer {json_type},
                 answered_by varchar(255) not null default '',
@@ -362,6 +363,10 @@ def provision_review_instance_tables():
                 created_at timestamp not null default current_timestamp,
                 updated_at timestamp not null default current_timestamp
             )
+        ''')
+        cursor.execute(f'''
+            create unique index if not exists review_instance_answers_uniq
+            on {curriculum_views.authoring_table_name(REVIEW_INSTANCE_ANSWERS_TABLE)} (review_instance_id, field_id)
         ''')
         cursor.execute(f'''
             create table if not exists {curriculum_views.authoring_table_name(REVIEW_INSTANCE_SIGNATURES_TABLE)} (
@@ -552,8 +557,8 @@ def create_learner_review_addition(
     require_native_review_creation(learner_id)
 
     addition_id = curriculum_views.unique_prefixed_id('LRA')
-    with transaction.atomic():
-        try:
+    try:
+        with transaction.atomic():
             row = curriculum_views.insert_row(LEARNER_REVIEW_ADDITIONS_TABLE, {
                 'id': addition_id,
                 'review_template_id': review_template_id,
@@ -567,13 +572,21 @@ def create_learner_review_addition(
                 'created_at': datetime.utcnow(),
                 'updated_at': datetime.utcnow(),
             })
-        except Exception:
-            # Lost the race with a concurrent identical request -- the unique
-            # index rejected the insert. The row that won is what we want.
-            existing = find_active_learner_review_addition(review_template_id, learner_id, target_date)
-            if existing:
-                return existing
-            raise
+    except IntegrityError as exc:
+        # Lost the race with a concurrent identical request -- the unique
+        # index rejected the insert. The row that won is what we want. The
+        # lookup is deliberately outside atomic() so the failed transaction
+        # has already rolled back before we query it.
+        existing = find_active_learner_review_addition(review_template_id, learner_id, target_date)
+        if existing:
+            return existing
+        from coach_api.review_sources import ReviewCreationBlocked
+        raise ReviewCreationBlocked({
+            'reviewSource': 'curriculum',
+            'canAddReview': False,
+            'code': 'REVIEW_DATA_CONFLICT',
+            'detail': 'The Review could not be linked to this learner and Programme. Refresh and try again.',
+        }) from exc
     return row
 
 
@@ -1026,8 +1039,8 @@ def ensure_review_instance(
     require_native_review_creation(learner_id)
 
     instance_id = curriculum_views.unique_prefixed_id('REVI', '', existing_review_instance_ids)
-    with transaction.atomic():
-        try:
+    try:
+        with transaction.atomic():
             row = curriculum_views.insert_row(REVIEW_INSTANCES_TABLE, {
                 'id': instance_id,
                 'review_template_id': review_template_id,
@@ -1046,13 +1059,19 @@ def ensure_review_instance(
                 'created_at': datetime.utcnow(),
                 'updated_at': datetime.utcnow(),
             })
-        except Exception:
-            # Lost the race with a concurrent identical request -- the unique
-            # index rejected the insert. The row that won is what we want.
-            existing = _existing()
-            if existing:
-                return existing
-            raise
+    except IntegrityError as exc:
+        # The lookup is deliberately outside atomic() so the failed insert has
+        # rolled back before a concurrent winner is queried.
+        existing = _existing()
+        if existing:
+            return existing
+        from coach_api.review_sources import ReviewCreationBlocked
+        raise ReviewCreationBlocked({
+            'reviewSource': 'curriculum',
+            'canAddReview': False,
+            'code': 'REVIEW_DATA_CONFLICT',
+            'detail': 'The Review could not be linked to this learner and Programme. Refresh and try again.',
+        }) from exc
     return row
 
 
@@ -1969,6 +1988,26 @@ def save_review_instance_answers_for_role(instance_row, answers, role, *, actor=
     return save_review_instance_answers(instance_row, answers, actor=actor)
 
 
+def _review_answer_integrity_message(exc):
+    """Return a safe, stable client message for answer FK/unique failures.
+
+    PostgreSQL exposes the violated constraint through ``diag`` while sqlite
+    only gives us the exception text. Neither form should be returned to a
+    caller because it leaks storage details and produces different API
+    responses between environments.
+    """
+    diagnostic = getattr(getattr(exc, '__cause__', None), 'diag', None)
+    constraint = str(getattr(diagnostic, 'constraint_name', '') or '').lower()
+    detail = str(exc).lower()
+    if 'field_template' in constraint or 'field_template' in detail:
+        return 'The answer field does not belong to this review template.'
+    if 'instance_template' in constraint or 'instance_template' in detail:
+        return 'The answer does not belong to this review instance.'
+    if 'review_instance_answers_uniq' in constraint or 'unique' in detail:
+        return 'This review answer was updated elsewhere. Refresh and try again.'
+    return 'The review answer conflicts with the current review definition. Refresh and try again.'
+
+
 @native_write
 def save_review_instance_answers(instance_row, answers, *, actor='system'):
     """Draft save -- merges posted {fieldId: value} into whatever is already
@@ -1978,23 +2017,34 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
     if instance_row.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
         raise ValueError('Submitted review answers cannot be changed after the signature step begins.')
 
-    with transaction.atomic():
-        # Answer writers and completion lock this same parent first. A stale
-        # save that started before submission therefore re-reads the terminal
-        # status and is rejected instead of changing signed content.
-        locked = get_review_instance(instance_row.get('id'), for_update=True)
-        if not locked:
-            raise ValueError('Review not found.')
-        if locked.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
-            raise ValueError('Submitted review answers cannot be changed after the signature step begins.')
-        _save_review_instance_answers_locked(locked, answers, actor=actor)
+    try:
+        with transaction.atomic():
+            # Answer writers and completion lock this same parent first. A stale
+            # save that started before submission therefore re-reads the terminal
+            # status and is rejected instead of changing signed content.
+            locked = get_review_instance(instance_row.get('id'), for_update=True)
+            if not locked:
+                raise ValueError('Review not found.')
+            if locked.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
+                raise ValueError('Submitted review answers cannot be changed after the signature step begins.')
+            _save_review_instance_answers_locked(locked, answers, actor=actor)
 
-        # Saving a draft answer is not evidence the meeting started -- it used
-        # to flip status to in-progress here, which is exactly the "opened/
-        # edited the form" trigger Phase 2 removes. The real trigger is a
-        # confirmed Microsoft Teams attendance signal; see
-        # mark_review_instance_in_progress_from_attendance and
-        # coach_api.views.apply_teams_attendance_status_transition.
+            # Saving a draft answer is not evidence the meeting started -- it used
+            # to flip status to in-progress here, which is exactly the "opened/
+            # edited the form" trigger Phase 2 removes. The real trigger is a
+            # confirmed Microsoft Teams attendance signal; see
+            # mark_review_instance_in_progress_from_attendance and
+            # coach_api.views.apply_teams_attendance_status_transition.
+    except IntegrityError as exc:
+        raise ValueError(_review_answer_integrity_message(exc)) from exc
+    except DatabaseError as exc:
+        # The Neon trigger raises a domain exception (rather than an
+        # IntegrityError) when a caller supplies a template that differs from
+        # the locked Review Instance. Turn only that known conflict into the
+        # same stable client error; unrelated database failures must surface.
+        if 'answer template does not match review instance' in str(exc).lower():
+            raise ValueError('The answer template does not match this review instance.') from exc
+        raise
 
     return review_instance_form_definition(get_review_instance(instance_row.get('id')))
 
@@ -2030,6 +2080,7 @@ def _save_review_instance_answers_locked(instance_row, answers, *, actor):
             curriculum_views.insert_row(REVIEW_INSTANCE_ANSWERS_TABLE, {
                 'id': curriculum_views.unique_prefixed_id('REVIA'),
                 'review_instance_id': instance_row.get('id'),
+                'review_template_id': instance_row.get('review_template_id'),
                 'field_id': field_id,
                 'created_at': datetime.utcnow(),
                 **payload,

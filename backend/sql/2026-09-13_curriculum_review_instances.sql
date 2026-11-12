@@ -82,6 +82,7 @@ CREATE INDEX IF NOT EXISTS review_instances_calendar_event_idx
 CREATE TABLE IF NOT EXISTS curriculum.review_instance_answers (
     id varchar(128) PRIMARY KEY,
     review_instance_id varchar(128) NOT NULL,
+    review_template_id varchar(128) NOT NULL,
     field_id varchar(128) NOT NULL,
     answer jsonb,
     answered_by varchar(255) NOT NULL DEFAULT '',

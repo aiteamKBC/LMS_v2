@@ -1,5 +1,6 @@
 """Programme Review Templates ("Reviews ID" tab)."""
 import json
+from unittest.mock import patch
 
 from django.db import connection
 from django.test import TestCase
@@ -352,6 +353,14 @@ class ReviewUpdateDeleteTests(ReviewTemplateTestCase):
         fields = response.json()['review']['fields']
         self.assertEqual([f['title'] for f in fields], ['Hours spent', 'Progress notes', 'New question'])
         self.assertEqual([f['displayOrder'] for f in fields], [0, 1, 2])
+
+    def test_edit_review_sections_returns_conflict_when_answers_exist(self):
+        programme_id = self._programme()
+        review_id = self._post(programme_id, self._basic_payload()).json()['review']['id']
+        with patch('curriculum_api.reviews._review_has_saved_answers', return_value=True):
+            response = self._patch(review_id, {'sections': [{'title': 'Changed', 'fields': []}]})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()['fields']['code'], 'REVIEW_TEMPLATE_LOCKED')
 
     def test_partial_update_leaves_other_fields_untouched(self):
         programme_id = self._programme()
