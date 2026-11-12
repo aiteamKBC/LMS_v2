@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from . import catalogue_summary_reads, views
+from . import catalogue_summary_reads, ksb_mapping_placement, views
 
 
 class GroupedCatalogueTests(SimpleTestCase):
@@ -13,40 +13,42 @@ class GroupedCatalogueTests(SimpleTestCase):
         self.db = sqlite3.connect(':memory:')
         self.db.row_factory = sqlite3.Row
         self.addCleanup(self.db.close)
+        # The curriculum shape: status is the archive state; a mapping belongs to
+        # a component and names a standard KSB (its code comes from there).
         self.db.executescript('''
             create table components (
                 id text, module_catalogue_id text, week_id text, type text,
-                title text, expected_otjh real, deleted_at text,
-                is_programme_deleted boolean, library_state text
+                title text, expected_otjh real, status text
             );
-            create table ksb_mappings (
-                module_catalogue_id text, ksb_code text, deleted_at text,
-                is_programme_deleted boolean, is_deleted boolean,
-                isDeleted boolean, isProgrammeDeleted boolean
-            );
+            create table standard_ksbs (id integer, ksb_code text, ksb_description text);
+            create table ksb_mappings (id text, component_id text, standard_ksb_id integer, status text);
         ''')
-        self.db.executemany('insert into components values (?,?,?,?,?,?,?,?,?)', [
-            ('C1', 'MOD-ONE', 'W1', 'reading', 'Body one', .125, None, False, ''),
-            ('C2', 'MOD-ONE', 'W1', 'reading', 'Body two', .125, None, False, ''),
-            ('C3', 'MOD-ONE', 'W1', 'live_session', 'Repeated', .25, None, False, ''),
-            ('C4', 'MOD-ONE', 'W1', 'live_session', 'Repeated', .25, None, False, ''),
-            ('C5', 'MOD-ONE', 'W2', 'live-session', 'Other', None, None, False, ''),
-            ('C6', 'MOD-ONE', 'missing', 'quiz', 'Quiz', -.5, None, False, ''),
-            ('C7', 'MOD-ONE', 'W2', 'quiz', 'Deleted', 99, '2026-01-01', False, ''),
-            ('C8', 'MOD-ONE', 'W2', 'reading', 'Library', 99, None, False, ' library '),
-            ('C9', 'MOD-ONE', 'W2', 'workplace-evidence', 'Retired', 99, None, False, ''),
-            ('C10', 'MOD-ONE', 'W2', 'quiz', 'Parent deleted', 99, None, True, ''),
-            ('C11', 'MOD-TWO', 'W3', 'quiz', 'Other module', .5, None, False, ''),
+        self.db.executemany('insert into components values (?,?,?,?,?,?,?)', [
+            ('C1', 'MOD-ONE', 'W1', 'reading', 'Body one', .125, 'active'),
+            ('C2', 'MOD-ONE', 'W1', 'reading', 'Body two', .125, 'active'),
+            ('C3', 'MOD-ONE', 'W1', 'live_session', 'Repeated', .25, 'active'),
+            ('C4', 'MOD-ONE', 'W1', 'live_session', 'Repeated', .25, 'active'),
+            ('C5', 'MOD-ONE', 'W2', 'live-session', 'Other', None, 'active'),
+            ('C6', 'MOD-ONE', 'missing', 'quiz', 'Quiz', -.5, 'active'),
+            ('C7', 'MOD-ONE', 'W2', 'quiz', 'Deleted', 99, 'inactive'),
+            ('C8', 'MOD-ONE', 'W2', 'reading', 'Archived', 99, 'inactive'),
+            ('C9', 'MOD-ONE', 'W2', 'workplace-evidence', 'Retired', 99, 'active'),
+            ('C10', 'MOD-ONE', 'W2', 'quiz', 'Parent deleted', 99, 'inactive'),
+            ('C11', 'MOD-TWO', 'W3', 'quiz', 'Other module', .5, 'active'),
         ])
-        self.db.executemany('insert into ksb_mappings values (?,?,?,?,?,?,?)', [
-            ('MOD-ONE', 'K1', None, False, False, False, False),
-            ('MOD-ONE', 'K1', None, False, False, False, False),
-            ('MOD-ONE', ' K1 ', None, False, False, False, False),
-            ('MOD-ONE', 'S1', None, False, True, False, False),
-            ('MOD-ONE', 'S2', None, False, False, True, False),
-            ('MOD-ONE', 'S3', None, False, False, False, True),
-            ('MOD-ONE', '', None, False, False, False, False),
-            ('MOD-TWO', 'B1', None, False, False, False, False),
+        self.db.executemany('insert into standard_ksbs values (?,?,?)', [
+            (1, 'K1', 'Knowledge'), (2, ' K1 ', 'Knowledge'), (3, 'S1', ''), (4, 'S2', ''), (5, 'S3', ''),
+            (6, '', ''), (7, 'B1', ''),
+        ])
+        self.db.executemany('insert into ksb_mappings values (?,?,?,?)', [
+            ('KM1', 'C1', 1, 'active'),
+            ('KM2', 'C2', 1, 'active'),
+            ('KM3', 'C3', 2, 'active'),
+            ('KM4', 'C1', 3, 'inactive'),
+            ('KM5', 'C2', 4, 'inactive'),
+            ('KM6', 'C3', 5, 'inactive'),
+            ('KM7', 'C4', 6, 'active'),
+            ('KM8', 'C11', 7, 'active'),
         ])
         self.modules = [
             {'module_catalogue_id': 'MOD-ONE', 'title': 'One', 'programme_name': 'Alpha',
@@ -65,14 +67,15 @@ class GroupedCatalogueTests(SimpleTestCase):
             return [dict(row) for row in self.db.execute(sql.replace('%s', '?'), params or [])]
         def fetch(table, where_sql='', params=None, order_sql='', **kwargs):
             if table in ('components', 'ksb_mappings'):
-                rows = sql_rows(f'select * from "{table}"' + (f' where {where_sql}' if where_sql else ''), params)
+                source = ksb_mapping_placement.relation() if table == 'ksb_mappings' else f'"{table}"'
+                rows = sql_rows(f'select * from {source}' + (f' where {where_sql}' if where_sql else ''), params)
             else:
                 rows = {'modules': self.modules, 'weeks': self.weeks,
                         'groups': [{'group_id': 'G1', 'coach_name': 'Coach'}]}.get(table, [])
             fields = kwargs.get('columns')
             return [{k:v for k,v in row.items() if not fields or k in fields} for row in rows]
         columns = {table: {row['name'] for row in self.db.execute(f'pragma table_info("{table}")')}
-                   for table in ('components', 'ksb_mappings')}
+                   for table in ('components', 'ksb_mappings', 'standard_ksbs')}
         stack = self.enterContext(ExitStack())
         for patcher in (
             patch.object(views, 'connection', vendor='postgresql'),
@@ -118,17 +121,6 @@ class GroupedCatalogueTests(SimpleTestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(actual, 7)
 
-    def test_missing_optional_legacy_flags_still_work(self):
-        self.db.execute('alter table ksb_mappings drop column isDeleted')
-        self.db.execute('alter table ksb_mappings drop column isProgrammeDeleted')
-        columns = {table: {row['name'] for row in self.db.execute(f'pragma table_info("{table}")')}
-                   for table in ('components', 'ksb_mappings')}
-        with patch.object(views, 'has_column', side_effect=lambda table, col: col in columns.get(table, set())):
-            self.assertEqual(
-                views.compact_module_list_rows(views.enrich_modules_with_authoring([], list_only=True)),
-                views.compact_module_list_rows(views.enrich_modules_with_authoring([])),
-            )
-
 
 class ModuleListVisibilityTests(SimpleTestCase):
     def test_programme_visibility_does_not_need_structure_or_learner_totals(self):
@@ -136,7 +128,7 @@ class ModuleListVisibilityTests(SimpleTestCase):
         rows['program_configs'] = [
             {'program_id': 'P1', 'name': 'Active', 'status': 'active'},
             {'program_id': 'P2', 'name': 'Archived', 'status': 'archived'},
-            {'program_id': 'P3', 'name': 'Inactive', 'is_active': False},
+            {'program_id': 'P3', 'name': 'Inactive', 'status': 'inactive'},
         ]
         modules = [
             {'id': f'M{index}', 'programmeId': f'P{index}', 'status': 'published'}

@@ -439,50 +439,9 @@ class LegacyCompatibilityTests(AuditHarness):
 class RecalculationTests(AuditHarness):
     """A cascade is the system's work, done because of somebody's edit."""
 
-    def test_renaming_a_programme_runs_its_cascade_as_the_system(self):
-        """Renaming a programme rewrites `programme_name` on every cohort, group
-        and module under it. One person renamed one record; recording it as their
-        edit to each child would say they opened forty modules and retyped a
-        field. The person stays on as what caused it, which is the true half.
-
-        Asserted through the context the cascade establishes rather than through
-        a recorded revision, because the write helper it uses re-reads its own
-        rows with the clause it just made false, and on SQLite -- which has no
-        `returning *` here -- that re-read comes back empty. On Postgres the
-        revisions are written; see the note in the Phase 2 report.
-        """
-        account = self.sign_in(name='Ayman Badewi', email='ayman@kentbusinesscollege.com')
-        seen = {}
-
-        def capture(programme_id, programme_name):
-            context = versioning.current_context()
-            seen.update({
-                'actor_type': versioning.actor_type(),
-                'source': versioning.current_source(),
-                'metadata': dict(context.get('metadata') or {}),
-                'actor': versioning.attribute(
-                    versioning.actor_type(), versioning.current_actor(), context.get('triggered_by')),
-            })
-
-        original = views._propagate_programme_name_rows
-        views._propagate_programme_name_rows = capture
-        try:
-            views.propagate_programme_name('PROG-RENAME', 'New programme name')
-        finally:
-            views._propagate_programme_name_rows = original
-
-        self.assertEqual(seen['actor_type'], versioning.ACTOR_SYSTEM)
-        self.assertEqual(seen['source'], 'recalculation')
-        self.assertEqual(seen['metadata']['recalculated_from'], 'programme_rename')
-        actor, triggered_by = seen['actor']
-        self.assertEqual(actor['name'], 'System')
-        self.assertEqual(actor['email'], '')
-        self.assertEqual(triggered_by['email'], account.email)
-
-    def test_the_cascade_does_not_relabel_the_rename_itself(self):
-        """The programme the person actually renamed is still their edit."""
+    def test_a_persons_own_edit_is_attributed_to_them(self):
+        """A save made by a signed-in person is recorded as theirs."""
         self.sign_in(name='Ayman Badewi', email='ayman@kentbusinesscollege.com')
-        views.propagate_programme_name('PROG-NONE', 'Whatever')
         self.committed(lambda: views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
             'id': 'COMP-AFTER', 'module_catalogue_id': 'MOD-AFTER', 'week_id': 'W',
             'type': 'reading', 'title': 'Reading', 'display_order': 0,

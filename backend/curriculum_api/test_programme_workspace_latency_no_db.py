@@ -19,28 +19,29 @@ class ProgrammeWorkspaceReadTests(SimpleTestCase):
             create table components (
                 id text, module_catalogue_id text, week_id text, type text,
                 title text, description text, expected_otjh real, display_order int,
-                deleted_at text, is_programme_deleted boolean, library_state text
+                status text
             );
             create table ksb_mappings (
                 id text, module_catalogue_id text, week_id text, component_id text,
                 ksb_code text, ksb_description text, weight real, created_at text,
-                source_type text, source_id text, deleted_at text,
-                is_programme_deleted boolean, is_deleted boolean
+                source_type text, source_id text, status text
             );
         ''')
-        self.db.executemany('insert into components values (?,?,?,?,?,?,?,?,?,?,?)', [
-            ('C2', 'M1', 'W1', 'quiz', 'Second', 'Retained text', .125, 1, None, False, ''),
-            ('C1', 'M1', 'W1', 'reading', 'First', '', .125, 0, None, False, ''),
-            ('C3', 'M2', 'W2', 'reading', 'Other module', '', 1, 0, '', False, ''),
-            ('C4', 'M1', 'W1', 'quiz', 'Deleted', '', 99, 2, '2026-01-01', False, ''),
-            ('C5', 'M1', 'W1', 'quiz', 'Parent deleted', '', 99, 3, None, True, ''),
-            ('C6', 'M1', 'W1', 'quiz', 'Library', '', 99, 4, None, False, ' library '),
-            ('C7', 'UNRELATED', 'W3', 'reading', 'Unrelated', '', 99, 0, None, False, ''),
+        self.db.executemany('insert into components values (?,?,?,?,?,?,?,?,?)', [
+            ('C2', 'M1', 'W1', 'quiz', 'Second', 'Retained text', .125, 1, 'active'),
+            ('C1', 'M1', 'W1', 'reading', 'First', '', .125, 0, 'active'),
+            ('C3', 'M2', 'W2', 'reading', 'Other module', '', 1, 0, 'active'),
+            ('C4', 'M1', 'W1', 'quiz', 'Deleted', '', 99, 2, 'inactive'),
+            ('C5', 'M1', 'W1', 'quiz', 'Parent deleted', '', 99, 3, 'inactive'),
+            ('C6', 'M1', 'W1', 'quiz', 'Archived', '', 99, 4, 'inactive'),
+            ('C7', 'UNRELATED', 'W3', 'reading', 'Unrelated', '', 99, 0, 'active'),
         ])
-        self.db.executemany('insert into ksb_mappings values (?,?,?,?,?,?,?,?,?,?,?,?,?)', [
-            ('K1', 'M1', 'W1', 'C1', 'K1', 'Description', 10, '2026-01-01', 'standard', 'STD', None, False, False),
-            ('K2', 'M2', 'W2', 'C3', 'S1', 'Description', 20, '2026-01-02', 'standard', 'STD', '', False, False),
-            ('K3', 'M1', 'W1', 'C1', 'K2', 'Deleted', 99, '2026-01-01', 'standard', 'STD', None, False, True),
+        # Mappings as the placement relation reads them: module, week and code
+        # beside the row's own columns.
+        self.db.executemany('insert into ksb_mappings values (?,?,?,?,?,?,?,?,?,?,?)', [
+            ('K1', 'M1', 'W1', 'C1', 'K1', 'Description', 10, '2026-01-01', 'standard', 'STD', 'active'),
+            ('K2', 'M2', 'W2', 'C3', 'S1', 'Description', 20, '2026-01-02', 'standard', 'STD', 'active'),
+            ('K3', 'M1', 'W1', 'C1', 'K2', 'Deleted', 99, '2026-01-01', 'standard', 'STD', 'inactive'),
         ])
         self.modules = [{'module_catalogue_id': mid, 'title': mid, 'weeks_number': 1} for mid in ('M1', 'M2')]
         self.weeks = [{'id': wid, 'module_catalogue_id': mid, 'week_number': 1} for mid, wid in [('M1', 'W1'), ('M2', 'W2')]]

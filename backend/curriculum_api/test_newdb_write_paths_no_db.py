@@ -177,13 +177,13 @@ class ReuseMappingRowsTests(SimpleTestCase):
     back on a component reuses its stored row instead of inserting a second."""
 
     def run_with(self, stored, payloads):
-        from curriculum_api import schema_compat
+        from curriculum_api import ksb_mapping_placement
         cursor = mock.MagicMock()
         cursor.__enter__.return_value = cursor
         cursor.fetchall.return_value = stored
         conn = mock.Mock(vendor='postgresql', cursor=mock.Mock(return_value=cursor))
-        with mock.patch.object(schema_compat, 'connection', conn):
-            return schema_compat.reuse_mapping_rows(payloads)
+        with mock.patch.object(ksb_mapping_placement, 'connection', conn):
+            return ksb_mapping_placement.reuse_mapping_rows(payloads)
 
     def test_readded_ksb_takes_the_archived_rows_id(self):
         rows = self.run_with([('C1', 120, 'OLD')], [{'id': 'NEW', 'component_id': 'C1', 'standard_ksb_id': 120, 'weight': 20}])

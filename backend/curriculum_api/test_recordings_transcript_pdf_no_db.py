@@ -21,14 +21,22 @@ class LectureTranscriptPdfTests(SimpleTestCase):
         self.addCleanup(self.db.close)
         self.db.row_factory = sqlite3.Row
         self.db.executescript('''ATTACH DATABASE ':memory:' AS curriculum;
-            CREATE TABLE curriculum.modules(module_catalogue_id TEXT,title TEXT,tutor_name TEXT,
-                programme_name TEXT,cohort_name TEXT,group_name TEXT);
+            CREATE TABLE curriculum.modules(module_catalogue_id TEXT,title TEXT,tutor_id TEXT,
+                programme_id TEXT,cohort_id TEXT,group_id TEXT);
+            CREATE TABLE curriculum.tutors(id TEXT,name TEXT);
+            CREATE TABLE curriculum.programmes(programme_id TEXT,name TEXT);
+            CREATE TABLE curriculum.cohorts(cohort_id TEXT,cohort_name TEXT);
+            CREATE TABLE curriculum.groups(group_id TEXT,group_name TEXT);
+            INSERT INTO curriculum.tutors VALUES('T-1','Synthetic Tutor'),('T-2','Other Tutor');
+            INSERT INTO curriculum.programmes VALUES('P-1','Synthetic programme'),('P-2','Other programme');
+            INSERT INTO curriculum.cohorts VALUES('C-1','Cohort A'),('C-2','Cohort B');
+            INSERT INTO curriculum.groups VALUES('G-1','Group A'),('G-2','Group B');
             CREATE TABLE curriculum.live_sessions(id TEXT,module_catalogue_id TEXT);
             CREATE TABLE curriculum.live_session_occurrences(id TEXT,live_session_id TEXT,scheduled_start TEXT,scheduled_end TEXT);
             CREATE TABLE curriculum.live_session_artifacts(id TEXT,occurrence_id TEXT,artifact_type TEXT,metadata TEXT,created_datetime TEXT);
             CREATE TABLE curriculum.session_result_archive(artifact_id TEXT,occurrence_id TEXT,status TEXT,transcript_text TEXT);
-            INSERT INTO curriculum.modules VALUES('M1','Synthetic lecture','Synthetic Tutor','Synthetic programme','Cohort A','Group A');
-            INSERT INTO curriculum.modules VALUES('M2','Other lecture','Other Tutor','Other programme','Cohort B','Group B');
+            INSERT INTO curriculum.modules VALUES('M1','Synthetic lecture','T-1','P-1','C-1','G-1');
+            INSERT INTO curriculum.modules VALUES('M2','Other lecture','T-2','P-2','C-2','G-2');
             INSERT INTO curriculum.live_sessions VALUES('S1','M1'),('S2','M2');
             INSERT INTO curriculum.live_session_occurrences VALUES('O1','S1','2026-11-02T10:00:00Z','2026-11-02T11:00:00Z'),
                 ('O2','S1','2026-11-03T10:00:00Z','2026-11-03T11:00:00Z'),

@@ -39,7 +39,7 @@ class HomeSourceTests(SimpleTestCase):
              'sessions_number': 3, 'status': 'archived'},
             {'module_catalogue_id': 'MOD-E', 'title': 'Deleted parent', 'programme_id': 'P1',
              'programme_name': 'Alpha', 'cohort_id': 'C1', 'group_id': 'G1',
-             'sessions_number': 4, 'status': 'draft', 'is_programme_deleted': True},
+             'sessions_number': 4, 'status': 'inactive'},
         ]
         self.groups = [
             {'group_id': 'G1', 'group_name': 'Group', 'cohort_id': 'C1', 'cohort_name': 'Cohort',
@@ -54,9 +54,9 @@ class HomeSourceTests(SimpleTestCase):
              'programme_name': 'Archived programme', 'status': 'archived'},
         ]
         self.programmes = [
-            {'programme_id': 'P1', 'name': 'Alpha', 'status': 'published', 'is_active': True},
-            {'programme_id': 'P2', 'name': 'Archived programme', 'status': 'archived', 'is_archived': True},
-            {'programme_id': 'P3', 'name': 'Empty', 'status': 'published', 'is_active': True},
+            {'programme_id': 'P1', 'name': 'Alpha', 'status': 'published'},
+            {'programme_id': 'P2', 'name': 'Archived programme', 'status': 'archived'},
+            {'programme_id': 'P3', 'name': 'Empty', 'status': 'published'},
         ]
         self.weeks = [
             {'id': 'W1', 'module_catalogue_id': 'MOD-C', 'title': 'Repeated', 'week_number': 1},
@@ -118,7 +118,7 @@ class HomeSourceTests(SimpleTestCase):
     def test_known_programmes_skip_content_counts_holidays_and_repeated_table_reads(self):
         # The guard remains conservative about archived names too: include the
         # programme in the visible list to exercise the common fast path.
-        self.programmes[1].update(status='published', is_archived=False, is_active=True)
+        self.programmes[1].update(status='published')
         with patch.object(views, 'enrich_modules_with_authoring', side_effect=AssertionError('Unused content read')), \
              patch.object(views, 'get_holiday_rows_safe', side_effect=AssertionError('Unused holiday read')):
             result = home_summary.build_home_summary('operational')
@@ -156,9 +156,9 @@ class HomeSourceTests(SimpleTestCase):
                 home_summary.build_home_summary('operational')
 
     def test_explicit_archive_and_parent_deletion_survive_narrow_projection(self):
-        self.modules[0]['is_archived'] = True
-        self.groups[0]['deleted_at'] = '2026-10-01'
-        self.cohorts[0]['is_deleted'] = True
+        self.modules[0]['status'] = 'inactive'
+        self.groups[0]['status'] = 'inactive'
+        self.cohorts[0]['status'] = 'inactive'
         for visibility in ('operational', 'all'):
             with self.subTest(visibility=visibility):
                 self.assertEqual(home_summary.build_home_summary(visibility), previous_summary(visibility))
@@ -179,8 +179,8 @@ class HomeSourceTests(SimpleTestCase):
         self.assertIn('"curriculum"."modules"', sql)
         self.assertIn('"curriculum"."groups"', sql)
         self.assertIn('"curriculum"."cohorts"', sql)
-        self.assertIn('is_archived', params[0])
-        self.assertIn('deleted_at', params[0])
+        self.assertIn('status', params[0])
+        self.assertNotIn('deleted_at', params[0])
         self.assertNotIn('cover_image_url', params[0])
         self.assertNotIn('selected_holidays', params[2])
 

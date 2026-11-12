@@ -27,11 +27,15 @@ def lecture_transcript(request):
     if any(not value or len(value) > 128 for value in scope):
         return response_error('Choose a saved lecture before opening its transcript.', 400)
     try:
-        rows = read('''SELECT m.title AS title,m.tutor_name AS tutor,m.programme_name AS programme,
-            m.cohort_name AS cohort,m.group_name AS "group",o.scheduled_start,o.scheduled_end
+        rows = read('''SELECT m.title AS title,coalesce(t.name,'') AS tutor,coalesce(p.name,'') AS programme,
+            coalesce(c.cohort_name,'') AS cohort,coalesce(g.group_name,'') AS "group",o.scheduled_start,o.scheduled_end
             FROM curriculum.live_session_occurrences o
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
+            LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+            LEFT JOIN curriculum.cohorts c ON c.cohort_id=m.cohort_id
+            LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
+            LEFT JOIN curriculum.tutors t ON t.id=m.tutor_id
             WHERE m.module_catalogue_id=%s AND s.id=%s AND o.id=%s''', scope)
         if not rows:
             return response_error('This module lecture was not found.', 404)

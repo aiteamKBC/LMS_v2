@@ -92,10 +92,9 @@ def catalogue_facts(modules, series):
 
 
 def read_catalogue_facts():
-    flags = ('deleted_at', 'is_programme_deleted', 'library_state')
-    where, params = views.live_authoring_rows_sql(views.AUTHORING_MODULES_TABLE, flags)
+    where, params = views.live_authoring_rows_sql(views.AUTHORING_MODULES_TABLE)
     modules = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, where, params,
-        ensure_tables=False, columns=['module_catalogue_id', 'start_date', 'source_type', 'status', 'teams_shared_source_module_id', *flags])
+        ensure_tables=False, columns=['module_catalogue_id', 'start_date', 'source_type', 'status', 'teams_shared_source_module_id'])
     modules = [row for row in modules if not views.programme_deleted_row(row)
                and str(row.get('status') or '').lower() != 'archived']
     series = []

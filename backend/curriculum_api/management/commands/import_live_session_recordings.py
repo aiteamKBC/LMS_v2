@@ -27,7 +27,7 @@ class Command(BaseCommand):
             occurrence = read('SELECT * FROM curriculum.live_session_occurrences WHERE id=%s', [row['occurrence_id']])[0]
             series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [occurrence['live_session_id']])[0]
             artifact = read('SELECT * FROM curriculum.live_session_artifacts WHERE id=%s', [row['id']])[0]
-            modules = read('SELECT * FROM curriculum.modules WHERE module_catalogue_id=%s AND deleted_at IS NULL AND NOT coalesce(is_programme_deleted,false)', [series['module_catalogue_id']])
+            modules = read("SELECT * FROM curriculum.modules WHERE module_catalogue_id=%s AND lower(btrim(coalesce(status, ''))) <> 'inactive'", [series['module_catalogue_id']])
             if not modules or not recording_uses_bunny(occurrence, artifact):
                 raise CommandError('A requested recording is outside the active module or 5 November 2026 cutover; nothing was imported.')
             plans.append((series, occurrence, artifact, modules[0]))

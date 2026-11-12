@@ -9,7 +9,7 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
-from curriculum_api import schema_compat, views
+from curriculum_api import ksb_mapping_placement, views
 
 
 class StandardReferenceTests(SimpleTestCase):
@@ -22,7 +22,7 @@ class StandardReferenceTests(SimpleTestCase):
             '': ('', ''),
         }
         for source_id, expected in cases.items():
-            self.assertEqual(schema_compat.standard_reference(source_id), expected, source_id)
+            self.assertEqual(ksb_mapping_placement.standard_reference(source_id), expected, source_id)
 
 
 class FakeCursor:
@@ -54,8 +54,8 @@ class StandardKsbIdTests(SimpleTestCase):
         cursor = FakeCursor(answers)
         connection = mock.MagicMock()
         connection.cursor.return_value = cursor
-        with mock.patch.object(schema_compat, 'connection', connection):
-            return schema_compat.standard_ksb_id_for(**kwargs), cursor.queries
+        with mock.patch.object(ksb_mapping_placement, 'connection', connection):
+            return ksb_mapping_placement.standard_ksb_id_for(**kwargs), cursor.queries
 
     def test_the_mappings_own_standard_decides_before_the_module_profile(self):
         resolved, queries = self._resolve(
@@ -84,17 +84,6 @@ class StandardKsbIdTests(SimpleTestCase):
             ksb_code='K1', module_catalogue_id='MOD-MM', source_type='standard', source_id='st0596-v1-0',
         )
         self.assertEqual(resolved, 612)
-
-    def test_translate_write_passes_the_mapping_source(self):
-        columns = {'id', 'component_id', 'ksb_id', 'standard_ksb_id', 'source_type', 'source_id', 'weight', 'status'}
-        with mock.patch.object(schema_compat, 'standard_ksb_id_for', return_value=7) as lookup:
-            payload, _ = schema_compat.translate_write('ksb_mappings', {
-                'id': 'KSBMAP-1', 'component_id': 'C1', 'ksb_id': 'K1', 'ksb_code': 'K1', 'weight': 40,
-                'module_catalogue_id': 'MOD-1', 'source_type': 'standard', 'source_id': 'st0596-v1-0',
-            }, columns)
-        self.assertEqual(payload['standard_ksb_id'], 7)
-        self.assertEqual(lookup.call_args.kwargs['source_type'], 'standard')
-        self.assertEqual(lookup.call_args.kwargs['source_id'], 'st0596-v1-0')
 
 
 class ComponentBuilderWeightTests(SimpleTestCase):

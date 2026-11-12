@@ -33,7 +33,6 @@ class EntityRenameTests(SimpleTestCase):
         self.stub('programme_config_id', return_value='PROG-1')
         self.stub('programme_record_revision', return_value='rev-1')
         self.stub('first_programme_response', return_value={'id': 'PROG-1', 'name': name})
-        children = self.stub('propagate_programme_name')
         write = self.stub('update_rows')
         with patch('curriculum_api.placement_rename.propagate_programme_name_to_learners') as learners:
             response = views.curriculum_programme_detail(self.request({'name': name}), 'PROG-1')
@@ -42,13 +41,12 @@ class EntityRenameTests(SimpleTestCase):
         self.assertEqual(args[:3], ('programmes', '"programme_id" = %s', ['PROG-1']))
         self.assertEqual(set(args[3]), {'name', 'updated_at'})
         self.assertEqual(args[3]['name'], name)
-        children.assert_called_once_with('PROG-1', name)
         learners.assert_called_once_with('PROG-1', 'Old name', name)
 
     def test_programme_rename_updates_only_its_label_by_id(self):
         self.assert_programme_rename('New name')
 
-    def test_programme_case_only_rename_also_refreshes_child_labels(self):
+    def test_programme_case_only_rename_is_saved(self):
         self.assert_programme_rename('OLD NAME')
 
     def test_cohort_rename_preserves_dates_status_and_parent_links(self):
@@ -131,9 +129,8 @@ class EntityRenameTests(SimpleTestCase):
         self.assertEqual(stored['module_catalogue_id'], 'MOD-1')
         self.assertEqual(other, other_before)
         self.assertEqual(structure, {**before, 'title': 'New name'})
-        self.assertEqual(group_write.call_args.args[0], 'GRP-1')
-        self.assertEqual(set(group_write.call_args.args[1]), {'module_names'})
-        self.assertEqual(views.parse_json_value(group_write.call_args.args[1]['module_names'], []), ['New name', 'Other module'])
+        # A group keeps no copy of its modules' titles: nothing to refresh.
+        group_write.assert_not_called()
         for operation in (save, calendars, notify):
             operation.assert_not_called()
         body = json.loads(response.content)

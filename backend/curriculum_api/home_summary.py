@@ -196,19 +196,18 @@ def project_home(overview, programmes):
 
 # Only relationship/visibility fields reach the Home builder. Large descriptions,
 # cover images and stored holiday/schedule payloads stay in their detail reads.
-_DELETION_FIELDS = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')
+# ``status`` is each row's archive state.
 _HOME_MODULE_FIELDS = (
     'module_catalogue_id', 'title', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
     'group_id', 'group_name', 'sessions_number', 'status', 'tutor_id', 'tutor_name', 'start_date', 'end_date',
-    'source_id', 'source_type', 'is_archived', *_DELETION_FIELDS,
+    'source_id', 'source_type',
 )
 _HOME_GROUP_FIELDS = (
     'group_id', 'group_name', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
-    'coach_name', 'status', *_DELETION_FIELDS,
+    'coach_name', 'status',
 )
 _HOME_COHORT_FIELDS = (
     'cohort_id', 'cohort_name', 'programme_id', 'programme_name', 'status', 'start_date', 'end_date',
-    *_DELETION_FIELDS,
 )
 
 

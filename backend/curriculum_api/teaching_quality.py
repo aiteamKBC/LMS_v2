@@ -20,12 +20,17 @@ def lecture_snapshot(request):
     if any(not value or len(value) > 128 for value in scope.values()):
         raise InvalidReview('Choose a saved module lecture before opening its quality check.')
     rows = session_results.read('''SELECT m.module_catalogue_id, m.title AS module_title,
-        m.tutor_name, to_jsonb(m)->>'tutor_email' AS tutor_email,
-        m.programme_name,m.cohort_name,m.group_name,
+        coalesce(t.name,'') AS tutor_name, coalesce(t.email,'') AS tutor_email,
+        coalesce(p.name,'') AS programme_name, coalesce(c.cohort_name,'') AS cohort_name,
+        coalesce(g.group_name,'') AS group_name,
         s.id AS series_id,o.id AS occurrence_id,o.scheduled_start,o.scheduled_end
         FROM curriculum.live_session_occurrences o
         JOIN curriculum.live_sessions s ON s.id=o.live_session_id
         JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
+        LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+        LEFT JOIN curriculum.cohorts c ON c.cohort_id=m.cohort_id
+        LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
+        LEFT JOIN curriculum.tutors t ON t.id=m.tutor_id
         WHERE m.module_catalogue_id=%s AND s.id=%s AND o.id=%s''',
         [scope[key] for key in keys])
     if not rows:

@@ -29,16 +29,17 @@ rows by key; the chosen tutor/coach written as its id), ``calendar_holidays``
 (the holiday calendar, the GOV.UK mirror and cohort choices) and
 ``ksb_mapping_placement`` (mappings scoped and read through their component).
 Placement labels are also projected by FK for SQL filtering and ordering.
-What remains: the lifecycle columns derived from ``status``, the KSB mapping /
-component read shapes, and ``adapt_sql`` -- which hand-written
-statements still need, chiefly the Learner team's code curriculum calls.
+Writes are shaped natively too (``write_shape``: status values, blank keys,
+the standard KSB a mapping carries). What remains: the lifecycle columns
+derived from ``status``, the KSB mapping / component read shapes, and
+``adapt_sql`` -- which hand-written statements still need, chiefly the Learner
+team's code curriculum calls.
 """
 from __future__ import annotations
 
 import re
 import threading
 import time
-import uuid
 from datetime import datetime, timezone
 
 from django.db import connection
@@ -54,27 +55,6 @@ ACTIVE = 'active'
 # 'archived' is what the legacy code writes for programmes/cohorts; both read
 # as withdrawn so a value written by an older process is never shown as live.
 INACTIVE_STATUSES = ('inactive', 'archived')
-# Lifecycle tables whose status is CHECKed to ('active', 'inactive') on the
-# normalised schema. Programmes and cohorts keep a free status (cohorts
-# 'planned' ...), so they are not in it.
-BINARY_STATUS_TABLES = frozenset({
-    'groups', 'modules', 'weeks', 'components', 'ksb_mappings', 'coaches', 'tutors',
-})
-# Foreign-key columns on the normalised schema, by nullability (see
-# translate_write: '' is "none", which a key column cannot hold).
-NULLABLE_FOREIGN_KEYS = {
-    'cohorts': ('programme_id',),
-    'groups': ('coach_id',),
-    'modules': ('programme_id', 'cohort_id', 'group_id', 'tutor_id'),
-    'weeks': ('module_catalogue_id', 'free_course_id'),
-    'ksb_mappings': ('component_id',),
-}
-REQUIRED_FOREIGN_KEYS = {
-    'groups': ('programme_id', 'cohort_id'),
-    'components': ('week_id', 'module_catalogue_id'),
-    # component_id became NOT NULL on 2026-11-10: a mapping belongs to a component.
-    'ksb_mappings': ('standard_ksb_id', 'component_id'),
-}
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 # Columns the normalised schema derives instead of storing, per table.
@@ -162,7 +142,7 @@ def status_is_inactive(value):
 # carries the legacy columns as SQL expressions, aliased with the table's own
 # name. Every caller's where/order/column list that names a legacy column then
 # keeps working unchanged. Writes never use it (a derived table is not
-# updatable); they go through translate_write() against the real table.
+# updatable); the curriculum writes the real table natively (write_shape).
 
 # Exactly the withdrawal columns each table had before normalisation. Adding
 # one a table never had would make an unqualified reference in a join
@@ -335,58 +315,6 @@ _CLAUSE_WORDS = {
     'where', 'join', 'left', 'right', 'inner', 'full', 'cross', 'natural', 'on', 'using', 'order', 'group',
     'limit', 'offset', 'union', 'intersect', 'except', 'having', 'window', 'fetch', 'for', 'returning', 'set',
 }
-
-
-PRIMARY_KEYS = {
-    'programmes': 'programme_id', 'cohorts': 'cohort_id', 'groups': 'group_id',
-    'modules': 'module_catalogue_id', 'weeks': 'id', 'components': 'id', 'ksb_mappings': 'id',
-    'coaches': 'id', 'tutors': 'id',
-}
-
-
-def _mentions_legacy(table, sql, columns):
-    lowered = (sql or '').lower()
-    return any(re.search(rf'\b{re.escape(name)}\b', lowered) for name in legacy_read_columns(table, columns))
-
-
-def write_where(table, where_sql, columns):
-    """A write's WHERE that names a legacy column, re-expressed by primary key.
-
-    ``update/delete ... where programme_name = %s`` cannot run against the
-    normalised table; the same rows are found through the read relation and
-    matched by key. The condition (and its parameters) is unchanged.
-    """
-    columns = set(columns or ())
-    key = PRIMARY_KEYS.get(table)
-    if not where_sql or not key or not _mentions_legacy(table, where_sql, columns):
-        return where_sql
-    relation = read_relation(table, columns, alias=True)
-    if not relation:
-        return where_sql
-    return f'"{key}" in (select "{key}" from {relation} where {where_sql})'
-
-
-def only_derived_copy(table, payload, columns):
-    """True when a write's payload sets nothing the normalised table stores.
-
-    e.g. ``{'programme_name': ..., 'updated_at': ...}``: the name is now read
-    by id, so there is no copy to refresh -- and stamping ``updated_at`` alone
-    would reorder catalogues for no change.
-    """
-    columns = set(columns or ())
-    if not is_normalised(table, columns) or not payload:
-        return False
-    if table == 'cohorts' and ({'holiday_ids', 'excluded_holiday_ids'} & set(payload)):
-        return False  # stored, in cohort_calendar_holidays (see after_write)
-    if table == 'groups' and 'coach_name' in payload:
-        from . import group_coaches
-        if group_coaches.in_use():
-            return False  # stored, in group_coaches (see group_coaches.store)
-    from .curriculum_names import ROW_FIELDS
-    legacy = (set(DERIVED_COLUMNS.get(table, ())) | set(ROW_FIELDS.get(table, ())) | set(LEGACY_LIFECYCLE_COLUMNS)
-              | {'deleted_by', 'deleted_via_parent'})
-    stored = [key for key in payload if key in columns and key not in {'updated_at'}]
-    return not stored and any(key in legacy and key not in columns for key in payload)
 
 
 def _sql_adapter(execute, sql, params, many, context):
@@ -688,209 +616,3 @@ def _project_components(rows, derived):
             if key == 'ksb_mappings':
                 continue
             row.setdefault(key, None if key == 'detached_at' else '')
-
-
-# --- write translation --------------------------------------------------------
-
-def standard_reference(source_id):
-    """``('ST0596', '1.0')`` for a standard source id (``st0596-v1-0``,
-    ``standard:st0596-v1-0``); ``('ST0596', '')`` without a version; ``('', '')``
-    for anything else (a framework id such as ``KSBP-...``)."""
-    value = (source_id or '').strip().split(':', 1)[-1]
-    match = re.fullmatch(r'(st\d+)(?:-v(\d+(?:-\d+)*))?', value, re.IGNORECASE)
-    if not match:
-        return '', ''
-    return match.group(1).upper(), (match.group(2) or '').replace('-', '.')
-
-
-def standard_ksb_id_for(ksb_id='', ksb_code='', programme_id='', module_catalogue_id='', source_type='', source_id=''):
-    """``standard_ksbs.id`` for a mapping being written, or None when unknown.
-
-    The mapping's own standard decides first: a component in one programme may
-    carry a KSB of another standard (ST0596 codes on a Marketing Manager
-    module), and the module's profile would point that code at the wrong
-    standard -- or at none, failing the NOT NULL. The profile is the fallback
-    for a mapping that names no standard (a framework source, or none).
-    """
-    with connection.cursor() as cursor:
-        if ksb_id:
-            cursor.execute(f'select standard_ksb_id from {_qualified("ksb_mappings")} where ksb_id = %s limit 1', [ksb_id])
-            found = cursor.fetchone()
-            if found:
-                return found[0]
-        code = (ksb_code or '').strip()
-        if not code and ksb_id:
-            return None
-        reference, version = standard_reference(source_id) if (source_type or 'standard').strip().lower() == 'standard' else ('', '')
-        if code and reference:
-            cursor.execute(
-                f'select id from {_qualified("standard_ksbs")} where upper(standard_ref) = %s and upper(ksb_code) = upper(%s) '
-                f"order by (standard_version = %s) desc, date_updated desc nulls last, id desc limit 1",
-                [reference, code, version],
-            )
-            found = cursor.fetchone()
-            if found:
-                return found[0]
-        # The module's (else the programme's) KSB profile names the standard,
-        # e.g. 'standard:st0845-v1-1' -> ST0845.
-        profile = ''
-        if module_catalogue_id:
-            cursor.execute(
-                f'''
-                select coalesce(nullif(m.ksb_profile_source_id, ''), p.ksb_profile_source_id), m.programme_id
-                from {_qualified("modules")} m
-                left join {_qualified("programmes")} p on p.programme_id = m.programme_id
-                where m.module_catalogue_id = %s
-                ''',
-                [module_catalogue_id],
-            )
-            found = cursor.fetchone()
-            if found:
-                profile, programme_id = found[0] or '', programme_id or found[1] or ''
-        if not profile and programme_id:
-            cursor.execute(f'select ksb_profile_source_id from {_qualified("programmes")} where programme_id = %s',
-                           [programme_id])
-            found = cursor.fetchone()
-            profile = (found[0] if found else '') or ''
-        reference = profile.split(':', 1)[-1].split('-v', 1)[0].upper() if profile else ''
-        if not reference:
-            return None
-        cursor.execute(
-            f'select id from {_qualified("standard_ksbs")} where upper(standard_ref) = %s and upper(ksb_code) = upper(%s) '
-            f'order by date_updated desc nulls last, id desc limit 1',
-            [reference, code],
-        )
-        found = cursor.fetchone()
-        return found[0] if found else None
-
-
-def reuse_mapping_rows(payloads):
-    """Fit translated ``ksb_mappings`` payloads to UNIQUE (component_id, standard_ksb_id).
-
-    The constraint covers archived rows too. Taking a KSB off a component
-    archives its row, and putting it back arrives with a newly minted id, so
-    the insert collided with the archived row (500). Each payload now takes
-    the id of the row this component already holds for that KSB: the upsert
-    then reactivates and updates that row, keeping its history, instead of
-    inserting a second one. If another payload in the batch keeps that id as
-    its own (its row is being moved to a different KSB), that payload gets a
-    new id, so the two never write one row. A KSB listed twice for the same
-    component in one batch keeps its first entry, as normalise_component_ksb_mappings
-    does for a repeated code. No-op where the column or constraint does not exist.
-    """
-    keyed = [payload for payload in payloads if payload.get('component_id') and payload.get('standard_ksb_id') is not None]
-    if not keyed or connection.vendor != 'postgresql':
-        return payloads
-    component_ids = sorted({str(payload['component_id']) for payload in keyed})
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f'select component_id, standard_ksb_id, id from {_internal("ksb_mappings")} where component_id = any(%s)',
-            [component_ids],
-        )
-        stored = {(str(component_id), standard_id): str(row_id) for component_id, standard_id, row_id in cursor.fetchall()}
-    own_ids = {str(payload.get('id')) for payload in payloads if payload.get('id')}
-    seen, result, renamed = set(), [], {}
-    for payload in payloads:
-        key = (str(payload.get('component_id') or ''), payload.get('standard_ksb_id'))
-        if not key[0] or key[1] is None:
-            result.append(payload)
-            continue
-        if key in seen:
-            continue
-        seen.add(key)
-        stored_id = stored.get(key)
-        if stored_id and stored_id != str(payload.get('id')):
-            if stored_id in own_ids:
-                renamed[stored_id] = f'KSBMAP-{datetime.now(timezone.utc):%Y%m%d%H%M%S%f}{uuid.uuid4().hex[:8].upper()}'
-            payload = {**payload, 'id': stored_id}
-        result.append(payload)
-    if renamed:
-        # The payload whose own id was taken over keeps its content under a new id.
-        result = [
-            {**payload, 'id': renamed[str(payload['id'])]}
-            if str(payload.get('id')) in renamed and stored.get((str(payload.get('component_id') or ''), payload.get('standard_ksb_id'))) != str(payload['id'])
-            else payload
-            for payload in result
-        ]
-    return result
-
-
-def translate_write(table, payload, columns):
-    """Rewrite a legacy-shaped write payload for the normalised schema.
-
-    Returns ``(payload, extra_nullable)``. Values for columns the table no
-    longer has are converted into what it stores instead; anything with no
-    normalised home is left for ``filtered_payload`` to drop, exactly as it
-    already drops unknown keys. A no-op on the legacy schema.
-    """
-    columns = set(columns or ())
-    if table not in LIFECYCLE_TABLES or not payload or not is_normalised(table, columns):
-        return payload, set()
-    payload = dict(payload)
-    nullable = set()
-
-    if uses_status_lifecycle(table, columns):
-        status = payload.get('status')
-        if isinstance(status, str) and status.strip().lower() == 'archived':
-            payload['status'] = INACTIVE
-        elif 'status' not in payload or payload.get('status') is None:
-            withdrawn = None
-            if payload.get('is_programme_deleted') is True or payload.get('is_archived') is True:
-                withdrawn = True
-            elif 'deleted_at' in payload:
-                withdrawn = payload.get('deleted_at') is not None
-            elif payload.get('is_programme_deleted') is False:
-                withdrawn = False
-            if withdrawn is True:
-                payload['status'] = INACTIVE
-            elif withdrawn is False:
-                payload['status'] = ACTIVE
-        if table == 'programmes' and payload.get('is_active') is False and 'status' not in payload:
-            payload['status'] = INACTIVE
-        if table in BINARY_STATUS_TABLES and 'status' in payload:
-            # These tables CHECK status in ('active', 'inactive'): it is only
-            # the archive flag. Writers still send display states -- a group
-            # 'planned' from its cohort, a module 'draft'/'published' -- which
-            # the database refuses (groups_status_check ...). Those are not a
-            # lifecycle change, so they are dropped: an insert takes the column
-            # default ('active') and an update leaves archive state alone (a
-            # coerced 'active' would restore an archived row).
-            value = str(payload.get('status') or '').strip().lower()
-            if value in INACTIVE_STATUSES:
-                payload['status'] = INACTIVE
-            elif value == ACTIVE:
-                payload['status'] = ACTIVE
-            else:
-                payload.pop('status')
-
-    # Placement and parent links are foreign keys here. Writers still send ''
-    # for "none" (a module saved without a group, a group without a coach),
-    # which the key refuses (modules_group_id_fkey ...). A nullable key stores
-    # it as NULL -- the same "none", cleared on update as '' always cleared it;
-    # a NOT NULL key keeps what it has (the update leaves it alone).
-    for column in NULLABLE_FOREIGN_KEYS.get(table, ()):
-        if column in payload and column in columns and isinstance(payload[column], str) and not payload[column].strip():
-            payload[column] = None
-            nullable.add(column)
-    for column in REQUIRED_FOREIGN_KEYS.get(table, ()):
-        if column in payload and isinstance(payload[column], str) and not payload[column].strip():
-            payload.pop(column)
-
-    if table in {'weeks', 'components'} and payload.get('library_state') == 'library' and 'library_state' not in columns:
-        raise UnsupportedOnNormalisedSchema(
-            'Keeping a week or component in the reuse library is not supported by the current curriculum '
-            'database: every week belongs to a module or a free course, and every component to a week.'
-        )
-
-    # The chosen tutor / coach (tutor_name/tutor_email, coach_name) is written
-    # as its id natively: curriculum_names.store_staff.
-    if table == 'ksb_mappings' and 'standard_ksb_id' in columns and not payload.get('standard_ksb_id'):
-        if payload.get('ksb_id') or payload.get('ksb_code'):
-            resolved = standard_ksb_id_for(
-                payload.get('ksb_id') or '', payload.get('ksb_code') or '',
-                module_catalogue_id=payload.get('module_catalogue_id') or '',
-                source_type=payload.get('source_type') or '', source_id=payload.get('source_id') or '',
-            )
-            if resolved is not None:
-                payload['standard_ksb_id'] = resolved
-    return payload, nullable
