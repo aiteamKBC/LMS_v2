@@ -315,6 +315,17 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
 export type TeamsUpdateFields = Partial<Pick<TeamsMeetingInput, 'attendees' | 'presenters' | 'coOrganizers' | 'recording' | 'lobbyBypass' | 'spokenLanguage'>>;
 
 
+/** Safe to read while editing: payload validation belongs to the save action. */
+export function teamsAddedPeople(form: TeamsCalendarForm, before: TeamsCalendarForm): string[] {
+  const invited = (value: TeamsCalendarForm) => new Set([value.organizerEmail.trim().toLowerCase(),
+    ...emailList(value.attendees).map(email => email.toLowerCase()),
+    ...emailList(value.presenters).map(email => email.toLowerCase()),
+    ...emailList(value.coOrganizers).map(email => email.toLowerCase())]);
+  const was = invited(before);
+  return [...invited(form)].filter(email => email && !was.has(email));
+}
+
+
 /**
  * What an update form changes on an existing calendar, and who it newly invites.
  *
@@ -336,10 +347,7 @@ export function teamsUpdateChanges(form: TeamsCalendarForm, before: TeamsCalenda
   for (const key of ['recording', 'lobbyBypass', 'spokenLanguage'] as const) {
     if (form[key] !== before[key]) fields[key] = form[key];
   }
-  const invited = (value: TeamsCalendarForm) => new Set([value.organizerEmail.trim().toLowerCase(),
-    ...lower(value.attendees), ...lower(value.presenters), ...lower(value.coOrganizers)]);
-  const was = invited(before);
-  return { fields, addedPeople: [...invited(form)].filter(email => email && !was.has(email)) };
+  return { fields, addedPeople: teamsAddedPeople(form, before) };
 }
 
 
