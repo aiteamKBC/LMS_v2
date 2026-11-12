@@ -1579,6 +1579,10 @@ function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, o
 // list (and whatever persistence — save-to-template vs save-to-module — sits
 // on top of it), via a single `onChange(nextComponents)` callback.
 export interface WeekComponentRailProps {
+  /** Optional presentation of the same editable rows, without slicing mutation state. */
+  renderComponentList?: (items: { component: ModuleComponent; members: ModuleComponent[]; node: ReactNode }[], searchTerm: string) => ReactNode;
+  /** Keep presentation-only session groups inside the author's Point boundaries. */
+  componentSectionKey?: (componentId: string) => string | null;
   selfStudyOnly?: boolean;
   weekId: string;
   displayWeek?: SessionTitleWeek;
@@ -1627,7 +1631,7 @@ export interface WeekComponentRailProps {
   recordingLinks?: RecordingLinkContext;
 }
 
-export function WeekComponentRail({ weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
+export function WeekComponentRail({ renderComponentList, componentSectionKey, weekId, displayWeek, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, selfStudyOnly = false }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1719,7 +1723,13 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
   };
   const activeComponent = components.find(c => c.id === activeDragId) || null;
   const searchTerm = componentSearch.trim().toLocaleLowerCase();
-  const sessionGroups = authoredSessionGroups(components, recordingLinks?.moduleId);
+  const authoredGroups = authoredSessionGroups(components, recordingLinks?.moduleId);
+  const sessionGroups = componentSectionKey ? authoredGroups.flatMap(group => {
+    const section = componentSectionKey(group.primary.id);
+    const recordings = group.recordings.filter(recording => componentSectionKey(recording.id) === section);
+    const separate = group.recordings.filter(recording => componentSectionKey(recording.id) !== section);
+    return [{ primary: group.primary, recordings }, ...separate.map(primary => ({ primary, recordings: [] }))];
+  }).sort((left, right) => components.indexOf(left.primary) - components.indexOf(right.primary)) : authoredGroups;
   const visibleGroups = searchTerm
     ? sessionGroups.filter(group => [group.primary, ...group.recordings].some(component =>
       [componentSessionTitle(component, displayWeek), component.title, component.description, component.type, weekTypeLabel(component.type)]
@@ -1728,6 +1738,38 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
   const visibleComponents = visibleGroups.map(group => group.primary);
 
   const nested = variant === 'nested';
+  const componentRows = visibleGroups.map(({ primary: component, recordings }, index) => ({ component, members: [component, ...recordings], node: (
+    <Fragment key={component.id}>
+      <SortableRailNode
+        component={component}
+        displayWeek={displayWeek}
+        nested={nested}
+        index={index}
+        selected={component.id === selectedId || recordings.some(recording => recording.id === selectedId)}
+        focused={component.id === focusedId || recordings.some(recording => recording.id === focusedId)}
+        onSelect={() => onSelectId(component.id)}
+        onDuplicate={() => duplicateComponent(component)}
+        onDelete={() => removeComponent(component.id)}
+        otherWeeks={otherWeeks}
+        onCopyToWeek={targetWeekId => onCopyComponentToWeek?.(component, targetWeekId)}
+        onMoveToWeek={onMoveComponentToWeek ? targetWeekId => onMoveComponentToWeek(component, targetWeekId) : undefined}
+        linkLabel={linkLabel(component)}
+        moveNote={moveNote(component)}
+        issues={validateWeekComponent(component).length}
+        weekSessionDate={weekSessionDate}
+        holidayDates={holidayDates}
+        dateDrift={dateDriftByComponentId?.get(component.id)}
+        recordings={recordings}
+        recordingActions={{ selectedId, onSelect: onSelectId, onDelete: removeComponent, onDuplicate: duplicateComponent,
+          onCopy: onCopyComponentToWeek, onMove: onMoveComponentToWeek }}
+      />
+      {!searchTerm && (() => {
+        const nextGroup = visibleGroups[index + 1];
+        const insertionIndex = nextGroup ? components.indexOf(nextGroup.primary) : components.length;
+        return <InsertionZone active={pickerIndex === insertionIndex} onOpen={() => setPickerIndex(insertionIndex)} last={index === visibleComponents.length - 1} />;
+      })()}
+    </Fragment>
+  ) }));
 
   return (
     <div className={nested ? 'min-w-0' : 'min-w-0 lg:sticky lg:top-6 rounded-2xl border border-background-200 bg-background-50 p-4 sm:p-5'}>
@@ -1766,6 +1808,7 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
 
       {components.length === 0 && pickerIndex === null ? (
         <div className="mt-3">
+          {renderComponentList?.([], searchTerm)}
           <button onClick={() => setPickerIndex(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
             <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
             <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first component</p>
@@ -1785,38 +1828,7 @@ export function WeekComponentRail({ weekId, displayWeek, components, selectedId,
                 <p className="rounded-xl border border-dashed border-background-300 px-3 py-6 text-center text-[11px] font-medium text-foreground-500">No components match “{componentSearch.trim()}”.</p>
               ) : <>
               {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />}
-              {visibleGroups.map(({ primary: component, recordings }, index) => (
-                <Fragment key={component.id}>
-                  <SortableRailNode
-                    component={component}
-                    displayWeek={displayWeek}
-                    nested={nested}
-                    index={index}
-                    selected={component.id === selectedId || recordings.some(recording => recording.id === selectedId)}
-                    focused={component.id === focusedId || recordings.some(recording => recording.id === focusedId)}
-                    onSelect={() => onSelectId(component.id)}
-                    onDuplicate={() => duplicateComponent(component)}
-                    onDelete={() => removeComponent(component.id)}
-                    otherWeeks={otherWeeks}
-                    onCopyToWeek={targetWeekId => onCopyComponentToWeek?.(component, targetWeekId)}
-                    onMoveToWeek={onMoveComponentToWeek ? targetWeekId => onMoveComponentToWeek(component, targetWeekId) : undefined}
-                    linkLabel={linkLabel(component)}
-                    moveNote={moveNote(component)}
-                    issues={validateWeekComponent(component).length}
-                    weekSessionDate={weekSessionDate}
-                    holidayDates={holidayDates}
-                    dateDrift={dateDriftByComponentId?.get(component.id)}
-                    recordings={recordings}
-                    recordingActions={{ selectedId, onSelect: onSelectId, onDelete: removeComponent, onDuplicate: duplicateComponent,
-                      onCopy: onCopyComponentToWeek, onMove: onMoveComponentToWeek }}
-                  />
-                  {!searchTerm && (() => {
-                    const nextGroup = visibleGroups[index + 1];
-                    const insertionIndex = nextGroup ? components.indexOf(nextGroup.primary) : components.length;
-                    return <InsertionZone active={pickerIndex === insertionIndex} onOpen={() => setPickerIndex(insertionIndex)} last={index === visibleComponents.length - 1} />;
-                  })()}
-                </Fragment>
-              ))}
+              {renderComponentList ? renderComponentList(componentRows, searchTerm) : componentRows.map(item => item.node)}
               </>}
             </div>
           </SortableContext>

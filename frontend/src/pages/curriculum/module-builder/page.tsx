@@ -1,6 +1,7 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { useWeekPointDrafts, type WeekPointDrafts } from './useWeekPointDrafts';
 import { WebWeekPointsEditor } from './WebWeekPointsEditor';
+import { WeekPointsNavigation } from './WeekPointsNavigation';
 import { componentSessionTitle } from '../shared/sessionDisplayTitle';
 import { ModuleLearnerCount } from './ModuleLearnerCount';
 import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
@@ -3735,6 +3736,7 @@ function ModuleBuilderContent() {
           >
           <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)_290px] 2xl:grid-cols-[420px_minmax(560px,1fr)_310px]">
             <CourseStructure
+              pointDrafts={pointDrafts}
               module={workingModule}
               selection={selection}
               dragState={dragState}
@@ -4780,7 +4782,8 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ pointDrafts, module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+  pointDrafts: WeekPointDrafts;
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -5359,6 +5362,20 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       warns and stops there -- the session keeps its date, its
                       week and its Teams meeting. */}
                   <WeekComponentRail
+                    componentSectionKey={componentId => pointDrafts.get(module.catalogueId || module.id, week.id)?.points
+                      .find(point => point.componentIds.includes(componentId))?.id || null}
+                    renderComponentList={(items, searchTerm) => <WeekPointsNavigation
+                      key={`${module.catalogueId || module.id}:${week.id}`}
+                      moduleId={module.catalogueId || module.id}
+                      weekId={week.id}
+                      drafts={pointDrafts}
+                      components={items.flatMap(item => item.members || [item.component])}
+                      selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
+                      onSelect={componentId => onSelectComponent(week.id, componentId)}
+                      renderActivity={componentId => items.find(item => item.component.id === componentId)?.node}
+                      expandAll={Boolean(searchTerm)}
+                      revealComponentId={focusedComponentId}
+                    />}
                     selfStudyOnly={module.isFreeCourse}
                     weekId={week.id}
                     displayWeek={week}
