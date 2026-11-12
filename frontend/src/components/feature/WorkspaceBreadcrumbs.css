@@ -1,0 +1,109 @@
+/* A shared layer keeps breadcrumb chrome consistent across legacy role themes. */
+@layer workspace-breadcrumbs-ui {
+  .workspace-breadcrumbs {
+    --crumb-surface: #f1eaf8;
+    --crumb-line: #dfd1ed;
+    --crumb-text: #593479;
+    --crumb-active: #5c2d82;
+    --crumb-hover: #e5d8f0;
+    display: flex !important;
+    height: 56px !important;
+    min-height: 56px !important;
+    flex-shrink: 0 !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 12px !important;
+    margin: 0 !important;
+    padding: 8px 24px !important;
+    overflow: hidden !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--crumb-line) !important;
+    border-radius: 0 !important;
+    background: var(--crumb-surface) !important;
+    color: var(--crumb-text) !important;
+  }
+
+  .workspace-breadcrumbs > nav {
+    display: flex !important;
+    min-width: 0 !important;
+    min-height: 36px !important;
+    height: auto !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 3px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+  }
+
+  .workspace-breadcrumbs > nav::-webkit-scrollbar { display: none; }
+
+  .workspace-breadcrumbs .workspace-breadcrumb-home {
+    display: grid !important;
+    width: 30px !important;
+    height: 30px !important;
+    flex: 0 0 30px !important;
+    place-items: center !important;
+    margin: 0 !important;
+    border: 1px solid var(--crumb-line) !important;
+    border-radius: 9px !important;
+    background: transparent !important;
+    color: var(--crumb-text) !important;
+  }
+
+  .workspace-breadcrumbs .workspace-breadcrumb-step {
+    display: flex !important;
+    min-width: 0 !important;
+    height: auto !important;
+    flex: 0 0 auto !important;
+    align-items: center !important;
+    gap: 6px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    clip-path: none !important;
+    white-space: nowrap !important;
+  }
+
+  .workspace-breadcrumbs .workspace-breadcrumb-step::before { display: none !important; }
+
+  .workspace-breadcrumbs .workspace-breadcrumb-step > :is(a, span) {
+    display: block;
+    padding: 7px 10px !important;
+    border-radius: 9px !important;
+    color: var(--crumb-text) !important;
+    text-decoration: none !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    line-height: 18px !important;
+  }
+
+  .workspace-breadcrumbs .workspace-breadcrumb-step.is-current > :is(a, span) {
+    background: var(--crumb-active) !important;
+    color: #fff !important;
+    box-shadow: 0 2px 6px rgb(53 23 80 / .14);
+  }
+
+  .workspace-breadcrumbs :is(.workspace-breadcrumb-home-separator, .workspace-breadcrumb-step > .ri-arrow-right-s-line) {
+    display: inline-flex !important;
+    flex-shrink: 0;
+    color: var(--crumb-text) !important;
+    opacity: .65;
+  }
+
+  .workspace-breadcrumbs a:hover { background: var(--crumb-hover) !important; }
+  .workspace-breadcrumbs .workspace-breadcrumb-step.is-current > a:hover { background: #492267 !important; }
+  .workspace-breadcrumbs a:focus-visible { outline: 2px solid var(--crumb-text) !important; outline-offset: 2px; }
+
+  [data-theme='dark'] .workspace-breadcrumbs {
+    --crumb-surface: #21192d;
+    --crumb-line: #433451;
+    --crumb-text: #e0c9f1;
+    --crumb-active: #693a91;
+    --crumb-hover: #39284a;
+  }
+
+  @media (max-width: 639px) {
+    .workspace-breadcrumbs { padding-inline: 12px !important; }
+  }
+}

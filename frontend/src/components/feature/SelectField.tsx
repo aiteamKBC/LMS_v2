@@ -170,7 +170,7 @@ export function SelectMenu({
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const height = Math.min(panelRef.current?.offsetHeight || MENU_MAX_HEIGHT, MENU_MAX_HEIGHT);
-      const gap = 6;
+      const gap = 8;
       const spaceBelow = window.innerHeight - rect.bottom;
       const flip = spaceBelow < height + gap + 12 && rect.top > spaceBelow;
       const width = Math.min(Math.max(rect.width, menuMinWidth ?? MENU_MIN_WIDTH), window.innerWidth - 16);
@@ -297,7 +297,7 @@ export function SelectMenu({
   const triggerTone = disabled
     ? 'cursor-not-allowed border-background-200 bg-background-100 text-foreground-400'
     : open
-      ? 'border-primary-300 bg-background-50 ring-2 ring-primary-100'
+      ? 'border-primary-400 bg-background-50 shadow-sm'
       : error
         ? 'border-red-300 bg-background-50'
         : 'border-background-200 bg-background-50 hover:border-primary-200';
@@ -320,7 +320,7 @@ export function SelectMenu({
         aria-controls={open ? listboxId : undefined}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
-        className={`flex w-full items-center gap-2 rounded-lg border pl-3 pr-2 text-left outline-none transition-smooth ${TRIGGER_HEIGHT[size]} ${triggerTone} ${triggerClassName}`}
+        className={`flex w-full items-center !gap-3 rounded-[10px] border px-3.5 text-left outline-none transition-smooth focus-visible:ring-2 focus-visible:ring-primary-200 ${TRIGGER_HEIGHT[size]} ${triggerTone} ${triggerClassName}`}
       >
         {selected?.icon && <AppIcon className={`${selected.icon} shrink-0 text-foreground-400`}></AppIcon>}
         <span className={`min-w-0 flex-1 truncate text-[14px] ${selected ? 'font-semibold text-foreground-900' : 'font-medium text-foreground-400'}`}>
@@ -329,7 +329,7 @@ export function SelectMenu({
         {selected?.meta && (
           <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[11px] font-bold text-foreground-500">{selected.meta}</span>
         )}
-        <AppIcon className={`ri-arrow-down-s-line shrink-0 text-xl transition-transform ${disabled ? 'text-foreground-300' : 'text-foreground-400'} ${open ? 'rotate-180' : ''}`}></AppIcon>
+        <AppIcon className={`ri-arrow-down-s-line shrink-0 text-base transition-transform ${disabled ? 'text-foreground-300' : 'text-foreground-400'} ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {open && createPortal(
@@ -338,10 +338,10 @@ export function SelectMenu({
           tabIndex={-1}
           onKeyDown={handleMenuKeyDown}
           style={panelStyle}
-          className={`fixed z-[10050] flex flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl outline-none select-menu-pop ${above ? 'is-above' : ''} ${menuClassName}`}
+          className={`fixed z-[10050] flex flex-col overflow-hidden rounded-[10px] border border-background-200 bg-background-50 shadow-[0_8px_24px_-6px_rgb(35_20_55_/_0.16)] outline-none focus-visible:!outline-none select-menu-pop ${above ? 'is-above' : ''} ${menuClassName}`}
         >
           {showSearch && (
-            <div className="flex items-center gap-2 border-b border-background-200 px-3 py-2.5">
+            <div className="flex items-center gap-3 border-b border-background-200 px-3.5 py-2.5">
               <AppIcon className="ri-search-line shrink-0 text-base text-foreground-300"></AppIcon>
               <input
                 ref={searchRef}
@@ -368,7 +368,7 @@ export function SelectMenu({
             id={listboxId}
             role="listbox"
             aria-activedescendant={rows[highlight] ? `${listboxId}-${highlight}` : undefined}
-            className="select-menu-list min-h-0 flex-1 overflow-y-auto p-1.5"
+            className="select-menu-list min-h-0 flex-1 space-y-1 overflow-y-auto p-2"
           >
             {rows.map((option, index) => {
               const active = option.value === value;
@@ -392,7 +392,7 @@ export function SelectMenu({
                     disabled={option.disabled}
                     onMouseMove={() => { if (!option.disabled && highlight !== index) setHighlight(index); }}
                     onClick={() => commit(option)}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left outline-none transition-smooth ${
+                    className={`flex min-h-10 w-full items-center !gap-3 rounded-md px-3 py-2.5 text-left outline-none transition-smooth ${focused ? 'ring-1 ring-inset ring-primary-200' : ''} ${
                       option.disabled
                         ? 'cursor-not-allowed text-foreground-300'
                         : active
@@ -402,9 +402,9 @@ export function SelectMenu({
                             : 'text-foreground-800'
                     }`}
                   >
-                    {option.icon && <AppIcon className={`${option.icon} shrink-0 text-lg ${active ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>}
+                    {option.icon && <AppIcon className={`${option.icon} shrink-0 text-base ${active ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>}
                     <span className="min-w-0 flex-1">
-                      <span className="block whitespace-normal break-words text-[14px] font-semibold">{option.label}</span>
+                      <span className="block whitespace-normal break-words text-[13px] font-medium">{option.label}</span>
                       {option.description && (
                         <span className="mt-0.5 block whitespace-normal break-words text-[12px] font-medium text-foreground-400">{option.description}</span>
                       )}
@@ -414,7 +414,7 @@ export function SelectMenu({
                         {option.meta}
                       </span>
                     )}
-                    {active && <AppIcon className="ri-check-line shrink-0 text-lg text-primary-600"></AppIcon>}
+                    {active && <AppIcon className="ri-check-line shrink-0 text-base text-primary-600"></AppIcon>}
                   </button>
                 </div>
               );
