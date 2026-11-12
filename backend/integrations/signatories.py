@@ -30,6 +30,6 @@ def employer_can_sign_progress_review(account) -> bool:
             can_sign=True,
         ).filter(Q(starts_at__isnull=True) | Q(starts_at__lte=now)).filter(Q(ends_at__isnull=True) | Q(ends_at__gte=now)).exists()
     except DatabaseError:
-        # The integration SQL is opt-in. Until it is provisioned, do not break
-        # the existing employer portal; once provisioned, the grant is enforced.
-        return True
+        # This opt-in integration helper must not grant permission on a failed
+        # lookup. It is deliberately not part of the existing employer flow.
+        return False

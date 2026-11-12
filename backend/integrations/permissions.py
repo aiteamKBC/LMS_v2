@@ -7,6 +7,7 @@ import os
 import time
 
 from django.http import JsonResponse
+from django.conf import settings
 
 from login.identity import accesses_for_staff
 from login.permissions import _forbidden, _unauthenticated
@@ -44,6 +45,8 @@ def integration_access(*, allow_employer=True, allow_service=False):
     def decorator(view):
         @functools.wraps(view)
         def wrapped(request, *args, **kwargs):
+            if not getattr(settings, "BREATHE_INTEGRATIONS_ENABLED", False):
+                return JsonResponse({"error": "The persistent Breathe connector is not enabled. The HR System demo remains available.", "code": "breathe_not_enabled"}, status=503)
             account = authenticate_request(request)
             if account is not None and (_staff_has_access(account) or (allow_employer and account.role == "employer")):
                 request.integration_actor = account

@@ -484,6 +484,10 @@ ROOT_URLCONF = 'config.urls'
 # Enable only after the owner applies the reviewed SQL metadata tables.
 OLD_OTJH_ENABLED = os.environ.get('OLD_OTJH_ENABLED', 'false').lower() == 'true'
 INTEGRATIONS_TEST_MODE = USE_SQLITE_FOR_TESTS
+# The presentation workspace is independent of the optional persistent HR
+# connector. Enable the latter only after its isolated SQL schema is reviewed
+# and provisioned; existing learner/employer workflows never consult it.
+BREATHE_INTEGRATIONS_ENABLED = os.environ.get('BREATHE_INTEGRATIONS_ENABLED', 'false').lower() == 'true'
 # Optional email-keyed overrides for the bundled public coach booking catalogue.
 # Parsing/validation stays local so links never delay record access.
 OLD_OTJH_COACH_BOOKING_URLS = os.environ.get('OLD_OTJH_COACH_BOOKING_URLS', '{}')

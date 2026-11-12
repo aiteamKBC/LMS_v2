@@ -1050,10 +1050,6 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key, 
             return _error(str(exc), 409)
         return JsonResponse(updated)
 
-    from integrations.signatories import employer_can_sign_progress_review
-    if not employer_can_sign_progress_review(getattr(request, 'login_account', None)):
-        return _error("An approved LMS signatory grant is required.", 403)
-
     signature = _s(payload.get('signature'))
     name = _s(payload.get('name'))
     if not signature.startswith('data:image/'):

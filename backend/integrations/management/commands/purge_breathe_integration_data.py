@@ -39,10 +39,14 @@ class Command(BaseCommand):
                 IntegrationSyncRun,
                 IntegrationConnection,
             ):
-                deleted, _ = model.objects.filter(tenant_id=tenant_id).delete()
-                total += deleted
+                rows = model.objects.filter(tenant_id=tenant_id)
+                if options["dry_run"]:
+                    total += rows.count()
+                else:
+                    deleted, _ = rows.delete()
+                    total += deleted
             if not options["dry_run"]:
                 tenant.active = False
                 tenant.save(update_fields=("active", "updated_at"))
-        suffix = " (dry run)" if options["dry_run"] else ""
-        self.stdout.write(self.style.SUCCESS(f"Purged {total} integration rows across {len(tenants)} tenant(s){suffix}."))
+        verb = "Would purge" if options["dry_run"] else "Purged"
+        self.stdout.write(self.style.SUCCESS(f"{verb} {total} integration rows across {len(tenants)} tenant(s)."))

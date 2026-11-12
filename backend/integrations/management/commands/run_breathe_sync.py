@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand, CommandError
+from django.conf import settings
 
 from integrations.models import IntegrationConnection, IntegrationSyncRun
 from integrations.services import ALLOWED_RESOURCES, create_sync_run, process_sync_run
@@ -14,6 +15,8 @@ class Command(BaseCommand):
         parser.add_argument("--dry-run", action="store_true")
 
     def handle(self, *args, **options):
+        if not getattr(settings, "BREATHE_INTEGRATIONS_ENABLED", False):
+            raise CommandError("Enable the persistent Breathe connector after provisioning its schema.")
         run_id = options.get("run_id")
         if run_id:
             try:

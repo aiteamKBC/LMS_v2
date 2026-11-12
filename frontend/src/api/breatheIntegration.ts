@@ -52,6 +52,12 @@ export interface BreatheSchedulingConflict {
 const BASE = '/integrations_api/breathe/connections';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const csrfHeaders: Record<string, string> = {};
+  if (init?.method && !['GET', 'HEAD', 'OPTIONS'].includes(init.method.toUpperCase())) {
+    const { csrfToken } = await request<{ csrfToken: string }>('/integrations_api/breathe/csrf');
+    if (!csrfToken) throw new Error('Could not obtain the integration security token.');
+    csrfHeaders['X-CSRFToken'] = csrfToken;
+  }
   let response: Response;
   try {
     response = await fetch(url, {
@@ -60,6 +66,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       headers: {
         'Content-Type': 'application/json',
         'X-Requested-With': 'XMLHttpRequest',
+        ...csrfHeaders,
         ...(init?.headers || {}),
       },
     });

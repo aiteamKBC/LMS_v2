@@ -102,7 +102,7 @@ export const ACCESS_OPTIONS: {
     id: 'integrations',
     label: 'HR integrations access',
     description: 'Manage Breathe HR connections, identity review and sync health.',
-    home: '/workspace/integrations/breathe',
+    home: '/workspace/hr-system',
     icon: 'ri-links-line',
   },
   {

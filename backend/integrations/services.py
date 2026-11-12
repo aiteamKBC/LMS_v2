@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from django.db import transaction
 
-from .breathe import BreatheClient
+from .breathe import BreatheApiError, BreatheClient
 from .models import (
     AvailabilityBlock,
     DepartmentMapping,
@@ -28,7 +28,10 @@ def secret_env_name(secret_ref):
 
 def api_key_for(connection):
     if str(connection.secret_ref).startswith("env:"):
-        return os.environ.get(str(connection.secret_ref)[4:], "")
+        name = str(connection.secret_ref)[4:]
+        if not re.fullmatch(r"BREATHE_API_KEY_[A-Z0-9_]+", name):
+            raise BreatheApiError("The secret reference must name a Breathe API key.")
+        return os.environ.get(name, "")
     return os.environ.get(secret_env_name(connection.secret_ref), "")
 
 
@@ -119,9 +122,12 @@ def process_sync_run(run_id, *, client=None):
     run.status = "running"
     run.started_at = datetime.now(timezone.utc)
     run.save(update_fields=("status", "started_at"))
-    client = client or client_for(connection)
     counts = {}
     try:
+        client = client or client_for(connection)
+        account = client.account()
+        if str(account.get("id")) != str(connection.external_account_id):
+            raise BreatheApiError("The API key belongs to a different Breathe account.")
         with transaction.atomic():
             for resource in run.resources:
                 if resource == "employees":
@@ -138,13 +144,23 @@ def process_sync_run(run_id, *, client=None):
         run.counts = counts
         run.finished_at = datetime.now(timezone.utc)
         run.save(update_fields=("status", "counts", "finished_at"))
+        if not run.dry_run:
+            connection.status = "active"
+            connection.last_sync_at = run.finished_at
+            connection.last_verified_at = run.finished_at
+            connection.last_error = ""
+            connection.save(update_fields=("status", "last_sync_at", "last_verified_at", "last_error", "updated_at"))
         return run
     except Exception as exc:
         run.status = "failed"
         run.error_code = getattr(exc, "status", None) and f"http_{exc.status}" or exc.__class__.__name__.lower()
-        run.error_message = str(exc)[:1000]
+        run.error_message = str(exc)[:1000] if isinstance(exc, BreatheApiError) else "The integration sync failed. Check the worker logs."
         run.finished_at = datetime.now(timezone.utc)
         run.save(update_fields=("status", "error_code", "error_message", "finished_at"))
+        if not run.dry_run:
+            connection.status = "attention"
+            connection.last_error = run.error_message
+            connection.save(update_fields=("status", "last_error", "updated_at"))
         raise
 
 

@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import json
 import uuid
+from django.utils import timezone
 
 from django.http import JsonResponse
+from django.middleware.csrf import get_token
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .breathe import BreatheApiError
+from .breathe import BreatheApiError, validated_base_url
 from .models import ExternalPersonLink, IntegrationConnection, IntegrationSyncRun, IntegrationTenant, ManagerSignatoryGrant, SchedulingConflict
 from .permissions import integration_access
-from .services import ALLOWED_RESOURCES, client_for, create_sync_run
+from .services import ALLOWED_RESOURCES, api_key_for, client_for, create_sync_run
 
 
 def _body(request):
@@ -71,6 +73,12 @@ def _in_actor_tenant(request, connection):
 
 @require_GET
 @integration_access(allow_employer=True)
+def csrf_token(request):
+    return JsonResponse({"csrfToken": get_token(request)})
+
+
+@require_GET
+@integration_access(allow_employer=True)
 def connections(request):
     actor = getattr(request, "integration_actor", None)
     query = IntegrationConnection.objects.all().order_by("external_account_id")
@@ -84,12 +92,23 @@ def connections(request):
 @integration_access(allow_employer=False)
 def create_connection(request):
     body = _body(request)
+    external_account_id = str(body.get("external_account_id") or "").strip()
+    secret_ref = str(body.get("secret_ref") or "").strip()
+    if not external_account_id or not secret_ref:
+        return JsonResponse({"error": "external_account_id and secret_ref are required."}, status=400)
+    try:
+        base_url = validated_base_url(body.get("base_url") or "https://api.sandbox.breathehr.info")
+        api_key_for(type("Reference", (), {"secret_ref": secret_ref})())
+    except BreatheApiError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
     tenant_id = None
     if body.get("tenant_id"):
         try:
             tenant_id = uuid.UUID(str(body.get("tenant_id")))
         except (TypeError, ValueError):
             return JsonResponse({"error": "tenant_id must be a UUID."}, status=400)
+        if not IntegrationTenant.objects.filter(pk=tenant_id, active=True).exists():
+            return JsonResponse({"error": "Tenant not found."}, status=404)
     if tenant_id is None:
         tenant_key = str(body.get("tenant_key") or "").strip()
         display_name = str(body.get("display_name") or tenant_key).strip()
@@ -100,16 +119,12 @@ def create_connection(request):
             defaults={"display_name": display_name, "tenant_kind": str(body.get("tenant_kind") or "employer"), "employer_id": body.get("employer_id")},
         )
         tenant_id = tenant.id
-    external_account_id = str(body.get("external_account_id") or "").strip()
-    secret_ref = str(body.get("secret_ref") or "").strip()
-    if not external_account_id or not secret_ref:
-        return JsonResponse({"error": "external_account_id and secret_ref are required."}, status=400)
     connection = IntegrationConnection.objects.create(
         tenant_id=tenant_id,
         provider="breathe",
         external_account_id=external_account_id,
         secret_ref=secret_ref,
-        base_url=str(body.get("base_url") or "https://api.sandbox.breathehr.info").strip(),
+        base_url=base_url.rstrip("/"),
         enabled_features=body.get("enabled_features") if isinstance(body.get("enabled_features"), list) else [],
     )
     return JsonResponse(_connection_payload(connection), status=201)
@@ -137,7 +152,7 @@ def _tenant_visible_to_actor(request, tenant):
 
 
 @require_POST
-@integration_access(allow_employer=True)
+@integration_access(allow_employer=False)
 def create_signatory_grant(request, tenant_id):
     try:
         tenant_uuid = uuid.UUID(str(tenant_id))
@@ -245,13 +260,22 @@ def validate_connection(request, connection_id):
         return JsonResponse({"error": "Connection is outside your tenant."}, status=404)
     try:
         account = client_for(connection).account()
+        if str(account.get("id")) != str(connection.external_account_id):
+            raise BreatheApiError("The API key belongs to a different Breathe account.")
     except BreatheApiError as exc:
+        connection.status = "attention"
+        connection.last_error = str(exc)
+        connection.save(update_fields=("status", "last_error", "updated_at"))
         return JsonResponse({"error": str(exc), "code": "breathe_validation_failed"}, status=502)
-    return JsonResponse({"ok": True, "account": {key: account.get(key) for key in ("id", "name", "subdomain") if isinstance(account, dict) and account.get(key)}})
+    connection.status = "active"
+    connection.last_verified_at = timezone.now()
+    connection.last_error = ""
+    connection.save(update_fields=("status", "last_verified_at", "last_error", "updated_at"))
+    return JsonResponse({"ok": True, "account": {key: account.get(key) for key in ("id", "name", "subdomain", "domain") if account.get(key)}})
 
 
 @require_POST
-@integration_access(allow_employer=True)
+@integration_access(allow_employer=False)
 def approve_match(request, connection_id):
     connection = _connection(connection_id)
     if not connection:

@@ -145,7 +145,7 @@ ACCESS_HOME_ROUTES = {
     ACCESS_COACH: "/workspace/coach",
     ACCESS_TUTOR: "/workspace/tutor",
     ACCESS_RECORD_MONITOR: "/old-otjh/monitor",
-    ACCESS_INTEGRATIONS: "/workspace/integrations/breathe",
+    ACCESS_INTEGRATIONS: "/workspace/hr-system",
     ACCESS_ADVANCED_ADMIN: "/workspace/advanced-admin",
     ACCESS_SUPER_ADMIN: "/workspace/admin",
 }

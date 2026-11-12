@@ -3,6 +3,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("breathe/csrf", views.csrf_token, name="breathe-csrf"),
     path("breathe/connections", views.connections, name="breathe-connections"),
     path("breathe/connections/create", views.create_connection, name="breathe-create-connection"),
     path("breathe/tenants/<uuid:tenant_id>/signatory-grants", views.signatory_grants, name="breathe-signatory-grants"),

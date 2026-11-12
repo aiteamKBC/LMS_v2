@@ -2,8 +2,33 @@
 
 The integration tables are provisioned by
 `backend/sql/2026-11-11_breathe_integrations.sql`. The SQL creates the
-`integrations` schema and never stores a Breathe API key; `secret_ref` points to
-Secrets Manager or an environment variable name.
+`integrations` schema and never stores a Breathe API key; `secret_ref` resolves
+to a server-side Breathe environment variable name.
+
+## Activation and isolation
+
+The HR System workspace at `/workspace/hr-system` is a synthetic presentation
+demo. It does not modify learner progress, hours, KSB evidence, enrolments,
+meetings or existing employer signing rules. Its preview requests do not send
+data to Breathe. The original integration configuration screen remains at
+`/workspace/integrations/breathe`.
+
+The persistent connector is **off by default**. Before enabling it, review and
+apply its separate SQL schema against the intended database with a restore
+point, configure the server-side Breathe key, then set
+`BREATHE_INTEGRATIONS_ENABLED=true`. API routes return a clear 503 while it is
+off; management sync also refuses to run. No migration is applied automatically
+and this release does not require altering the existing learner database.
+
+Supported secret references are `env:BREATHE_API_KEY_<NAME>` or an opaque
+reference resolved to a `BREATHE_API_KEY_*` environment variable. A Secrets
+Manager fetcher is not implemented. Never put key values in frontend code or Git.
+Only the official production and sandbox HTTPS origins are accepted;
+pagination stays on that origin and redirects are refused.
+
+Browser writes obtain a CSRF token from `GET /integrations_api/breathe/csrf`.
+Identity approvals and signing-grant administration require integration staff or
+super-admin access. Existing employer signatures do not call these new grants.
 
 ## Scheduler trigger
 

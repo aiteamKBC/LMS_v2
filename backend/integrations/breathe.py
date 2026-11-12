@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 from collections import deque
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -26,9 +26,24 @@ class BreatheApiError(RuntimeError):
         self.retryable = retryable
 
 
+def validated_base_url(value):
+    try:
+        parsed = urlsplit(str(value))
+        valid = (parsed.scheme == "https"
+                 and parsed.hostname in {"api.breathehr.com", "api.sandbox.breathehr.info"}
+                 and parsed.port in (None, 443)
+                 and not parsed.username and not parsed.password
+                 and parsed.path in ("", "/") and not parsed.query and not parsed.fragment)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise BreatheApiError("Use an official Breathe HTTPS API origin.")
+    return f"https://{parsed.hostname}/"
+
+
 class BreatheClient:
     def __init__(self, base_url, api_key, *, session=None, sleep=time.sleep, max_requests=40, window_seconds=60):
-        self.base_url = base_url.rstrip("/") + "/"
+        self.base_url = validated_base_url(base_url)
         self.api_key = api_key
         self.session = session or requests.Session()
         self.sleep = sleep
@@ -48,16 +63,27 @@ class BreatheClient:
     def request_json(self, method, path, *, params=None, json=None, retries=3):
         if not self.api_key:
             raise BreatheApiError("Breathe API key is not configured.")
-        url = path if path.startswith("http") else urljoin(self.base_url, path.lstrip("/"))
+        url = urljoin(self.base_url, str(path))
+        parsed = urlsplit(url)
+        try:
+            valid = (parsed.scheme == "https" and parsed.hostname == urlsplit(self.base_url).hostname
+                     and parsed.port in (None, 443) and not parsed.username and not parsed.password
+                     and parsed.path.startswith("/v1/") and not parsed.fragment)
+        except ValueError:
+            valid = False
+        if not valid:
+            raise BreatheApiError("Breathe pagination must remain on the configured API origin.")
         for attempt in range(retries + 1):
             self._rate_limit()
             try:
-                response = self.session.request(method, url, params=params, json=json, headers={"X-API-KEY": self.api_key, "Accept": "application/json"}, timeout=30)
+                response = self.session.request(method, url, params=params, json=json, headers={"X-API-KEY": self.api_key, "Accept": "application/json"}, timeout=30, allow_redirects=False)
             except requests.RequestException as exc:
                 if attempt >= retries:
                     raise BreatheApiError("Breathe request failed.", retryable=True) from exc
                 self.sleep(2 ** attempt)
                 continue
+            if 300 <= response.status_code < 400:
+                raise BreatheApiError("Breathe redirects are not accepted.", status=response.status_code)
             if response.status_code == 429 or response.status_code >= 500:
                 if attempt >= retries:
                     raise BreatheApiError("Breathe returned a retryable error.", status=response.status_code, retryable=True)
@@ -66,7 +92,7 @@ class BreatheClient:
                     delay = float(retry_after) if retry_after else 2 ** attempt
                 except ValueError:
                     delay = 2 ** attempt
-                self.sleep(min(delay, 60))
+                self.sleep(max(0, min(delay, 60)))
                 continue
             if not response.ok:
                 raise BreatheApiError("Breathe rejected the request.", status=response.status_code, retryable=False)
@@ -77,14 +103,21 @@ class BreatheClient:
         raise BreatheApiError("Breathe request exhausted retries.", retryable=True)
 
     def account(self):
-        return self.request_json("GET", RESOURCE_PATHS["account"])[0]
+        payload = self.request_json("GET", RESOURCE_PATHS["account"])[0]
+        if not isinstance(payload, dict):
+            raise BreatheApiError("Breathe returned invalid account data.")
+        return payload.get("account") if isinstance(payload.get("account"), dict) else payload
 
     def list_resource(self, resource, *, per_page=100):
         if resource not in RESOURCE_PATHS:
             raise ValueError(f"Unsupported Breathe resource: {resource}")
         path = RESOURCE_PATHS[resource]
         params = {"page": 1, "per_page": min(max(int(per_page), 1), 100)}
+        visited = set()
         while path:
+            if path in visited or len(visited) >= 1000:
+                raise BreatheApiError("Breathe pagination did not terminate.")
+            visited.add(path)
             payload, headers = self.request_json("GET", path, params=params)
             items = self._items(payload, resource)
             for item in items:
