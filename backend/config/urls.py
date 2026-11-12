@@ -67,6 +67,7 @@ urlpatterns = [
     path('.well-known/oauth-protected-resource/mcp', mcp_views.oauth_protected_resource_metadata, {'mcp_path': '/mcp'}, name='oauth-protected-resource-mcp'),
     path('.well-known/oauth-protected-resource/mcp/', mcp_views.oauth_protected_resource_metadata, {'mcp_path': '/mcp/'}, name='oauth-protected-resource-mcp-slash'),
     path('.well-known/oauth-authorization-server', mcp_views.oauth_authorization_server_metadata, name='oauth-authorization-server'),
+    path('integrations_api/', include('integrations.urls')),
 ]
 
 if settings.DEBUG:

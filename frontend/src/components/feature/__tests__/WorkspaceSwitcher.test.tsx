@@ -53,6 +53,14 @@ beforeEach(() => {
 });
 
 describe('WorkspaceSwitcher', () => {
+  it('opens HR System for a super-admin without changing account identity', async () => {
+    signedIn();
+    renderAt('/workspace/admin');
+    await userEvent.click(trigger());
+    await userEvent.click(screen.getByRole('menuitem', { name: /HR System/ }));
+    expect(path()).toBe('/workspace/hr-system');
+    expect(switchRole).not.toHaveBeenCalled();
+  });
   it('uses the prominent shared trigger treatment for an administrator', () => {
     signedIn();
     renderAt('/workspace/coach');
