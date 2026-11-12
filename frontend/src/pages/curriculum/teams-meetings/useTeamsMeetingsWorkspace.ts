@@ -13,6 +13,7 @@ import { UNCERTAIN_MESSAGE, waitForSavedCreate, type CreateProgress, type Create
 import { type UpdateProgress } from './updateProgress';
 import { syncTeamsCalendarState } from './calendarState';
 import { compareTeamsAttendees, type AttendeeComparison } from './attendeeComparison';
+import { refreshTeamsPeople } from './meetingPeopleSync';
 import { type CalendarActionTarget } from './CalendarActionDialog';
 import { calendarAction, type ActionResult, type ActionReview } from './calendarActions';
 import { leftoverSlotLabel } from './leftoverSlots';
@@ -77,7 +78,7 @@ import {
   resolveModuleContext,
 } from '../shared/entities/model';
 import { type GroupDeliveryPattern, type TeamsCalendarForm } from './createCalendarForm';
-import { buildTeamsCalendarInput, DEFAULT_DURATION_MINUTES, emptyTeamsCalendarForm, minuteKey, minutesBetween, naiveLocalFromUtc, sessionNaiveLocal, teamsCalendarOccurrences, teamsUpdateChanges } from './createCalendarForm.helpers';
+import { buildTeamsCalendarInput, DEFAULT_DURATION_MINUTES, emptyTeamsCalendarForm, minuteKey, minutesBetween, naiveLocalFromUtc, sessionNaiveLocal, teamsAddedPeople, teamsCalendarOccurrences, teamsUpdateChanges } from './createCalendarForm.helpers';
 import { useDrawerState } from '../shared/entities/useDrawerState';
 
 
@@ -770,6 +771,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   }, [additionalMeetings, liveComponents, plannedSessions, selected]);
   const [originalRead, setOriginalRead] = useState<{ id: string; loading: boolean; data?: ImportedMeetingEditor; error?: string }>({ id: '', loading: false });
   const [originalRevision, setOriginalRevision] = useState(0);
+  const [peopleRefreshing, setPeopleRefreshing] = useState(false);
+  const discardOnOriginalRead = useRef(false);
+  const invitationDirty = useRef(updateDrawer.dirty);
+  invitationDirty.current = updateDrawer.dirty;
   const reloadOriginalCalendar = () => {
     setOriginalRead(value => ({ ...value, loading: true }));
     setOriginalRevision(value => value + 1);
@@ -779,7 +784,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     void showCurriculumConfirm({ title: 'Reload the saved meeting?',
       text: 'Refreshing reads the latest meeting and discards your unsaved invitation changes.',
       icon: 'warning', confirmButtonText: 'Reload meeting',
-      onConfirm: () => { updateDrawer.openWith(emptyTeamsCalendarForm()); reloadOriginalCalendar(); } });
+      onConfirm: () => { discardOnOriginalRead.current = true; reloadOriginalCalendar(); } });
   };
   const updateExistingTeamsMeeting = (id: string, input: Parameters<typeof updateTeamsMeetingSchedule>[1], options?: Parameters<typeof updateTeamsMeetingSchedule>[2]) => updateTeamsMeetingSchedule(id, {
     ...input, ...(originalRead.id === id && originalRead.data?.sourceToken ? { originalSourceToken: originalRead.data.sourceToken } : {}),
@@ -1193,13 +1198,41 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   /** Who the open invitation fields add to this calendar, compared with what it holds. */
   const addedInvitees = (row: MeetingRow) => {
     const update = invitationEdits(row);
-    return update ? teamsUpdateChanges(update.form, update.baseline).addedPeople : [];
+    return update ? teamsAddedPeople(update.form, update.baseline) : [];
   };
 
   /** After a save, what was sent is the new starting point: nothing is left "unsaved". */
   const settleInvitations = (form: TeamsCalendarForm) => {
     updateBaseline.current = form;
     updateDrawer.openWith(form);
+  };
+
+  const refreshPeopleFromTeams = () => {
+    if (!selected?.summary || peopleRefreshing || updateDrawer.saving || busy) return;
+    if (originalCalendar) { refreshOriginalCalendar(); return; }
+    const row = selected;
+    const liveId = row.summary!.liveSessionId;
+    const read = async () => {
+      setPeopleRefreshing(true);
+      setBusy(`${row.catalogueId}:people-refresh`);
+      updateDrawer.setError(null);
+      try {
+        const values = await refreshTeamsPeople(liveId);
+        if (selectedLiveId.current !== liveId) return;
+        await loadTeamsState();
+        await loadDetail(liveId);
+        if (selectedLiveId.current !== liveId) return;
+        settleInvitations({ ...invitationForm(row), ...values });
+        setComparison(null);
+        notifyChanged(row.catalogueId);
+      } catch (error) {
+        if (selectedLiveId.current === liveId) updateDrawer.setError(error instanceof Error ? error.message : 'People and settings could not be refreshed from Teams. Retry.');
+      } finally { setPeopleRefreshing(false); setBusy(''); }
+    };
+    if (!updateDrawer.dirty) { void read(); return; }
+    void showCurriculumConfirm({ title: 'Reload the saved meeting?',
+      text: 'Sync reads the latest people and roles from Teams and replaces your unsaved edits only after a successful read. Session dates stay unchanged.',
+      icon: 'warning', confirmButtonText: 'Reload meeting', onConfirm: read });
   };
 
   /**
@@ -1336,8 +1369,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     // Only what the author changed in the invitation fields is sent: an
     // untouched field keeps what the calendar has saved.
     const update = invitationEdits(row);
-    const changes = update ? teamsUpdateChanges(update.form, update.baseline) : { fields: {}, addedPeople: [] };
     try {
+      const changes = update ? teamsUpdateChanges(update.form, update.baseline) : { fields: {}, addedPeople: [] };
       // Do not send `row.sessions` here: booked rows intentionally retain the
       // old Teams occurrence dates. The server-side planner is authoritative
       // after a group day/time edit and is fetched again immediately before the
@@ -1707,21 +1740,21 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const savePeople = async (row: MeetingRow, update: { form: TeamsCalendarForm; baseline: TeamsCalendarForm }, { invite = false }: { invite?: boolean } = {}) => {
     const summary = row.summary;
     if (!summary) return;
-    const changes = teamsUpdateChanges(update.form, update.baseline);
-    if (!Object.keys(changes.fields).length) {
-      updateDrawer.setError('Nothing has changed yet. Add or remove someone, or change a setting, then save.');
-      return;
-    }
-    if (!emailList(update.form.attendees).length) {
-      updateDrawer.setError('Name at least one attendee.');
-      return;
-    }
-    const held = heldSchedule(row);
-    if (!held) {
-      updateDrawer.setError('The meeting dates for this series have not loaded, so saving now could shorten it. Reload the page and try again.');
-      return;
-    }
     try {
+      const changes = teamsUpdateChanges(update.form, update.baseline);
+      if (!Object.keys(changes.fields).length) {
+        updateDrawer.setError('Nothing has changed yet. Add or remove someone, or change a setting, then save.');
+        return;
+      }
+      if (!emailList(update.form.attendees).length) {
+        updateDrawer.setError('Name at least one attendee.');
+        return;
+      }
+      const held = heldSchedule(row);
+      if (!held) {
+        updateDrawer.setError('The meeting dates for this series have not loaded, so saving now could shorten it. Reload the page and try again.');
+        return;
+      }
       const inviting = invite && changes.addedPeople.length > 0;
       const result = await updateExistingTeamsMeeting(summary.liveSessionId, { ...held, ...changes.fields,
         sendLmsEmails: inviting, ...(inviting ? {} : { invitationsOnly: true }) }, {
@@ -2067,11 +2100,13 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   useEffect(() => {
     if (!originalId) return;
     let active = true;
+    const discardEdits = discardOnOriginalRead.current;
+    discardOnOriginalRead.current = false;
     setOriginalRead({ id: originalId, loading: true });
     void readImportedMeetingEditor(originalId, { standard: true }).then(data => {
       if (!active || selectedLiveId.current !== originalId) return;
       setOriginalRead({ id: originalId, loading: false, data });
-      if (data.status !== 'editable' || data.rolesEditable !== true || updateDrawer.dirty) return;
+      if (data.status !== 'editable' || data.rolesEditable !== true || (invitationDirty.current && !discardEdits)) return;
       const roles = new Set([...(data.presenters || []), ...(data.coOrganizers || [])].map(value => value.toLowerCase()));
       const form = { ...emptyTeamsCalendarForm(), organizerEmail: data.organizer || selected?.summary?.organizerEmail || '',
         attendees: (data.attendees || []).filter(value => !roles.has(value.toLowerCase())).join('\n'),
@@ -2214,7 +2249,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
     selectedScopeRows, chooseMeetingScope, refreshMeetingScopes,
     externalCalendar, calendarLinksLoading, calendarLinksError,
-    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar,
+    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar, refreshPeopleFromTeams, peopleRefreshing,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };
 }

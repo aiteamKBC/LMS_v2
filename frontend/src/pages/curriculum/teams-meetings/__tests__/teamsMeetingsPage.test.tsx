@@ -3,6 +3,8 @@ import { syncTeamsCalendarState } from '../calendarState';
 import * as calendarHealth from '../calendarHealth';
 import { calendarAction } from '../calendarActions';
 import { compareTeamsAttendees } from '../attendeeComparison';
+import { searchEntraPeople } from '../entraDirectory';
+import { refreshTeamsPeople } from '../meetingPeopleSync';
 import { loadModuleStructure, loadTeamsMeetingArtifacts, loadTeamsMeetingConfiguration, type ModuleCatalogueItem, type ModuleComponent } from '../../module-builder/moduleAuthoringData';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -170,6 +172,8 @@ const alertMock = vi.mocked(showCurriculumAlert);
 vi.mock('../creationResult', () => ({ finishTeamsCreation: vi.fn(), finishTeamsUpdate: vi.fn() }));
 vi.mock('../calendarState', () => ({ syncTeamsCalendarState: vi.fn() }));
 vi.mock('../calendarActions', () => ({ calendarAction: vi.fn() }));
+vi.mock('../entraDirectory', () => ({ searchEntraPeople: vi.fn() }));
+vi.mock('../meetingPeopleSync', () => ({ refreshTeamsPeople: vi.fn() }));
 // Only the Microsoft read is replaced; the pure helpers beside it are the real
 // ones, so the panel's "not published yet" list is the shipped logic.
 vi.mock('../attendeeComparison', async importOriginal => ({
@@ -292,6 +296,9 @@ function rowFor(name: string) {
 
 describe('Teams Meetings page', () => {
   beforeEach(() => {
+    vi.mocked(refreshTeamsPeople).mockReset();
+    vi.mocked(searchEntraPeople).mockReset();
+    vi.mocked(searchEntraPeople).mockResolvedValue({ people: [], hasMore: false });
     vi.mocked(readImportedMeetingEditor).mockReset();
     vi.mocked(readImportedMeetingEditor).mockResolvedValue({ status: 'blocked', message: 'Original calendar requires connection.', connectionRequired: true, connectionKind: 'group' });
     vi.mocked(fetchOrganizationCalendarConnection).mockResolvedValue({ applicable: true, available: true, connected: false, state: 'disconnected', canManageOrganization: false, calendarKind: 'group', message: 'An administrator connects the organization calendar.' });
@@ -949,6 +956,37 @@ describe('Teams Meetings page', () => {
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['Co-organizers', 'Save without notifying'], ['Presenters', 'Save without notifying'], ['Co-organizers', 'Update Teams calendar'],
+  ])('keeps the editor recoverable when selecting %s exceeds the combined role limit via %s', async (role, action) => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
+      ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
+    const coOrganizers = Array.from({ length: 9 }, (_, index) => `co${index}@example.invalid`);
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ status: 'editable', message: 'Verified', sourceToken: 'SOURCE-1',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com', 'presenter@example.invalid', ...coOrganizers],
+      presenters: ['presenter@example.invalid'], coOrganizers, rolesEditable: true });
+    vi.mocked(searchEntraPeople).mockResolvedValue({ people: [{ id: 'staff-1', name: 'Staff Example', email: 'staff@example.invalid' }], hasMore: false });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const input = dialog.getByRole('combobox', { name: role });
+    await waitFor(() => expect(input).toBeEnabled());
+    await userEvent.type(input, 'Staff');
+    await userEvent.click(await dialog.findByRole('option', { name: /Staff Example/ }));
+    expect(dialog.getByRole('button', { name: 'Remove staff@example.invalid' })).toBeVisible();
+    await userEvent.click(dialog.getByRole('button', { name: action }));
+    if (action === 'Update Teams calendar') await userEvent.click(dialog.getByRole('button', { name: 'Confirm update' }));
+    expect(await screen.findByText(/Teams supports up to 10 co-organizers/)).toBeVisible();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    await userEvent.click(dialog.getByRole('button', { name: 'Remove staff@example.invalid' }));
+    fireEvent.change(input, { target: { value: coOrganizers[0] } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(dialog.getByRole('combobox', { name: role })).toBeEnabled();
+  });
+
   it('loads Teams co-organizers into their role field and preserves them when promoting an invited person', async () => {
     window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
     fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
@@ -973,6 +1011,111 @@ describe('Teams Meetings page', () => {
     }), expect.anything()));
     expect(createTeamsMeeting).not.toHaveBeenCalled();
     expect(finishTeamsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refreshes people and roles changed in Teams without writing a meeting or moving dates', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
+      ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
+    vi.mocked(readImportedMeetingEditor).mockResolvedValueOnce({ status: 'editable', message: 'Verified', sourceToken: 'SOURCE-1',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com', 'old.co@example.invalid'],
+      presenters: [], coOrganizers: ['old.co@example.invalid'], rolesEditable: true });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await dialog.findByRole('button', { name: 'Remove old.co@example.invalid' });
+    vi.mocked(readImportedMeetingEditor).mockResolvedValueOnce({ status: 'editable', message: 'Verified', sourceToken: 'SOURCE-2',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com', 'new.co@example.invalid', 'new.learner@example.invalid'],
+      presenters: [], coOrganizers: ['new.co@example.invalid'], rolesEditable: true,
+      options: { recordAutomatically: true, allowTranscription: true, lobbyBypassSettings: { scope: 'everyone' }, meetingSpokenLanguageTag: 'ar-EG' } });
+    await userEvent.click(dialog.getByRole('button', { name: 'Sync people and roles from Teams' }));
+    expect(await dialog.findByRole('button', { name: 'Remove new.co@example.invalid' })).toBeVisible();
+    expect(dialog.queryByRole('button', { name: 'Remove old.co@example.invalid' })).not.toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Remove new.learner@example.invalid' })).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+    expect(dialog.getByText('Record and transcribe')).toBeVisible();
+    expect(readImportedMeetingEditor).toHaveBeenCalledTimes(2);
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    expect(finishTeamsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refreshes an LMS-created meeting and uses its verified people as the next save baseline', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    vi.mocked(refreshTeamsPeople).mockResolvedValue({ organizerEmail: 'tutor@example.com', attendees: 'from.teams@example.invalid',
+      presenters: '', coOrganizers: 'co.from.teams@example.invalid' });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Sync people and roles from Teams' })).toBeEnabled());
+    await userEvent.click(dialog.getByRole('button', { name: 'Sync people and roles from Teams' }));
+    expect(await dialog.findByRole('button', { name: 'Remove co.from.teams@example.invalid' })).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Remove from.teams@example.invalid' })).toBeVisible();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    expect(refreshTeamsPeople).toHaveBeenCalledExactlyOnceWith('LIVE-1');
+    const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'added@example.invalid' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    await userEvent.click(dialog.getByRole('button', { name: 'Save without notifying' }));
+    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledWith('LIVE-1', expect.objectContaining({
+      attendees: ['from.teams@example.invalid', 'added@example.invalid'], invitationsOnly: true,
+    }), expect.anything()));
+    expect((updateTeamsMeetingSchedule.mock.calls[0] as unknown[])[1]).not.toHaveProperty('coOrganizers');
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+  });
+
+  it('adds ordinary attendees at the co-organizer limit without changing meeting roles', async () => {
+    const coOrganizers = Array.from({ length: 10 }, (_, index) => `co${index}@example.invalid`);
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
+      ? { ...summary, coOrganizers, presenters: [] } : summary));
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'added@example.invalid' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    await userEvent.click(dialog.getByRole('button', { name: 'Save without notifying' }));
+    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledOnce());
+    expect((updateTeamsMeetingSchedule.mock.calls[0] as unknown[])[1]).not.toHaveProperty('coOrganizers');
+    expect((updateTeamsMeetingSchedule.mock.calls[0] as unknown[])[1]).not.toHaveProperty('presenters');
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+  });
+
+  it('replaces unsaved invitation edits only after refresh is confirmed and succeeds', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.map(summary => summary.moduleCatalogueId === 'MOD-1'
+      ? { ...summary, meetingType: 'linked-external', calendarManagement: 'external' as const } : summary));
+    vi.mocked(readImportedMeetingEditor).mockResolvedValue({ status: 'editable', message: 'Verified', sourceToken: 'SOURCE-1',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com'], presenters: [], coOrganizers: [], rolesEditable: true });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const co = dialog.getByRole('combobox', { name: 'Co-organizers' });
+    await waitFor(() => expect(co).toBeEnabled());
+    fireEvent.change(co, { target: { value: 'unsaved@example.invalid' } });
+    fireEvent.keyDown(co, { key: 'Enter' });
+    await userEvent.click(dialog.getByRole('button', { name: 'Sync people and roles from Teams' }));
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(readImportedMeetingEditor).toHaveBeenCalledTimes(1);
+    expect(dialog.getByRole('button', { name: 'Remove unsaved@example.invalid' })).toBeVisible();
+    confirmMock.mockImplementationOnce(async options => { await options.onConfirm(); return true; });
+    vi.mocked(readImportedMeetingEditor).mockRejectedValueOnce(new Error('Microsoft is unavailable. Retry.'));
+    await userEvent.click(dialog.getByRole('button', { name: 'Sync people and roles from Teams' }));
+    expect(await dialog.findByText('Microsoft is unavailable. Retry.')).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Remove unsaved@example.invalid' })).toBeVisible();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    confirmMock.mockImplementationOnce(async options => { await options.onConfirm(); return true; });
+    vi.mocked(readImportedMeetingEditor).mockResolvedValueOnce({ status: 'editable', message: 'Verified', sourceToken: 'SOURCE-2',
+      organizer: 'tutor@example.com', attendees: ['learner@example.com', 'fresh@example.invalid'],
+      presenters: [], coOrganizers: ['fresh@example.invalid'], rolesEditable: true });
+    await userEvent.click(dialog.getByRole('button', { name: 'Sync people and roles from Teams' }));
+    expect(await dialog.findByRole('button', { name: 'Remove fresh@example.invalid' })).toBeVisible();
+    expect(dialog.queryByRole('button', { name: 'Remove unsaved@example.invalid' })).not.toBeInTheDocument();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
   it('blocks unverified meeting roles and recovers their actual lists after retry', async () => {
