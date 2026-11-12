@@ -117,7 +117,7 @@ def event_check_in(request):
     with transaction.atomic():
         EventAttendance.objects.update_or_create(
             event=event,
-            learner_id=identity,
+            enrolment_id=identity,
             defaults={
                 'learner_name': name,
                 'attendee_email': email,

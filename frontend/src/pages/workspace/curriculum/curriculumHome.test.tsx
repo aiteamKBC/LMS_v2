@@ -15,6 +15,13 @@ import CurriculumStudio from './page';
 const summary: CurriculumHomeSummary = {
   stats: { programmes: 7, activeCohorts: 11, groups: 113, openIssues: 174 },
   attentionCounts: { 'programme-ksb-source': 0, 'module-mapping': 94, 'draft-content': 0, 'group-coach': 79, 'module-tutor': 1 },
+  attentionRecords: {
+    'programme-ksb-source': [],
+    'module-mapping': [{ id: 'M/1', name: 'Synthetic module', programme: 'Synthetic programme' }],
+    'draft-content': [],
+    'group-coach': [{ id: 'G/1', name: 'Synthetic group', programme: 'Synthetic programme' }],
+    'module-tutor': [{ id: 'M/2', name: 'Synthetic module 2', programme: 'Synthetic programme' }],
+  },
   continueModules: [{ id: 'M/1', name: 'Synthetic module', programme: 'Synthetic programme', weeks: 16, status: 'published' }],
   programmeFocus: [{ programme: { id: 'P/1', name: 'Synthetic programme' }, issues: ['26 mapping gaps', '29 without coach'], issueCount: 2 }],
 };
@@ -34,10 +41,13 @@ describe('Curriculum Home summary', () => {
     showHome();
     expect(await screen.findByText('174 open actions')).toBeInTheDocument();
     expect(screen.getByText('113 groups across all cohorts')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Synthetic module/ })).toHaveAttribute('href', '/curriculum/module-builder?module=M%2F1');
-    expect(screen.getByRole('link', { name: /Synthetic programme.*26 mapping gaps/ })).toHaveAttribute('href', '/curriculum/programmes/P%2F1');
-    expect(screen.getByRole('link', { name: /Modules have no KSB mappings/ })).toHaveAttribute('href', '/curriculum/ksb-mapping');
-    expect(screen.getByRole('link', { name: /Groups have no coach/ })).toHaveAttribute('href', '/curriculum/groups');
+    // Continue Working row is now a button that opens a module detail modal.
+    expect(screen.getByRole('button', { name: /Synthetic module/ })).toBeInTheDocument();
+    // Programme Review card is now a button; matched by its unique issue text.
+    expect(screen.getByRole('button', { name: /26 mapping gaps/ })).toBeInTheDocument();
+    // Attention rows are now buttons; count badges confirm the right issue is shown.
+    expect(screen.getByRole('button', { name: /Modules have no KSB mappings/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Groups have no coach/ })).toBeInTheDocument();
     expect(screen.queryByText('Modules are still in draft')).not.toBeInTheDocument();
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(mocks.fetch).toHaveBeenCalledWith('/curriculum/home-summary/', {
@@ -54,6 +64,7 @@ describe('Curriculum Home summary', () => {
     await act(async () => resolve({
       stats: { programmes: 0, activeCohorts: 0, groups: 0, openIssues: 0 },
       attentionCounts: { 'programme-ksb-source': 0, 'module-mapping': 0, 'draft-content': 0, 'group-coach': 0, 'module-tutor': 0 },
+      attentionRecords: { 'programme-ksb-source': [], 'module-mapping': [], 'draft-content': [], 'group-coach': [], 'module-tutor': [] },
       continueModules: [], programmeFocus: [],
     }));
     expect(screen.getByText('Everything looks clear')).toBeInTheDocument();

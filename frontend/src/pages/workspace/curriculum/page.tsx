@@ -1,16 +1,21 @@
 import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { useCurriculumHome, type HomeModule, type ProgrammeFocus } from './useCurriculumHome';
+import { useCurriculumHome, type HomeModule, type ProgrammeFocus, type AttentionRecord } from './useCurriculumHome';
 import { curriculumNavItems } from '@/mocks/navigation';
 
 type AttentionTone = 'rose' | 'amber' | 'sky';
 type AttentionIssue = { key: string; title: string; detail: string; count: number; href: string; action: string; icon: string; tone: AttentionTone };
+type ActiveModal =
+  | { kind: 'attention'; issue: AttentionIssue }
+  | { kind: 'programme'; item: ProgrammeFocus }
+  | { kind: 'module'; module: HomeModule }
+  | null;
 type GuideStep = {
   title: string;
   shortTitle: string;
@@ -111,6 +116,7 @@ const CURRICULUM_GUIDE_STEPS: GuideStep[] = [
 
 export default function CurriculumStudio() {
   const [guideOpen, setGuideOpen] = useState(false);
+  const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const { data, loading, error, reload } = useCurriculumHome();
   const counts = data?.attentionCounts;
   const continueModules = data?.continueModules ?? [];
@@ -158,14 +164,14 @@ export default function CurriculumStudio() {
             <div className="h-full rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Needs attention" detail="Live gaps, ordered by impact. Each row opens where it can be fixed." href="/curriculum/quality" action="View Quality" />
               <div className="p-3">
-                {loading ? <LoadingRows count={4} /> : unavailable ? null : attentionIssues.length ? <div className="space-y-2">{attentionIssues.map(issue => <AttentionRow key={issue.key} issue={issue} />)}</div> : <EmptyState icon="ri-checkbox-circle-line" title="No curriculum blockers found" detail="You can continue authoring or review an active programme." />}
+                {loading ? <LoadingRows count={4} /> : unavailable ? null : attentionIssues.length ? <div className="space-y-2">{attentionIssues.map(issue => <AttentionRow key={issue.key} issue={issue} onOpen={() => setActiveModal({ kind: 'attention', issue })} />)}</div> : <EmptyState icon="ri-checkbox-circle-line" title="No curriculum blockers found" detail="You can continue authoring or review an active programme." />}
               </div>
             </div>
             <aside className="h-full rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Continue working" detail="Draft and recently updated modules." href="/curriculum/library" action="Open Library" />
               <div className="p-3">
                 <div className="overflow-hidden rounded-xl border border-background-200 bg-background-100/35 divide-y divide-background-200/80">
-                  {loading ? <LoadingRows count={4} /> : unavailable ? null : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={module.id} module={module} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
+                  {loading ? <LoadingRows count={4} /> : unavailable ? null : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={module.id} module={module} onOpen={() => setActiveModal({ kind: 'module', module })} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
                 </div>
               </div>
             </aside>
@@ -174,7 +180,7 @@ export default function CurriculumStudio() {
           <section className="rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
             <SectionHeader title="Programmes to review" detail="Programme-level gaps grouped together, so you do not have to hunt across separate lists." href="/curriculum/programmes" action="All programmes" />
             <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
-              {loading ? Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-xl bg-background-100" />) : unavailable ? null : programmeFocus.length ? programmeFocus.map(item => <ProgrammeFocusCard key={item.programme.id} item={item} />) : <div className="md:col-span-2 xl:col-span-3"><EmptyState icon="ri-shield-check-line" title="All programmes are clear" detail="No missing structure, KSB source or staffing gaps were found in the current data." /></div>}
+              {loading ? Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-xl bg-background-100" />) : unavailable ? null : programmeFocus.length ? programmeFocus.map(item => <ProgrammeFocusCard key={item.programme.id} item={item} onOpen={() => setActiveModal({ kind: 'programme', item })} />) : <div className="md:col-span-2 xl:col-span-3"><EmptyState icon="ri-shield-check-line" title="All programmes are clear" detail="No missing structure, KSB source or staffing gaps were found in the current data." /></div>}
             </div>
           </section>
 
@@ -185,6 +191,19 @@ export default function CurriculumStudio() {
           </section>
         </div>
       </PageContainer>
+      {activeModal?.kind === 'attention' && (
+        <AttentionDetailModal
+          issue={activeModal.issue}
+          records={data?.attentionRecords?.[activeModal.issue.key] ?? []}
+          onClose={() => setActiveModal(null)}
+        />
+      )}
+      {activeModal?.kind === 'programme' && (
+        <ProgrammeReviewModal item={activeModal.item} onClose={() => setActiveModal(null)} />
+      )}
+      {activeModal?.kind === 'module' && (
+        <ContinueModuleModal module={activeModal.module} onClose={() => setActiveModal(null)} />
+      )}
       <CurriculumGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
     </WorkspaceShell>
   );
@@ -304,20 +323,18 @@ function SummaryCard({ label, value, detail, href, icon, loading, warning = fals
   );
 }
 
-function AttentionRow({ issue }: { issue: AttentionIssue }) {
+function AttentionRow({ issue, onOpen }: { issue: AttentionIssue; onOpen: () => void }) {
   const tones: Record<AttentionTone, string> = { rose: 'bg-amber-50 text-amber-700', amber: 'bg-amber-50 text-amber-700', sky: 'bg-amber-50 text-amber-700' };
-  return <Link to={issue.href} className="group grid gap-2.5 rounded-xl border border-foreground-200/70 bg-background-50 p-3 transition-all duration-200 hover:border-primary-200 hover:bg-primary-50/25 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${tones[issue.tone]}`}><AppIcon className={`${issue.icon} text-base`} /></span><span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><span className="text-[12px] font-bold text-foreground-900">{issue.title}</span><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{issue.count}</span></span><span className="mt-1 block text-[11px] leading-5 text-foreground-500">{issue.detail}</span></span><span className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700">{issue.action}<AppIcon className="ri-arrow-right-line transition-transform duration-200 group-hover:translate-x-0.5" /></span></Link>;
+  return <button type="button" onClick={onOpen} className="group grid w-full gap-2.5 rounded-xl border border-foreground-200/70 bg-background-50 p-3 text-left transition-all duration-200 hover:border-primary-200 hover:bg-primary-50/25 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${tones[issue.tone]}`}><AppIcon className={`${issue.icon} text-base`} /></span><span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><span className="text-[12px] font-bold text-foreground-900">{issue.title}</span><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{issue.count}</span></span><span className="mt-1 block text-[11px] leading-5 text-foreground-500">{issue.detail}</span></span><span className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700">View details<AppIcon className="ri-arrow-right-line transition-transform duration-200 group-hover:translate-x-0.5" /></span></button>;
 }
 
-function ContinueModuleRow({ module }: { module: HomeModule }) {
-  const href = `/curriculum/module-builder?module=${encodeURIComponent(module.id)}`;
+function ContinueModuleRow({ module, onOpen }: { module: HomeModule; onOpen: () => void }) {
   const published = normalise(module.status) === 'published';
-  return <Link to={href} className="group flex min-h-[58px] items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 hover:bg-primary-50/35 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-layout-4-line" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{clean(module.name) || 'Untitled module'}</span><span className="mt-0.5 block truncate text-[10px] leading-4 text-foreground-500">{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span></span><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold uppercase ${published ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{published ? 'Published' : 'Draft'}</span><AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-colors group-hover:text-primary-600" /></Link>;
+  return <button type="button" onClick={onOpen} className="group flex min-h-[58px] w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-200 hover:bg-primary-50/35 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-layout-4-line" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{clean(module.name) || 'Untitled module'}</span><span className="mt-0.5 block truncate text-[10px] leading-4 text-foreground-500">{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span></span><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold uppercase ${published ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{published ? 'Published' : 'Draft'}</span><AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-colors group-hover:text-primary-600" /></button>;
 }
 
-function ProgrammeFocusCard({ item }: { item: ProgrammeFocus }) {
-  const id = item.programme.id;
-  return <Link to={`/curriculum/programmes/${encodeURIComponent(id)}`} className="group flex min-h-[128px] flex-col rounded-[14px] border border-foreground-200/70 bg-background-50 p-4 shadow-[0_4px_14px_-12px_rgba(31,14,59,0.25)] transition-all duration-200 hover:border-primary-200 hover:shadow-[0_10px_20px_-14px_rgba(68,30,115,0.28)] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"><div className="flex items-start justify-between gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-stack-line" /></span><span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold text-amber-700">{item.issueCount} {item.issueCount === 1 ? 'action' : 'actions'}</span></div><h3 className="mt-2 line-clamp-1 text-[13px] font-bold text-foreground-950">{item.programme.name}</h3><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-foreground-500">{item.issues.join(' · ')}</p><span className="mt-auto inline-flex items-center gap-1 pt-2 text-[10px] font-bold text-primary-700">Open programme <AppIcon className="ri-arrow-right-line transition-transform duration-200 group-hover:translate-x-0.5" /></span></Link>;
+function ProgrammeFocusCard({ item, onOpen }: { item: ProgrammeFocus; onOpen: () => void }) {
+  return <button type="button" onClick={onOpen} className="group flex min-h-[128px] w-full flex-col rounded-[14px] border border-foreground-200/70 bg-background-50 p-4 text-left shadow-[0_4px_14px_-12px_rgba(31,14,59,0.25)] transition-all duration-200 hover:border-primary-200 hover:shadow-[0_10px_20px_-14px_rgba(68,30,115,0.28)] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"><div className="flex items-start justify-between gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-stack-line" /></span><span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold text-amber-700">{item.issueCount} {item.issueCount === 1 ? 'action' : 'actions'}</span></div><h3 className="mt-2 line-clamp-1 text-[13px] font-bold text-foreground-950">{item.programme.name}</h3><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-foreground-500">{item.issues.join(' · ')}</p><span className="mt-auto inline-flex items-center gap-1 pt-2 text-[10px] font-bold text-primary-700">Review programme <AppIcon className="ri-arrow-right-line transition-transform duration-200 group-hover:translate-x-0.5" /></span></button>;
 }
 
 function WorkflowCard({ step, title, detail, href, icon }: { step: string; title: string; detail: string; href: string; icon: string }) {
@@ -338,3 +355,148 @@ function LoadingRows({ count }: { count: number }) {
 
 function clean(value: unknown) { return String(value ?? '').trim(); }
 function normalise(value: unknown) { return clean(value).toLowerCase(); }
+
+// ── Modal infrastructure ──────────────────────────────────────────────────────
+
+function BaseModal({ onClose, title, subtitle, children }: {
+  onClose: () => void; title: string; subtitle?: string; children: ReactNode;
+}) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[1001] flex items-end justify-center bg-foreground-950/55 backdrop-blur-[2px] sm:items-center sm:p-4" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <section role="dialog" aria-modal="true" className="flex max-h-[90dvh] w-full max-w-xl flex-col overflow-hidden rounded-t-3xl border border-foreground-200 bg-background-50 shadow-2xl sm:rounded-3xl">
+        <header className="flex items-start justify-between gap-3 border-b border-background-200 px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="font-heading text-[17px] font-bold leading-tight text-foreground-950">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-[11px] text-foreground-500">{subtitle}</p>}
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-background-100 text-foreground-500 hover:bg-background-200 focus:outline-none focus:ring-2 focus:ring-primary-300">
+            <AppIcon className="ri-close-line text-lg" />
+          </button>
+        </header>
+        {children}
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Attention detail modal ────────────────────────────────────────────────────
+
+function AttentionDetailModal({ issue, records, onClose }: {
+  issue: AttentionIssue; records: AttentionRecord[]; onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const q = query.toLowerCase();
+  const filtered = q
+    ? records.filter(r => r.name.toLowerCase().includes(q) || (r.programme ?? '').toLowerCase().includes(q))
+    : records;
+
+  return (
+    <BaseModal onClose={onClose} title={issue.title} subtitle={`${records.length} ${records.length === 1 ? 'record' : 'records'} need attention`}>
+      <div className="flex min-h-0 flex-col gap-3 p-4">
+        {records.length > 5 && (
+          <input
+            type="search" value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Filter by name or programme…"
+            className="w-full rounded-xl border border-background-200 bg-background-100/60 px-3 py-2 text-[12px] placeholder:text-foreground-400 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300"
+          />
+        )}
+        <div className="min-h-0 overflow-y-auto">
+          {filtered.length ? (
+            <div className="space-y-1.5">
+              {filtered.map((rec, i) => (
+                <div key={rec.id || i} className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-50 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[12px] font-bold text-foreground-900">{rec.name || 'Unnamed'}</p>
+                    {rec.programme && <p className="truncate text-[11px] text-foreground-500">{rec.programme}</p>}
+                  </div>
+                  <Link to={issue.href} onClick={onClose} className="shrink-0 text-[11px] font-bold text-primary-700 hover:text-primary-800">
+                    Fix →
+                  </Link>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="py-6 text-center text-[12px] text-foreground-400">No matching records</p>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-background-200 pt-3">
+          {records.length > 5 && <span className="text-[11px] text-foreground-400">{filtered.length} of {records.length} shown</span>}
+          <Link to={issue.href} onClick={onClose} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
+            {issue.action} <AppIcon className="ri-arrow-right-line" />
+          </Link>
+        </div>
+      </div>
+    </BaseModal>
+  );
+}
+
+// ── Programme review modal ────────────────────────────────────────────────────
+
+function ProgrammeReviewModal({ item, onClose }: { item: ProgrammeFocus; onClose: () => void }) {
+  const id = item.programme.id;
+  return (
+    <BaseModal onClose={onClose} title={item.programme.name} subtitle={`${item.issueCount} ${item.issueCount === 1 ? 'action' : 'actions'} to resolve`}>
+      <div className="flex flex-col gap-3 p-4">
+        <div className="divide-y divide-background-200 rounded-xl border border-background-200 bg-background-50">
+          {item.issues.map(issue => (
+            <div key={issue} className="flex items-center gap-3 px-3 py-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+                <AppIcon className="ri-error-warning-line text-sm" />
+              </span>
+              <span className="text-[12px] font-medium text-foreground-800">{issue}</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-end border-t border-background-200 pt-3">
+          <Link to={`/curriculum/programmes/${encodeURIComponent(id)}`} onClick={onClose} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
+            Open programme <AppIcon className="ri-arrow-right-line" />
+          </Link>
+        </div>
+      </div>
+    </BaseModal>
+  );
+}
+
+// ── Continue working modal ────────────────────────────────────────────────────
+
+function ContinueModuleModal({ module, onClose }: { module: HomeModule; onClose: () => void }) {
+  const href = `/curriculum/module-builder?module=${encodeURIComponent(module.id)}`;
+  const published = normalise(module.status) === 'published';
+  return (
+    <BaseModal onClose={onClose} title={clean(module.name) || 'Untitled module'} subtitle="Module details">
+      <div className="flex flex-col gap-3 p-4">
+        <div className="divide-y divide-background-200 rounded-xl border border-background-200 bg-background-50">
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <span className="text-[11px] font-semibold text-foreground-500">Status</span>
+            <span className={`rounded-full px-2.5 py-1 text-[9px] font-extrabold uppercase ${published ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{published ? 'Published' : 'Draft'}</span>
+          </div>
+          {module.programme && (
+            <div className="flex items-center justify-between px-3 py-2.5">
+              <span className="text-[11px] font-semibold text-foreground-500">Programme</span>
+              <span className="max-w-[60%] truncate text-right text-[12px] text-foreground-800">{clean(module.programme)}</span>
+            </div>
+          )}
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <span className="text-[11px] font-semibold text-foreground-500">Weeks</span>
+            <span className="text-[12px] text-foreground-800">{Number(module.weeks || 0)}</span>
+          </div>
+        </div>
+        <div className="flex justify-end border-t border-background-200 pt-3">
+          <Link to={href} onClick={onClose} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
+            Open in Module Builder <AppIcon className="ri-arrow-right-line" />
+          </Link>
+        </div>
+      </div>
+    </BaseModal>
+  );
+}

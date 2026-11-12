@@ -235,14 +235,14 @@ def _latest_available_delivery(modules):
 
 def _recipient(delivery, learner):
     return FeedbackDeliveryRecipient.objects.filter(
-        delivery=delivery, learner_id=str(learner.pk), revoked_at__isnull=True,
+        delivery=delivery, enrolment_id=str(learner.pk), revoked_at__isnull=True,
     ).first()
 
 
 def _claim_recipient(delivery, learner):
     with transaction.atomic():
         recipient, _ = FeedbackDeliveryRecipient.objects.select_for_update().get_or_create(
-            delivery=delivery, learner_id=str(learner.pk),
+            delivery=delivery, enrolment_id=str(learner.pk),
             defaults={
                 'learner_name': learner.username or learner.email or f'Learner {learner.pk}',
                 'programme': learner.programme or '',
@@ -312,7 +312,7 @@ def public_lecture_access(request):
         recipient = _recipient(delivery, learner)
         ensure_delivery_questions(delivery)
         response = FeedbackResponse.objects.filter(
-            delivery=delivery, learner_id=str(learner.pk),
+            delivery=delivery, enrolment_id=str(learner.pk),
         ).prefetch_related('answers').first()
         selected_ids = _selected_delivery_question_ids(delivery, recipient, response)
         sections = [_section_dict(section) for section in form.sections.prefetch_related('questions').all()]
@@ -363,7 +363,7 @@ def public_photo_upload(request):
 
 def _owned_upload(delivery, learner, upload_id):
     return FeedbackUpload.objects.select_related('response', 'question').filter(
-        pk=upload_id, response__delivery=delivery, response__learner_id=str(learner.pk),
+        pk=upload_id, response__delivery=delivery, response__enrolment_id=str(learner.pk),
     ).first()
 
 

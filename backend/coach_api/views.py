@@ -6237,7 +6237,7 @@ def build_catchup_calendar_event(
         "id": record.event_key,
         "ownerEmail": clean_text(record.owner_email),
         "ownerName": clean_text(owner_name) or clean_text(record.owner_name) or "Med Maher",
-        "learnerId": str(record.learner_id),
+        "learnerId": str(record.learner_profile_id),
         **learner_detail_identity(learner),
         "learner": learner_name,
         "email": learner_email,
@@ -6346,7 +6346,7 @@ def build_catchup_scheduler_events(
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
-            learner=learner_profile_map.get(record.learner_id),
+            learner=learner_profile_map.get(record.learner_profile_id),
         )
         for record in persisted_records
     ]
@@ -6356,7 +6356,7 @@ def build_catchup_scheduler_events(
         status = clean_text(record.status).lower()
         if status in {CoachCalendarEvent.STATUS_COMPLETED, CoachCalendarEvent.STATUS_IN_PROGRESS, "confirmed"}:
             continue
-        selectable_record_ids[record.learner_id] = True
+        selectable_record_ids[record.learner_profile_id] = True
 
     for learner in active_rows:
         learner_id = int(getattr(learner, "id", 0) or 0)
@@ -6375,7 +6375,7 @@ def build_catchup_scheduler_events(
 def fetch_standalone_event_records(owner_email: str, learner_id: int | None = None) -> list[CoachCalendarEvent]:
     queryset = CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email)
     if learner_id is not None:
-        queryset = queryset.filter(learner_id=learner_id)
+        queryset = queryset.filter(learner_profile_id=learner_id)
     return normalize_calendar_records(
         list(
             queryset.filter(
@@ -6511,7 +6511,7 @@ def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
         "id": record.event_key,
         "ownerEmail": record.owner_email,
         "ownerName": record.owner_name,
-        "learnerId": str(record.learner_id),
+        "learnerId": str(record.learner_profile_id),
         "learnerType": None,
         "enrolmentId": None,
         "learner": clean_text(record.learner_name) or "Unknown learner",
@@ -7093,7 +7093,7 @@ def ensure_review_instance_for_calendar_record(record: CoachCalendarEvent, base_
     occurrence_ref = (base_event or {}).get('occurrenceRef') if is_manual else None
     instance = curriculum_review_instances.ensure_review_instance(
         template_row,
-        learner_id=record.learner_id,
+        learner_id=record.learner_profile_id,
         learner_kind='',
         programme_id=template_row.get('programme_id'),
         occurrence_number=None if is_manual else (record.occurrence_number or record.sequence),
@@ -7891,10 +7891,10 @@ def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
                        graph_event_id, transcript_artifact_id, transcript_hash
                 FROM {COACH_MEETING_SUMMARIES_RELATION}
                 WHERE event_key = %s AND calendar_event_id = %s AND owner_email = %s
-                  AND learner_id IS NOT DISTINCT FROM %s
+                  AND learner_profile_id IS NOT DISTINCT FROM %s
                 LIMIT 1
                 """,
-                [record.event_key, record.pk, clean_email(record.owner_email), record.learner_id],
+                [record.event_key, record.pk, clean_email(record.owner_email), record.learner_profile_id],
             )
             row = cursor.fetchone()
     except Exception:
@@ -8497,7 +8497,7 @@ def ensure_coach_meeting_summary(
                     owner_email,
                     graph_event_id,
                     event_type,
-                    learner_id,
+                    learner_profile_id,
                     learner_name,
                     transcript_artifact_id,
                     transcript_hash,
@@ -8520,7 +8520,7 @@ def ensure_coach_meeting_summary(
                     owner_email = EXCLUDED.owner_email,
                     graph_event_id = EXCLUDED.graph_event_id,
                     event_type = EXCLUDED.event_type,
-                    learner_id = EXCLUDED.learner_id,
+                    learner_profile_id = EXCLUDED.learner_profile_id,
                     learner_name = EXCLUDED.learner_name,
                     transcript_artifact_id = EXCLUDED.transcript_artifact_id,
                     transcript_hash = EXCLUDED.transcript_hash,
@@ -8552,7 +8552,7 @@ def ensure_coach_meeting_summary(
                     clean_email(record.owner_email),
                     clean_text(record.graph_event_id),
                     clean_text(record.event_type).lower(),
-                    getattr(record, "learner_id", None),
+                    getattr(record, "learner_profile_id", None),
                     clean_text(record.learner_name),
                     transcript["artifactId"],
                     transcript_hash,
@@ -8629,7 +8629,7 @@ def persist_coach_meeting_snapshots(
     graph_organizer_email = clean_email(record.graph_organizer_email or record.owner_email)
     graph_event_id = clean_text(record.graph_event_id)
     event_type = clean_text(record.event_type).lower()
-    learner_id = getattr(record, "learner_id", None)
+    learner_profile_id = getattr(record, "learner_profile_id", None)
     learner_name = clean_text(record.learner_name)
     learner_email = clean_email(record.learner_email)
     transcript_columns_ready = coach_meeting_artifact_transcript_columns_ready(database)
@@ -8817,7 +8817,7 @@ def persist_coach_meeting_snapshots(
                         graph_organizer_email,
                         graph_event_id,
                         event_type,
-                        learner_id,
+                        learner_profile_id,
                         learner_name,
                         learner_email,
                         role,
@@ -8848,7 +8848,7 @@ def persist_coach_meeting_snapshots(
                         graph_organizer_email = EXCLUDED.graph_organizer_email,
                         graph_event_id = EXCLUDED.graph_event_id,
                         event_type = EXCLUDED.event_type,
-                        learner_id = EXCLUDED.learner_id,
+                        learner_profile_id = EXCLUDED.learner_profile_id,
                         learner_name = EXCLUDED.learner_name,
                         learner_email = EXCLUDED.learner_email,
                         role = EXCLUDED.role,
@@ -8875,7 +8875,7 @@ def persist_coach_meeting_snapshots(
                         graph_organizer_email,
                         graph_event_id,
                         event_type,
-                        learner_id,
+                        learner_profile_id,
                         learner_name,
                         learner_email,
                         clean_text(row.get("role")).lower() or "attendee",
@@ -9107,7 +9107,7 @@ def coach_meeting_write_error(request, record):
         if error is not None:
             return error
         if (instance.get("calendar_event_id") != record.pk
-                or instance.get("learner_id") != record.learner_id
+                or instance.get("learner_id") != record.learner_profile_id
                 or instance.get("review_template_id") != record.review_template_id
                 or instance.get("status") not in {"scheduled", "in-progress"}):
             return JsonResponse({"detail": "The Review is read-only or its meeting association changed."}, status=409)
@@ -9583,7 +9583,7 @@ def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCal
             if (
                 not instance
                 or instance.get("calendar_event_id") != current.pk
-                or instance.get("learner_id") != current.learner_id
+                or instance.get("learner_id") != current.learner_profile_id
                 or clean_text(instance.get("review_template_id"))
                 != clean_text(current.review_template_id)
                 or clean_email(instance.get("coach_email"))
@@ -9639,7 +9639,7 @@ def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCal
             transitioned = curriculum_review_instances.mark_review_instance_not_scheduled(
                 instance["id"],
                 calendar_event_id=current.pk,
-                learner_id=current.learner_id,
+                learner_id=current.learner_profile_id,
                 review_template_id=current.review_template_id,
                 coach_email=current.owner_email,
                 actor=current.owner_email or "calendar-cancel",
@@ -10864,7 +10864,7 @@ def collect_generated_timetable(
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
-            learner=learner_profile_map.get(record.learner_id),
+            learner=learner_profile_map.get(record.learner_profile_id),
             review_type_fields=standalone_review_type_fields,
         )
         for record in persisted_standalone_records
@@ -10993,7 +10993,7 @@ def booking_request_matches_record(
     notes: str,
 ) -> bool:
     return (
-        record.learner_id == learner_id
+        record.learner_profile_id == learner_id
         and clean_text(record.event_type).lower() == session_type
         and record.scheduled_date == scheduled_date
         and record.scheduled_time == scheduled_time
@@ -11016,7 +11016,7 @@ class LearnerSessionAlreadyBooked(LearnerCalendarConflict):
 def lock_learner_calendar(learner_id: int) -> None:
     """Serialize all booking types for one learner inside the current transaction."""
     CoachCalendarSequence.objects.select_for_update().get_or_create(
-        learner_id=learner_id,
+        learner_profile_id=learner_id,
         event_type=LEARNER_CALENDAR_LOCK_SCOPE,
         defaults={"last_sequence": 0},
     )
@@ -11241,7 +11241,7 @@ def reserve_coach_calendar_booking(
                     from .reconciliation_links import for_calendar
                     reconciliation = for_calendar(existing)
                     if (normalize_email(existing.owner_email) != owner_email
-                            or existing.learner_id != learner_id or existing.event_type != "mcr"
+                            or existing.learner_profile_id != learner_id or existing.event_type != "mcr"
                             or ((existing.review_template_id or existing.review_instance_id) and not reconciliation)
                             or existing.status != CoachCalendarEvent.STATUS_SCHEDULED):
                         raise LearnerCalendarConflict("This review already has an incompatible booking.")
@@ -11286,13 +11286,13 @@ def reserve_coach_calendar_booking(
 
             current_max = (
                 CoachCalendarEvent.objects.filter(
-                    learner_id=learner_id,
+                    learner_profile_id=learner_id,
                     event_type=session_type,
                 ).aggregate(max_seq=Max("sequence"))["max_seq"]
                 or 0
             )
             counter, _ = CoachCalendarSequence.objects.select_for_update().get_or_create(
-                learner_id=learner_id,
+                learner_profile_id=learner_id,
                 event_type=session_type,
                 defaults={"last_sequence": current_max},
             )
@@ -11308,7 +11308,7 @@ def reserve_coach_calendar_booking(
                 idempotency_key=idempotency_key,
                 owner_email=owner_email,
                 owner_name=owner_name,
-                learner_id=learner_id,
+                learner_profile_id=learner_id,
                 learner_name=learner_name,
                 learner_email=learner_email,
                 event_type=session_type,
@@ -11482,14 +11482,14 @@ def persist_calendar_sync_reservation(
         ):
             if not clean_text(candidate.review_template_id):
                 ensure_learner_session_not_booked_in_week(
-                    learner_id=candidate.learner_id,
+                    learner_id=candidate.learner_profile_id,
                     learner_email=candidate.learner_email,
                     session_type=candidate.event_type,
                     scheduled_date=candidate.scheduled_date,
                     exclude_record_id=candidate.pk,
                 )
             ensure_learner_calendar_available(
-                learner_id=candidate.learner_id,
+                learner_id=candidate.learner_profile_id,
                 learner_email=candidate.learner_email,
                 scheduled_date=candidate.scheduled_date,
                 scheduled_time=candidate.scheduled_time,
@@ -11878,7 +11878,7 @@ def coach_timetable_schedule_event(request):
     if review_booking:
         current_review_booking = CoachCalendarEvent.objects.filter(
             event_key=event_key, owner_email__iexact=owner_email,
-            learner_id=int(base_event["learnerId"]),
+            learner_profile_id=int(base_event["learnerId"]),
         ).first()
         review_slot_is_replay = bool(current_review_booking
                                      and current_review_booking.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
@@ -11895,7 +11895,7 @@ def coach_timetable_schedule_event(request):
     if base_event.get("reviewSource") != "aptem" and base_event.get("source") in {"mcr", "progress-review", "review"}:
         existing = CoachCalendarEvent.objects.filter(
             event_key=event_key, owner_email__iexact=owner_email,
-            learner_id=int(base_event["learnerId"]),
+            learner_profile_id=int(base_event["learnerId"]),
         ).first()
         if not (existing and existing.review_instance_id and existing.scheduled_date and existing.scheduled_time):
             policy = native_review_creation_policy(base_learner)
@@ -12063,7 +12063,7 @@ def coach_timetable_book_event(request):
         report = CoachAbsenceReport.objects.filter(
             pk=absence_report_id,
             owner_email__iexact=owner_email,
-            learner_id=learner_id,
+            enrolment_id=getattr(learner, 'enrolment_id', None),
         ).first()
         if not report:
             raise LearnerCalendarConflict("Missed lecture not found in this coach caseload.")
@@ -12215,7 +12215,7 @@ def coach_timetable_book_event(request):
                 report = CoachAbsenceReport.objects.select_for_update().filter(
                     pk=absence_report_id,
                     owner_email__iexact=owner_email,
-                    learner_id=learner_id,
+                    enrolment_id=learner_id,
                 ).first()
                 if not report:
                     raise LearnerCalendarConflict("Missed lecture not found in this coach caseload.")
@@ -13079,7 +13079,7 @@ def coach_manual_attendance(request, record_id=None):
     except ValidationError as exc:
         return validation_error_response(exc)
 
-    learner_id = clean_text(payload.get("learnerId")) if record is None else str(record.learner_id)
+    learner_id = clean_text(payload.get("learnerId")) if record is None else str(record.learner_profile_id)
     if not learner_id.isdigit():
         return JsonResponse({"detail": "Learner id must be a valid number."}, status=400)
     profile, learner = _manual_attendance_learner(owner_email, learner_id)
@@ -13113,12 +13113,12 @@ def coach_manual_attendance(request, record_id=None):
         source = getattr(profile, "_caseload_source", None)
         # Identical retries reuse a record; ambiguous entries remain separate.
         existing = CoachManualAttendance.objects.filter(
-            learner_id=int(learner["id"]), **values).order_by("id").first()
+            learner_profile_id=int(learner["id"]), **values).order_by("id").first()
         if existing is not None:
             return JsonResponse(serialize_manual_attendance(existing), status=200)
         record = CoachManualAttendance.objects.create(
             owner_email=owner_email,
-            learner_id=int(learner["id"]),
+            learner_profile_id=int(learner["id"]),
             enrolment_id=getattr(source, "id", None),
             learner_name=learner["name"],
             learner_email=learner.get("email") or "",
@@ -14648,14 +14648,14 @@ def coach_absence_reports(request):
             except Exception:
                 recovery_warning = 'Decision saved. Attendance register update needs retry.'
                 logger.warning('Catch-up register refresh needs retry for report %s', report.pk)
-        attendance_rates = fetch_absence_report_attendance_rates([report.learner_id], [report.learner_email])
-        attendance_rate = attendance_rates["by_id"].get(report.learner_id)
+        attendance_rates = fetch_absence_report_attendance_rates([report.enrolment_id], [report.learner_email])
+        attendance_rate = attendance_rates["by_id"].get(report.enrolment_id)
         if attendance_rate is None:
             attendance_rate = attendance_rates["by_email"].get(normalize_email(report.learner_email))
-        detail_data = fetch_attendance_detail_summary_data([report.learner_id], [report.learner_email])
-        detail_rows = detail_data["recordsById"].get(report.learner_id) or detail_data["records"].get(normalize_email(report.learner_email), [])
+        detail_data = fetch_attendance_detail_summary_data([report.enrolment_id], [report.learner_email])
+        detail_rows = detail_data["recordsById"].get(report.enrolment_id) or detail_data["records"].get(normalize_email(report.learner_email), [])
         previous_absences = count_previous_absences_from_detail_rows(detail_rows, report.session_date)
-        return JsonResponse({"item": serialize_absence_report(report, active_map.get(report.learner_id), attendance_rate, previous_absences), "warning": recovery_warning})
+        return JsonResponse({"item": serialize_absence_report(report, active_map.get(report.enrolment_id), attendance_rate, previous_absences), "warning": recovery_warning})
 
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
@@ -14663,25 +14663,25 @@ def coach_absence_reports(request):
     records = CoachAbsenceReport.objects.filter(owner_email__iexact=owner_email).order_by("-session_date", "learner_name")
     records = [
         report for report in records
-        if report.learner_id in active_ids or normalize_email(report.learner_email) in active_emails
+        if report.enrolment_id in active_ids or normalize_email(report.learner_email) in active_emails
     ]
     attendance_rates = fetch_absence_report_attendance_rates(
-        [report.learner_id for report in records],
+        [report.enrolment_id for report in records],
         [report.learner_email for report in records],
     )
     attendance_detail_data = fetch_attendance_detail_summary_data(
-        [report.learner_id for report in records],
+        [report.enrolment_id for report in records],
         [report.learner_email for report in records],
     )
     items = [
         serialize_absence_report(
             report,
-            active_map.get(report.learner_id),
-            attendance_rates["by_id"].get(report.learner_id)
-            if attendance_rates["by_id"].get(report.learner_id) is not None
+            active_map.get(report.enrolment_id),
+            attendance_rates["by_id"].get(report.enrolment_id)
+            if attendance_rates["by_id"].get(report.enrolment_id) is not None
             else attendance_rates["by_email"].get(normalize_email(report.learner_email)),
             count_previous_absences_from_detail_rows(
-                attendance_detail_data["recordsById"].get(report.learner_id)
+                attendance_detail_data["recordsById"].get(report.enrolment_id)
                 or attendance_detail_data["records"].get(normalize_email(report.learner_email), []),
                 report.session_date,
             ),
@@ -15738,15 +15738,15 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     saved_instance = requested_overlay
     if not saved_instance:
         saved_instance = ImportedReviewInstance.objects.filter(
-            owner_email__iexact=canonical_owner, learner_id=profile_id, source_review_id=row["id"],
+            owner_email__iexact=canonical_owner, learner_profile_id=profile_id, source_review_id=row["id"],
         ).first()
         if not saved_instance and ImportedReviewInstance.objects.filter(
-                learner_id=profile_id, source_review_id=row["id"]).first() is not None:
+                learner_profile_id=profile_id, source_review_id=row["id"]).first() is not None:
             # A blocked handover must not look like a fresh form that the new
             # Coach can initialize over another owner's continuation/history.
             return None
     source_review_id = getattr(saved_instance, "source_review_id", None)
-    overlay_learner_id = getattr(saved_instance, "learner_id", None)
+    overlay_learner_id = getattr(saved_instance, "learner_profile_id", None)
     if saved_instance and isinstance(source_review_id, int):
         if source_review_id != row["id"] or overlay_learner_id != profile_id:
             return None
@@ -16087,7 +16087,7 @@ def _owned_migrated_overlay(owner_email, definition, *, lock=False, lock_calenda
         owned = _owned_migrated_overlay(owner_email, definition)
         if owned is None:
             return None
-        lock_learner_calendar(owned.learner_id)
+        lock_learner_calendar(owned.learner_profile_id)
         from .review_sources import booking_for_overlay
         booking_for_overlay(owned, lock=True)
         # Re-read and revalidate below after acquiring the parent locks.
@@ -16101,7 +16101,7 @@ def _owned_migrated_overlay(owner_email, definition, *, lock=False, lock_calenda
     source = definition.get("historicalReview") or {}
     if not overlay or not isinstance(overlay.template_snapshot, dict) or not overlay.template_snapshot.get("sections"):
         return None
-    if overlay.learner_id != definition["instance"]["learnerId"] or overlay.source_review_id != int(source["id"]):
+    if overlay.learner_profile_id != definition["instance"]["learnerId"] or overlay.source_review_id != int(source["id"]):
         return None
     return overlay
 
@@ -16257,7 +16257,7 @@ def coach_review_instance_adopt_booking(request, instance_id):
                 return JsonResponse({"detail": "The review or meeting association changed. Reload the review.",
                                      "code": "BOOKING_CONFLICT"}, status=409)
             if (not overlay or overlay.completed_at
-                    or overlay.learner_id != current["instance"]["learnerId"]
+                    or overlay.learner_profile_id != current["instance"]["learnerId"]
                     or overlay.source_review_id != int(current["historicalReview"]["id"])
                     or not snapshot_assignment_valid(overlay, family, current.get("migratedProgrammeKey"))
                     or overlay.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED,
@@ -16366,7 +16366,7 @@ def coach_review_instance_book(request, instance_id):
         learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes,
         exclude_record=(definition.get("booking", {}).get("eventKey") and CoachCalendarEvent.objects.filter(
             event_key=definition["booking"]["eventKey"], owner_email__iexact=owner_email,
-            learner_id=learner_id, event_type=event_type,
+            learner_profile_id=learner_id, event_type=event_type,
         ).first()),
         business_time_zone="Europe/London",
     ):
@@ -16430,7 +16430,7 @@ def coach_review_instance_book(request, instance_id):
                 else:
                     record = CoachCalendarEvent.objects.create(
                         event_key=instance_id, idempotency_key=instance_id,
-                        owner_email=owner_email, learner_id=learner_id,
+                        owner_email=owner_email, learner_profile_id=learner_id,
                         event_type=event_type, **reserved,
                     )
     except IntegrityError:
@@ -16489,7 +16489,7 @@ def coach_review_availability(request):
     exclude_record = None
     if exclude_key:
         record = CoachCalendarEvent.objects.filter(
-            event_key=exclude_key, owner_email__iexact=owner_email, learner_id=learner_id,
+            event_key=exclude_key, owner_email__iexact=owner_email, learner_profile_id=learner_id,
             event_type__in={"mcr", "progress-review", "review"},
         ).first()
         if not record:

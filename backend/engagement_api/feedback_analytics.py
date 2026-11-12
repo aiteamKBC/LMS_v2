@@ -171,7 +171,7 @@ def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=Non
     recipients = defaultdict(set)
     for delivery_id, learner_id in FeedbackDeliveryRecipient.objects.filter(
         delivery__form_id__in=form_ids, revoked_at__isnull=True,
-    ).values_list('delivery_id', 'learner_id'):
+    ).values_list('delivery_id', 'enrolment_id'):
         recipients[delivery_id].add(('delivery', delivery_id, str(learner_id)))
     pinned = defaultdict(set)
     for delivery_id, question_id in FeedbackDeliveryQuestion.objects.filter(
@@ -182,7 +182,7 @@ def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=Non
     for delivery_id, learner_id, original_id, replacement_id, effective_at in (
         FeedbackDeliveryQuestionOverride.objects.filter(
             recipient__delivery_id__in=[delivery['id'] for delivery in deliveries],
-        ).values_list('recipient__delivery_id', 'recipient__learner_id',
+        ).values_list('recipient__delivery_id', 'recipient__enrolment_id',
                       'original_question_id', 'replacement_question_id', 'effective_at')
     ):
         key = ('delivery', delivery_id, str(learner_id))
@@ -194,7 +194,7 @@ def question_analytics(family_ids=None, *, delivery_ids=None, submitted_from=Non
             ('delivery', delivery_id, str(learner_id)): timestamp
             for delivery_id, learner_id, timestamp in FeedbackResponse.objects.filter(
                 delivery_id__in={key[1] for key in replacements},
-            ).values_list('delivery_id', 'learner_id', 'started_at')
+            ).values_list('delivery_id', 'enrolment_id', 'started_at')
         }
         recipient_questions = {
             key: effective_question_ids(pinned[key[1]], changes, started_at.get(key), as_of=timezone.now())

@@ -121,10 +121,10 @@ def sync_module_feedback(learner_id=None):
         )}
         recipient_scope = {'delivery_id__in': [row.id for row in existing_deliveries.values()]}
         if learner_id is not None:
-            recipient_scope['learner_id'] = str(learner_id)
+            recipient_scope['enrolment_id'] = str(learner_id)
         # Lock existing recipients in one read. Writes take the same row lock
         # before starting a response, so rescheduling cannot race a first save.
-        existing_recipients = {(row.delivery_id, str(row.learner_id)): row for row in
+        existing_recipients = {(row.delivery_id, str(row.enrolment_id)): row for row in
                                FeedbackDeliveryRecipient.objects.select_for_update().filter(**recipient_scope)}
         learners = {str(row.pk): row for row in EnrolmentUser.all_learners.filter(
             pk__in=[key for key, ids in memberships.items() if ids],
@@ -170,15 +170,15 @@ def sync_module_feedback(learner_id=None):
                 assigned_ids = [key for key, ids in memberships.items() if module_id in ids]
                 recipients = FeedbackDeliveryRecipient.objects.filter(delivery=delivery)
                 if learner_id is not None:
-                    recipients = recipients.filter(learner_id=str(learner_id))
-                recipients.exclude(learner_id__in=assigned_ids).filter(revoked_at__isnull=True).update(revoked_at=now)
+                    recipients = recipients.filter(enrolment_id=str(learner_id))
+                recipients.exclude(enrolment_id__in=assigned_ids).filter(revoked_at__isnull=True).update(revoked_at=now)
                 for member_id in assigned_ids:
                     learner = learners[member_id]
                     recipient = existing_recipients.get((delivery.id, member_id))
                     created = False
                     if recipient is None:
                         recipient, created = FeedbackDeliveryRecipient.objects.select_for_update().get_or_create(
-                            delivery=delivery, learner_id=member_id,
+                            delivery=delivery, enrolment_id=member_id,
                             defaults={
                                 'learner_name': learner.username or learner.email or f'Learner {member_id}',
                                 'programme': learner.programme or '', 'due_date': None,
@@ -189,7 +189,7 @@ def sync_module_feedback(learner_id=None):
                         recipient.revoked_at = None
                         recipient.save(update_fields=['revoked_at'])
                     if not created and recipient.available_at != available_at and not FeedbackResponse.objects.filter(
-                        delivery=delivery, learner_id=member_id,
+                        delivery=delivery, enrolment_id=member_id,
                     ).exists():
                         recipient.available_at = available_at
                         recipient.save(update_fields=['available_at'])

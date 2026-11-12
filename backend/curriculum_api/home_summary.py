@@ -7,7 +7,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
-from . import views
+from . import views, curriculum_names
 
 
 def _clean(value):
@@ -63,6 +63,31 @@ def project_home_summary(overview, programmes):
         'group-coach': sum(_missing(group.get('coach')) for group in groups),
         'module-tutor': sum(_missing(module.get('tutor')) for module in modules),
     }
+
+    def _module_id(module):
+        return _clean(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('id') or module.get('sourceId') or module.get('name'))
+
+    def _module_rec(m):
+        return {'id': _module_id(m), 'name': m.get('name') or '', 'programme': m.get('programme') or ''}
+
+    def _group_rec(g):
+        return {
+            'id': _clean(g.get('id') or g.get('sourceId') or g.get('groupId') or g.get('name')),
+            'name': g.get('name') or g.get('groupName') or '',
+            'programme': g.get('programme') or g.get('programmeName') or '',
+        }
+
+    attention_records = {
+        'programme-ksb-source': [
+            {'id': _clean(p.get('sourceId') or p.get('id') or p.get('name')), 'name': p.get('name') or ''}
+            for p in programmes if needs_source(p)
+        ],
+        'module-mapping': [_module_rec(m) for m in modules if _zero(m.get('ksbCount'))],
+        'draft-content': [_module_rec(m) for m in drafts],
+        'group-coach': [_group_rec(g) for g in groups if _missing(g.get('coach'))],
+        'module-tutor': [_module_rec(m) for m in modules if _missing(m.get('tutor'))],
+    }
+
     focus = []
     for programme in programmes:
         keys = {_key(programme.get(field)) for field in ('id', 'sourceId', 'name')} - {''}
@@ -109,6 +134,7 @@ def project_home_summary(overview, programmes):
             'openIssues': sum(counts.values()),
         },
         'attentionCounts': counts,
+        'attentionRecords': attention_records,
         'continueModules': [{
             'id': _clean(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('id') or module.get('sourceId') or module.get('name')),
             'name': module.get('name') or '',
@@ -125,7 +151,7 @@ def project_home_summary(overview, programmes):
 _DELETION_FIELDS = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')
 _HOME_MODULE_FIELDS = (
     'module_catalogue_id', 'title', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
-    'group_id', 'group_name', 'sessions_number', 'status', 'tutor_name', 'start_date', 'end_date',
+    'group_id', 'group_name', 'sessions_number', 'status', 'tutor_id', 'tutor_name', 'start_date', 'end_date',
     'source_id', 'source_type', 'is_archived', *_DELETION_FIELDS,
 )
 _HOME_GROUP_FIELDS = (
@@ -196,6 +222,12 @@ def home_source_rows(visibility):
     legacy_catalogue = views.table_exists('Modules')
     relationships = home_relationship_rows(include_weeks=visibility == 'all' and not legacy_catalogue)
     modules, groups, cohorts = (relationships[key] for key in ('modules', 'groups', 'cohorts'))
+    # The raw jsonb_agg path bypasses authoring_fetch_all's curriculum_names.attach(),
+    # which resolves tutor_name (modules.tutor_id -> tutors) and coach_name
+    # (group_coaches -> coaches) in the normalised schema. Apply before training
+    # rows are built, as those read tutor_name and coach_name from these rows.
+    curriculum_names.attach('modules', modules)
+    curriculum_names.attach('groups', groups)
     training = views.authoring_modules_as_training_rows(
         module_rows=modules, group_rows=groups, cohort_rows=cohorts,
     )

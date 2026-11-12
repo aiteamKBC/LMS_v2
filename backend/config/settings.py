@@ -704,6 +704,7 @@ if USE_SQLITE_FOR_TESTS:
 if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     parsed_db = urlparse(DATABASE_URL)
     db_options = dict(parse_qsl(parsed_db.query))
+    db_options.pop('channel_binding', None)
     db_options.setdefault("connect_timeout", DB_CONNECT_TIMEOUT)
     if DB_POOL:
         db_options["pool"] = {**DB_POOL_OPTIONS, "min_size": DB_POOL_DEFAULT_MIN_SIZE}

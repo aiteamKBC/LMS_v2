@@ -861,7 +861,7 @@ def _response_assigned_at(response):
     if response.delivery_id:
         recipients = response.delivery.response_assignment_recipients
         return next((item.assigned_at for item in recipients
-                     if str(item.learner_id) == str(response.learner_id)), None)
+                     if str(item.enrolment_id) == str(response.enrolment_id)), None)
     field = 'employer_review_delivery' if kind == EMPLOYER_REVIEW_FORM_TYPE else 'review_delivery'
     if getattr(response, f'{field}_id', None):
         return getattr(getattr(response, field), 'assigned_at', None)
@@ -878,7 +878,7 @@ def _response_assigned_at(response):
     if kind == 'general':
         dates = [item.assigned_at for item in response.form.response_assignments
                  if item.target_type == 'all_learners' or (
-                     item.target_type == 'learner' and str(item.target_id) == str(response.learner_id))]
+                     item.target_type == 'learner' and str(item.target_id) == str(response.enrolment_id))]
         return min(dates) if dates else None
     return None
 
@@ -890,7 +890,7 @@ def _response_dict(response, *, include_answers=False, include_activity=False, r
         'id': response.id, 'formId': response.form_id, 'formTitle': response.form.title,
         'templateKey': str(response.form.template_key),
         'formType': response.form.form_type,
-        'learnerId': None if anonymous else response.learner_id,
+        'learnerId': None if anonymous else response.enrolment_id,
         'learnerName': anonymous_name if anonymous else response.learner_name,
         'programme': '' if anonymous else response.programme,
         'deliveryId': response.delivery_id,
@@ -906,7 +906,7 @@ def _response_dict(response, *, include_answers=False, include_activity=False, r
     if include_answers:
         by_question = {a.question_id: a.answer for a in response.answers.all()}
         recipient = (FeedbackDeliveryRecipient.objects.filter(
-            delivery_id=response.delivery_id, learner_id=response.learner_id,
+            delivery_id=response.delivery_id, enrolment_id=response.enrolment_id,
         ).first() if response.delivery_id else None)
         selected_ids = _selected_delivery_question_ids(response.delivery, recipient, response)
         data['sections'] = [{
@@ -926,7 +926,7 @@ def responses_collection(request):
         'event_recipient__event', 'rsvp_recipient__campaign__event',
     ).prefetch_related(
         Prefetch('delivery__recipients', queryset=FeedbackDeliveryRecipient.objects.only(
-            'delivery_id', 'learner_id', 'assigned_at'), to_attr='response_assignment_recipients'),
+            'delivery_id', 'enrolment_id', 'assigned_at'), to_attr='response_assignment_recipients'),
         Prefetch('form__assignments', queryset=FeedbackAssignment.objects.only(
             'form_id', 'target_type', 'target_id', 'assigned_at'), to_attr='response_assignments'),
         Prefetch('event_recipient__event__feedback_campaigns', queryset=FeedbackEventCampaign.objects.only(
@@ -1120,7 +1120,7 @@ def learner_forms(request):
         ).distinct()
         forms = forms.filter(Q(start_date__isnull=True) | Q(start_date__lte=now))
         responses = {r.form_id: r for r in FeedbackResponse.objects.filter(
-            learner_id=learner_id, delivery__isnull=True, event_recipient__isnull=True,
+            enrolment_id=learner_id, delivery__isnull=True, event_recipient__isnull=True,
             rsvp_recipient__isnull=True, review_delivery__isnull=True,
         )}
         for form in forms:
@@ -1137,7 +1137,7 @@ def learner_forms(request):
                 'responseId': response.id if response else None,
             })
     recipients = list(FeedbackDeliveryRecipient.objects.select_related('delivery__form').filter(
-        learner_id=learner_id, revoked_at__isnull=True,
+        enrolment_id=learner_id, revoked_at__isnull=True,
         delivery__status='open',
         delivery__form__status='published',
         delivery__form__form_type__in=['post_lecture'] if lecture_only else ['post_lecture', *MODULE_FORM_TYPES],
@@ -1148,7 +1148,7 @@ def learner_forms(request):
     ).order_by('-delivery__available_at', '-assigned_at'))
     delivery_responses = {
         r.delivery_id: r for r in FeedbackResponse.objects.filter(
-            learner_id=learner_id, delivery_id__in=[item.delivery_id for item in recipients],
+            enrolment_id=learner_id, delivery_id__in=[item.delivery_id for item in recipients],
         )
     }
     accessible_modules = None
@@ -1185,7 +1185,7 @@ def learner_forms(request):
     if lecture_only:
         return JsonResponse({'forms': items})
     review_deliveries = list(FeedbackReviewDelivery.objects.select_related('form').filter(
-        learner_id=learner_id, form__status='published',
+        enrolment_id=learner_id, form__status='published',
     ).filter(
         Q(form__start_date__isnull=True) | Q(form__start_date__lte=now),
     ).order_by('-completed_at', '-assigned_at'))
@@ -1194,7 +1194,7 @@ def learner_forms(request):
         review_responses = {
             response.review_delivery_id: response
             for response in FeedbackResponse.objects.filter(
-                learner_id=learner_id,
+                enrolment_id=learner_id,
                 review_delivery_id__in=[item.id for item in review_deliveries],
             )
         }
@@ -1214,7 +1214,7 @@ def learner_forms(request):
             'responseId': response.id if response else None,
         })
     event_recipients = list(FeedbackEventRecipient.objects.select_related('event').filter(
-        learner_id=learner_id, revoked_at__isnull=True,
+        enrolment_id=learner_id, revoked_at__isnull=True,
         # Preparing an event roster is enough to assign its forms to an
         # authenticated learner. Only guests need the later email-publish step.
         invite_status__in=['pending', 'sent'],
@@ -1228,7 +1228,7 @@ def learner_forms(request):
         ).order_by('form__title', 'form_id')
         responses = {
             response.form_id: response for response in FeedbackResponse.objects.filter(
-                event_recipient=recipient, learner_id=learner_id,
+                event_recipient=recipient, enrolment_id=learner_id,
             )
         }
         for campaign in campaigns:
@@ -1287,10 +1287,10 @@ def _form_recipient_rows(form):
             form_id__in=family_ids,
         ).order_by('-completed_at', '-id'))
 
-    learner_ids = {str(item.learner_id) for item in delivery_recipients}
+    learner_ids = {str(item.enrolment_id) for item in delivery_recipients}
     learner_ids.update(str(item.target_id) for item in manual_assignments if item.target_id)
-    learner_ids.update(str(item.learner_id) for item in event_recipients if item.learner_id)
-    learner_ids.update(str(item.learner_id) for item in review_deliveries)
+    learner_ids.update(str(item.enrolment_id) for item in event_recipients if item.enrolment_id)
+    learner_ids.update(str(item.enrolment_id) for item in review_deliveries)
     all_assignment = next((item for item in manual_assignments if item.target_type == 'all_learners'), None)
     # Created_users contains many large JSON/document columns.  The recipient
     # report only needs these four scalar fields; selecting the full model for
@@ -1302,11 +1302,11 @@ def _form_recipient_rows(form):
 
     responses = list(FeedbackResponse.objects.filter(form_id__in=family_ids))
     delivery_status = {
-        (item.delivery_id, str(item.learner_id)): item.status
+        (item.delivery_id, str(item.enrolment_id)): item.status
         for item in responses if item.delivery_id is not None
     }
     manual_status = {
-        str(item.learner_id): item.status
+        str(item.enrolment_id): item.status
         for item in responses
         if item.delivery_id is None and getattr(item, 'event_recipient_id', None) is None
         and getattr(item, 'review_delivery_id', None) is None
@@ -1320,7 +1320,7 @@ def _form_recipient_rows(form):
                      for item in responses if getattr(item, review_response_field, None) is not None}
     rows = []
     for recipient in delivery_recipients:
-        learner_id = str(recipient.learner_id)
+        learner_id = str(recipient.enrolment_id)
         learner = learners.get(learner_id)
         delivery = recipient.delivery
         is_module = delivery.form.form_type in MODULE_FORM_TYPES
@@ -1387,7 +1387,7 @@ def _form_recipient_rows(form):
             'formVersion': form.version,
         })
     for recipient in event_recipients:
-        learner_id = str(recipient.learner_id or '')
+        learner_id = str(recipient.enrolment_id or '')
         learner = learners.get(learner_id)
         event = recipient.event
         rows.append({
@@ -1414,7 +1414,7 @@ def _form_recipient_rows(form):
             'recipientType': 'learner' if learner_id else 'guest',
         })
     for review_delivery in review_deliveries:
-        learner_id = str(review_delivery.learner_id)
+        learner_id = str(review_delivery.enrolment_id)
         learner = learners.get(learner_id)
         is_employer = form.form_type == EMPLOYER_REVIEW_FORM_TYPE
         learner_name = review_delivery.learner_name or getattr(learner, 'username', '') or f'Learner {learner_id}'
@@ -1559,7 +1559,7 @@ def _learner_feedback_context(
     if review_delivery_id is not None:
         try:
             review_delivery = FeedbackReviewDelivery.objects.select_related('form').get(
-                pk=review_delivery_id, learner_id=learner_id, form__status='published',
+                pk=review_delivery_id, enrolment_id=learner_id, form__status='published',
             )
         except FeedbackReviewDelivery.DoesNotExist:
             return None, None, None
@@ -1570,7 +1570,7 @@ def _learner_feedback_context(
     if event_recipient_id is not None:
         try:
             recipient = FeedbackEventRecipient.objects.select_related('event').get(
-                pk=event_recipient_id, learner_id=learner_id,
+                pk=event_recipient_id, enrolment_id=learner_id,
                 revoked_at__isnull=True, invite_status='sent',
             )
             campaign = FeedbackEventCampaign.objects.select_related('form').get(
@@ -1583,7 +1583,7 @@ def _learner_feedback_context(
     if delivery_id is not None:
         try:
             recipient = FeedbackDeliveryRecipient.objects.select_related('delivery__form').get(
-                delivery_id=delivery_id, learner_id=learner_id, revoked_at__isnull=True,
+                delivery_id=delivery_id, enrolment_id=learner_id, revoked_at__isnull=True,
                 delivery__status='open',
                 delivery__form__status='published',
                 **({'delivery__form__form_type': 'post_lecture'} if lecture_only else {}),
@@ -1658,7 +1658,7 @@ def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=N
     disabled = _learner_feedback_disabled_response(request, form=form, delivery=delivery)
     if disabled:
         return disabled
-    response_filter = {'form': form, 'learner_id': learner_id}
+    response_filter = {'form': form, 'enrolment_id': learner_id}
     if event_recipient_id is not None:
         response_filter['event_recipient'] = recipient
     elif review_delivery_id is not None:
@@ -1779,7 +1779,7 @@ def save_owned_response(request, *, learner_id, learner_name, form, delivery, re
         return json_error('This form does not allow saving before submission.', status=409)
     if not isinstance(answers, dict):
         return json_error('Answers must be an object keyed by question ID.')
-    response_filter = {'form': form, 'learner_id': learner_id}
+    response_filter = {'form': form, 'enrolment_id': learner_id}
     if employer_review_delivery_id is not None:
         response_filter['employer_review_delivery'] = recipient
     elif event_recipient_id is not None:
@@ -1821,7 +1821,7 @@ def save_owned_response(request, *, learner_id, learner_name, form, delivery, re
     with transaction.atomic():
         if not _module_recipient_open_for_write(form, recipient):
             return json_error('Feedback form not found.', status=404)
-        create_identity = {'form': form, 'learner_id': learner_id}
+        create_identity = {'form': form, 'enrolment_id': learner_id}
         if employer_review_delivery_id is not None:
             create_identity['employer_review_delivery'] = recipient
         elif event_recipient_id is not None:
@@ -1885,7 +1885,7 @@ def upload_owned_photo(request, *, learner_id, learner_name, form, delivery, rec
     except FeedbackQuestion.DoesNotExist:
         return json_error('Feedback form or photo question not found.', status=404)
     existing_response = (FeedbackResponse.objects.filter(
-        form=form, delivery=delivery, learner_id=learner_id,
+        form=form, delivery=delivery, enrolment_id=learner_id,
     ).first() if delivery is not None else None)
     selected_ids = _selected_delivery_question_ids(delivery, recipient, existing_response)
     if selected_ids is not None and question.id not in selected_ids:
@@ -1902,7 +1902,7 @@ def upload_owned_photo(request, *, learner_id, learner_name, form, delivery, rec
         return json_error(str(exc))
     except EnrolmentUser.DoesNotExist:
         return json_error('Learner account not found.', status=404)
-    response_identity = {'form': form, 'delivery': delivery, 'learner_id': learner_id}
+    response_identity = {'form': form, 'delivery': delivery, 'enrolment_id': learner_id}
     if review_delivery_id is not None:
         response_identity['review_delivery'] = recipient
     if employer_review_delivery_id is not None:
@@ -1985,7 +1985,7 @@ def feedback_upload_content(request, upload_id):
         from .employer_feedback import employer_scope
         _, error = employer_scope(request, upload.response.employer_review_delivery.employer_id)
     else:
-        error = require_self_or_staff(request, upload.response.learner_id)
+        error = require_self_or_staff(request, upload.response.enrolment_id)
     if error:
         return error
     if not evidence_storage.azure_configured():

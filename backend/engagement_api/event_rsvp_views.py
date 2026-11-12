@@ -40,7 +40,7 @@ def public_csrf(request):
 def _recipient_dict(item):
     return {
         'id': item.id, 'name': item.recipient_name, 'email': item.recipient_email,
-        'learnerId': item.learner_id or None, 'inviteStatus': item.invite_status,
+        'learnerId': item.enrolment_id or None, 'inviteStatus': item.invite_status,
         'rsvpStatus': item.rsvp_status, 'sentAt': _iso(item.invitation_sent_at),
         'respondedAt': _iso(item.responded_at), 'error': item.invitation_error,
     }
@@ -180,7 +180,7 @@ def public_access(request):
             response, _ = FeedbackResponse.objects.get_or_create(
                 form=form, rsvp_recipient=recipient,
                 defaults={
-                    'learner_id': recipient.learner_id, 'learner_name': recipient.recipient_name,
+                    'enrolment_id': recipient.enrolment_id, 'learner_name': recipient.recipient_name,
                     'status': 'in_progress',
                 },
             )
@@ -226,7 +226,7 @@ def public_photo_upload(request):
     response, _ = FeedbackResponse.objects.get_or_create(
         form=recipient.campaign.form, rsvp_recipient=recipient,
         defaults={
-            'learner_id': recipient.learner_id or '',
+            'enrolment_id': recipient.enrolment_id or '',
             'learner_name': recipient.recipient_name,
             'status': 'in_progress',
         },

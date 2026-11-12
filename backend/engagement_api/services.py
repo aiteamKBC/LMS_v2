@@ -55,7 +55,7 @@ def grant_points(
     try:
         return PointsGrant.objects.create(
             rule=rule,
-            learner_id=learner_id,
+            enrolment_id=learner_id,
             learner_name=learner_name,
             points=awarded_points,
             event_reference=event_reference,
@@ -82,9 +82,9 @@ def points_summary(learner_id):
 
     from .models import VoucherClaim
 
-    earned = PointsGrant.objects.filter(learner_id=learner_id).aggregate(total=Sum('points'))['total'] or 0
+    earned = PointsGrant.objects.filter(enrolment_id=learner_id).aggregate(total=Sum('points'))['total'] or 0
     committed = (
-        VoucherClaim.objects.filter(learner_id=learner_id)
+        VoucherClaim.objects.filter(enrolment_id=learner_id)
         .exclude(status='rejected')
         .aggregate(total=Sum('points'))['total']
         or 0

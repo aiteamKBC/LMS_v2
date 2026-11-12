@@ -210,11 +210,11 @@ def sync_post_lecture_feedback(occurrence, attendees, *, attendance_finalized=Fa
             deliveries.append(delivery.id)
             revoked_count += FeedbackDeliveryRecipient.objects.filter(
                 delivery=delivery, revoked_at__isnull=True, public_claimed_at__isnull=True,
-            ).exclude(learner_id__in=learners).update(revoked_at=timezone.now())
+            ).exclude(enrolment_id__in=learners).update(revoked_at=timezone.now())
             for learner_id, learner in learners.items():
                 attendee = attendees_by_id[learner_id]
                 FeedbackDeliveryRecipient.objects.update_or_create(
-                    delivery=delivery, learner_id=learner_id,
+                    delivery=delivery, enrolment_id=learner_id,
                     defaults={
                         'learner_name': attendee.learner_name or learner.username or learner.email or f'Learner {learner_id}',
                         'programme': attendee.programme or learner.programme or '',

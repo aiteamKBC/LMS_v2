@@ -1512,7 +1512,7 @@ class LearnerAbsence(models.Model):
     """Stored attendance/absence summary used by the coach attendance table."""
 
     learner_email = models.EmailField(primary_key=True, db_column="learner_email")
-    learner_id = models.IntegerField(db_column="learner_id")
+    learner_profile_id = models.IntegerField(db_column="learner_id")
     learner_name = models.TextField(db_column="learner_name")
     sessions = models.PositiveIntegerField(db_column="sessions", default=0)
     present = models.PositiveIntegerField(db_column="present", default=0)
@@ -1569,10 +1569,10 @@ class EnrolmentReview(models.Model):
     review_type = models.TextField(db_column="Review_type")
     review_label = models.TextField(db_column="Review_label", blank=True)
 
-    # Learner side. Learner_kind + Learner_id is the console's identity pair
+    # Learner side. Learner_kind + enrolment_id is the console's identity pair
     # (one table cannot key both apprenticeship and commercial learners).
     learner_kind = models.TextField(db_column="Learner_kind")
-    learner_id = models.BigIntegerField(db_column="Learner_id")
+    enrolment_id = models.BigIntegerField(db_column="Learner_id")
     learner_name = models.TextField(db_column="Learner_name", blank=True)
     learner_email = models.TextField(db_column="Learner_email", blank=True)
 
@@ -1644,7 +1644,7 @@ class EnrolmentReview(models.Model):
         ordering = ("-scheduled_date", "review_type")
 
     def __str__(self):
-        return f"{self.review_label or self.review_type} for {self.learner_name or self.learner_id}"
+        return f"{self.review_label or self.review_type} for {self.learner_name or self.enrolment_id}"
 
 
 class _ReviewDetail(models.Model):
@@ -1669,7 +1669,7 @@ class _ReviewDetail(models.Model):
         related_name="%(class)s_rows",
     )
     event_key = models.TextField(db_column="Event_key")
-    learner_id = models.BigIntegerField(db_column="Learner_id")
+    enrolment_id = models.BigIntegerField(db_column="Learner_id")
     learner_name = models.TextField(db_column="Learner_name", blank=True)
     completed = models.BooleanField(db_column="Completed", default=False)
     created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
@@ -1954,7 +1954,7 @@ class ApprenticeshipAgreement(models.Model):
     id = models.UUIDField(primary_key=True, db_column="id", default=uuid.uuid4, editable=False)
 
     learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
-    learner_id = models.BigIntegerField(db_column="Learner_id")
+    enrolment_id = models.BigIntegerField(db_column="Learner_id")
 
     # ---- Particulars, frozen at issue ----
     apprentice_name = models.TextField(db_column="Apprentice_name", blank=True, default="")
@@ -2013,7 +2013,7 @@ class ApprenticeshipAgreement(models.Model):
         return self.fully_signed
 
     def __str__(self):
-        return f"Apprenticeship Agreement for {self.apprentice_name or self.learner_id}"
+        return f"Apprenticeship Agreement for {self.apprentice_name or self.enrolment_id}"
 
 
 class IlrDocument(models.Model):
@@ -2038,7 +2038,7 @@ class IlrDocument(models.Model):
     id = models.UUIDField(primary_key=True, db_column="id", default=uuid.uuid4, editable=False)
 
     learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
-    learner_id = models.BigIntegerField(db_column="Learner_id")
+    enrolment_id = models.BigIntegerField(db_column="Learner_id")
 
     # Page 1 "Learner details" — name, DOB, address, contact, and the ILR
     # identifiers (ULN, NI number, ethnicity...) where we hold them.
@@ -2078,7 +2078,7 @@ class IlrDocument(models.Model):
         return self.fully_signed
 
     def __str__(self):
-        return f"ILR for {self.learner_kind}:{self.learner_id}"
+        return f"ILR for {self.learner_kind}:{self.enrolment_id}"
 
 
 class TrainingPlanDocument(models.Model):
@@ -2103,7 +2103,7 @@ class TrainingPlanDocument(models.Model):
     id = models.UUIDField(primary_key=True, db_column="id", default=uuid.uuid4, editable=False)
 
     learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
-    learner_id = models.BigIntegerField(db_column="Learner_id")
+    enrolment_id = models.BigIntegerField(db_column="Learner_id")
 
     # ---- Frozen content ----
     programme = SafeJSONField(db_column="Programme", null=True, blank=True)
@@ -2158,7 +2158,7 @@ class TrainingPlanDocument(models.Model):
         return self.fully_signed
 
     def __str__(self):
-        return f"Training Plan for {self.learner_kind}:{self.learner_id}"
+        return f"Training Plan for {self.learner_kind}:{self.enrolment_id}"
 
 
 class WrittenAgreement(models.Model):
@@ -2184,7 +2184,7 @@ class WrittenAgreement(models.Model):
     id = models.UUIDField(primary_key=True, db_column="id", default=uuid.uuid4, editable=False)
 
     learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
-    learner_id = models.BigIntegerField(db_column="Learner_id")
+    enrolment_id = models.BigIntegerField(db_column="Learner_id")
 
     # ---- Frozen content ----
     particulars = SafeJSONField(db_column="Particulars", null=True, blank=True)
@@ -2238,7 +2238,7 @@ class WrittenAgreement(models.Model):
         return self.fully_signed
 
     def __str__(self):
-        return f"Written Agreement for {self.learner_kind}:{self.learner_id}"
+        return f"Written Agreement for {self.learner_kind}:{self.enrolment_id}"
 
 
 # Kept in its own module so checkpoint storage has no progress-table side effects.

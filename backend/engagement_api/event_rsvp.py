@@ -70,7 +70,7 @@ def configure_campaign(*, event, form_id, learner_ids, guests, created_by):
             raise ValueError(f'{learner.username or "A selected learner"} does not have a valid email address.') from exc
         audience[email] = {
             'name': learner.username or learner.email or f'Learner {learner.id}',
-            'email': email, 'learner_id': str(learner.id),
+            'email': email, 'enrolment_id': str(learner.id),
         }
     for raw in guests:
         guest = _normalise_guest(raw)
@@ -94,7 +94,7 @@ def configure_campaign(*, event, form_id, learner_ids, guests, created_by):
         recipient, _ = EventRsvpRecipient.objects.update_or_create(
             campaign=campaign, recipient_email=item['email'],
             defaults={
-                'recipient_name': item['name'], 'learner_id': item['learner_id'],
+                'recipient_name': item['name'], 'enrolment_id': item['enrolment_id'],
                 'revoked_at': None,
             },
         )
@@ -168,15 +168,15 @@ def save_rsvp(recipient, status):
     recipient.responded_at = timezone.now()
     recipient.save(update_fields=['rsvp_status', 'responded_at', 'updated_at'])
 
-    if recipient.learner_id:
+    if recipient.enrolment_id:
         booking = EventBooking.objects.select_for_update().filter(
-            event=event, learner_id=recipient.learner_id,
+            event=event, enrolment_id=recipient.enrolment_id,
         ).first()
         was_booked = bool(booking and booking.status == 'booked')
         should_book = status == 'yes'
         if booking is None:
             booking = EventBooking(
-                event=event, learner_id=recipient.learner_id,
+                event=event, enrolment_id=recipient.enrolment_id,
                 learner_name=recipient.recipient_name, learner_email=recipient.recipient_email,
             )
         booking.learner_name = recipient.recipient_name

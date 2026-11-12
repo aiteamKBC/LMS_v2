@@ -26,7 +26,7 @@ class ExtendedIlr(models.Model):
 
     # --- learner identity (see module docstring: two source tables) ---
     learner_kind = models.TextField(db_column="Learner_kind")  # 'apprenticeship' | 'commercial'
-    learner_id = models.BigIntegerField(db_column="Learner_id")
+    enrolment_id = models.BigIntegerField()
     learner_name = models.TextField(db_column="Learner_name", null=True, blank=True)
 
     # --- the questionnaire itself ---
@@ -60,7 +60,7 @@ class ExtendedIlr(models.Model):
         db_table = 'enrolment"."Extended_ILR'
 
     def __str__(self):
-        return f"Extended ILR {self.learner_kind}:{self.learner_id}"
+        return f"Extended ILR {self.learner_kind}:{self.enrolment_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -75,17 +75,17 @@ class ExtendedIlr(models.Model):
 
 
 class _LearnerScoped(models.Model):
-    """Shared identity for the wizard tables: (learner_kind, learner_id).
+    """Shared identity for the wizard tables: (learner_kind, enrolment_id).
 
     Not a foreign key: the pairing dates from when apprenticeship and commercial
     learners lived in two separate tables. Both now share
-    enrolment."Created_users", so learner_id alone identifies a learner and
+    enrolment."Created_users", so enrolment_id alone identifies a learner and
     learner_kind is kept only so existing rows keep resolving.
     """
 
     id = models.AutoField(primary_key=True, db_column="id")
     learner_kind = models.TextField(db_column="Learner_kind")
-    learner_id = models.BigIntegerField(db_column="Learner_id")
+    enrolment_id = models.BigIntegerField()
     created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
     updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
 

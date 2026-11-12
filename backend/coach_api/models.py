@@ -50,7 +50,7 @@ class CoachCalendarEvent(models.Model):
     idempotency_key = models.CharField(max_length=255, blank=True)
     owner_email = models.EmailField(max_length=255, db_index=True)
     owner_name = models.CharField(max_length=255, blank=True)
-    learner_id = models.IntegerField(db_index=True)
+    learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
     learner_name = models.CharField(max_length=255, blank=True)
     learner_email = models.EmailField(max_length=255, blank=True)
     event_type = models.CharField(max_length=32, db_index=True)
@@ -99,7 +99,7 @@ class CoachCalendarEvent(models.Model):
         ordering = ["target_date", "learner_name", "event_type", "sequence"]
         indexes = [
             models.Index(fields=["owner_email", "target_date", "status"], name="coach_owner_date_status_idx"),
-            models.Index(fields=["learner_id", "event_type", "target_date"], name="coach_learner_type_date_idx"),
+            models.Index(fields=["learner_profile_id", "event_type", "target_date"], name="coach_learner_type_date_idx"),
         ]
         constraints = [
             models.CheckConstraint(
@@ -121,7 +121,7 @@ class CoachCalendarEvent(models.Model):
                 name="coach_calendar_event_status_valid",
             ),
             models.UniqueConstraint(
-                fields=["learner_id", "event_type", "sequence"],
+                fields=["learner_profile_id", "event_type", "sequence"],
                 condition=models.Q(
                     event_type__in=[
                         "catch-up",
@@ -142,14 +142,14 @@ class CoachCalendarEvent(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
+        return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_profile_id}"
 
 
 class ReviewBookingReschedule(models.Model):
     """Immutable context of a coach-rescheduled, unoccupied Review meeting."""
 
     calendar_event_id = models.BigIntegerField(db_index=True)
-    learner_id = models.IntegerField()
+    learner_profile_id = models.IntegerField(db_column='learner_id')
     event_key = models.CharField(max_length=255)
     graph_event_id = models.CharField(max_length=255)
     owner_email = models.EmailField(max_length=255)
@@ -235,7 +235,7 @@ class ImportedReviewInstance(models.Model):
 
     event_key = models.CharField(max_length=255)
     owner_email = models.EmailField(max_length=255, db_index=True)
-    learner_id = models.IntegerField(db_index=True)
+    learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
     source_review_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     migrated_template = models.ForeignKey(
         MigratedReviewTemplate, null=True, blank=True, on_delete=models.PROTECT,
@@ -298,7 +298,7 @@ class ImportedMeetingOwnership(models.Model):
     STATE_CANCELLED = "cancelled"
 
     source_review_id = models.BigIntegerField()
-    learner_id = models.IntegerField()
+    learner_profile_id = models.IntegerField(db_column='learner_id')
     review_event_key = models.CharField(max_length=255)
     calendar_event_id = models.BigIntegerField()
     overlay = models.ForeignKey(ImportedReviewInstance, null=True, blank=True,
@@ -332,7 +332,7 @@ class ImportedMeetingOwnership(models.Model):
 class ReviewSourceReconciliation(models.Model):
     """Explicit current authority; the calendar's Native fields remain provenance."""
 
-    learner_id = models.BigIntegerField()
+    learner_profile_id = models.BigIntegerField(db_column='learner_id')
     # The Coach calendar model addresses a PostgreSQL VIEW. The migration's
     # physical FK therefore targets Learner.coach_calendar_event, not that view.
     calendar_event_id = models.BigIntegerField()
@@ -430,7 +430,7 @@ class MigratedReviewRevision(models.Model):
 class CoachCalendarSequence(models.Model):
     """Cross-process sequence allocator for a learner/session-type scope."""
 
-    learner_id = models.IntegerField()
+    learner_profile_id = models.IntegerField(db_column='learner_id')
     event_type = models.CharField(max_length=32)
     last_sequence = models.PositiveIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
@@ -442,7 +442,7 @@ class CoachCalendarSequence(models.Model):
         )
         constraints = [
             models.UniqueConstraint(
-                fields=["learner_id", "event_type"],
+                fields=["learner_profile_id", "event_type"],
                 name="coach_calendar_sequence_scope_uniq",
             ),
         ]
@@ -483,7 +483,7 @@ class CoachAbsenceReport(models.Model):
     attendance_id = models.BigIntegerField(unique=True)
     owner_email = models.EmailField(max_length=255, db_index=True)
     owner_name = models.CharField(max_length=255, blank=True)
-    learner_id = models.IntegerField(db_index=True)
+    enrolment_id = models.IntegerField(db_index=True, db_column='learner_id')
     learner_name = models.CharField(max_length=255)
     learner_email = models.EmailField(max_length=255, blank=True)
     session_title = models.CharField(max_length=255)
@@ -511,7 +511,7 @@ class CoachAbsenceReport(models.Model):
         ordering = ["-session_date", "learner_name"]
         indexes = [
             models.Index(fields=["owner_email", "status", "-session_date"], name="coach_abs_owner_status_idx"),
-            models.Index(fields=["learner_id", "-session_date"], name="coach_abs_learner_date_idx"),
+            models.Index(fields=["enrolment_id", "-session_date"], name="coach_abs_learner_date_idx"),
         ]
         constraints = [
             models.CheckConstraint(
@@ -537,9 +537,9 @@ class CoachManualAttendance(models.Model):
     STATUS_CHOICES = [(STATUS_PRESENT, "Present"), (STATUS_ABSENT, "Absent")]
 
     owner_email = models.EmailField(max_length=255, db_index=True)
-    learner_id = models.IntegerField(db_index=True)
+    learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
     # Stable cross-schema links already present on Coach.coach_manual_attendance.
-    # learner_id/enrolment_id remain historical snapshots used by the existing
+    # learner_profile_id/enrolment_id remain historical snapshots used by the existing
     # attendance contract; these relations are the canonical joins for new code.
     learner_profile_link = models.ForeignKey(
         "learner_api.LearnerProfile",
@@ -574,7 +574,7 @@ class CoachManualAttendance(models.Model):
         db_table = _table_name("coach_test_manual_attendance", 'Coach"."coach_manual_attendance')
         ordering = ["-session_date", "-id"]
         indexes = [
-            models.Index(fields=["owner_email", "learner_id", "-session_date"], name="coach_manual_att_owner_idx"),
+            models.Index(fields=["owner_email", "learner_profile_id", "-session_date"], name="coach_manual_att_owner_idx"),
         ]
         constraints = [
             models.CheckConstraint(
@@ -593,9 +593,9 @@ class CoachAttendanceSourceAdjustment(models.Model):
     """
 
     owner_email = models.EmailField(max_length=255)
-    learner_id = models.IntegerField(db_index=True)
-    # Existing FK column; keep learner_id as the legacy snapshot until all
-    # readers migrate to the stable LearnerProfile relation.
+    learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
+    # Existing FK column; kept as learner_profile_id for joins until all
+    # readers use the stable learner_profile_link relation.
     learner_profile_link = models.ForeignKey(
         "learner_api.LearnerProfile",
         db_column="learner_profile_link_id",
@@ -620,7 +620,7 @@ class CoachAttendanceSourceAdjustment(models.Model):
         db_table = _table_name("coach_test_attendance_adjustment", 'Coach"."coach_attendance_adjustment')
         constraints = [
             models.UniqueConstraint(
-                fields=["learner_id", "source", "source_id"],
+                fields=["learner_profile_id", "source", "source_id"],
                 name="coach_attendance_adjustment_source_uniq",
             ),
             models.CheckConstraint(
@@ -634,7 +634,7 @@ class ReviewAttendanceLink(models.Model):
     """Audited, reversible identity correction; original Teams evidence is immutable."""
 
     calendar_event_id = models.BigIntegerField(db_index=True)
-    learner_id = models.IntegerField()
+    learner_profile_id = models.IntegerField(db_column='learner_id')
     target_role = models.CharField(max_length=16, default='learner')
     target_key = models.CharField(max_length=64, default='learner')
     target_name = models.CharField(max_length=255, blank=True, default='')

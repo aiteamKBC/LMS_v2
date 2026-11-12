@@ -175,7 +175,7 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
     # fall back to Aptem-only detection. Legacy keys are scoped by Profile ID.
     overlays = list(ImportedReviewInstance.objects.filter(
         Q(source_review_id__in=review_ids)
-        | Q(learner_id=profile.pk, source_review_id__isnull=True),
+        | Q(learner_profile_id=profile.pk, source_review_id__isnull=True),
     ))
     legacy_keys = Counter(str(row.get('aptem_review_id') or '') for row in rows)
     linked_ids = set()
@@ -207,7 +207,7 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
         candidates = [item for item in overlays if item.source_review_id == row['id']
                       or (item.source_review_id is None and aptem_id
                           and item.event_key == event['eventKey'])]
-        if (any(str(item.learner_id) != str(profile.pk) for item in candidates)
+        if (any(str(item.learner_profile_id) != str(profile.pk) for item in candidates)
                 or (legacy_keys[aptem_id] > 1
                     and any(item.source_review_id is None for item in candidates))):
             result['identityConflicts'] += 1
@@ -221,11 +221,11 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
             linked_ids.add(overlay.pk)
         delivery = existing.get(row['id'])
         if delivery is not None:
-            if employer and str(delivery.learner_id) == str(learner.pk):
+            if employer and str(delivery.enrolment_id) == str(learner.pk):
                 from .employer_feedback import resolve_pending_delivery
                 resolve_pending_delivery(delivery, learner)
                 result['pending'] += int(delivery.employer_id is None)
-            result['existing' if str(delivery.learner_id) == str(learner.pk)
+            result['existing' if str(delivery.enrolment_id) == str(learner.pk)
                    else 'identityConflicts'] += 1
             continue
         state = review_completion(row, overlay)
@@ -255,12 +255,12 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
         delivery, created = delivery_model.objects.get_or_create(
             source_review_id=row['id'], defaults={
                 'form': form, 'aptem_review_id': aptem_id,
-                'learner_id': str(learner.pk), 'learner_name': row.get('learner_name') or '',
+                'enrolment_id': str(learner.pk), 'learner_name': row.get('learner_name') or '',
                 'review_type': row['review_type'], 'review_name': row.get('review_name') or '',
                 'completed_at': state.first_completed_at,
             },
         )
-        if str(delivery.learner_id) != str(learner.pk):
+        if str(delivery.enrolment_id) != str(learner.pk):
             result['identityConflicts'] += 1
         else:
             if employer:
@@ -280,7 +280,7 @@ def _sync_review_feedback(learner_id, *, source_review_id=None, employer=False):
 
 def sync_completed_overlay(overlay):
     """Post-commit fast path; page/command reconciliation is the retry path."""
-    profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
+    profile = LearnerProfile.objects.filter(pk=overlay.learner_profile_id).first()
     learner = enrolment_for_review_profile(profile)
     if learner is None:
         logger.warning('Review feedback unresolved: completion has no verified enrolment link')

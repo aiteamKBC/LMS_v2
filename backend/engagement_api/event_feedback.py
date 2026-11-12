@@ -210,12 +210,12 @@ def import_qr_attendance(*, event_id, form_ids, created_by):
     )
     imported = []
     for item in attendance:
-        learner_id = item.learner_id if item.attendee_type == 'learner' else ''
+        learner_id = item.enrolment_id if item.attendee_type == 'learner' else ''
         recipient, _ = FeedbackEventRecipient.objects.update_or_create(
             event=event, attendee_email=item.attendee_email.casefold(),
             defaults={
                 'attendee_name': item.learner_name,
-                'learner_id': learner_id,
+                'enrolment_id': learner_id,
                 'attendance_source': 'qr',
                 'attendance_reference': f'event_attendance:{item.id}',
                 'revoked_at': None,
@@ -242,7 +242,7 @@ def send_event_invitations(event, recipients):
     """Mint a fresh hash-only token per recipient, then send outside a transaction."""
     results = []
     for recipient in recipients:
-        if recipient.learner_id:
+        if recipient.enrolment_id:
             recipient.token_hash = None
             recipient.token_expires_at = None
             recipient.invite_status = 'sent'

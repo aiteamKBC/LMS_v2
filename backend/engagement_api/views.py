@@ -48,7 +48,7 @@ def reward_to_dict(reward):
 def claim_to_dict(claim):
     return {
         'id': claim.id,
-        'learnerId': claim.learner_id,
+        'learnerId': claim.enrolment_id,
         'learner': claim.learner_name,
         'rewardId': claim.reward_id,
         'reward': claim.reward.name,
@@ -67,7 +67,7 @@ def claim_to_dict(claim):
 def recognition_to_dict(recognition):
     return {
         'id': recognition.id,
-        'learnerId': recognition.learner_id,
+        'learnerId': recognition.enrolment_id,
         'learner': recognition.learner_name,
         'avatarImg': recognition.avatar_img,
         'programmeCode': recognition.programme_code,
@@ -109,7 +109,7 @@ def event_booking_to_dict(booking):
     return {
         'id': booking.id,
         'eventId': booking.event_id,
-        'learnerId': booking.learner_id,
+        'learnerId': booking.enrolment_id,
         'learner': booking.learner_name,
         'email': booking.learner_email,
         'status': booking.status,
@@ -133,7 +133,7 @@ def meeting_to_dict(meeting):
 def member_to_dict(member):
     return {
         'id': member.id,
-        'learnerId': member.learner_id,
+        'learnerId': member.enrolment_id,
         'learnerName': member.learner_name,
         'assignedBy': member.assigned_by,
         'assignedAt': member.assigned_at.isoformat(),
@@ -170,7 +170,7 @@ def rules_with_stats():
     accurate, even as grants are added later.
     """
     return PointsRule.objects.annotate(
-        learners_impacted=Count('grants__learner_id', distinct=True),
+        learners_impacted=Count('grants__enrolment_id', distinct=True),
         total_points_awarded=Sum('grants__points'),
     )
 
@@ -197,7 +197,7 @@ def grant_to_dict(grant):
         'ruleId': grant.rule_id,
         'rule': grant.rule.name,
         'category': grant.rule.category,
-        'learnerId': grant.learner_id,
+        'learnerId': grant.enrolment_id,
         'learner': grant.learner_name,
         'points': grant.points,
         'awardedAt': grant.awarded_at.isoformat(),
@@ -280,7 +280,7 @@ def voucher_claims_collection(request):
             return error
         claims = VoucherClaim.objects.select_related('reward').all().order_by('-requested_at')
         if learner_id:
-            claims = claims.filter(learner_id=learner_id)
+            claims = claims.filter(enrolment_id=learner_id)
         return JsonResponse({'claims': [claim_to_dict(c) for c in claims]})
 
     if request.method != 'POST':
@@ -333,7 +333,7 @@ def voucher_claims_collection(request):
             return json_error('You do not have enough available points for this reward.', status=400)
 
         claim = VoucherClaim.objects.create(
-            learner_id=learner_id,
+            enrolment_id=learner_id,
             learner_name=learner_name,
             reward=reward,
             points=reward.points,
@@ -359,7 +359,7 @@ def voucher_claim_detail(request, pk):
         return json_error('Voucher claim not found.', status=404)
 
     if request.method == 'GET':
-        error = require_self_or_staff(request, claim.learner_id)
+        error = require_self_or_staff(request, claim.enrolment_id)
         if error:
             return error
         return JsonResponse({'claim': claim_to_dict(claim)})
@@ -441,7 +441,7 @@ def leaderboard(request):
     scope = request.GET.get('scope') if request.GET.get('scope') in ('monthly', 'all-time') else 'all-time'
     cohort = request.GET.get('cohort') or None
 
-    where = ["g.learner_id ~ '^[0-9]+$'"]
+    where = ["g.enrolment_id ~ '^[0-9]+$'"]
     params = []
     if scope == 'monthly':
         where.append("g.awarded_at >= date_trunc('month', now())")
@@ -452,9 +452,9 @@ def leaderboard(request):
     with connection.cursor() as cursor:
         cursor.execute(
             f'''
-            SELECT g.learner_id, g.learner_name, SUM(g.points) AS points, max(placement.cohort_name) AS cohort
+            SELECT g.enrolment_id, g.learner_name, SUM(g.points) AS points, max(placement.cohort_name) AS cohort
             FROM "Engagement"."points_grants" g
-            JOIN enrolment."Created_users" cu ON cu.id = g.learner_id::bigint
+            JOIN enrolment."Created_users" cu ON cu.id = g.enrolment_id::bigint
             -- Created_users no longer stores the cohort name: read it as
             -- EnrolmentUser.cohort does, through the enrolment's learner profile.
             LEFT JOIN LATERAL (
@@ -466,7 +466,7 @@ def leaderboard(request):
                 LIMIT 1
             ) placement ON TRUE
             WHERE {' AND '.join(where)}
-            GROUP BY g.learner_id, g.learner_name
+            GROUP BY g.enrolment_id, g.learner_name
             ORDER BY points DESC, g.learner_name ASC
             LIMIT 50
             ''',
@@ -499,7 +499,7 @@ def stats_overview(request):
         return error
 
     month_start = dj_timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    real_learner = {'learner_id__regex': r'^\d+$'}
+    real_learner = {'enrolment_id__regex': r'^\d+$'}
 
     points_awarded = PointsGrant.objects.filter(**real_learner).aggregate(total=Sum('points'))['total'] or 0
     points_awarded_this_month = (
@@ -509,7 +509,7 @@ def stats_overview(request):
     vouchers_claimed = VoucherClaim.objects.filter(status__in=claimed_statuses).count()
     vouchers_claimed_this_month = VoucherClaim.objects.filter(status__in=claimed_statuses, requested_at__gte=month_start).count()
     active_learners = (
-        PointsGrant.objects.filter(**real_learner, awarded_at__gte=month_start).values('learner_id').distinct().count()
+        PointsGrant.objects.filter(**real_learner, awarded_at__gte=month_start).values('enrolment_id').distinct().count()
     )
     event_seats_booked = EventBooking.objects.filter(status='booked').count()
 
@@ -611,22 +611,22 @@ def learner_analytics(request):
 
     month_start = dj_timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     points_all_time = dict(
-        PointsGrant.objects.filter(learner_id__in=learner_ids)
-        .values('learner_id').annotate(total=Sum('points')).values_list('learner_id', 'total')
+        PointsGrant.objects.filter(enrolment_id__in=learner_ids)
+        .values('enrolment_id').annotate(total=Sum('points')).values_list('enrolment_id', 'total')
     )
     points_this_month = dict(
-        PointsGrant.objects.filter(learner_id__in=learner_ids, awarded_at__gte=month_start)
-        .values('learner_id').annotate(total=Sum('points')).values_list('learner_id', 'total')
+        PointsGrant.objects.filter(enrolment_id__in=learner_ids, awarded_at__gte=month_start)
+        .values('enrolment_id').annotate(total=Sum('points')).values_list('enrolment_id', 'total')
     )
     club_counts = dict(
-        ClubMembership.objects.filter(learner_id__in=learner_ids, status='active')
-        .values('learner_id').annotate(total=Count('club_id')).values_list('learner_id', 'total')
+        ClubMembership.objects.filter(enrolment_id__in=learner_ids, status='active')
+        .values('enrolment_id').annotate(total=Count('club_id')).values_list('enrolment_id', 'total')
     )
     open_interventions = {}
     for intervention in (
-        AttendanceIntervention.objects.filter(learner_id__in=learner_ids, resolved=False).order_by('-created_at')
+        AttendanceIntervention.objects.filter(enrolment_id__in=learner_ids, resolved=False).order_by('-created_at')
     ):
-        open_interventions.setdefault(intervention.learner_id, intervention)  # most recent wins
+        open_interventions.setdefault(intervention.enrolment_id, intervention)  # most recent wins
     response_rates = compute_message_response_rates(learner_ids)
 
     learners = []
@@ -685,7 +685,7 @@ def learner_analytics(request):
 def intervention_to_dict(intervention):
     return {
         'id': intervention.id,
-        'learnerId': intervention.learner_id,
+        'learnerId': intervention.enrolment_id,
         'learnerName': intervention.learner_name,
         'action': intervention.action,
         'employerNotified': intervention.employer_notified,
@@ -704,7 +704,7 @@ def attendance_interventions_collection(request):
         interventions = AttendanceIntervention.objects.all().order_by('-created_at')
         learner_id = request.GET.get('learnerId')
         if learner_id:
-            interventions = interventions.filter(learner_id=learner_id)
+            interventions = interventions.filter(enrolment_id=learner_id)
         return JsonResponse({'interventions': [intervention_to_dict(i) for i in interventions]})
 
     if request.method != 'POST':
@@ -719,7 +719,7 @@ def attendance_interventions_collection(request):
         return json_error('Missing required fields.', fields=missing)
 
     intervention = AttendanceIntervention.objects.create(
-        learner_id=str(payload['learnerId']),
+        enrolment_id=str(payload['learnerId']),
         learner_name=payload['learnerName'],
         action=payload['action'],
         employer_notified=bool(payload.get('employerNotified', False)),
@@ -764,7 +764,7 @@ def recognitions_collection(request):
             return error
         recognitions = Recognition.objects.all().order_by('-awarded_at')
         if learner_id:
-            recognitions = recognitions.filter(learner_id=learner_id)
+            recognitions = recognitions.filter(enrolment_id=learner_id)
         return JsonResponse({'recognitions': [recognition_to_dict(r) for r in recognitions]})
 
     if request.method != 'POST':
@@ -790,7 +790,7 @@ def recognitions_collection(request):
 
     recognition_points = max(0, int(payload.get('points') or 0))
     recognition = Recognition.objects.create(
-        learner_id=str(payload['learnerId']),
+        enrolment_id=str(payload['learnerId']),
         learner_name=payload['learnerName'],
         avatar_img=payload.get('avatarImg'),
         programme_code=payload['programmeCode'],
@@ -811,7 +811,7 @@ def recognitions_collection(request):
         # itself, so this is best-effort like the progress hooks.
         try:
             grant_points(
-                'recognition_awarded', recognition.learner_id, recognition.learner_name,
+                'recognition_awarded', recognition.enrolment_id, recognition.learner_name,
                 points=recognition_points,
                 event_reference=f'recognition:{recognition.id}',
                 awarded_by=recognition.awarded_by,
@@ -830,7 +830,7 @@ def recognition_detail(request, pk):
         return json_error('Recognition not found.', status=404)
 
     if request.method == 'GET':
-        error = require_self_or_staff(request, recognition.learner_id)
+        error = require_self_or_staff(request, recognition.enrolment_id)
         if error:
             return error
         return JsonResponse({'recognition': recognition_to_dict(recognition)})
@@ -976,7 +976,7 @@ def event_bookings_collection(request):
             return error
         bookings = EventBooking.objects.select_related('event').order_by('-booked_at')
         if learner_id:
-            bookings = bookings.filter(learner_id=learner_id)
+            bookings = bookings.filter(enrolment_id=learner_id)
         return JsonResponse({'bookings': [event_booking_to_dict(booking) for booking in bookings]})
 
     if request.method != 'POST':
@@ -1003,7 +1003,7 @@ def event_bookings_collection(request):
 
         booking, created = EventBooking.objects.select_for_update().get_or_create(
             event=event,
-            learner_id=learner_id,
+            enrolment_id=learner_id,
             defaults={
                 'learner_name': learner_name,
                 'learner_email': payload.get('learnerEmail', ''),
@@ -1033,7 +1033,7 @@ def event_booking_detail(request, pk):
             booking = EventBooking.objects.select_for_update().get(pk=pk)
         except EventBooking.DoesNotExist:
             return json_error('Event booking not found.', status=404)
-        error = require_self_or_staff(request, booking.learner_id)
+        error = require_self_or_staff(request, booking.enrolment_id)
         if error:
             return error
         if booking.status == 'cancelled':
@@ -1056,7 +1056,7 @@ def clubs_collection(request):
         if error:
             return error
         if learner_id:
-            clubs = clubs.filter(memberships__learner_id=learner_id, memberships__status='active')
+            clubs = clubs.filter(memberships__enrolment_id=learner_id, memberships__status='active')
         return JsonResponse({'clubs': [club_to_dict(c) for c in clubs]})
 
     if request.method != 'POST':
@@ -1190,7 +1190,7 @@ def club_meeting_detail(request, club_id, pk):
 
 def attendance_to_dict(record):
     return {
-        'learnerId': record.learner_id,
+        'learnerId': record.enrolment_id,
         'learnerName': record.learner_name,
         'status': record.status,
         'markedBy': record.marked_by,
@@ -1245,14 +1245,14 @@ def club_meeting_attendance_collection(request, club_id, meeting_id):
 
     if request.method == 'GET':
         members = ClubMembership.objects.filter(club_id=club_id, status='active').order_by('learner_name')
-        marks = {a.learner_id: a for a in meeting.attendance.all()}
+        marks = {a.enrolment_id: a for a in meeting.attendance.all()}
         roster = [
             {
-                'learnerId': member.learner_id,
+                'learnerId': member.enrolment_id,
                 'learnerName': member.learner_name,
-                'status': marks[member.learner_id].status if member.learner_id in marks else None,
-                'markedBy': marks[member.learner_id].marked_by if member.learner_id in marks else None,
-                'markedAt': marks[member.learner_id].marked_at.isoformat() if member.learner_id in marks else None,
+                'status': marks[member.enrolment_id].status if member.enrolment_id in marks else None,
+                'markedBy': marks[member.enrolment_id].marked_by if member.enrolment_id in marks else None,
+                'markedAt': marks[member.enrolment_id].marked_at.isoformat() if member.enrolment_id in marks else None,
             }
             for member in members
         ]
@@ -1267,7 +1267,7 @@ def club_meeting_attendance_collection(request, club_id, meeting_id):
 
     def save_mark(learner_id, learner_name, status, marker):
         attendance, _ = ClubMeetingAttendance.objects.update_or_create(
-            meeting=meeting, learner_id=learner_id,
+            meeting=meeting, enrolment_id=learner_id,
             defaults={'learner_name': learner_name, 'status': status, 'marked_by': marker},
         )
         return attendance
@@ -1296,14 +1296,14 @@ def event_attendance_collection(request, event_id):
 
     if request.method == 'GET':
         bookings = EventBooking.objects.filter(event=event, status='booked').order_by('learner_name')
-        marks = {a.learner_id: a for a in event.attendance.all()}
+        marks = {a.enrolment_id: a for a in event.attendance.all()}
         roster = []
         seen_ids = set()
         for booking in bookings:
-            seen_ids.add(booking.learner_id)
-            mark = marks.get(booking.learner_id)
+            seen_ids.add(booking.enrolment_id)
+            mark = marks.get(booking.enrolment_id)
             roster.append({
-                'learnerId': booking.learner_id,
+                'learnerId': booking.enrolment_id,
                 'learnerName': booking.learner_name,
                 'email': mark.attendee_email if mark and mark.attendee_email else booking.learner_email,
                 'attendeeType': mark.attendee_type if mark else 'learner',
@@ -1319,7 +1319,7 @@ def event_attendance_collection(request, event_id):
             if learner_id in seen_ids:
                 continue
             roster.append({
-                'learnerId': mark.learner_id,
+                'learnerId': mark.enrolment_id,
                 'learnerName': mark.learner_name,
                 'email': mark.attendee_email,
                 'attendeeType': mark.attendee_type,
@@ -1340,7 +1340,7 @@ def event_attendance_collection(request, event_id):
 
     def save_mark(learner_id, learner_name, status, marker):
         attendance, _ = EventAttendance.objects.update_or_create(
-            event=event, learner_id=learner_id,
+            event=event, enrolment_id=learner_id,
             defaults={'learner_name': learner_name, 'status': status, 'marked_by': marker},
         )
         return attendance
@@ -1382,13 +1382,13 @@ def club_members_collection(request, club_id):
         return json_error('Missing required fields.', fields=missing)
 
     learner_id = str(payload['learnerId'])
-    existing = ClubMembership.objects.filter(club=club, learner_id=learner_id, status='active').first()
+    existing = ClubMembership.objects.filter(club=club, enrolment_id=learner_id, status='active').first()
     if existing:
         return JsonResponse({'created': False, 'member': member_to_dict(existing)})
 
     member = ClubMembership.objects.create(
         club=club,
-        learner_id=learner_id,
+        enrolment_id=learner_id,
         learner_name=payload['learnerName'],
         assigned_by=actor_name(request),
     )
@@ -1401,7 +1401,7 @@ def club_member_detail(request, club_id, learner_id):
         return json_error('Method not allowed.', status=405)
 
     updated = ClubMembership.objects.filter(
-        club_id=club_id, learner_id=str(learner_id), status='active',
+        club_id=club_id, enrolment_id=str(learner_id), status='active',
     ).update(status='removed')
     if not updated:
         return json_error('Membership not found.', status=404)
@@ -1511,7 +1511,7 @@ def points_rule_grants(request, rule_id):
 
     grant = PointsGrant.objects.create(
         rule=rule,
-        learner_id=str(payload['learnerId']),
+        enrolment_id=str(payload['learnerId']),
         learner_name=payload['learnerName'],
         points=points,
         awarded_by=actor_name(request),
@@ -1522,7 +1522,7 @@ def points_rule_grants(request, rule_id):
 
 
 def _points_rewards_report():
-    real_learner = {'learner_id__regex': r'^\d+$'}
+    real_learner = {'enrolment_id__regex': r'^\d+$'}
     month_start = dj_timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     total_awarded = PointsGrant.objects.filter(**real_learner).aggregate(total=Sum('points'))['total'] or 0
@@ -1538,7 +1538,7 @@ def _points_rewards_report():
         for row in (
             PointsGrant.objects.filter(**real_learner)
             .values('rule__category')
-            .annotate(points=Sum('points'), learners=Count('learner_id', distinct=True))
+            .annotate(points=Sum('points'), learners=Count('enrolment_id', distinct=True))
             .order_by('-points')
         )
     ]
@@ -1654,7 +1654,7 @@ def points_grants_collection(request):
 
     grants = PointsGrant.objects.select_related('rule').order_by('-awarded_at')
     if learner_id:
-        grants = grants.filter(learner_id=learner_id)
+        grants = grants.filter(enrolment_id=learner_id)
     return JsonResponse({'grants': [grant_to_dict(grant) for grant in grants]})
 
 
@@ -2068,7 +2068,7 @@ def flash_card_flip(request, card_id):
     except FlashCard.DoesNotExist:
         return json_error('Flash card not found.', status=404)
 
-    existing = FlashCardView.objects.filter(flash_card=card, learner_id=learner_id).first()
+    existing = FlashCardView.objects.filter(flash_card=card, enrolment_id=learner_id).first()
     if existing is not None:
         return JsonResponse({
             'flipped': True,
@@ -2096,13 +2096,13 @@ def flash_card_flip(request, card_id):
     try:
         FlashCardView.objects.create(
             flash_card=card,
-            learner_id=learner_id,
+            enrolment_id=learner_id,
             learner_name=learner_name,
             points_awarded=points_awarded,
         )
     except IntegrityError:
         # Concurrent first-open won the race — treat as already flipped.
-        existing = FlashCardView.objects.filter(flash_card=card, learner_id=learner_id).first()
+        existing = FlashCardView.objects.filter(flash_card=card, enrolment_id=learner_id).first()
         return JsonResponse({
             'flipped': True,
             'alreadyFlipped': True,

@@ -45,7 +45,7 @@ class VoucherClaim(models.Model):
 
     # Learner records live in another team's app (not in scope here yet), so
     # we just store the id/name the frontend sends rather than a real FK.
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
 
     reward = models.ForeignKey(Reward, on_delete=models.CASCADE, related_name='claims', db_column='reward_id')
@@ -81,7 +81,7 @@ class Recognition(models.Model):
 
     # Learner records live in another team's app (not in scope here yet), so
     # we just store the id/name the frontend sends rather than a real FK.
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     avatar_img = models.TextField(null=True, blank=True)
     programme_code = models.CharField(max_length=50)
@@ -151,7 +151,7 @@ class EventBooking(models.Model):
     ]
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='bookings', db_column='event_id')
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     learner_email = models.EmailField(blank=True, default='')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='booked')
@@ -162,7 +162,7 @@ class EventBooking(models.Model):
         managed = False
         db_table = 'Engagement"."event_bookings'
         constraints = [
-            models.UniqueConstraint(fields=['event', 'learner_id'], name='engagement_event_booking_unique'),
+            models.UniqueConstraint(fields=['event', 'enrolment_id'], name='engagement_event_booking_unique'),
         ]
 
     def __str__(self):
@@ -223,7 +223,7 @@ class ClubMembership(models.Model):
     ]
 
     club = models.ForeignKey(Club, on_delete=models.CASCADE, related_name='memberships', db_column='club_id')
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     assigned_by = models.CharField(max_length=255, null=True, blank=True)
@@ -235,7 +235,7 @@ class ClubMembership(models.Model):
         constraints = [
             # Partial in the DB (WHERE status = 'active') so a removed-then
             # reassigned learner doesn't collide with their own old row.
-            models.UniqueConstraint(fields=['club', 'learner_id'], name='engagement_club_membership_active_unique'),
+            models.UniqueConstraint(fields=['club', 'enrolment_id'], name='engagement_club_membership_active_unique'),
         ]
 
     def __str__(self):
@@ -255,7 +255,7 @@ class ClubMeetingAttendance(models.Model):
     ]
 
     meeting = models.ForeignKey(ClubMeeting, on_delete=models.CASCADE, related_name='attendance', db_column='meeting_id')
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     marked_by = models.CharField(max_length=255, null=True, blank=True)
@@ -265,7 +265,7 @@ class ClubMeetingAttendance(models.Model):
         managed = False
         db_table = 'Engagement"."club_meeting_attendance'
         constraints = [
-            models.UniqueConstraint(fields=['meeting', 'learner_id'], name='engagement_club_meeting_attendance_unique'),
+            models.UniqueConstraint(fields=['meeting', 'enrolment_id'], name='engagement_club_meeting_attendance_unique'),
         ]
 
     def __str__(self):
@@ -285,7 +285,7 @@ class EventAttendance(models.Model):
     ]
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='attendance', db_column='event_id')
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     attendee_email = models.EmailField(max_length=320, blank=True, default='')
     attendee_type = models.CharField(
@@ -300,7 +300,7 @@ class EventAttendance(models.Model):
         managed = False
         db_table = 'Engagement"."event_attendance'
         constraints = [
-            models.UniqueConstraint(fields=['event', 'learner_id'], name='engagement_event_attendance_unique'),
+            models.UniqueConstraint(fields=['event', 'enrolment_id'], name='engagement_event_attendance_unique'),
         ]
 
     def __str__(self):
@@ -311,7 +311,7 @@ class AttendanceIntervention(models.Model):
     """A staff-logged follow-up action for a learner's attendance risk —
     what the attendance-risk page's "Take Action" button writes to."""
 
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     action = models.TextField()
     employer_notified = models.BooleanField(default=False)
@@ -368,12 +368,11 @@ class PointsGrant(models.Model):
     """
 
     rule = models.ForeignKey(PointsRule, on_delete=models.CASCADE, related_name='grants', db_column='rule_id')
-    # learner_id is the engagement-space learner identifier: it holds
-    # str(enrolment."Created_users".id), i.e. the same integer LoginAccount
-    # exposes as account.subject_id for a signed-in learner. Kept as
-    # CharField (not a real FK) because Engagement is its own unmanaged
-    # schema and learner records live in enrolment's tables.
-    learner_id = models.CharField(max_length=100)
+    # enrolment_id holds str(enrolment."Created_users".id), i.e. the same
+    # integer LoginAccount exposes as account.subject_id for a signed-in
+    # learner. Kept as CharField (not a real FK) because Engagement is its own
+    # unmanaged schema and learner records live in enrolment's tables.
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     points = models.IntegerField()
     awarded_at = models.DateTimeField(auto_now_add=True)
@@ -486,7 +485,7 @@ class FlashCardView(models.Model):
     """
 
     flash_card = models.ForeignKey(FlashCard, on_delete=models.CASCADE, related_name='views', db_column='flash_card_id')
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     # Snapshot of what this flip awarded (the rule's value at flip time).
     points_awarded = models.IntegerField(default=0)
@@ -649,7 +648,7 @@ class FeedbackDeliveryRecipient(models.Model):
     """A learner eligible by lecture attendance or module assignment."""
 
     delivery = models.ForeignKey(FeedbackDelivery, on_delete=models.CASCADE, related_name='recipients', db_column='delivery_id')
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     programme = models.CharField(max_length=255, blank=True, default='')
     attendance_reference = models.CharField(max_length=255, blank=True, default='')
@@ -696,7 +695,7 @@ class FeedbackReviewDelivery(models.Model):
     )
     source_review_id = models.BigIntegerField(unique=True)
     aptem_review_id = models.TextField(blank=True, default='')
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255, blank=True, default='')
     review_type = models.CharField(max_length=255)
     review_name = models.CharField(max_length=500, blank=True, default='')
@@ -714,7 +713,7 @@ class FeedbackEmployerReviewDelivery(models.Model):
     form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='employer_review_deliveries')
     source_review_id = models.BigIntegerField(unique=True)
     aptem_review_id = models.TextField(blank=True, default='')
-    learner_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255, blank=True, default='')
     review_type = models.CharField(max_length=255)
     review_name = models.CharField(max_length=500, blank=True, default='')
@@ -755,7 +754,7 @@ class FeedbackEventRecipient(models.Model):
     event = models.ForeignKey(Event, on_delete=models.PROTECT, related_name='feedback_recipients', db_column='event_id')
     attendee_name = models.CharField(max_length=255)
     attendee_email = models.EmailField(max_length=320)
-    learner_id = models.CharField(max_length=100, blank=True, default='')
+    enrolment_id = models.CharField(max_length=100, blank=True, default='')
     attendance_source = models.CharField(max_length=80, default='spreadsheet')
     attendance_reference = models.CharField(max_length=255, blank=True, default='')
     token_hash = models.CharField(max_length=64, null=True, blank=True)
@@ -836,7 +835,7 @@ class EventRsvpRecipient(models.Model):
     campaign = models.ForeignKey(EventRsvpCampaign, on_delete=models.CASCADE, related_name='recipients', db_column='campaign_id')
     recipient_name = models.CharField(max_length=255)
     recipient_email = models.EmailField(max_length=320)
-    learner_id = models.CharField(max_length=100, blank=True, default='')
+    enrolment_id = models.CharField(max_length=100, blank=True, default='')
     token_hash = models.CharField(max_length=64, null=True, blank=True)
     token_expires_at = models.DateTimeField(null=True, blank=True)
     invite_status = models.CharField(max_length=20, default='pending')
@@ -877,7 +876,7 @@ class FeedbackResponse(models.Model):
         FeedbackEmployerReviewDelivery, on_delete=models.PROTECT, related_name='responses',
         db_column='employer_review_delivery_id', null=True, blank=True,
     )
-    learner_id = models.CharField(max_length=100, blank=True, default='')
+    enrolment_id = models.CharField(max_length=100, blank=True, default='')
     learner_name = models.CharField(max_length=255)
     programme = models.CharField(max_length=255, blank=True, default='')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')

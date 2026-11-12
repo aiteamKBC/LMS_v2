@@ -59,13 +59,13 @@ class Command(BaseCommand):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT g.learner_id, g.learner_name, count(*) AS grants, sum(g.points) AS points
+                SELECT g.enrolment_id, g.learner_name, count(*) AS grants, sum(g.points) AS points
                   FROM "Engagement"."points_grants" g
-                 WHERE g.learner_id !~ '^[0-9]+$'
+                 WHERE g.enrolment_id !~ '^[0-9]+$'
                     OR NOT EXISTS (
-                         SELECT 1 FROM enrolment."Created_users" cu WHERE cu.id::text = g.learner_id
+                         SELECT 1 FROM enrolment."Created_users" cu WHERE cu.id::text = g.enrolment_id
                        )
-                 GROUP BY g.learner_id, g.learner_name
+                 GROUP BY g.enrolment_id, g.learner_name
                  ORDER BY grants DESC
                 """
             )

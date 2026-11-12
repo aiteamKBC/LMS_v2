@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from . import home_summary, views
+from . import curriculum_names, home_summary, views
 
 
 def previous_summary(visibility):
@@ -87,6 +87,12 @@ class HomeSourceTests(SimpleTestCase):
             patch.object(views, 'table_exists', return_value=False),
             patch.object(views, 'get_holiday_rows_safe', return_value=[]),
             patch.object(views, 'authoring_module_content_counts', return_value=({}, {})),
+            # Force non-PostgreSQL path in home_relationship_rows() so authoring_fetch_all
+            # (mocked above) is used instead of the jsonb_agg PostgreSQL branch.
+            patch.object(views, 'connection', vendor='sqlite'),
+            # curriculum_names.attach() is a no-op on SQLite; replicate that here so
+            # home_source_rows() doesn't attempt DB lookups in the test environment.
+            patch.object(curriculum_names, 'attach', return_value=None),
         ):
             stack.enter_context(patcher)
 

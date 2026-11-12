@@ -16,9 +16,16 @@ export interface ProgrammeFocus {
   issueCount: number;
 }
 
+export interface AttentionRecord {
+  id: string;
+  name: string;
+  programme?: string;
+}
+
 export interface CurriculumHomeSummary {
   stats: { programmes: number; activeCohorts: number; groups: number; openIssues: number };
   attentionCounts: Record<'programme-ksb-source' | 'module-mapping' | 'draft-content' | 'group-coach' | 'module-tutor', number>;
+  attentionRecords: Record<string, AttentionRecord[]>;
   continueModules: HomeModule[];
   programmeFocus: ProgrammeFocus[];
 }

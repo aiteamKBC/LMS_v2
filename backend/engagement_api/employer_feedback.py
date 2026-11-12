@@ -92,11 +92,11 @@ def reconcile_employer(employer_id):
     ))
     for learner in learners:
         sync_review_feedback(learner.pk)
-    pending_scope = Q(learner_id__in=[str(learner.pk) for learner in learners])
+    pending_scope = Q(enrolment_id__in=[str(learner.pk) for learner in learners])
     if email:
         pending_scope |= Q(employer_email__iexact=email)
     for delivery in FeedbackEmployerReviewDelivery.objects.filter(pending_scope, employer_id__isnull=True):
-        learner = EnrolmentUser.all_learners.filter(pk=delivery.learner_id).first()
+        learner = EnrolmentUser.all_learners.filter(pk=delivery.enrolment_id).first()
         if learner is not None:
             resolve_pending_delivery(delivery, learner)
 
@@ -182,7 +182,7 @@ def response_save(request, employer_id, delivery_id):
     if delivery is None:
         return json_error('Feedback not found.', status=404)
     return feedback.save_owned_response(
-        request, learner_id=delivery.learner_id, learner_name=account.display_name or delivery.employer_name,
+        request, learner_id=delivery.enrolment_id, learner_name=account.display_name or delivery.employer_name,
         form=delivery.form, delivery=None, recipient=delivery, employer_review_delivery_id=delivery.id,
     )
 
@@ -198,7 +198,7 @@ def photo_upload(request, employer_id, delivery_id, question_id):
     if delivery is None:
         return json_error('Feedback not found.', status=404)
     return feedback.upload_owned_photo(
-        request, learner_id=delivery.learner_id, learner_name=account.display_name or delivery.employer_name,
+        request, learner_id=delivery.enrolment_id, learner_name=account.display_name or delivery.employer_name,
         form=delivery.form, delivery=None, recipient=delivery, question_id=question_id,
         employer_review_delivery_id=delivery.id,
     )

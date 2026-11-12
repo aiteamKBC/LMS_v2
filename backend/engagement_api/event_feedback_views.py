@@ -81,7 +81,7 @@ def event_campaign(request, event_id):
             } for item in campaigns],
             'recipients': [{
                 'id': item.id, 'name': item.attendee_name, 'email': item.attendee_email,
-                'learnerId': item.learner_id or None, 'inviteStatus': item.invite_status,
+                'learnerId': item.enrolment_id or None, 'inviteStatus': item.invite_status,
                 'sentAt': _iso(item.invitation_sent_at), 'error': item.invitation_error,
             } for item in recipients.order_by('attendee_name', 'id')],
             'qrAttendance': [{
@@ -224,7 +224,7 @@ def public_event_access(request):
         response, _ = FeedbackResponse.objects.select_for_update().get_or_create(
             form=form, event_recipient=recipient,
             defaults={
-                'learner_id': recipient.learner_id, 'learner_name': recipient.attendee_name,
+                'learner_id': recipient.enrolment_id, 'learner_name': recipient.attendee_name,
                 'programme': '',
             },
         )
