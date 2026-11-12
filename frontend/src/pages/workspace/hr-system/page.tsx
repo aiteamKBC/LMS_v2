@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { CertificateDocument } from '@/components/feature/CertificateDocument';
@@ -138,6 +138,11 @@ export default function HRSystemWorkspace() {
   const { auth } = useAuth();
   const [params, setParams] = useSearchParams();
   const view = VIEWS.some(item => item.value === params.get('view')) ? params.get('view')! : 'overview';
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const main = contentRef.current?.closest<HTMLElement>('.workspace-main');
+    if (main) main.scrollTop = 0;
+  }, [view]);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedLearner, setSelectedLearner] = useState(DEMO_LEARNERS[0].id);
@@ -159,14 +164,14 @@ export default function HRSystemWorkspace() {
     <div className={styles.toolbar}><PageTabs label="Filter learners by status" value={filter} onChange={setFilter} items={[
       { value: 'all', label: 'All learners', count: 3 }, { value: 'Completed', label: 'Completed', count: 1 }, { value: 'On track', label: 'On track', count: 1 }, { value: 'At risk', label: 'At risk', count: 1, tone: 'critical' },
     ]} /><label className={styles.search}><AppIcon name="ri-search-line" /><input aria-label="Search demo learners" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learners…" /></label></div>
-    <div className={styles.tableScroll}><table className={styles.table}><caption className="sr-only">Demo programme learner progress</caption><thead><tr><th>Learner</th><th>Actual / planned</th><th>Learning</th><th>KSBs achieved</th><th>Status</th><th><span className="sr-only">Details</span></th></tr></thead><tbody>
-      {visible.map(learner => <tr key={learner.id}><td><div className={styles.person}><span className={`${styles.avatar} ${styles[`avatar${learner.id.slice(-1)}`]}`}>{learner.initials}</span><div><strong>{learner.name}</strong><small>{learner.email}</small></div></div></td><td><strong>{number(actualHours(learner))}<span className={styles.muted}> / 850h</span></strong><small className={styles.hoursNote}>{difference(actualHours(learner) - 850)} vs plan</small></td><td><Progress value={learningProgress(learner)} risk={learner.status === 'At risk'} /></td><td><button className={styles.textButton} type="button" onClick={() => setDetails(learner)} aria-label={`View KSBs for ${learner.name}`}>{learner.achievedKsbCodes.length} <span className={styles.muted}>/ 62</span><AppIcon name="ri-arrow-right-up-line" /></button></td><td><LearnerStatus learner={learner} /><small>{learner.dueLabel}</small></td><td><button type="button" className={styles.iconButton} aria-label={`View details for ${learner.name}`} onClick={() => { setSelectedLearner(learner.id); setDetails(learner); }}><AppIcon name="ri-arrow-right-line" /></button></td></tr>)}
+    <div className={styles.tableScroll}><table className={`${styles.table} ${styles.learnersTable}`}><caption className="sr-only">Demo programme learner progress</caption><thead><tr><th>Learner</th><th>Actual / planned</th><th>Learning</th><th>KSBs achieved</th><th>Status</th><th><span className="sr-only">Details</span></th></tr></thead><tbody>
+      {visible.map(learner => <tr key={learner.id}><td><div className={styles.person}><span className={`${styles.avatar} ${styles[`avatar${learner.id.slice(-1)}`]}`}>{learner.initials}</span><div><strong>{learner.name}</strong><small>{learner.email}</small></div></div></td><td data-label="Actual / planned"><strong>{number(actualHours(learner))}<span className={styles.muted}> / 850h</span></strong><small className={styles.hoursNote}>{difference(actualHours(learner) - 850)} vs plan</small></td><td data-label="Learning"><Progress value={learningProgress(learner)} risk={learner.status === 'At risk'} /></td><td data-label="KSBs achieved"><button className={styles.textButton} type="button" onClick={() => setDetails(learner)} aria-label={`View KSBs for ${learner.name}`}>{learner.achievedKsbCodes.length} <span className={styles.muted}>/ 62</span><AppIcon name="ri-arrow-right-up-line" /></button></td><td data-label="Status"><LearnerStatus learner={learner} /><small>{learner.dueLabel}</small></td><td><button type="button" className={styles.iconButton} aria-label={`View details for ${learner.name}`} onClick={() => { setSelectedLearner(learner.id); setDetails(learner); }}><AppIcon name="ri-arrow-right-line" /></button></td></tr>)}
     </tbody></table>{visible.length === 0 && <p className={styles.empty}>No demo learners match your search and status filter.</p>}</div>
     <div className={styles.panelFooter}><span>Learning completion and KSB achievement are measured separately.</span><span>As at 12 Nov 2026 · Demo</span></div>
   </section>;
 
   return <div className={styles.root}><WorkspaceShell appearance="learner" role="integrations" roleLabel="HR System" workspaceLabel="HR System" navItems={navItems} pageTitle="HR System" pageSubtitle="Learning connected to your people" userName={auth.account?.displayName ?? 'Administrator'} headerExtras={demoLabel} hideBreadcrumbs>
-    <div className={styles.content}>
+    <div ref={contentRef} className={styles.content}>
       <div className={styles.pageHeading}><div><p className={styles.eyebrow}><span className={styles.brandDot} /> KBC LEARNING · HR SYSTEM</p><h1>{view === 'overview' ? 'Learning that moves people forward.' : VIEWS.find(item => item.value === view)?.label}</h1><p className={styles.muted}>One clear view of programme hours, skills and the journey into Breathe HR.</p></div><button type="button" className={styles.primaryButton} onClick={() => go(view === 'connections' ? 'overview' : 'connections')}><AppIcon name="ri-links-line" />{view === 'connections' ? 'Back to overview' : 'Breathe connection'}</button></div>
       <div className={styles.demoNotice}><AppIcon name="ri-information-line" /><p><strong>Presentation demo.</strong> Three fictional learners. Sample hours, progress, KSBs and alerts. Sending from this screen is not enabled.</p><span>12 NOV 2026</span></div>
 
