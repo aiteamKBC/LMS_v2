@@ -25,9 +25,9 @@ describe('Recordings page guides', () => {
     trigger.focus(); fireEvent.click(trigger);
     expect(screen.getByRole('dialog', { name: tutorial.title })).toBeVisible();
     const video = screen.getByLabelText(`${tutorial.title} screen recording`) as HTMLVideoElement;
-    expect(video.querySelector('source')).toHaveAttribute('src', `/help/recordings/v1/${tutorial.id}.webm`);
+    expect(video.querySelector('source')).toHaveAttribute('src', `/help/recordings/v2/${tutorial.id}.webm`);
     expect(video.querySelector('track')).toHaveAttribute('srclang', 'en');
-    expect(video).toHaveAttribute('poster', `/help/recordings/v1/${tutorial.id}.jpg`);
+    expect(video).toHaveAttribute('poster', `/help/recordings/v2/${tutorial.id}.jpg`);
     for (const chapter of tutorial.chapters) expect(screen.getByText(chapter.text)).toBeVisible();
     Object.defineProperty(video, 'readyState', { configurable: true, value: 1 });
     fireEvent.click(screen.getByText(tutorial.chapters[1].title, { exact: true }).closest('button')!);

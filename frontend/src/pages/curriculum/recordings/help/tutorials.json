@@ -13,10 +13,10 @@
     "id": "tutor-recordings", "title": "Tutor session recordings", "path": "/curriculum/recordings",
     "chapters": [
       { "id": "overview", "title": "Find teaching session recordings", "text": "This page brings together lectures linked to LMS modules. Choose a calendar view or browse the module directory to find a session." },
-      { "id": "calendar", "title": "Choose a calendar view", "text": "Switch between Day, Week and Month. Select Week to see the teaching sessions scheduled across the selected week." },
+      { "id": "calendar", "title": "Choose a calendar view", "text": "Use the View buttons to switch between Day, Work week, Week and Month. Select Week to see teaching sessions across the selected week. The small calendar lets you choose a date." },
       { "id": "search", "title": "Search for a lecture", "text": "Enter part of a lecture title, module or programme name. Use the results to find the session you need quickly." },
-      { "id": "filters", "title": "Filter the recording library", "text": "Use More filters to refine the programme and recording status. All recordings includes every status, while Ready to download shows available files." },
-      { "id": "details", "title": "Open lecture details", "text": "Select a lecture in the calendar to open its details panel. Review the date, programme, module and week before opening the evidence." },
+      { "id": "filters", "title": "Filter the recording library", "text": "Choose the programme and recording status beside the search box. All recordings includes every status. Open More filters to refine the cohort, group and module, or include draft programmes and archived modules." },
+      { "id": "details", "title": "Open lecture details", "text": "Select a lecture in the calendar to open the details drawer on the right. Review the date, time, programme, module and week. Scroll inside the drawer to reach the transcript, attendance and teaching quality check." },
       { "id": "recordings", "title": "Play or download a recording", "text": "For a ready recording, use Play to watch the video or Download to save it. Files that are not ready display their current status." },
       { "id": "attendance", "title": "Review attendance", "text": "Open View attendance and saved files to check learner names, time in the session and attendance status. Download attendance sheet exports the register." },
       { "id": "quality", "title": "Find transcripts and teaching quality checks", "text": "Open Transcript to access the available transcript tools. Use Open teaching quality check to start a review of the teaching session." },
@@ -27,12 +27,12 @@
   {
     "id": "coach-meetings", "title": "Coach meetings", "path": "/curriculum/coaching-recordings",
     "chapters": [
-      { "id": "coach", "title": "Choose the coach", "text": "Select a name from Coach. The meeting calendar loads after you choose the coach whose meetings you want to review." },
+      { "id": "coach", "title": "Choose the coach", "text": "Open the Coach menu and select a name. Use Search coaches or search within the menu to find a coach. The meeting calendar loads after you choose the coach whose meetings you want to review." },
       { "id": "period", "title": "Choose the calendar period", "text": "Use Calendar period to choose Day, Week or Month. Select Week to review meetings across the selected week." },
       { "id": "status", "title": "Filter by meeting status", "text": "Ready to action focuses on meetings ready for review. Choose All meetings to include every loaded meeting that matches the other filters." },
       { "id": "type", "title": "Choose a meeting type", "text": "Meeting type separates monthly coaching, progress reviews, student support and other meetings. Select MCM to focus on monthly coaching meetings." },
       { "id": "learner", "title": "Filter by learner and LMS match", "text": "Learner narrows the results to one person. Match describes the link to an LMS booking. The time zone controls how meeting times are displayed." },
-      { "id": "details", "title": "Open the meeting", "text": "Select a meeting card in the calendar to open the meeting details. The tabs bring its recording, attendance and other evidence together." },
+      { "id": "details", "title": "Open the meeting", "text": "Select a meeting card in the calendar to open the details drawer on the right. Use its tabs to switch between Overview, Recording, Attendance, Transcript and Quality check. Close the drawer to return to the calendar." },
       { "id": "overview", "title": "Check the meeting information", "text": "In Overview, review the date, time, coach, learners and meeting type before assessing the session." },
       { "id": "recording", "title": "Review recording parts", "text": "Recording lists the available saved parts. Use Play to watch a part or Download to save the file you need." },
       { "id": "attendance", "title": "Check actual attendance", "text": "Attendance shows participants and their time in the meeting. A scheduled appointment alone does not confirm attendance." },

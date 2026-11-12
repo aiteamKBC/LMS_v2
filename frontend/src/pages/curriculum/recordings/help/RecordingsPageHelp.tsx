@@ -20,6 +20,6 @@ export function RecordingsPageHelp({ guideId }: { guideId: GuideId }) {
     <div className={styles.launcherSpacer} aria-hidden="true" />
     <EnrolmentHelpLauncher title={tutorial.title} hintStorageKey="recordings-help-hint-hidden" onOpen={() => setOpen(true)} />
     {open && <EnrolmentTutorial tutorial={tutorial} initialChapter={0} onClose={() => setOpen(false)}
-      assetBase={`${import.meta.env.BASE_URL}help/recordings/v1`} chapterTimes={timings[tutorial.id]} />}
+      assetBase={`${import.meta.env.BASE_URL}help/recordings/v2`} chapterTimes={timings[tutorial.id]} />}
   </>;
 }
