@@ -47,7 +47,7 @@ ASSIGNED_SUBJECTS_SQL = '''
             CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END
         ) entry
         UNION
-        SELECT coalesce(m.curriculum_module_id,nullif(m.module_ref,'')) FROM source
+        SELECT m.curriculum_module_id FROM source
         JOIN "Learner".learners l ON l.enrolment_id=source.id
         JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
         WHERE jsonb_typeof(source.plan) IS DISTINCT FROM 'array'

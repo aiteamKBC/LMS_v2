@@ -77,7 +77,7 @@ class Command(BaseCommand):
 
     def _mirror(self, cur, email):
         cur.execute(
-            'select id, enrolment_id, lifecycle_status, coach_email '
+            'select id, enrolment_id, lifecycle_status '
             'from "Learner".learners where email_normalized = lower(btrim(%s))', [email],
         )
         columns = [c[0] for c in cur.description]

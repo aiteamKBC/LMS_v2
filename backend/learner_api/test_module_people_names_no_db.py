@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from django.test import RequestFactory, SimpleTestCase
 
+from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 from . import (active_users, attendance_lectures, curriculum, dashboard_header, dashboard_training, my_learning,
                training_plan_dashboard)
 from .module_placement_sql import group_coach_name_sql, module_tutor_name_sql
@@ -176,6 +177,8 @@ class ReaderSqlTests(SimpleTestCase):
         self.assertIsNone(REMOVED_READ.search(statement), statement)
         self.assertIn('curriculum.tutors', statement)
         self.assertIn('AS tutor_name', statement)
+        self.assertIn(f"{module_expected_otjh_sql('m')} AS total_otjh", statement)
+        self.assertNotIn("{module_expected_otjh_sql('m')}", statement)
 
     def test_dashboard_header_modules_with_and_without_coach(self):
         for include_coach in (True, False):

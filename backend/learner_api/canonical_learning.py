@@ -12,6 +12,7 @@ from old_otjh import repository
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .ksb_exclusions import not_excluded_sql
+from .learner_coach_columns import owner_coach_sql
 from .monthly_log_sources import decoded, number, row
 from .current_learning import (
     current_records, current_records_bulk, is_unsynchronised_direct_save, source_payload_metadata,
@@ -23,6 +24,11 @@ UK = ZoneInfo('Europe/London')
 def _ksb_not_excluded(alias='k'):
     """Skip KSB rows the standards migration registered as not counting."""
     return not_excluded_sql(alias, repository._query_alias.get() or repository.DB)
+
+
+def _owner_coach_sql(alias='l'):
+    """The learner row's coach_name/coach_email on the database this query uses."""
+    return owner_coach_sql(alias, repository._query_alias.get() or repository.DB)
 
 
 def is_legacy_record(record):
@@ -86,8 +92,8 @@ def require_profile(learner_id):
 
 
 def profile(learner_id):
-    records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+    records = query(f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,{_owner_coach_sql()},l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         l.planned_hours AS programme_planned_hours,l.learner_start_date,l.learner_end_date,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active
@@ -127,9 +133,11 @@ def programme_planned_hours(learner_id, *, owner=None):
 
 def profile_by_aptem(aptem_id):
     """For already-authorized Audit callers; never use an Aptem ID as a PK."""
-    records = query('''SELECT id,enrolment_id,aptem_id,programme_id,full_name AS name,
-        programme,coach_name,coach_email,email,start_date,end_date,learner_type
-        FROM "Learner".learners WHERE aptem_id=%s''', [aptem_id])
+    records = query(f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,{_owner_coach_sql()},l.email,l.start_date,l.end_date,l.learner_type
+        FROM "Learner".learners l
+        LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
+        WHERE l.aptem_id=%s''', [aptem_id])
     if len(records) != 1:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     return records[0]
@@ -1531,8 +1539,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     if not enrolment_ids:
         return {}
 
-    owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
+    owners = query(f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,{_owner_coach_sql()},l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
         l.planned_hours AS programme_planned_hours,l.learner_start_date,l.learner_end_date,
         EXISTS(SELECT 1 FROM "Learner".progress_transfer_requests t WHERE t.enrolment_id=l.enrolment_id) AS progress_transfer_active

@@ -364,7 +364,7 @@ def _quiz_component_slots(profile, component_ids):
           ) IS NOT NULL
           AND """ + visible_child_sql("c") + """
           AND c.module_catalogue_id IN (
-              SELECT module_ref FROM "Learner".learner_training_plan_modules
+              SELECT curriculum_module_id FROM "Learner".learner_training_plan_modules
               WHERE learner_id = %s
               UNION
               SELECT module_catalogue_id FROM curriculum.components
@@ -993,15 +993,14 @@ def _replace_mirrored_module(profile, from_id, target):
     mirror cannot be updated safely.
     """
     matches = list(LearnerTrainingPlanModule.objects.filter(
-        learner=profile, module_ref=from_id,
+        learner=profile, curriculum_module_id=from_id,
     )[:2])
     if len(matches) != 1:
         return False
 
     module_row = matches[0]
     module_row.module_ref = _s(target.get("moduleId")) or None
-    module_row.module_title = _s(target.get("moduleTitle"))
-    module_row.save(update_fields=["module_ref", "module_title"])
+    module_row.save(update_fields=["curriculum_module"])
     module_row.weeks.all().delete()
 
     weeks = [week for week in target.get("weeks") or [] if isinstance(week, dict)]
@@ -1146,14 +1145,6 @@ def _save_shifted_plan(learner, shifted_plan, from_id="", to_id=""):
 
     mirrored = False
     if profile is not None and target is not None:
-        if not _replace_json_plan_module(
-            LearnerProfile, profile.pk, "learning_plan", profile.learning_plan,
-            from_id, target, explicit,
-        ):
-            LearnerProfile.objects.filter(pk=profile.pk).update(
-                learning_plan=shifted_plan or None,
-            )
-        profile.learning_plan = shifted_plan or None
         mirrored = _replace_mirrored_module(profile, from_id, target)
 
     _sync_legacy_titles_from_json(learner, plan_field)
