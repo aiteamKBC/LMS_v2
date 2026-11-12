@@ -876,6 +876,9 @@ class TeamsAttendanceSyncTests(SimpleTestCase):
         shared = patch('curriculum_api.shared_session_register.shared_register_rows', return_value=[])
         self.shared_rows = shared.start()
         self.addCleanup(shared.stop)
+        reconcile = patch('curriculum_api.parallel_attendance_register.reconcile_parallel_attendance')
+        self.parallel_reconcile = reconcile.start()
+        self.addCleanup(reconcile.stop)
 
     @patch('learner_api.teams_attendance.ensure_teams_attendance_reporting_columns')
     @patch('learner_api.teams_attendance._verified_occurrence_ids', return_value=[])
@@ -931,6 +934,7 @@ class TeamsAttendanceSyncTests(SimpleTestCase):
              patch.object(teams_attendance_module, '_award_attendance_points') as award:
             self.assertEqual(sync_verified_teams_attendance_reporting(module_refs=['SHARED']), 1)
         save.assert_called_once_with(cursor, rows)
+        self.parallel_reconcile.assert_called_once_with({'O'}, database='default')
         cursor.executemany.assert_not_called()  # Shared deliveries do not duplicate the legacy report.
         award.assert_called_once_with([])
         feedback.assert_called_once_with(['O'], using='default')

@@ -25,7 +25,7 @@ import { activeWorkspace, grantedWorkspacesFor, workspacesFor, type PortalWorksp
    ═══════════════════════════════════════════════════════ */
 
 /** Administrators keep their launcher; other accounts switch between their grants. */
-export function WorkspaceSwitcher() {
+export function WorkspaceSwitcher({ label }: { label?: string } = {}) {
   const { auth, isAdmin } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -112,7 +112,7 @@ export function WorkspaceSwitcher() {
           <AppIcon className={`${current ? current.icon : 'ri-dashboard-line'} text-[11px]`} />
         </span>
         <span className="hidden max-w-[9rem] truncate text-[12.5px] font-bold !text-white sm:inline">
-          Workspaces
+          {label ? <span className="kbc-workspace-label"><small>Workspace</small><span>{label}</span></span> : 'Workspaces'}
         </span>
         <AppIcon
           className={`ri-arrow-down-s-line text-[11px] !text-white transition-transform ${open ? 'rotate-180' : ''}`}

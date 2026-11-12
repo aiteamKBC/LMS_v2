@@ -495,7 +495,8 @@ class CalendarChecksTests(unittest.TestCase):
         # Silence for the people already invited, not for the person added: they
         # are forwarded the meeting, which is the only write Graph offers that
         # reaches named recipients alone.
-        self.assertEqual(self.forwards, [('event-1', ['replacement@example.invalid'])])
+        # Microsoft forwarding is forbidden; optional mail uses the LMS.
+        self.assertFalse(self.forwards)
         # Who is invited is the calendar event, not the meeting's options: an
         # attendee-only save sends no onlineMeeting PATCH at all.
         self.v.apply_teams_meeting_options.assert_not_called()
@@ -609,7 +610,8 @@ class CalendarChecksTests(unittest.TestCase):
                           if call[0] == 'DELETE' or (call[0] == 'POST' and not call[1].endswith('/forward'))])
         # The one person this save added is invited directly, so nobody already
         # on the meeting is mailed about them joining it.
-        self.assertEqual(self.forwards, [('event-1', ['replacement@example.invalid'])])
+        # Microsoft forwarding is forbidden; optional mail uses the LMS.
+        self.assertFalse(self.forwards)
 
     def test_unrelated_event_id_rejected_before_graph(self):
         self.assertEqual(self.create().status_code, 201)
@@ -711,8 +713,46 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result)
         announced = [item[2] for item in self.headers if item[0] == 'PATCH' and 'attendees' in (item[3] or {})]
         self.assertEqual(announced, [SILENT_INVITE, SILENT_INVITE])
-        self.assertEqual(sorted(self.forwards), sorted([('event-1', ['joined@example.invalid']),
-                                                        ('event-2', ['joined@example.invalid'])]))
+        # Microsoft forwarding is forbidden; optional mail uses the LMS.
+        self.assertFalse(self.forwards)
+
+    def test_privacy_failure_is_not_reported_as_a_request_to_move_session_dates(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.events['event-1']['hideAttendees'] = False
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            attendees=['learner@example.invalid', 'new@example.invalid'])
+        held = copy.deepcopy(self.tracked)
+        self.calls.clear()
+        self.forwards.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 409, result)
+        self.assertEqual(result['code'], 'teams_attendee_privacy_unconfirmed')
+        self.assertIn('Updating session dates does not resolve', result['error'])
+        self.assertFalse([call for call in self.calls if call[0] != 'GET'])
+        self.assertFalse(self.forwards)
+        self.assertEqual(self.tracked, held)
+
+    def test_microsoft_forwarding_is_disabled_even_for_one_person(self):
+        sent = Mock(return_value={})
+        warnings = self.v.forward_teams_invitation(sent, 'owner', ['ROOT', 'ROOT'],
+            ['first@example.invalid', 'second@example.invalid', 'FIRST@example.invalid'])
+        sent.assert_not_called()
+        self.assertEqual([item['code'] for item in warnings], ['teams_calendar_mail_disabled'])
+
+    def test_weekday_privacy_failure_does_not_request_a_schedule_update(self):
+        self.prepare_weekday_path()
+        self.assertEqual(self.create().status_code, 201)
+        self.events['event-2']['hideAttendees'] = False
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            attendees=['learner@example.invalid', 'new@example.invalid'])
+        self.v.stored_calendar_series = lambda series: series.get('calendar_series') or []
+        self.calls.clear()
+        self.forwards.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 409, result)
+        self.assertEqual(result['code'], 'teams_attendee_privacy_unconfirmed')
+        self.assertFalse([call for call in self.calls if call[0] != 'GET'])
+        self.assertFalse(self.forwards)
 
     def test_save_invitations_sends_nothing_even_to_the_person_it_added(self):
         """"Save invitations" only saves who is invited.
@@ -1110,8 +1150,8 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(self.v.apply_teams_meeting_options.call_args.kwargs['groups'], {'settings'})
         self.assertEqual(self.series[0]['recording'], 'record-transcribe')
 
-    def test_a_403_on_the_roles_still_invites_the_added_person_and_marks_roles_pending(self):
-        """The reported incident: a 403 on the options PATCH no longer strands the invitation."""
+    def test_a_403_on_roles_keeps_roster_and_marks_roles_pending_without_forwarding(self):
+        """A 403 remains visible while the saved roster survives and no Microsoft forward runs."""
         self.assertEqual(self.create().status_code, 201)
         self.v.apply_teams_meeting_options = self.refused({'roles'})
         self.forwards.clear()
@@ -1120,9 +1160,10 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertTrue(result['partial'])
         self.assertFalse(result['optionsApplied'])
         self.assertEqual(result['optionsPending'], ['roles'])
-        # The invitation went ahead: on the calendar, and forwarded to the person added alone.
+        # Calendar membership was saved; Microsoft forwarding remains disabled.
         self.assertIn('co@example.invalid', [item['emailAddress']['address'] for item in self.events['event-1']['attendees']])
-        self.assertEqual(self.forwards, [('event-1', ['co@example.invalid'])])
+        # Microsoft forwarding is forbidden; optional mail uses the LMS.
+        self.assertFalse(self.forwards)
         # The roster Microsoft accepted is saved, so the next save does not invite them again.
         self.assertEqual(self.series[0]['co_organizers'], ['co@example.invalid'])
         warning = result['warnings'][0]

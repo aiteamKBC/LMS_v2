@@ -1,4 +1,5 @@
 import { fileProbe } from './page.helpers';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { ActivityRetakeTimeDialog, ActivityTimeLimitNotice } from '@/components/feature/ActivityRetakeTimeDialog';
@@ -850,17 +851,6 @@ export default function ComponentViewPage() {
       hideBreadcrumbs
     >
       <div className="mx-auto page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        <button
-          onClick={() => navigate(backHref)}
-          className="mb-5 inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-4 py-2.5 text-[13px] font-semibold text-foreground-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:text-primary-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 cursor-pointer"
-        >
-          <span className="grid h-6 w-6 place-items-center rounded-lg bg-primary-50 text-primary-700">
-            <AppIcon className="ri-arrow-left-line text-sm" />
-          </span>
-          Back to training plan
-        </button>
-
-
         {expiredTiming && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4">
           <p>Your time needs to sync before you finish. Your previous time and answers are kept.</p>
           <button type="button" disabled={recoveringTiming} onClick={restartTiming} className="mt-2 font-semibold underline">{recoveringTiming ? 'Restoring...' : 'Restore saved time'}</button>
@@ -870,13 +860,7 @@ export default function ComponentViewPage() {
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError ? (
-          <div role="alert" className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6">
-            <EmptyState text={loadError} />
-            <button type="button" onClick={() => setLoadRevision(value => value + 1)}
-              className="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">
-              Try again
-            </button>
-          </div>
+          <LearnerLoadError title="Could not load this learning activity" error={loadError} onRetry={() => setLoadRevision(value => value + 1)} />
         ) : !component ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
         ) : !canProgress ? (

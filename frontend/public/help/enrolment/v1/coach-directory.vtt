@@ -1,0 +1,26 @@
+WEBVTT
+
+1
+00:00:01.600 --> 00:00:09.200
+Browse coaches
+Find coaches and their public booking pages. Search by name or link, sort by name, and filter by available booking type.
+
+2
+00:00:09.200 --> 00:00:18.300
+Choose a layout
+Switch between List and Cards. Each coach shows the booking options configured for their public page.
+
+3
+00:00:18.300 --> 00:00:25.700
+Preview or share a booking page
+Preview opens the public booking page. Copy page link lets you share it. Confirm availability before promising a learner a slot.
+
+4
+00:00:25.700 --> 00:00:34.900
+Add and update a coach
+Add coach opens the editor. Enter the coach name and booking URLs, then Save coach. Edit updates an existing entry.
+
+5
+00:00:34.900 --> 00:00:45.593
+Remove an entry
+Remove coach asks for confirmation before deleting a directory entry. Check the coach name and the effect on shared links before confirming.

@@ -5,8 +5,8 @@ import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 export function ComponentAccessNotice({ onBack }: { onBack?: () => void }) {
   const access = useComponentAccessWindow();
   return (
-    <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center md:p-8">
-      <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+    <div role="status" className="rounded-2xl border border-background-200 bg-background-50 p-6 text-center md:p-8">
+      <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
         <AppIcon className="ri-time-line text-xl" />
       </span>
       <h2 className="font-heading text-base font-bold text-foreground-900">Learning components are currently closed</h2>

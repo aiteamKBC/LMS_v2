@@ -4415,8 +4415,8 @@ def _same_database(first: str, second: str) -> bool:
     return all(a.get(key) == b.get(key) for key in ("ENGINE", "NAME", "HOST", "PORT"))
 
 
-def _shared_expected_otjh():
-    """Every component's expected_otjh from the shared curriculum cache, or None.
+def _shared_expected_otjh(ids):
+    """These components' expected_otjh from the shared curriculum cache, or None.
 
     Only when both aliases the lookup below tries are the same database: the
     alias fallback exists for a deployment where they are not, and there the
@@ -4427,7 +4427,7 @@ def _shared_expected_otjh():
     from curriculum_api import content_cache
     try:
         with connections["default"].cursor() as cur:
-            return content_cache.expected_otjh_map(cur)
+            return content_cache.expected_otjh(cur, ids)
     except Exception as exc:
         logger.warning("Shared expected_otjh unavailable; reading by id: %s", exc)
         return None
@@ -4437,7 +4437,7 @@ def curriculum_expected_otjh_by_component_id(component_ids: list[str]) -> dict[s
     ids = sorted({clean_text(component_id) for component_id in component_ids if clean_text(component_id)})
     if not ids:
         return {}
-    known = _shared_expected_otjh()
+    known = _shared_expected_otjh(ids)
     if known is not None:
         return {
             component_id: float(known[component_id])

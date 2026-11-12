@@ -21,6 +21,12 @@ describe('personal course identity and transport', () => {
     expect(activePersonalLearning('/learner/my-learning/commercial/13')).toBeNull();
     expect(activePersonalLearning('/curriculum/module-builder')).toBeNull();
   });
+  it('returns personal study to its enrolment page without accepting unrelated users paths', () => {
+    rememberPersonalLearning(id, '/users/my-courses');
+    expect(readPersonalLearning()?.returnTo).toBe('/users/my-courses');
+    rememberPersonalLearning(id, '/users/7');
+    expect(readPersonalLearning()?.returnTo).toBe('/users/my-courses');
+  });
   it('restores only the owning administrator and clears the context on account changes', () => {
     rememberPersonalLearning(id);
     syncPersonalLearningAccount({ id: 7, role: 'admin' });

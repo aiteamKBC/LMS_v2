@@ -484,7 +484,7 @@ def next_title(items, today):
     return next((i['title'] for i in entries if not i['completed']), None)
 
 
-def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False):
+def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None, include_activity_items=False, show_current_replacements=False):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
     from .progress_transfer_policy import merged_percent
     from .progress_demo import credit as demo_credit
@@ -528,7 +528,13 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
     approved = {f"current:{item['moduleId']}": item for item in transfers if item['status'] == 'approved'}
     links = {**metadata['imported_courses'], **metadata['replacement_courses']}
     uses = Counter(links.values())
-    replaced = {ref for ref, old in links.items() if old in by_id and uses[old] == 1 and ref not in approved}
+    # My Learning exposes authored successors with their own native progress.
+    # Exact imports still use the original catalogue; transfer/directory callers
+    # retain their existing population unless they opt into this display choice.
+    replaced = {ref for ref, old in links.items() if old in by_id and uses[old] == 1 and ref not in approved
+                and (not show_current_replacements or ref in metadata['imported_courses'])}
+    replacement_groups = {old: ref for ref, old in metadata['replacement_courses'].items()
+                          if show_current_replacements and uses[old] == 1 and ref not in replaced}
     from .imported_course_continuation import continuation_components
     continuations = continuation_components(metadata,
         {ref: subject['_items'] for ref, subject in by_id.items()}, components, metadata['activity_dates'])
@@ -610,7 +616,7 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         imported = subject['source'] == 'legacy' and subject['id'] in metadata['imported_courses'].values()
         if imported:
             module = None
-        group = metadata['previous_learning_groups'].get(subject['id'])
+        group = metadata['previous_learning_groups'].get(subject['id']) or replacement_groups.get(subject['id'])
         if subject['source'] == 'legacy' and group in by_id and by_id[group]['source'] == 'current':
             subject['previousLearningFor'] = group
         if metadata['imported_courses'].get(subject['id']):
@@ -820,7 +826,8 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
     modules = metadata['modules']
     with projection_stage('card_aggregation'):
-        cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits)
+        cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits,
+                                       show_current_replacements=True)
     if upcoming_only:
         # Reuse native completion before selecting deadlines, just as the
         # initial catalogue does. No cover or programme metric reads on expansion.
@@ -929,7 +936,7 @@ def read_search(source, owner, term, offset):
         ORDER BY c.source_course_ref''', [[c['id'] for c in courses],term,excluded]) if courses else []
     legacy_matches = {f"legacy:{int(row['source_course_ref'])}" for row in found}
     cards, _ = assemble_cards(native,metadata['current_subjects'],courses,definitions,done,started,hours,
-        metadata,records,metadata['modules'] or {},credits,search=term.lower())
+        metadata,records,metadata['modules'] or {},credits,search=term.lower(),show_current_replacements=True)
     matches = [dict(id=c['id']) for c in cards if c['_matches'] or c['id'] in legacy_matches]
     return dict(matches=matches[offset:offset+50], nextOffset=offset+50 if len(matches)>offset+50 else None)
 
@@ -974,7 +981,7 @@ def read_module(source, kind, owner, subject_id):
     transfers = metadata.get('progress_transfers', [])
     approved = {f"current:{item['moduleId']}": item for item in transfers if item['status'] == 'approved'}
     old = links.get(subject_id)
-    if old in owned and Counter(links.values())[old] == 1 and subject_id not in approved:
+    if subject_id in metadata['imported_courses'] and old in owned and Counter(links.values())[old] == 1 and subject_id not in approved:
         subject_id = old
     mid = subject_id[8:] if subject_id.startswith('current:') else owned.get(subject_id,{}).get('curriculum_module_ref')
     scope_ids = [mid] if mid in ids else []

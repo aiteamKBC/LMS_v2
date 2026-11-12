@@ -505,7 +505,9 @@ describe('learner loading and recovery', () => {
     }));
     const Page=(await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
-    expect(await screen.findByText('Plan unavailable')).toBeVisible();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load your learning data');
+    expect(alert).not.toHaveTextContent('Plan unavailable');
     expect(screen.queryByLabelText('Learner programme')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /try again|retry/i })).toBeVisible();
   });
@@ -776,10 +778,12 @@ describe('learner loading and recovery', () => {
         ? new Response(JSON.stringify({ error: 'Attendance unavailable' }), { status: 503 })
         : new Response(JSON.stringify(payload(String(input))))));
     await renderLearnerPage('attendance');
-    expect(await screen.findByText('Attendance unavailable')).toBeInTheDocument();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load your learning data');
+    expect(alert).not.toHaveTextContent('Attendance unavailable');
     failed = false;
     fireEvent.click(screen.getByRole('button', { name: /try again/i }));
     expect(await screen.findByText('No lectures yet')).toBeInTheDocument();
-    expect(screen.queryByText('Attendance unavailable')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

@@ -3,6 +3,7 @@ export type { TeamsPlannedSession, TeamsSchedulePreviewRow, GroupDeliveryPattern
 import { sessionDisplayTitle } from '../shared/sessionDisplayTitle';
 import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { Notice } from '@/components/ui/Notice';
 import {
   formatCalendarDateTime,
   getCalendarTimeZone,
@@ -48,23 +49,11 @@ function HolidayWarningNote({ plan }: { plan: HolidayShiftPlan }) {
       : formatDateLabel(closure.date)))
     .join(', ');
   return (
-    <div className="flex items-start gap-2.5 border-b border-amber-200 bg-amber-50/70 px-3 py-2.5">
-      <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-sm text-amber-700"></AppIcon>
-      <div className="space-y-1 text-[11px] leading-relaxed text-amber-900">
-        <p>
-          <span className="font-bold">Heads up: </span>
-          <span className="font-bold">{names.length ? names.join(', ') : 'A cohort holiday'}</span>
-          {' falls on '}
-          <span className="font-semibold">{closureList}</span>
-          {' inside this module’s dates.'}
-        </p>
-        <p>
-          Nothing is changed by that. Every session keeps its own date, none is moved or dropped, and
-          the module ends where its delivery pattern says it ends — whether these sessions run is
-          yours to decide on the week itself.
-        </p>
-      </div>
-    </div>
+    <Notice title="Holidays in this plan" className="m-3"
+      details={<p>{names.length ? names.join(', ') : 'A cohort holiday'} · {closureList}</p>}
+      detailsLabel="View holiday dates">
+      Sessions keep their scheduled dates. Review the affected weeks to decide whether any changes are needed.
+    </Notice>
   );
 }
 
@@ -421,7 +410,7 @@ export function TeamsPeopleFields({ form, patch, prefilling, prefillNotice, onPr
           </p>
         </div>
       )}
-      <FormField label="Presenters" hint="These people can share and record.">
+      <FormField label="Presenters" hint="For LMS-created meetings, tutor presenters are also saved as co-organizers so they can manage breakout rooms. Use an internal Microsoft 365 account.">
         <EntraPeopleInput label="Presenters"
           value={form.presenters}
           onChange={value => patch({ presenters: value })}
@@ -429,7 +418,7 @@ export function TeamsPeopleFields({ form, patch, prefilling, prefillNotice, onPr
       </FormField>
       <FormField
         label="Co-organisers"
-        hint="They run the meeting with the organizer: start and stop the recording, admit people from the lobby and change the meeting options. Invited automatically."
+        hint="Up to 10 people, including presenters on LMS-created meetings. Co-organizers manage breakout rooms, admit people from the lobby and change meeting options. Invited automatically."
       >
         <EntraPeopleInput label="Co-organizers"
           value={form.coOrganizers}

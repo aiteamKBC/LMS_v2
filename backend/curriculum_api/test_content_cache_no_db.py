@@ -23,6 +23,10 @@ ROWS = {
 }
 
 
+OTJH = {'c1': (1.5, 'MOD-A'), 'c2': (None, 'MOD-A'), 'c3': (2, 'MOD-B')}
+OTJH_LIVE = {'c1': 1.5, 'c2': None, 'c3': 2, 'c-new': 4}
+
+
 class FakeCursor:
     """Answers the component statement for whichever modules it is asked for."""
 
@@ -42,8 +46,12 @@ class FakeCursor:
             self._result = [self.collation]
         elif 'information_schema.columns' in sql:
             self._result = [(name,) for name in self.columns]
-        elif 'expected_otjh' in sql:
-            self._result = [('c1', 1.5), ('c2', None)]
+        elif sql == content_cache.INDEX_SQL:
+            self._result = [(cid, mid) for cid, (_otjh, mid) in OTJH.items()]
+        elif sql == content_cache.OTJH_SQL:
+            self._result = [(cid, otjh, mid) for cid, (otjh, mid) in OTJH.items() if mid in params[0]]
+        elif 'expected_otjh' in sql:  # the by-id read
+            self._result = [(cid, OTJH_LIVE[cid]) for cid in params[0] if cid in OTJH_LIVE]
         else:
             if self.delay:
                 time.sleep(self.delay)
@@ -72,15 +80,18 @@ class BrokenCache:
 
 
 @LOCAL_CACHE
+@override_settings(SHARED_VERSION_CACHE_ALLOW_LOCAL=True)
 class CacheTestCase(SimpleTestCase):
     def setUp(self):
+        from config import cache_versions
         cache.clear()
         content_cache.reset_for_tests()
+        cache_versions.reset_for_tests()
         self.addCleanup(content_cache.reset_for_tests)
-        self.epoch = 7
-        patcher = patch.object(content_cache, '_epoch', side_effect=lambda: self.epoch)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # Outside a transaction a bump applies at once, as after a commit.
+        on_commit = patch('django.db.transaction.on_commit', side_effect=lambda fn, using=None: fn())
+        on_commit.start()
+        self.addCleanup(on_commit.stop)
         # The atomic() around the collation read needs a real alias.
         atomic = patch('django.db.transaction.atomic')
         atomic.start()
@@ -108,27 +119,60 @@ class ModuleRowsTests(CacheTestCase):
         content_cache.module_rows(cursor, 'comp', SQL, ['MOD-C'], 2)
         self.assertEqual(cursor.data_reads(), [])
 
-    def test_a_curriculum_write_retires_every_entry(self):
-        content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A'], 2)
-        self.epoch += 1  # what invalidate_curriculum_cache() does to the shared epoch
-        changed = {**ROWS, 'MOD-A': [('c1', 'w1', 'MOD-A')]}
-        cursor = FakeCursor(rows=changed)
-        self.assertEqual(content_cache.module_rows(cursor, 'comp', SQL, ['MOD-A'], 2), {'MOD-A': changed['MOD-A']})
+    def test_a_write_retires_only_its_own_module(self):
+        content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
+        content_cache.note_rows('components', [{'id': 'c1', 'module_catalogue_id': 'MOD-A'}])
+        cursor = FakeCursor()
+        content_cache.module_rows(cursor, 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
         self.assertEqual(cursor.data_reads(), [[['MOD-A']]])
 
-    def test_invalidate_curriculum_cache_moves_the_epoch_the_keys_use(self):
-        """The real epoch, not the patched one: a write must change the key."""
-        content_cache._epoch.side_effect = None
-        content_cache._epoch.side_effect = lambda: views.shared_curriculum_epoch()
-        with patch.object(views, 'ensure_curriculum_epoch_table', return_value=False), \
-                patch.object(views, 'schedule_curriculum_warm'), \
-                patch('curriculum_api.read_model.enqueue_all_curriculum_home_refreshes'), \
-                patch('config.management_safety.reconciliation_command', return_value=False):
-            before = views.shared_curriculum_epoch()
-            views.invalidate_curriculum_cache()
-            views._SHARED_EPOCH_STATE['checked_at'] = 0.0
-            after = views.shared_curriculum_epoch()
-        self.assertNotEqual(before, after)
+    def test_non_content_tables_retire_nothing(self):
+        content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A'], 2)
+        for table in ('learner_activity_display_overrides', 'groups', 'cohorts', 'live_sessions', 'reviews'):
+            content_cache.note_rows(table, [{'module_catalogue_id': 'MOD-A'}])
+        cursor = FakeCursor()
+        content_cache.module_rows(cursor, 'comp', SQL, ['MOD-A'], 2)
+        self.assertEqual(cursor.data_reads(), [])
+
+    def test_a_request_bumps_each_written_module_once_after_the_view(self):
+        content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
+        from config import cache_versions
+        with patch.object(cache_versions, 'bump', wraps=cache_versions.bump) as bump:
+            content_cache.begin_write_scope()
+            for _ in range(50):  # a tree save writes many rows of one module
+                content_cache.note_rows('components', [{'module_catalogue_id': 'MOD-A'}])
+            self.assertEqual(bump.call_count, 0)
+            content_cache.end_write_scope()
+        self.assertEqual(bump.call_count, 1)
+        cursor = FakeCursor()
+        content_cache.module_rows(cursor, 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
+        self.assertEqual(cursor.data_reads(), [[['MOD-A']]])
+
+    def test_retire_all_and_the_curriculum_epoch(self):
+        content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
+        with patch.object(views, 'bump_shared_curriculum_epoch'), patch.object(views, 'schedule_curriculum_warm'), \
+                patch('curriculum_api.read_model.enqueue_all_curriculum_home_refreshes'):
+            views.invalidate_curriculum_cache()  # a non-content write: learner content stays
+            cursor = FakeCursor()
+            content_cache.module_rows(cursor, 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
+            self.assertEqual(cursor.data_reads(), [])
+            views.invalidate_curriculum_cache(content_scope='all')  # a raw-SQL content write
+            cursor = FakeCursor()
+            content_cache.module_rows(cursor, 'comp', SQL, ['MOD-A', 'MOD-B'], 2)
+            self.assertEqual(cursor.data_reads(), [[['MOD-A', 'MOD-B']]])
+
+    def test_a_missing_version_is_a_miss_and_versions_never_repeat(self):
+        from config import cache_versions
+        content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A'], 2)
+        key = cache_versions.version_key(content_cache.NAMESPACE, 'MOD-A')
+        seen = {cache.get(key)}
+        for _ in range(3):
+            cache.delete(key)  # restart / eviction
+            cursor = FakeCursor()
+            content_cache.module_rows(cursor, 'comp', SQL, ['MOD-A'], 2)
+            self.assertEqual(cursor.data_reads(), [[['MOD-A']]])
+            seen.add(cache.get(key))
+        self.assertEqual(len(seen), 4)
 
     def test_a_different_statement_is_a_different_key(self):
         content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A'], 2)
@@ -139,18 +183,18 @@ class ModuleRowsTests(CacheTestCase):
     def test_keys_hold_only_module_ids_and_statement_digests(self):
         content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A', 'odd id/with space'], 2)
         from django.core.cache import caches
-        keys = [key for key in caches['default']._cache if ':cmc:v1:' in key]
+        keys = [key for key in caches['default']._cache if ':cmc:v2:' in key]
         self.assertEqual(len(keys), 2)
         for key in keys:
-            tail = key.split(':cmc:v1:', 1)[1]
-            epoch, part, statement, module = tail.split(':')
-            self.assertEqual((epoch, part, len(statement)), ('7', 'comp', 16))
+            tail = key.split(':cmc:v2:', 1)[1]
+            part, statement, module, version, generation = tail.split(':')
+            self.assertEqual((part, len(statement), len(version), len(generation)), ('comp', 16, 16, 16))
             self.assertIn(module, {'MOD-A', 'h' + content_cache._digest('odd id/with space')})
 
     def test_values_are_compressed_pickles(self):
         content_cache.module_rows(FakeCursor(), 'comp', SQL, ['MOD-A'], 2)
         from django.core.cache import caches
-        key = next(key for key in caches['default']._cache if ':cmc:v1:' in key)
+        key = next(key for key in caches['default']._cache if ':cmc:v2:comp:' in key)
         stored = cache.get(key.split(':', 2)[2])
         self.assertEqual(pickle.loads(zlib.decompress(stored)), ROWS['MOD-A'])
 
@@ -211,28 +255,33 @@ class CollationTests(CacheTestCase):
 
 
 class ExpectedOtjhTests(CacheTestCase):
-    def test_built_once_per_generation_then_served_from_the_process(self):
+    def test_matches_the_by_id_read_and_hits_after_the_first(self):
+        ids = ['c1', 'c2', 'c3', 'missing']
+        first = content_cache.expected_otjh(FakeCursor(), ids)
+        self.assertEqual(first, {'c1': 1.5, 'c2': None, 'c3': 2})
         cursor = FakeCursor()
-        self.assertEqual(content_cache.expected_otjh_map(cursor), {'c1': 1.5, 'c2': None})
-        with patch.object(content_cache, '_get_many', side_effect=AssertionError('process copy expected')):
-            self.assertEqual(content_cache.expected_otjh_map(FakeCursor()), {'c1': 1.5, 'c2': None})
-        self.epoch += 1
-        cursor = FakeCursor()
-        content_cache.expected_otjh_map(cursor)
-        self.assertEqual(len([1 for sql, _ in cursor.executed if 'expected_otjh' in sql]), 1)
+        self.assertEqual(content_cache.expected_otjh(cursor, ids), first)
+        self.assertEqual([sql for sql, _ in cursor.executed if 'curriculum.components' in sql],
+                         ['SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)'])
 
-    def test_other_processes_read_the_shared_copy(self):
-        content_cache.expected_otjh_map(FakeCursor())
-        content_cache._otjh_local.update(epoch=None)  # a different process
+    def test_a_component_the_index_does_not_know_is_read_by_id(self):
+        result = content_cache.expected_otjh(FakeCursor(), ['c1', 'c-new'])
+        self.assertEqual(result, {'c1': 1.5, 'c-new': 4})
+
+    def test_an_edit_to_one_module_rebuilds_only_its_values(self):
+        content_cache.expected_otjh(FakeCursor(), ['c1', 'c3'])
+        content_cache.note_modules(['MOD-B'])
         cursor = FakeCursor()
-        self.assertEqual(content_cache.expected_otjh_map(cursor), {'c1': 1.5, 'c2': None})
-        self.assertEqual(cursor.executed, [])
+        content_cache.expected_otjh(cursor, ['c1', 'c3'])
+        self.assertEqual([params for sql, params in cursor.executed if sql == content_cache.OTJH_SQL],
+                         [[['MOD-B']]])
+        self.assertFalse(any(sql == content_cache.INDEX_SQL for sql, _ in cursor.executed))
 
     def test_learner_and_coach_lookups_match_the_by_id_reads(self):
         from coach_api import views as coach
         from learner_api import learner_detail
         known = {'c1': 2, 'c2': None, 'c3': 0}
-        with patch.object(content_cache, 'expected_otjh_map', return_value=known), \
+        with patch.object(content_cache, 'expected_otjh', side_effect=lambda cur, ids: {i: known[i] for i in ids if i in known}), \
                 patch.object(coach, '_same_database', return_value=True), \
                 patch.object(coach, 'connections') as coach_db, \
                 patch.object(learner_detail, 'connections') as learner_db:
@@ -248,8 +297,8 @@ class ExpectedOtjhTests(CacheTestCase):
     def test_coach_lookup_reads_by_id_when_aliases_are_different_databases(self):
         from coach_api import views as coach
         with patch.object(coach, '_same_database', return_value=False), \
-                patch.object(content_cache, 'expected_otjh_map', side_effect=AssertionError('not shared')):
-            self.assertIsNone(coach._shared_expected_otjh())
+                patch.object(content_cache, 'expected_otjh', side_effect=AssertionError('not shared')):
+            self.assertIsNone(coach._shared_expected_otjh(['c1']))
 
 
 @LOCAL_CACHE
@@ -274,7 +323,7 @@ class SharedRowsCacheTests(SimpleTestCase):
         self.assertEqual(pickle.loads(zlib.decompress(stored)), rows)
 
     def test_rows_follow_the_epoch_and_use_the_payload_ttl(self):
-        self.assertEqual(views.CURRICULUM_ROWS_CACHE_TTL_SECONDS, views.CURRICULUM_CACHE_TTL_SECONDS)
+        self.assertEqual(views.CURRICULUM_ROWS_CACHE_TTL_SECONDS, 300)
         with patch.object(views, 'get_curriculum_rows', side_effect=[{'v': 1}, {'v': 2}]):
             self.assertEqual(views.get_cached_curriculum_rows(), {'v': 1})
             views.shared_curriculum_epoch.return_value = 12
@@ -362,3 +411,103 @@ class InvalidationGuardTests(SimpleTestCase):
             if (self.RAW.search(text) or self.HELPER.search(text)) and 'invalidate_curriculum_cache' not in text:
                 offenders.append(relative)
         self.assertEqual(offenders, [], 'These write cached curriculum tables without invalidate_curriculum_cache().')
+
+
+@LOCAL_CACHE
+class SharedTtlCapTests(SimpleTestCase):
+    """Retired generations must not pile up in Valkey for the payload's full TTL."""
+
+    def setUp(self):
+        views._CURRICULUM_CACHE.clear()
+        self.addCleanup(views._CURRICULUM_CACHE.clear)
+
+    def test_shared_copy_is_capped_but_the_process_copy_keeps_its_ttl(self):
+        with patch.object(views, 'shared_curriculum_epoch', return_value=21), \
+                patch.object(views.cache, 'set', wraps=views.cache.set) as shared_set:
+            views.cached_curriculum_value('cap-check', lambda: {'v': 1}, ttl=1800)
+        self.assertEqual(shared_set.call_args.kwargs['timeout'], views.CURRICULUM_SHARED_TTL_SECONDS)
+        self.assertEqual(views.CURRICULUM_SHARED_TTL_SECONDS, 300)
+        entry = views._CURRICULUM_CACHE['cap-check']
+        import time as _time
+        from datetime import datetime
+        self.assertGreater(entry['expires_at'] - datetime.now().timestamp(), 1700)
+
+    def test_a_shorter_ttl_is_not_raised(self):
+        with patch.object(views, 'shared_curriculum_epoch', return_value=22), \
+                patch.object(views.cache, 'set', wraps=views.cache.set) as shared_set:
+            views.cached_curriculum_value('short-check', lambda: {'v': 1}, ttl=60)
+        self.assertEqual(shared_set.call_args.kwargs['timeout'], 60)
+
+
+class MovePreReadTests(SimpleTestCase):
+    """A write that can move rows between modules retires the modules they leave."""
+
+    def run_pre_read(self, table, payloads, **kwargs):
+        with patch.object(views.connection, 'vendor', 'postgresql'), \
+                patch.object(views, 'fetch_all', return_value=[{'module_catalogue_id': 'MOD-OLD'}]) as read, \
+                patch.object(content_cache, 'note_modules') as noted, \
+                patch.object(content_cache, 'retire_all') as retired:
+            views.note_previous_content_modules(table, payloads=payloads, **kwargs)
+        return read, noted, retired
+
+    def test_update_that_sets_the_module_reads_the_old_one(self):
+        read, noted, retired = self.run_pre_read('components', [{'module_catalogue_id': 'MOD-NEW'}],
+                                                 where_sql='id = %s', where_params=['c1'])
+        self.assertIn('where id = %s', read.call_args.args[0])
+        self.assertEqual(list(noted.call_args.args[0]), ['MOD-OLD'])
+        retired.assert_not_called()
+
+    def test_upsert_by_id_reads_the_old_modules_once(self):
+        read, noted, _ = self.run_pre_read('weeks', [{'id': 'w1', 'module_catalogue_id': 'M'},
+                                                     {'id': 'w2', 'module_catalogue_id': 'M'}], key_columns=['id'])
+        self.assertEqual(read.call_count, 1)
+        self.assertEqual(read.call_args.args[1], [['w1', 'w2']])
+
+    def test_writes_that_cannot_move_rows_read_nothing(self):
+        for table, payloads in (('components', [{'title': 'x'}]), ('modules', [{'module_catalogue_id': 'M'}]),
+                                ('groups', [{'module_catalogue_id': 'M'}])):
+            with self.subTest(table=table):
+                read, noted, retired = self.run_pre_read(table, payloads, where_sql='1=1', where_params=[])
+                read.assert_not_called()
+                noted.assert_not_called()
+                retired.assert_not_called()
+
+    def test_an_unknown_key_or_a_failed_read_retires_everything(self):
+        _read, _noted, retired = self.run_pre_read('ksb_mappings', [{'module_catalogue_id': 'M'}],
+                                                   key_columns=['component_id', 'ksb_code'])
+        retired.assert_called_once()
+        with patch.object(views.connection, 'vendor', 'postgresql'), \
+                patch.object(views, 'fetch_all', side_effect=RuntimeError('down')), \
+                patch.object(content_cache, 'retire_all') as retired:
+            views.note_previous_content_modules('components', payloads=[{'module_catalogue_id': 'M'}],
+                                                where_sql='id = %s', where_params=['c'])
+        retired.assert_called_once()
+
+    def test_every_helper_reports_its_rows(self):
+        """note_live_rows feeds content_cache.note_rows for every write helper."""
+        with patch.object(content_cache, 'note_rows') as noted, \
+                patch('curriculum_api.module_live.note_rows'):
+            views.note_live_rows('components', [{'module_catalogue_id': 'MOD-A'}])
+        noted.assert_called_once_with('components', [{'module_catalogue_id': 'MOD-A'}])
+
+
+class RawContentWriterGuardTests(SimpleTestCase):
+    """Raw SQL writes to cached content tables bypass the helpers' reporting, so
+    each such file must name the module it wrote (note_modules) or retire all."""
+
+    def test_raw_content_writers_retire_their_modules(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        offenders = []
+        for path in root.rglob('*.py'):
+            relative = path.relative_to(root).as_posix()
+            name = path.name
+            if (relative.startswith(('venv/', 'scripts/', 'node_modules/')) or '/migrations/' in relative
+                    or name.startswith(('test', 'run_', 'postgres_')) or '/tests' in relative
+                    or name == 'tests.py' or name.startswith('apply_')):
+                continue
+            text = path.read_text(encoding='utf-8', errors='ignore')
+            if InvalidationGuardTests.RAW.search(text) and not any(
+                    marker in text for marker in ('note_modules(', 'retire_all(', "content_scope='all'")):
+                offenders.append(relative)
+        self.assertEqual(offenders, [], 'These write content tables by raw SQL without retiring the modules.')

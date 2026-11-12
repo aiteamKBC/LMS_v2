@@ -81,8 +81,12 @@ function WeeklyLearningPlanView({ kind, learnerId, canOpenActivities = true, act
   const candidateModules = real?.modules || [];
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
   const initialNavigation = real ? selectedNavigation(real) : undefined;
+  // A retained/header-selected module may be from an earlier teaching period.
+  // Prefer the canonical current week on entry, while retaining manual choices.
+  const currentNavigation = real?.weeks.find(week => week.moduleId === initialNavigation?.moduleId && week.status === 'current')
+    || real?.weeks.find(week => week.status === 'current');
   const resolvedModuleId = (selectedModuleId && candidateModules.some(module => module.id === selectedModuleId) ? selectedModuleId : null)
-    || initialNavigation?.moduleId || candidateModules[0]?.id || null;
+    || currentNavigation?.moduleId || initialNavigation?.moduleId || candidateModules[0]?.id || null;
   const canonicalNavigation = useMemo(() => real?.weeks.filter(week => week.moduleId === resolvedModuleId) || [], [real, resolvedModuleId]);
   const navigationBySlot = useMemo(() => new Map(canonicalNavigation.map(week => [week.slotNumber, week])), [canonicalNavigation]);
   const weeks = useMemo(() => canonicalNavigation.map(week => canonicalWeekRow(week,

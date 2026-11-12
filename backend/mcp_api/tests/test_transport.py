@@ -17,6 +17,7 @@ from mcp_api import dispatch, pii, protocol, ratelimit, views
 from mcp_api import schema as json_schema
 from mcp_api.tests.test_oauth import BASE, FakeManager, OAuthTestCase
 from mcp_api.tools import REGISTRY, ToolError, ToolResult, tool, unregister
+from mcp_api.tools import components
 
 
 def rpc(method, params=None, id_=1):
@@ -32,6 +33,8 @@ class TransportTestCase(OAuthTestCase):
     def setUp(self):
         super().setUp()
         self.enterContext(mock.patch.object(views, "McpOAuthToken", SimpleNamespace(objects=FakeManager(self.store.tokens))))
+        # No database here: write previews see "no learners" unless a test sets a count.
+        self.live_learners = self.enterContext(mock.patch.object(components, "live_learner_count", return_value=0))
         self.client_id, self.body = self.tokens()
         self.access = self.body["access_token"]
         self.seen = {}
@@ -100,13 +103,19 @@ class ProtocolTests(TransportTestCase):
         # Change management, lookups and independently gated content/video tools.
         self.assertEqual(set(REGISTRY), {
             "apply_change", "cancel_change", "list_my_pending_changes", "test_whoami",
-            "find_programmes", "find_cohorts_groups", "find_modules", "get_module_structure", "list_module_weeks",
+            "find_programmes", "find_cohorts_groups", "find_modules", "get_module_structure", "list_module_weeks", "find_free_courses", "list_ksb_standards",
             "list_standard_ksbs", "ksb_coverage", "get_quiz", "list_books", "search_books",
             "save_curriculum_video", "get_video_import_status",
-            "create_curriculum_component", "create_week",
+            "create_curriculum_component", "create_week", "create_quiz_draft", "map_ksbs", "add_lesson_content",
+            "edit_quiz_draft", "clone_quiz_version", "update_component", "save_component_file",
+            "create_programme", "create_cohort", "create_group", "create_module",
         })
         self.assertEqual({name for name, t in REGISTRY.items() if t.writes},
-                         {"apply_change", "save_curriculum_video", "create_curriculum_component", "create_week"})
+                         {"apply_change", "save_curriculum_video", "create_curriculum_component", "create_week",
+                          "create_quiz_draft", "map_ksbs", "add_lesson_content",
+                          "edit_quiz_draft", "clone_quiz_version", "update_component",
+                          "save_component_file", "create_programme", "create_cohort", "create_group",
+                          "create_module"})
 
     def test_invalid_json_unknown_method_and_batch(self):
         bad = self.post("{not json")
@@ -295,9 +304,11 @@ class DispatchTests(SimpleTestCase):
         self.request = SimpleNamespace(login_account=SimpleNamespace(pk=5, role="staff"))
 
     def test_not_allowlisted_is_refused(self):
-        # Step 6 allows GET on the programme list -- never a write, never anything else.
+        # Single-entity creates are allowed (Step 10); the tree save, edits and deletes never are.
         for method, path in (
-            ("POST", "/curriculum_api/curriculum/programmes/"),
+            ("POST", "/curriculum_api/curriculum/programmes/tree/"),
+            ("PATCH", "/curriculum_api/curriculum/programmes/PROG-1/"),
+            ("DELETE", "/curriculum_api/curriculum/cohorts/C1/"),
             ("GET", "/curriculum_api/curriculum/programmes/tree/"),
             ("GET", "/learner_api/enrolment-users/"),
             ("PUT", "/curriculum_api/curriculum/modules/M1/structure/"),

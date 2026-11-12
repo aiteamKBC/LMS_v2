@@ -53,6 +53,9 @@ urlpatterns = [
     path('manual_audit_api/', include('manual_audit_api.urls')),
     path('engagement_api/', include('engagement_api.urls')),
     path('enrolment_api/', include('enrolment_api.urls')),
+    # Reuse an established edge-forwarded prefix; unknown API prefixes can
+    # otherwise be served the SPA index before a request reaches Django.
+    path('login_api/hr-integrations/', include('integrations.urls')),
     path('login_api/', include('login.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/calendar/', include('learner_api.calendar_urls')),
@@ -71,6 +74,7 @@ urlpatterns = [
     path('.well-known/oauth-protected-resource/mcp', mcp_views.oauth_protected_resource_metadata, {'mcp_path': '/mcp'}, name='oauth-protected-resource-mcp'),
     path('.well-known/oauth-protected-resource/mcp/', mcp_views.oauth_protected_resource_metadata, {'mcp_path': '/mcp/'}, name='oauth-protected-resource-mcp-slash'),
     path('.well-known/oauth-authorization-server', mcp_views.oauth_authorization_server_metadata, name='oauth-authorization-server'),
+    path('integrations_api/', include('integrations.urls')),
 ]
 
 if settings.DEBUG:

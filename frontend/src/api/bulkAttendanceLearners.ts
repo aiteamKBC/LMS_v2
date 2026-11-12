@@ -30,6 +30,7 @@ export interface BulkAttendanceKbcHistoryRecord {
   effectiveAttendance?: 'present' | 'awaiting_recording';
   attendanceBasis?: 'recorded' | 'awaiting_recording';
   recoveryOccurrenceId?: string;
+  recoveryGroup?: string;
   makeupForOccurrenceId?: string;
   makeupForDate?: string;
   countsAsSession?: boolean;

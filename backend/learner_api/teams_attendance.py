@@ -1025,6 +1025,11 @@ def sync_verified_teams_attendance_reporting(
             if params:
                 cursor.executemany(query, params)
             upsert_live_session_register(cursor, [*rows, *shared_rows])
+            from curriculum_api.parallel_attendance_register import reconcile_parallel_attendance
+            reconcile_parallel_attendance(
+                set(occurrence_ids) | {row['occurrence_id'] for row in [*rows, *shared_rows]},
+                database=database,
+            )
         from engagement_api.feedback_delivery import reconcile_feedback_after_attendance_commit
         reconcile_feedback_after_attendance_commit(
             [row['occurrence_id'] for row in [*rows, *shared_rows]], using=database,

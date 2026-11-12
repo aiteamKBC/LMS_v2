@@ -69,6 +69,8 @@ export interface ActivitySidebarProps {
   currentWeekKey?: string | null;
   accessOpen?: boolean;
   onAccessBlocked?: () => void;
+  /** Keep this sidebar scrollable beside a long material page. */
+  scrollWithinViewport?: boolean;
 }
 
 const ACTIVITY_TONES: Record<string, { background: string; border: string; color: string }> = {
@@ -136,6 +138,7 @@ export function ActivitySidebar({
   currentWeekKey,
   accessOpen = true,
   onAccessBlocked,
+  scrollWithinViewport = false,
 }: ActivitySidebarProps) {
   const weekComponents = useMemo(() => uniqueWeekActivities(suppliedWeekComponents), [suppliedWeekComponents]);
   const weeks = useMemo(() => suppliedWeeks.map(week => {
@@ -217,7 +220,8 @@ export function ActivitySidebar({
   const shownWeekComponents = visibleRows(weekComponents);
 
   return (
-    <aside aria-label="Module activities" className="min-w-0 space-y-4 lg:sticky lg:top-4">
+    <aside aria-label="Module activities" tabIndex={scrollWithinViewport ? 0 : undefined}
+      className={`min-w-0 space-y-4 lg:sticky lg:top-4 ${scrollWithinViewport ? 'lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto lg:pr-1' : ''}`}>
       {webPoints.error && <p role="status" className="text-xs text-amber-800">Point grouping could not load. Activities are shown below. <button type="button" onClick={webPoints.refresh} className="underline">Retry Points</button></p>}
       {legendItems.length > 0 && <section aria-label="Activity type key" className="rounded-xl border border-primary-100 bg-white px-4 py-3 shadow-sm">
         <p className="text-[10px] font-bold uppercase tracking-wider text-primary-900">Activity types</p>
@@ -254,7 +258,7 @@ export function ActivitySidebar({
         </div>
         <ul className="divide-y divide-emerald-100">
           {requiredOnly && !shownWeekComponents.length && <li className="px-4 py-3 text-xs text-foreground-600">No required activities in this week. <button type="button" onClick={() => setRequiredOnly(false)} className="min-h-11 font-semibold text-primary-800 underline">Show all activities</button></li>}
-          <PointActivityRows components={shownWeekComponents} plan={webPoints.data} current={isCurrentRow} pointIdentityFor={pointIdentityFor} renderRow={(c) => {
+          <PointActivityRows components={shownWeekComponents} plan={webPoints.data} current={isCurrentRow} pointIdentityFor={pointIdentityFor} renderRow={(c, sessionPart) => {
             const cm = sidebarActivityMeta(c);
             const isCurrent = isCurrentRow(c);
             const contentAvailable = contentAvailableFor(c);
@@ -293,7 +297,7 @@ export function ActivitySidebar({
                     <span title={c.title || cm.detail || cm.label} className={`block text-[13px] font-semibold leading-snug truncate ${
                       isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-primary-800'
                     }`}>
-                      {cm.detail || cm.label}
+                      {sessionPart === 'live' ? 'Open live session' : sessionPart === 'recording' ? (contentAvailable ? 'Open recording' : 'Awaiting recording') : cm.detail || cm.label}
                     </span>
                     <ActivityPlanDetails hours={c.expectedOtjh} componentType={c.type}
                       kind={attendanceLearner?.kind ?? kind} learnerId={attendanceLearner?.id ?? id} />
@@ -409,7 +413,7 @@ export function ActivitySidebar({
                   {expanded && (
                     <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
                       {requiredOnly && !shownComponents.length && <li className="px-4 py-3 text-xs text-foreground-600"><p>No required activities in this week.</p><button type="button" onClick={() => setRequiredOnly(false)} className="min-h-11 font-semibold text-primary-800 underline">Show all activities</button></li>}
-                      <PointActivityRows components={shownComponents} plan={webPoints.data} current={isCurrentRow} pointIdentityFor={pointIdentityFor} renderRow={(component) => {
+                      <PointActivityRows components={shownComponents} plan={webPoints.data} current={isCurrentRow} pointIdentityFor={pointIdentityFor} renderRow={(component, sessionPart) => {
                         const row = weekComponentRows({ ...w, components: [component] }, completedIds)[0];
                         const rowMeta = sidebarActivityMeta(row.component);
                         const openable = canOpen ? canOpen(row.component) : row.openable;
@@ -437,7 +441,7 @@ export function ActivitySidebar({
                                 <span title={row.component.title || rowMeta.detail || rowMeta.label} className={`block text-[12px] font-medium leading-snug truncate ${
                                   row.complete ? 'text-emerald-900' : 'text-primary-800'
                                 }`}>
-                                  {rowMeta.detail || rowMeta.label}
+                                  {sessionPart === 'live' ? 'Open live session' : sessionPart === 'recording' ? (openable ? 'Open recording' : 'Awaiting recording') : rowMeta.detail || rowMeta.label}
                                 </span>
                                 <ActivityPlanDetails hours={row.component.expectedOtjh} componentType={row.component.type}
                                   kind={attendanceLearner?.kind ?? kind} learnerId={attendanceLearner?.id ?? id} />

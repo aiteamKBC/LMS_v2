@@ -60,7 +60,7 @@ it('does not offer the change email where there is no change to describe', async
 });
 
 it('sends nothing after a save that changed nothing everyone has to be told', async () => {
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: false }, calendar);
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: false }, calendar);
   await resultOpen();
   expect(screen.getByText('Not sent — nothing changed that everyone invited has to be told')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
@@ -69,7 +69,7 @@ it('sends nothing after a save that changed nothing everyone has to be told', as
 });
 
 it('sends the signed change notice when the calendar moved', async () => {
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true }, calendar);
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true }, calendar);
   await resultOpen();
   expect(screen.getByText('3 of 3 submitted to Microsoft')).toBeVisible();
   expect(submitChangeEmails).toHaveBeenCalledWith('LIVE-ONE', 'signed', expect.objectContaining({ retryFailed: false }));
@@ -79,7 +79,7 @@ it('sends the signed change notice when the calendar moved', async () => {
 });
 
 it('says so when the author asked but no session date moved', async () => {
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: '', notifyAttendees: true }, calendar);
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: '', notifyAttendees: true }, calendar);
   await resultOpen();
   expect(screen.getByText('Not sent — no session date changed')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
@@ -88,7 +88,7 @@ it('says so when the author asked but no session date moved', async () => {
 });
 
 it('sends the full schedule to the people an update added, without a change email nobody asked for', async () => {
-  const pending = finishTeamsUpdate({ updated: true, meeting: {}, changeNotice: '', notifyAttendees: false },
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: {}, changeNotice: '', notifyAttendees: false },
     { ...calendar, liveSessionId: 'LIVE-ONE', addedPeople: ['new.presenter@example.invalid'] });
   await resultOpen();
   expect(submitAddedPeopleEmails).toHaveBeenCalledWith('LIVE-ONE', ['new.presenter@example.invalid'], expect.objectContaining({ retryFailed: false }));
@@ -101,7 +101,7 @@ it('sends the full schedule to the people an update added, without a change emai
 
 it('says so when everyone added had already been sent the schedule', async () => {
   vi.mocked(submitAddedPeopleEmails).mockResolvedValue({ total: 0, accepted: 0, queued: 0, failed: 0, uncertain: 0, status: 'complete' });
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' } },
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' } },
     { ...calendar, addedPeople: ['back.again@example.invalid'] });
   await resultOpen();
   expect(screen.getByText('Already sent to everyone added')).toBeVisible();
@@ -111,7 +111,7 @@ it('says so when everyone added had already been sent the schedule', async () =>
 
 it('retries only the added-people emails that did not go through', async () => {
   vi.mocked(submitAddedPeopleEmails).mockRejectedValueOnce(new Error('Schedule email status could not be confirmed.'));
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true },
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true },
     { ...calendar, addedPeople: ['new.learner@example.invalid'] });
   await resultOpen();
   await userEvent.click(screen.getByRole('button', { name: 'Retry pending emails' }));
@@ -145,7 +145,7 @@ it('names the added people, and nothing else, in their email request', async () 
 });
 
 it('shows the change email the server already sent with the update, and sends nothing from the browser', async () => {
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
     scheduleEmail: { ...complete, total: 5, accepted: 5 } }, calendar);
   await resultOpen();
   expect(screen.getByText('5 of 5 submitted to Microsoft')).toBeVisible();
@@ -156,7 +156,7 @@ it('shows the change email the server already sent with the update, and sends no
 });
 
 it('reaches only the people the server found were added, with what it already sent', async () => {
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' },
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' },
     addedPeople: ['new@example.invalid'], addedEmail: { ...complete, total: 1, accepted: 1 } }, calendar);
   await resultOpen();
   expect(screen.getByText('Schedule emails to 1 added person')).toBeVisible();
@@ -169,7 +169,7 @@ it('reaches only the people the server found were added, with what it already se
 });
 
 it('reports a server email failure beside the saved calendar and retries only when asked', async () => {
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
     scheduleEmail: { error: 'Schedule emails are not configured.', code: 'schedule_email_not_configured' } }, calendar);
   await waitFor(() => expect(screen.getByText('Schedule emails are not configured.')).toBeVisible());
   expect(submitChangeEmails).not.toHaveBeenCalled();
@@ -181,7 +181,7 @@ it('reports a server email failure beside the saved calendar and retries only wh
 });
 
 it('finishes from the browser what the server left queued', async () => {
-  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
+  const pending = finishTeamsUpdate({ updated: true, lmsEmailRequested: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
     scheduleEmail: { ...complete, total: 6, accepted: 4, queued: 2, status: 'pending' } }, calendar);
   await resultOpen();
   expect(submitChangeEmails).toHaveBeenCalledTimes(1);

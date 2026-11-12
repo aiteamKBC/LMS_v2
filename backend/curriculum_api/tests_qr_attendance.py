@@ -73,6 +73,8 @@ class QRPolicyTests(SimpleTestCase):
             'qr_confirmed_at': NOW,
         }))
         self.register_write = self.enterContext(mock.patch.object(register, 'upsert_qr_attendance_register'))
+        self.parallel_reconcile = self.enterContext(mock.patch(
+            'curriculum_api.parallel_attendance_register.reconcile_parallel_attendance'))
         self.enterContext(mock.patch.object(qr.timezone, 'now', return_value=NOW))
 
     def lectures(self, module_id='M1'):

@@ -177,7 +177,12 @@ def completed_alternatives_by_occurrence(original_occurrence_ids, *, at=None, da
     )
 
 
-def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="enrolment", completed=False):
+def equivalent_alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="enrolment"):
+    """Find equivalent deliveries on any date; scheduling alone is not evidence."""
+    return _alternatives_by_occurrence(original_occurrence_ids, at=at, database=database, all_occurrences=True)
+
+
+def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="enrolment", completed=False, all_occurrences=False):
     """``eligible_alternative_occurrences`` for many occurrences in a few queries.
 
     A learner's absence form lists every missed lecture with its alternatives;
@@ -259,9 +264,11 @@ def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="e
     candidates = LiveSessionOccurrence.objects.using(database).filter(
         live_session_id__in=list(series_ids), session_number__in=list(numbers),
     )
-    candidates = list(candidates.filter(
-        **({"scheduled_end__lte": now} if completed else {"scheduled_start__gt": now})
-    ).order_by("scheduled_start", "id"))
+    if not all_occurrences:
+        candidates = candidates.filter(
+            **({"scheduled_end__lte": now} if completed else {"scheduled_start__gt": now})
+        )
+    candidates = list(candidates.order_by("scheduled_start", "id"))
     for occurrence_id, series in matched.items():
         original = contexts[occurrence_id][0]
         session_context = {pair[1].id: (group_id, pair[0]) for group_id, pair in series.items()}
@@ -274,7 +281,7 @@ def _alternatives_by_occurrence(original_occurrence_ids, *, at=None, database="e
                 continue
             start, end = _local(occurrence.scheduled_start), _local(occurrence.scheduled_end)
             result[occurrence_id].append({
-                **({"moduleCatalogueId": str(module.module_catalogue_id)} if completed else {}),
+                **({"moduleCatalogueId": str(module.module_catalogue_id)} if completed or all_occurrences else {}),
                 "id": occurrence.id,
                 "sessionId": f"teams:{occurrence.id}",
                 "title": f"{session.module_title or module.title or 'Live session'} — Session {occurrence.session_number}",

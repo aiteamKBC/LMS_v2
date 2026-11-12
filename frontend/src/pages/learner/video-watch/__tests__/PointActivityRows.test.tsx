@@ -21,6 +21,37 @@ function sidebar(current = 'AUDIO', accessOpen = true, blocked = vi.fn(), compon
     accessOpen={accessOpen} onAccessBlocked={blocked} /><Location /></MemoryRouter>;
 }
 describe('flat week sidebar', () => {
+  it('groups a linked session once while preserving both original routes and completion', () => {
+    const components: JourneyComponent[] = [
+      { componentId: 'LIVE', title: 'Organisational Context', type: 'live_session', moduleId: 'M', weekId: 'W', expectedOtjh: 2.5, liveSessionUrl: 'https://example.test/join' },
+      { componentId: 'RECORDING', title: 'Session Recording', type: 'recording_placeholder', moduleId: 'M', weekId: 'W', linkedSessionComponentId: 'LIVE', expectedOtjh: 0,
+        recordingSeriesId: 'SERIES', recordingSessionNumber: 1, recordingDate: '2026-11-12' },
+    ];
+    const before = structuredClone(components);
+    const { container } = render(sidebar('OTHER', true, vi.fn(), components));
+    expect(container.querySelectorAll('[data-session-activity]')).toHaveLength(1);
+    expect(screen.getAllByText('Organisational Context')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: /Open live session/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/LIVE');
+    fireEvent.click(screen.getByRole('button', { name: /Open recording/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/RECORDING');
+    expect(screen.getByText(/2 components/)).toBeVisible();
+    expect(components).toEqual(before);
+  });
+
+  it('keeps an awaiting recording visible and preserves the existing access gate', () => {
+    const blocked = vi.fn();
+    const components: JourneyComponent[] = [
+      { componentId: 'LIVE', title: 'Organisational Context', type: 'live_session', moduleId: 'M', weekId: 'W', expectedOtjh: 1, liveSessionUrl: 'https://example.test/join' },
+      { componentId: 'RECORDING', title: 'Session Recording', type: 'recording_placeholder', moduleId: 'M', weekId: 'W', linkedSessionComponentId: 'LIVE', expectedOtjh: 0 },
+    ];
+    render(sidebar('OTHER', false, blocked, components));
+    expect(screen.getByRole('button', { name: /Awaiting recording/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /Open live session/ }));
+    expect(blocked).toHaveBeenCalledOnce();
+    expect(screen.getByTestId('location')).toHaveTextContent('/AUDIO');
+  });
+
   it('shows all activities directly in saved order and retains native routes', () => {
     const { container } = render(sidebar());
     expect(container.querySelector('details')).toBeNull();

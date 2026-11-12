@@ -1,0 +1,70 @@
+.page { display: grid; grid-template-columns: minmax(0,1fr); gap: 1.25rem; min-width: 0; max-width: none; padding: 0; color: #51474b; }
+.page .hero { min-width: 0; min-height: 17.5rem; padding: 1.75rem; }
+.page .hero::before { mask-image: none; }
+.hero > div { max-width: 68%; }
+.page .hero p { max-width: 42rem; font-size: .8125rem; line-height: 1.6; }
+.page .hero h1 { font-size: 1.75rem; }
+.page .hero :is(button,a) { font-size: .75rem; }
+.page .hero nav { min-width: 0; flex-wrap: nowrap; }
+.page .hero nav > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editorColumns { display: grid; grid-template-columns: minmax(14rem,17.5rem) minmax(0,1fr); align-items: start; gap: 1rem; min-width: 0; }
+.rail,.editorPanel { min-width: 0; overflow: hidden; border: 1px solid #ded4eb; border-radius: 1rem; background: #fcfbfd; box-shadow: none; }
+.rail > div:first-child { background: #f6f1fa; border-color: #e7ddee; }
+.rail > div:first-child > p { color: #8c7b94; font-size: .625rem; letter-spacing: .08em; }
+.rail :is(ol,ul) { padding: .5rem; }
+.page .rail button[aria-current] { border-radius: .875rem; background: #5d2e88; color: #fff; }
+.rail button[aria-current] span { color: inherit; }
+.rail button[aria-current] > span:first-child { border-color: #ffffff55; background: #ffffff22; }
+.page .rail > div button[aria-current] { width: 100%; }
+.rail :is(button,a):focus-visible { outline: 3px solid #aa8abe; outline-offset: -3px; }
+.editorPanel > div:first-child { border-color: #e8dfef; background: #faf7fc; }
+.page .editorPanel :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),select,textarea),.page.plan :is(input,select) { min-width: 0; max-width: 100%; min-height: 2.5rem; border: 1px solid #dacde7; border-radius: .875rem; background: #fff; color: #4d3d55; box-shadow: none; font: 400 .8125rem/1.5 var(--font-body); }
+.editor :is(input[type="checkbox"],input[type="radio"]) { accent-color: #5d2e88; }
+.editorPanel > ol > li > div { border-color: #e8dff0; border-radius: .875rem; }
+.page .editorPanel :is(h2,h3),.page.plan h3 { color: #4d365b; }
+.page :is(button,a,input,select,textarea):focus-visible { outline: 3px solid #9c75bd; outline-offset: 3px; }
+.page :is(button,a):disabled { cursor: not-allowed; }
+.page > p[aria-live] { margin: 0; padding: .75rem 1rem; border: 1px solid #e5dced; border-radius: .875rem; background: #faf7fc; color: #817286; }
+.staffWizard { display: block; }
+.page.staffWizard :global([data-testid="staff-wizard-banner"]) { position: relative; isolation: isolate; overflow: hidden; min-height: 14rem; padding: 1.5rem 1.75rem; border: 1px solid #532970; border-radius: 1.5rem; background: #381656 url('/assets/enrolment-users-banner.png') right center/cover no-repeat; }
+.staffWizard :global([data-testid="staff-wizard-banner"])::before { position: absolute; z-index: -1; inset: 0; background: linear-gradient(90deg,#28103e66,transparent 75%); content: ''; }
+.staffWizard :global([data-testid="staff-wizard-banner"]) > div { max-width: 68%; flex-direction: column; }
+.staffWizard :global([data-testid="staff-wizard-banner"]) p { color: #e4d2ef; font-size: .8125rem; }
+.page.staffWizard :global([data-testid="staff-wizard-banner"]) button { min-height: 2.25rem; border-radius: .875rem; }
+.staffWizard :global(.shadow-sm) { border-color: #ded4eb; border-radius: 1rem; background-color: #fcfbfd; box-shadow: none; }
+.staffWizard nav:has([aria-label="Enrolment steps"]) > div { background: #f9f6fc; }
+.page.staffWizard [aria-label="Enrolment steps"] [role="tab"][aria-selected="true"] { border-color: #5d2e88; background: #5d2e88; color: #fff; }
+.staffWizard [aria-label="Enrolment steps"] [aria-selected="true"] span { color: inherit; }
+.staffWizard [aria-label="Enrolment steps"] [aria-selected="true"] > span:nth-child(2) { border-color: #ffffff55; background: #ffffff22; }
+.page.staffWizard :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea) { border-color: #dacde7; border-radius: .875rem; background-color: #fff; color: #4d3d55; }
+.staffWizard :is(label,legend) { color: #75657d; }
+.stepper { min-width: 0; padding: 1rem 1.25rem; border: 1px solid #ded4eb; border-radius: 1rem; background: #fcfbfd; }
+.stepper button { min-height: 2.5rem; }
+.page .stepper [aria-current="step"] > span:first-child { border-color: #5d2e88; background: #5d2e88; color: #fff; }
+.page.plan > :global(.card-premium),.page.plan > :global(.bg-background-50) { border-color: #ded4eb; border-radius: 1rem; background: #fcfbfd; box-shadow: none; }
+.formFooter { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem; border: 1px solid #e1d6eb; border-radius: 1rem; background: #faf7fc; }
+.formFooter > div { display: flex; flex-wrap: wrap; gap: .75rem; }
+.formFooter button { min-height: 2.5rem; border-radius: .875rem; }
+@media (max-width: 1100px) {
+  .editorColumns { grid-template-columns: minmax(0,1fr); }
+  .rail > ol { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .375rem; }
+  .rail :is(li,button) { min-width: 0; }
+}
+@media (max-width: 760px) {
+  .page { gap: 1rem; }
+  .page .hero,.page.staffWizard :global([data-testid="staff-wizard-banner"]) { min-height: 14rem; padding: 1.25rem; }
+  .hero > div,.staffWizard :global([data-testid="staff-wizard-banner"]) > div { max-width: 100%; }
+  .page .hero::after,.staffWizard :global([data-testid="staff-wizard-banner"])::before { background: linear-gradient(90deg,#28103eee,#381656b8); }
+  .page .hero h1 { font-size: 1.375rem; }
+  .rail > ol { display: flex; gap: .375rem; overflow-x: auto; scroll-snap-type: x proximity; }
+  .rail > ol > li { flex: 0 0 min(19rem,100%); scroll-snap-align: start; }
+  .page .editorPanel label { min-width: 0; max-width: 100%; }
+  .editorPanel > div:first-child > label:first-child { flex-basis: 100%; }
+  .editorPanel > ol > li > div > div:first-child > div:first-child { flex-basis: 100%; }
+  .editorPanel > ol > li > div > div:first-child > div:first-child > p { white-space: normal; overflow-wrap: anywhere; }
+  .page .hero :is(button,a),.editorPanel button,.rail button,.formFooter button { min-height: 2.75rem; }
+  .page.plan > :global(.card-premium) { padding: 1rem; }
+  .stepper button { flex-direction: column; gap: .375rem; }
+  .stepper button > span:nth-child(2) { display: block; font-size: .625rem; }
+  .formFooter { padding: 1rem; }
+}

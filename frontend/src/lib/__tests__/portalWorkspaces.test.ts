@@ -60,7 +60,7 @@ describe('activeWorkspace', () => {
 describe('the list itself', () => {
   it('is the curated set, Super Admin first', () => {
     expect(PORTAL_WORKSPACES.map((w) => w.slug)).toEqual([
-      'admin', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'support', 'employer', 'audit', 'learner',
+      'admin', 'integrations', 'my-courses', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'support', 'employer', 'audit', 'learner',
     ]);
   });
 
@@ -98,11 +98,25 @@ describe('the list itself', () => {
     expect(admin?.demoEmail).toBeNull();
   });
 
+  it('offers HR System in the admin switcher without a public demo login', () => {
+    expect(workspacesFor(null).find(w => w.slug === 'integrations'))
+      .toMatchObject({ label: 'HR System', path: '/workspace/hr-system', demoEmail: null });
+    expect(activeWorkspace('/workspace/hr-system')?.slug).toBe('integrations');
+    expect(activeWorkspace('/workspace/hr-system-other')).toBeNull();
+  });
+
   it('keeps the employer directory off the public launcher', () => {
     // It lists every employer contact, so it is a super-admin page, not a demo.
     const employer = PORTAL_WORKSPACES.find((w) => w.slug === 'employer');
     expect(employer).toBeDefined();
     expect(employer?.demoEmail).toBeNull();
+  });
+
+  it('offers personal courses without a learner record or a public demo login', () => {
+    expect(workspacesFor(null).find(workspace => workspace.slug === 'my-courses'))
+      .toMatchObject({ path: '/my-courses', label: 'My Courses', demoEmail: null });
+    expect(activeWorkspace('/my-courses')?.slug).toBe('my-courses');
+    expect(activeWorkspace('/my-courses-other')).toBeNull();
   });
 
   it('opens the protected support queue without offering a public demo account', () => {

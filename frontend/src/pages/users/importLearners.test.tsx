@@ -8,8 +8,8 @@ import { importEnrolmentUsers, type LearnerImportResult } from '@/api/enrolmentU
 import type { UserListRow } from './types';
 import UsersListPage from './page';
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: true }) }));
-vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => children }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isAdmin: true }) }));
+vi.mock('@/pages/users/presentation/EnrolmentWorkspaceShell', () => ({ EnrolmentWorkspaceShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock('@/api/enrolmentUsers', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/enrolmentUsers')>(), fetchEnrolmentUsers: vi.fn(),
 }));
@@ -47,6 +47,7 @@ it('refreshes the directory after importing the validated workbook', async () =>
   vi.mocked(importEnrolmentUsers).mockResolvedValueOnce(result).mockResolvedValueOnce({ ...result, imported: 1, results: [learner] });
   render(<MemoryRouter><UsersListPage /></MemoryRouter>);
   await screen.findByText(/No users yet/);
+  fireEvent.click(screen.getByLabelText('Directory tools'));
   expect(screen.getByRole('button', { name: 'Download template' })).toBeInTheDocument();
   // The wizard and eligibility form builders are opened from the same header.
   expect(screen.getByRole('button', { name: 'Edit apprenticeship wizard' })).toBeInTheDocument();

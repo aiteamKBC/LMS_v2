@@ -31,6 +31,21 @@ def ids(weeks):
 
 
 class LinkedRecordingTests(unittest.TestCase):
+    def test_presentation_link_keeps_both_canonical_activities_and_all_settings(self):
+        source = {'W1': [live(), recording(reflectionRequired=True, expectedOtjh=0)]}
+        rows = resolve_linked_recordings(source, merge=False)['W1']
+        self.assertEqual([row['componentId'] for row in rows], ['LS', 'REC'])
+        self.assertEqual(rows[1]['linkedSessionComponentId'], 'LS')
+        self.assertTrue(rows[1]['reflectionRequired'])
+        self.assertEqual(rows[1]['expectedOtjh'], 0)
+        self.assertNotIn('linkedSessionComponentId', source['W1'][1])
+
+    def test_external_or_broken_links_never_become_presentation_children(self):
+        source = {'W1': [live(), recording('BROKEN', link='GONE'), recording('REMOTE', link='LS-B', link_module='OTHER')]}
+        remote = {('OTHER', 'LS-B'): {'teamsLiveSessionId': 'SERIES-B', 'teamsSessionNumber': 1, 'sessionDate': '2026-11-12'}}
+        rows = resolve_linked_recordings(source, remote, merge=False)['W1']
+        self.assertTrue(all('linkedSessionComponentId' not in row for row in rows))
+
     def test_linked_recording_plays_its_sessions_recording_on_its_date(self):
         rows = resolve_linked_recordings({'W1': [live(), recording()]}, merge=False)['W1']
         self.assertEqual(

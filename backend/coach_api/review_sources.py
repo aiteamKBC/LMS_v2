@@ -379,20 +379,58 @@ def enrich_imported_events(events):
             for event in events]
 
 
+REVIEW_CYCLE_EVENT_TYPES = {"mcr", "progress-review", "review"}
+
+
+def _deleted_profile_ids(learner_ids):
+    """Which of these generated-slot learner IDs no longer have a profile row.
+
+    One bounded query, and only for IDs the caller could not already account
+    for, so a timetable whose rows all belong to its caseload asks nothing.
+    """
+    if not learner_ids:
+        return frozenset()
+    from learner_api.models import LearnerProfile
+
+    live = set(
+        LearnerProfile.objects.filter(pk__in=sorted(learner_ids)).values_list("pk", flat=True)
+    )
+    return frozenset(learner_ids) - live
+
+
 def standalone_review_records(records, profiles, aptem_profile_ids, *, linked_keys=()):
     """Suppress parallel Aptem reviews, respecting legacy enrolment ID space."""
     identities = {row.id: imported_learner_identity(row) for row in profiles if row.id in aptem_profile_ids}
     enrolments = {(item["learnerType"], item["enrolmentId"]) for item in identities.values() if item["enrolmentId"]}
+    # A generated cycle slot stores the Learner profile ID. When that profile is
+    # deleted and rebuilt, the slot stays behind pointing at the dead ID: the
+    # learner can never see it again (learner_api.calendar._belongs_to_current_cycle
+    # and _verified_native_review_booking both reject it), so showing it to the
+    # coach invites a whole review being filled in on a record its learner
+    # cannot reach. Learner-made bookings keep the same survive-a-rebuild
+    # generosity they have on the learner side and are never dropped here.
+    known_profile_ids = {row.id for row in profiles}
+    unresolved = {
+        record.learner_id
+        for record in records
+        if record.event_type in REVIEW_CYCLE_EVENT_TYPES
+        and not (record.idempotency_key or "").startswith("learner-book:")
+        and record.learner_id not in known_profile_ids
+        and record.learner_id not in aptem_profile_ids
+    }
+    deleted_profile_ids = _deleted_profile_ids(unresolved)
     result = []
     for record in records:
         if record.event_key in linked_keys:
             continue
-        if record.event_type in {"mcr", "progress-review", "review"}:
+        if record.event_type in REVIEW_CYCLE_EVENT_TYPES:
             parts = (record.idempotency_key or "").split(":")
             if len(parts) >= 4 and parts[0] == "learner-book":
                 if (parts[2], parts[3]) in enrolments:
                     continue
             elif record.learner_profile_id in aptem_profile_ids:
+                continue
+            elif record.learner_id in deleted_profile_ids:
                 continue
         result.append(record)
     return result

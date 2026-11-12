@@ -44,7 +44,7 @@ class SharedRegisterTests(unittest.TestCase):
             attendance_report_id text, first_join_at text, last_leave_at text,
             calculated_at text, attendance_basis text, teams_attendance_status text,
             attendance_source_occurrence_id text, qr_attendance_id integer,
-            qr_confirmed_at text, updated_at text,
+            qr_confirmed_at text, parallel_source_occurrence_id text, updated_at text,
             UNIQUE(occurrence_id,learner_profile_id,module_catalogue_id))''')
 
     def session(self, **changes):
@@ -77,6 +77,20 @@ class SharedRegisterTests(unittest.TestCase):
                 db.executemany(sql.replace('%s', '?'), [tuple(
                     value.isoformat() if isinstance(value, datetime) else value for value in row) for row in params])
         return self.upsert(Cursor(), rows)
+
+    def test_late_teams_absence_does_not_override_parallel_presence(self):
+        self.save(self.project_rows('SOURCE'))
+        self.db.execute("UPDATE register SET attendance_status='present', attendance_basis='parallel', parallel_source_occurrence_id='B' WHERE module_catalogue_id='SOURCE'")
+        self.save(self.project_rows('SOURCE', session=self.session(rawStatus='absent', seconds=0)))
+        result = self.db.execute("SELECT attendance_status, attendance_basis, teams_attendance_status, parallel_source_occurrence_id FROM register WHERE module_catalogue_id='SOURCE'").fetchone()
+        self.assertEqual(tuple(result), ('present', 'parallel', 'absent', 'B'))
+
+    def test_staff_absence_still_overrides_parallel_presence(self):
+        self.save(self.project_rows('SOURCE'))
+        self.db.execute("UPDATE register SET attendance_status='present', attendance_basis='parallel', parallel_source_occurrence_id='B' WHERE module_catalogue_id='SOURCE'")
+        self.save(self.project_rows('SOURCE', corrections={('O', 7): 'absent'}))
+        result = self.db.execute("SELECT attendance_status, attendance_basis FROM register WHERE module_catalogue_id='SOURCE'").fetchone()
+        self.assertEqual(tuple(result), ('absent', 'staff'))
 
     def test_same_learner_and_meeting_have_independent_module_records(self):
         self.save(self.project_rows('SOURCE'))

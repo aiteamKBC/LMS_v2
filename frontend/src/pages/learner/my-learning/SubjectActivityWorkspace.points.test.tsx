@@ -21,6 +21,31 @@ const props = { subject, weeks, kind: 'commercial', learnerId: '132', progress: 
   renderWeekProgress: () => null };
 
 describe('catalogue point navigation', () => {
+  it.each(['commercial', 'apprenticeship'])('groups native session identities while preserving catalogue aliases and the recording player (%s)', async kind => {
+    clearAllCachedResources();
+    const live: SubjectEntry = { ...entries[0], id: 'catalogue:live', title: 'Workshop', category: 'live_session',
+      native: { ...entries[0].native!, componentId: 'LIVE', title: 'Workshop', type: 'live_session' } };
+    const recording: SubjectEntry = { ...entries[0], id: 'catalogue:recording', title: 'Session recording', category: 'recording_placeholder',
+      native: { ...entries[0].native!, componentId: 'REC', title: 'Session recording', type: 'recording_placeholder', linkedSessionComponentId: 'LIVE' } };
+    const paired = { ...subject, activities: [live, recording] };
+    const before = structuredClone(paired);
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/web-points/')) return new Response(JSON.stringify({ weeks: {} }));
+      if (url.includes('/attendance/')) return new Response(JSON.stringify({ mode: 'live' }));
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    try {
+      render(<MemoryRouter><SubjectActivityWorkspace {...props} kind={kind} subject={paired} weeks={[{ ...weeks[0], activities: paired.activities }]}
+        requestedActivity={recording.id} search="" /></MemoryRouter>);
+      const sidebar = screen.getByRole('complementary', { name: 'Module activities' });
+      expect(sidebar.querySelectorAll('[data-session-activity]')).toHaveLength(1);
+      expect(await within(sidebar).findByRole('button', { name: /Open recording/ })).toHaveAttribute('aria-current', 'step');
+      expect(screen.getByRole('article', { name: 'catalogue:recording player' })).toBeVisible();
+      expect(paired).toEqual(before);
+    } finally {
+      cleanup(); vi.unstubAllGlobals(); clearAllCachedResources();
+    }
+  });
   it.each(['commercial', 'apprenticeship'])('retains authored Points and attendance requirements together (%s)', async kind => {
     clearAllCachedResources();
     const live: SubjectEntry = { ...entries[0], id: 'catalogue:session', title: 'Live workshop', category: 'live_session',

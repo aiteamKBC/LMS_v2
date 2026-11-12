@@ -975,6 +975,7 @@ export default function AttendancePage() {
       effectiveAttendance: record.effectiveAttendance,
       attendanceBasis: record.attendanceBasis,
       recoveryOccurrenceId: record.recoveryOccurrenceId,
+      recoveryGroup: record.recoveryGroup,
       makeupForOccurrenceId: record.makeupForOccurrenceId,
       makeupForDate: record.makeupForDate,
       countsAsSession: record.countsAsSession,

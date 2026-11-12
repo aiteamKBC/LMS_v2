@@ -105,6 +105,7 @@ def _weekly_component(c):
         **point_projection(c),
         "moduleId": c.get("moduleId"),
         "weekId": c.get("weekId"),
+        "linkedSessionComponentId": c.get("linkedSessionComponentId"),
         "type": c.get("type"),
         "isQuiz": bool(c.get("isQuiz")),
         "quizMeta": {key: meta.get(key) for key in ("quizId", "questions", "duration", "timeUnit")}

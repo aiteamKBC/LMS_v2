@@ -7,7 +7,7 @@ import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { apprenticeHomeRedirect, isFreshStatus, isOnboardingStatus } from '@/hooks/useOnboardingRedirect';
 import { useFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { upcomingSchedule, homeSummary, currentLearningWeek } from '@/api/learnerOverview';
+import { upcomingSchedule, homeSummary } from '@/api/learnerOverview';
 import { feedbackApi } from '@/api/feedback';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
@@ -102,7 +102,6 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   const loadFeedbackCount = feedbackEnabled && ready && (preview || kind === 'commercial' || (!onboarding && !fresh));
   const schedule = useLiveLearnerRead(kind, id, loadCards, upcomingSchedule.read, upcomingSchedule.peek);
   const week = useLiveLearnerRead(kind, id, loadCards, homeSummary.read, homeSummary.peek);
-  const navigationWeek = useLiveLearnerRead(kind, id, loadCards, currentLearningWeek.read, currentLearningWeek.peek);
   const [feedbackPendingCount, setFeedbackPendingCount] = useState(0);
   useEffect(() => {
     let active = true;
@@ -145,8 +144,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
       </section>
       <blockquote className={styles.quote}><p>“A brighter future<br/>belongs to those who keep learning.”</p><cite>KENT BUSINESS COLLEGE</cite></blockquote>
       <LearningShield link={link}>
-        <ContinueLearning kind={kind} learnerId={id} enabled={loadCards} week={navigationWeek.data} linkIdentity={preview}
-          loading={navigationWeek.loading} error={navigationWeek.error} onRetry={navigationWeek.refresh}/>
+        <ContinueLearning kind={kind} learnerId={id} enabled={loadCards} linkIdentity={preview}/>
       </LearningShield>
       <ProgressCard data={week.data?.homeProgress} loading={week.loading} error={week.error} refresh={week.refresh} dashboardHref={dashboardHref} link={link}/>
       <div className={styles.kent} aria-hidden="true"><span>Kent</span><p>Always a step ahead</p></div>
