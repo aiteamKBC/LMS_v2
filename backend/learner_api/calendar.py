@@ -217,7 +217,7 @@ def _record_enrolment_review(record, *, kind, learner_kind_id, coach_id):
             "review_type": _s(record.event_type),
             "review_label": ONBOARDING_REVIEW_LABELS.get(_s(record.event_type), ""),
             "learner_kind": kind,
-            "learner_id": learner_kind_id,
+            "enrolment_id": learner_kind_id,
             "learner_name": _s(record.learner_name),
             "learner_email": _s(record.learner_email),
             "coach_name": _s(record.owner_name),
@@ -291,7 +291,7 @@ def _belongs_to_current_cycle(record, mirror):
         return True
     if _s(getattr(record, "idempotency_key", "")).startswith("learner-book:"):
         return True
-    return str(record.learner_id or "") in ("", str(mirror.id))
+    return str(record.learner_profile_id or "") in ("", str(mirror.id))
 
 
 def _verified_native_review_booking(learner, mirror, record, instance, emails):
@@ -300,7 +300,7 @@ def _verified_native_review_booking(learner, mirror, record, instance, emails):
             or record.event_type not in {"mcr", "progress-review", "review"}
             or not _s(getattr(record, "review_instance_id", ""))
             or not _s(getattr(record, "review_template_id", ""))
-            or str(record.learner_id) != str(mirror.id)):
+            or str(record.learner_profile_id) != str(mirror.id)):
         return False
     source_id = getattr(mirror, "enrolment_id", None)
     if source_id is not None and str(source_id) != str(learner.pk):
@@ -487,7 +487,7 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
             review_id, assignment_month = local_review
     migrated_form = (not compact and record.event_key.startswith("imported-review:")
                      and ImportedReviewInstance.objects.filter(
-                         event_key=record.event_key, learner_id=record.learner_id,
+                         event_key=record.event_key, learner_profile_id=record.learner_id,
                          source_review_id__isnull=False,
                      ).exists())
     return {
@@ -638,7 +638,7 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
     for email in emails:
         match |= Q(learner_email__iexact=email)
     if mirror is not None:
-        match |= Q(learner_id=mirror.id) | Q(learner_id=learner.pk)
+        match |= Q(learner_profile_id=mirror.id) | Q(learner_profile_id=learner.pk)
     if not match:
         return []
     records = []
@@ -671,7 +671,8 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
         expected_id = learner.pk if _s(getattr(record, 'idempotency_key', '')).startswith('learner-book:') else getattr(mirror, 'id', None)
         imported_owned = (review_source.kind == "aptem" and mirror is not None
                           and record.event_type in {"mcr", "progress-review"}
-                          and str(record.learner_id) in {str(mirror.id), str(learner.pk)})
+                          and str(record.learner_profile_id) in {str(mirror.id), str(learner.pk)}
+                          and not _email_names_another_learner(record, emails))
         if (review_source.kind == "curriculum"
                 and record.event_type in {"mcr", "progress-review", "review"}
                 and _s(getattr(record, "review_instance_id", ""))):
@@ -783,7 +784,7 @@ def alternative_recovery_events_for_learner(learner_id):
 
     events = []
     reports = CoachAbsenceReport.objects.filter(
-        learner_id=learner_id,
+        enrolment_id=learner_id,
         status=CoachAbsenceReport.STATUS_APPROVED,
         recovery_method=ALTERNATIVE_METHOD,
     )
@@ -1027,6 +1028,30 @@ def _record_owner_ids(record, *, created_user_id, profile_id):
     return {str(value) for value in ids if value is not None}
 
 
+def _profile_id_for_enrolment(enrolment_id):
+    """The learner's profile id, active or not; None before a profile exists.
+
+    Every profile carries a unique enrolment_id, so this is exact and needs no
+    email bridge. Read-only: it never heals a profile link.
+    """
+    return LearnerProfile.objects.filter(enrolment_id=enrolment_id).values_list("id", flat=True).first()
+
+
+def _email_names_another_learner(record, emails):
+    """True when the row's own learner email belongs to somebody else.
+
+    Created_users.id and profile ids are independent sequences, so a stored
+    number can equal another learner's id; the stored email cannot be mistaken
+    that way. An id match never overrides another learner's email.
+    """
+    email = _s(getattr(record, "learner_email", "")).strip().casefold()
+    if not email or email in emails:
+        return False
+    if LearnerProfile.objects.filter(email__iexact=email).exists():
+        return True
+    return any(model.all_learners.filter(email__iexact=email).exists() for model in SOURCE_MODELS.values())
+
+
 def _learner_calendar_record(kind, pk, event_key):
     """Resolve an event only when it belongs to the requested learner."""
     model = SOURCE_MODELS.get(kind)
@@ -1038,7 +1063,7 @@ def _learner_calendar_record(kind, pk, event_key):
     mirror = _calendar_profile(learner, pk)
     existing = CoachCalendarEvent.objects.filter(event_key=event_key).first()
     review_source = source_for_learner(learner, mirror)
-    if existing and mirror and str(existing.learner_id) == str(mirror.id):
+    if existing and mirror and str(existing.learner_profile_id) == str(mirror.id):
         from coach_api.reconciliation_links import for_calendar
         link = for_calendar(existing)
         if link:
@@ -1081,8 +1106,12 @@ def _learner_calendar_record(kind, pk, event_key):
     if not record or (review_source.kind == "aptem"
                       and record.event_type in {"mcr", "progress-review", "review"}):
         return None
+    if _s(record.learner_email).strip().casefold() in emails:
+        return record
     owner_ids = _record_owner_ids(record, created_user_id=pk, profile_id=mirror.id if mirror else None)
-    return record if (str(record.learner_id or "") in owner_ids or _s(record.learner_email).strip().casefold() in emails) else None
+    if str(record.learner_profile_id or "") in owner_ids and not _email_names_another_learner(record, emails):
+        return record
+    return None
 
 
 def _follow_first_session_start_date(kind, pk, record, scheduled_date):
@@ -1647,8 +1676,8 @@ def learner_calendar(request, kind, pk):
 
     match = Q()
     if mirror is not None:
-        match |= Q(learner_id=pk)
-        match |= Q(learner_id=mirror.id)
+        match |= Q(learner_profile_id=pk)
+        match |= Q(learner_profile_id=mirror.id)
     for candidate in {mirror_email, source_email} - {""}:
         match |= Q(learner_email__iexact=candidate)
     if not match:
@@ -1847,10 +1876,14 @@ def learner_calendar_book(request, kind, pk):
             # meetings, two invitations and a start date that follows whichever
             # was written last -- moving it is what reschedule is for.
             try:
+                # Rows written before 2026-11-12 may carry Created_users.id; the
+                # email keeps that number from naming another learner's profile.
+                owner = Q(learner_profile_id=pk, learner_email__iexact=_s(learner.email).strip())
+                profile_id = mirror.id if mirror is not None else _profile_id_for_enrolment(pk)
+                if profile_id is not None:
+                    owner |= Q(learner_profile_id=profile_id)
                 existing = (
-                    CoachCalendarEvent.objects.filter(
-                        learner_id=pk, event_type=FIRST_SESSION_TYPE
-                    )
+                    CoachCalendarEvent.objects.filter(owner, event_type=FIRST_SESSION_TYPE)
                     .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
                     .exists()
                 )
@@ -2034,7 +2067,17 @@ def learner_calendar_book(request, kind, pk):
             return _error(message, status_code)
         payload = {**payload, "eventKey": resolved_event_key}
     requires_coach_approval = session_type in COACH_APPROVAL_TYPES and not is_onboarding_review
-    calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
+    # Onboarding reviews stay under Created_users.id (see _record_owner_ids).
+    # Everything else is filed under the profile id -- the first session too,
+    # which is booked before the profile is Active -- so the stored number
+    # names one learner. Created_users.id remains only for a learner with no
+    # profile yet.
+    if is_onboarding_review:
+        calendar_learner_id = pk
+    elif mirror is not None:
+        calendar_learner_id = int(mirror.id)
+    else:
+        calendar_learner_id = _profile_id_for_enrolment(pk) or pk
 
     if assignment_month:
         if not imported_review_id and not assignment_booking:
@@ -2128,7 +2171,7 @@ def learner_calendar_book(request, kind, pk):
             review_booking = session_type in REVIEW_BOOKING_TYPES
             existing_booking = (CoachCalendarEvent.objects.filter(
                 event_key=event_key, owner_email__iexact=owner_email,
-                learner_id=int(getattr(mirror, "id", pk) or pk),
+                learner_profile_id=int(getattr(mirror, "id", pk) or pk),
             ).first() if review_booking else None)
             unchanged_review_replay = bool(
                 existing_booking and existing_booking.status == CoachCalendarEvent.STATUS_SCHEDULED
@@ -2176,7 +2219,7 @@ def learner_calendar_book(request, kind, pk):
                     defaults={
                         "owner_email": owner_email,
                         "owner_name": owner_name or _s(mirror.coach_name) or "Coach",
-                        "learner_id": int(mirror.id),
+                        "learner_profile_id": int(mirror.id),
                         "learner_name": _s(base_event.get("learner")) or learner_name,
                         "learner_email": _s(base_event.get("email")) or learner_email,
                         "event_type": session_type,
@@ -2278,7 +2321,7 @@ def learner_calendar_book(request, kind, pk):
             # owner a second invite for the same meeting. Returning the existing
             # booking makes the request idempotent instead.
             existing = (
-                CoachCalendarEvent.objects.filter(learner_id=pk, event_type=session_type)
+                CoachCalendarEvent.objects.filter(learner_profile_id=pk, event_type=session_type)
                 .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
                 .order_by("-sequence")
                 .first()
@@ -2320,7 +2363,7 @@ def learner_calendar_book(request, kind, pk):
             # slot because each review type is a one-time logical operation.
             if is_onboarding_review:
                 cancelled_count = CoachCalendarEvent.objects.filter(
-                    learner_id=pk,
+                    learner_profile_id=pk,
                     event_type=session_type,
                     status=CoachCalendarEvent.STATUS_CANCELLED,
                 ).count()
@@ -2788,7 +2831,7 @@ def learner_onboarding_reviews(request, kind, pk):
         booked = {
             record.event_type: record
             for record in CoachCalendarEvent.objects.filter(
-                learner_id=pk, event_type__in=ONBOARDING_REVIEW_TYPES
+                learner_profile_id=pk, event_type__in=ONBOARDING_REVIEW_TYPES
             )
             .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
             .order_by("scheduled_date")
@@ -2803,7 +2846,7 @@ def learner_onboarding_reviews(request, kind, pk):
         form_state = {
             row.event_key: row
             for row in EnrolmentReview.objects.filter(
-                learner_id=pk, review_type__in=ONBOARDING_REVIEW_TYPES
+                enrolment_id=pk, review_type__in=ONBOARDING_REVIEW_TYPES
             )
         }
     except DatabaseError:
@@ -2944,7 +2987,7 @@ def learner_first_session(request, kind, pk):
         if learner is None:
             return _error("Learner not found.", 404)
         record = (
-            CoachCalendarEvent.objects.filter(learner_id=pk, event_type=FIRST_SESSION_TYPE)
+            CoachCalendarEvent.objects.filter(learner_profile_id=pk, event_type=FIRST_SESSION_TYPE)
             .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
             .order_by("-sequence")
             .first()

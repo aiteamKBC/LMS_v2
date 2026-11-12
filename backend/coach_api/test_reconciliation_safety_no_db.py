@@ -58,7 +58,7 @@ class ReconciliationSchemaTests(SimpleTestCase):
                     calendars, overlays = load_imported_links([event])
                     self.assertFalse(any(calendars.values()))
                     self.assertFalse(any(overlays.values()))
-                overlay = ImportedReviewInstance(pk=8, learner_id=21, source_review_id=401,
+                overlay = ImportedReviewInstance(pk=8, learner_profile_id=21, source_review_id=401,
                     owner_email="coach@example.invalid", event_key="imported-review:A-401")
                 self.assertIsNone(booking_for_overlay(overlay))
 

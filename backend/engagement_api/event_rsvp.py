@@ -47,7 +47,7 @@ def _normalise_guest(item):
         validate_email(email)
     except ValidationError as exc:
         raise ValueError(f'Invalid guest email: {email or "missing"}.') from exc
-    return {'name': name, 'email': email, 'learner_id': ''}
+    return {'name': name, 'email': email, 'enrolment_id': ''}
 
 
 @transaction.atomic

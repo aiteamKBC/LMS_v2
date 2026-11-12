@@ -64,7 +64,7 @@ def cv_documents(request, kind, learner_id):
 
     if request.method == "GET":
         try:
-            row = WizardCvJob.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+            row = WizardCvJob.objects.filter(learner_kind=kind, enrolment_id=learner_id).first()
         except DatabaseError as exc:
             logger.warning("Could not list CV documents: %s", exc)
             return _error("Could not load documents.", 502)
@@ -94,7 +94,7 @@ def cv_documents(request, kind, learner_id):
             # Created if the learner uploads before the step has been saved; the
             # draft save upserts the same row and leaves this column alone.
             row, _ = WizardCvJob.objects.select_for_update().get_or_create(
-                learner_kind=kind, learner_id=learner_id,
+                learner_kind=kind, enrolment_id=learner_id,
             )
             row.documents = [*_items(row), item]
             row.save(update_fields=["documents", "updated_at"])
@@ -116,7 +116,7 @@ def download_cv_document(request, kind, learner_id, file_id):
     if not azure_configured():
         return _error("Document storage is not configured.", 503)
     try:
-        row = WizardCvJob.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+        row = WizardCvJob.objects.filter(learner_kind=kind, enrolment_id=learner_id).first()
     except DatabaseError as exc:
         logger.warning("Could not look up CV document for download: %s", exc)
         return _error("Could not load documents.", 502)
@@ -140,7 +140,7 @@ def delete_cv_document(request, kind, learner_id, file_id):
         with transaction.atomic(using="enrolment"):
             row = (
                 WizardCvJob.objects.select_for_update()
-                .filter(learner_kind=kind, learner_id=learner_id)
+                .filter(learner_kind=kind, enrolment_id=learner_id)
                 .first()
             )
             items = _items(row)

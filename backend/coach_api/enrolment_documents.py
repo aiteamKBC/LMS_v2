@@ -49,7 +49,7 @@ def coach_enrolment_documents(request, learner_id):
         if enrolment_id is None:
             return _not_found()
         rows = list(
-            EnrolmentReview.objects.filter(learner_id=enrolment_id)
+            EnrolmentReview.objects.filter(enrolment_id=enrolment_id)
             .exclude(status=EnrolmentReview.STATUS_CANCELLED)
             .order_by("scheduled_date", "review_type")
         )

@@ -125,13 +125,13 @@ def meeting_profile(record):
     from learner_api.models import EnrolmentUser, LearnerProfile
 
     owner = str(record.owner_email or '').strip().casefold()
-    if not owner or not record.learner_id:
+    if not owner or not record.learner_profile_id:
         return None
     if record.review_instance_id:
         from curriculum_api.review_instances import get_review_instance
         instance = get_review_instance(record.review_instance_id)
         if (not instance or instance.get('calendar_event_id') != record.pk
-                or instance.get('learner_id') != record.learner_id
+                or instance.get('learner_id') != record.learner_profile_id
                 or instance.get('review_template_id') != record.review_template_id
                 or str(instance.get('coach_email') or '').strip().casefold() != owner):
             raise ReviewIdentityConflict('The Native Review meeting identity is inconsistent.')
@@ -147,10 +147,10 @@ def meeting_profile(record):
         if not source or source.learner_type != parts[2]:
             raise ReviewIdentityConflict('The legacy meeting learner source is inconsistent.')
         profile = review_profile_for_source(source)
-        if profile and record.learner_id not in {source.pk, profile.pk}:
+        if profile and record.learner_profile_id not in {source.pk, profile.pk}:
             raise ReviewIdentityConflict('The legacy meeting learner link is inconsistent.')
     else:
-        profile = LearnerProfile.objects.filter(pk=record.learner_id).first()
+        profile = LearnerProfile.objects.filter(pk=record.learner_profile_id).first()
     if profile and str(profile.coach_email or '').strip().casefold() != owner:
         raise ReviewIdentityConflict('The meeting fallback profile belongs to another coach.')
     return profile
@@ -259,7 +259,7 @@ def load_imported_links(events, *, records=None, compact=False):
     profile_ids = {int(event["learnerId"]) for event in events}
     review_ids = {int(event["reviewId"]) for event in events if event.get("reviewId")}
     keys = {event["eventKey"] for event in events}
-    overlay_query = ImportedReviewInstance.objects.filter(learner_id__in=profile_ids).filter(
+    overlay_query = ImportedReviewInstance.objects.filter(learner_profile_id__in=profile_ids).filter(
         Q(source_review_id__in=review_ids) | Q(event_key__in=keys))
     # Select a boolean rather than the frozen form body for compact lists.
     # The first array element must exist; an object with a literal "0" key
@@ -269,7 +269,7 @@ def load_imported_links(events, *, records=None, compact=False):
              & ~Q(template_snapshot__sections__has_key="0"), then=Value(True)),
         default=Value(False), output_field=BooleanField()))
     if compact:
-        overlay_query = overlay_query.only('id', 'learner_id', 'source_review_id', 'event_key', 'owner_email', 'status', 'completed_at')
+        overlay_query = overlay_query.only('id', 'learner_profile_id', 'source_review_id', 'event_key', 'owner_email', 'status', 'completed_at')
     overlays = list(overlay_query)
     corrections = {row.pk: row for row in overlays if row._has_lms_form
                    and row.source_review_id and row.status in {"in-progress", "awaiting-signature"}}
@@ -289,7 +289,7 @@ def load_imported_links(events, *, records=None, compact=False):
     if records is None:
         enrolment_ids = {int(event["enrolmentId"]) for event in events if str(event.get("enrolmentId", "")).isdigit()}
         records = list(CoachCalendarEvent.objects.filter(
-            Q(event_key__in=keys) | Q(learner_id__in=profile_ids | enrolment_ids,
+            Q(event_key__in=keys) | Q(learner_profile_id__in=profile_ids | enrolment_ids,
                                      event_type__in={event["source"] for event in events})))
     from .reconciliation_links import active_links
     reconciliations = list(active_links(source_review_id__in=review_ids).select_related("overlay"))
@@ -323,7 +323,7 @@ def booking_for_imported_review(profile, review, overlay=None, *, lock=False):
     keys = {event["eventKey"]}
     if overlay is not None:
         keys.add(overlay.event_key)
-    records = query.filter(Q(event_key__in=keys) | Q(learner_id__in=ids, event_type=event["source"]))
+    records = query.filter(Q(event_key__in=keys) | Q(learner_profile_id__in=ids, event_type=event["source"]))
     return linked_booking(event, records, overlay)
 
 
@@ -350,12 +350,12 @@ def booking_for_overlay(overlay, *, lock=False):
     if current:
         record = current[0]
         if (record.owner_email.casefold() != overlay.owner_email.casefold()
-                or record.learner_id != overlay.learner_id
+                or record.learner_profile_id != overlay.learner_profile_id
                 or record.review_instance_id or record.review_template_id
                 or record.event_type not in {"mcr", "progress-review"}):
             raise ReviewIdentityConflict("The imported Review calendar association is inconsistent.")
         return record
-    profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
+    profile = LearnerProfile.objects.filter(pk=overlay.learner_profile_id).first()
     if not profile or not overlay.source_review_id:
         return None
     # Family is only a filter. Internal review ID in the durable key is the link.
@@ -392,7 +392,7 @@ def standalone_review_records(records, profiles, aptem_profile_ids, *, linked_ke
             if len(parts) >= 4 and parts[0] == "learner-book":
                 if (parts[2], parts[3]) in enrolments:
                     continue
-            elif record.learner_id in aptem_profile_ids:
+            elif record.learner_profile_id in aptem_profile_ids:
                 continue
         result.append(record)
     return result

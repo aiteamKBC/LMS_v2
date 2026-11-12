@@ -235,7 +235,7 @@ def _active_document(learner_kind, learner_id, lock=False):
     `transaction.atomic(using="enrolment")`."""
     qs = WrittenAgreement.objects.filter(
         learner_kind=learner_kind,
-        learner_id=learner_id,
+        enrolment_id=learner_id,
         status=WrittenAgreement.STATUS_ACTIVE,
     )
     if lock:
@@ -313,7 +313,7 @@ def issue_written_agreement(request, pk):
 
             document = WrittenAgreement.objects.create(
                 learner_kind=kind,
-                learner_id=learner.pk,
+                enrolment_id=learner.pk,
                 particulars=derived["particulars"],
                 delivery=derived["delivery"],
                 epa=derived["epa"],

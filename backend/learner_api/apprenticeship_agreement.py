@@ -265,7 +265,7 @@ def _active_agreement(learner_kind, learner_id, lock=False):
     it — only valid inside `transaction.atomic(using="enrolment")`."""
     qs = ApprenticeshipAgreement.objects.filter(
         learner_kind=learner_kind,
-        learner_id=learner_id,
+        enrolment_id=learner_id,
         status=ApprenticeshipAgreement.STATUS_ACTIVE,
     )
     if lock:
@@ -371,7 +371,7 @@ def issue_agreement(request, pk):
 
             agreement = ApprenticeshipAgreement.objects.create(
                 learner_kind=kind,
-                learner_id=learner.pk,
+                enrolment_id=learner.pk,
                 apprentice_name=derived["apprenticeName"],
                 employer_name=derived["employerName"],
                 employer_address=derived["employerAddress"],

@@ -32,7 +32,7 @@ class RescheduleFixtures:
         self.day = future + timedelta(days=(0 - future.weekday()) % 7)
         self.calendar = CoachCalendarEvent.objects.create(
             event_key=self.overlay.event_key, idempotency_key=self.overlay.event_key,
-            owner_email="coach@example.invalid", learner_id=21, learner_email="learner@example.invalid",
+            owner_email="coach@example.invalid", learner_profile_id=21, learner_email="learner@example.invalid",
             event_type="progress-review", target_date=self.day, scheduled_date=self.day,
             scheduled_time=time(10), duration_minutes=60, status="scheduled", sync_state="synced",
             graph_event_id="existing-graph", graph_organizer_email="original@example.invalid",

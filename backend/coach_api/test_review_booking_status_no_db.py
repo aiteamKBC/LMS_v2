@@ -48,7 +48,7 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.record = dict(
             pk=1, event_key=self.base.event['eventKey'], review_instance_id='INSTANCE-SYNTHETIC',
             review_template_id='REV-SYNTHETIC', occurrence_number=1, sequence=1,
-            owner_email='coach@example.invalid', owner_name='Synthetic coach', learner_id=248,
+            owner_email='coach@example.invalid', owner_name='Synthetic coach', learner_profile_id=248,
             learner_name='Synthetic learner', learner_email='learner@example.invalid', event_type='mcr',
             target_date=date(2026, 10, 16), scheduled_date=None, scheduled_time=None, duration_minutes=60,
             status='not-scheduled', sync_state='synced', notes='',

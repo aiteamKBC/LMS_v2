@@ -348,7 +348,7 @@ class CoachToLearnerTests(ReviewSchedulingSyncTestCase):
         self.coach_schedules(occurrence['eventKey'], day)
 
         record = CoachCalendarEvent.objects.get(event_key=occurrence['eventKey'])
-        self.assertEqual(record.learner_id, MIRROR_ID)
+        self.assertEqual(record.learner_profile_id, MIRROR_ID)
         self.assertEqual(record.owner_email, COACH_EMAIL)
         self.assertEqual(record.review_template_id, template['id'])
         self.assertTrue(record.review_instance_id)

@@ -289,7 +289,7 @@ def reconcile_progress(progress_id):
         if intents:
             cursor.execute('''SELECT g.event_reference FROM "Engagement".points_grants g
                 JOIN "Engagement".points_rules r ON r.id=g.rule_id
-                WHERE g.enrolment_id=%s AND r.key=%s AND g.event_reference=ANY(%s)''',
+                WHERE g.learner_id=%s AND r.key=%s AND g.event_reference=ANY(%s)''',
                 [session["learner_id"],HOUR_RULE,[intent.event_reference for intent in intents]])
             existing_refs={item[0] for item in cursor.fetchall()}
             intents=[intent for intent in intents if intent.event_reference not in existing_refs]
@@ -504,7 +504,7 @@ def summary(*,learner_id,module_id=PILOT_MODULE):
         cursor.execute('''SELECT o.display_name,coalesce(sum(g.points),0) AS points
           FROM "Engagement".shared_reward_leaderboard_optins o
           LEFT JOIN "Engagement".shared_reward_award_links a ON a.module_id=o.module_id
-          LEFT JOIN "Engagement".points_grants g ON g.id=a.grant_id AND g.enrolment_id=o.learner_id
+          LEFT JOIN "Engagement".points_grants g ON g.id=a.grant_id AND g.learner_id=o.learner_id
           WHERE o.module_id=%s AND o.opted_in
           GROUP BY o.learner_id,o.display_name ORDER BY points DESC,o.display_name,o.learner_id LIMIT 50''',[module_id])
         ranked=_all(cursor)
@@ -556,7 +556,7 @@ def verify_bonus(*,learner_id,learner_name,module_id,opportunity,verification_id
         booked=False
         if opportunity=="module-feedback" and cfg.get("masterclass_event_id"):
             cursor.execute('''SELECT 1 FROM "Engagement".event_bookings
-               WHERE enrolment_id=%s AND event_id=%s AND status='booked' LIMIT 1''',
+               WHERE learner_id=%s AND event_id=%s AND status='booked' LIMIT 1''',
                [learner_id,cfg["masterclass_event_id"]])
             booked=bool(cursor.fetchone())
         if opportunity=="semester-winner":
@@ -564,7 +564,7 @@ def verify_bonus(*,learner_id,learner_name,module_id,opportunity,verification_id
                  CASE WHEN b.opportunity='semester-winner' THEN 0 ELSE g.points END),0) AS points
                FROM "Engagement".shared_reward_leaderboard_optins o
                LEFT JOIN "Engagement".shared_reward_award_links a ON a.module_id=o.module_id
-               LEFT JOIN "Engagement".points_grants g ON g.id=a.grant_id AND g.enrolment_id=o.learner_id
+               LEFT JOIN "Engagement".points_grants g ON g.id=a.grant_id AND g.learner_id=o.learner_id
                LEFT JOIN "Engagement".shared_reward_bonus_verifications b ON b.grant_id=g.id
                WHERE o.module_id=%s AND o.opted_in
                GROUP BY o.learner_id''',[module_id])

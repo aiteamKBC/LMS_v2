@@ -15,7 +15,7 @@ class TimetableBatchMetadataTests(SimpleTestCase):
     def test_confirmed_bookings_share_metadata_reads_and_keep_their_payload(self):
         owner = SimpleNamespace(id=7, learner_type='commercial', enrolment_id=107)
         records = [CoachCalendarEvent(
-            pk=index + 1, event_key=f'booking:{index}', learner_id=7,
+            pk=index + 1, event_key=f'booking:{index}', learner_profile_id=7,
             owner_email='coach@example.invalid', learner_email='learner@example.invalid',
             learner_name='Synthetic learner', event_type='mcr', review_template_id='template',
             review_instance_id=f'instance:{index}', target_date=date(2026, 11, 2),

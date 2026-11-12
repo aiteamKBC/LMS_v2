@@ -45,7 +45,7 @@ class MigratedProgressPersistenceTests(TestCase):
         self.template = MigratedReviewTemplate.objects.create(scope="GLOBAL", programme_key="",
             review_family="PR", name="Progress fixture", definition_json=deepcopy(FORM), is_active=True)
         self.overlay = ImportedReviewInstance.objects.create(event_key="imported-review:progress-fixture", owner_email=OWNER,
-            learner_id=42, source_review_id=70000001, migrated_template=self.template,
+            learner_profile_id=42, source_review_id=70000001, migrated_template=self.template,
             template_snapshot=snapshot_for(self.template), status="in-progress", answers={"note": "Saved answer"},
             meeting_intelligence={"summary": {"overview": "Saved summary"}},
             signature_requirements={"advisor": True, "participant": True, "employer": True})
@@ -172,7 +172,7 @@ class MigratedProgressPersistenceTests(TestCase):
 
     def test_another_learner_overlay_is_untouched(self):
         other = ImportedReviewInstance.objects.create(event_key="imported-review:other-progress", owner_email=OWNER,
-            learner_id=43, source_review_id=70000002, status="in-progress", progress_snapshot={"other": True})
+            learner_profile_id=43, source_review_id=70000002, status="in-progress", progress_snapshot={"other": True})
         before = other.updated_at
         self.assertEqual(self.post()[0].status_code, 200)
         other.refresh_from_db()

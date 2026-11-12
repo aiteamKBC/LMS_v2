@@ -14,18 +14,18 @@ class DashboardCompletedDatesTests(SimpleTestCase):
     def test_old_native_history_uses_completion_and_preserves_owner_and_type_scope(self):
         rows = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
         records = [
-            {"learner_id": 2, "event_type": "progress-review", "review_template_id": "pr",
+            {"learner_profile_id": 2, "event_type": "progress-review", "review_template_id": "pr",
              "review_completed_at": datetime(2026, 10, 27, tzinfo=timezone.utc)},
-            {"learner_id": 2, "event_type": "progress-review", "review_template_id": "other",
+            {"learner_profile_id": 2, "event_type": "progress-review", "review_template_id": "other",
              "review_completed_at": datetime(2026, 11, 5, tzinfo=timezone.utc)},
-            {"learner_id": 2, "event_type": "mcr", "review_template_id": "mcm", "review_completed_at": None},
+            {"learner_profile_id": 2, "event_type": "mcr", "review_template_id": "mcm", "review_completed_at": None},
         ]
         with patch("coach_api.views.dashboard_imported_completed_review_dates", return_value={1: {"lastPr": None, "lastMcm": "26 Oct 2026"}}), \
              patch("coach_api.models.CoachCalendarEvent.objects") as objects, \
              patch("coach_api.views.review_type_fields_by_template", return_value={"other": {"reviewTypeCode": "personal_support"}}):
             objects.filter.return_value.exclude.return_value.values.return_value = records
             result = saved_completed_review_dates(rows, owner_email="coach@example.invalid", owner_name="Coach")
-        objects.filter.assert_called_once_with(owner_email="coach@example.invalid", learner_id__in=[2], status="completed")
+        objects.filter.assert_called_once_with(owner_email="coach@example.invalid", learner_profile_id__in=[2], status="completed")
         objects.filter.return_value.exclude.assert_called_once_with(event_key__startswith="imported-review:")
         self.assertEqual(result, {1: {"lastPr": None, "lastMcm": "26 Oct 2026"}, 2: {"lastPr": "27 Oct 2026", "lastMcm": None}})
 

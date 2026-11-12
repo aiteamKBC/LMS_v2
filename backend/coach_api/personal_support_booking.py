@@ -164,7 +164,7 @@ def book(request, instance_id, definition):
             # Calendar then overlay: the same lock order as other Review writers.
             record = booking_for_imported_review(learner, review, lock=True)
             overlay = ImportedReviewInstance.objects.select_for_update().filter(
-                learner_id=learner_id, event_key=instance_id,
+                learner_profile_id=learner_id, event_key=instance_id,
             ).first()
             current = v._imported_review_definition(owner, instance_id)
             if (not current or current["instance"]["learnerId"] != learner_id
@@ -197,7 +197,7 @@ def book(request, instance_id, definition):
                 record = CoachCalendarEvent.objects.create(
                     event_key=instance_id, idempotency_key=instance_id,
                     owner_email=owner, owner_name=owner_name,
-                    learner_id=learner_id, learner_name=v.clean_text(base_event.get("learner")),
+                    learner_profile_id=learner_id, learner_name=v.clean_text(base_event.get("learner")),
                     learner_email=v.clean_text(base_event.get("email")), event_type="progress-review",
                     sequence=int(base_event.get("sequence") or 1), target_date=target_date,
                     scheduled_date=scheduled_date, scheduled_time=scheduled_time,

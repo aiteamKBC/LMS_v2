@@ -142,7 +142,7 @@ class Command(BaseCommand):
 
     def _candidates(self):
         """The legacy set, ordered for a stable report."""
-        return list(self._legacy_queryset().order_by("event_type", "learner_id", "target_date", "id"))
+        return list(self._legacy_queryset().order_by("event_type", "learner_profile_id", "target_date", "id"))
 
     def _guard_count(self, records, expected):
         if len(records) != expected:

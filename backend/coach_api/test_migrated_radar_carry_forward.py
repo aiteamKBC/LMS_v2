@@ -39,7 +39,7 @@ class RadarContinuationTests(TestCase):
 
     def overlay(self, pk, answers=None, **kwargs):
         return ImportedReviewInstance.objects.create(event_key=f'imported-review:source-{pk}',
-            learner_id=42, source_review_id=pk, owner_email=self.owner,
+            learner_profile_id=42, source_review_id=pk, owner_email=self.owner,
             template_snapshot=frozen_snapshot(), migrated_template=self.master,
             status=kwargs.pop('status', 'in-progress'), answers=answers or {}, **kwargs)
 

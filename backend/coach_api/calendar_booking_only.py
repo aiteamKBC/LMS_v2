@@ -45,7 +45,7 @@ def booking_only_candidates(records, profiles, aptem_profile_ids, *, events=(), 
             )
             use_enrolment_id = enrolment_booking and not native_matches
             expected = getattr(profile, 'enrolment_id', None) if use_enrolment_id else profile.id
-            if expected is None or str(record.learner_id) != str(expected):
+            if expected is None or str(record.learner_profile_id) != str(expected):
                 continue
             if enrolment_booking and len(parts) >= 4 and parts[2] in {'commercial', 'apprenticeship'}:
                 if parts[2] != profile.learner_type or (use_enrolment_id and parts[3] != str(expected)):
@@ -68,10 +68,10 @@ def unlinked_review_bookings(records, profiles, aptem_profile_ids, *, events=(),
     records, profiles = list(records), list(profiles)
     owners = {profile.id: profile for profile in profiles if profile.id in aptem_profile_ids}
     proof_instance_ids = sorted({record.review_instance_id for record in records
-        if record.learner_id in owners and record.review_instance_id and record.review_template_id
+        if record.learner_profile_id in owners and record.review_instance_id and record.review_template_id
         and ((record.idempotency_key or '').startswith('learner-book:')
              or (record.learner_email or '').strip().casefold()
-             != (owners[record.learner_id].email or '').strip().casefold())})
+             != (owners[record.learner_profile_id].email or '').strip().casefold())})
     instances = []
     if proof_instance_ids:
         from curriculum_api import views as curriculum_views

@@ -134,7 +134,7 @@ def check_report_can_take_catchup(learner_id, report_id, *, lock=False, enforce_
     from .catchup_outcomes import learner_attended_catchup
     from .coach_availability import CATCHUP_CHANGE_CLOSED_MESSAGE, catchup_change_closed
     query = CoachAbsenceReport.objects.select_for_update() if lock else CoachAbsenceReport.objects
-    report = query.filter(pk=report_id, learner_id=learner_id).first()
+    report = query.filter(pk=report_id, enrolment_id=learner_id).first()
     if not report or report.status == 'declined':
         raise ReportNotFound()
     # A completed catch-up the learner missed can be replaced by a new booking.

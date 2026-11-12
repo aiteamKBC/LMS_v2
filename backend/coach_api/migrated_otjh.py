@@ -70,9 +70,9 @@ def record_completion(overlay):
     if (overlay.meeting_intelligence or {}).get("otjhCredit"):
         raise ValueError("This review already has an OTJH completion receipt.")
     suffix = " FOR UPDATE" if connection.vendor == "postgresql" else ""
-    owners = query(f'SELECT id,enrolment_id,aptem_id FROM {table("learners")} WHERE id=%s{suffix}', [overlay.learner_id])
+    owners = query(f'SELECT id,enrolment_id,aptem_id FROM {table("learners")} WHERE id=%s{suffix}', [overlay.learner_profile_id])
     sources = query(f'''SELECT id,learner_id,aptem_review_id,status,completed_date
-        FROM {table("reviews")} WHERE id=%s AND learner_id=%s''', [overlay.source_review_id, overlay.learner_id])
+        FROM {table("reviews")} WHERE id=%s AND learner_id=%s''', [overlay.source_review_id, overlay.learner_profile_id])
     if (not owners or not owners[0]["enrolment_id"] or not owners[0]["aptem_id"] or not sources
             or str(sources[0]["status"] or "").strip().casefold() == "completed" or sources[0]["completed_date"]
             or overlay.event_key != f'imported-review:{sources[0]["aptem_review_id"]}'):
@@ -83,13 +83,13 @@ def record_completion(overlay):
     from curriculum_api.review_instances import get_review_instance
     from curriculum_api.review_otjh import template_otjh_hours
     from curriculum_api.reviews import get_review_template_row
-    for link in active_links(learner_id=overlay.learner_id, overlay_id=overlay.pk):
+    for link in active_links(learner_id=overlay.learner_profile_id, overlay_id=overlay.pk):
         native = get_review_instance(link.native_review_instance_id)
         if native and native.get("status") == "completed" and template_otjh_hours(get_review_template_row(link.native_template_id, include_deleted=True)):
             raise ValueError("This review already has Native OTJH credit. Review the linked hours before completing it.")
     reference = f"migrated-review:{overlay.source_review_id}"
     existing = query(f'''SELECT id FROM {table("learner_progress_entries")}
-        WHERE learner_id=%s AND canonical_activity_key=%s''', [overlay.learner_id, reference])
+        WHERE learner_id=%s AND canonical_activity_key=%s''', [overlay.learner_profile_id, reference])
     if existing:
         raise ValueError("This review already has an Activity Log allocation; no duplicate hours were recorded.")
     owner = owners[0]
@@ -159,8 +159,8 @@ def source_rows(profile_ids):
 def overlays_for(profile_ids):
     """Totals need settings and receipts, not answers, transcripts or evidence."""
     from .models import ImportedReviewInstance
-    for row in ImportedReviewInstance.objects.filter(learner_id__in=profile_ids).values(
-            "learner_id", "source_review_id", "status", "migrated_template_id",
+    for row in ImportedReviewInstance.objects.filter(learner_profile_id__in=profile_ids).values(
+            "learner_profile_id", "source_review_id", "status", "migrated_template_id",
             "template_snapshot__otjh", "template_snapshot__name", "meeting_intelligence__otjhCredit",
             "meeting_intelligence__reopenCompletedAt"):
         settings = row.pop("template_snapshot__otjh")
@@ -238,7 +238,7 @@ def planned_hours_bulk(owners):
     ids = [owner["id"] for owner in eligible]
     by_owner = defaultdict(dict)
     for overlay in overlays_for(ids):
-        by_owner[overlay.learner_id][overlay.source_review_id] = overlay
+        by_owner[overlay.learner_profile_id][overlay.source_review_id] = overlay
     if not any(hours_for(t.definition_json) for t in templates) and not any(
             frozen_hours(o) for group in by_owner.values() for o in group.values()):
         return {}

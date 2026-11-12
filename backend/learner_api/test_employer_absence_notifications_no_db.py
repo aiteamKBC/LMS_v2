@@ -44,7 +44,7 @@ class EmployerAbsenceNotificationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         learner_manager.filter.assert_called_once_with(employer_id=7)
         report_manager.filter.assert_called_once_with(
-            learner_id__in=[12, 13],
+            enrolment_id__in=[12, 13],
             recovery_method="recorded",
         )
         payload = json.loads(response.content)

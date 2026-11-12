@@ -37,13 +37,13 @@ def review_fixture(family="MCM"):
                  "Monthly Coaching Meeting" if family == "MCM" else "Progress Review", "Scheduled"],
             )
     overlay = ImportedReviewInstance.objects.create(
-        event_key=key, owner_email="coach@example.invalid", learner_id=17,
+        event_key=key, owner_email="coach@example.invalid", learner_profile_id=17,
         source_review_id=source_id,
         status="awaiting-signature", signature_requirements=requirements_for_family(family),
         template_snapshot=deepcopy(SNAPSHOT), answers={"answer": "Agreed next steps"},
     )
     booking = CoachCalendarEvent.objects.create(
-        event_key=key, owner_email=overlay.owner_email, learner_id=17,
+        event_key=key, owner_email=overlay.owner_email, learner_profile_id=17,
         event_type="mcr" if family == "MCM" else "progress-review",
         target_date=date(2026, 10, 19), scheduled_date=date(2026, 10, 19),
         scheduled_time=time(10), duration_minutes=60, status="awaiting-signature",
@@ -167,7 +167,7 @@ class MigratedAutoCompletionTests(TestCase):
             calendar_event_id=booking.pk, native_review_instance_id=booking.review_instance_id,
             native_template_id=booking.review_template_id, native_event_key=booking.event_key,
             source_review_id=overlay.source_review_id, aptem_review_id=overlay.event_key.removeprefix("imported-review:"),
-            learner_id=overlay.learner_id, family="MCM", overlay=overlay,
+            learner_profile_id=overlay.learner_id, family="MCM", overlay=overlay,
             approved_by=approver_id, approved_at=timezone.now(), reason="Synthetic reconciliation fixture",
         )
         original = (booking.pk, booking.event_key, booking.graph_event_id, booking.review_instance_id)

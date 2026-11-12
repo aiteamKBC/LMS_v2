@@ -24,7 +24,7 @@ class ImportedReviewListFormsTests(TestCase):
         event.update(hasReviewForm=False, sourceCompletedDate="2026-10-24T10:00:00Z",
                      reviewCompletedAt="2026-10-24T10:00:00Z")
         overlay = ImportedReviewInstance.objects.create(
-            learner_id=21, source_review_id=number, event_key=f"imported-review:legacy-{number}",
+            learner_profile_id=21, source_review_id=number, event_key=f"imported-review:legacy-{number}",
             owner_email="coach@example.invalid", status=status,
             completed_at=completed if status == "completed" else None,
             template_snapshot={"sections": [{"key": "discussion", "fields": []}]},

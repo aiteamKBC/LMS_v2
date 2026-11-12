@@ -85,7 +85,7 @@ class MigratedHoursTests(TestCase):
 
     def make_overlay(self, ident, **kwargs):
         return ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", event_key=f"imported-review:R{ident}",
-            learner_id=17, source_review_id=ident, migrated_template=self.template, template_snapshot=snapshot_for(self.template),
+            learner_profile_id=17, source_review_id=ident, migrated_template=self.template, template_snapshot=snapshot_for(self.template),
             answers={"progress": "Discussed progress"}, status="awaiting-signature", signature_requirements={"advisor": False}, **kwargs)
 
     def finish(self, overlay=None, at=None):

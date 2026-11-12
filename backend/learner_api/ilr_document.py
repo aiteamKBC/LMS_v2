@@ -63,7 +63,7 @@ def _wizard_personal(learner_id):
     try:
         from enrolment_api.models import WizardPersonalDetails
 
-        return WizardPersonalDetails.objects.filter(learner_id=learner_id).first()
+        return WizardPersonalDetails.objects.filter(enrolment_id=learner_id).first()
     except DatabaseError:
         logger.exception("_wizard_personal: lookup failed")
         return None
@@ -74,7 +74,7 @@ def _rpl_detail(learner_id):
     try:
         from .models import RplReviewDetail
 
-        return RplReviewDetail.objects.filter(learner_id=learner_id).first()
+        return RplReviewDetail.objects.filter(enrolment_id=learner_id).first()
     except DatabaseError:
         logger.exception("_rpl_detail: lookup failed")
         return None
@@ -85,7 +85,7 @@ def _wizard_ilr_details(learner_id):
     try:
         from enrolment_api.models import WizardIlrLearnerDetails
 
-        return WizardIlrLearnerDetails.objects.filter(learner_id=learner_id).first()
+        return WizardIlrLearnerDetails.objects.filter(enrolment_id=learner_id).first()
     except DatabaseError:
         logger.exception("_wizard_ilr_details: lookup failed")
         return None
@@ -104,7 +104,7 @@ def _extended_ilr(learner_id):
     try:
         from enrolment_api.models import ExtendedIlr
 
-        return ExtendedIlr.objects.filter(learner_id=learner_id).first()
+        return ExtendedIlr.objects.filter(enrolment_id=learner_id).first()
     except DatabaseError:
         logger.exception("_extended_ilr: lookup failed")
         return None
@@ -224,7 +224,7 @@ def _active_document(learner_kind, learner_id, lock=False):
     transaction — only valid inside `transaction.atomic(using="enrolment")`."""
     qs = IlrDocument.objects.filter(
         learner_kind=learner_kind,
-        learner_id=learner_id,
+        enrolment_id=learner_id,
         status=IlrDocument.STATUS_ACTIVE,
     )
     if lock:
@@ -297,7 +297,7 @@ def issue_ilr(request, pk):
 
             document = IlrDocument.objects.create(
                 learner_kind=kind,
-                learner_id=learner.pk,
+                enrolment_id=learner.pk,
                 learner_details=details,
                 answers=answers,
             )

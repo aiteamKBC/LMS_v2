@@ -30,7 +30,7 @@ class CoachAttendanceAdjustmentProjectionTests(SimpleTestCase):
         self.assertEqual(result[0]["session_title"], "Updated session")
         self.assertEqual(result[0]["attendance_status"], "present")
         self.assertEqual(result[0]["effective_attendance"], 1)
-        objects.filter.assert_called_once_with(learner_id=315)
+        objects.filter.assert_called_once_with(learner_profile_id=315)
 
     @patch("coach_api.models.CoachAttendanceSourceAdjustment.objects")
     def test_delete_removes_only_the_matching_learner_row(self, objects):

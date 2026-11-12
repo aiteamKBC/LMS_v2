@@ -130,7 +130,7 @@ def counted_history(source, learner_profile_id):
     evidence.extend({**row, 'source': 'live-register', 'learner_email': source.email} for row in saved)
     rows = canonical.lecture_register(source, learner_profile_id=learner_profile_id,
         scheduled=scheduled, records=evidence)
-    manual = CoachManualAttendance.objects.filter(learner_id=learner_profile_id).only(
+    manual = CoachManualAttendance.objects.filter(learner_profile_id=learner_profile_id).only(
         'id', 'status', 'session_date', 'module_name', 'session_title')
     rows.extend({'source': 'coach-manual', 'session_id': str(row.id),
         'session_date': row.session_date, 'module_title': row.module_name,
@@ -166,7 +166,7 @@ def detail_records(source, learner_profile_id, params):
     components = page_components([row for row, _ in selected])
     report_ids = [str(canonical.report_id(row)) for row, _ in selected if not row.get('_manual')]
     reports = {str(report.attendance_id): report for report in
-        (CoachAbsenceReport.objects.filter(learner_id=source.id, attendance_id__in=report_ids)
+        (CoachAbsenceReport.objects.filter(enrolment_id=source.id, attendance_id__in=report_ids)
          .only('id', 'attendance_id', 'status', 'evidence_image_url').order_by('created_at', 'id') if report_ids else [])}
     records = []
     for row, status in selected:

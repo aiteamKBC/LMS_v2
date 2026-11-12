@@ -59,7 +59,7 @@ def previous_radar(overlay, definition):
     previous = ImportedReviewInstance.objects.filter(source_review_id=row['id']).first()
     if previous is None:
         return None, 'The previous review has no saved LMS Skills Radar assessments.'
-    if previous.learner_id != learner or previous.owner_email.strip().casefold() != owner:
+    if previous.learner_profile_id != learner or previous.owner_email.strip().casefold() != owner:
         return None, 'The previous review is not available to the assigned coach.'
     prior_definition = views._imported_review_definition(owner, previous.event_key, pdf_only=True, learners=profiles)
     if (not prior_definition or prior_definition['instance']['learnerId'] != learner

@@ -30,7 +30,7 @@ class RecentWindowTestCase(TestCase):
         return CoachCalendarEvent.objects.create(
             event_key=f'{event_type}:{700}:1:{suffix}', event_type=event_type,
             owner_email='coach@example.com', owner_name='Coach',
-            learner_id=700, learner_name='Learner', learner_email='learner@example.com',
+            learner_profile_id=700, learner_name='Learner', learner_email='learner@example.com',
             scheduled_date=scheduled_at.date(), scheduled_time=scheduled_at.time(),
             target_date=scheduled_at.date(), duration_minutes=duration_minutes,
             status=status, meeting_link=meeting_link,
@@ -118,7 +118,7 @@ class FailureIsolationTestCase(TestCase):
         return CoachCalendarEvent.objects.create(
             event_key=f'mcr:800:1:{suffix}', event_type='mcr',
             owner_email='coach@example.com', owner_name='Coach',
-            learner_id=800, learner_name='Learner', learner_email='learner@example.com',
+            learner_profile_id=800, learner_name='Learner', learner_email='learner@example.com',
             scheduled_date=scheduled_at.date(), scheduled_time=scheduled_at.time(),
             target_date=scheduled_at.date(), duration_minutes=30,
             status=CoachCalendarEvent.STATUS_SCHEDULED,

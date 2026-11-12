@@ -42,7 +42,7 @@ def preview_learner_review(request, review_id, kind, pk):
         return JsonResponse({"detail": "Review not found."}, status=404)
     from .views import _imported_review_definition
     overlays = list(ImportedReviewInstance.objects.filter(
-        event_key=review_id, learner_id=profile.pk, source_review_id__isnull=False,
+        event_key=review_id, learner_profile_id=profile.pk, source_review_id__isnull=False,
     )[:2])
     if len(overlays) > 1:
         return JsonResponse({"detail": "The existing review association could not be verified."}, status=409)
@@ -88,7 +88,7 @@ def prepare_learner_review(request, review_id):
         # Reject an unrelated or unsupported source before taking the learner
         # lock: acquiring that lock may create a sequence row on first use.
         preliminary = list(ImportedReviewInstance.objects.filter(
-            event_key=review_id, learner_id=profile.pk, source_review_id__isnull=False,
+            event_key=review_id, learner_profile_id=profile.pk, source_review_id__isnull=False,
         )[:2])
         if len(preliminary) > 1:
             raise ValueError("The existing review association could not be verified.")
@@ -105,7 +105,7 @@ def prepare_learner_review(request, review_id):
         with transaction.atomic():
             lock_learner_calendar(profile.pk)
             existing = list(ImportedReviewInstance.objects.filter(
-                event_key=review_id, learner_id=profile.pk, source_review_id__isnull=False,
+                event_key=review_id, learner_profile_id=profile.pk, source_review_id__isnull=False,
             )[:2])
             if len(existing) > 1:
                 raise ValueError("The existing review association could not be verified.")

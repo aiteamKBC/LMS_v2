@@ -48,7 +48,7 @@ from .learner_detail import (
 )
 from .free_course_selectors import VALID_LEARNER_KINDS, assigned_course_ids, canonical_learner
 from .mappers import _s
-from .models import LearnerFreeCourseProgress, LearnerProfile
+from .models import FREE_PROGRESS_ACTIVE, LearnerFreeCourseProgress, LearnerProfile
 from .quizzes import _fetch_quiz, _grade_question, _scrub_answer_key
 from quiz_api.answer_keys import quiz_submission_error
 
@@ -109,12 +109,42 @@ def _catalogue_batch(reads):
 
 
 def _completed_refs(learner_id, course_ids):
-    """Canonical ``(course, component)`` completion keys for this learner."""
+    """Canonical ``(course, component)`` completion keys for this learner.
+
+    Only active rows are completions; an inactive (withdrawn) row is history.
+    ``completed_at`` is not consulted, so an active row with an unknown date
+    still counts.
+    """
     return set(
         LearnerFreeCourseProgress.objects
-        .filter(learner_id=learner_id, free_course_ref__in=course_ids)
+        .filter(learner_id=learner_id, free_course_ref__in=course_ids, status=FREE_PROGRESS_ACTIVE)
         .values_list("free_course_ref", "component_ref")
     )
+
+
+WITHDRAWN_COMPLETION = (
+    "This activity's completion was withdrawn, so it cannot be recorded again. "
+    "Please contact your coach."
+)
+
+
+def _record_completion(learner_id, component_id, free_course_ref):
+    """Record one completion; False when a withdrawn (inactive) row already exists.
+
+    Keyed on (learner, component_ref), so a repeat never adds a second row. An
+    existing row is returned untouched: an active one stays as it is, and an
+    inactive one is never reactivated.
+    """
+    row, created = LearnerFreeCourseProgress.objects.get_or_create(
+        learner_id=learner_id,
+        component_ref=component_id,
+        defaults={
+            "free_course_ref": free_course_ref,
+            "completed_at": timezone.now(),
+            "status": FREE_PROGRESS_ACTIVE,
+        },
+    )
+    return created or row.status == FREE_PROGRESS_ACTIVE
 
 
 def _activity(component):
@@ -430,13 +460,11 @@ def complete_free_course_activity(request, kind, pk):
         return _error("Activity not found.", 404)
 
     try:
-        LearnerFreeCourseProgress.objects.get_or_create(
-            learner_id=source.pk,
-            component_ref=component_id,
-            defaults={"free_course_ref": free_course_ref, "completed_at": timezone.now()},
-        )
+        recorded = _record_completion(source.pk, component_id, free_course_ref)
     except DatabaseError:
         return _error("Could not save your progress. Please try again.", 503)
+    if not recorded:
+        return _error(WITHDRAWN_COMPLETION, 409)
 
     response = JsonResponse({"componentId": component_id, "completed": True})
     response["Cache-Control"] = "private, no-store"
@@ -588,13 +616,11 @@ def submit_free_course_quiz(request, kind, pk, component_id):
 
     if passed:
         try:
-            LearnerFreeCourseProgress.objects.get_or_create(
-                learner_id=source.pk,
-                component_ref=component_id,
-                defaults={"free_course_ref": free_course_ref, "completed_at": timezone.now()},
-            )
+            recorded = _record_completion(source.pk, component_id, free_course_ref)
         except DatabaseError:
             return _error("Your quiz was graded but could not be saved. Please try again.", 503)
+        if not recorded:
+            return _error(WITHDRAWN_COMPLETION, 409)
 
     response = JsonResponse({
         "componentId": component_id,

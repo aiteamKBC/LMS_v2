@@ -81,7 +81,7 @@ def bound_session(record, *, overlay=None, target=None, lock=False):
             or owner.provenance != 'graph-calendar-verified'
             or owner.overlay_id != overlay.pk
             or owner.source_review_id != overlay.source_review_id
-            or owner.learner_id != overlay.learner_id
+            or owner.learner_profile_id != overlay.learner_profile_id
             or owner.review_event_key != overlay.event_key
             or owner.review_event_key != record.event_key
             or owner.owner_email.casefold() != record.owner_email.casefold()

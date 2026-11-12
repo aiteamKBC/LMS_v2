@@ -248,7 +248,7 @@ class HomeEndpointTests(SimpleTestCase):
              patch.object(home_summary, 'build_home_summary', return_value={'stats': {}}) as build:
             response = home_summary.curriculum_home_summary(request)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(cache.call_args.args[0], 'home-summary:v1:all')
+        self.assertEqual(cache.call_args.args[0], 'home-summary:v2:all')
         self.assertTrue(cache.call_args.kwargs['force'])
         build.assert_called_once_with('all', force=True)
 
@@ -267,3 +267,48 @@ class HomeEndpointTests(SimpleTestCase):
                     RequestFactory().get('/curriculum_api/curriculum/home-summary/')
                 )
             self.assertEqual(response.status_code, status)
+
+
+class HomeAttentionDetailTests(SimpleTestCase):
+    def setUp(self):
+        source = source_data()
+        self.projection = home_summary.project_home(source, source['programmes'])
+
+    def _get(self, query):
+        request = RequestFactory().get(f'/curriculum_api/curriculum/home-attention/?{query}')
+        with patch.object(views, 'cached_curriculum_value', return_value=self.projection) as cached:
+            response = home_summary.curriculum_home_attention(request)
+        return response, cached
+
+    def test_summary_omits_records_that_the_detail_read_returns(self):
+        summary = home_summary.summary_only(self.projection)
+        self.assertNotIn('attentionRecords', summary)
+        self.assertNotIn('programmeDetails', summary)
+        response, cached = self._get('issue=group-coach')
+        self.assertEqual(cached.call_args.args[0], 'home-summary:v2:operational')
+        body = json.loads(response.content)
+        self.assertEqual(body['count'], summary['attentionCounts']['group-coach'])
+        self.assertEqual([record['id'] for record in body['records']], ['G1', 'G2'])
+
+    def test_records_carry_names_and_context_without_placeholder_programmes(self):
+        records = self.projection['attentionRecords']['module-mapping']
+        self.assertEqual(records[0], {'id': 'M/1', 'name': 'First', 'programme': 'Alpha', 'cohort': '', 'group': ''})
+        self.assertEqual(records[1]['programme'], 'beta')
+
+    def test_programme_detail_lists_the_records_its_card_counted(self):
+        response, _ = self._get('programme=canonical-P1')
+        body = json.loads(response.content)
+        sections = {section['key']: section for section in body['sections']}
+        self.assertEqual(body['programme'], {'id': 'canonical-P1', 'name': 'Alpha'})
+        self.assertEqual(set(sections), {'module-mapping', 'module-tutor', 'group-coach'})
+        self.assertEqual([r['id'] for r in sections['group-coach']['records']], ['G1', 'G2'])
+        self.assertEqual(sections['group-coach']['count'], 2)
+        empty = json.loads(self._get('programme=P3')[0].content)
+        self.assertEqual([s['key'] for s in empty['sections']], ['programme-ksb-source', 'no-modules', 'no-delivery'])
+
+    def test_rejects_unknown_or_ambiguous_queries_before_reading(self):
+        for query in ('', 'issue=bogus', 'issue=group-coach&programme=P1'):
+            with self.subTest(query=query):
+                response, cached = self._get(query)
+                self.assertEqual(response.status_code, 400)
+                cached.assert_not_called()

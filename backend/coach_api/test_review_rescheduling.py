@@ -45,7 +45,7 @@ class ReviewRescheduleTests(TestCase):
         for model in reversed(self.models):
             model.objects.all().delete()
         self.record = CoachCalendarEvent.objects.create(
-            event_key='review:21:template:1', learner_id=21,
+            event_key='review:21:template:1', learner_profile_id=21,
             owner_email='coach@example.invalid', learner_email='student@example.invalid',
             learner_name='Synthetic learner', event_type='mcr', target_date=date(2026, 10, 27),
             scheduled_date=date(2026, 10, 27), scheduled_time=time(10), duration_minutes=60,

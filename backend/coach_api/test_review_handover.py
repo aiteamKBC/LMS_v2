@@ -70,7 +70,7 @@ class HandoverPersistenceTests(TestCase):
 
     def overlay(self, source, status='scheduled', **kwargs):
         return ImportedReviewInstance.objects.create(event_key=f"imported-review:{source['aptemReviewId']}",
-            owner_email=OLD, learner_id=901, source_review_id=source['id'], status=status,
+            owner_email=OLD, learner_profile_id=901, source_review_id=source['id'], status=status,
             template_snapshot={'sections': [{'key': 'synthetic'}]}, answers={'recap': 'Saved answer'},
             progress_snapshot={'hours': 12}, signature_requirements={'advisor': True, 'participant': True},
             meeting_intelligence={'reviewRevision': 2, 'summary': {'overview': 'Keep'}}, **kwargs)

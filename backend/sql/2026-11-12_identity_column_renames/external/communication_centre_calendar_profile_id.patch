@@ -1,0 +1,65 @@
+diff --git a/backend/callcentre/lms_booking.py b/backend/callcentre/lms_booking.py
+index 54295e6..3f9c9ce 100644
+--- a/backend/callcentre/lms_booking.py
++++ b/backend/callcentre/lms_booking.py
+@@ -82,9 +82,11 @@ def _fetch(cursor, sql, params=()):
+ def lms_learner(email):
+     """The learner and their coach as the LMS enrolment record (enrolment."Created_users") gives them.
+ 
+-    Unified mode resolves source aliases through the shared directory. The calendar row
+-    is still filed under Created_users.id, not a profile ID or an Aptem ID. Legacy mode
+-    retains the original direct enrolment lookup for reader rollback.
++    Unified mode resolves source aliases through the shared directory. Calendar rows are
++    filed under the learner's profile ID ("Learner".learners.id), as every LMS writer does;
++    the absence report keeps Created_users.id (``source_id``). The two are independent
++    number ranges, so a booking is refused rather than filed under the wrong one. Legacy
++    mode retains the original direct enrolment lookup for reader rollback.
+     """
+     from .sources import rows, learner_directory
+     from .identity import enabled
+@@ -100,7 +102,11 @@ def lms_learner(email):
+         if not person['coach_email']:
+             raise ValueError('No verified coach email is available for this learner.')
+         aptem_ids = [value for source, value in person['source_ids'] if source == 'aptem']
+-        return {'source_id': person['enrolment']['id'], 'aptem_id': aptem_ids[0] if aptem_ids else None,
++        profile_ids = {int(value) for source, value in person['source_ids'] if source == 'profile'}
++        if len(profile_ids) != 1:
++            raise ValueError('No unique LMS learner profile is linked to this contact. Review their identity before booking.')
++        return {'source_id': person['enrolment']['id'], 'profile_id': profile_ids.pop(),
++                'aptem_id': aptem_ids[0] if aptem_ids else None,
+                 'name': person['profile']['learner_name'], 'email': person['profile']['learner_email'],
+                 'coach_email': person['coach_email'], 'coach_name': person['profile']['coach']}
+     found = rows(LMS, '''SELECT id, aptem_id, "Username", "Email", "Programme_status", "Coach_name", "Coach_email",
+@@ -130,7 +136,10 @@ def lms_learner(email):
+         raise ValueError(f'No email is recorded in the LMS for the learner’s coach ({coach_name or "none set"}). '
+                          'Ask for their coach to be set in the LMS first.')
+     name = (row['Username'] or '').strip() or 'Learner'
+-    return {'source_id': row['id'], 'aptem_id': row['aptem_id'], 'name': name, 'email': email_key(row['Email']),
++    # Each profile carries a unique enrolment_id, so this is the learner's one profile or none.
++    profiles = rows(LMS, 'SELECT id FROM "Learner".learners WHERE enrolment_id = %s', [row['id']])
++    return {'source_id': row['id'], 'profile_id': profiles[0]['id'] if len(profiles) == 1 else None,
++            'aptem_id': row['aptem_id'], 'name': name, 'email': email_key(row['Email']),
+             'coach_email': coach_email, 'coach_name': coach_name}
+ 
+ 
+@@ -299,11 +308,19 @@ def check_lecture_free(cursor, lecture):
+     return report
+ 
+ 
++def _calendar_learner_id(person):
++    profile_id = person.get('profile_id')
++    if not profile_id:
++        raise ValueError('This learner has no LMS learner profile yet, so the LMS cannot take a booking for them.')
++    return profile_id
++
++
+ def _reserve(person, session_type, start, notes, idempotency_key):
+     """Insert the LMS calendar row under the LMS's per-learner lock and rules; returns (row, created)."""
+     local = start.astimezone(LONDON)
+     day, at = local.date(), local.time().replace(second=0, microsecond=0)
+-    learner_id, coach = person['source_id'], person['coach_email']
++    # Calendar and sequence rows are keyed by the LMS profile ID, never Created_users.id.
++    learner_id, coach = _calendar_learner_id(person), person['coach_email']
+     with transaction.atomic(using=LMS), connections[LMS].cursor() as cursor:
+         cursor.execute('''INSERT INTO "Coach".coach_calendar_sequence (learner_id, event_type, last_sequence, updated_at)
+             VALUES (%s, %s, 0, now()) ON CONFLICT (learner_id, event_type) DO NOTHING''', [learner_id, LOCK_SCOPE])

@@ -14,7 +14,7 @@ class ImportedContinuationLockOrderTests(SimpleTestCase):
             "historicalReview": {"id": 501},
         }
         self.overlay = SimpleNamespace(
-            learner_id=21, source_review_id=501,
+            learner_profile_id=21, source_review_id=501,
             template_snapshot={"sections": [{"title": "Synthetic"}]},
         )
 
@@ -37,7 +37,7 @@ class ImportedContinuationLockOrderTests(SimpleTestCase):
             # A stale initial identity cannot authorize the row re-read later.
             locked.first.side_effect = None
             locked.first.return_value = SimpleNamespace(
-                learner_id=22, source_review_id=501, template_snapshot=self.overlay.template_snapshot,
+                learner_profile_id=22, source_review_id=501, template_snapshot=self.overlay.template_snapshot,
             )
             self.assertIsNone(views._owned_migrated_overlay(
                 "coach@example.invalid", self.definition, lock=True, lock_calendar=True,
@@ -45,7 +45,7 @@ class ImportedContinuationLockOrderTests(SimpleTestCase):
 
     def test_missing_or_wrong_owned_source_never_acquires_parent_locks(self):
         for overlay in (None, SimpleNamespace(
-            learner_id=21, source_review_id=502, template_snapshot=self.overlay.template_snapshot,
+            learner_profile_id=21, source_review_id=502, template_snapshot=self.overlay.template_snapshot,
         )):
             with self.subTest(overlay=overlay), \
                  patch.object(views.ImportedReviewInstance.objects, "filter") as query, \

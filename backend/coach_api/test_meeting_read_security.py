@@ -17,7 +17,7 @@ class MeetingReadSecurityTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
         self.record = CoachCalendarEvent(id=7, event_key='mcr:42:1:2026-10-24',
-            owner_email='coach@example.invalid', learner_id=42, event_type='mcr', status='scheduled')
+            owner_email='coach@example.invalid', learner_profile_id=42, event_type='mcr', status='scheduled')
         self.snapshot = dict(attendance={'records': []}, artifacts=[], attendanceReports=[],
                              attendanceTracker={}, errors=[], partial=False, storage={'stored': True})
         self.stack = ExitStack()

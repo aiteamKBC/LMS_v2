@@ -57,7 +57,7 @@ class UnscheduledReviewHoursTests(TestCase):
             name='Synthetic MCM', is_active=True, definition_json=definition)
         self.review = ImportedReviewInstance.objects.create(
             owner_email='coach@example.invalid', event_key=f'imported-review:{token}',
-            learner_id=self.learner_id, source_review_id=self.source_id,
+            learner_profile_id=self.learner_id, source_review_id=self.source_id,
             migrated_template=template, template_snapshot=snapshot_for(template), status='not-scheduled')
         self.enterContext(patch('coach_api.migrated_completion_views.booking_for_overlay', return_value=None))
         self.account = SimpleNamespace(pk=901, display_name='Synthetic learner', email=email)

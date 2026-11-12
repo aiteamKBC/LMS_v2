@@ -22,7 +22,7 @@ def imported_events_for_learner(source, profile, aptem_id, records, *, month=Non
         from coach_api.models import ImportedReviewInstance
         keys = [record.event_key for record in records]
         review_ids = list(ImportedReviewInstance.objects.filter(
-            learner_id=profile.id, event_key__in=keys).values_list('source_review_id', flat=True))
+            learner_profile_id=profile.id, event_key__in=keys).values_list('source_review_id', flat=True))
         for record in records:
             parts = str(record.idempotency_key or '').split(':')
             if len(parts) == 6 and parts[0] == 'learner-book' and parts[-1].isdigit():

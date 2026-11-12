@@ -734,7 +734,7 @@ def reconcile_review_event_keys(events, records):
         template_id = getattr(record, 'review_template_id', '')
         occurrence_number = getattr(record, 'occurrence_number', None)
         if template_id and occurrence_number is not None:
-            identity = (str(record.learner_id), template_id, occurrence_number)
+            identity = (str(record.learner_profile_id), template_id, occurrence_number)
             by_identity[identity] = record
     matched = {}
     for event in events:
@@ -2227,7 +2227,7 @@ def _locked_linked_calendar_for_mirror(instance_row):
             'The linked Calendar event does not point back to this Review Instance; '
             'review reconciliation is required.'
         )
-    if str(calendar.learner_id) != str(instance_row.get('learner_id')):
+    if str(calendar.learner_profile_id) != str(instance_row.get('learner_id')):
         raise ValueError(
             'The linked Calendar event belongs to a different learner; '
             'review reconciliation is required.'

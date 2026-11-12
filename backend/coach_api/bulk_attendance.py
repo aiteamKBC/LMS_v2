@@ -79,7 +79,7 @@ def current_row(profile, occurrence_id, lock=False):
     if row is None:
         raise BulkError('No saved attendance record is available for this learner and occurrence.', 409)
     query = CoachAttendanceSourceAdjustment.objects.filter(
-        learner_id=profile.id, source='microsoft-teams', source_id=occurrence_id)
+        learner_profile_id=profile.id, source='microsoft-teams', source_id=occurrence_id)
     adjustment = (query.select_for_update() if lock else query).first()
     return row, adjustment, attendance_version(profile.id, occurrence_id, row, adjustment)
 
@@ -135,7 +135,7 @@ def write_records(profiles, occurrence_id, records, owner):
         action = 'unchanged'
         if not same:
             CoachAttendanceSourceAdjustment.objects.update_or_create(
-                learner_id=int(learner_id), source='microsoft-teams', source_id=occurrence_id,
+                learner_profile_id=int(learner_id), source='microsoft-teams', source_id=occurrence_id,
                 defaults={'status': '' if status == 'reset' else status, 'is_deleted': False, 'owner_email': owner, 'updated_by': owner})
             action = 'updated' if adjustment else 'created'
         results.append({'learnerId': learner_id, 'status': status, 'action': action})

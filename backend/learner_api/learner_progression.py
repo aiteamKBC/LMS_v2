@@ -100,7 +100,7 @@ def compliance_document_state(learner_kind, learner_id):
         try:
             document = model.objects.filter(
                 learner_kind=learner_kind,
-                learner_id=learner_id,
+                enrolment_id=learner_id,
                 status=model.STATUS_ACTIVE,
             ).first()
         except DatabaseError:
@@ -129,7 +129,7 @@ def learner_signed_compliance_documents(learner_kind, learner_id):
     for name, model in COMPLIANCE_DOCUMENT_MODELS:
         try:
             document = model.objects.filter(
-                learner_kind=learner_kind, learner_id=learner_id, status=model.STATUS_ACTIVE,
+                learner_kind=learner_kind, enrolment_id=learner_id, status=model.STATUS_ACTIVE,
             ).only(LEARNER_SIGNATURE_FIELDS[name]).first()
         except DatabaseError:
             logger.exception("learner_signed_compliance_documents: %s lookup failed", name)

@@ -43,7 +43,7 @@ def _public(row, item):
 
 def _find(kind, learner_id, file_id, lock=False):
     """(row, item, items) holding `file_id` among this learner's records, or Nones."""
-    rows = WizardPlrRecord.objects.filter(learner_kind=kind, learner_id=learner_id)
+    rows = WizardPlrRecord.objects.filter(learner_kind=kind, enrolment_id=learner_id)
     if lock:
         rows = rows.select_for_update()
     for row in rows:
@@ -69,7 +69,7 @@ def plr_evidence(request, kind, learner_id):
 
     if request.method == "GET":
         try:
-            rows = list(WizardPlrRecord.objects.filter(learner_kind=kind, learner_id=learner_id))
+            rows = list(WizardPlrRecord.objects.filter(learner_kind=kind, enrolment_id=learner_id))
         except DatabaseError as exc:
             logger.warning("Could not list PLR evidence: %s", exc)
             return _error("Could not load evidence.", 502)
@@ -98,7 +98,7 @@ def plr_evidence(request, kind, learner_id):
         with transaction.atomic(using="enrolment"):
             # Locked so two uploads at once each append to what the other wrote.
             row, _ = WizardPlrRecord.objects.select_for_update().get_or_create(
-                learner_kind=kind, learner_id=learner_id, record_ref=record_ref,
+                learner_kind=kind, enrolment_id=learner_id, record_ref=record_ref,
             )
             row.evidence = [*uploads.items(row.evidence), item]
             row.save(update_fields=["evidence", "updated_at"])

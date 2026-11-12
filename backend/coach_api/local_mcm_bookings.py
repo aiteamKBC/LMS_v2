@@ -86,7 +86,7 @@ def legacy_mcm_calendar_records(owner_email, event_keys, *, lock=False):
             continue
         _, profile_id, imported_id, enrolment_id, kind, _ = row
         key = "imported-review:" + imported_id.strip()
-        if (key in keys and record.learner_id == profile_id
+        if (key in keys and record.learner_profile_id == profile_id
                 and str(enrolment_id) == parts[3] and (kind or "").lower() == parts[2]):
             result[key].append(record)
     return dict(result)

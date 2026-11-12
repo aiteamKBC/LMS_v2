@@ -138,7 +138,7 @@ def read_extended_ilr(kind, learner_id, learner_name):
 
 
 def _read_extended_ilr_row(kind, learner_id, learner_name):
-    row = ExtendedIlr.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+    row = ExtendedIlr.objects.filter(learner_kind=kind, enrolment_id=learner_id).first()
     if row is None:
         # No ILR row, but the per-step tables may still hold a partly-filled
         # wizard (e.g. a learner who only completed Personal Details).
@@ -227,7 +227,7 @@ def extended_ilr(request, kind, learner_id):
             with transaction.atomic(using="enrolment"):
                 row, _ = ExtendedIlr.objects.update_or_create(
                     learner_kind=kind,
-                    learner_id=learner_id,
+                    enrolment_id=learner_id,
                     defaults=defaults,
                 )
                 # Same transaction as the document, so the queryable per-step

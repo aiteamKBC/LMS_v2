@@ -155,7 +155,7 @@ def _party_overlay(review_id, account, *, lock=False, lock_calendar=False, allow
     if (account.role == "employer" and is_personal_support_form(overlay)
             and "employer" not in required_roles(overlay)):
         return None
-    profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
+    profile = LearnerProfile.objects.filter(pk=overlay.learner_profile_id).first()
     from .review_sources import enrolment_for_review_profile
     learner = enrolment_for_review_profile(profile)
     if not learner:
@@ -166,7 +166,7 @@ def _party_overlay(review_id, account, *, lock=False, lock_calendar=False, allow
         return None
     from coach_api.views import get_learner_db_alias
     with connections[get_learner_db_alias()].cursor() as cursor:
-        cursor.execute('SELECT status, completed_date FROM "Learner".reviews WHERE id = %s AND learner_id = %s', [overlay.source_review_id, overlay.learner_id])
+        cursor.execute('SELECT status, completed_date FROM "Learner".reviews WHERE id = %s AND learner_id = %s', [overlay.source_review_id, overlay.learner_profile_id])
         source = cursor.fetchone()
     if not source:
         return None

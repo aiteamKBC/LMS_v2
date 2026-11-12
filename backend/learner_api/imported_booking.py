@@ -48,7 +48,7 @@ def schedule_overlay_for_booking(record_id, event):
         views.lock_learner_calendar(event["learnerId"])
         record = CoachCalendarEvent.objects.select_for_update().get(pk=record_id)
         overlays = list(ImportedReviewInstance.objects.select_for_update().filter(
-            learner_id=event["learnerId"],
+            learner_profile_id=event["learnerId"],
         ).filter(Q(source_review_id=event["reviewId"]) | Q(event_key=event["eventKey"])))
         try:
             overlay = linked_overlay(event, overlays)
@@ -94,14 +94,14 @@ def reserve_imported_booking(candidate, event, expected_slot, *, notes=None, exp
             record, _created = CoachCalendarEvent.objects.get_or_create(
                 event_key=candidate.event_key,
                 defaults={name: getattr(candidate, name) for name in (
-                    "owner_email", "owner_name", "learner_id", "learner_name", "learner_email",
+                    "owner_email", "owner_name", "learner_profile_id", "learner_name", "learner_email",
                     "event_type", "sequence", "target_date",
                 )},
             )
         else:
             record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
         overlays = list(ImportedReviewInstance.objects.select_for_update().filter(
-            learner_id=event["learnerId"],
+            learner_profile_id=event["learnerId"],
         ).filter(Q(source_review_id=event["reviewId"]) | Q(event_key=event["eventKey"])))
         try:
             overlay = linked_overlay(event, overlays)

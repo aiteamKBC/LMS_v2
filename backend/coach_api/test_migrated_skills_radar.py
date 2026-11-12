@@ -422,7 +422,7 @@ class RadarPersistenceTests(TestCase):
             review_family='PR_SKILLS_RADAR',name='PR + Skills Radar',definition_json=template().definition_json,is_active=True)
         snapshot=snapshot_for(self.master);snapshot['sections']=[radar.build_section(source_fields(),None)]
         self.overlay=ImportedReviewInstance.objects.create(event_key='imported-review:radar-fixture',
-            owner_email='coach@example.test',learner_id=701,source_review_id=9001,migrated_template=self.master,
+            owner_email='coach@example.test',learner_profile_id=701,source_review_id=9001,migrated_template=self.master,
             template_snapshot=snapshot,status='in-progress',answers={PREFIX+'learner':'2',PREFIX+'coach':'4',PREFIX+'goal':'5'})
         self.definition={'migratedForm':True,'migratedProgrammeKey':'','readOnly':False,
             'instance':{'id':self.overlay.event_key,'learnerId':701},

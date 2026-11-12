@@ -419,7 +419,7 @@ class CoachAuthorizationSecurityTests(CoachTransactionTestCase):
             attendance_id=5001,
             owner_email="coach-b@example.com",
             owner_name="Coach B",
-            learner_id=202,
+            enrolment_id=202,
             learner_name="Learner B",
             learner_email="learner-b@example.com",
             session_title="Session",

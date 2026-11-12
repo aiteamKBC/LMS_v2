@@ -50,11 +50,26 @@ class Command(BaseCommand):
         try:
             with transaction.atomic(using=CONN):
                 for record in records:
-                    kind, learner = self._learner_for(record.learner_id)
+                    # Onboarding rows are filed under Created_users.id, not the
+                    # profile id the calendar field is named for (see
+                    # learner_api.calendar._record_owner_ids).
+                    enrolment_id = record.learner_profile_id
+                    kind, learner = self._learner_for(enrolment_id)
                     if learner is None:
                         self.stdout.write(
                             self.style.WARNING(
-                                f"  skip {record.event_key}: learner {record.learner_id} not found"
+                                f"  skip {record.event_key}: learner {enrolment_id} not found"
+                            )
+                        )
+                        skipped += 1
+                        continue
+                    # The two id sequences overlap, so a number alone may name
+                    # someone else; the row's own email must agree.
+                    booked_email = _s(record.learner_email).strip().casefold()
+                    if booked_email and booked_email != _s(learner.email).strip().casefold():
+                        self.stdout.write(
+                            self.style.WARNING(
+                                f"  skip {record.event_key}: learner {enrolment_id} is not the person this was booked for"
                             )
                         )
                         skipped += 1
@@ -68,7 +83,7 @@ class Command(BaseCommand):
                             "review_type": _s(record.event_type),
                             "review_label": ONBOARDING_REVIEW_LABELS.get(_s(record.event_type), ""),
                             "learner_kind": kind,
-                            "learner_id": record.learner_id,
+                            "enrolment_id": enrolment_id,
                             "learner_name": _s(record.learner_name),
                             "learner_email": _s(record.learner_email),
                             "coach_id": coach_id,

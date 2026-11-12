@@ -99,7 +99,7 @@ class MigratedTemplateManagementTests(TestCase):
     def working_review(self, template, *, answers=None, status="in-progress", number=1):
         return ImportedReviewInstance.objects.create(
             event_key=f"imported-review:authoring-{number}", owner_email="coach@example.invalid",
-            learner_id=100 + number, source_review_id=9000 + number, migrated_template=template,
+            learner_profile_id=100 + number, source_review_id=9000 + number, migrated_template=template,
             template_snapshot=snapshot_for(template), status=status,
             answers=answers if answers is not None else {"progress": "Synthetic saved answer"},
         )
@@ -482,7 +482,7 @@ class MigratedTemplateManagementTests(TestCase):
     def test_programme_snapshot_survives_definition_edit_and_deactivation(self):
         template = self.template("PROGRAMME", key="id:P1")
         overlay = ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", event_key="imported-review:snapshot",
-            learner_id=1, source_review_id=103, migrated_template=template, template_snapshot=snapshot_for(template),
+            learner_profile_id=1, source_review_id=103, migrated_template=template, template_snapshot=snapshot_for(template),
             answers={"progress": "Saved response"}, status="in-progress")
         before = copy.deepcopy(overlay.template_snapshot)
         definition = copy.deepcopy(DEFINITION); definition["sections"][0]["fields"][0]["title"] = "Future question"
@@ -516,7 +516,7 @@ class MigratedTemplateManagementTests(TestCase):
 
     def test_legacy_skills_snapshot_keeps_original_pr_reference(self):
         template = self.template("PROGRAMME", key="id:P1", active=False)
-        overlay = ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", event_key="imported-review:old", learner_id=1,
+        overlay = ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", event_key="imported-review:old", learner_profile_id=1,
             source_review_id=101, migrated_template=template, template_snapshot=copy.deepcopy(DEFINITION))
         self.assertTrue(snapshot_assignment_valid(overlay, "PR_SKILLS_RADAR", "id:P1"))
         self.assertFalse(snapshot_assignment_valid(overlay, "PR_SKILLS_RADAR", "id:P2"))

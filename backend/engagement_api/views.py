@@ -441,7 +441,7 @@ def leaderboard(request):
     scope = request.GET.get('scope') if request.GET.get('scope') in ('monthly', 'all-time') else 'all-time'
     cohort = request.GET.get('cohort') or None
 
-    where = ["g.enrolment_id ~ '^[0-9]+$'"]
+    where = ["g.learner_id ~ '^[0-9]+$'"]
     params = []
     if scope == 'monthly':
         where.append("g.awarded_at >= date_trunc('month', now())")
@@ -452,9 +452,9 @@ def leaderboard(request):
     with connection.cursor() as cursor:
         cursor.execute(
             f'''
-            SELECT g.enrolment_id, g.learner_name, SUM(g.points) AS points, max(placement.cohort_name) AS cohort
+            SELECT g.learner_id AS enrolment_id, g.learner_name, SUM(g.points) AS points, max(placement.cohort_name) AS cohort
             FROM "Engagement"."points_grants" g
-            JOIN enrolment."Created_users" cu ON cu.id = g.enrolment_id::bigint
+            JOIN enrolment."Created_users" cu ON cu.id = g.learner_id::bigint
             -- Created_users no longer stores the cohort name: read it as
             -- EnrolmentUser.cohort does, through the enrolment's learner profile.
             LEFT JOIN LATERAL (
@@ -466,7 +466,7 @@ def leaderboard(request):
                 LIMIT 1
             ) placement ON TRUE
             WHERE {' AND '.join(where)}
-            GROUP BY g.enrolment_id, g.learner_name
+            GROUP BY g.learner_id, g.learner_name
             ORDER BY points DESC, g.learner_name ASC
             LIMIT 50
             ''',

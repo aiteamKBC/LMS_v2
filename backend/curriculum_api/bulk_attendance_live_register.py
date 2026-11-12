@@ -228,7 +228,7 @@ def save_live_attendance(changes, *, actor=''):
         for row in rows:
             source_id = row['occurrence_id'] if owners.get(row['live_session_id']) == row['module_catalogue_id'] else f"{row['occurrence_id']}:{row['module_catalogue_id']}"
             CoachAttendanceSourceAdjustment.objects.using(database).update_or_create(
-                learner_id=row['learner_profile_id'], source='microsoft-teams', source_id=source_id,
+                learner_profile_id=row['learner_profile_id'], source='microsoft-teams', source_id=source_id,
                 defaults={'status': changes[row['id']], 'is_deleted': False,
                           'owner_email': actor, 'updated_by': actor},
             )

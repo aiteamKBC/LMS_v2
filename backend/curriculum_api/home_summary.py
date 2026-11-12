@@ -39,11 +39,29 @@ def _date_value(value):
         return 0
 
 
+ATTENTION_ISSUES = ('programme-ksb-source', 'module-mapping', 'draft-content', 'group-coach', 'module-tutor')
+# Keys of the cached projection that only the on-demand detail read returns.
+_DETAIL_KEYS = ('attentionRecords', 'programmeDetails')
+
+
 def project_home_summary(overview, programmes):
     """Preserve Home's existing counting, matching, ordering and link identities.
 
     Only five module cards and six programme cards leave the server. No source
     rows, learner counts, KSB definitions or authoring content are exposed.
+    """
+    return summary_only(project_home(overview, programmes))
+
+
+def summary_only(projection):
+    return {key: value for key, value in projection.items() if key not in _DETAIL_KEYS}
+
+
+def project_home(overview, programmes):
+    """The summary plus the affected records each modal lists, built in one pass.
+
+    The records stay in the server cache; Home reads them per issue or per
+    programme only when a modal opens.
     """
     modules = overview.get('modules') or []
     cohorts = overview.get('cohorts') or []
@@ -67,19 +85,30 @@ def project_home_summary(overview, programmes):
     def _module_id(module):
         return _clean(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('id') or module.get('sourceId') or module.get('name'))
 
+    def _context(row):
+        # 'Unassigned' is the overview's placeholder for no programme, not a name.
+        programme = _clean(row.get('programme') or row.get('programmeName'))
+        return {
+            'programme': '' if _missing(programme) else programme,
+            'cohort': _clean(row.get('cohort') or row.get('cohortName')),
+            'group': _clean(row.get('group') or row.get('groupName')),
+        }
+
     def _module_rec(m):
-        return {'id': _module_id(m), 'name': m.get('name') or '', 'programme': m.get('programme') or ''}
+        return {'id': _module_id(m), 'name': _clean(m.get('name')), **_context(m)}
 
     def _group_rec(g):
         return {
             'id': _clean(g.get('id') or g.get('sourceId') or g.get('groupId') or g.get('name')),
-            'name': g.get('name') or g.get('groupName') or '',
-            'programme': g.get('programme') or g.get('programmeName') or '',
+            **_context(g),
+            'name': _clean(g.get('name') or g.get('groupName')),
+            'group': '',
         }
 
     attention_records = {
         'programme-ksb-source': [
-            {'id': _clean(p.get('sourceId') or p.get('id') or p.get('name')), 'name': p.get('name') or ''}
+            {'id': _clean(p.get('sourceId') or p.get('id') or p.get('name')), 'name': _clean(p.get('name')),
+             'programme': '', 'cohort': '', 'group': ''}
             for p in programmes if needs_source(p)
         ],
         'module-mapping': [_module_rec(m) for m in modules if _zero(m.get('ksbCount'))],
@@ -89,6 +118,7 @@ def project_home_summary(overview, programmes):
     }
 
     focus = []
+    programme_details = {}
     for programme in programmes:
         keys = {_key(programme.get(field)) for field in ('id', 'sourceId', 'name')} - {''}
 
@@ -116,15 +146,32 @@ def project_home_summary(overview, programmes):
         if coach_gaps:
             issues.append(f'{coach_gaps} without coach')
         if issues:
+            programme_id = _clean(programme.get('sourceId') or programme.get('id') or programme.get('name'))
             focus.append({
-                'programme': {
-                    'id': _clean(programme.get('sourceId') or programme.get('id') or programme.get('name')),
-                    'name': programme.get('name') or '',
-                },
+                'programme': {'id': programme_id, 'name': programme.get('name') or ''},
                 'issues': issues,
                 'issueCount': len(issues),
             })
+            # Same membership as the counts above, so each section lists exactly
+            # the records its card counted.
+            sections = [
+                {'key': 'programme-ksb-source', 'count': int(needs_source(programme)), 'records': []},
+                {'key': 'no-modules', 'count': int(not programme_modules), 'records': []},
+                {'key': 'no-delivery', 'count': int(not programme_cohorts), 'records': []},
+                {'key': 'module-mapping', 'count': mapping_gaps,
+                 'records': [_module_rec(m) for m in programme_modules if _zero(m.get('ksbCount'))]},
+                {'key': 'module-tutor', 'count': tutor_gaps,
+                 'records': [_module_rec(m) for m in programme_modules if _missing(m.get('tutor'))]},
+                {'key': 'group-coach', 'count': coach_gaps,
+                 'records': [_group_rec(g) for g in programme_groups if _missing(g.get('coach'))]},
+            ]
+            programme_details[programme_id] = {
+                'programme': {'id': programme_id, 'name': programme.get('name') or ''},
+                'sections': [section for section in sections if section['count']],
+            }
     focus.sort(key=lambda item: -item['issueCount'])
+    focus = focus[:6]
+    shown = {item['programme']['id'] for item in focus}
     recent = sorted(drafts or modules, key=lambda module: -_date_value(module.get('lastUpdated')))[:5]
     return {
         'stats': {
@@ -134,7 +181,6 @@ def project_home_summary(overview, programmes):
             'openIssues': sum(counts.values()),
         },
         'attentionCounts': counts,
-        'attentionRecords': attention_records,
         'continueModules': [{
             'id': _clean(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('id') or module.get('sourceId') or module.get('name')),
             'name': module.get('name') or '',
@@ -142,7 +188,9 @@ def project_home_summary(overview, programmes):
             'weeks': module.get('weeks') or 0,
             'status': module.get('status') or '',
         } for module in recent],
-        'programmeFocus': focus[:6],
+        'programmeFocus': focus,
+        'attentionRecords': attention_records,
+        'programmeDetails': {key: value for key, value in programme_details.items() if key in shown},
     }
 
 
@@ -289,7 +337,7 @@ def build_home_summary(visibility, *, force=False):
         if not home_programmes_need_enrichment(
             overview, rows['authoring_modules'], rows['program_configs'], include_archived=visibility == 'all',
         ):
-            return project_home_summary(overview, overview['programmes'])
+            return project_home(overview, overview['programmes'])
         # Programme enrichment can introduce module-only programmes. Preserve
         # those identities, but do not load component bodies or KSB mappings.
         modules = views.enrich_modules_with_authoring(
@@ -301,13 +349,16 @@ def build_home_summary(visibility, *, force=False):
             # identities/source metadata, including module-only programmes.
             include_structure_counts=False,
         )
-        return project_home_summary(overview, programmes)
+        return project_home(overview, programmes)
 
 
-@require_GET
-def curriculum_home_summary(request):
-    # The existing /curriculum_api/ staff gate applies before this view, just
-    # as it does to overview. Cache by visibility and the shared write epoch.
+def _home_projection(request):
+    """The cached Home projection for this request's visibility, plus a cache header.
+
+    The existing /curriculum_api/ staff gate applies before both Home views, just
+    as it does to overview. Cache by visibility and the shared write epoch, so a
+    curriculum write invalidates the summary and every detail read together.
+    """
     visibility = views.curriculum_visibility(request)
     force = views.request_bypasses_curriculum_cache(request)
     shared_enabled = getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False)
@@ -317,19 +368,54 @@ def curriculum_home_summary(request):
         if shared is not None and isinstance(shared.payload.get('overview'), dict) and isinstance(shared.payload.get('programmes'), list):
             # Do not put a stale snapshot in the long-lived payload cache. The
             # worker can refresh it without moving the curriculum write epoch.
-            response = JsonResponse(project_home_summary(shared.payload['overview'], shared.payload['programmes']))
-            response['X-LMS-Cache'] = 'READ-MODEL-STALE' if shared.stale else 'READ-MODEL-HIT'
             if shared.stale:
                 enqueue_curriculum_home_refresh(visibility, reason='stale-read')
-            return response
-    payload = views.cached_curriculum_value(
-        f'home-summary:v1:{visibility}',
+            projection = project_home(shared.payload['overview'], shared.payload['programmes'])
+            return projection, 'READ-MODEL-STALE' if shared.stale else 'READ-MODEL-HIT'
+    projection = views.cached_curriculum_value(
+        f'home-summary:v2:{visibility}',
         lambda: build_home_summary(visibility, force=force),
         force=force,
     )
+    if not shared_enabled:
+        return projection, None
+    from .read_model import enqueue_curriculum_home_refresh
+    enqueue_curriculum_home_refresh(visibility, reason='forced-read' if force else 'missing-read-model')
+    return projection, 'READ-MODEL-MISS'
+
+
+def _respond(payload, cache_state):
     response = JsonResponse(payload)
-    if shared_enabled:
-        from .read_model import enqueue_curriculum_home_refresh
-        enqueue_curriculum_home_refresh(visibility, reason='forced-read' if force else 'missing-read-model')
-        response['X-LMS-Cache'] = 'READ-MODEL-MISS'
+    if cache_state:
+        response['X-LMS-Cache'] = cache_state
     return response
+
+
+@require_GET
+def curriculum_home_summary(request):
+    projection, cache_state = _home_projection(request)
+    return _respond(summary_only(projection), cache_state)
+
+
+@require_GET
+def curriculum_home_attention(request):
+    """The records behind one Home count (?issue=) or one programme card (?programme=).
+
+    Filtered from the same cached projection as the summary: no overview
+    payload, no extra SQL on a warm cache, and the same write-epoch invalidation.
+    """
+    issue = _clean(request.GET.get('issue'))
+    programme = _clean(request.GET.get('programme'))
+    if bool(issue) == bool(programme):
+        return JsonResponse({'error': 'Provide exactly one of issue or programme.'}, status=400)
+    if issue and issue not in ATTENTION_ISSUES:
+        return JsonResponse({'error': 'Unknown attention issue.'}, status=400)
+    projection, cache_state = _home_projection(request)
+    if issue:
+        records = (projection.get('attentionRecords') or {}).get(issue) or []
+        return _respond({'issue': issue, 'count': len(records), 'records': records}, cache_state)
+    detail = (projection.get('programmeDetails') or {}).get(programme)
+    if detail is None:
+        # Not one of the programme cards Home shows (or its gaps were resolved).
+        return _respond({'programme': {'id': programme, 'name': ''}, 'sections': []}, cache_state)
+    return _respond(detail, cache_state)

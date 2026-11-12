@@ -15,7 +15,7 @@ class NativeReviewMeetingContextTests(SimpleTestCase):
     def test_calendar_lookup_scopes_instance_learner_and_owner(self):
         with patch.object(CoachCalendarEvent.objects, 'filter') as lookup:
             views._review_instance_calendar_record(self.instance)
-        lookup.assert_called_once_with(pk=17, review_instance_id='REVI-1', learner_id=42,
+        lookup.assert_called_once_with(pk=17, review_instance_id='REVI-1', learner_profile_id=42,
                                        owner_email__iexact='coach@example.invalid')
 
     def test_form_exposes_only_linked_teams_booking(self):

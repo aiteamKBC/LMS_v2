@@ -218,7 +218,7 @@ class CoachSchedulingGuardTests(DirectRequestHelpersMixin):
         record = CoachCalendarEvent.objects.create(
             event_key=occurrence['eventKey'], event_type='mcr',
             owner_email=COACH_EMAIL, owner_name='Coach One',
-            learner_id=MIRROR_ID, learner_name='Test Learner', learner_email='learner@example.com',
+            learner_profile_id=MIRROR_ID, learner_name='Test Learner', learner_email='learner@example.com',
             target_date=bookable_day(20), status=CoachCalendarEvent.STATUS_SCHEDULED,
             scheduled_date=bookable_day(20), scheduled_time=time(10, 0), duration_minutes=60,
             review_template_id=template['id'], occurrence_number=occurrence['occurrenceNumber'],
@@ -318,7 +318,7 @@ class LegacyUnlinkedRowsUntouchedTests(DirectRequestHelpersMixin):
         legacy = CoachCalendarEvent.objects.create(
             event_key='mcr:{}:1:2026-01-01'.format(MIRROR_ID), event_type='mcr',
             owner_email=COACH_EMAIL, owner_name='Coach One',
-            learner_id=MIRROR_ID, learner_name='Test Learner', learner_email='learner@example.com',
+            learner_profile_id=MIRROR_ID, learner_name='Test Learner', learner_email='learner@example.com',
             target_date=bookable_day(1), status=CoachCalendarEvent.STATUS_NOT_SCHEDULED,
             idempotency_key='learner-book:legacy-direct-request',
         )

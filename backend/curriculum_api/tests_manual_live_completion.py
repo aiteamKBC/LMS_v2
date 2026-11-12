@@ -166,7 +166,7 @@ class BulkManualCompletionPersistenceTests(SimpleTestCase):
         from learner_api.learner_detail import SOURCE_MODELS
         source = SimpleNamespace(id=70, email=self.profile.email, username='')
         record = CoachManualAttendance.objects.create(
-            owner_email='coach@example.invalid', learner_id=7, enrolment_id=70,
+            owner_email='coach@example.invalid', learner_profile_id=7, enrolment_id=70,
             learner_name='Synthetic', session_date=self.now.date(), module_name='Module one',
             session_title='Lecture 1', status='present', created_by='coach@example.invalid')
         with patch.object(SOURCE_MODELS['commercial'], 'all_learners') as sources, \

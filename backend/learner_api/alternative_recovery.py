@@ -362,8 +362,8 @@ def approved_alternative_guests(
     if current_emails_by_enrolment is not None:
         if not current_emails_by_enrolment:
             return defaultdict(set)
-        reports_query = reports_query.filter(learner_id__in=current_emails_by_enrolment)
-    reports = list(reports_query.values("learner_id", "learner_email", "catchup_event_key"))
+        reports_query = reports_query.filter(enrolment_id__in=current_emails_by_enrolment)
+    reports = list(reports_query.values("enrolment_id", "learner_email", "catchup_event_key"))
     if not reports:
         return defaultdict(set)
     current_emails = current_emails_by_enrolment
@@ -371,13 +371,13 @@ def approved_alternative_guests(
         current_emails = {
             profile.enrolment_id: str(profile.email or "").strip().casefold()
             for profile in LearnerProfile.objects.using(database).filter(
-                enrolment_id__in=[report["learner_id"] for report in reports]
+                enrolment_id__in=[report["enrolment_id"] for report in reports]
             ).only('enrolment_id', 'email')
         }
     guests = defaultdict(set)
     for report in reports:
         occurrence_id = alternative_occurrence_id(report["catchup_event_key"])
-        email = current_emails.get(report["learner_id"]) or str(report["learner_email"] or "").strip().casefold()
+        email = current_emails.get(report["enrolment_id"]) or str(report["learner_email"] or "").strip().casefold()
         if occurrence_id and email:
             guests[occurrence_id].add(email)
     return guests

@@ -48,7 +48,7 @@ def signature_waiver(overlay, family):
         return None
     if (waiver.get("version") != 1 or waiver.get("eventKey") != overlay.event_key
             or waiver.get("sourceReviewId") != overlay.source_review_id
-            or waiver.get("learnerId") != overlay.learner_id
+            or waiver.get("learnerId") != overlay.learner_profile_id
             or not waiver.get("reason") or not waiver.get("appliedBy")):
         return None
     try:

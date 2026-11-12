@@ -109,7 +109,8 @@ class QuizAnswerKeyTests(SimpleTestCase):
                     with patch.object(free, "_resolve_source", return_value=(SimpleNamespace(pk=19), None)), \
                          patch.object(free, "_resolve_quiz_component", return_value=(7, "FREE-1", None)), \
                          patch.object(free, "_fetch_quiz", return_value=quiz), \
-                         patch.object(free.LearnerFreeCourseProgress.objects, "get_or_create") as save:
+                         patch.object(free.LearnerFreeCourseProgress.objects, "get_or_create",
+                                      return_value=(SimpleNamespace(status="active"), True)) as save:
                         response = view(request, kind, 19, "COMP-1")
                     self.assertEqual(response.status_code, 200 if valid else 409)
                     if valid:

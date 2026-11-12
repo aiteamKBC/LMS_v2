@@ -48,7 +48,7 @@ def session_context_from_claim(record, claim):
     if not isinstance(claim, dict) or claim.get('schemaVersion') != 1 or claim.get('selectionVersion') != 1:
         return None
     expected = {'eventKey': record.event_key, 'calendarId': record.pk,
-        'profileId': record.learner_id, 'ownerEmail': record.owner_email,
+        'profileId': record.learner_profile_id, 'ownerEmail': record.owner_email,
         'graphEventId': record.graph_event_id, 'bookingFingerprint': booking_fingerprint(record)}
     if any(claim.get(key) != value for key, value in expected.items()):
         return None

@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from config.legacy_identity import legacy_field_alias
 from django.db.models.functions import Lower
 import uuid
 
@@ -51,6 +52,7 @@ class CoachCalendarEvent(models.Model):
     owner_email = models.EmailField(max_length=255, db_index=True)
     owner_name = models.CharField(max_length=255, blank=True)
     learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     learner_name = models.CharField(max_length=255, blank=True)
     learner_email = models.EmailField(max_length=255, blank=True)
     event_type = models.CharField(max_length=32, db_index=True)
@@ -150,6 +152,7 @@ class ReviewBookingReschedule(models.Model):
 
     calendar_event_id = models.BigIntegerField(db_index=True)
     learner_profile_id = models.IntegerField(db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     event_key = models.CharField(max_length=255)
     graph_event_id = models.CharField(max_length=255)
     owner_email = models.EmailField(max_length=255)
@@ -236,6 +239,7 @@ class ImportedReviewInstance(models.Model):
     event_key = models.CharField(max_length=255)
     owner_email = models.EmailField(max_length=255, db_index=True)
     learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     source_review_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     migrated_template = models.ForeignKey(
         MigratedReviewTemplate, null=True, blank=True, on_delete=models.PROTECT,
@@ -299,6 +303,7 @@ class ImportedMeetingOwnership(models.Model):
 
     source_review_id = models.BigIntegerField()
     learner_profile_id = models.IntegerField(db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     review_event_key = models.CharField(max_length=255)
     calendar_event_id = models.BigIntegerField()
     overlay = models.ForeignKey(ImportedReviewInstance, null=True, blank=True,
@@ -333,6 +338,7 @@ class ReviewSourceReconciliation(models.Model):
     """Explicit current authority; the calendar's Native fields remain provenance."""
 
     learner_profile_id = models.BigIntegerField(db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     # The Coach calendar model addresses a PostgreSQL VIEW. The migration's
     # physical FK therefore targets Learner.coach_calendar_event, not that view.
     calendar_event_id = models.BigIntegerField()
@@ -431,6 +437,7 @@ class CoachCalendarSequence(models.Model):
     """Cross-process sequence allocator for a learner/session-type scope."""
 
     learner_profile_id = models.IntegerField(db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     event_type = models.CharField(max_length=32)
     last_sequence = models.PositiveIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
@@ -484,6 +491,7 @@ class CoachAbsenceReport(models.Model):
     owner_email = models.EmailField(max_length=255, db_index=True)
     owner_name = models.CharField(max_length=255, blank=True)
     enrolment_id = models.IntegerField(db_index=True, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     learner_email = models.EmailField(max_length=255, blank=True)
     session_title = models.CharField(max_length=255)
@@ -538,6 +546,7 @@ class CoachManualAttendance(models.Model):
 
     owner_email = models.EmailField(max_length=255, db_index=True)
     learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     # Stable cross-schema links already present on Coach.coach_manual_attendance.
     # learner_profile_id/enrolment_id remain historical snapshots used by the existing
     # attendance contract; these relations are the canonical joins for new code.
@@ -594,6 +603,7 @@ class CoachAttendanceSourceAdjustment(models.Model):
 
     owner_email = models.EmailField(max_length=255)
     learner_profile_id = models.IntegerField(db_index=True, db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     # Existing FK column; kept as learner_profile_id for joins until all
     # readers use the stable learner_profile_link relation.
     learner_profile_link = models.ForeignKey(
@@ -635,6 +645,7 @@ class ReviewAttendanceLink(models.Model):
 
     calendar_event_id = models.BigIntegerField(db_index=True)
     learner_profile_id = models.IntegerField(db_column='learner_id')
+    learner_id = legacy_field_alias("learner_profile_id")
     target_role = models.CharField(max_length=16, default='learner')
     target_key = models.CharField(max_length=64, default='learner')
     target_name = models.CharField(max_length=255, blank=True, default='')

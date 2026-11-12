@@ -64,7 +64,7 @@ def events_for(principal):
     source = EnrolmentUser.all_learners.get(pk=principal.subject_id)
     profile = LearnerProfile.objects.get(enrolment_id=source.pk,lifecycle_status="active")
     result = []
-    approved = {str(x) for x in CoachAbsenceReport.objects.filter(learner_id=source.pk,status="approved").values_list("attendance_id",flat=True)}
+    approved = {str(x) for x in CoachAbsenceReport.objects.filter(enrolment_id=source.pk,status="approved").values_list("attendance_id",flat=True)}
     confirmations = read_confirmations(source.pk)
     meetings = coaching_events_for_learner(source,profile) + alternative_recovery_events_for_learner(source.pk)
     attended = learner_attended_event_keys(x.get("calendarEventKey") or x.get("eventKey") for x in meetings)

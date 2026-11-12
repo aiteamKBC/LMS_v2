@@ -31,7 +31,7 @@ class CoachMeetingSummaryGenerationTests(SimpleTestCase):
             event_key="mcr:42:1:2026-09-19",
             owner_email="coach@example.test",
             owner_name="Test Coach",
-            learner_id=42,
+            learner_profile_id=42,
             learner_name="Test Learner",
             event_type="mcr",
         )

@@ -20,7 +20,7 @@ def previous_summary(visibility):
             overview['programmes'], modules, modules_enriched=True,
             include_archived=visibility == 'all', include_structure_counts=False,
         )
-        return home_summary.project_home_summary(overview, programmes)
+        return home_summary.project_home(overview, programmes)
 
 
 class HomeSourceTests(SimpleTestCase):

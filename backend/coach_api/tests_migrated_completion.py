@@ -45,7 +45,7 @@ class MigratedReviewCompletionTests(SimpleTestCase):
         from learner_api.calendar import _serialize_event
 
         event = CoachCalendarEvent(
-            event_key="imported-review:synthetic", learner_id=1208,
+            event_key="imported-review:synthetic", learner_profile_id=1208,
             event_type="mcr", target_date=datetime(2026, 11, 18).date(),
         )
         with patch("learner_api.calendar.ImportedReviewInstance.objects.filter") as lookup, \
@@ -53,7 +53,7 @@ class MigratedReviewCompletionTests(SimpleTestCase):
             lookup.return_value.exists.return_value = True
             self.assertTrue(_serialize_event(event, review_types_by_template={}, templates_by_id={})["migratedForm"])
             lookup.assert_called_once_with(
-                event_key=event.event_key, learner_id=event.learner_id,
+                event_key=event.event_key, learner_id=event.learner_profile_id,
                 source_review_id__isnull=False,
             )
             lookup.return_value.exists.return_value = False

@@ -271,7 +271,7 @@ def bulk_attendance_delete_attendance(request):
             if owners.get(row['live_session_id']) != row['module_catalogue_id']:
                 source_id = f"{row['occurrence_id']}:{row['module_catalogue_id']}"
             CoachAttendanceSourceAdjustment.objects.using(database).filter(
-                learner_id=row['learner_profile_id'], source='microsoft-teams', source_id=source_id,
+                learner_profile_id=row['learner_profile_id'], source='microsoft-teams', source_id=source_id,
             ).update(is_deleted=True, status='')
             LiveSessionLearnerAttendance.objects.using(database).filter(id=row_id).delete()
     else:

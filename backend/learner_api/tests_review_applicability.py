@@ -126,7 +126,7 @@ class ReviewApplicabilityTests(ReviewSchedulingSyncTestCase):
         target = date.fromisoformat(event['targetDate'])
         old_key = coach_views.build_timetable_event_key(self.mirror.id, 'mcr', 1, target)
         CoachCalendarEvent.objects.create(
-            event_key=old_key, owner_email=self.mirror.coach_email, learner_id=self.mirror.id,
+            event_key=old_key, owner_email=self.mirror.coach_email, learner_profile_id=self.mirror.id,
             learner_email=self.mirror.email, event_type='mcr', sequence=1,
             target_date=target, scheduled_date=target, status='scheduled',
         )
@@ -142,7 +142,7 @@ class ReviewApplicabilityTests(ReviewSchedulingSyncTestCase):
         target = date.fromisoformat(event['targetDate'])
         CoachCalendarEvent.objects.create(
             event_key=coach_views.build_timetable_event_key(self.mirror.id, 'mcr', 1, target),
-            owner_email=self.mirror.coach_email, learner_id=self.mirror.id,
+            owner_email=self.mirror.coach_email, learner_profile_id=self.mirror.id,
             learner_email=self.mirror.email, event_type='mcr', sequence=1,
             target_date=target, status='not-scheduled',
         )

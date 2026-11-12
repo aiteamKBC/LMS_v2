@@ -46,7 +46,7 @@ def prepare_learner_personal_support(request, review_id):
             lock_learner_calendar(profile.pk)
             lock_template_family("PSP")
             existing = list(ImportedReviewInstance.objects.filter(
-                event_key=review_id, learner_id=profile.pk, source_review_id__isnull=False,
+                event_key=review_id, learner_profile_id=profile.pk, source_review_id__isnull=False,
             )[:2])
             if len(existing) > 1:
                 raise ValueError("The existing Personal Support Plan association could not be verified.")

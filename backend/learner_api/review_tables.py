@@ -134,7 +134,7 @@ def sync_review_detail(review):
 
     defaults = {
         "event_key": review.event_key,
-        "learner_id": review.learner_id,
+        "enrolment_id": review.enrolment_id,
         "learner_name": _s(review.learner_name),
         "completed": bool(review.form_completed),
     }

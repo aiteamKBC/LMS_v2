@@ -11,6 +11,7 @@ from curriculum_api.canonical_read_sql import (component_ksb_codes_sql,
                                                 component_ksb_mappings_sql,
                                                 current_status_sql)
 from curriculum_api.week_visibility import visible_child_sql
+from curriculum_api.schema_compat import inactive_condition
 
 from . import (active_users, attendance_lectures, components, dashboard_header, dashboard_metrics, dashboard_training,
                learner_detail, my_learning, overview_week,
@@ -23,6 +24,12 @@ class CanonicalKsbReadTests(SimpleTestCase):
         for alias in ('c', 'w', 'm'):
             self.assertIn(current_status_sql(alias), sql)
             for removed in ('deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'):
+                self.assertNotIn(f'{alias}.{removed}', sql)
+        # Groups, cohorts and programmes have only status on the normalised
+        # schema: 'inactive'/'archived' withdraw, a cohort's 'planned' does not.
+        for alias in ('g', 'ch', 'p'):
+            self.assertIn(inactive_condition(alias), sql)
+            for removed in ('deleted_at', 'is_programme_deleted', 'is_archived'):
                 self.assertNotIn(f'{alias}.{removed}', sql)
 
     def test_progress_snapshot_derives_component_mappings_canonically(self):

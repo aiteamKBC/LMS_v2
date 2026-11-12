@@ -238,7 +238,7 @@ class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
         learner, mirror = _learner(), _mirror()
         key = review_calendar_event_key(mirror.id, 'REV-MCM', 1)
         booking = CoachCalendarEvent(
-            learner_id=mirror.id, learner_email=learner.email, event_key=key,
+            learner_profile_id=mirror.id, learner_email=learner.email, event_key=key,
             event_type='mcr', review_template_id='REV-MCM', occurrence_number=1,
             sequence=1, target_date=date(2026, 9, 14), scheduled_date=date(2026, 10, 5),
             status='scheduled', meeting_link='https://example.invalid/meeting',

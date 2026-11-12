@@ -119,8 +119,8 @@ def _read_manual_context(candidates, profile):
     from curriculum_api.models import ModuleAuthoringComponent, ModuleAuthoringModule
     from .attendance_lectures import ATTENDANCE_SOURCE_FIELDS, read_native_occurrences
 
-    adjustments = list(CoachAttendanceSourceAdjustment.objects.filter(learner_id=profile.pk))
-    manual = list(CoachManualAttendance.objects.filter(learner_id=profile.pk))
+    adjustments = list(CoachAttendanceSourceAdjustment.objects.filter(learner_profile_id=profile.pk))
+    manual = list(CoachManualAttendance.objects.filter(learner_profile_id=profile.pk))
     if not adjustments and not manual:
         return {}, [], []
     module_ids = sorted({c['moduleId'] for c in candidates})

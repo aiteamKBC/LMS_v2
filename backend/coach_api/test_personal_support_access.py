@@ -70,7 +70,7 @@ class PersonalSupportAccessTests(TestCase):
                     response = self.request()
                     self.assertEqual(response.status_code, 200, response.content)
                     overlay = ImportedReviewInstance.objects.get()
-                    self.assertEqual((overlay.learner_id, overlay.owner_email, overlay.status), (17, self.owner, status))
+                    self.assertEqual((overlay.learner_profile_id, overlay.owner_email, overlay.status), (17, self.owner, status))
                     self.assertEqual(overlay.migrated_template_id, self.template.pk)
                     self.assertEqual(overlay.answers, {"goal": "Imported goal"})
                     body = json.loads(response.content)
@@ -169,7 +169,7 @@ class PersonalSupportAccessTests(TestCase):
         self.assertEqual(self.request().status_code, 409)
         self.profile.coach_email = self.owner
         self.assertFalse(ImportedReviewInstance.objects.exists())
-        other = ImportedReviewInstance.objects.create(owner_email="other@example.invalid", learner_id=999,
+        other = ImportedReviewInstance.objects.create(owner_email="other@example.invalid", learner_profile_id=999,
             event_key=self.key, source_review_id=9001, answers={"original": "retained"})
         self.assertEqual(self.request().status_code, 409)
         other.refresh_from_db()

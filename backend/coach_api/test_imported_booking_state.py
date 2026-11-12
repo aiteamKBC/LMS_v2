@@ -261,7 +261,7 @@ class CoachBookingPlaceholderRecoveryTests(TestCase):
             definition_json=candidate_definition(SOURCE), is_active=True,
         )
         self.overlay = ImportedReviewInstance.objects.create(
-            event_key=self.key, owner_email=OWNER, learner_id=21, source_review_id=5101,
+            event_key=self.key, owner_email=OWNER, learner_profile_id=21, source_review_id=5101,
             status=ImportedReviewInstance.STATUS_NOT_SCHEDULED, migrated_template=self.template,
             template_snapshot={"sections": [{"id": "s"}],
                                "templateSource": {"id": self.template.pk, "family": "MCM",
@@ -332,7 +332,7 @@ class CoachBookingPlaceholderRecoveryTests(TestCase):
     def test_booking_a_placeholder_never_creates_a_second_appointment(self):
         self.placeholder()
         self.assertEqual(self.book().status_code, 200)
-        self.assertEqual(CoachCalendarEvent.objects.filter(learner_id=21, event_type="mcr").count(), 1)
+        self.assertEqual(CoachCalendarEvent.objects.filter(learner_profile_id=21, event_type="mcr").count(), 1)
 
     def test_a_real_booking_at_another_time_is_still_refused(self):
         self.placeholder(status=CoachCalendarEvent.STATUS_SCHEDULED,

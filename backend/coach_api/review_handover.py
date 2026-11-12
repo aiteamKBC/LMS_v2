@@ -112,7 +112,7 @@ def save_assignment(user, profile, fields, profile_fields):
         if len(staff) != 1:
             return blocked('assigned_coach_identity_unresolved')
         rows = source_reviews(profile.pk)
-        overlays = list(ImportedReviewInstance.objects.filter(learner_id=profile.pk).order_by('pk'))
+        overlays = list(ImportedReviewInstance.objects.filter(learner_profile_id=profile.pk).order_by('pk'))
         for source in rows:
             key = f"imported-review:{source['aptemReviewId']}"
             matches = [row for row in overlays if row.source_review_id == source['id']]

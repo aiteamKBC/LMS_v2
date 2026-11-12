@@ -224,7 +224,7 @@ def public_event_access(request):
         response, _ = FeedbackResponse.objects.select_for_update().get_or_create(
             form=form, event_recipient=recipient,
             defaults={
-                'learner_id': recipient.enrolment_id, 'learner_name': recipient.attendee_name,
+                'enrolment_id': recipient.enrolment_id, 'learner_name': recipient.attendee_name,
                 'programme': '',
             },
         )

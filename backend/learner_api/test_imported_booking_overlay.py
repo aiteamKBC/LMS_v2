@@ -46,14 +46,14 @@ class ScheduleOverlayForBookingTests(SimpleTestCase):
 
     def setUp(self):
         self.record = CoachCalendarEvent(
-            pk=51, event_key=KEY, learner_id=101, owner_email=OWNER, event_type="mcr",
+            pk=51, event_key=KEY, learner_profile_id=101, owner_email=OWNER, event_type="mcr",
             status=CoachCalendarEvent.STATUS_SCHEDULED, sync_state=CoachCalendarEvent.SYNC_SYNCED,
             graph_event_id="existing-graph", meeting_link="https://example.invalid/meeting",
             scheduled_date=date(2026, 11, 2), scheduled_time=time(10), duration_minutes=60,
         )
         self.record.save = MagicMock()
         self.overlay = ImportedReviewInstance(
-            pk=7, event_key=KEY, owner_email=OWNER, learner_id=101, source_review_id=401,
+            pk=7, event_key=KEY, owner_email=OWNER, learner_profile_id=101, source_review_id=401,
             status=ImportedReviewInstance.STATUS_NOT_SCHEDULED,
         )
         self.overlay.save = MagicMock()
@@ -107,7 +107,7 @@ class ScheduleOverlayForBookingTests(SimpleTestCase):
         self.assertFalse(self.schedule())
 
     def test_an_ambiguous_continuation_is_refused_instead_of_guessed(self):
-        second = ImportedReviewInstance(pk=8, event_key=KEY, owner_email=OWNER, learner_id=101,
+        second = ImportedReviewInstance(pk=8, event_key=KEY, owner_email=OWNER, learner_profile_id=101,
                                         source_review_id=401, status="not-scheduled")
         second.save = MagicMock()
         self.overlays.return_value = [self.overlay, second]
@@ -133,7 +133,7 @@ class LearnerBookingEndpointOverlayTests(TestCase):
     def setUp(self):
         review_source(401, learner_id=101, aptem_review_id=KEY.removeprefix("imported-review:"))
         self.overlay = ImportedReviewInstance.objects.create(
-            event_key=KEY, owner_email=OWNER, learner_id=101, source_review_id=401,
+            event_key=KEY, owner_email=OWNER, learner_profile_id=101, source_review_id=401,
             status=ImportedReviewInstance.STATUS_NOT_SCHEDULED,
             template_snapshot={"sections": [{"id": "s"}]},
         )

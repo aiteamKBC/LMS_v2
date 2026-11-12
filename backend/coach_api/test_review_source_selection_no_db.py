@@ -394,7 +394,7 @@ class AptemEventVerificationTests(SimpleTestCase):
         }
         record = CoachCalendarEvent(
             event_key="imported-review:R-1", owner_email="coach@example.invalid",
-            learner_id=1, event_type="mcr", target_date=date(2026, 9, 23),
+            learner_profile_id=1, event_type="mcr", target_date=date(2026, 9, 23),
             scheduled_date=date(2026, 9, 24), scheduled_time=time(11, 0),
             duration_minutes=60, status=CoachCalendarEvent.STATUS_SCHEDULED,
             sync_state=CoachCalendarEvent.SYNC_SYNCED, graph_event_id="graph-synthetic",
@@ -414,7 +414,7 @@ class AptemEventVerificationTests(SimpleTestCase):
         base = {"eventKey": "imported-review:H-1", "source": "mcr", "reviewSource": "aptem",
                 "status": "completed", "sourceStatus": "Completed", "targetDate": "2026-09-23"}
         record = CoachCalendarEvent(
-            event_key=base["eventKey"], owner_email="coach@example.invalid", learner_id=1,
+            event_key=base["eventKey"], owner_email="coach@example.invalid", learner_profile_id=1,
             event_type="mcr", target_date=date(2026, 9, 23),
             scheduled_date=date(2026, 9, 24), scheduled_time=time(11, 0),
             status=CoachCalendarEvent.STATUS_SCHEDULED, sync_state=CoachCalendarEvent.SYNC_SYNCED,
@@ -724,7 +724,7 @@ class ImportedReviewWriteTests(SimpleTestCase):
         get_or_create.assert_called_once_with(
             owner_email="coach@example.invalid",
             event_key="imported-review:R-1",
-            defaults={"learner_id": 1},
+            defaults={"learner_profile_id": 1},
         )
         self.assertEqual(imported.answers, {"aptem-field:501:0": "Updated locally"})
         imported.save.assert_called_once_with(update_fields=["answers", "updated_at"])
@@ -831,9 +831,9 @@ class TimetableResolvedReviewStreamTests(SimpleTestCase):
             },
         }
         duplicate = MagicMock(
-            event_key="curriculum:duplicate", learner_id=1, event_type="mcr", idempotency_key="",
+            event_key="curriculum:duplicate", learner_profile_id=1, event_type="mcr", idempotency_key="",
         )
-        legacy = MagicMock(event_key="old-learner-booking", learner_id=101, event_type="mcr",
+        legacy = MagicMock(event_key="old-learner-booking", learner_profile_id=101, event_type="mcr",
                            idempotency_key="learner-book:mcm:apprenticeship:101:2026-09:401")
         standalone_records.return_value = [duplicate, legacy]
 

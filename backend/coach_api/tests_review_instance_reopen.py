@@ -118,7 +118,7 @@ class ReopenReviewInstanceTestCase(TestCase):
         record = CoachCalendarEvent.objects.create(
             event_key=f'mcr:{learner_id}:1:2026-10-01', event_type='mcr',
             owner_email=COACH_EMAIL, owner_name='Coach',
-            learner_id=learner_id, learner_name='Learner', learner_email='learner@example.com',
+            learner_profile_id=learner_id, learner_name='Learner', learner_email='learner@example.com',
             scheduled_date=date(2026, 10, 1), scheduled_time=time(10, 0),
             target_date=date(2026, 10, 1), duration_minutes=30,
             status=CoachCalendarEvent.STATUS_SCHEDULED,

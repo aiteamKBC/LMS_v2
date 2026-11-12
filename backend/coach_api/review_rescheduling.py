@@ -19,7 +19,7 @@ def previous_bookings(record):
     if cached and cached[0] == key:
         return cached[1]
     query = ReviewBookingReschedule.objects.filter(
-        calendar_event_id=record.pk, learner_id=record.learner_id,
+        calendar_event_id=record.pk, learner_profile_id=record.learner_id,
         event_key=record.event_key, graph_event_id=record.graph_event_id,
         owner_email__iexact=record.owner_email,
     ).order_by('created_at', 'pk')

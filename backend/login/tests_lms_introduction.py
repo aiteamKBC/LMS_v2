@@ -40,7 +40,7 @@ class LmsIntroductionBookingTests(TestCase):
         return intro._save(ACCOUNT, LEARNER, OWNER, "QA Case Owner", self.day, at, note)
 
     def rows(self):
-        return CoachCalendarEvent.objects.filter(learner_id=LEARNER.pk, event_type=intro.EVENT_TYPE)
+        return CoachCalendarEvent.objects.filter(learner_profile_id=LEARNER.pk, event_type=intro.EVENT_TYPE)
 
     @patch("coach_api.views.sync_calendar_event_to_graph", side_effect=teams_accepts)
     def test_booking_lands_in_teams_once_with_the_learner_invited(self, graph):
@@ -82,7 +82,7 @@ class LmsIntroductionBookingTests(TestCase):
     def test_a_request_saved_before_immediate_booking_is_booked_on_the_same_row(self):
         legacy = CoachCalendarEvent.objects.create(
             event_key=f"lms-introduction:{LEARNER.pk}:legacy", owner_email=OWNER, owner_name="QA Case Owner",
-            learner_id=LEARNER.pk, learner_name="QA Learner", learner_email=ACCOUNT.email, event_type=intro.EVENT_TYPE,
+            learner_profile_id=LEARNER.pk, learner_name="QA Learner", learner_email=ACCOUNT.email, event_type=intro.EVENT_TYPE,
             sequence=1, target_date=self.day, scheduled_date=self.day, scheduled_time=time(9, 0),
             duration_minutes=30, status="not-scheduled", idempotency_key=f"lms-introduction:{LEARNER.pk}:1",
         )

@@ -197,7 +197,7 @@ def ksb_totals(native, progress, historical=None, attempts=None, links=None, led
 def read_planned_hours(source, kind, cursor, preloaded_document=_MISSING, preloaded_contract=_MISSING):
     if preloaded_document is _MISSING:
         document = (TrainingPlanDocument.objects.using('enrolment')
-                    .filter(learner_id=source.pk, learner_kind=kind, status=TrainingPlanDocument.STATUS_ACTIVE)
+                    .filter(enrolment_id=source.pk, learner_kind=kind, status=TrainingPlanDocument.STATUS_ACTIVE)
                     .order_by('-created_at', '-id').values('otjh').first())
     else:
         document = preloaded_document
@@ -769,13 +769,13 @@ def load_planned_hours_documents_bulk(keys):
     from django.db.models import Q
     query = Q()
     for learner_id, kind in pairs:
-        query |= Q(learner_id=learner_id, learner_kind=kind)
+        query |= Q(enrolment_id=learner_id, learner_kind=kind)
     documents = (TrainingPlanDocument.objects.using('enrolment')
                  .filter(query, status=TrainingPlanDocument.STATUS_ACTIVE)
-                 .order_by('learner_id', 'learner_kind', '-created_at', '-id')
-                 .values('learner_id', 'learner_kind', 'otjh'))
+                 .order_by('enrolment_id', 'learner_kind', '-created_at', '-id')
+                 .values('enrolment_id', 'learner_kind', 'otjh'))
     for document in documents:
-        pair = (int(document['learner_id']), str(document['learner_kind']))
+        pair = (int(document['enrolment_id']), str(document['learner_kind']))
         if pair in result and result[pair] is None:
             result[pair] = {'otjh': document['otjh']}
     return result

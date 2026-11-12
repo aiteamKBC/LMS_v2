@@ -141,8 +141,8 @@ def _skills_radar_context(review, learner):
     from enrolment_api.models import WizardKsbAssessment, WizardSkillsRadar
 
     try:
-        radar = WizardSkillsRadar.objects.filter(learner_id=review.learner_id).first()
-        rows = list(WizardKsbAssessment.objects.filter(learner_id=review.learner_id))
+        radar = WizardSkillsRadar.objects.filter(enrolment_id=review.learner_id).first()
+        rows = list(WizardKsbAssessment.objects.filter(enrolment_id=review.learner_id))
     except DatabaseError:
         logger.exception("_skills_radar_context: lookup failed")
         return {"skillsRadar": {"standardId": "", "assessments": [], "ksbs": []}}
@@ -222,9 +222,9 @@ def _plr_context(review, learner):
     from enrolment_api.models import WizardPlr, WizardPlrRecord
 
     try:
-        plr = WizardPlr.objects.filter(learner_id=review.learner_id).first()
+        plr = WizardPlr.objects.filter(enrolment_id=review.learner_id).first()
         records = list(
-            WizardPlrRecord.objects.filter(learner_id=review.learner_id).order_by("id")
+            WizardPlrRecord.objects.filter(enrolment_id=review.learner_id).order_by("id")
         )
     except DatabaseError:
         logger.exception("_plr_context: PLR lookup failed")
@@ -349,11 +349,11 @@ def _lookup(kind, pk, event_key):
         return None, None, None, _error("Learner not found.", 404)
 
     # Scoped to this learner so one learner's event key cannot open another's form.
-    review = EnrolmentReview.objects.filter(event_key=event_key, learner_id=pk).first()
+    review = EnrolmentReview.objects.filter(event_key=event_key, enrolment_id=pk).first()
     if review is None:
         return None, None, None, _error("Review not found.", 404)
 
-    event = CoachCalendarEvent.objects.filter(event_key=event_key, learner_id=pk).first()
+    event = CoachCalendarEvent.objects.filter(event_key=event_key, learner_profile_id=pk).first()
     return learner, review, event, None
 
 
@@ -669,7 +669,7 @@ def enrolment_review_documents(request, kind, pk):
         if learner is None:
             return _error("Learner not found.", 404)
         rows = list(
-            EnrolmentReview.objects.filter(learner_id=pk)
+            EnrolmentReview.objects.filter(enrolment_id=pk)
             .exclude(status=EnrolmentReview.STATUS_CANCELLED)
             .order_by("scheduled_date", "review_type")
         )
@@ -701,7 +701,7 @@ def enrolment_review_documents(request, kind, pk):
 def _current_reviews(pk):
     """{review_type: the learner's current review of that type}: the newest not cancelled."""
     rows = (
-        EnrolmentReview.objects.filter(learner_id=pk, review_type__in=ONBOARDING_REVIEW_TYPES)
+        EnrolmentReview.objects.filter(enrolment_id=pk, review_type__in=ONBOARDING_REVIEW_TYPES)
         .exclude(status=EnrolmentReview.STATUS_CANCELLED)
         .order_by("id")
     )
@@ -801,7 +801,7 @@ def issue_onboarding_review(request, kind, pk):
             review_type=review_type,
             review_label=ONBOARDING_REVIEW_LABELS[review_type],
             learner_kind=kind,
-            learner_id=pk,
+            enrolment_id=pk,
             learner_name=_s(getattr(learner, "username", "")),
             learner_email=_s(getattr(learner, "email", "")),
             coach_id=owner_id,

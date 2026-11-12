@@ -21,7 +21,7 @@ def profile(aptem_id=6301):
 
 def record(event_type, key, template=""):
     return SimpleNamespace(event_type=event_type, event_key=key, review_template_id=template,
-                           learner_email="learner@example.invalid", learner_id=21, idempotency_key="")
+                           learner_email="learner@example.invalid", learner_profile_id=21, idempotency_key="")
 
 
 class NarrowedReviewEventsTests(SimpleTestCase):

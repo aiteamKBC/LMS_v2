@@ -58,7 +58,7 @@ def _extended_ilr_answers(learner_id):
     try:
         from enrolment_api.models import ExtendedIlr
 
-        row = ExtendedIlr.objects.filter(learner_id=learner_id).first()
+        row = ExtendedIlr.objects.filter(enrolment_id=learner_id).first()
     except DatabaseError:
         logger.exception("_extended_ilr_answers: lookup failed")
         return {}
@@ -331,7 +331,7 @@ def _active_document(learner_kind, learner_id, lock=False):
     `transaction.atomic(using="enrolment")`."""
     qs = TrainingPlanDocument.objects.filter(
         learner_kind=learner_kind,
-        learner_id=learner_id,
+        enrolment_id=learner_id,
         status=TrainingPlanDocument.STATUS_ACTIVE,
     )
     if lock:
@@ -410,7 +410,7 @@ def issue_training_plan(request, pk):
 
             document = TrainingPlanDocument.objects.create(
                 learner_kind=kind,
-                learner_id=learner.pk,
+                enrolment_id=learner.pk,
                 programme=derived["programme"],
                 employment=derived["employment"],
                 learning_plan=derived["learningPlan"],

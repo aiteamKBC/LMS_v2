@@ -116,12 +116,42 @@ def learner_and_owner(account):
     return learner, owner_email, owner_name
 
 
-def open_request(learner_id):
+def calendar_learner_id(learner):
+    """The id this learner's introduction is filed under in the coach calendar.
+
+    The profile id ("Learner".learners.id) when the learner has a profile, as
+    every other calendar row is; Created_users.id only before one exists.
+    """
+    from learner_api.models import LearnerProfile
+
+    profile_id = LearnerProfile.objects.filter(enrolment_id=learner.pk).values_list("id", flat=True).first()
+    return int(profile_id) if profile_id is not None else int(learner.pk)
+
+
+def _requests(learner):
+    """Every introduction row of this learner, old or new.
+
+    Rows written before 2026-11-12 carry Created_users.id, a sequence that can
+    equal another learner's profile id, so those match only with this learner's
+    email as well.
+    """
+    from django.db.models import Q
+
+    from coach_api.models import CoachCalendarEvent
+
+    owner = Q(learner_profile_id=calendar_learner_id(learner))
+    email = str(learner.email or "").strip()
+    if email:
+        owner |= Q(learner_profile_id=int(learner.pk), learner_email__iexact=email)
+    return CoachCalendarEvent.objects.filter(owner, event_type=EVENT_TYPE)
+
+
+def open_request(learner):
     """The learner's current (not cancelled) introduction, if any."""
     from coach_api.models import CoachCalendarEvent
 
     return (
-        CoachCalendarEvent.objects.filter(learner_id=learner_id, event_type=EVENT_TYPE)
+        _requests(learner)
         .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
         .order_by("-id")
         .first()
@@ -203,9 +233,9 @@ def _save(account, learner, owner_email, owner_name, day, at, note):
         reserve_coach_calendar_booking,
     )
 
-    learner_id = int(learner.pk)
+    learner_id = calendar_learner_id(learner)
     learner_name = str(learner.username or account.display_name or "").strip()
-    existing = open_request(learner_id)
+    existing = open_request(learner)
     if existing is not None:
         if existing.status != CoachCalendarEvent.STATUS_NOT_SCHEDULED:
             return existing, False
@@ -221,7 +251,7 @@ def _save(account, learner, owner_email, owner_name, day, at, note):
         return persist_calendar_sync_reservation(existing), False
     # Numbered so a learner whose earlier booking was cancelled can book again,
     # while a double-submitted form replays the same row.
-    attempt = CoachCalendarEvent.objects.filter(learner_id=learner_id, event_type=EVENT_TYPE).count() + 1
+    attempt = _requests(learner).count() + 1
     return reserve_coach_calendar_booking(
         owner_email=owner_email,
         owner_name=owner_name,
@@ -233,7 +263,8 @@ def _save(account, learner, owner_email, owner_name, day, at, note):
         scheduled_time=at,
         duration_minutes=DURATION_MINUTES,
         notes=note,
-        idempotency_key=f"{EVENT_TYPE}:{learner_id}:{attempt}",
+        # "profile:" keeps these keys apart from the older Created_users.id ones.
+        idempotency_key=f"{EVENT_TYPE}:profile:{learner_id}:{attempt}",
         initial_status=CoachCalendarEvent.STATUS_SCHEDULED,
     )
 
@@ -320,7 +351,7 @@ def public_request(request):
         learner, owner_email, owner_name = learner_and_owner(account)
         if learner is None:
             return _error(INVALID_LINK, 404)
-        existing = open_request(learner.pk)
+        existing = open_request(learner)
         if not owner_email and existing is None:
             return _error(
                 "No case owner has been assigned to you yet, so the introduction cannot be "

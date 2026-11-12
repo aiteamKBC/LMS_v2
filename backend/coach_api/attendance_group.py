@@ -89,17 +89,17 @@ def group_contracts(profiles):
         for row in canonical.dict_rows(cur):
             confirmations[row['enrolment_id']][row['lecture_id']] = row
     for report in CoachAbsenceReport.objects.filter(
-            learner_id__in=source_ids, status=CoachAbsenceReport.STATUS_APPROVED,
+            enrolment_id__in=source_ids, status=CoachAbsenceReport.STATUS_APPROVED,
             recovery_method=ALTERNATIVE_METHOD):
-        targets[report.learner_id][str(report.attendance_id)] = alternative_occurrence_id(report.catchup_event_key)
+        targets[report.enrolment_id][str(report.attendance_id)] = alternative_occurrence_id(report.catchup_event_key)
     for learner_id, occurrence_id in LiveSessionAbsence.objects.filter(
             source_learner_id__in=source_ids, recovery_method='catch-up',
             recovery_status=LiveSessionAbsence.RECOVERY_COMPLETED).values_list('source_learner_id', 'occurrence_id'):
         completed[learner_id].add(occurrence_id)
-    for row in CoachManualAttendance.objects.filter(learner_id__in=profile_ids):
-        manuals[row.learner_id].append(row)
-    for row in CoachAttendanceSourceAdjustment.objects.filter(learner_id__in=profile_ids):
-        adjustments[row.learner_id][(row.source, row.source_id)] = row
+    for row in CoachManualAttendance.objects.filter(learner_profile_id__in=profile_ids):
+        manuals[row.learner_profile_id].append(row)
+    for row in CoachAttendanceSourceAdjustment.objects.filter(learner_profile_id__in=profile_ids):
+        adjustments[row.learner_profile_id][(row.source, row.source_id)] = row
 
     result = {}
     for profile in profiles:

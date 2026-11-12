@@ -68,7 +68,7 @@ class PostgresHoursTests(TransactionTestCase):
         template = MigratedReviewTemplate.objects.create(scope="GLOBAL", review_family="PR", name="PR", is_active=True,
             definition_json={**deepcopy(DEFINITION), "otjh": {"expectedHours": 1.25, "countsTowardsOtjh": True}})
         self.review = ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", event_key="imported-review:R1",
-            learner_id=17, source_review_id=1, migrated_template=template, template_snapshot=snapshot_for(template),
+            learner_profile_id=17, source_review_id=1, migrated_template=template, template_snapshot=snapshot_for(template),
             answers={"progress": "Agreed next steps"}, status="awaiting-signature", signature_requirements={"participant": True})
 
     def finish(self):

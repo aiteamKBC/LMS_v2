@@ -17,7 +17,7 @@ from .models import CoachCalendarEvent
 class SessionConsumerTests(SimpleTestCase):
     def setUp(self):
         self.record = CoachCalendarEvent(id=7, event_key='review:42:template:1', owner_email='coach@example.invalid',
-            learner_id=42, event_type='mcr', graph_event_id='graph-current',
+            learner_profile_id=42, event_type='mcr', graph_event_id='graph-current',
             scheduled_date=date(2026, 10, 24), scheduled_time=time(10), duration_minutes=60)
         self.current = self.artifact('current', '2026-10-24T10:05:00Z', 'call-current')
         self.old = self.artifact('old', '2026-10-23T10:05:00Z', 'call-old')

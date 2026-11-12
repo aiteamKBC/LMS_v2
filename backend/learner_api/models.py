@@ -25,6 +25,7 @@ from django.db import DatabaseError, connections, models
 from django.db.models.functions import Lower, Trim
 from system_audit.writes import AuditedQuerySet
 from config.cache_versions import VersionBumpQuerySetMixin
+from config.legacy_identity import legacy_field_alias
 
 
 class SafeJSONField(models.JSONField):
@@ -1174,6 +1175,10 @@ class LearnerFreeCourse(models.Model):
         ordering = ("position", "id")
 
 
+FREE_PROGRESS_ACTIVE = "active"
+FREE_PROGRESS_INACTIVE = "inactive"
+
+
 class LearnerFreeCourseProgress(models.Model):
     """A learner's completion of a single free-course activity.
 
@@ -1196,6 +1201,10 @@ class LearnerFreeCourseProgress(models.Model):
     # (free_course_ref, component_ref) and never on this date. New completions
     # always store timezone.now(). Never backfill a NULL.
     completed_at = models.DateTimeField(null=True, blank=True)
+    # Only 'active' rows are completions. An 'inactive' row is a withdrawn
+    # completion kept for history (deleted_at says when); no write reactivates it.
+    status = models.CharField(max_length=20, default=FREE_PROGRESS_ACTIVE)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False
@@ -1266,6 +1275,15 @@ class LearnerProgressEntry(models.Model):
     component_link_status = models.TextField(blank=True, default='')
     legacy_component_ref = models.TextField(null=True, blank=True)
     component_link_source = models.TextField(blank=True, default='')
+    # The current Curriculum component this row is credited to.
+    # `curriculum_component_ref` is the text lineage (it may name a component
+    # that no longer exists); `curriculum_component_fk` is the same id only when
+    # it was verified against curriculum.components at write time, and stays
+    # NULL for historical and non-component activity. The column and its
+    # FOREIGN KEY (ON DELETE SET NULL) were created outside Django, so this is
+    # a plain CharField, not a ForeignKey.
+    curriculum_component_ref = models.TextField(null=True, blank=True)
+    curriculum_component_fk = models.CharField(max_length=128, null=True, blank=True)
     # Soft-deleted progress remains as historical evidence but is excluded from
     # active learner progress, hours and KSB projections.
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -1513,6 +1531,7 @@ class LearnerAbsence(models.Model):
 
     learner_email = models.EmailField(primary_key=True, db_column="learner_email")
     learner_profile_id = models.IntegerField(db_column="learner_id")
+    learner_id = legacy_field_alias("learner_profile_id")
     learner_name = models.TextField(db_column="learner_name")
     sessions = models.PositiveIntegerField(db_column="sessions", default=0)
     present = models.PositiveIntegerField(db_column="present", default=0)
@@ -1573,6 +1592,7 @@ class EnrolmentReview(models.Model):
     # (one table cannot key both apprenticeship and commercial learners).
     learner_kind = models.TextField(db_column="Learner_kind")
     enrolment_id = models.BigIntegerField(db_column="Learner_id")
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.TextField(db_column="Learner_name", blank=True)
     learner_email = models.TextField(db_column="Learner_email", blank=True)
 
@@ -1670,6 +1690,7 @@ class _ReviewDetail(models.Model):
     )
     event_key = models.TextField(db_column="Event_key")
     enrolment_id = models.BigIntegerField(db_column="Learner_id")
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.TextField(db_column="Learner_name", blank=True)
     completed = models.BooleanField(db_column="Completed", default=False)
     created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
@@ -1955,6 +1976,7 @@ class ApprenticeshipAgreement(models.Model):
 
     learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
     enrolment_id = models.BigIntegerField(db_column="Learner_id")
+    learner_id = legacy_field_alias("enrolment_id")
 
     # ---- Particulars, frozen at issue ----
     apprentice_name = models.TextField(db_column="Apprentice_name", blank=True, default="")
@@ -2039,6 +2061,7 @@ class IlrDocument(models.Model):
 
     learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
     enrolment_id = models.BigIntegerField(db_column="Learner_id")
+    learner_id = legacy_field_alias("enrolment_id")
 
     # Page 1 "Learner details" — name, DOB, address, contact, and the ILR
     # identifiers (ULN, NI number, ethnicity...) where we hold them.
@@ -2104,6 +2127,7 @@ class TrainingPlanDocument(models.Model):
 
     learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
     enrolment_id = models.BigIntegerField(db_column="Learner_id")
+    learner_id = legacy_field_alias("enrolment_id")
 
     # ---- Frozen content ----
     programme = SafeJSONField(db_column="Programme", null=True, blank=True)
@@ -2185,6 +2209,7 @@ class WrittenAgreement(models.Model):
 
     learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
     enrolment_id = models.BigIntegerField(db_column="Learner_id")
+    learner_id = legacy_field_alias("enrolment_id")
 
     # ---- Frozen content ----
     particulars = SafeJSONField(db_column="Particulars", null=True, blank=True)

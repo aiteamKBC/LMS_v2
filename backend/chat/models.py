@@ -102,7 +102,7 @@ class Conversation(models.Model):
     )
     learner = models.ForeignKey(
         ChatLearner,
-        db_column="learner_profile_id",
+        db_column="learner_id",
         on_delete=models.CASCADE,
         related_name="chat_conversations_as_learner",
     )
@@ -153,7 +153,7 @@ class Message(models.Model):
     )
     sender_learner = models.ForeignKey(
         ChatLearner,
-        db_column="sender_learner_profile_id",
+        db_column="sender_learner_id",
         null=True,
         blank=True,
         on_delete=models.CASCADE,
@@ -246,7 +246,7 @@ class MessageReceipt(models.Model):
     )
     recipient_learner = models.ForeignKey(
         ChatLearner,
-        db_column="recipient_learner_profile_id",
+        db_column="recipient_learner_id",
         null=True,
         blank=True,
         on_delete=models.CASCADE,

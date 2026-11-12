@@ -80,9 +80,9 @@ class ReviewReconciliationTests(TransactionTestCase):
         LoginAccount.objects.filter(pk=990).update(role="admin")
 
     def cleanup_persisted_graph(self):
-        ReviewSourceReconciliation.objects.filter(learner_id=21).delete()
-        ImportedReviewInstance.objects.filter(learner_id=21).delete()
-        CoachCalendarEvent.objects.filter(learner_id=21).delete()
+        ReviewSourceReconciliation.objects.filter(learner_profile_id=21).delete()
+        ImportedReviewInstance.objects.filter(learner_profile_id=21).delete()
+        CoachCalendarEvent.objects.filter(learner_profile_id=21).delete()
         MigratedReviewTemplate.objects.filter(name="Synthetic MCM").delete()
         self._clear()
         self.cleanup_identity_parents()
@@ -101,7 +101,7 @@ class ReviewReconciliationTests(TransactionTestCase):
                                                 programme_id="PROG-A", occurrence_number=number, target_date=date(2099, 11, 18),
                                                 coach_email="coach@example.invalid")
         record = CoachCalendarEvent.objects.create(event_key=f"review:21:{self.template_id}:{number}",
-                    owner_email="coach@example.invalid", learner_id=21, event_type="mcr", target_date=date(2099, 11, 18),
+                    owner_email="coach@example.invalid", learner_profile_id=21, event_type="mcr", target_date=date(2099, 11, 18),
                     scheduled_date=date(2099, 11, 18), scheduled_time=time(10), status="scheduled", sync_state="synced",
                     review_instance_id=instance["id"], review_template_id=self.template_id, occurrence_number=number,
                     graph_event_id=f"graph-synthetic-{number}", meeting_link=f"https://example.invalid/meeting/{number}",
@@ -166,7 +166,7 @@ class ReviewReconciliationTests(TransactionTestCase):
         with self.assertRaises(service.ReconciliationConflict): self.apply()
 
     def test_existing_imported_booking_conflicts_even_with_different_owner(self):
-        CoachCalendarEvent.objects.create(event_key="imported-review:A501", learner_id=21, owner_email="other@example.invalid",
+        CoachCalendarEvent.objects.create(event_key="imported-review:A501", learner_profile_id=21, owner_email="other@example.invalid",
                                          event_type="mcr", target_date=date(2099, 11, 18))
         with self.assertRaisesRegex(service.ReconciliationConflict, "incompatible calendar"): self.apply()
 

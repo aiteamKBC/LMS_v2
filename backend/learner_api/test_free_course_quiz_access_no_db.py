@@ -440,8 +440,8 @@ class FreeCourseQuizSubmissionTests(SimpleTestCase):
 
     def test_passed_quiz_completion_uses_canonical_owner_and_is_idempotent(self):
         progress = Mock(side_effect=[
-            (SimpleNamespace(), True),
-            (SimpleNamespace(), False),
+            (SimpleNamespace(status="active"), True),
+            (SimpleNamespace(status="active"), False),
         ])
         first, _ = self.call(LEARNER_19, progress=progress)
         second, _ = self.call(LEARNER_19, progress=progress)

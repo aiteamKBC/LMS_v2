@@ -110,7 +110,7 @@ class AttendanceInProgressTestCase(TestCase):
         record = CoachCalendarEvent.objects.create(
             event_key=f'{event_type}:{learner_id}:1:2026-10-01', event_type=event_type,
             owner_email=COACH_EMAIL, owner_name='Coach One',
-            learner_id=learner_id, learner_name='Learner One', learner_email=LEARNER_EMAIL,
+            learner_profile_id=learner_id, learner_name='Learner One', learner_email=LEARNER_EMAIL,
             scheduled_date=date(2026, 10, 1), scheduled_time=time(10, 0),
             target_date=date(2026, 10, 1), duration_minutes=30,
             status=status or CoachCalendarEvent.STATUS_SCHEDULED,
@@ -236,7 +236,7 @@ class AttendanceInProgressTestCase(TestCase):
         record = CoachCalendarEvent.objects.create(
             event_key='mcr:550:1:2026-10-01', event_type='mcr',
             owner_email=COACH_EMAIL, owner_name='Coach One',
-            learner_id=550, learner_name='Learner One', learner_email=LEARNER_EMAIL,
+            learner_profile_id=550, learner_name='Learner One', learner_email=LEARNER_EMAIL,
             scheduled_date=date(2026, 10, 1), scheduled_time=time(10, 0),
             target_date=date(2026, 10, 1), duration_minutes=30,
             status=CoachCalendarEvent.STATUS_SCHEDULED,
@@ -371,7 +371,7 @@ class AttendanceInProgressTestCase(TestCase):
         record = CoachCalendarEvent.objects.create(
             event_key='mcr:9999:1:2025-01-01', event_type='mcr',
             owner_email=COACH_EMAIL, owner_name='Coach One',
-            learner_id=9999, learner_name='Old Learner', learner_email='old@example.com',
+            learner_profile_id=9999, learner_name='Old Learner', learner_email='old@example.com',
             scheduled_date=date(2025, 1, 1), scheduled_time=time(10, 0),
             target_date=date(2025, 1, 1), duration_minutes=30,
             status=CoachCalendarEvent.STATUS_IN_PROGRESS,

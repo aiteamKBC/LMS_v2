@@ -128,15 +128,15 @@ class PersonalSupportRefreshSourceTests(SimpleTestCase):
         from .models import CoachCalendarEvent
         from .personal_support_booking import can_refresh_meeting
         record = CoachCalendarEvent(pk=7, event_key='imported-review:A-7',
-            owner_email='coach@example.invalid', learner_id=21, event_type='progress-review',
+            owner_email='coach@example.invalid', learner_profile_id=21, event_type='progress-review',
             status='scheduled', sync_state='synced', graph_event_id='existing-graph',
             meeting_link='https://example.invalid/existing-meeting',
             scheduled_date=date(2026, 10, 24), scheduled_time=time(10), duration_minutes=60)
         with patch('coach_api.personal_support_booking.booking_for_imported_review', return_value=record):
             self.assertTrue(can_refresh_meeting(record.owner_email, record))
-            record.learner_id = 99
+            record.learner_profile_id = 99
             self.assertFalse(can_refresh_meeting(record.owner_email, record))
-            record.learner_id = 21
+            record.learner_profile_id = 21
             row = list(self.cursor.fetchall.return_value[0])
             row[9] = 'Completed'
             self.cursor.fetchall.return_value = [tuple(row)]

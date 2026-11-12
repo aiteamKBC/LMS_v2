@@ -57,12 +57,12 @@ def selected_rows(profiles, occurrence_id, timing):
     reports, targets = {}, defaultdict(dict)
     with timing.stage('absence_reports'):
         for report in CoachAbsenceReport.objects.filter(
-                learner_id__in=source_ids, attendance_id__in=list(report_ids.values())).order_by('created_at', 'id'):
-            if str(report.attendance_id) != report_ids.get(report.learner_id):
+                enrolment_id__in=source_ids, attendance_id__in=list(report_ids.values())).order_by('created_at', 'id'):
+            if str(report.attendance_id) != report_ids.get(report.enrolment_id):
                 continue
-            reports[report.learner_id] = report
+            reports[report.enrolment_id] = report
             if report.status == CoachAbsenceReport.STATUS_APPROVED and report.recovery_method == ALTERNATIVE_METHOD:
-                targets[report.learner_id][str(report.attendance_id)] = alternative_occurrence_id(report.catchup_event_key)
+                targets[report.enrolment_id][str(report.attendance_id)] = alternative_occurrence_id(report.catchup_event_key)
 
     wanted = sorted({occurrence_id} | {value for values in targets.values() for value in values.values() if value})
     scheduled, records = defaultdict(list), defaultdict(list)
@@ -107,8 +107,8 @@ def selected_rows(profiles, occurrence_id, timing):
             # Match the register's existing unavailable-ledger behavior for
             # unreported lectures; never invent recovery credit.
             canonical.log.warning('Could not read completed catch-ups for selected attendance.', exc_info=True)
-        adjustments = {row.learner_id: row for row in CoachAttendanceSourceAdjustment.objects.filter(
-            learner_id__in=profile_ids, source='microsoft-teams', source_id=occurrence_id)}
+        adjustments = {row.learner_profile_id: row for row in CoachAttendanceSourceAdjustment.objects.filter(
+            learner_profile_id__in=profile_ids, source='microsoft-teams', source_id=occurrence_id)}
         # Confirmation keys contain the scheduled local date. Restrict by exact
         # keys, retaining canonical ordering when old duplicate events exist.
         keys = [f"teams:{occurrence_id}-{timezone.localtime(canonical._aware(row['scheduled_start'])).date().isoformat()}"

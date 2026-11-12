@@ -213,7 +213,7 @@ class SimpleMeetingCheckSessionTests(TestCase):
         self.calendar.meeting_link = 'https://teams.microsoft.com/l/meetup-join/synthetic'
         self.calendar.save(update_fields=['meeting_link'])
         CoachCalendarEvent.objects.create(event_key='imported-review:other-synthetic',
-            owner_email=OWNER, learner_id=99, event_type='progress-review',
+            owner_email=OWNER, learner_profile_id=99, event_type='progress-review',
             target_date=date(2026, 10, 26), graph_event_id='other-event',
             meeting_link=self.calendar.meeting_link)
         target = VerifiedMeetingTarget('users/synthetic/onlineMeetings/meeting-1',
@@ -234,7 +234,7 @@ class SimpleMeetingCheckSessionTests(TestCase):
         previous = {'artifacts': [], 'attendanceReports': [], 'attendanceTracker': {},
                     'storage': {'stored': True}, 'partial': False}
         CoachCalendarEvent.objects.create(event_key='imported-review:other-late',
-            owner_email=OWNER, learner_id=99, event_type='progress-review',
+            owner_email=OWNER, learner_profile_id=99, event_type='progress-review',
             target_date=date(2026, 10, 26), graph_event_id='different-event',
             meeting_link=self.calendar.meeting_link)
         with patch.object(views, 'stored_coach_meeting_snapshot', return_value=previous), \

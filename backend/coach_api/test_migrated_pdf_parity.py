@@ -268,7 +268,7 @@ class MigratedPdfStoredDocumentTests(TestCase):
     def setUp(self):
         sample = sample_review("PR")
         self.review = ImportedReviewInstance.objects.create(
-            event_key=sample.event_key, owner_email=sample.owner_email, learner_id=sample.learner_id,
+            event_key=sample.event_key, owner_email=sample.owner_email, learner_profile_id=sample.learner_id,
             source_review_id=sample.source_review_id, template_snapshot=sample.template_snapshot,
             answers=sample.answers, progress_snapshot=sample.progress_snapshot,
             signature_requirements=sample.signature_requirements, status="completed", completed_at=AT,

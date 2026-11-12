@@ -242,7 +242,7 @@ class PostgreSQLTimingTests(unittest.TestCase):
         self.assertEqual(sum(not reply['duplicate'] for reply in replies), 1)
         self.assertEqual(points_summary(self.learner)['earned'], 1)
         self.assertEqual(points_summary(self.other)['earned'], 0)
-        self.assertEqual(PointsGrant.objects.filter(learner_id=self.learner).count(), 1)
+        self.assertEqual(PointsGrant.objects.filter(enrolment_id=self.learner).count(), 1)
         self.assertEqual(sql('SELECT accepted_ms FROM "Engagement".shared_reward_acceptances WHERE progress_id=%s',
                              [pid]), [(3605000,)])
         self.assertEqual(sql('SELECT count(*) FROM "Engagement".shared_reward_observations WHERE session_id=%s',
@@ -258,7 +258,7 @@ class PostgreSQLTimingTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 'observation_outside_timing_lease')
         self.assertEqual(sql('SELECT count(*) FROM "Engagement".shared_reward_sessions WHERE session_id=%s',
                              [session['sessionId']])[0][0], 0)
-        self.assertEqual(PointsGrant.objects.filter(learner_id=self.learner).count(), 0)
+        self.assertEqual(PointsGrant.objects.filter(enrolment_id=self.learner).count(), 0)
 
     def test_persisted_completion_prevents_renewal_without_changing_saved_evidence(self):
         session = self.start()

@@ -22,7 +22,7 @@ class MeetingProfileIdentityTests(SimpleTestCase):
         self.collision = SimpleNamespace(id=200, pk=200, enrolment_id=999, aptem_id=9999,
             coach_email='coach@example.invalid', full_name='Unrelated Person', email='unrelated@example.invalid')
         self.source = SimpleNamespace(id=200, pk=200, aptem_id='9000', learner_type='apprenticeship')
-        self.record = CoachCalendarEvent(id=7, event_key='legacy-booking', learner_id=200,
+        self.record = CoachCalendarEvent(id=7, event_key='legacy-booking', learner_profile_id=200,
             owner_email='coach@example.invalid', event_type='progress-review',
             idempotency_key='learner-book:progress-review:apprenticeship:200:2026-10:3000')
 

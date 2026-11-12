@@ -47,7 +47,7 @@ class MigratedSignatureSettingsTests(TestCase):
             overlay, created = initialize_imported_review("coach@example.invalid", source)
             profiles.assert_called_once_with(pk=17)
         self.assertTrue(created)
-        booking = CoachCalendarEvent.objects.create(event_key=overlay.event_key, owner_email=overlay.owner_email, learner_id=17,
+        booking = CoachCalendarEvent.objects.create(event_key=overlay.event_key, owner_email=overlay.owner_email, learner_profile_id=17,
             event_type="mcr" if family == "MCM" else "progress-review", target_date=date(2026, 10, 22),
             scheduled_date=date(2026, 10, 22), scheduled_time=time(10), duration_minutes=60, status="scheduled",
             graph_event_id="synthetic-existing", meeting_link="https://example.invalid/meeting")

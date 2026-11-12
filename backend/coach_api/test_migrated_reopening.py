@@ -154,7 +154,7 @@ class MigratedReopenLifecycleTests(TestCase):
         self.original = deepcopy(self.overlay.meeting_intelligence)
         self.account = SimpleNamespace(role="staff", pk=91, email=self.overlay.owner_email, display_name="Assigned Coach")
         self.calendar = CoachCalendarEvent.objects.create(
-            owner_email=self.overlay.owner_email, learner_id=self.overlay.learner_id,
+            owner_email=self.overlay.owner_email, learner_profile_id=self.overlay.learner_id,
             event_key=self.overlay.event_key, event_type="mcr", status="completed",
             review_completed_at=self.overlay.completed_at, graph_event_id="synthetic-event",
             target_date=self.overlay.completed_at.date(),

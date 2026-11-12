@@ -59,6 +59,8 @@ def _entry(component_ref, kind="component", **kwargs):
         kind=kind,
         component_ref=component_ref,
         legacy_component_ref=kwargs.get("legacy_component_ref", ""),
+        curriculum_component_ref=kwargs.get("curriculum_component_ref"),
+        curriculum_component_fk=kwargs.get("curriculum_component_fk"),
         programme_ref="PROG-1",
         programme_title="Test 25/8",
         module_ref="MOD-A",
@@ -742,6 +744,7 @@ class QuizShiftProgressTests(SimpleTestCase):
             **TARGET_CONTEXT, "componentType": "quiz", "componentTitle": "Matching quiz",
         }), patch.object(module_shift, "_rewrite_ksbs"), \
                 patch.object(module_shift, "_move_review", return_value=(0, 0)), \
+                patch.object(module_shift, "current_component_fk", side_effect=lambda _db, target: target), \
                 patch.object(module_shift, "_progress_entries_by_component") as resolve:
             counts = module_shift._repoint_progress(
                 SimpleNamespace(pk=62), self.profile, [("C-AQ", "C-BQ")], entries,
@@ -749,6 +752,7 @@ class QuizShiftProgressTests(SimpleTestCase):
         resolve.assert_not_called()  # Already resolved against the pre-shift plan.
         self.assertEqual(counts["entries"], 1)
         self.assertEqual(entry.component_ref, "C-BQ")
+        self.assertEqual(entry.curriculum_component_fk, "C-BQ")
         self.assertEqual(entry.legacy_component_ref, "C-AQ")
         self.assertEqual(entry.module_ref, "MOD-B")
         self.assertEqual({field: getattr(entry, field) for field in historical_fields}, original)

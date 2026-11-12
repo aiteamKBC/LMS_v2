@@ -389,7 +389,7 @@ class MigratedPreviewTests(SimpleTestCase):
                          ["advisor", "participant", "employer"])
 
         calendar = CoachCalendarEvent(event_key="imported-review:A-7", owner_email="coach@example.invalid",
-            learner_id=21, event_type="progress-review", status="scheduled", sync_state="synced",
+            learner_profile_id=21, event_type="progress-review", status="scheduled", sync_state="synced",
             graph_event_id="synthetic-graph", meeting_link="https://example.invalid/teams",
             scheduled_date=date(2026, 10, 30), scheduled_time=time(10), duration_minutes=60)
         with patch("coach_api.views.CoachCalendarEvent.objects.filter") as lookup:
@@ -682,7 +682,7 @@ class MigratedModelTests(TestCase):
             self.assertEqual(response.status_code, 200)
             overlay = ImportedReviewInstance.objects.get(event_key=definition["instance"]["id"])
             self.assertEqual(overlay.owner_email, "coach@example.invalid")
-            self.assertEqual(overlay.learner_id, 21)
+            self.assertEqual(overlay.learner_profile_id, 21)
             self.assertEqual(overlay.source_review_id, int(definition["historicalReview"]["id"]))
             self.assertEqual(overlay.status, expected)
             self.assertEqual(overlay.answers, {})
@@ -738,13 +738,13 @@ class MigratedModelTests(TestCase):
 
         overlay = ImportedReviewInstance.objects.create(
             event_key="imported-review:A-1", owner_email="coach@example.invalid",
-            learner_id=99, source_review_id=401,
+            learner_profile_id=99, source_review_id=401,
             template_snapshot=candidate_definition(SOURCE), status="in-progress",
         )
         self.assertIsNone(views._owned_migrated_overlay("coach@example.invalid", source))
-        overlay.learner_id = 21
+        overlay.learner_profile_id = 21
         overlay.source_review_id = 402
-        overlay.save(update_fields=["learner_id", "source_review_id"])
+        overlay.save(update_fields=["learner_profile_id", "source_review_id"])
         self.assertIsNone(views._owned_migrated_overlay("coach@example.invalid", source))
 
 
@@ -760,7 +760,7 @@ class MigratedWriteTests(TestCase):
         )
         self.overlay = ImportedReviewInstance.objects.create(
             event_key="imported-review:A-7", owner_email="coach@example.invalid",
-            learner_id=21, source_review_id=407, migrated_template=self.template,
+            learner_profile_id=21, source_review_id=407, migrated_template=self.template,
             template_snapshot=snapshot_for(self.template), answers={}, status="scheduled",
         )
         self.definition = {
@@ -786,7 +786,7 @@ class MigratedWriteTests(TestCase):
     def test_scheduled_review_starts_locally_then_submits_for_signature(self):
         calendar = CoachCalendarEvent.objects.create(
             event_key=self.overlay.event_key, owner_email=self.overlay.owner_email,
-            learner_id=self.overlay.learner_id, event_type="progress-review",
+            learner_profile_id=self.overlay.learner_id, event_type="progress-review",
             target_date=date(2026, 10, 20), scheduled_date=date(2026, 10, 20),
             scheduled_time=time(10, 0), status="scheduled", sync_state="synced",
             graph_event_id="graph-synthetic", meeting_link="https://example.invalid/teams",
@@ -843,7 +843,7 @@ class MigratedBookingTests(TestCase):
         )
         self.overlay = ImportedReviewInstance.objects.create(
             event_key="imported-review:A-9", owner_email="coach@example.invalid",
-            learner_id=21, source_review_id=409, migrated_template=self.template,
+            learner_profile_id=21, source_review_id=409, migrated_template=self.template,
             template_snapshot=candidate_definition(SOURCE), answers={}, status="not-scheduled",
         )
         self.definition = {
@@ -924,7 +924,7 @@ class MigratedBookingTests(TestCase):
     def test_verified_existing_booking_is_reused_without_graph_creation(self):
         calendar = CoachCalendarEvent.objects.create(
             event_key=self.overlay.event_key, owner_email=self.overlay.owner_email,
-            learner_id=21, event_type="progress-review", target_date=date(2026, 10, 30),
+            learner_profile_id=21, event_type="progress-review", target_date=date(2026, 10, 30),
             scheduled_date=date.fromisoformat(self.slot["scheduledDate"]), scheduled_time=time(10, 0),
             duration_minutes=60, status="scheduled", sync_state="synced",
             graph_event_id="existing-graph-event", meeting_link="https://example.invalid/teams/existing",
@@ -1051,7 +1051,7 @@ class MigratedBookingTests(TestCase):
         self.definition["historicalReview"]["type"] = "Progress Review (+ Skills Radar)"
         calendar = CoachCalendarEvent.objects.create(
             event_key=self.overlay.event_key, owner_email=self.overlay.owner_email,
-            learner_id=21, event_type="progress-review", target_date=date(2026, 10, 30),
+            learner_profile_id=21, event_type="progress-review", target_date=date(2026, 10, 30),
             scheduled_date=date.fromisoformat(self.slot["scheduledDate"]), scheduled_time=time(10),
             duration_minutes=60, status="scheduled", sync_state="synced", sync_attempt_count=1,
             graph_event_id="existing-graph-event", meeting_link="https://example.invalid/teams/existing",
@@ -1110,7 +1110,7 @@ class MigratedBookingTests(TestCase):
 
     def test_skills_radar_graph_payload_keeps_title_and_pr_attendees(self):
         record = CoachCalendarEvent(event_key=self.overlay.event_key, owner_email="coach@example.invalid",
-            owner_name="Test coach", learner_id=21, learner_name="Test learner",
+            owner_name="Test coach", learner_profile_id=21, learner_name="Test learner",
             learner_email="learner@example.invalid", event_type=booking_event_type("PR_SKILLS_RADAR"),
             scheduled_date=date(2026, 10, 30), scheduled_time=time(10), duration_minutes=60)
         event = {**self.base_event, "source": record.event_type,
@@ -1133,8 +1133,8 @@ class MigratedBookingTests(TestCase):
         self.assertEqual(json.loads(response.content)["error"], "ALREADY_BOOKED")
         self.assertEqual(calls, 0)
         calendar = CoachCalendarEvent.objects.get()
-        calendar.learner_id = 99
-        calendar.save(update_fields=["learner_id"])
+        calendar.learner_profile_id = 99
+        calendar.save(update_fields=["learner_profile_id"])
         response, calls = self.book()
         self.assertEqual(response.status_code, 409)
         self.assertEqual(calls, 0)
@@ -1176,7 +1176,7 @@ class MigratedBookingTests(TestCase):
         calendar = CoachCalendarEvent.objects.create(
             event_key="mcr:21:1:2026-10-30",
             idempotency_key="learner-book:mcm:commercial:101:2026-10:409",
-            owner_email=self.overlay.owner_email, learner_id=21, event_type="mcr",
+            owner_email=self.overlay.owner_email, learner_profile_id=21, event_type="mcr",
             target_date=date(2026, 10, 30),
             scheduled_date=date.fromisoformat(self.slot["scheduledDate"]),
             scheduled_time=time(10), duration_minutes=60, status="scheduled",

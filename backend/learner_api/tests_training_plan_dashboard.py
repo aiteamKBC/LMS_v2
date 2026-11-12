@@ -350,7 +350,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
 
             # Unsaved fixture only: exercise the actual calendar serializer and
             # generated/stored merge without making any database changes.
-            booking = CoachCalendarEvent(event_key=event_key, event_type='mcr', learner_id=272,
+            booking = CoachCalendarEvent(event_key=event_key, event_type='mcr', learner_profile_id=272,
                                          learner_email=source.email, sequence=23, target_date=date(2026, 9, 25),
                                          scheduled_date=date(2026, 9, 28), scheduled_time=time(14),
                                          status='scheduled', owner_name='Assigned Coach')

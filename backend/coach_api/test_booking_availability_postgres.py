@@ -27,7 +27,7 @@ class CoachBookingAvailabilityPostgresTests(TransactionTestCase):
 
     def slot(self, learner, owner="coach@example.test", *, at=None):
         record = CoachCalendarEvent.objects.create(event_key=f"imported-review:A-{learner}", owner_email=owner,
-            learner_id=learner, learner_email=f"learner-{learner}@example.test", event_type="progress-review",
+            learner_profile_id=learner, learner_email=f"learner-{learner}@example.test", event_type="progress-review",
             target_date=self.day, scheduled_date=self.day if at else None, scheduled_time=at,
             status="scheduled" if at else "not-scheduled", duration_minutes=60)
         self.created_ids.append(record.pk)

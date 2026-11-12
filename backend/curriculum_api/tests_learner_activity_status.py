@@ -32,7 +32,7 @@ class ActivityStatusTests(SimpleTestCase):
                 component_link_status text,accepted boolean,deleted_at timestamp,
                 submitted_at timestamp,passed boolean,feedback text,ssot_updated_at timestamp,source_payload text,
                 feed_kind text,feed_action text,feed_title text,time_tracking_source text,time_tracking_session_ref text,
-                time_tracking_calculation text,claimed_seconds integer
+                time_tracking_calculation text,claimed_seconds integer,curriculum_component_fk text
             );
             CREATE TABLE live_sessions (id text,module_catalogue_id text,status text);
             CREATE TABLE live_session_occurrences (id text,live_session_id text,scheduled_start text,scheduled_end text,status text);
@@ -469,6 +469,22 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(rows[0]['actual_seconds'], 3617)
         self.assertEqual(rows[0]['feedback'], 'Original feedback')
         self.assertEqual(rows[0]['component_ref'], ' c1 ')
+
+    def test_staff_declared_hours_carry_the_verified_component_key(self):
+        self.save(self.payload())
+        row = self.query('SELECT * FROM learner_progress_entries')[0]
+        self.assertEqual((row['component_ref'], row['curriculum_component_fk']), ('c1', 'c1'))
+        self.assertIsNone(row['curriculum_component_ref'])
+
+    def test_staff_edit_sets_the_key_without_rewriting_the_original_references(self):
+        self.query('''INSERT INTO learner_progress_entries
+            (learner_id,enrolment_id,component_ref,curriculum_component_ref,kind,accepted,actual_seconds)
+            VALUES (1,91,' c1 ','','component',true,1800)''')
+        self.save(self.payload())
+        rows = self.query('SELECT * FROM learner_progress_entries')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]['component_ref'], rows[0]['curriculum_component_ref']), (' c1 ', ''))
+        self.assertEqual(rows[0]['curriculum_component_fk'], 'c1')
 
     def test_enrichment_counts_module_ref_rows_once_and_reports_completion(self):
         payload = {'identifier':'MOD-1', 'otjhAchievement':{'learners':[{'learnerId':1,'plannedOtjh':10}]},

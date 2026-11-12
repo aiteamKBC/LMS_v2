@@ -224,7 +224,7 @@ def preview(*, calendar_event_id, source_review_id, actor_id):
             record = CoachCalendarEvent.objects.filter(pk=calendar_event_id).first()
             return {"status": "CONFLICT", "calendarEventId": calendar_event_id, "sourceReviewId": source_review_id,
                     "detail": str(exc), "nativeInstanceId": record.review_instance_id if record else None,
-                    "learnerProfileId": record.learner_id if record else None,
+                    "learnerProfileId": record.learner_profile_id if record else None,
                     "dependencies": dependency_counts(record) if record else {}, "changes": []}
 
 
@@ -238,7 +238,7 @@ def apply(*, calendar_event_id, source_review_id, actor_id, reason, validate_loc
             from .views import lock_learner_calendar
             owner_record = CoachCalendarEvent.objects.filter(pk=calendar_event_id).first()
             if owner_record:
-                lock_learner_calendar(owner_record.learner_id)
+                lock_learner_calendar(owner_record.learner_profile_id)
             # Repeat approvals remain a no-op even after imported work starts.
             record = CoachCalendarEvent.objects.select_for_update().filter(pk=calendar_event_id).first()
             if record:
@@ -266,7 +266,7 @@ def apply(*, calendar_event_id, source_review_id, actor_id, reason, validate_loc
                 overlay.status = "scheduled"
                 overlay.save(update_fields=["status", "updated_at"])
             link = ReviewSourceReconciliation.objects.create(
-                learner_id=record.learner_id, calendar_event_id=record.pk,
+                learner_profile_id=record.learner_profile_id, calendar_event_id=record.pk,
                 native_review_instance_id=record.review_instance_id, native_template_id=record.review_template_id,
                 native_event_key=record.event_key, source_review_id=source["id"], aptem_review_id=source["aptem_review_id"],
                 overlay=overlay, approved_by=actor.pk, approved_at=timezone.now(), reason=reason.strip(),
@@ -290,7 +290,7 @@ def reverse(*, reconciliation_id, actor_id, reason):
         require_reconciliation_schema()
         prior = ReviewSourceReconciliation.objects.get(pk=reconciliation_id)
         from .views import lock_learner_calendar
-        lock_learner_calendar(prior.learner_id)
+        lock_learner_calendar(prior.learner_profile_id)
         record = CoachCalendarEvent.objects.select_for_update().get(pk=prior.calendar_event_id)
         link = ReviewSourceReconciliation.objects.select_for_update().get(pk=prior.pk)
         if link.status == "REVERSED":
@@ -319,13 +319,13 @@ def candidates(*, calendar_event_id, actor_id):
     require_operator(actor_id)
     require_reconciliation_schema()
     record = CoachCalendarEvent.objects.get(pk=calendar_event_id)
-    read_profile(record.learner_id)
+    read_profile(record.learner_profile_id)
     with connection.cursor() as cursor:
         cursor.execute('SELECT id, aptem_review_id, review_type, status, planned_scheduled_date '
-                       'FROM "Learner".reviews WHERE learner_id=%s ORDER BY id', [record.learner_id])
+                       'FROM "Learner".reviews WHERE learner_id=%s ORDER BY id', [record.learner_profile_id])
         rows = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor.fetchall()]
     from .migrated_reviews import review_family
-    return {"calendarEventId": record.pk, "learnerProfileId": record.learner_id,
+    return {"calendarEventId": record.pk, "learnerProfileId": record.learner_profile_id,
             "nativeInstanceId": record.review_instance_id, "dependencies": dependency_counts(record),
             "candidates": [row for row in rows if review_family(row["review_type"]) == "MCM"],
             "warning": "Candidates are not approved. Select an exact source review ID and run preview."}

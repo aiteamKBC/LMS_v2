@@ -154,13 +154,13 @@ def load_wizard_bundle(learner_id):
         return None
     try:
         return {
-            "ilr": ExtendedIlr.objects.filter(learner_id=lid).first(),
-            "personal": WizardPersonalDetails.objects.filter(learner_id=lid).first(),
-            "cv_job": WizardCvJob.objects.filter(learner_id=lid).first(),
-            "plr": WizardPlr.objects.filter(learner_id=lid).first(),
-            "plr_records": list(WizardPlrRecord.objects.filter(learner_id=lid).order_by("id")),
-            "policies": list(WizardPolicyAck.objects.filter(learner_id=lid).order_by("id")),
-            "ksbs": list(WizardKsbAssessment.objects.filter(learner_id=lid).order_by("ksb_id")),
+            "ilr": ExtendedIlr.objects.filter(enrolment_id=lid).first(),
+            "personal": WizardPersonalDetails.objects.filter(enrolment_id=lid).first(),
+            "cv_job": WizardCvJob.objects.filter(enrolment_id=lid).first(),
+            "plr": WizardPlr.objects.filter(enrolment_id=lid).first(),
+            "plr_records": list(WizardPlrRecord.objects.filter(enrolment_id=lid).order_by("id")),
+            "policies": list(WizardPolicyAck.objects.filter(enrolment_id=lid).order_by("id")),
+            "ksbs": list(WizardKsbAssessment.objects.filter(enrolment_id=lid).order_by("ksb_id")),
         }
     except DatabaseError:
         # The board is still useful without the onboarding detail; a missing or

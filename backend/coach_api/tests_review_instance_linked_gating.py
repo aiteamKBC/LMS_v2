@@ -49,7 +49,7 @@ class LinkedReviewGatingTestCase(TestCase):
         return CoachCalendarEvent.objects.create(
             event_key=event_key, event_type=event_type,
             owner_email="coach@example.com", owner_name="Coach One",
-            learner_id=301, learner_name="Learner", learner_email="learner@example.com",
+            learner_profile_id=301, learner_name="Learner", learner_email="learner@example.com",
             scheduled_date=date(2026, 10, 1), scheduled_time=time(10, 0),
             target_date=date(2026, 10, 1), duration_minutes=30, status=status,
             meeting_link="https://teams.microsoft.com/meet/abc",

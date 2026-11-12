@@ -7891,7 +7891,7 @@ def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
                        graph_event_id, transcript_artifact_id, transcript_hash
                 FROM {COACH_MEETING_SUMMARIES_RELATION}
                 WHERE event_key = %s AND calendar_event_id = %s AND owner_email = %s
-                  AND learner_profile_id IS NOT DISTINCT FROM %s
+                  AND learner_id IS NOT DISTINCT FROM %s
                 LIMIT 1
                 """,
                 [record.event_key, record.pk, clean_email(record.owner_email), record.learner_profile_id],
@@ -11042,7 +11042,7 @@ def find_learner_calendar_conflict(
     from .booking_reservations import OCCUPANCY_FIELDS, calendar_record_occupies_slot
     requested_start = datetime.combine(scheduled_date, scheduled_time)
     requested_end = requested_start + timedelta(minutes=duration_minutes)
-    identity = Q(learner_id=learner_id)
+    identity = Q(learner_profile_id=learner_id)
     normalized_email = normalize_email(learner_email)
     if normalized_email:
         # Email keeps the check effective when an Active_users mirror is
@@ -11107,7 +11107,7 @@ def find_learner_same_session_in_week(
     """Return this learner's active booking of the same type, Monday-Sunday."""
     week_start = scheduled_date - timedelta(days=scheduled_date.weekday())
     week_end = week_start + timedelta(days=6)
-    identity = Q(learner_id=learner_id)
+    identity = Q(learner_profile_id=learner_id)
     normalized_email = normalize_email(learner_email)
     if normalized_email:
         identity |= Q(learner_email__iexact=normalized_email)
@@ -11375,7 +11375,7 @@ def sync_scheduled_review_instance(record: CoachCalendarEvent, *, coach_reschedu
         if (
             not instance
             or instance.get('calendar_event_id') != record.pk
-            or instance.get('learner_id') != record.learner_id
+            or instance.get('learner_id') != record.learner_profile_id
             or clean_email(instance.get('coach_email')) != clean_email(record.owner_email)
             or clean_text(instance.get('review_template_id')) != clean_text(record.review_template_id)
         ):
@@ -11411,7 +11411,7 @@ def persist_calendar_sync_reservation(
     mutable_fields = (
         "owner_email",
         "owner_name",
-        "learner_id",
+        "learner_profile_id",
         "learner_name",
         "learner_email",
         "event_type",
@@ -11437,7 +11437,7 @@ def persist_calendar_sync_reservation(
         if non_delivery_reason:
             raise LearnerCalendarConflict(non_delivery_reason, candidate)
     with transaction.atomic():
-        lock_learner_calendar(candidate.learner_id)
+        lock_learner_calendar(candidate.learner_profile_id)
         record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
         from .reconciliation_links import require_schedulable
         reconciliation = require_schedulable(record, **({'allow_started': True} if coach_reschedule else {}))
@@ -11450,7 +11450,7 @@ def persist_calendar_sync_reservation(
         if rescheduling_started:
             from .review_rescheduling import require_started_reschedule, archive_booking
             if (record.owner_email.casefold() != candidate.owner_email.casefold()
-                    or record.learner_id != candidate.learner_id
+                    or record.learner_profile_id != candidate.learner_profile_id
                     or record.event_type != candidate.event_type):
                 raise LearnerCalendarConflict('The booking association changed. Reload the Review.')
             if overlay is not None:
@@ -11501,7 +11501,7 @@ def persist_calendar_sync_reservation(
         for field in mutable_fields:
             if record.review_instance_id and field in {"review_template_id", "occurrence_number"}:
                 continue
-            if reconciliation and field in {"owner_email", "learner_id", "event_type", "sequence", "target_date"}:
+            if reconciliation and field in {"owner_email", "learner_profile_id", "event_type", "sequence", "target_date"}:
                 continue
             setattr(record, field, getattr(candidate, field))
         record.sync_state = CoachCalendarEvent.SYNC_PENDING
@@ -11774,7 +11774,7 @@ def coach_timetable_schedule_event(request):
             defaults={
                 "owner_email": owner_email,
                 "owner_name": owner_name,
-                "learner_id": learner_id,
+                "learner_profile_id": learner_id,
                 "learner_name": clean_text(catchup_template_event.get("learner")),
                 "learner_email": clean_text(catchup_template_event.get("email")),
                 "event_type": CATCH_UP_EVENT_TYPE,
@@ -11926,7 +11926,7 @@ def coach_timetable_schedule_event(request):
         defaults={
             "owner_email": owner_email,
             "owner_name": owner_name,
-            "learner_id": int(base_event["learnerId"]),
+            "learner_profile_id": int(base_event["learnerId"]),
             "learner_name": clean_text(base_event.get("learner")),
             "learner_email": clean_text(base_event.get("email")),
             "event_type": clean_text(base_event.get("source")),
@@ -12212,10 +12212,11 @@ def coach_timetable_book_event(request):
         try:
             from learner_api.session_recovery import _record_linked_catchup
             with transaction.atomic():
+                # learner_id is the profile pk; reports are keyed by enrolment id.
                 report = CoachAbsenceReport.objects.select_for_update().filter(
                     pk=absence_report_id,
                     owner_email__iexact=owner_email,
-                    enrolment_id=learner_id,
+                    enrolment_id=getattr(learner, 'enrolment_id', None),
                 ).first()
                 if not report:
                     raise LearnerCalendarConflict("Missed lecture not found in this coach caseload.")
@@ -13162,7 +13163,7 @@ def coach_source_attendance(request):
     if not any(row.get('source') == source_name and str(row.get('session_id')) == source_id for row in register):
         return JsonResponse({"detail": "Attendance source does not belong to this learner register."}, status=404)
 
-    lookup = {"learner_id": int(learner_id), "source": source_name, "source_id": source_id}
+    lookup = {"learner_profile_id": int(learner_id), "source": source_name, "source_id": source_id}
     if request.method == "DELETE":
         CoachAttendanceSourceAdjustment.objects.update_or_create(
             **lookup,
@@ -14429,16 +14430,16 @@ def fetch_absence_report_attendance_rates(learner_ids: list[int], learner_emails
     if legacy_summary_exists and (missing_ids or missing_emails):
         query = Q()
         if missing_ids:
-            query |= Q(learner_id__in=missing_ids)
+            query |= Q(learner_profile_id__in=missing_ids)
         if missing_emails:
             query |= Q(learner_email__in=missing_emails)
-        rows = LearnerAbsence.objects.filter(query).values("learner_id", "learner_email", "present", "absent")
+        rows = LearnerAbsence.objects.filter(query).values("learner_profile_id", "learner_email", "present", "absent")
         for row in rows:
             present = to_int(row["present"])
             absent = to_int(row["absent"])
             recorded_sessions = present + absent
             attendance_rate = percentage(present, recorded_sessions) if recorded_sessions else None
-            learner_id = to_int(row["learner_id"])
+            learner_id = to_int(row["learner_profile_id"])
             email_key = normalize_email(row["learner_email"])
             if learner_id and learner_id not in by_id:
                 by_id[learner_id] = attendance_rate
@@ -14591,7 +14592,7 @@ def coach_absence_reports(request):
         except ValidationError as exc:
             return validation_error_response(exc)
         report = CoachAbsenceReport.objects.filter(id=report_id, owner_email__iexact=owner_email).first()
-        if not report or (report.learner_id not in active_ids and normalize_email(report.learner_email) not in active_emails):
+        if not report or (report.enrolment_id not in active_ids and normalize_email(report.learner_email) not in active_emails):
             return JsonResponse({"detail": "Absence report not found."}, status=404)
         moved_blob = None
         try:
@@ -15383,7 +15384,7 @@ def _review_instance_calendar_record(instance_row):
     return CoachCalendarEvent.objects.filter(
         pk=calendar_event_id,
         review_instance_id=instance_row.get("id"),
-        learner_id=instance_row.get("learner_id"),
+        learner_profile_id=instance_row.get("learner_id"),
         owner_email__iexact=instance_row.get("coach_email") or "",
     ).first()
 
@@ -16870,7 +16871,7 @@ def coach_review_instance_answers(request, instance_id):
         imported, _created = ImportedReviewInstance.objects.get_or_create(
             owner_email=owner_email,
             event_key=definition["instance"]["id"],
-            defaults={"learner_id": definition["instance"]["learnerId"]},
+            defaults={"learner_profile_id": definition["instance"]["learnerId"]},
         )
         if imported.status == ImportedReviewInstance.STATUS_COMPLETED:
             return JsonResponse({"detail": "This review has already been completed and is read-only."}, status=409)
@@ -17207,7 +17208,7 @@ def coach_review_instance_complete(request, instance_id):
         imported, _created = ImportedReviewInstance.objects.get_or_create(
             owner_email=owner_email,
             event_key=definition["instance"]["id"],
-            defaults={"learner_id": definition["instance"]["learnerId"]},
+            defaults={"learner_profile_id": definition["instance"]["learnerId"]},
         )
         if imported.status == ImportedReviewInstance.STATUS_COMPLETED:
             return JsonResponse({"detail": "This review has already been completed."}, status=409)

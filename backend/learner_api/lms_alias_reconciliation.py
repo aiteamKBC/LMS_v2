@@ -615,10 +615,13 @@ def apply(cursor, expected_branch_id):
                 component_title,component_type,quiz_ref,attempt,achieved_score,total_score,
                 passed,enrolment_id,programme_id,aptem_id,source_system,source_activity_id,
                 canonical_activity_key,activity_status,accepted,actual_seconds,actual_basis,
-                reporting_month,source_payload,sync_run_id,curriculum_component_ref
+                reporting_month,source_payload,sync_run_id,curriculum_component_ref,
+                curriculum_component_fk
             ) VALUES (nextval('"Learner".learner_progress_entries_id_seq'),
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                false,NULL,%s,'',%s::jsonb,%s,%s) RETURNING id''', [
+                false,NULL,%s,'',%s::jsonb,%s,%s,
+                (SELECT id FROM curriculum.components WHERE id=nullif(%s::text,''))
+            ) RETURNING id''', [
                 learner_id, next_orders[learner_id], action['activity_type'],
                 action.get('curriculum_module_ref'), action.get('source_course_title') or '',
                 action['source_activity_id'], action.get('source_activity_title') or 'LMS activity',
@@ -630,6 +633,9 @@ def apply(cursor, expected_branch_id):
                 SOURCE_SYSTEM, action['source_activity_id'], canonical_key,
                 action['activity_status'], 'lms:completion-only-no-verified-duration',
                 _json(payload), run_id, action.get('curriculum_component_ref'),
+                # The key only when the mapped lineage is a current component;
+                # an unmatched historical ref keeps its text and a NULL key.
+                action.get('curriculum_component_ref'),
             ])
             progress_id = int(cursor.fetchone()[0])
             progress_created += 1

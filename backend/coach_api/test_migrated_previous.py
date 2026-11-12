@@ -32,7 +32,7 @@ class MigratedPreviousTests(TestCase):
         self.prior = source(2, "2026-09-20")
         self.rows = [self.current, self.prior, source(1, "2026-08-20", status="Completed")]
         self.overlay = ImportedReviewInstance.objects.create(
-            event_key="imported-review:source-2", source_review_id=2, learner_id=42,
+            event_key="imported-review:source-2", source_review_id=2, learner_profile_id=42,
             owner_email=OWNER, status="completed", template_snapshot=deepcopy(DEFINITION),
             answers={"recap": "Final coach-edited summary."},
             meeting_intelligence={"summaryStatus": "ready", "summary": {"overview": "Older AI suggestion."}},
@@ -122,7 +122,7 @@ class MigratedPreviousTests(TestCase):
         from .models import CoachCalendarEvent
         from django.test import override_settings
         record = CoachCalendarEvent(id=7, owner_email=OWNER, event_key=self.overlay.event_key,
-            learner_id=42, event_type='mcr', graph_event_id='graph-current',
+            learner_profile_id=42, event_type='mcr', graph_event_id='graph-current',
             scheduled_date=date(2026, 9, 20), scheduled_time=time(10), duration_minutes=60)
         self.booking.return_value = record
         self.transcript.side_effect = scoped_transcript_reader
@@ -162,7 +162,7 @@ class MigratedPreviousTests(TestCase):
         for actual_time in ('2026-09-19T10:05:00Z', '2026-09-21T10:05:00Z'):
             with self.subTest(actual_time=actual_time):
                 record = CoachCalendarEvent(id=7, owner_email=OWNER, event_key=self.overlay.event_key,
-                    learner_id=42, event_type='mcr', graph_event_id='graph-current',
+                    learner_profile_id=42, event_type='mcr', graph_event_id='graph-current',
                     scheduled_date=date(2026, 9, 20), scheduled_time=time(10), duration_minutes=60)
                 self.booking.return_value = record
                 self.transcript.side_effect = scoped_transcript_reader
@@ -190,7 +190,7 @@ class MigratedPreviousTests(TestCase):
         from .models import CoachCalendarEvent
 
         record = CoachCalendarEvent(id=7, owner_email=OWNER, event_key=self.overlay.event_key,
-            learner_id=42, event_type='mcr', graph_event_id='graph-current',
+            learner_profile_id=42, event_type='mcr', graph_event_id='graph-current',
             scheduled_date=date(2026, 9, 20), scheduled_time=time(10), duration_minutes=60)
         self.booking.return_value = record
         self.transcript.side_effect = scoped_transcript_reader

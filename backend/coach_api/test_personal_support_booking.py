@@ -24,7 +24,7 @@ class PersonalSupportIdentityTests(SimpleTestCase):
         profile = SimpleNamespace(id=21, enrolment_id=121, learner_type="apprenticeship")
         source = {"id": "407", "aptemReviewId": "A-7", "type": "Personal Support Plan",
                   "status": "not-scheduled"}
-        record = CoachCalendarEvent(pk=1, event_key=KEY, owner_email=OWNER, learner_id=21,
+        record = CoachCalendarEvent(pk=1, event_key=KEY, owner_email=OWNER, learner_profile_id=21,
                                     event_type="progress-review", status="scheduled", sync_state="synced",
                                     graph_event_id="original-event", meeting_link="https://example.invalid/meeting",
                                     scheduled_date=date(2026, 11, 2), scheduled_time=time(10), duration_minutes=60)
@@ -34,7 +34,7 @@ class PersonalSupportIdentityTests(SimpleTestCase):
         self.assertTrue(state["canReschedule"])
         self.assertEqual(state["scheduledDate"], "2026-11-02")
         self.assertEqual(state["status"], "scheduled")
-        record.learner_id = 99
+        record.learner_profile_id = 99
         linked, state = booking.booking_state(OWNER, profile, source)
         self.assertIsNone(linked)
         self.assertTrue(state["conflict"])

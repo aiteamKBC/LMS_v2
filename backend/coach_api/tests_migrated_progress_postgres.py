@@ -51,7 +51,7 @@ class MigratedProgressPostgresRaces(SimpleTestCase):
                 cursor.execute('DELETE FROM "Learner".reviews WHERE id = %s AND aptem_review_id = %s', [source_id, key])
         self.addCleanup(remove_source)
         self.overlay = ImportedReviewInstance.objects.create(event_key="imported-review:" + key,
-            owner_email=OWNER, learner_id=-73421, source_review_id=source_id,
+            owner_email=OWNER, learner_profile_id=-73421, source_review_id=source_id,
             migrated_template=self.template, template_snapshot=snapshot_for(self.template),
             status="in-progress", answers={"note": "Initial answer"},
             signature_requirements={"advisor": True, "participant": True, "employer": True})

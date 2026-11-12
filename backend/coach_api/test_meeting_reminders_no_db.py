@@ -63,7 +63,7 @@ class ReminderTests(unittest.TestCase):
     def setUp(self):
         self.staff = SimpleNamespace(id=1, subject_type='staff', email='coach@example.invalid', access='coach')
         self.learner = SimpleNamespace(id=42, email='learner@example.invalid', full_name='Example <Learner>', coach_email=self.staff.email)
-        self.record = SimpleNamespace(id=7, owner_email=self.staff.email, event_key='mcr:42:1', learner_id=42,
+        self.record = SimpleNamespace(id=7, owner_email=self.staff.email, event_key='mcr:42:1', learner_profile_id=42,
             learner_email='stale@example.invalid', event_type='mcr', status='scheduled', scheduled_date=date(2026, 9, 21),
             scheduled_time=time(10, 30), duration_minutes=60, owner_name='Example Coach', meeting_link='https://example.invalid/meeting')
         self.mail = SimpleNamespace(is_configured=Mock(return_value=True), send_mail=Mock(return_value=(True, None)))
@@ -210,7 +210,7 @@ class ReminderTests(unittest.TestCase):
     def test_commercial_and_apprenticeship_learner_ids_do_not_cross(self):
         for kind in ['commercial', 'apprenticeship']:
             self.learner.learner_type = kind
-            self.record.learner_id = self.learner.id + 1
+            self.record.learner_profile_id = self.learner.id + 1
             self.assertEqual(self.send().status_code, 404)
         self.mail.send_mail.assert_not_called()
 

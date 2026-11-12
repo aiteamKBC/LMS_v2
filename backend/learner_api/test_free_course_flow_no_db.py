@@ -431,7 +431,8 @@ class CanonicalFreeCourseModelTests(SimpleTestCase):
             refs = view._completed_refs(7, ["FREE-1"])
         self.assertEqual(refs, {("FREE-1", "C-1")})
         filters = queryset.filter.call_args.kwargs
-        self.assertEqual(set(filters), {"learner_id", "free_course_ref__in"})
+        self.assertEqual(set(filters), {"learner_id", "free_course_ref__in", "status"})
+        self.assertEqual(filters["status"], "active")
         self.assertEqual(captured["fields"], ("free_course_ref", "component_ref"))
 
 
@@ -622,7 +623,7 @@ class FreeCourseCompletionIsolationTests(SimpleTestCase):
         self.enterContext(patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}))
 
     def test_completion_writes_only_the_isolated_free_course_store(self):
-        progress = Mock()
+        progress = Mock(return_value=(SimpleNamespace(status="active"), True))
         request = self.factory.post(
             "/learner_api/free-courses/commercial/19/complete/",
             data=json.dumps({"componentId": "C-1"}), content_type="application/json",

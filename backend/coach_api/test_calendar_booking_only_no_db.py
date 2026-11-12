@@ -17,7 +17,7 @@ def profile(**changes):
 
 def booking(**changes):
     return SimpleNamespace(**dict(dict(pk=31, event_key='review:7:template:1',
-        operation_id='operation-31', learner_id=7, learner_email='learner@example.invalid',
+        operation_id='operation-31', learner_profile_id=7, learner_email='learner@example.invalid',
         idempotency_key='', event_type='mcr', review_template_id='template',
         review_instance_id='instance', occurrence_number=1, status='scheduled', sync_state='synced',
         graph_event_id='graph-31', meeting_link='https://example.invalid/meeting',
@@ -86,7 +86,7 @@ class BookingOnlyCandidateTests(SimpleTestCase):
 
     def test_legacy_enrolment_id_is_not_confused_with_profile_id_or_kind(self):
         for kind in ('commercial', 'apprenticeship'):
-            row = booking(learner_id=107, idempotency_key=f'learner-book:mcm:{kind}:107:2026-10:41')
+            row = booking(learner_profile_id=107, idempotency_key=f'learner-book:mcm:{kind}:107:2026-10:41')
             owner = profile(learner_type=kind)
             self.assertEqual(booking_only_candidates([row], [owner], {7}), [(row, owner)])
             self.assertEqual(booking_only_candidates([row], [profile(id=107, enrolment_id=207)], {107}), [])

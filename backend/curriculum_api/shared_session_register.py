@@ -109,10 +109,10 @@ def shared_register_rows(*, database, module_refs=None, learner_ids=None, learne
                                attendance_only=True, use_saved_outcomes=False)
         apply_recovery(sessions)
         correction_ids = {f'{occurrence}:{module_id}': occurrence for occurrence in reports}
-        corrections = {(correction_ids[row['source_id']], row['learner_id']): row['status']
+        corrections = {(correction_ids[row['source_id']], row['learner_profile_id']): row['status']
                        for row in CoachAttendanceSourceAdjustment.objects.using(database).filter(
                            source='microsoft-teams', source_id__in=list(correction_ids), is_deleted=False,
-                           status__in=['present', 'absent']).values('source_id', 'learner_id', 'status')}
+                           status__in=['present', 'absent']).values('source_id', 'learner_profile_id', 'status')}
         projected = project_shared_attendance(module_id, series_id, sessions, reports, corrections, calculated_at)
         rows.extend(row for row in projected if not (ids or emails)
                     or row['learner_profile_id'] in ids or row['learner_email'] in emails)

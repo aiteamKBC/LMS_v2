@@ -91,12 +91,12 @@ def register_rows(profiles, *, occurrence_id=None, lock=False):
 
 def correction_rows(profile_ids, *, occurrence_id=None):
     query = CoachAttendanceSourceAdjustment.objects.filter(
-        learner_id__in=profile_ids, source='microsoft-teams')
+        learner_profile_id__in=profile_ids, source='microsoft-teams')
     if occurrence_id is not None:
         query = query.filter(source_id=occurrence_id)
     result = defaultdict(dict)
     for row in query:
-        result[str(row.learner_id)][(row.source, row.source_id)] = row
+        result[str(row.learner_profile_id)][(row.source, row.source_id)] = row
     return result
 
 
@@ -154,10 +154,10 @@ def selected_rows(profiles, occurrence_id, timing):
     reports = {}
     with timing.stage('absence_reports'):
         for report in CoachAbsenceReport.objects.filter(
-                learner_id__in=list(report_ids), attendance_id__in=list(report_ids.values())
+                enrolment_id__in=list(report_ids), attendance_id__in=list(report_ids.values())
         ).order_by('created_at', 'id'):
-            if str(report.attendance_id) == report_ids.get(report.learner_id):
-                reports[report.learner_id] = report
+            if str(report.attendance_id) == report_ids.get(report.enrolment_id):
+                reports[report.enrolment_id] = report
     result = {}
     for profile in profiles:
         key = str(profile.id)

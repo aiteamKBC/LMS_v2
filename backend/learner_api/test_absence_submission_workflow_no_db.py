@@ -140,7 +140,7 @@ class AbsenceSubmissionWorkflowTests(SimpleTestCase):
             with self.subTest(kind=kind):
                 response = self.submit(kind=kind)
                 self.assertEqual(response.status_code, 201)
-                self.assertEqual(self.calendar.create.call_args.kwargs["learner_id"], 12)
+                self.assertEqual(self.calendar.create.call_args.kwargs["learner_profile_id"], 12)
         self.ledger.assert_not_called()
 
     def test_missing_native_profile_returns_actionable_conflict_without_saving(self):

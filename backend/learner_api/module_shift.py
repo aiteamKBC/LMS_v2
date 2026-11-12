@@ -56,6 +56,7 @@ from .active_users import (
     _component_learning_context,
     _decimal,
     _normalise_weight_class,
+    current_component_fk,
     hydrate_training_plan,
     recompute_completed_hours,
     refresh_learner_ksb_snapshot,
@@ -778,6 +779,7 @@ REPOINTED_FIELDS = [
     "group_ref", "group_title", "cohort_ref", "cohort_title",
     "component_ref", "component_title", "component_type", "points",
     "component_link_status", "component_link_source",
+    "curriculum_component_ref", "curriculum_component_fk",
 ]
 
 
@@ -889,6 +891,12 @@ def _repoint_progress(learner, profile, pairs, entries_by_component=None):
             entry.cohort_ref = _s(context.get("cohortId")) or entry.cohort_ref
             entry.cohort_title = _s(context.get("cohort")) or entry.cohort_title
             entry.component_ref = target_id
+            # The canonical identity moves with it. A lineage ref left on the
+            # source would keep crediting the old component; the key is only
+            # ever the verified target, never the previous component.
+            if _s(entry.curriculum_component_ref):
+                entry.curriculum_component_ref = target_id
+            entry.curriculum_component_fk = current_component_fk(connections["enrolment"], target_id)
             entry.component_title = _s(context.get("componentTitle")) or entry.component_title
             entry.component_type = _s(context.get("componentType")) or entry.component_type
             if context.get("points") not in (None, ""):

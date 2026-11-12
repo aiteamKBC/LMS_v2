@@ -29,7 +29,7 @@ class AdvancedAdminEligibilityFormTests(SimpleTestCase):
         self.assertEqual(json.loads(response.content), {'eventKey': review.event_key})
         self.assertEqual(response['Cache-Control'], 'private, no-store')
         reviews.filter.assert_called_once_with(
-            learner_kind='commercial', learner_id=7,
+            learner_kind='commercial', enrolment_id=7,
             review_type='eligibility-review', event_key='eligibility-review:7:1',
         )
         serialize.assert_called_once_with(review, learner, None)
@@ -52,7 +52,7 @@ class AdvancedAdminEligibilityFormTests(SimpleTestCase):
             response = learner_eligibility_form.__wrapped__.__wrapped__(request, 42, 'other')
         self.assertEqual(response.status_code, 404)
         reviews.filter.assert_called_once_with(
-            learner_kind='commercial', learner_id=7,
+            learner_kind='commercial', enrolment_id=7,
             review_type='eligibility-review', event_key='other',
         )
         learners.get.assert_not_called()

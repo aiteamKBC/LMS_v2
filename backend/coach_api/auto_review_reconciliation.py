@@ -85,7 +85,7 @@ def _inventory(learner_id=None):
     from learner_api.models import LearnerProfile, EnrolmentUser
     records = CoachCalendarEvent.objects.filter(event_type="mcr").exclude(review_instance_id="")
     if learner_id is not None:
-        records = records.filter(learner_id=learner_id)
+        records = records.filter(learner_profile_id=learner_id)
     records = list(records.order_by("id"))
     profiles = {p.pk: p for p in LearnerProfile.objects.using("default").filter(
         pk__in={r.learner_id for r in records})}

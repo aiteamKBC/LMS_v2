@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from config.legacy_identity import legacy_field_alias
 
 
 class Reward(models.Model):
@@ -45,7 +46,8 @@ class VoucherClaim(models.Model):
 
     # Learner records live in another team's app (not in scope here yet), so
     # we just store the id/name the frontend sends rather than a real FK.
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
 
     reward = models.ForeignKey(Reward, on_delete=models.CASCADE, related_name='claims', db_column='reward_id')
@@ -81,7 +83,8 @@ class Recognition(models.Model):
 
     # Learner records live in another team's app (not in scope here yet), so
     # we just store the id/name the frontend sends rather than a real FK.
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     avatar_img = models.TextField(null=True, blank=True)
     programme_code = models.CharField(max_length=50)
@@ -151,7 +154,8 @@ class EventBooking(models.Model):
     ]
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='bookings', db_column='event_id')
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     learner_email = models.EmailField(blank=True, default='')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='booked')
@@ -223,7 +227,8 @@ class ClubMembership(models.Model):
     ]
 
     club = models.ForeignKey(Club, on_delete=models.CASCADE, related_name='memberships', db_column='club_id')
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     assigned_by = models.CharField(max_length=255, null=True, blank=True)
@@ -255,7 +260,8 @@ class ClubMeetingAttendance(models.Model):
     ]
 
     meeting = models.ForeignKey(ClubMeeting, on_delete=models.CASCADE, related_name='attendance', db_column='meeting_id')
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     marked_by = models.CharField(max_length=255, null=True, blank=True)
@@ -285,7 +291,8 @@ class EventAttendance(models.Model):
     ]
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='attendance', db_column='event_id')
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     attendee_email = models.EmailField(max_length=320, blank=True, default='')
     attendee_type = models.CharField(
@@ -311,7 +318,8 @@ class AttendanceIntervention(models.Model):
     """A staff-logged follow-up action for a learner's attendance risk —
     what the attendance-risk page's "Take Action" button writes to."""
 
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     action = models.TextField()
     employer_notified = models.BooleanField(default=False)
@@ -372,7 +380,8 @@ class PointsGrant(models.Model):
     # integer LoginAccount exposes as account.subject_id for a signed-in
     # learner. Kept as CharField (not a real FK) because Engagement is its own
     # unmanaged schema and learner records live in enrolment's tables.
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     points = models.IntegerField()
     awarded_at = models.DateTimeField(auto_now_add=True)
@@ -485,7 +494,8 @@ class FlashCardView(models.Model):
     """
 
     flash_card = models.ForeignKey(FlashCard, on_delete=models.CASCADE, related_name='views', db_column='flash_card_id')
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     # Snapshot of what this flip awarded (the rule's value at flip time).
     points_awarded = models.IntegerField(default=0)
@@ -648,7 +658,8 @@ class FeedbackDeliveryRecipient(models.Model):
     """A learner eligible by lecture attendance or module assignment."""
 
     delivery = models.ForeignKey(FeedbackDelivery, on_delete=models.CASCADE, related_name='recipients', db_column='delivery_id')
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     programme = models.CharField(max_length=255, blank=True, default='')
     attendance_reference = models.CharField(max_length=255, blank=True, default='')
@@ -695,7 +706,8 @@ class FeedbackReviewDelivery(models.Model):
     )
     source_review_id = models.BigIntegerField(unique=True)
     aptem_review_id = models.TextField(blank=True, default='')
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255, blank=True, default='')
     review_type = models.CharField(max_length=255)
     review_name = models.CharField(max_length=500, blank=True, default='')
@@ -713,7 +725,8 @@ class FeedbackEmployerReviewDelivery(models.Model):
     form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='employer_review_deliveries')
     source_review_id = models.BigIntegerField(unique=True)
     aptem_review_id = models.TextField(blank=True, default='')
-    enrolment_id = models.CharField(max_length=100)
+    enrolment_id = models.CharField(max_length=100, db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255, blank=True, default='')
     review_type = models.CharField(max_length=255)
     review_name = models.CharField(max_length=500, blank=True, default='')
@@ -754,7 +767,8 @@ class FeedbackEventRecipient(models.Model):
     event = models.ForeignKey(Event, on_delete=models.PROTECT, related_name='feedback_recipients', db_column='event_id')
     attendee_name = models.CharField(max_length=255)
     attendee_email = models.EmailField(max_length=320)
-    enrolment_id = models.CharField(max_length=100, blank=True, default='')
+    enrolment_id = models.CharField(max_length=100, blank=True, default='', db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     attendance_source = models.CharField(max_length=80, default='spreadsheet')
     attendance_reference = models.CharField(max_length=255, blank=True, default='')
     token_hash = models.CharField(max_length=64, null=True, blank=True)
@@ -835,7 +849,8 @@ class EventRsvpRecipient(models.Model):
     campaign = models.ForeignKey(EventRsvpCampaign, on_delete=models.CASCADE, related_name='recipients', db_column='campaign_id')
     recipient_name = models.CharField(max_length=255)
     recipient_email = models.EmailField(max_length=320)
-    enrolment_id = models.CharField(max_length=100, blank=True, default='')
+    enrolment_id = models.CharField(max_length=100, blank=True, default='', db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     token_hash = models.CharField(max_length=64, null=True, blank=True)
     token_expires_at = models.DateTimeField(null=True, blank=True)
     invite_status = models.CharField(max_length=20, default='pending')
@@ -876,7 +891,8 @@ class FeedbackResponse(models.Model):
         FeedbackEmployerReviewDelivery, on_delete=models.PROTECT, related_name='responses',
         db_column='employer_review_delivery_id', null=True, blank=True,
     )
-    enrolment_id = models.CharField(max_length=100, blank=True, default='')
+    enrolment_id = models.CharField(max_length=100, blank=True, default='', db_column='learner_id')
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.CharField(max_length=255)
     programme = models.CharField(max_length=255, blank=True, default='')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')

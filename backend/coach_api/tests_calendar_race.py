@@ -56,8 +56,8 @@ class CoachCalendarRaceTests(TransactionTestCase):
         )
 
     def tearDown(self):
-        CoachCalendarEvent.objects.filter(learner_id=self.learner.id).delete()
-        CoachCalendarSequence.objects.filter(learner_id=self.learner.id).delete()
+        CoachCalendarEvent.objects.filter(learner_profile_id=self.learner.id).delete()
+        CoachCalendarSequence.objects.filter(learner_profile_id=self.learner.id).delete()
         LoginSession.objects.filter(account_id=self.account.id).delete()
         LoginAccount.objects.filter(id=self.account.id).delete()
         StaffUser.objects.filter(id=self.staff.id).delete()
@@ -255,7 +255,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
         self.assertEqual((first.status_code, second.status_code), (201, 409))
         self.assertIn("Would you like to reschedule", second.json()["message"])
         self.assertEqual(
-            CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 1
+            CoachCalendarEvent.objects.filter(learner_profile_id=self.learner.id).count(), 1
         )
         self.assertEqual(sync_graph.call_count, 1)
 
@@ -281,7 +281,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
         self.assertIn("reschedule it instead", second.json()["message"])
         self.assertIn("Thursday, 1 January 2099 at 10:00", second.json()["message"])
         self.assertEqual(
-            CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 1
+            CoachCalendarEvent.objects.filter(learner_profile_id=self.learner.id).count(), 1
         )
 
     @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=[])
@@ -327,7 +327,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
 
         self.assertEqual((first.status_code, second.status_code), (201, 201))
         self.assertEqual(
-            CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 2
+            CoachCalendarEvent.objects.filter(learner_profile_id=self.learner.id).count(), 2
         )
 
     @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=[])
@@ -342,7 +342,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
             event_key=f"other-coach-{uuid.uuid4().hex}",
             owner_email="other-coach@kbc.invalid",
             owner_name="Other Coach",
-            learner_id=self.learner.id,
+            learner_profile_id=self.learner.id,
             learner_name=self.learner.username,
             learner_email=self.learner.email,
             event_type="student-support",
@@ -360,7 +360,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("Would you like to reschedule", response.json()["message"])
         self.assertEqual(
-            CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 1
+            CoachCalendarEvent.objects.filter(learner_profile_id=self.learner.id).count(), 1
         )
         sync_graph.assert_not_called()
 

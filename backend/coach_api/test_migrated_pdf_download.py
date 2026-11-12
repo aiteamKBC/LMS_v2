@@ -32,7 +32,7 @@ def create_review(family="PR", *, source_id=None):
     sample = sample_review(family)
     overlay = ImportedReviewInstance.objects.create(
         event_key=f"imported-review:SYNTHETIC-{family}-{source_id or sample.source_review_id}", owner_email=sample.owner_email,
-        learner_id=sample.learner_id, source_review_id=source_id or sample.source_review_id,
+        learner_profile_id=sample.learner_id, source_review_id=source_id or sample.source_review_id,
         template_snapshot=sample.template_snapshot, answers=sample.answers,
         progress_snapshot=sample.progress_snapshot, signature_requirements=sample.signature_requirements,
         status="completed", completed_at=AT,

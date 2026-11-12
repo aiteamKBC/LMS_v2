@@ -195,7 +195,7 @@ class AdvancedAdminReviewSignatureTests(SimpleTestCase):
             }]
             response = learner_reviews.__wrapped__.__wrapped__(request, 42)
         self.assertEqual(response.status_code, 200)
-        overlays.filter.assert_called_once_with(learner_id=42, source_review_id__in=[11])
+        overlays.filter.assert_called_once_with(learner_profile_id=42, source_review_id__in=[11])
         signatures.filter.assert_called_once_with(overlay_id__in=[9])
         row = json.loads(response.content)['mcm'][0]
         self.assertTrue(row['signatures']['coach']['signed'])
@@ -219,7 +219,7 @@ class AdvancedAdminReviewSignatureTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'%PDF-1.7 saved')
         self.assertEqual(response['Content-Type'], 'application/pdf')
-        documents.filter.assert_called_once_with(overlay__learner_id=42, overlay__source_review_id=11)
+        documents.filter.assert_called_once_with(overlay__learner_profile_id=42, overlay__source_review_id=11)
         original.assert_not_called()
 
     def test_original_download_uses_aptem_even_when_a_local_report_exists(self):

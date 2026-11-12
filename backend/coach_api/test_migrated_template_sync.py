@@ -187,14 +187,14 @@ class WorkingSnapshotTests(TestCase):
         self.template = MigratedReviewTemplate.objects.create(scope="GLOBAL", programme_key="", review_family="MCM",
             name="Synthetic MCM", definition_json=form(), is_active=True)
         self.overlay = ImportedReviewInstance.objects.create(event_key="imported-review:sync-test", owner_email=OWNER,
-            learner_id=42, source_review_id=7001, migrated_template=self.template, template_snapshot=snapshot_for(self.template),
+            learner_profile_id=42, source_review_id=7001, migrated_template=self.template, template_snapshot=snapshot_for(self.template),
             status="in-progress", answers={"note": "Saved answer"}, progress_snapshot={"unchanged": [1, 2, 3]},
             meeting_intelligence={"aiSummaryOriginal": {"overview": "Original"}, "summaryStatus": "edited", "transcriptArtifactId": "synthetic"})
         self.definition = {"migratedForm": True, "readOnly": False, "localStatus": "in-progress", "migratedProgrammeKey": "id:synthetic",
             "instance": {"id": self.overlay.event_key, "learnerId": 42}, "historicalReview": {"id": "7001", "type": SOURCE_TYPES["MCM"]}}
         # A working booked review has a calendar row. Keep lifecycle tests on their
         # synthetic booking instead of falling through to enrolment-source lookup.
-        self.meeting = CoachCalendarEvent.objects.create(event_key=self.overlay.event_key, owner_email=OWNER, learner_id=42,
+        self.meeting = CoachCalendarEvent.objects.create(event_key=self.overlay.event_key, owner_email=OWNER, learner_profile_id=42,
             event_type="mcr", target_date=date(2026, 10, 4), scheduled_date=date(2026, 10, 4), scheduled_time=time(10),
             graph_event_id="synthetic-event", meeting_link="https://example.invalid/meeting", sync_state="synced", status="scheduled")
 
@@ -263,7 +263,7 @@ class WorkingSnapshotTests(TestCase):
 
     def test_opening_one_review_does_not_bulk_sync_another_learner(self):
         other = ImportedReviewInstance.objects.create(event_key="imported-review:other-sync-test", owner_email=OWNER,
-            learner_id=43, source_review_id=7002, migrated_template=self.template, template_snapshot=snapshot_for(self.template),
+            learner_profile_id=43, source_review_id=7002, migrated_template=self.template, template_snapshot=snapshot_for(self.template),
             status="in-progress", answers={"note": "Other learner"})
         before = deepcopy(other.template_snapshot)
         self.edit()

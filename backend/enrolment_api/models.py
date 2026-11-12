@@ -17,6 +17,7 @@ query or report on (signature state and completion).
 management command, matching how every other enrolment table is handled here.
 """
 from django.db import models
+from config.legacy_identity import legacy_field_alias
 
 from learner_api.models import SafeJSONField
 
@@ -26,7 +27,8 @@ class ExtendedIlr(models.Model):
 
     # --- learner identity (see module docstring: two source tables) ---
     learner_kind = models.TextField(db_column="Learner_kind")  # 'apprenticeship' | 'commercial'
-    enrolment_id = models.BigIntegerField()
+    enrolment_id = models.BigIntegerField(db_column="Learner_id")
+    learner_id = legacy_field_alias("enrolment_id")
     learner_name = models.TextField(db_column="Learner_name", null=True, blank=True)
 
     # --- the questionnaire itself ---
@@ -85,7 +87,8 @@ class _LearnerScoped(models.Model):
 
     id = models.AutoField(primary_key=True, db_column="id")
     learner_kind = models.TextField(db_column="Learner_kind")
-    enrolment_id = models.BigIntegerField()
+    enrolment_id = models.BigIntegerField(db_column="Learner_id")
+    learner_id = legacy_field_alias("enrolment_id")
     created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
     updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
 

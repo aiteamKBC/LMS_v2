@@ -524,7 +524,7 @@ def attendance_read_contract(source, *, learner_profile_id, register=None, manua
     for component in components:
         by_module.setdefault(component['module_catalogue_id'], []).append(component)
     reports = {str(report.attendance_id): report for report in
-               (CoachAbsenceReport.objects.filter(learner_id=source.id).order_by('created_at', 'id') if not compact else [])}
+               (CoachAbsenceReport.objects.filter(enrolment_id=source.id).order_by('created_at', 'id') if not compact else [])}
     history = []
     now = timezone.now()
     for row in rows:
@@ -553,7 +553,7 @@ def attendance_read_contract(source, *, learner_profile_id, register=None, manua
             'absenceReport': {'id': str(report.id), 'status': report.status,
                               'url': getattr(report, 'evidence_image_url', '') or None} if report else None,
         })
-    for row in (CoachManualAttendance.objects.filter(learner_id=learner_profile_id) if manual_rows is None else manual_rows):
+    for row in (CoachManualAttendance.objects.filter(learner_profile_id=learner_profile_id) if manual_rows is None else manual_rows):
         outcome, counted = attendance_outcome({'attendance_status': row.status, 'session_date': row.session_date}, now)
         history.append({
             'learnerId': str(learner_profile_id), 'learner_profile_id': learner_profile_id,
@@ -588,7 +588,7 @@ def _apply_coach_source_adjustments(rows, learner_profile_id, *, adjustments=Non
     try:
         adjustments = adjustments if adjustments is not None else {
             (item.source, item.source_id): item
-            for item in CoachAttendanceSourceAdjustment.objects.filter(learner_id=learner_profile_id)
+            for item in CoachAttendanceSourceAdjustment.objects.filter(learner_profile_id=learner_profile_id)
         }
     except DatabaseError:
         log.warning('Could not read coach attendance adjustments for profile %s.', learner_profile_id, exc_info=True)
@@ -628,7 +628,7 @@ def _approved_alternative_targets(learner_id):
     from coach_api.models import CoachAbsenceReport
     from .alternative_recovery import ALTERNATIVE_METHOD, alternative_occurrence_id
     reports = CoachAbsenceReport.objects.filter(
-        learner_id=learner_id, status=CoachAbsenceReport.STATUS_APPROVED, recovery_method=ALTERNATIVE_METHOD,
+        enrolment_id=learner_id, status=CoachAbsenceReport.STATUS_APPROVED, recovery_method=ALTERNATIVE_METHOD,
     ).values_list('attendance_id', 'catchup_event_key')
     return {str(attendance_id): alternative_occurrence_id(key) for attendance_id, key in reports}
 

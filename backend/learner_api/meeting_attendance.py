@@ -108,7 +108,7 @@ def meeting_attendance(request, kind, learner_id):
         if source is None:
             return JsonResponse({'error': 'Learner not found.'}, status=404)
         from coach_api.models import CoachAbsenceReport
-        reports = {str(value) for value in CoachAbsenceReport.objects.filter(learner_id=learner_id).values_list('attendance_id', flat=True)}
+        reports = {str(value) for value in CoachAbsenceReport.objects.filter(enrolment_id=learner_id).values_list('attendance_id', flat=True)}
         confirmations = read_confirmations(learner_id)
         return JsonResponse({'sessions': [attendance_context(source, item, confirmations, reports) for item in meeting_records(source, kind)],
             'today': timezone.localdate().isoformat(), 'timeZone': timezone.get_current_timezone_name(), 'csrfToken': get_token(request)})

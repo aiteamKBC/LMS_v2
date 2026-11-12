@@ -34,7 +34,7 @@ class Command(BaseCommand):
         # Only learners who actually have reviews are candidates.
         pairs = set(
             EnrolmentReview.objects.exclude(status="cancelled")
-            .values_list("learner_kind", "learner_id")
+            .values_list("learner_kind", "enrolment_id")
         )
         self.stdout.write(f"Checking {len(pairs)} learner(s) with reviews…")
 

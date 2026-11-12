@@ -67,12 +67,16 @@ def adoption_snapshot():
     learners = list(EnrolmentUser.all_learners.filter(pk__in=selected_ids).values(
         'id', 'free_courses', 'learning_plan', 'training_plan'))
     progress = list(LearnerFreeCourseProgress.objects.filter(free_course_ref__in=course_ids).values())
-    owner_ids = {row['id'] for row in learners} | {row['learner_id'] for row in progress}
+    # Assignments are keyed by enrolment id; completion history by learner
+    # profile id (its learner_id references Learner.learners). The enrolment is
+    # the owner, reached from each history row through its own profile.
+    owner_by_profile = history_owners(progress)
+    owner_ids = {row['id'] for row in learners} | set(owner_by_profile.values())
     profiles = list(LearnerProfile.objects.filter(enrolment_id__in=owner_ids).values('id', 'enrolment_id', 'learning_plan'))
     profiles_by_owner = defaultdict(list)
     for profile in profiles:
         profiles_by_owner[profile['enrolment_id']].append(profile['id'])
-    if any(len(profiles_by_owner[row['learner_id']]) != 1 for row in progress):
+    if any(len(profiles_by_owner[owner_by_profile[row['learner_id']]]) != 1 for row in progress):
         raise ValueError('Historical completions require exactly one profile per enrolment identity.')
     content = {component['settings']['legacyFreeComponentId']: (payload, week, component)
                for payload in payloads for week in payload['weekStructure'] for component in week['components']}
@@ -80,10 +84,24 @@ def adoption_snapshot():
         if history['component_ref'] not in content:
             raise ValueError('Historical completion references unavailable legacy content; adoption stopped.')
         payload, week, component = content[history['component_ref']]
-        completion_fields(history, profile_id=profiles_by_owner[history['learner_id']][0],
+        completion_fields(history, profile_id=history['learner_id'],
                           module=payload, week=week, component=component)
     return {'courses': courses, 'weeks': weeks, 'components': components, 'payloads': payloads,
             'learners': learners, 'profiles': profiles, 'progress': progress}
+
+
+def history_owners(progress):
+    """{profile id: enrolment id} for every completion-history row.
+
+    A row whose learner_id is not a known profile, or whose profile has no
+    enrolment link, stops adoption: its owner is never guessed.
+    """
+    from learner_api.models import LearnerProfile
+    profile_ids = {row['learner_id'] for row in progress}
+    owners = dict(LearnerProfile.objects.filter(pk__in=profile_ids).values_list('id', 'enrolment_id'))
+    if set(owners) != profile_ids or any(owner is None for owner in owners.values()):
+        raise ValueError('Historical completion learner is not a linked learner profile; adoption stopped.')
+    return owners
 
 
 def snapshot_counts(snapshot):
@@ -121,20 +139,22 @@ def adopt_course(payload):
 
 def adopt_learners(snapshot):
     from learner_api.models import EnrolmentUser, LearnerProfile, LearnerProgressEntry, LearnerFreeCourseProgress
+    from learner_api.active_users import current_component_fk
     from . import learner_assignments as assignments
     from . import views
     alias = EnrolmentUser.all_learners.db
     mapping = {p['sourceId']: p for p in snapshot['payloads']}
     content = {c['settings']['legacyFreeComponentId']: (p, w, c)
                for p in snapshot['payloads'] for w in p['weekStructure'] for c in w['components']}
-    owner_ids = sorted({row['id'] for row in snapshot['learners']} | {row['learner_id'] for row in snapshot['progress']})
+    owner_ids = sorted({row['id'] for row in snapshot['learners']} | set(history_owners(snapshot['progress']).values()))
     catalogue = {entry['moduleId']: entry for entry in assignments.plans._all_modules()}
     changed, imported = 0, 0
     for owner_id in owner_ids:
         with transaction.atomic(using=alias):
             learner = EnrolmentUser.all_learners.select_for_update().get(pk=owner_id)
             profiles = list(LearnerProfile.objects.select_for_update().filter(enrolment_id=owner_id))
-            history = list(LearnerFreeCourseProgress.objects.filter(learner_id=owner_id, free_course_ref__in=mapping).values())
+            history = list(LearnerFreeCourseProgress.objects.filter(
+                learner_id__in=[profile.pk for profile in profiles], free_course_ref__in=mapping).values())
             if history and len(profiles) != 1:
                 raise ValueError('Historical learner identity changed during adoption.')
             for completion in history:
@@ -146,6 +166,7 @@ def adopt_learners(snapshot):
                 fields, ledger = completion_fields(completion, profile_id=profiles[0].pk,
                     module=payload, week=week, component=component)
                 order = LearnerProgressEntry.objects.filter(learner=profiles[0]).aggregate(value=Max('entry_order'))['value'] or 0
+                fields['curriculum_component_fk'] = current_component_fk(connections[alias], fields['component_ref'])
                 entry = LearnerProgressEntry.objects.create(entry_order=order + 1, **fields)
                 with connections[alias].cursor() as cursor:
                     cursor.execute('''UPDATE "Learner".learner_progress_entries SET

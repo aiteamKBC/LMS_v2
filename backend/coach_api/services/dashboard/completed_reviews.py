@@ -21,13 +21,13 @@ def saved_completed_review_dates(rows, *, owner_email, owner_name):
     if native:
         records = list(CoachCalendarEvent.objects.filter(
             owner_email=domain.normalize_email(owner_email),
-            learner_id__in=[row.id for row in native], status="completed",
+            learner_profile_id__in=[row.id for row in native], status="completed",
         ).exclude(event_key__startswith="imported-review:").values(
-            "learner_id", "event_type", "review_template_id", "review_completed_at",
+            "learner_profile_id", "event_type", "review_template_id", "review_completed_at",
         ))
         types = domain.review_type_fields_by_template(record["review_template_id"] for record in records)
         events = [{
-            "learnerId": str(record["learner_id"]), "source": record["event_type"],
+            "learnerId": str(record["learner_profile_id"]), "source": record["event_type"],
             "status": "completed",
             "reviewCompletedAt": record["review_completed_at"].isoformat() if record["review_completed_at"] else None,
             **types.get(record["review_template_id"], {}),

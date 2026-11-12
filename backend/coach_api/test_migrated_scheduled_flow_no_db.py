@@ -64,7 +64,7 @@ class ScheduledContinuationTests(SimpleTestCase):
         snapshot["templateSource"] = {"id": 1, "family": family, "scope": "GLOBAL"}
         snapshot["sections"][0]["fields"][0]["semanticKey"] = "meeting_summary"
         self.saved = SimpleNamespace(
-            pk=1, event_key=KEY, owner_email=OWNER, learner_id=21, source_review_id=407,
+            pk=1, event_key=KEY, owner_email=OWNER, learner_profile_id=21, source_review_id=407,
             status="scheduled", completed_at=None, updated_at=timezone.now(),
             template_snapshot=snapshot, migrated_template_id=1,
             migrated_template=SimpleNamespace(review_family=family, scope="GLOBAL", programme_key="", is_active=True),
@@ -77,7 +77,7 @@ class ScheduledContinuationTests(SimpleTestCase):
         self.saved.migrated_signatures.values_list.return_value = []
         self.overlays.return_value.first.return_value = self.saved
         self.overlays.return_value.select_for_update.return_value.first.side_effect = lambda: self.order.append("overlay") or self.saved
-        self.calendar = SimpleNamespace(pk=91, event_key=KEY, learner_id=21, owner_email=OWNER,
+        self.calendar = SimpleNamespace(pk=91, event_key=KEY, learner_profile_id=21, owner_email=OWNER,
             event_type="mcr" if family == "MCM" else "progress-review", status="scheduled",
             sync_state="synced", graph_event_id="synthetic-meeting", meeting_link="https://example.invalid/meeting", save=Mock(),
             scheduled_date=date(2026, 10, 20), scheduled_time=time(10), duration_minutes=60)
@@ -243,7 +243,7 @@ class ScheduledContinuationTests(SimpleTestCase):
     def test_unscheduled_form_does_not_bypass_learner_identity_checks(self):
         self.saved.status = "not-scheduled"
         self.calendar = None
-        self.saved.learner_id = 999
+        self.saved.learner_profile_id = 999
         self.assertEqual(self._submit().status_code, 409)
         self.saved.save.assert_not_called()
         self.calendar_updates.assert_not_called()
@@ -252,7 +252,7 @@ class ScheduledContinuationTests(SimpleTestCase):
         from .migrated_signature_rules import requirements_for_overlay, WAIVER_KEY
         waiver = {
             "version": 1, "eventKey": self.saved.event_key,
-            "sourceReviewId": self.saved.source_review_id, "learnerId": self.saved.learner_id,
+            "sourceReviewId": self.saved.source_review_id, "learnerId": self.saved.learner_profile_id,
             "reason": "Synthetic approved historical exception", "appliedBy": "admin@example.invalid",
             "meetingDate": "2026-10-22", "before": "2026-11-06", "appliedAt": "2026-11-07T12:00:00+00:00",
         }
@@ -289,7 +289,7 @@ class ScheduledContinuationTests(SimpleTestCase):
         self.saved.save.assert_not_called()
 
     def test_locked_state_rejects_concurrent_submit_or_changed_source_association(self):
-        for change in ({"status": "awaiting-signature"}, {"source_review_id": 999}, {"learner_id": 999}):
+        for change in ({"status": "awaiting-signature"}, {"source_review_id": 999}, {"learner_profile_id": 999}):
             with self.subTest(change=change):
                 locked = copy(self.saved)
                 for key, value in change.items():

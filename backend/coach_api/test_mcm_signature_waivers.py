@@ -24,12 +24,12 @@ class LegacyMcmSignatureWaiverTests(TestCase):
         template, _ = MigratedReviewTemplate.objects.get_or_create(scope="GLOBAL", programme_key="", review_family="MCM",
             defaults={"name": "Synthetic MCM", "is_active": True, "definition_json": deepcopy(fixtures.DEFINITION)})
         source_id = 7000 + ImportedReviewInstance.objects.count()
-        review = ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", learner_id=17,
+        review = ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", learner_profile_id=17,
             source_review_id=source_id, event_key=f"imported-review:synthetic-{source_id}", status="scheduled",
             migrated_template=template, template_snapshot=snapshot_for(template),
             signature_requirements=requirements_for_family("MCM"))
         booking = CoachCalendarEvent.objects.create(event_key=review.event_key, owner_email=review.owner_email,
-            learner_id=17, event_type="mcr", target_date=date(2026, 10, 22), scheduled_date=date(2026, 10, 22),
+            learner_profile_id=17, event_type="mcr", target_date=date(2026, 10, 22), scheduled_date=date(2026, 10, 22),
             scheduled_time=time(10), duration_minutes=60, status="scheduled", graph_event_id="synthetic-existing",
             meeting_link="https://example.invalid/meeting")
         return template, review, booking

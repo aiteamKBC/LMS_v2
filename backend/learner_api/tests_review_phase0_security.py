@@ -175,7 +175,7 @@ class Phase0ReviewTestCase(TestCase):
         record = CoachCalendarEvent.objects.create(
             event_key=f'mcr:{profile.id}:{self._event_counter}:2026-10-01', event_type='mcr',
             owner_email=owner_email, owner_name='Coach',
-            learner_id=profile.id, learner_name='Synthetic Learner', learner_email=profile.email,
+            learner_profile_id=profile.id, learner_name='Synthetic Learner', learner_email=profile.email,
             scheduled_date=date(2026, 10, 1), scheduled_time=time(10, 0),
             target_date=date(2026, 10, 1), duration_minutes=30,
             status=CoachCalendarEvent.STATUS_SCHEDULED,
@@ -567,7 +567,7 @@ class F3IdentityCollisionTests(Phase0ReviewTestCase):
     def _row(self, event_key, *, learner_id, email, event_type, idempotency_key=None):
         return CoachCalendarEvent.objects.create(
             event_key=event_key, event_type=event_type, owner_email=COACH_EMAIL, owner_name='Coach',
-            learner_id=learner_id, learner_name='Synthetic Learner', learner_email=email,
+            learner_profile_id=learner_id, learner_name='Synthetic Learner', learner_email=email,
             target_date=date(2026, 10, 1), status=CoachCalendarEvent.STATUS_SCHEDULED,
             idempotency_key=idempotency_key or f'p0:{event_key}',
         )

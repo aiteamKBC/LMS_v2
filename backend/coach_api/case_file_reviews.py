@@ -10,7 +10,7 @@ from .review_sources import standalone_review_records, load_imported_links
 # Construct detached records with defaults for unused fields rather than defer():
 # shared pure adapters can access defaults without causing per-row DB queries.
 CALENDAR_FIELDS = (
-    'id', 'event_key', 'idempotency_key', 'owner_email', 'owner_name', 'learner_id',
+    'id', 'event_key', 'idempotency_key', 'owner_email', 'owner_name', 'learner_profile_id',
     'event_type', 'sequence', 'target_date', 'scheduled_date', 'scheduled_time',
     'status', 'review_completed_at', 'review_template_id', 'review_instance_id',
     'occurrence_number', 'sync_state', 'graph_event_id', 'meeting_link', 'graph_web_link',
@@ -30,9 +30,9 @@ def review_events(context):
     if profile.enrolment_id:
         ids.add(profile.enrolment_id)
     records = [CoachCalendarEvent(**row) for row in CoachCalendarEvent.objects.filter(
-        Q(owner_email__iexact=owner, learner_id=profile.id)
+        Q(owner_email__iexact=owner, learner_profile_id=profile.id)
         | Q(event_key__in=[event['eventKey'] for event in imported])
-        | Q(learner_id__in=ids, event_type__in={event['source'] for event in imported})).values(*CALENDAR_FIELDS)]
+        | Q(learner_profile_id__in=ids, event_type__in={event['source'] for event in imported})).values(*CALENDAR_FIELDS)]
     candidates = [record for record in records if record.learner_id == profile.id and record.owner_email.casefold() == owner.casefold() and (
         record.event_type not in {'mcr', 'progress-review'}
         or record.idempotency_key.startswith('learner-book:') or record.review_template_id

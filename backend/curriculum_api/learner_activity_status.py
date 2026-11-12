@@ -506,9 +506,10 @@ def save(account, module_id, learner_id, component_id, payload):
                     SET actual_seconds=%s,actual_basis='staff:module-progress',
                         reporting_started_at=%s,reporting_ended_at=%s,reporting_month=%s,
                         reporting_timestamp_label=%s,source_payload=%s,accepted=CASE WHEN %s THEN true ELSE accepted END,
-                        ssot_updated_at=CURRENT_TIMESTAMP
+                        curriculum_component_fk=%s,ssot_updated_at=CURRENT_TIMESTAMP
                     WHERE id=%s AND learner_id=%s AND coalesce(nullif(trim(curriculum_component_ref),''),nullif(trim(component_ref),''))=%s AND deleted_at IS NULL''',
-                    [seconds, start, end, month, timestamp_label, encode(source_payload), is_attendance, selected['id'], learner_id, component_id])
+                    [seconds, start, end, month, timestamp_label, encode(source_payload), is_attendance, component['id'],
+                     selected['id'], learner_id, component_id])
             else:
                 # Staff-declared hours are labelled, not a quiz attempt/mark or
                 # manufactured evidence. No KSB links or reward hooks are fired.
@@ -517,13 +518,14 @@ def save(account, module_id, learner_id, component_id, payload):
                     component_ref,component_title,component_type,expected_otjh,actual_seconds,
                     actual_basis,reporting_started_at,reporting_ended_at,reporting_month,
                     reporting_timestamp_label,source_system,canonical_activity_key,component_link_source,
-                    component_link_status,accepted,source_payload)
+                    component_link_status,accepted,source_payload,curriculum_component_fk)
                     SELECT %s,%s,coalesce(max(entry_order),0)+1,'staff_hours',%s,%s,%s,%s,%s,%s,%s,%s,
-                        'staff:module-progress',%s,%s,%s,%s,'staff',%s,'direct','resolved_to_current_component',true,%s
+                        'staff:module-progress',%s,%s,%s,%s,'staff',%s,'direct','resolved_to_current_component',true,%s,%s
                     FROM {table('learner_progress_entries')} WHERE learner_id=%s''',
                     [learner_id, owner['enrolment_id'], module_id, module.get('title') or '', component.get('week_id'), component_id,
                      component.get('title') or '', component['type'], component.get('expected_otjh'), seconds, start, end, month,
-                     timestamp_label, f'staff:{learner_id}:{module_id}:{component_id}', encode({'staff_time_entry': declaration}), learner_id])
+                     timestamp_label, f'staff:{learner_id}:{module_id}:{component_id}', encode({'staff_time_entry': declaration}),
+                     component['id'], learner_id])
             if is_attendance and choice == 'attended':
                 attendance.save_confirmation(query, table, owner, component, module, lecture, encode)
         elif any(key in payload for key in ('durationSeconds', 'startedAt', 'activityDate', 'timeEntryMode', 'attendanceMode')):

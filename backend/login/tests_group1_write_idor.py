@@ -163,7 +163,7 @@ class A1ReviewSignTests(Group1Base):
             review_type="progress",
             review_label="Progress review",
             learner_kind="apprenticeship",
-            learner_id=self.victim.pk,
+            enrolment_id=self.victim.pk,
             form_completed=True,
             status=EnrolmentReview.STATUS_COMPLETED,
         )

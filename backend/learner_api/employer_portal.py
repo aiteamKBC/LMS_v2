@@ -134,7 +134,7 @@ def _review_signing_rows_for(learners, *, employer_only=True):
         # happening -- the learner re-books, and that new review is the one to
         # sign. Same rule as the board's and the coach's review documents.
         reviews = list(
-            EnrolmentReview.objects.filter(learner_id__in=learner_ids)
+            EnrolmentReview.objects.filter(enrolment_id__in=learner_ids)
             .exclude(status=EnrolmentReview.STATUS_CANCELLED)
             .order_by("scheduled_date", "id")
         )
@@ -250,7 +250,7 @@ def _review_signing_rows_for(learners, *, employer_only=True):
         for overlay in ImportedReviewInstance.objects.select_related("migrated_template")
         .prefetch_related("migrated_signatures")
         .filter(
-            learner_id__in=[int(value) for value in all_identity_ids],
+            learner_profile_id__in=[int(value) for value in all_identity_ids],
             source_review_id__isnull=False,
             status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
         )
@@ -376,7 +376,7 @@ def _active_documents(model, keys):
     try:
         found = {}
         for doc in model.objects.filter(
-            learner_id__in=list(dict.fromkeys(learner_id for _kind, learner_id in keys)),
+            enrolment_id__in=list(dict.fromkeys(learner_id for _kind, learner_id in keys)),
             status=model.STATUS_ACTIVE,
         ).defer(*frozen_content):
             found.setdefault((doc.learner_kind, doc.learner_id), doc)
@@ -626,7 +626,7 @@ def employer_absence_notifications(request, employer_id):
         )
         reports = (
             CoachAbsenceReport.objects
-            .filter(learner_id__in=learner_ids, recovery_method="recorded")
+            .filter(enrolment_id__in=learner_ids, recovery_method="recorded")
             .order_by("-created_at")[:50]
         )
         items = [_recording_absence_notification(report, employer_id) for report in reports]
@@ -1012,7 +1012,7 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key, 
     profile = _calendar_profile(learner, learner.pk)
     owner_id = profile.pk if profile is not None else learner.pk
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
-    if record and str(record.learner_id or '') not in {str(learner_id), str(owner_id)} and _s(record.learner_email).casefold() != _s(learner.email).casefold():
+    if record and str(record.learner_profile_id or '') not in {str(learner_id), str(owner_id)} and _s(record.learner_email).casefold() != _s(learner.email).casefold():
         record = None
     instance = review_instances.get_review_instance(getattr(record, 'review_instance_id', '')) if record else review_instances.get_review_instance(event_key)
     if not instance:
@@ -1320,7 +1320,7 @@ def employer_document_preview(request, employer_id, kind, learner_id, document_k
         if document_kind in snapshots:
             model, serialize = snapshots[document_kind]
             document = model.objects.filter(
-                pk=document_id, learner_id=learner.pk, learner_kind=kind, status=model.STATUS_ACTIVE,
+                pk=document_id, enrolment_id=learner.pk, learner_kind=kind, status=model.STATUS_ACTIVE,
             ).first()
             if document is None:
                 return _error("Document not found.", 404)
@@ -1421,7 +1421,7 @@ def _employer_progress_review_rows(learner, event_key=None, month=None):
             migrated_state = None
             if source.get("migratedForm") and category in {"mcr", "progress-review", "review"}:
                 overlay = ImportedReviewInstance.objects.filter(
-                    event_key=source["eventKey"], learner_id=getattr(profile, "pk", learner.pk),
+                    event_key=source["eventKey"], learner_profile_id=getattr(profile, "pk", learner.pk),
                 ).first()
                 if overlay is None:
                     continue

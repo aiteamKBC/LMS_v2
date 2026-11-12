@@ -101,7 +101,7 @@ class AptemBookingAvailabilityTests(SimpleTestCase):
         for valid_owner in (True, False):
             with self.subTest(valid_owner=valid_owner):
                 record = CoachCalendarEvent(pk=51, event_key=event["eventKey"],
-                    learner_id=int(event["learnerId"]), event_type=event["source"],
+                    learner_profile_id=int(event["learnerId"]), event_type=event["source"],
                     owner_email=profile().coach_email if valid_owner else "another@example.test",
                     target_date=date(2026, 11, 20))
                 self.persist.reset_mock(); self.sync.reset_mock()

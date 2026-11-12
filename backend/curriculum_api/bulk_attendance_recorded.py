@@ -84,9 +84,9 @@ def manual_corrections(sources):
 
     profiles = dict(LearnerProfile.objects.filter(enrolment_id__in=[source.id for source in sources.values()])
                     .values_list('id', 'enrolment_id'))
-    return {(profiles[row['learner_id']], row['source'], row['source_id'])
-            for row in CoachAttendanceSourceAdjustment.objects.filter(learner_id__in=profiles)
-            .values('learner_id', 'source', 'source_id', 'status', 'is_deleted')
+    return {(profiles[row['learner_profile_id']], row['source'], row['source_id'])
+            for row in CoachAttendanceSourceAdjustment.objects.filter(learner_profile_id__in=profiles)
+            .values('learner_profile_id', 'source', 'source_id', 'status', 'is_deleted')
             if row['status'] or row['is_deleted']}
 
 

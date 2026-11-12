@@ -120,9 +120,9 @@ class MigratedBindingFlowTests(TestCase):
         self.template = MigratedReviewTemplate.objects.create(scope="GLOBAL", programme_key="", review_family="MCM",
             name="Synthetic MCM", definition_json=deepcopy(DEFINITION), is_active=True)
         self.overlay = ImportedReviewInstance.objects.create(event_key="imported-review:binding-test", owner_email=OWNER,
-            learner_id=42, source_review_id=7001, migrated_template=self.template, template_snapshot=snapshot_for(self.template),
+            learner_profile_id=42, source_review_id=7001, migrated_template=self.template, template_snapshot=snapshot_for(self.template),
             status="in-progress", answers={"other": "Keep this answer"}, signature_requirements={"advisor": True, "participant": True})
-        self.calendar = CoachCalendarEvent.objects.create(event_key=self.overlay.event_key, owner_email=OWNER, learner_id=42,
+        self.calendar = CoachCalendarEvent.objects.create(event_key=self.overlay.event_key, owner_email=OWNER, learner_profile_id=42,
             event_type="mcr", target_date=date.today() - timedelta(days=1), scheduled_date=date.today() - timedelta(days=1),
             scheduled_time=time(10), duration_minutes=30, graph_event_id="synthetic", sync_state="synced", status="in-progress")
         self.definition = {"migratedForm": True, "readOnly": False, "instance": {"id": self.overlay.event_key, "learnerId": 42},
@@ -439,7 +439,7 @@ class MigratedBindingFlowTests(TestCase):
         self.assertNotIn("recap", self.overlay.answers)
 
     def test_no_cross_review_write(self):
-        other = ImportedReviewInstance.objects.create(event_key="imported-review:other", owner_email=OWNER, learner_id=43,
+        other = ImportedReviewInstance.objects.create(event_key="imported-review:other", owner_email=OWNER, learner_profile_id=43,
             template_snapshot=deepcopy(DEFINITION), answers={"recap": "Different learner"})
         self.check()
         other.refresh_from_db()

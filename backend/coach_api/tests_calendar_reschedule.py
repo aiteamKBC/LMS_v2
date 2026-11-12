@@ -15,7 +15,7 @@ class CalendarRescheduleSyncTests(SimpleTestCase):
         record = CoachCalendarEvent(
             pk=51, event_key="mcr:211:1:2026-10-31", event_type="mcr",
             owner_email="coach@example.test", owner_name="Coach",
-            learner_id=211, learner_name="Learner", learner_email="learner@example.test",
+            learner_profile_id=211, learner_name="Learner", learner_email="learner@example.test",
             scheduled_date=date(2026, 10, 5), scheduled_time=time(11, 30),
             target_date=date(2026, 10, 31), duration_minutes=90, status="scheduled",
             graph_event_id="original-event" if existing else "",
@@ -187,7 +187,7 @@ class CalendarRescheduleAvailabilityTests(SimpleTestCase):
                     record = CoachCalendarEvent(
                         pk=51, event_key='synthetic-existing', event_type=event_type,
                         owner_email='coach@example.invalid', owner_name='Coach',
-                        learner_id=21, learner_name='Synthetic learner', learner_email='learner@example.invalid',
+                        learner_profile_id=21, learner_name='Synthetic learner', learner_email='learner@example.invalid',
                         target_date=date(2099, 11, 23), scheduled_date=date(2099, 11, 23),
                         scheduled_time=time(10), duration_minutes=60, status='scheduled', sync_state='synced',
                         graph_event_id='original-event', graph_organizer_email='coach@example.invalid',

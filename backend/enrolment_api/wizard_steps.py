@@ -103,7 +103,7 @@ def project_draft(kind, learner_id, draft):
     personalDetails must not wipe the learner's PLR records.
     """
     draft = _dict(draft)
-    scope = {"learner_kind": kind, "learner_id": learner_id}
+    scope = {"learner_kind": kind, "enrolment_id": learner_id}
 
     if "personalDetails" in draft:
         pd = _dict(draft["personalDetails"])
@@ -280,7 +280,7 @@ def without_ilr_details(draft):
 
 def read_ilr_details(kind, learner_id):
     """This learner's ILR Learner Details in draft shape, or None if never saved."""
-    row = WizardIlrLearnerDetails.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+    row = WizardIlrLearnerDetails.objects.filter(learner_kind=kind, enrolment_id=learner_id).first()
     return ilr_details_draft(row) if row else None
 
 
@@ -318,7 +318,7 @@ def read_projection(kind, learner_id):
     Used as a fallback for rows saved before the projection existed, and as the
     canonical read once these tables are the system of record.
     """
-    scope = {"learner_kind": kind, "learner_id": learner_id}
+    scope = {"learner_kind": kind, "enrolment_id": learner_id}
     out = {}
 
     pd = WizardPersonalDetails.objects.filter(**scope).first()

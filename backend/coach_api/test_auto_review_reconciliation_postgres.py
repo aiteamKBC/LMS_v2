@@ -109,7 +109,7 @@ class AutoReconciliationPostgresTests(TransactionTestCase):
     def test_real_conflicts_and_completed_source_do_not_mutate(self):
         from .models import CoachCalendarEvent
         for status in ("scheduled", "not-scheduled"):
-            claim = CoachCalendarEvent.objects.create(event_key="imported-review:A501", learner_id=21,
+            claim = CoachCalendarEvent.objects.create(event_key="imported-review:A501", learner_profile_id=21,
                         owner_email="other@example.invalid", event_type="mcr", status=status,
                         target_date=date(2099, 11, 29), graph_event_id="other" if status == "scheduled" else "")
             self.assertEqual(self.rows()[0]["classification"], "IMPORTED_CALENDAR_CONFLICT")
@@ -192,7 +192,7 @@ class AutoReconciliationPostgresTests(TransactionTestCase):
 
     def test_imported_legacy_key_bookings_without_native_are_excluded(self):
         from .models import CoachCalendarEvent
-        record = CoachCalendarEvent.objects.create(owner_email=self.record.owner_email, learner_id=21,
+        record = CoachCalendarEvent.objects.create(owner_email=self.record.owner_email, learner_profile_id=21,
                     event_key="mcr:21:99:2099-12-01", event_type="mcr", target_date=date(2099, 12, 1),
                     idempotency_key="learner-book:mcm:apprenticeship:121:2099-12:502")
         before = canonical.calendar_fingerprint(record)

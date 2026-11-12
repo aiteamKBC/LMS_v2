@@ -17,7 +17,7 @@ def profile(*, enrolment_id=17, email="new@example.invalid", aptem_id=None):
 
 def booking(*, event_type="mcr", email="old@example.invalid", status="scheduled"):
     return SimpleNamespace(
-        pk=91, event_key="review:42:template:1", learner_id=42,
+        pk=91, event_key="review:42:template:1", learner_profile_id=42,
         learner_email=email, owner_email="coach@example.invalid",
         review_instance_id="instance-91", review_template_id="template",
         occurrence_number=1, event_type=event_type, status=status,
@@ -95,7 +95,7 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
                 result, _ = self.calendar_rows([row], mirror=mirror, instances=[linked])
                 self.assertEqual(result, [])
         row = booking()
-        row.learner_id = 17  # Enrolment ID 17 is not profile ID 42.
+        row.learner_profile_id = 17  # Enrolment ID 17 is not profile ID 42.
         result, _ = self.calendar_rows([row], instances=[instance(learner_id=17)])
         self.assertEqual(result, [])
 

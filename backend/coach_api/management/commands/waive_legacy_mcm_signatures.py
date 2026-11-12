@@ -105,11 +105,11 @@ class Command(BaseCommand):
         # One transaction: a changed association or failed completion rolls back
         # every waiver in this explicitly selected batch.
         with transaction.atomic():
-            initial = list(ImportedReviewInstance.objects.filter(pk__in=ids).order_by("learner_id", "pk"))
+            initial = list(ImportedReviewInstance.objects.filter(pk__in=ids).order_by("learner_profile_id", "pk"))
             if len(initial) != len(ids):
                 raise CommandError("One or more selected review IDs do not exist. Nothing changed.")
             if options["apply"]:
-                for learner_id in sorted({row.learner_id for row in initial}):
+                for learner_id in sorted({row.learner_profile_id for row in initial}):
                     lock_learner_calendar(learner_id)
             for initial_row in initial:
                 calendar = booking_for_overlay(initial_row, lock=options["apply"])

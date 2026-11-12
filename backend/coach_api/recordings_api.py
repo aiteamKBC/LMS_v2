@@ -33,7 +33,7 @@ from .recordings_categories import lecture_occurrences, category
 from .recordings_links import occurrence_id
 
 log = logging.getLogger(__name__)
-BOOKING_FIELDS = ('event_key', 'owner_email', 'learner_id', 'event_type', 'graph_event_id',
+BOOKING_FIELDS = ('event_key', 'owner_email', 'learner_profile_id', 'event_type', 'graph_event_id',
                   'meeting_link', 'scheduled_date', 'scheduled_time', 'duration_minutes',
                   'status', 'sync_state', 'updated_at')
 
@@ -117,12 +117,12 @@ def _roster_bookings(owner, learner_ids, start, end, first_day, last_day):
         | Q(scheduled_date__isnull=True, target_date__range=(first_day, last_day))
         | (Q(scheduled_date__isnull=True, updated_at__gte=start, updated_at__lt=end)
            & (Q(status='cancelled') | Q(sync_state='cancelled'))),
-        owner_key=owner, learner_id__in=learner_ids,
+        owner_key=owner, learner_profile_id__in=learner_ids,
     ).order_by('target_date', 'id').values(*BOOKING_FIELDS, 'target_date', 'sequence', 'review_completed_at'))
 
 
 def _roster_booking(row, *, owner, learner_ids, start, end, first_day, last_day):
-    if _email(row.get('owner_email')) != owner or str(row.get('learner_id')) not in learner_ids:
+    if _email(row.get('owner_email')) != owner or str(row.get('learner_profile_id')) not in learner_ids:
         return None
     begin, finish = session_window(row)
     cancelled = is_lms_cancelled(row)
@@ -193,7 +193,7 @@ def coaching_recordings_learners(request):
             booking = _roster_booking(row, owner=owner, learner_ids=ids, start=start, end=end,
                                       first_day=first_day, last_day=last_day)
             if booking is not None:
-                by_learner[str(row['learner_id'])].append(booking)
+                by_learner[str(row['learner_profile_id'])].append(booking)
         return _response({
             'coach': coach, 'scope': 'all' if all_access else 'own', 'source': 'lms',
             'start': range_params['start'], 'end': range_params['end'], 'timeZone': zone_name, 'search': search,
@@ -446,7 +446,7 @@ def _authorised_record(request):
         allowed = bool(record) and (all_access or (
             _email(record.owner_email) == _email(staff.email)
             and bool(_email(staff.email))
-            and any(str(row['id']) == str(record.learner_id) for row in _learners(_email(staff.email)))))
+            and any(str(row['id']) == str(record.learner_profile_id) for row in _learners(_email(staff.email)))))
         if not allowed:
             return None, _response({'error': 'Session not found.', 'code': 'not_found'}, 404)
         return record, None

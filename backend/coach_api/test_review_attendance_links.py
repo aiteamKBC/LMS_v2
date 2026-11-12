@@ -37,7 +37,7 @@ def snapshot():
 
 
 def booking(**overrides):
-    return CoachCalendarEvent(pk=1, event_key='mcr:21:1', learner_id=21, owner_email='coach@example.invalid',
+    return CoachCalendarEvent(pk=1, event_key='mcr:21:1', learner_profile_id=21, owner_email='coach@example.invalid',
         learner_name='Synthetic learner', learner_email='student@example.invalid', event_type='mcr',
         target_date=date(2026, 10, 27), scheduled_date=date(2026, 10, 27), scheduled_time=time(10),
         graph_event_id='graph-event-1', graph_organizer_email='coach@example.invalid',
@@ -285,7 +285,7 @@ class AttendanceLinkStorageTests(TestCase):
         self.assertTrue(next(r for r in rows if r['role'] == 'employer')['attended'])
         link = ReviewAttendanceLink.objects.get()
         self.assertEqual((link.target_role, link.target_name), ('employer', 'Example employer'))
-        self.assertEqual(link.learner_id, self.record.learner_id)
+        self.assertEqual(link.learner_profile_id, self.record.learner_id)
         self.assertEqual(data['activeLinks'][0]['targetRole'], 'employer')
         self.assertEqual(self.snap, raw)
         response = self.request({'action': 'undo', 'linkId': link.pk, 'version': data['version'], 'reason': 'Incorrect account'})

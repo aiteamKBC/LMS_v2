@@ -111,7 +111,7 @@ class InstallCommandTests(unittest.TestCase):
         command.handle(**opts)
         self.assertEqual(sql('SELECT enabled FROM "Engagement".shared_reward_voucher_options'),[(False,)])
         self.assertEqual(VoucherClaim.objects.count(),0)
-        VoucherClaim.objects.create(learner_id="synthetic",learner_name="Synthetic",reward=reward,points=100,
+        VoucherClaim.objects.create(enrolment_id="synthetic",learner_name="Synthetic",reward=reward,points=100,
                                     status="pending",delivery_type="digital")
         with self.assertRaises(CommandError):command.handle(**{**opts,"stock":0,"enable":True})
         reward.refresh_from_db();self.assertEqual(reward.stock,4)

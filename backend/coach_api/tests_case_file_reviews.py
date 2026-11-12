@@ -73,7 +73,7 @@ class ReviewListReaderTests(SimpleTestCase):
         from .models import CoachCalendarEvent
         profile = SimpleNamespace(id=101, enrolment_id=201, username='Synthetic learner', email='learner@example.test', programme='Programme', cohort='Cohort', learner_type='apprenticeship')
         context = SimpleNamespace(profile=profile, coach='coach@example.test')
-        records = [CoachCalendarEvent(id=index, event_key=f'review:{index}', owner_email=context.coach, learner_id=101,
+        records = [CoachCalendarEvent(id=index, event_key=f'review:{index}', owner_email=context.coach, learner_profile_id=101,
                     event_type='review', sequence=index, target_date=date(2026, 9, 1), scheduled_date=date(2026, 10, 1),
                     scheduled_time=time(9, 30), status='completed', review_template_id='T1', review_instance_id=f'I{index}',
                     review_completed_at=datetime(2026, 10, 2, tzinfo=timezone.utc)) for index in (1, 2)]

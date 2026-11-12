@@ -16,7 +16,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import learner_self_only
 
-from .active_users import completed_hours_from_progress, save_progress_record
+from .active_users import save_progress_record
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser, LearnerProgressEntry
 from .quizzes import _fetch_quiz, _format_clock, _parse_image_matching_answer
@@ -351,9 +351,8 @@ def quiz_reading(request, quiz_id):
                     "server_session_seconds", "verified_seconds", "feed_kind", "feed_action",
                     "feed_title", "feed_detail", "feed_occurred_at",
                 ])
-        profile.refresh_from_db()
-        profile.completed_hours = completed_hours_from_progress(profile.training_plan_progress)
-        profile.save(update_fields=["completed_hours", "updated_at"])
+        # Official completed_hours is not rewritten from progress (see
+        # active_users.save_progress_record).
         existing.refresh_from_db()
         return JsonResponse(_serialize(existing))
     except (DatabaseError, IntegrityError) as exc:

@@ -89,7 +89,7 @@ class EmployerSyncTests(SimpleTestCase):
 
 class EmployerResolutionTests(SimpleTestCase):
     def setUp(self):
-        self.delivery = FeedbackEmployerReviewDelivery(id=501, learner_id='71', form_id=83,
+        self.delivery = FeedbackEmployerReviewDelivery(id=501, enrolment_id='71', form_id=83,
             source_review_id=9001, review_type='Progress Review', completed_at=baseline.COMPLETED)
         self.learner = SimpleNamespace(pk=71, employer_id=7, employer='Synthetic employer')
         self.record = SimpleNamespace(pk=7, full_name='Synthetic Employer', email='employer@example.test')
@@ -258,7 +258,7 @@ class EmployerAuthorizationTests(SimpleTestCase):
 
     def test_shared_response_validation_preserves_independent_employer_identity(self):
         form = FeedbackForm(id=83, form_type=reviews.EMPLOYER_REVIEW_FORM_TYPE, allow_save_continue=True)
-        delivery = FeedbackEmployerReviewDelivery(id=501, form=form, learner_id='71', employer_id=7)
+        delivery = FeedbackEmployerReviewDelivery(id=501, form=form, enrolment_id='71', employer_id=7)
         question = SimpleNamespace(id=12, question_type='long_text', required=True, config={})
         response = feedback.FeedbackResponse(id=901, form=form, learner_id='71', employer_review_delivery=delivery)
         request = self.factory.post('/', data=json.dumps({'answers': {'12': 'Useful'}, 'submit': True}), content_type='application/json')
@@ -298,7 +298,7 @@ class EmployerAuthorizationTests(SimpleTestCase):
 
     def test_staff_recipient_report_shows_employer_pending_state_and_related_learner(self):
         form = FeedbackForm(id=83, form_type=reviews.EMPLOYER_REVIEW_FORM_TYPE)
-        delivery = FeedbackEmployerReviewDelivery(id=501, form=form, source_review_id=9001, learner_id='71',
+        delivery = FeedbackEmployerReviewDelivery(id=501, form=form, source_review_id=9001, enrolment_id='71',
             learner_name='Synthetic Learner', review_type='Progress Review', completed_at=baseline.COMPLETED,
             assigned_at=baseline.COMPLETED, employer_name='Synthetic Employer', employer_email='employer@example.test')
         with (mock.patch.object(feedback.FeedbackForm.objects, 'filter') as forms,

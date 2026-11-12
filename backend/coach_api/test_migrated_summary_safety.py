@@ -202,7 +202,7 @@ class SummaryPersistenceSafetyTests(TestCase):
 
     def test_upload_rechecks_learner_and_source_identity_after_generation(self):
         def reassign():
-            ImportedReviewInstance.objects.filter(pk=self.overlay.pk).update(learner_id=43, source_review_id=7002)
+            ImportedReviewInstance.objects.filter(pk=self.overlay.pk).update(learner_profile_id=43, source_review_id=7002)
             self.definition['instance']['learnerId'] = 43
             self.definition['historicalReview']['id'] = '7002'
         response, _ = self.upload(during_generation=reassign)

@@ -39,7 +39,7 @@ class AptemAttendanceRefreshTests(SimpleTestCase):
         self.family = family
         fixture = fixtures.meeting()
         self.record = CoachCalendarEvent(id=7, event_key=fixtures.ID,
-            idempotency_key=fixtures.ID, owner_email='coach@example.invalid', learner_id=42,
+            idempotency_key=fixtures.ID, owner_email='coach@example.invalid', learner_profile_id=42,
             event_type='mcr' if family == 'MCM' else 'progress-review', status='scheduled',
             graph_event_id=fixture.graph_event_id, graph_organizer_email='coach@example.invalid',
             meeting_link=fixture.meeting_link,

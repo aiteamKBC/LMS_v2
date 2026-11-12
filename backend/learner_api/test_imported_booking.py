@@ -17,7 +17,7 @@ from . import calendar, imported_booking, tests_booking_calendar
 class ImportedReservationTests(SimpleTestCase):
     def setUp(self):
         self.record = CoachCalendarEvent(
-            pk=51, event_key="imported-review:sample", learner_id=101,
+            pk=51, event_key="imported-review:sample", learner_profile_id=101,
             owner_email="coach@example.test", owner_name="Current coach",
             event_type="progress-review", status="scheduled", duration_minutes=60,
             scheduled_date=date(2026, 11, 20), scheduled_time=time(10),

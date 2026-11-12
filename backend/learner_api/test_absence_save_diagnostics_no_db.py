@@ -98,7 +98,7 @@ class AbsenceSaveDiagnosticsTests(SimpleTestCase):
     def test_successful_duplicate_recovery_is_not_reported_as_a_save_failure(self):
         response, _, _ = self.submit(
             "report", database_failure(IntegrityError, "23505"),
-            duplicate=SimpleNamespace(id=7, learner_id=12),
+            duplicate=SimpleNamespace(id=7, enrolment_id=12),
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content), {"id": 7})

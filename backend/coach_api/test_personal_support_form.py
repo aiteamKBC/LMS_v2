@@ -31,7 +31,7 @@ class PersonalSupportCompletionTests(TestCase):
                 field("goal", 13, mandatory=True, respondentRoles=["participant"]),
                 field("support", 6, mandatory=True, respondentRoles=["participant"], ifTrue=[
                     field("detail", 13, mandatory=True, respondentRoles=["participant"])])))
-        self.review = ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", learner_id=17,
+        self.review = ImportedReviewInstance.objects.create(owner_email="coach@example.invalid", learner_profile_id=17,
             event_key="imported-review:psp-synthetic", source_review_id=7001, migrated_template=self.template,
             template_snapshot=snapshot_for(self.template), signature_requirements=requirements_for_family("PSP"),
             status="not-scheduled", answers={})
@@ -91,7 +91,7 @@ class PersonalSupportCompletionTests(TestCase):
     def test_selected_signatures_complete_on_last_signer_keep_booking_and_never_credit_hours(self):
         self.template.definition_json["otjh"] = {"expectedHours": 2, "countsTowardsOtjh": True}
         self.select_signatures("advisor", "participant", "employer")
-        booking = CoachCalendarEvent.objects.create(event_key=self.review.event_key, learner_id=17,
+        booking = CoachCalendarEvent.objects.create(event_key=self.review.event_key, learner_profile_id=17,
             owner_email=self.review.owner_email, event_type="progress-review", target_date=date(2026, 11, 1),
             status="scheduled", graph_event_id="original-event", meeting_link="https://example.invalid/original")
         with self.identities(), patch("coach_api.migrated_otjh.record_completion", side_effect=AssertionError("PSP hours")):
@@ -178,7 +178,7 @@ class PersonalSupportCompletionTests(TestCase):
         return unwrap(views.coach_review_instance_answers)(request, self.review.event_key)
 
     def test_coach_partial_save_then_completion_preserves_the_existing_meeting(self):
-        booking = CoachCalendarEvent.objects.create(event_key=self.review.event_key, learner_id=17,
+        booking = CoachCalendarEvent.objects.create(event_key=self.review.event_key, learner_profile_id=17,
             owner_email=self.review.owner_email, event_type="progress-review", target_date=date(2026, 11, 1),
             status="scheduled", graph_event_id="original-event", meeting_link="https://example.invalid/original")
         with self.identities():

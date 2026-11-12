@@ -20,6 +20,7 @@ from django.utils.dateparse import parse_datetime
 
 from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, current_status_sql
 from curriculum_api.programme_name_sql import programme_name_sql
+from curriculum_api.schema_compat import inactive_condition
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 from .retake_timing import attempt_order, selected_attempt
@@ -350,15 +351,18 @@ def component_reference_exists(component_id):
 
 # Effective inactive state of a component, level by level, in the order a
 # rejection should name. Components, weeks and modules use the normalised
-# status contract; NULL, blank and unknown values remain visible.
+# status contract; NULL, blank and unknown values remain visible. Groups,
+# cohorts and programmes record withdrawal in status too (the legacy stamps
+# are gone): 'inactive', or 'archived' as older processes wrote it, withdraws;
+# a cohort's 'planned' and every other value stay live.
 _COMPONENT_LINEAGE_DELETED_SQL = f"""
     select
         (not ({current_status_sql('c')})) as component_deleted,
         (w.id is not null and not ({current_status_sql('w')})) as week_deleted,
         (m.module_catalogue_id is not null and not ({current_status_sql('m')})) as module_deleted,
-        (g.group_id is not null and (g.deleted_at is not null or coalesce(g.is_programme_deleted, false))) as group_deleted,
-        (ch.cohort_id is not null and (ch.deleted_at is not null or coalesce(ch.is_programme_deleted, false))) as cohort_deleted,
-        (p.programme_id is not null and (p.deleted_at is not null or coalesce(p.is_archived, false))) as programme_deleted
+        (g.group_id is not null and {inactive_condition('g')}) as group_deleted,
+        (ch.cohort_id is not null and {inactive_condition('ch')}) as cohort_deleted,
+        (p.programme_id is not null and {inactive_condition('p')}) as programme_deleted
     from curriculum.components c
     left join curriculum.weeks w on w.id = c.week_id
     left join curriculum.modules m on m.module_catalogue_id = c.module_catalogue_id
@@ -413,6 +417,24 @@ def component_reference_state(component_id):
     if not reachable:
         raise last_error
     return "unknown", ""
+
+
+def current_component_fk(connection, component_id):
+    """The value for ``curriculum_component_fk``: the id, or None.
+
+    Checked on the connection that writes the progress row, so the key can
+    never name a component only another alias knows; the caller's transaction
+    holds the component row (FOR KEY SHARE) until the row is committed. An id
+    that resolves nowhere — historical or non-component activity — stores NULL
+    and never a substitute.
+    """
+    component_id = _s(component_id)
+    if not component_id:
+        return None
+    lock = " FOR KEY SHARE" if getattr(connection, "vendor", "") == "postgresql" else ""
+    with connection.cursor() as cursor:
+        cursor.execute("select id from curriculum.components where id = %s" + lock, [component_id])
+        return component_id if cursor.fetchone() else None
 
 
 def _component_learning_context(component_id):
@@ -1171,6 +1193,7 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
             week_ref=_s(record.get("weekId") or component_context.get("weekId")) or None,
             week_title=_s(record.get("weekTitle") or record.get("week") or component_context.get("weekTitle") or activity.get("week")),
             component_ref=_s(record.get("componentId")) or None,
+            curriculum_component_fk=current_component_fk(connections["enrolment"], component_id),
             component_title=_s(record.get("componentTitle") or component_context.get("componentTitle") or activity.get("title")),
             component_type=_s(record.get("componentType") or component_context.get("componentType") or activity.get("componentType")),
             expected_otjh=_decimal(record.get("expectedOtjh") or component_context.get("expectedOtjh")),
@@ -1282,10 +1305,10 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                     )
                 ]
             )
-        learner.completed_hours = _number(
-            completed_hours_from_progress(learner.training_plan_progress)
-        )
-        learner.save(update_fields=["completed_hours", "updated_at"])
+        # Learner.learners.completed_hours is the official aggregate: it
+        # carries migrated/imported hours and historical credits that progress
+        # rows do not. A learner save records evidence only, so it never
+        # rewrites the total from a progress projection.
 
         # Engagement points: fire only once this transaction actually commits.
         # Progress writes route to the "enrolment" DB alias while engagement

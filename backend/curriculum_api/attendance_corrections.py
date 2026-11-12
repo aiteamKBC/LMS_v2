@@ -63,8 +63,8 @@ def session_context(series_id, number, module_id, *, lock=False):
 
 def states_for(source_id, roster):
     profiles = {row['learner_profile_id'] for row in roster if row.get('learner_profile_id')}
-    saved = {row.learner_id: row for row in CoachAttendanceSourceAdjustment.objects.filter(
-        learner_id__in=profiles, source='microsoft-teams', source_id=source_id)}
+    saved = {row.learner_profile_id: row for row in CoachAttendanceSourceAdjustment.objects.filter(
+        learner_profile_id__in=profiles, source='microsoft-teams', source_id=source_id)}
     return [{'learnerProfileId': row['learner_profile_id'], 'email': row['learner_email'],
              **correction_state(saved.get(row['learner_profile_id']))}
             for row in roster if row.get('learner_profile_id')]
@@ -90,7 +90,7 @@ def save_correction(module_id, occurrence, source_id, roster, payload, actor):
     native = read_native_occurrences(source, module_ids=[module_id])
     if not any(str(row['session_id']) == source_id for row in native):
         raise CorrectionError('Session assignment changed. Refresh saved results.', 409)
-    lookup = dict(learner_id=profile_id, source='microsoft-teams', source_id=source_id)
+    lookup = dict(learner_profile_id=profile_id, source='microsoft-teams', source_id=source_id)
     saved = CoachAttendanceSourceAdjustment.objects.select_for_update().filter(**lookup).first()
     desired = '' if action == 'reset' else action
     same = ((saved is None and action == 'reset') or

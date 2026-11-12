@@ -49,7 +49,7 @@ from .teams_week_meeting import (
 from . import recordings_library, session_results, tutor_notifications, recordings_day, recordings_calendar, recordings_external
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
-from .home_summary import curriculum_home_summary
+from .home_summary import curriculum_home_attention, curriculum_home_summary
 from .teaching_quality import teaching_review
 from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target
@@ -144,6 +144,7 @@ urlpatterns = [
     # The Archive page's one read: every archived record, a page at a time.
     path('curriculum/archive/', curriculum_archive_index, name='curriculum-archive-index'),
     path('curriculum/home-summary/', curriculum_home_summary, name='curriculum-home-summary'),
+    path('curriculum/home-attention/', curriculum_home_attention, name='curriculum-home-attention'),
     path('curriculum/delivery-scope/', views.curriculum_delivery_scope, name='curriculum-delivery-scope'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
     # Polled by every open tab to notice a write made somewhere else. Kept next

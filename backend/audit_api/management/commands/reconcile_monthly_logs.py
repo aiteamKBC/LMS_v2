@@ -132,6 +132,17 @@ def _timestamp_seconds(label):
     return seconds if seconds > 0 else None
 
 
+def _own_evidence(data, evidence_id, aptem_id):
+    """The evidence item, only when it belongs to this Aptem learner.
+
+    evidence_items.learner_record_id is the fetcher's own key
+    (fetching_evidence.learner_evidence.id), not a profile id, so evidence is
+    read by Aptem id alone and a foreign item is treated as unavailable.
+    """
+    item = data["evidence"].get(evidence_id) if evidence_id else None
+    return item if item and str(item.get("learner_id")) == str(aptem_id) else None
+
+
 def _evidence_id(source_ref):
     ref = str(source_ref or "")
     match = re.search(r":evidence:(\d+)$", ref) or re.fullmatch(r"ev:(\d+)", ref)
@@ -234,7 +245,6 @@ class Command(BaseCommand):
                              AND m.month <= %s
                            ORDER BY m.aptem_id,m.month,m.id''', [aptem_ids, END_MONTH])
         rows = self._dicts(cursor)
-        learner_ids = {r["aptem_id"]: r.get("canonical_learner_id") for r in rows}
         # The row-level revision history is the authority for approved fields.
         cursor.execute(f'''SELECT row_id, proposed_actual_hours, proposed_planned_hours
                            FROM {REVISIONS}
@@ -271,7 +281,7 @@ class Command(BaseCommand):
         cursor.execute('''SELECT evidence_id,learner_id,ksb_codes,evidence_status,review_status,
                                  content_char_count,note_content,has_explicit_ksbs,source_item
                           FROM fetching_evidence.evidence_items
-                          WHERE learner_id=ANY(%s) OR learner_record_id=ANY(%s)''', [aptem_ids, list(learner_ids.values())])
+                          WHERE learner_id=ANY(%s)''', [aptem_ids])
         evidence = {int(r["evidence_id"]): r for r in self._dicts(cursor)}
         return {
             "rows": rows, "approved_actual": approved_actual, "approved_planned": approved_planned,
@@ -344,7 +354,7 @@ class Command(BaseCommand):
 
             current_actual = _num(row.get("actual_hours")) or Decimal("0")
             evidence_id = _evidence_id(row.get("source_ref"))
-            evidence_item = data["evidence"].get(evidence_id) if evidence_id else None
+            evidence_item = _own_evidence(data, evidence_id, aid)
             if (current_actual > 0 and str(row.get("category") or "").lower() == "assignment"
                     and evidence_id and not _readable_evidence(evidence_item)):
                 pending.append(self._pending(
@@ -450,7 +460,7 @@ class Command(BaseCommand):
                 return codes, f"Last_audit.activities.raw:{activity_id}"
         evidence_id = _evidence_id(row.get("source_ref"))
         if evidence_id:
-            item = data["evidence"].get(evidence_id)
+            item = _own_evidence(data, evidence_id, row["aptem_id"])
             codes = _codes(item.get("ksb_codes") if item else None)
             if codes:
                 return codes, f"fetching_evidence.evidence_items:{evidence_id}"

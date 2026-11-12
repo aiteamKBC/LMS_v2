@@ -642,7 +642,7 @@ def build_aptem_review_reconciliation_preview(learner, owner_email, *, today=Non
         columns = [col[0] for col in cursor.description]
         imported_rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
     native_rows = review_instances.list_review_instances_for_learner(learner.id)
-    calendar_rows = list(CoachCalendarEvent.objects.filter(learner_id=learner.id))
+    calendar_rows = list(CoachCalendarEvent.objects.filter(learner_profile_id=learner.id))
     return classify_aptem_review_preview(
         learner=learner, imported_rows=imported_rows, occurrences=occurrences,
         native_rows=native_rows, calendar_rows=calendar_rows,

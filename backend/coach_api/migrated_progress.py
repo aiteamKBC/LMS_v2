@@ -60,7 +60,7 @@ def resolve_context(owner, review_id):
     if not calculation_available(overlay, family, definition.get("migratedProgrammeKey", "")):
         raise ProgressError("Progress requires an initialized, editable migrated Progress Review with a valid template assignment.")
     return ProgressContext(
-        overlay.pk, overlay.learner_id, overlay.source_review_id,
+        overlay.pk, overlay.learner_profile_id, overlay.source_review_id,
         overlay.migrated_template_id, family, answer_version(overlay),
     )
 

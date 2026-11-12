@@ -163,7 +163,7 @@ def import_event_attendance(*, event_id, form_ids, preview, created_by):
             event=event, attendee_email=item['email'],
             defaults={
                 'attendee_name': item['name'],
-                'learner_id': learners.get(item['email'], ''),
+                'enrolment_id': learners.get(item['email'], ''),
                 'attendance_source': 'spreadsheet',
                 'attendance_reference': f'row:{item["row"]}',
                 'revoked_at': None,

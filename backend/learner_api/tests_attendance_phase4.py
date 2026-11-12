@@ -139,12 +139,12 @@ class AttendanceWriteReadTests(TestCase):
     def test_real_concurrent_correction_returns_409_and_identical_retry_is_noop(self):
         from coach_api.models import CoachAttendanceSourceAdjustment
         record = self.loaded_record()
-        CoachAttendanceSourceAdjustment.objects.create(learner_id=42, source='microsoft-teams',
+        CoachAttendanceSourceAdjustment.objects.create(learner_profile_id=42, source='microsoft-teams',
             source_id='occ', status='absent', owner_email='coach@example.test', updated_by='coach@example.test')
         self.assertEqual(self.bulk_request([record]).status_code, 409)
         fresh = self.loaded_record()
         self.assertEqual(self.bulk_request([fresh]).status_code, 200)
-        adjustment = CoachAttendanceSourceAdjustment.objects.get(learner_id=42, source_id='occ')
+        adjustment = CoachAttendanceSourceAdjustment.objects.get(learner_profile_id=42, source_id='occ')
         revision = adjustment.updated_at
         self.assertEqual(self.bulk_request([fresh]).status_code, 200)
         adjustment.refresh_from_db()
@@ -156,7 +156,7 @@ class AttendanceWriteReadTests(TestCase):
         for learner, occurrence in ((43, 'occ'), (42, 'another-occ')):
             with self.subTest(learner=learner, occurrence=occurrence):
                 record = self.loaded_record()
-                CoachAttendanceSourceAdjustment.objects.create(learner_id=learner, source='microsoft-teams',
+                CoachAttendanceSourceAdjustment.objects.create(learner_profile_id=learner, source='microsoft-teams',
                     source_id=occurrence, status='absent', owner_email='coach@example.test', updated_by='coach@example.test')
                 self.schedule[0].update(updated_at=NOW, session_title='New display title', legacy_ambiguity=['other'])
                 self.assertEqual(record['version'], self.loaded_record()['version'])
@@ -170,7 +170,7 @@ class AttendanceWriteReadTests(TestCase):
 
     def test_correction_metadata_timestamp_does_not_stale_attendance_state(self):
         from coach_api.models import CoachAttendanceSourceAdjustment
-        correction = CoachAttendanceSourceAdjustment.objects.create(learner_id=42, source='microsoft-teams',
+        correction = CoachAttendanceSourceAdjustment.objects.create(learner_profile_id=42, source='microsoft-teams',
             source_id='occ', status='absent', owner_email='coach@example.test', updated_by='coach@example.test')
         record = self.loaded_record()
         CoachAttendanceSourceAdjustment.objects.filter(pk=correction.pk).update(
@@ -298,7 +298,7 @@ class AttendanceWriteReadTests(TestCase):
     def test_denominator_excludes_unmarked_and_future_manual(self):
         from coach_api.models import CoachManualAttendance
         for day, status in ((date(2026, 9, 18), 'present'), (date(2026, 9, 18), 'absent'), (date(2026, 9, 21), 'present')):
-            CoachManualAttendance.objects.create(learner_id=42, owner_email='coach@example.test', session_date=day,
+            CoachManualAttendance.objects.create(learner_profile_id=42, owner_email='coach@example.test', session_date=day,
                 module_name='Module', session_title=status, status=status)
         summary = self.read()['summary']
         self.assertEqual((summary['present'], summary['absent'], summary['totalCounted'], summary['attendanceRate']), (1, 1, 2, 50))
@@ -306,7 +306,7 @@ class AttendanceWriteReadTests(TestCase):
     def test_manual_only_learner_still_uses_canonical_summary(self):
         self.schedule.clear()
         from coach_api.models import CoachManualAttendance
-        CoachManualAttendance.objects.create(learner_id=42, session_date=date(2026, 9, 18),
+        CoachManualAttendance.objects.create(learner_profile_id=42, session_date=date(2026, 9, 18),
             module_name='Module', session_title='Manual only', status='present')
         self.assertEqual(self.read()['summary']['present'], 1)
 

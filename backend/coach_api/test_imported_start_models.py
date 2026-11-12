@@ -12,12 +12,12 @@ class ImportedStartPersistenceTests(TestCase):
             with self.subTest(family=family):
                 key = f'imported-review:synthetic-{number}'
                 calendar = CoachCalendarEvent.objects.create(event_key=key, owner_email='coach@example.invalid',
-                    learner_id=42, event_type='mcr' if family == 'MCM' else 'progress-review', status='scheduled',
+                    learner_profile_id=42, event_type='mcr' if family == 'MCM' else 'progress-review', status='scheduled',
                     target_date=date(2026, 10, 20),
                     scheduled_date=date(2026, 10, 20), scheduled_time=time(10), sync_state='synced',
                     graph_event_id=f'graph-{number}', meeting_link='https://example.invalid/teams')
                 overlay = ImportedReviewInstance.objects.create(event_key=key, owner_email=calendar.owner_email,
-                    learner_id=42, source_review_id=number, status='scheduled',
+                    learner_profile_id=42, source_review_id=number, status='scheduled',
                     template_snapshot={'sections': [{'key': 'discussion'}]}, answers={'recap': 'Preserve'},
                     meeting_intelligence={'reviewRevision': 2, 'summary': {'text': 'Saved suggestion'}},
                     progress_snapshot={'hours': 17}, signature_requirements={'advisor': True})

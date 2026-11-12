@@ -21,8 +21,9 @@ class ActivityTimeWriteGuardsTests(SimpleTestCase):
                'timeTrackingSource': 'signed:input', 'submittedAt': '2026-10-01T10:00:00Z'}
         history = [old] if attendance is None else []
         original_history = deepcopy(history)
+        # 38.30 is the official total (imported hours included); a save must not rewrite it.
         learner = SimpleNamespace(pk=7, enrolment_id=19, aptem_id=42, username='Synthetic learner',
-                                  training_plan_progress=history, save=Mock())
+                                  training_plan_progress=history, save=Mock(), completed_hours=38.3)
         record = {'kind': 'component', 'componentType': 'reading', 'componentId': 'C1',
                   'claimedSeconds': current, 'verifiedSeconds': 12, 'timeTrackingSource': 'signed:input',
                   'retakeTimeChoice': mode, 'retakePreviousSeconds': expected,
@@ -78,18 +79,20 @@ class ActivityTimeWriteGuardsTests(SimpleTestCase):
             with self.subTest(mode=mode, current=current):
                 saved, learner, record, create, cursor, check = self.save(frozen=True, mode=mode, current=current)
                 self.assertEqual(record['countedSeconds'], counted)
-                self.assertEqual(learner.completed_hours, round(counted / 3600, 1))
+                self.assertEqual(learner.completed_hours, 38.3)
+                learner.save.assert_not_called()
                 self.assertEqual(len(learner.training_plan_progress), 2)
                 self.assertEqual(learner.training_plan_progress[0]['claimedSeconds'], 3600)
                 create.assert_called_once()
                 self.assertEqual(check.call_args.args[2], mode)
                 self.assertFalse(any('signature' in call.args[0].lower() for call in cursor.execute.call_args_list))
 
-    def test_success_stores_the_choice_and_recomputes_totals_with_separate_timer_evidence(self):
+    def test_success_stores_the_choice_and_keeps_official_hours_with_separate_timer_evidence(self):
         saved, learner, record, create, cursor, check = self.save(current=3600)
         self.assertEqual(saved.pk, 11); self.assertEqual(record['countedSeconds'], 7200)
         self.assertEqual(record['verifiedSeconds'], 12)
-        self.assertEqual(learner.completed_hours, 2)
+        self.assertEqual(learner.completed_hours, 38.3)
+        learner.save.assert_not_called()
         create.assert_called_once(); check.assert_called_once()
         calls = cursor.execute.call_args_list
         self.assertIn('Created_users', calls[0].args[0])
@@ -102,7 +105,8 @@ class ActivityTimeWriteGuardsTests(SimpleTestCase):
         self.assertEqual(record['countedSeconds'], 9000)
         self.assertEqual(record['claimedSeconds'], 1800)
         self.assertEqual(record['verifiedSeconds'], 12)
-        self.assertEqual(learner.completed_hours, 2.5)
+        self.assertEqual(learner.completed_hours, 38.3)
+        learner.save.assert_not_called()
         create.assert_called_once()
         metadata = next(call for call in cursor.execute.call_args_list if 'source_payload=' in call.args[0])
         self.assertEqual(json.loads(metadata.args[1][0]), {'retakeTimeChoice': 'add', 'retakePreviousSeconds': 7200})

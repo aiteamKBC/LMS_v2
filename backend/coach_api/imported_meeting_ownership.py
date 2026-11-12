@@ -183,7 +183,7 @@ def _finalize_owned_booking(record, warning, event, target):
                 or current.last_sync_attempt_at != record.last_sync_attempt_at
                 or current.event_key != record.event_key
                 or current.owner_email != record.owner_email
-                or current.learner_id != record.learner_id
+                or current.learner_profile_id != record.learner_id
                 or current.scheduled_date != record.scheduled_date
                 or current.scheduled_time != record.scheduled_time
                 or current.duration_minutes != record.duration_minutes
@@ -215,7 +215,7 @@ def _finalize_owned_booking(record, warning, event, target):
         if ownership:
             if (ownership.state != ImportedMeetingOwnership.STATE_ACTIVE
                     or ownership.source_review_id != source_id
-                    or ownership.learner_id != record.learner_id
+                    or ownership.learner_profile_id != record.learner_id
                     or ownership.review_event_key != record.event_key
                     or ownership.owner_email.casefold() != record.owner_email.casefold()
                     or (str(ownership.tenant_id), str(ownership.organizer_id),
@@ -228,7 +228,7 @@ def _finalize_owned_booking(record, warning, event, target):
             ownership.save(update_fields=['overlay', 'booking_fingerprint'])
         else:
             ImportedMeetingOwnership.objects.create(
-                source_review_id=source_id, learner_id=record.learner_id,
+                source_review_id=source_id, learner_profile_id=record.learner_id,
                 review_event_key=record.event_key, calendar_event_id=record.pk,
                 overlay=overlay, owner_email=record.owner_email,
                 tenant_id=target.tenant_id, organizer_id=target.organizer_id,
@@ -249,7 +249,7 @@ def require_synced_owner(record, event):
     owner = ImportedMeetingOwnership.objects.filter(calendar_event_id=record.pk).first()
     if (not owner or owner.state != ImportedMeetingOwnership.STATE_ACTIVE
             or owner.source_review_id != source_id
-            or owner.learner_id != record.learner_id
+            or owner.learner_profile_id != record.learner_id
             or owner.review_event_key != record.event_key
             or owner.owner_email.casefold() != record.owner_email.casefold()
             or owner.graph_event_id != record.graph_event_id):
@@ -262,7 +262,7 @@ def bind_owned_overlay(record, overlay):
              .filter(calendar_event_id=record.pk).first())
     if (not owner or owner.state != ImportedMeetingOwnership.STATE_ACTIVE
             or owner.source_review_id != overlay.source_review_id
-            or owner.learner_id != overlay.learner_id
+            or owner.learner_profile_id != overlay.learner_id
             or owner.review_event_key != overlay.event_key
             or owner.graph_event_id != record.graph_event_id
             or owner.owner_email.casefold() != overlay.owner_email.casefold()
@@ -295,7 +295,7 @@ def require_cancel_owner(record):
     owner = (ImportedMeetingOwnership.objects.select_for_update()
              .filter(calendar_event_id=record.pk).first())
     if (not owner or owner.state != ImportedMeetingOwnership.STATE_ACTIVE
-            or owner.learner_id != record.learner_id
+            or owner.learner_profile_id != record.learner_id
             or owner.review_event_key != record.event_key
             or owner.owner_email.casefold() != record.owner_email.casefold()
             or owner.graph_event_id != record.graph_event_id):

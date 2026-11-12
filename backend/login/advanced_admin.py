@@ -730,7 +730,7 @@ def learner_enrolment(request, profile_id):
     try:
         source = EnrolmentUser.all_learners.get(pk=profile.enrolment_id)
         ilr = (ExtendedIlr.objects.filter(learner_kind='commercial',
-                                          learner_id=source.id).order_by('-updated_at').first())
+                                          enrolment_id=source.id).order_by('-updated_at').first())
     except (EnrolmentUser.DoesNotExist, DatabaseError):
         return JsonResponse({'error': 'Enrolment record is unavailable.'}, status=503)
     return JsonResponse({
@@ -1844,7 +1844,7 @@ def learner_reviews(request, profile_id):
     review_ids = [int(row['id']) for rows in groups.values() for row in rows]
     try:
         overlays = list(ImportedReviewInstance.objects.filter(
-            learner_id=profile.id, source_review_id__in=review_ids,
+            learner_profile_id=profile.id, source_review_id__in=review_ids,
         ).only('id', 'source_review_id', 'meeting_intelligence', 'signature_requirements'))
         signed = {}
         for signature in MigratedReviewSignature.objects.filter(
@@ -1897,7 +1897,7 @@ def learner_review_pdf(request, profile_id, aptem_review_id):
                               review['aptemLearnerId'] != str(profile.aptem_id)):
             return JsonResponse({'error': 'Review document not found.'}, status=404)
         local_pdf = MigratedReviewDocument.objects.filter(
-            overlay__learner_id=profile.id,
+            overlay__learner_profile_id=profile.id,
             overlay__source_review_id=int(review['id']),
         ).values_list('pdf_bytes', flat=True).first()
         content = (bytes(local_pdf) if local_pdf else
@@ -1971,7 +1971,7 @@ def learner_eligibility(request, profile_id):
     from learner_api.review_history import _review_rows, _sections_by_review, _serialize_review
     try:
         native = EnrolmentReview.objects.filter(
-            learner_kind='commercial', learner_id=profile.enrolment_id,
+            learner_kind='commercial', enrolment_id=profile.enrolment_id,
             review_type='eligibility-review',
         ).only('event_key', 'review_label', 'scheduled_date', 'status',
                'form_answers', 'section_status', 'form_completed').order_by('-scheduled_date')
@@ -2007,7 +2007,7 @@ def learner_eligibility_form(request, profile_id, event_key):
 
     try:
         review = EnrolmentReview.objects.filter(
-            learner_kind='commercial', learner_id=profile.enrolment_id,
+            learner_kind='commercial', enrolment_id=profile.enrolment_id,
             review_type='eligibility-review', event_key=event_key,
         ).first()
         if review is None:

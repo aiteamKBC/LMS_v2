@@ -30,7 +30,7 @@ def coach_meeting_reminder(request, event_key):
         if record is None:
             return JsonResponse({'detail': 'Meeting not found.'}, status=404)
         learner = LearnerProfile.objects.annotate(coach_key=Lower(Trim('coach_email'))).filter(
-            pk=record.learner_id, coach_key=owner,
+            pk=record.learner_profile_id, coach_key=owner,
         ).only('email', 'full_name').first()
     except DatabaseError:
         return JsonResponse({'detail': 'Meeting details are temporarily unavailable.'}, status=503)

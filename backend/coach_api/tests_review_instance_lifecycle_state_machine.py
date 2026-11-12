@@ -121,7 +121,7 @@ class ReviewLifecycleStateMachineTestCase(CoachTransactionTestCase):
         record = CoachCalendarEvent.objects.create(
             event_key=f'{event_type}:{learner_id}:1:2026-10-01', event_type=event_type,
             owner_email=owner_email, owner_name='Coach',
-            learner_id=learner_id, learner_name='Learner', learner_email=LEARNER_EMAIL,
+            learner_profile_id=learner_id, learner_name='Learner', learner_email=LEARNER_EMAIL,
             scheduled_date=date(2026, 10, 1), scheduled_time=time(10, 0),
             target_date=date(2026, 10, 1), duration_minutes=30,
             status=CoachCalendarEvent.STATUS_SCHEDULED,

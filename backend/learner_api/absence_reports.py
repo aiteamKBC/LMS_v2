@@ -255,7 +255,7 @@ def _existing_report_response(existing, learner_id):
     The first attempt may have been saved after the proxy had already given up
     on it. Another learner's report for the same key remains a conflict.
     """
-    if str(existing.learner_id) != str(learner_id):
+    if str(existing.enrolment_id) != str(learner_id):
         return _error("An absence report already exists for this session.", 409)
     return JsonResponse(_serialize(existing), status=200)
 
@@ -272,7 +272,7 @@ def _recording_recovery_event(report, learner, mirror, recording_date, recording
         idempotency_key=f"absence-recovery:{report.id}",
         owner_email=report.owner_email,
         owner_name=report.owner_name,
-        learner_id=calendar_learner_id,
+        learner_profile_id=calendar_learner_id,
         learner_name=report.learner_name,
         learner_email=report.learner_email,
         event_type="recorded-recovery",
@@ -431,7 +431,7 @@ def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False, fo
               for person in (learner, mirror)} - {''}
     ids = {str(getattr(person, 'id', '')) for person in (learner, mirror) if person is not None}
     email = str(getattr(booking, 'learner_email', '') or '').strip().casefold()
-    belongs = booking is not None and (email in emails if email else str(booking.learner_id) in ids)
+    belongs = booking is not None and (email in emails if email else str(booking.learner_profile_id) in ids)
     if not belongs or booking.event_type != 'catch-up':
         raise RecoveryPlanError('Choose one of your own catch-up bookings.')
     if (booking.status not in {'not-scheduled', 'scheduled', 'in-progress'}
@@ -464,7 +464,7 @@ def learner_absence_reports(request, kind, learner_id):
 
     if request.method == "GET":
         try:
-            reports = CoachAbsenceReport.objects.filter(learner_id=learner_id).order_by("-created_at")
+            reports = CoachAbsenceReport.objects.filter(enrolment_id=learner_id).order_by("-created_at")
             results = [_serialize(report) for report in reports]
             missed_sessions = _fetch_missed_sessions(learner, learner_id, meetings=True, kind=kind) if request.GET.get('scope') == 'meetings' else _fetch_missed_sessions(learner, learner_id)
         except Exception:
@@ -660,12 +660,12 @@ def learner_absence_reports(request, kind, learner_id):
                 if validate_alternative_occurrence(original_occurrence_id, target_occurrence_id) is None:
                     raise RecoveryPlanError('That alternative session is no longer eligible. Choose another option.')
             save_stage = "RPT"
-            previous_absences = CoachAbsenceReport.objects.filter(learner_id=learner_id).count()
+            previous_absences = CoachAbsenceReport.objects.filter(enrolment_id=learner_id).count()
             report = CoachAbsenceReport.objects.create(
                 attendance_id=attendance_id,
                 owner_email=owner_email,
                 owner_name=owner_name,
-                learner_id=learner_id,
+                enrolment_id=learner_id,
                 learner_name=learner_name,
                 learner_email=learner_email,
                 session_title=session_title,

@@ -73,7 +73,7 @@ class CompletedSourceReopeningTests(TestCase):
                     "mandatory": True, "respondentRoles": ["participant"]}]}]})
         completed = timezone.now()
         review = ImportedReviewInstance.objects.create(event_key=f"imported-review:source-{template.pk}",
-            source_review_id=1000 + template.pk, owner_email=self.owner, learner_id=17,
+            source_review_id=1000 + template.pk, owner_email=self.owner, learner_profile_id=17,
             migrated_template=template, template_snapshot=snapshot_for(template),
             status="completed", completed_at=completed, answers={"answer": "Original agreed action"},
             signature_requirements=rules, meeting_intelligence={"otjhCredit": {"hours": 1}, "unrelated": "retain"})

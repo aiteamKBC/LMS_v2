@@ -102,8 +102,8 @@ def recent_attendance(profiles, assignments):
         return result
     adjustments, confirmations, targets, completed, report_days, manuals = (
         defaultdict(dict), defaultdict(dict), defaultdict(dict), defaultdict(set), defaultdict(set), defaultdict(list))
-    for row in CoachAttendanceSourceAdjustment.objects.filter(learner_id__in=[p.id for p in profiles]):
-        adjustments[row.learner_id][(row.source, row.source_id)] = row
+    for row in CoachAttendanceSourceAdjustment.objects.filter(learner_profile_id__in=[p.id for p in profiles]):
+        adjustments[row.learner_profile_id][(row.source, row.source_id)] = row
     with connections['enrolment'].cursor() as cursor:
         cursor.execute('''SELECT l.enrolment_id,p.time_tracking_session_ref AS lecture_id,
             p.claimed_seconds AS seconds,p.submitted_at FROM "Learner".learner_progress_entries p
@@ -112,20 +112,20 @@ def recent_attendance(profiles, assignments):
             ORDER BY p.id''', [source_ids, EVENT])
         for row in canonical.dict_rows(cursor):
             confirmations[row['enrolment_id']][row['lecture_id']] = row
-    for row in CoachAbsenceReport.objects.filter(learner_id__in=source_ids,
+    for row in CoachAbsenceReport.objects.filter(enrolment_id__in=source_ids,
             status=CoachAbsenceReport.STATUS_APPROVED, recovery_method=ALTERNATIVE_METHOD).only(
-                'learner_id', 'attendance_id', 'catchup_event_key', 'session_date'):
-        targets[row.learner_id][str(row.attendance_id)] = alternative_occurrence_id(row.catchup_event_key)
-        report_days[row.learner_id].add(row.session_date)
+                'enrolment_id', 'attendance_id', 'catchup_event_key', 'session_date'):
+        targets[row.enrolment_id][str(row.attendance_id)] = alternative_occurrence_id(row.catchup_event_key)
+        report_days[row.enrolment_id].add(row.session_date)
     for learner, occurrence in LiveSessionAbsence.objects.filter(source_learner_id__in=source_ids,
             recovery_method='catch-up', recovery_status=LiveSessionAbsence.RECOVERY_COMPLETED).values_list(
                 'source_learner_id', 'occurrence_id'):
         completed[learner].add(occurrence)
-    for row in CoachManualAttendance.objects.filter(learner_id__in=[p.id for p in profiles],
+    for row in CoachManualAttendance.objects.filter(learner_profile_id__in=[p.id for p in profiles],
             session_date__lte=timezone.localdate()).annotate(day_rank=Window(
-                expression=DenseRank(), partition_by=[F('learner_id')], order_by=F('session_date').desc()
-            )).filter(day_rank__lte=4).only('id', 'learner_id', 'session_date', 'status'):
-        manuals[row.learner_id].append({'session_id': str(row.id), 'session_date': row.session_date,
+                expression=DenseRank(), partition_by=[F('learner_profile_id')], order_by=F('session_date').desc()
+            )).filter(day_rank__lte=4).only('id', 'learner_profile_id', 'session_date', 'status'):
+        manuals[row.learner_profile_id].append({'session_id': str(row.id), 'session_date': row.session_date,
                                       'attendance_status': row.status, '_manual': True})
     pending, limit = [p for p in profiles if getattr(p, '_caseload_source', None) is not None], 8
     state = adjustments, confirmations, targets, completed, report_days

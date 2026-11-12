@@ -32,7 +32,7 @@ def fixture(family="PR"):
             field("gate", 6, respondentRoles=["participant"], ifTrue=[
                 field("child", respondentRoles=["participant"], mandatory=True)])))
     review = ImportedReviewInstance.objects.create(event_key="imported-review:respondent-test",
-        learner_id=17, source_review_id=7001, owner_email="coach@example.invalid",
+        learner_profile_id=17, source_review_id=7001, owner_email="coach@example.invalid",
         migrated_template=template, template_snapshot=snapshot_for(template), status="scheduled",
         answers={"coach": "Coach notes", "employer": "Employer notes", "gate": "no", "child": "Retained hidden answer"},
         signature_requirements=requirements_for_family(family))
@@ -42,7 +42,7 @@ def fixture(family="PR"):
 def definition(owner, key, *, learners=None):
     review = ImportedReviewInstance.objects.get(event_key=key)
     if learners is not None:
-        assert len(learners) == 1 and learners[0].id == review.learner_id
+        assert len(learners) == 1 and learners[0].id == review.learner_profile_id
     sections, _ = render_sections(review.template_snapshot, review.answers,
                                  answer_audit=review.meeting_intelligence.get("answerEdits", {}))
     return {"migratedForm": True, "readOnly": review.status not in {"not-scheduled", "scheduled", "in-progress"},

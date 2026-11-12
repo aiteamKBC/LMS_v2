@@ -108,7 +108,7 @@ class ManualOverrideTestCase(TestCase):
         record = CoachCalendarEvent.objects.create(
             event_key=f'{event_type}:{learner_id}:1:2026-10-01', event_type=event_type,
             owner_email=owner_email, owner_name='Coach',
-            learner_id=learner_id, learner_name='Learner', learner_email='learner@example.com',
+            learner_profile_id=learner_id, learner_name='Learner', learner_email='learner@example.com',
             scheduled_date=date(2026, 10, 1), scheduled_time=time(10, 0),
             target_date=date(2026, 10, 1), duration_minutes=30,
             status=status or CoachCalendarEvent.STATUS_SCHEDULED,
@@ -301,7 +301,7 @@ class ManualOverrideTestCase(TestCase):
         CoachCalendarEvent.objects.create(
             event_key='mcr:903:1:2025-01-01', event_type='mcr',
             owner_email=COACH_EMAIL, owner_name='Coach',
-            learner_id=903, learner_name='Old Learner', learner_email='old@example.com',
+            learner_profile_id=903, learner_name='Old Learner', learner_email='old@example.com',
             scheduled_date=date(2025, 1, 1), scheduled_time=time(10, 0),
             target_date=date(2025, 1, 1), duration_minutes=30,
             status=CoachCalendarEvent.STATUS_SCHEDULED,

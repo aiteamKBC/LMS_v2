@@ -15,11 +15,11 @@ from .migrated_session_scope import booking_fingerprint, scope_snapshot
 class BoundActualSessionTests(SimpleTestCase):
     def setUp(self):
         self.record = SimpleNamespace(pk=51, event_key='imported-review:synthetic',
-            learner_id=7, owner_email='coach@example.invalid', graph_event_id='graph-51',
+            learner_profile_id=7, owner_email='coach@example.invalid', graph_event_id='graph-51',
             graph_organizer_email='coach@example.invalid', meeting_link='https://example.invalid/meeting',
             review_instance_id=None, review_template_id=None, scheduled_date=date(2026, 10, 25),
             scheduled_time=time(10), duration_minutes=60)
-        self.overlay = SimpleNamespace(pk=9, source_review_id=81, learner_id=7,
+        self.overlay = SimpleNamespace(pk=9, source_review_id=81, learner_profile_id=7,
             event_key=self.record.event_key, owner_email=self.record.owner_email)
         self.claim = {'schemaVersion': 1, 'selectionVersion': 1, 'eventKey': self.record.event_key,
             'calendarId': 51, 'profileId': 7, 'ownerEmail': self.record.owner_email,
@@ -31,7 +31,7 @@ class BoundActualSessionTests(SimpleTestCase):
             'associationMethod': 'single-run-corroborated'}
         self.overlay.meeting_intelligence = {'actualSession': self.claim}
         self.owner = SimpleNamespace(state='active', provenance='graph-calendar-verified',
-            overlay_id=9, source_review_id=81, learner_id=7,
+            overlay_id=9, source_review_id=81, learner_profile_id=7,
             review_event_key=self.record.event_key, owner_email=self.record.owner_email,
             graph_event_id=self.record.graph_event_id,
             booking_fingerprint=self.claim['bookingFingerprint'],

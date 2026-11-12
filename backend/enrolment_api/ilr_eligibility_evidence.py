@@ -75,7 +75,7 @@ def eligibility_evidence(request, kind, learner_id):
 
     if request.method == "GET":
         try:
-            row = ExtendedIlr.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+            row = ExtendedIlr.objects.filter(learner_kind=kind, enrolment_id=learner_id).first()
         except DatabaseError as exc:
             logger.warning("Could not list ILR eligibility evidence: %s", exc)
             return _error("Could not load evidence.", 502)
@@ -94,7 +94,7 @@ def eligibility_evidence(request, kind, learner_id):
     # Checked before anything reaches Azure so a locked record never costs an
     # upload; checked again under the row lock below, which is the one that counts.
     try:
-        if ExtendedIlr.objects.filter(learner_kind=kind, learner_id=learner_id, completed=True).exists():
+        if ExtendedIlr.objects.filter(learner_kind=kind, enrolment_id=learner_id, completed=True).exists():
             return _error(LOCKED_MESSAGE, 409)
     except DatabaseError as exc:
         logger.warning("Could not read the ILR before an evidence upload: %s", exc)
@@ -111,7 +111,7 @@ def eligibility_evidence(request, kind, learner_id):
             # the learner uploads before the wizard has saved anything; the ILR
             # save upserts on the same (kind, id) and leaves this column alone.
             row, _ = ExtendedIlr.objects.select_for_update().get_or_create(
-                learner_kind=kind, learner_id=learner_id,
+                learner_kind=kind, enrolment_id=learner_id,
                 defaults={"learner_name": learner_name},
             )
             if row.completed:
@@ -142,7 +142,7 @@ def download_eligibility_evidence(request, kind, learner_id, file_id):
     if not azure_configured():
         return _error("Evidence storage is not configured.", 503)
     try:
-        row = ExtendedIlr.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+        row = ExtendedIlr.objects.filter(learner_kind=kind, enrolment_id=learner_id).first()
     except DatabaseError as exc:
         logger.warning("Could not look up ILR evidence for download: %s", exc)
         return _error("Could not load evidence.", 502)
@@ -166,7 +166,7 @@ def delete_eligibility_evidence(request, kind, learner_id, file_id):
         with transaction.atomic(using="enrolment"):
             row = (
                 ExtendedIlr.objects.select_for_update()
-                .filter(learner_kind=kind, learner_id=learner_id)
+                .filter(learner_kind=kind, enrolment_id=learner_id)
                 .first()
             )
             items = _items(row)

@@ -1379,7 +1379,7 @@ def onboarding_complete(learner_kind, learner_id):
 
     reviews = EnrolmentReview.objects.filter(
         learner_kind=learner_kind,
-        learner_id=learner_id,
+        enrolment_id=learner_id,
         review_type__in=ONBOARDING_REVIEW_TYPES,
     ).exclude(status="cancelled")
 

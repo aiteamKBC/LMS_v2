@@ -185,7 +185,7 @@ def project_attendance(record, attendance, links):
 
 def saved_links(record):
     return list(ReviewAttendanceLink.objects.using(record._state.db or 'default')
-                .filter(calendar_event_id=record.pk, learner_id=record.learner_id).order_by('pk'))
+                .filter(calendar_event_id=record.pk, learner_profile_id=record.learner_id).order_by('pk'))
 
 
 def attendance_for_display(record, attendance):
@@ -342,7 +342,7 @@ def review_attendance_links(request, event_key):
                     row = next(r for r in snapshot['attendance']['tracker'] if r['id'] == candidate['rowId'] and not r.get('expected'))
                     evidence = participant_evidence(snapshot['attendance'], row)
                     ReviewAttendanceLink.objects.using(db).create(calendar_event_id=record.pk,
-                        learner_id=record.learner_id, session_key=session_key(record, snapshot['attendance']),
+                        learner_profile_id=record.learner_id, session_key=session_key(record, snapshot['attendance']),
                         target_key=target['key'], target_role=target['role'], target_name=str(target['name'] or '')[:255],
                         participant_key=candidate['key'], evidence=evidence, reason=reason.strip(),
                         confirmed_by=authenticated_coach_email(request))
