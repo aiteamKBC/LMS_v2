@@ -97,13 +97,16 @@ export default function MeetingTimeline({ start, end, timeZone, meetings, now, s
             const people = row.learnerIds.map(learnerName);
             return <article key={meetingKey(row)} className="absolute" style={{ top: begin / 60 * HOUR_HEIGHT, height: (finish - begin) / 60 * HOUR_HEIGHT, left: `calc(${col / cols * 100}% + 3px)`, width: `calc(${100 / cols}% - 6px)` }}>
               <button type="button" aria-label={`View ${title} on ${day}`} aria-pressed={active} onClick={() => onSelect(row, day)}
+                data-meeting-card data-compact={compact} data-phase={phase} data-media-state={row.media.state} data-coach-lane={Boolean(owner)}
                 title={`${title}\n${coachName(row.coachEmail)}\n${clock(row.startsAt)}–${clock(row.endsAt)}\n${people.join(', ')}`}
                 className={`h-full w-full overflow-hidden rounded-lg border border-l-4 px-2.5 ${compact ? 'py-1' : 'py-1.5'} text-left text-[11px] leading-[14px] shadow-sm hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 ${phase === 'cancelled' ? 'border-rose-200 border-l-rose-400 bg-rose-50' : 'border-primary-100 border-l-primary-400 bg-primary-50'} ${active ? 'ring-2 ring-primary-500' : ''}`}>
                 <h3 className={`${compact ? 'truncate' : 'line-clamp-2 break-words'} text-xs font-bold leading-4 text-primary-900`}>{title}</h3>
-                <span className="block truncate tabular-nums text-primary-800">{clock(row.startsAt)}–{clock(row.endsAt)}{meetingDate(row.startsAt, timeZone) < day ? ' · Continues' : ''}</span>
-                <span className={compact || owner ? 'sr-only' : 'mt-0.5 block truncate text-foreground-700'}>{coachName(row.coachEmail)}</span>
-                <span className={compact ? 'sr-only' : 'block truncate text-foreground-500'}>{people.slice(0, 2).join(', ') || 'No learner linked'}{people.length > 2 ? ` +${people.length - 2} more` : ''}</span>
-                <span className={`block truncate ${compact ? 'text-[10px] leading-3' : 'mt-0.5'} ${row.media.readyCount > 0 ? 'text-emerald-700' : 'text-foreground-500'}`}>{phase === 'upcoming' ? 'Upcoming' : phase === 'in-progress' ? `Within scheduled time · ${recordingLabel(row.media)}` : phase === 'cancelled' ? 'Cancelled' : `Ended · ${recordingLabel(row.media)}`}</span>
+                <span data-meeting-time className="block truncate tabular-nums text-primary-800">{clock(row.startsAt)}–{clock(row.endsAt)}{meetingDate(row.startsAt, timeZone) < day ? ' · Continues' : ''}</span>
+                <span data-meeting-people className={compact ? 'sr-only' : 'block'}>
+                  <span data-meeting-coach className={owner ? 'sr-only' : 'mt-0.5 block truncate text-foreground-700'}>{coachName(row.coachEmail)}</span>
+                  <span data-meeting-learners className="block truncate text-foreground-500">{people.slice(0, 2).join(', ') || 'No learner linked'}{people.length > 2 ? ` +${people.length - 2} more` : ''}</span>
+                </span>
+                <span data-meeting-status className={`block truncate ${compact ? 'text-[10px] leading-3' : 'mt-0.5'} ${row.media.readyCount > 0 ? 'text-emerald-700' : 'text-foreground-500'}`}>{phase === 'upcoming' ? 'Upcoming' : phase === 'in-progress' ? `Within scheduled time · ${recordingLabel(row.media)}` : phase === 'cancelled' ? 'Cancelled' : `Ended · ${recordingLabel(row.media)}`}</span>
               </button>
             </article>;
           })}

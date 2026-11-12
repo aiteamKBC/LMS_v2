@@ -7,6 +7,7 @@ import { AssignmentPdfPreview } from '@/pages/learner/monthly-submission/Assignm
 import { meetingDate } from './model';
 import QualityModal from './QualityModal';
 import QualityQuestions from './QualityQuestions';
+import RecordingSelect from './RecordingSelect';
 import { blankQualityForm, qualityCompletionIssue } from './qualityFormModel';
 import QualityFormCards from './QualityFormCards';
 import QualityEvidenceFiles from './QualityEvidenceFiles';
@@ -157,16 +158,15 @@ export default function QualityReviewDialog({ teachingLecture, eventKey = '', re
           <section aria-label="Review context" className="mb-4 grid gap-3 rounded-xl border border-background-200 bg-white p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <div><p className="text-xs text-foreground-500">{teachingLecture ? 'Tutor observed' : 'Coach / tutor observed'}</p><p className="mt-1 font-semibold">{coach?.name}</p></div>
             <div><p className="text-xs text-foreground-500">Observer</p><p className="mt-1 font-semibold">{review?.reviewer.name ?? context?.observer.name}</p></div>
-            {teachingLecture ? <div><p className="text-xs text-foreground-500">Cohort / group</p><p className="mt-1 font-semibold">{[lecture?.cohort, lecture?.group].filter(Boolean).join(' / ') || 'Whole lecture'}</p></div> : <label className="grid gap-1 text-xs text-foreground-600">Learner{review ? <span className="mt-1 text-sm font-semibold">{review.learner?.name}</span> : <select aria-label="Review learner" className={input} value={learner} onChange={event => {
-              if (!dirty || window.confirm('Discard this unsaved form and choose another learner?')) setLearner(event.target.value);
-            }}><option value="">Choose one learner</option>{context?.learners.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>}</label>}
+            {teachingLecture ? <div><p className="text-xs text-foreground-500">Cohort / group</p><p className="mt-1 font-semibold">{[lecture?.cohort, lecture?.group].filter(Boolean).join(' / ') || 'Whole lecture'}</p></div> : <label className="grid gap-1 text-xs text-foreground-600">Learner{review ? <span className="mt-1 text-sm font-semibold">{review.learner?.name}</span> : <RecordingSelect ariaLabel="Review learner" value={learner} disabled={busy} onChange={value => {
+              if (!dirty || window.confirm('Discard this unsaved form and choose another learner?')) setLearner(value);
+            }} options={[{ value: '', label: 'Choose one learner' }, ...(context?.learners.map(row => ({ value: row.id, label: row.name })) ?? [])]} />}</label>}
             <div className="min-w-0"><p className="text-xs text-foreground-500">Meeting</p><p className="mt-1 break-words text-xs font-medium">{meeting?.title}</p><p className="mt-1 text-xs text-foreground-500">{meeting && meetingDate(meeting.startsAt, timeZone)}</p></div>
           </section>
           <div className="grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
             <label className="grid gap-2 text-xs font-semibold lg:hidden">Review section · {completed} questions answered
-              <select className={input} value={section} onChange={event => setSection(event.target.value)}>
-                {[{ id: 'details', title: detailsTitle }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-              </select>
+              <RecordingSelect ariaLabel="Review section" value={section} onChange={setSection} disabled={busy}
+                options={[{ id: 'details', title: detailsTitle }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => ({ value: item.id, label: item.title }))} />
             </label>
             <nav aria-label="Review sections" className="hidden flex-col gap-1 rounded-xl border border-background-200 bg-white p-2 lg:flex">
               <p className="px-3 py-2 text-xs font-semibold text-foreground-500">{completed} of {template.sections.reduce((sum, item) => sum + item.criteria.length, 0)} criteria rated</p>
@@ -185,7 +185,7 @@ export default function QualityReviewDialog({ teachingLecture, eventKey = '', re
                 </fieldset>
               </section>}
               <QualityEvidenceFiles reviewId={review?.id} files={evidenceFiles} ids={form.attachments?.evidence ?? []} busy={busy} onUpload={attachEvidence} onRemove={(id, key) => update({ ...form, attachments: { ...form.attachments, [key]: (form.attachments?.[key] ?? []).filter(value => value !== id) } })} />
-              <QualityQuestions template={template} sectionId={section} form={form} onChange={update}
+              <QualityQuestions template={template} sectionId={section} form={form} onChange={update} disabled={busy}
                 renderFiles={key => <QualityEvidenceFiles section={key} reviewId={review?.id} files={evidenceFiles} ids={form.attachments?.[key] ?? []} busy={busy} onUpload={attachEvidence} onRemove={(id, group) => update({ ...form, attachments: { ...form.attachments, [group]: (form.attachments?.[group] ?? []).filter(value => value !== id) } })} />}
                 renderImages={(key, label) => <section aria-label={label} className="rounded-xl border border-dashed border-primary-200 bg-white p-4">
                 <h4 className="text-sm font-semibold">{label}</h4><p className="mt-1 text-xs text-foreground-500">Save the draft before uploading. Up to two images here, 20 per review.</p>

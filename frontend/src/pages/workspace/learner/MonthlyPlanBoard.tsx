@@ -53,6 +53,7 @@ export function MonthlyPlanBoard({ payload, kind, learnerId, onRefresh, onMonthC
   const canGoNext = !!payload.navigation.next;
   const shiftMonth = (step: number) => { const month = step < 0 ? payload.navigation.previous : payload.navigation.next; if (month) onMonthChange(month); };
   const summary = payload.summary;
+  const monthlyLogHref = `/learner/monthly-logs/${kind}/${learnerId}/${payload.month}`;
   const differenceIcons = { down: <TrendingDown size={20} />, up: <TrendingUp size={20} />, equal: <Equal size={20} /> };
   const monthMetricCells = [
     { label: 'Required hours', value: summary.requiredHours, icon: <Target size={20} />, tone: undefined },
@@ -92,7 +93,9 @@ export function MonthlyPlanBoard({ payload, kind, learnerId, onRefresh, onMonthC
     <section className={`${board.card} ${board.metrics}`} aria-label="Progress this month">
       {monthMetricCells.map(cell => <div key={cell.label} className={board.metric}>
         <span className={board.metricRing} data-empty={cell.value === 'Not available' || undefined} aria-hidden="true">{cell.value === 'Not available' ? '--' : cell.icon}</span>
-        <div><span>{cell.label}</span><strong data-tone={cell.value === 'Not available' ? undefined : cell.tone}>{cell.value}</strong></div>
+        <div><span>{cell.label}</span><strong data-tone={cell.value === 'Not available' ? undefined : cell.tone}>{cell.value}</strong>
+          {cell.label === 'Achieved hours' && <Link className={board.outlineAction} to={monthlyLogHref}>View monthly log</Link>}
+        </div>
       </div>)}
       <div className={board.metric}>
         <span className={`${board.metricRing} ${board.metricIcon}`} aria-hidden="true"><GraduationCap size={20} /></span>

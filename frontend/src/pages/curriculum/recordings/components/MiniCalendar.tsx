@@ -5,6 +5,8 @@ import {
   parseIsoDate,
   todayIso,
 } from "@/pages/curriculum/recordings/utils";
+import { ChevronLeft, ChevronRight, Clock3 } from 'lucide-react';
+import styles from '@/components/feature/RecordingsMiniCalendar.module.css';
 
 interface MiniCalendarProps {
   compact?: boolean;
@@ -36,69 +38,44 @@ export default function MiniCalendar({
   const cells = getMonthMatrix(viewYear, viewMonth);
 
   return (
-    <div className="rounded-lg border border-background-200 bg-background-50 p-4">
-      {!compact && <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onPrevDay}
-          aria-label="Previous day"
-          className="flex h-8 w-8 items-center justify-center rounded-md border border-background-200 text-foreground-700 transition-colors hover:bg-background-100 hover:text-primary-700"
-        >
-          <i className="ri-arrow-left-s-line text-lg" aria-hidden="true"></i>
-        </button>
-        <button
-          type="button"
-          onClick={onToday}
-          className="flex-1 whitespace-nowrap rounded-md bg-primary-600 px-3 py-1.5 text-sm font-semibold text-background-50 transition-colors hover:bg-primary-700"
-        >
-          Today
-        </button>
-        <button
-          type="button"
-          onClick={onNextDay}
-          aria-label="Next day"
-          className="flex h-8 w-8 items-center justify-center rounded-md border border-background-200 text-foreground-700 transition-colors hover:bg-background-100 hover:text-primary-700"
-        >
-          <i className="ri-arrow-right-s-line text-lg" aria-hidden="true"></i>
-        </button>
-      </div>}
-
-      <div className={`${compact ? '' : 'mt-5'} flex items-center justify-between`}>
-        <p className="font-heading text-sm font-bold text-foreground-950">
+    <div className={styles.root}>
+      <div className={styles.card}>
+      <div className={styles.header}>
+        <p className={styles.heading}>
           {formatMonthLabel(viewYear, viewMonth)}
         </p>
-        <div className="flex items-center gap-1">
+        <div className={styles.monthNavigation}>
           <button
             type="button"
             onClick={() => onMonthChange(-1)}
             aria-label="Previous month"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-600 transition-colors hover:bg-background-100 hover:text-primary-700"
+            className={styles.navigation}
           >
-            <span aria-hidden="true">&lsaquo;</span>
+            <ChevronLeft size={16} aria-hidden="true" />
           </button>
           <button
             type="button"
             onClick={() => onMonthChange(1)}
             aria-label="Next month"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-600 transition-colors hover:bg-background-100 hover:text-primary-700"
+            className={styles.navigation}
           >
-            <span aria-hidden="true">&rsaquo;</span>
+            <ChevronRight size={16} aria-hidden="true" />
           </button>
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-7 gap-1">
+      <div className={styles.weekdays}>
         {WEEKDAY_SHORT.map((day) => (
           <span
             key={day}
-            className="flex h-7 items-center justify-center text-[11px] font-semibold uppercase tracking-wide text-foreground-400"
+            className={styles.weekday}
           >
-            {day.slice(0, 1)}
+            {day.slice(0, 2)}
           </span>
         ))}
       </div>
 
-      <div className="mt-1 grid grid-cols-7 gap-1">
+      <div className={styles.days}>
         {cells.map((iso) => {
           const { month } = parseIsoDate(iso);
           const inMonth = month === viewMonth;
@@ -113,23 +90,16 @@ export default function MiniCalendar({
               onClick={() => onSelectDate(iso)}
               aria-current={isSelected ? "date" : undefined}
               aria-label={`Select ${iso}`}
-              className={`relative flex h-8 w-8 items-center justify-center rounded-md text-sm transition-colors ${
-                isSelected
-                  ? "bg-primary-600 font-semibold text-background-50"
-                  : inMonth
-                    ? "text-foreground-800 hover:bg-primary-100 hover:text-primary-800"
-                    : "text-foreground-300 hover:bg-background-100"
-              }`}
+              className={`${styles.day} ${inMonth ? '' : styles.outside}`}
             >
               {parseIsoDate(iso).day}
               {isToday && !isSelected ? (
-                <span className="absolute inset-x-1.5 bottom-0.5 h-0.5 rounded-full bg-primary-500"></span>
+                <span aria-hidden="true" className={styles.todayMark}></span>
               ) : null}
               {hasLecture ? (
                 <span
-                  className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${
-                    isSelected ? "bg-background-50" : "bg-primary-500"
-                  }`}
+                  aria-hidden="true"
+                  className={styles.dot}
                 ></span>
               ) : null}
             </button>
@@ -137,31 +107,56 @@ export default function MiniCalendar({
         })}
       </div>
 
-      <div className="mt-4 space-y-2 border-t border-background-200 pt-4">
-        <p className="text-[11px] text-foreground-500">A purple dot marks a day with a lecture.</p>
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-400">
+      {!compact && <div className={styles.dayNavigation}>
+        <button
+          type="button"
+          onClick={onPrevDay}
+          aria-label="Previous day"
+          className={styles.navigation}
+        >
+          <ChevronLeft size={16} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={onToday}
+          className={styles.today}
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          onClick={onNextDay}
+          aria-label="Next day"
+          className={styles.navigation}
+        >
+          <ChevronRight size={16} aria-hidden="true" />
+        </button>
+      </div>}
+      </div>
+      <div className={`${styles.card} ${styles.legend}`}>
+        <p className={styles.note}>A purple dot marks a day with a lecture.</p>
+        <p className={styles.legendTitle}>
           Recording status
         </p>
-        <ul className="space-y-1.5 text-xs text-foreground-700">
-          <li className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-accent-500"></span> Ready to download
+        <ul className={styles.statusList}>
+          <li className={styles.status}>
+            <span aria-hidden="true" className={`${styles.statusDot} bg-accent-500`}></span> Ready to download
           </li>
-          <li className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-amber-500"></span> Processing
+          <li className={styles.status}>
+            <span aria-hidden="true" className={`${styles.statusDot} bg-amber-500`}></span> Processing
           </li>
-          <li className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-rose-500"></span> Not recorded
+          <li className={styles.status}>
+            <span aria-hidden="true" className={`${styles.statusDot} bg-rose-500`}></span> Not recorded
           </li>
-          <li className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-rose-500"></span> Archive failed
+          <li className={styles.status}>
+            <span aria-hidden="true" className={`${styles.statusDot} bg-rose-700`}></span> Archive failed
           </li>
-          <li className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-secondary-500"></span> Awaiting sync
+          <li className={styles.status}>
+            <span aria-hidden="true" className={`${styles.statusDot} bg-secondary-500`}></span> Awaiting sync
           </li>
         </ul>
-        <p className="flex items-center gap-1.5 pt-1 text-[11px] text-foreground-500">
-          <i className="ri-time-line" aria-hidden="true"></i>
-          All times shown in {timeZone}
+        <p className={styles.timeZone}>
+          <Clock3 size={13} aria-hidden="true" /><span>All times shown in {timeZone}</span>
         </p>
       </div>
     </div>

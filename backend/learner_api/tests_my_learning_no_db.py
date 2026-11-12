@@ -220,6 +220,54 @@ class MyLearningAggregateTests(SimpleTestCase):
                 self.assertEqual(visible, [courses[5], courses[6]])
                 self.assertEqual(courses, original)  # historical facts are read-only
 
+    def test_compact_saved_progress_keeps_latest_non_quiz_times_for_resume_only(self):
+        from datetime import datetime, timezone
+        from .weekly_learning import _progress
+        latest = datetime(2026, 11, 11, 10, tzinfo=timezone.utc)
+        older = datetime(2026, 10, 1, 10, tzinfo=timezone.utc)
+        profile = MagicMock()
+        query = profile.progress_entries.filter.return_value.exclude.return_value
+        query.values_list.return_value = [
+            ('component', None, 'C1', None, None, None, latest),
+            ('component', None, 'C1', None, None, None, older),
+            ('video', None, 'VIDEO', None, None, older, latest),
+        ]
+        quizzes, videos, progress = _progress(profile, active_only=True, include_activity_times=True)
+        content = native([component(), component('VIDEO', type='video')])
+        content.update(quizAttempts=quizzes, videoProgress=videos, componentProgress=progress)
+        cards, _ = self.cards(content)
+        self.assertEqual(cards[0]['lastActivityAt'], latest.isoformat())
+        self.assertEqual(progress[0]['submittedAt'], latest.isoformat())
+        self.assertEqual(videos[0]['submittedAt'], latest.isoformat())
+        self.assertNotIn('submittedAt', _progress(profile, active_only=True)[2][0])
+
+    def test_imported_course_resume_uses_owned_saved_work_not_catalogue_creation(self):
+        course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
+        definitions = [{'source_course_ref': '50', 'source_activity_id': 'material:7',
+                        'source_activity_title': 'Owned lesson', 'source_payload': {'created_at': '2026-12-01T10:00:00Z'}}]
+        record = {'id': 1, 'accepted': False, 'actual_seconds': 0, 'activity_status': 'in_progress',
+                  'reporting_started_at': '2026-11-11T10:00:00Z', 'sources': [{'source_system': 'old_lms',
+                      'source_course_ref': '50', 'source_activity_id': 'material:7'}]}
+        with patch.object(canonical, 'query', return_value=definitions):
+            rows, done, started, hours, _ = learning.course_facts({'id': 9}, [record], [course])
+        cards, _ = self.cards(native(), [course], rows, done, started, hours, records=[record])
+        self.assertEqual(next(card for card in cards if card['source'] == 'legacy')['lastActivityAt'], '2026-11-11T10:00:00+00:00')
+
+    def test_resume_time_follows_saved_work_not_uploads_or_automatic_attendance(self):
+        content = native([component('START'), component('NEXT'), component('LIVE', type='live_session', attendanceCompleted=True)])
+        content['componentProgress'] = [
+            {'componentId': 'START', 'kind': 'component', 'submittedAt': '2026-11-11T12:30:00+03:00'},
+            {'componentId': 'NEXT', 'kind': 'component', 'passed': False, 'startedAt': '2026-11-11T10:00:00Z'},
+            {'componentId': 'LIVE', 'kind': 'component', 'submittedAt': '2026-11-12T10:00:00Z',
+             'timeTrackingSource': 'verified_teams_attendance'},
+            {'componentId': 'ANOTHER-MODULE', 'submittedAt': '2026-12-01T10:00:00Z'},
+        ]
+        cards, summary = self.cards(content)
+        self.assertEqual(cards[0]['lastActivityAt'], '2026-11-11T10:00:00+00:00')
+        self.assertEqual(summary['current']['completed'], 2)
+        self.assertEqual(learning.native_activity_times(content)[('component', 'START')], '2026-11-11T09:30:00+00:00')
+        self.assertIsNone(learning.last_activity_at({'created_at': '2026-11-12T10:00:00Z'}))
+
     def test_next_title_uses_the_whole_delivery_week_not_an_individual_material_date(self):
         def item(title, when, placement, completed=False):
             return {'title': title, 'completed': completed, 'position': 1,

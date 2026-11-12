@@ -4,6 +4,7 @@ Weekly HTTP routes use dashboard_weekly and coach_api.weekly_learning instead.
 This helper retains the existing content/template readers used by other features.
 """
 import re
+from datetime import timezone
 
 
 
@@ -135,7 +136,7 @@ def _weekly_component(c):
             if value is not None or key in {"module", "week", "component", "expectedOtjh"}}
 
 
-def _progress(profile, *, active_only=False):
+def _progress(profile, *, active_only=False, include_activity_times=False):
     """The completion facts to_learner_detail splits from training_plan_progress."""
     if profile is None:
         return [], [], []
@@ -143,6 +144,19 @@ def _progress(profile, *, active_only=False):
     rows = entries.exclude(kind="activity_event").values_list(
         "kind", "passed", "component_ref", "quiz_ref", "grade", "started_at", "submitted_at")
     quizzes, videos, components = [], {}, {}
+    latest_saved = {}
+    def save(bucket, key, item, started_at, submitted_at):
+        if include_activity_times:
+            # The compact completion projection used to drop non-quiz dates.
+            # My Learning also needs the latest saved attempt as its resume anchor.
+            at = max(((value if value.tzinfo else value.replace(tzinfo=timezone.utc)).timestamp()
+                      for value in (started_at, submitted_at) if value is not None), default=0)
+            if latest_saved.get(key, -1) > at:
+                return
+            latest_saved[key] = at
+            item.update(startedAt=started_at.isoformat() if started_at else None,
+                        submittedAt=submitted_at.isoformat() if submitted_at else '')
+        bucket[key] = item
     for kind, passed, component_ref, quiz_ref, grade, started_at, submitted_at in rows:
         if kind == "quiz":
             # Every attempt: a failed one still marks the quiz "in progress".
@@ -153,9 +167,9 @@ def _progress(profile, *, active_only=False):
                 "submittedAt": submitted_at.isoformat() if submitted_at else "",
             })
         elif kind == "video":
-            videos[(component_ref, passed)] = {"kind": kind, "componentId": component_ref, "passed": passed}
+            save(videos, (component_ref, passed), {"kind": kind, "componentId": component_ref, "passed": passed}, started_at, submitted_at)
         elif kind == "component" or (kind == "quiz_reading" and submitted_at):
-            components[(kind, component_ref, passed)] = {"kind": kind, "componentId": component_ref, "passed": passed}
+            save(components, (kind, component_ref, passed), {"kind": kind, "componentId": component_ref, "passed": passed}, started_at, submitted_at)
     return quizzes, list(videos.values()), list(components.values())
 
 
@@ -208,7 +222,7 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
     profile = owned_profile if owned_profile is not None else (learner_profile_for_source(source, pk, heal=False) if progress is None else None)
     with projection_stage('native_progress'):
         quiz_attempts, video_progress, component_progress = progress if progress is not None else _progress(
-            profile, **({'active_only': True} if preserve_legacy else {}))
+            profile, **({'active_only': True, 'include_activity_times': True} if preserve_legacy else {}))
     detail = {"components": components, "quizAttempts": quiz_attempts}
     # Compact projections need completed credit only, as learner-detail's summary.
     if progress is None:

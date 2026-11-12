@@ -364,6 +364,28 @@ def session_instant(value):
     return (at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at).astimezone(timezone.utc)
 
 
+def last_activity_at(record):
+    """Saved learner work only; authored/upload dates never anchor a resume."""
+    if not record.get('startedAt') and record.get('timeTrackingSource') in {'verified_teams_attendance', 'manual_attendance'}:
+        return None
+    instants = [at for key in ('startedAt', 'submittedAt', 'started_at', 'submitted_at',
+                              'reporting_started_at', 'reporting_ended_at')
+                if (at := session_instant(record.get(key))) is not None]
+    return max(instants).isoformat() if instants else None
+
+
+def native_activity_times(native):
+    times = {}
+    for bucket in ('quizAttempts', 'videoProgress', 'componentProgress'):
+        for record in native.get(bucket, []):
+            key = ('component', str(record['componentId'])) if record.get('componentId') else (
+                ('quiz', str(record['quizId'])) if record.get('quizId') is not None else None)
+            at = last_activity_at(record)
+            if key and at:
+                times[key] = max(times.get(key, ''), at)
+    return times
+
+
 def course_facts(owner, records, courses):
     """Minimal catalogue identities for exact denominator/lineage and card search.
 
@@ -419,6 +441,9 @@ def course_facts(owner, records, courses):
             course = str(definition['source_course_ref'])
             key = (course, definition['source_activity_id'])
             retain_learner_schedule(definition, record, completed=is_done)
+            at = last_activity_at(record) if is_started or is_done else None
+            if at:
+                definition['_last_activity_at'] = max(definition.get('_last_activity_at', ''), at)
             if is_started:
                 started.add(key)
             record_ids[key].add(record_id)
@@ -506,8 +531,10 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             'source_activity_id': int(ident) if ident.isdigit() else 0, 'catalogue_kind': kind,
             'completed': (course, ref) in done, 'started': (course, ref) in started,
             '_course_ref': course, 'title': d['source_activity_title'], 'section_title': d.get('source_section_title'),
-            'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0})
+            'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0,
+            'lastActivityAt': d.get('_last_activity_at')})
     native_component_count = len(native.get('components', []))
+    activity_times = native_activity_times(native) if search is None else {}
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
     from .replacement_learning import project_approved_learning, approved_retained_components
     components = project_approved_learning(components, metadata['replacement_settings'], metadata.get('progress_transfers', []))
@@ -579,7 +606,10 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                     placement.update(month=raw[:7],week_start=monday.isoformat(),week_end=(monday+timedelta(days=6)).isoformat())
             if delivery:
                 placement['delivery_week'] = delivery
+        saved_at = max(activity_times.get(('component', str(c.get('componentId'))), ''),
+                       activity_times.get(('quiz', str((c.get('quizMeta') or {}).get('quizId'))), '')) or None
         subject['_items'].append(dict(id=ident, title=c.get('component') or '', completed=native_done(c, native) if search is None else False,
+            lastActivityAt=saved_at,
             position=index, week=c.get('week'), weekId=c.get('weekId'), schedule=placement, component=c,
             started=(c.get('componentId') in attempted_components or str((c.get('quizMeta') or {}).get('quizId')) in attempted_quizzes) if c.get('isQuiz') else False))
     titles = {s['title'].strip().casefold() for s in by_id.values()} | skipped_titles
@@ -632,6 +662,9 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             finalTestPassed=any(i.get('component', {}).get('isQuiz') and 'final' in i['title'].lower() and native_done({k:v for k,v in i['component'].items() if k not in ('previousLearning','attendanceCompleted')}, native) for i in items),
             planModule={k: module.get(k) for k in ('start_date','end_date','tutor_name','total_otjh','educational_session_count','programme_name','cohort_name','group_name')} if module else None,
             actualHours=subject.pop('_hours',None) if subject['source'] == 'legacy' or subject.get('replacementCourseRef') else progress.get(subject.get('moduleId'), {}).get('hours', {}).get('actual'))
+        saved_at = max((i.get('lastActivityAt') or '' for i in items), default='')
+        if saved_at:
+            subject['lastActivityAt'] = saved_at
         demo = demo_credit(next((course for course in courses if subject['id'] == f"legacy:{course['source_course_ref']}"), None))
         if demo:
             subject.update(demo, status='In progress' if demo['progress'] else 'Upcoming')
@@ -988,6 +1021,12 @@ def read_module(source, kind, owner, subject_id):
     course_refs = [str(owned[subject_id]['source_course_ref'])] if subject_id.startswith('legacy:') else []
     activity = canonical.source_subjects(source.pk,summarize_activities,owner=owner,records=records,
         include_totals=False,course_ids=course_refs,module_ids=[]) if course_refs else None
+    if activity:
+        record_times = {str(record['id']): last_activity_at(record) for record in records}
+        for item in activity['activities']:
+            saved_at = max((record_times.get(str(ref)) or '' for ref in item.get('record_ids', [])), default='')
+            if saved_at:
+                item['last_activity_at'] = saved_at
     demo_course = owned.get(subject_id)
     if activity and (demo_course or {}).get('demo_progress'):
         excluded = set(demo_course['demo_progress']['excluded_activity_refs'])

@@ -11,16 +11,18 @@ class BootstrapTests(SimpleTestCase):
         cursor = MagicMock()
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value = cursor
+        source = SimpleNamespace()
         with patch.object(header, 'connections', {'enrolment': connection}), \
              patch.object(header, '_effective_plan_ids', return_value=['M']), \
              patch.object(header.canonical_learning, 'curriculum_module_ids_for', return_value=[]), \
              patch.object(header, 'rows', return_value=[]):
-            header.dashboard_modules(object(), {}, include_coach=False)
+            header.dashboard_modules(source, {}, include_coach=False)
         sql, params = cursor.execute.call_args.args
         self.assertNotIn('coach_name', sql)
         # No coach contact join; the module's group name is read through its id.
         self.assertNotIn('JOIN curriculum.groups', sql)
         self.assertEqual(params, [['M']])
+        self.assertEqual(source._dashboard_assigned_ids, {'M'})
 
     def test_canonical_routes_do_not_require_or_obey_legacy_version_negotiation(self):
         from django.urls import resolve
