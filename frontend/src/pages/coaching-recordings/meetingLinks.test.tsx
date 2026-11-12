@@ -49,8 +49,8 @@ describe('Meeting deep links', () => {
     const drawer = within(await screen.findByRole('dialog', { name: 'Meeting details' }));
     expect(await drawer.findByText(/no saved AI report is linked/)).toBeInTheDocument();
     expect(loadLinkedCoachingMeeting).toHaveBeenCalledWith(id, '2026-10-20', 'UTC', expect.any(AbortSignal), false);
-    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveValue('week');
-    expect(screen.getByRole('button', { name: 'All meetings' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveTextContent('Week');
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('All meetings');
     expect(loadCoachingCalendar).toHaveBeenCalledOnce(); expect(loadCoachingSession).toHaveBeenCalledOnce(); expect(loadSavedCoachingEvidence).toHaveBeenCalledOnce();
   });
   it('keeps an unavailable link explicit and closes it without changing the saved filters', async () => {

@@ -26,6 +26,7 @@ import {
   ExternalLink,
   FileSearch,
   FileText,
+  Film,
   Flag,
   Folder,
   FolderOpen,
@@ -164,6 +165,10 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   if (id === 'admin-inclusion' || id === 'coach-inclusion') return HeartPulse;
   if (id === 'learner-onboarding') return Users;
   if (id === 'learner-compliance-documents') return ShieldCheck;
+  if (id === 'curriculum-coaching-recordings') return Film;
+  if (id === 'curriculum-recordings-hub') return LayoutDashboard;
+  if (id === 'curriculum-tutor-recordings') return Presentation;
+  if (id === 'curriculum-coach-meetings') return UserCog;
   if (/clipboard/.test(sourceIcon.toLowerCase())) return ClipboardList;
   // Home is a house; Dashboard is the grid. They shared one branch, so the two
   // rows sat one above the other drawing the identical icon -- different
@@ -1010,7 +1015,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
   const activeChildIndex = item.children?.findIndex(child => isActive(child.href, child.matchPaths)) ?? -1;
 
   return (
-    <div>
+    <div data-nav-group={item.id}>
       {presentation === 'tiles' ? (
         <div className="mb-3 flex min-h-12 items-center gap-2.5 rounded-lg border border-white/90 bg-brand-accent px-3 py-2 text-[13px] font-semibold leading-snug text-white shadow-sm">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />

@@ -8,6 +8,7 @@ import { GlobalSearch } from '@/components/feature/GlobalSearch';
 import { SidebarIcon, type SidebarNavItem } from '@/components/feature/Sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import styles from './EnrolmentWorkspace.module.css';
+import '@/components/feature/WorkspaceBreadcrumbs.css';
 import { EnrolmentTutorial } from '../help/EnrolmentTutorial';
 import { EnrolmentHelpLauncher } from '../help/EnrolmentHelpLauncher';
 import { tutorialForLocation } from '../help/tutorials';
@@ -129,12 +130,15 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
         pageIcon={activeHref ? <SidebarIcon id={destinations.find(item => item.href === activeHref)?.id} label={pageTitle} /> : undefined}
         onToggleMobileSidebar={() => setMobileOpen(value => !value)} mobileSidebarOpen={mobileOpen} mobileMenuButtonRef={menuRef}
         onOpenSearch={() => setSearchOpen(true)} />}
-      {!hidePageChrome && (!hideBreadcrumbs || showBackButton) && <div className={styles.breadcrumbs}>
-        {showBackButton && <button type="button" aria-label="Back to previous page" onClick={() => {
+      {!hidePageChrome && (!hideBreadcrumbs || showBackButton) && <div className={`workspace-breadcrumbs ${styles.breadcrumbs}`}>
+        {showBackButton && <button className="kbc-workspace-back" type="button" aria-label="Back to previous page" onClick={() => {
           if (typeof window.history.state?.idx === 'number' && window.history.state.idx > 0) navigate(-1);
           else navigate(location.pathname === '/users' ? '/' : backFallbackHref, { replace: true });
         }}><ArrowLeft size={15} aria-hidden="true" />Back</button>}
-        {!hideBreadcrumbs && <nav aria-label="Breadcrumb"><Link to="/users">{workspaceLabel}</Link><ChevronRight size={13} aria-hidden="true" /><span>{breadcrumbCurrentLabel || pageTitle}</span></nav>}
+        {!hideBreadcrumbs && <nav aria-label="Breadcrumb">
+          <span className="workspace-breadcrumb-step is-complete"><Link to="/users">{workspaceLabel}</Link><ChevronRight size={13} aria-hidden="true" /></span>
+          <span className="workspace-breadcrumb-step is-current"><span aria-current="page">{breadcrumbCurrentLabel || pageTitle}</span></span>
+        </nav>}
       </div>}
       <main className={`workspace-main ${styles.main}`}>{children}{pageGuide && <div className={tutorialStyles.launcherSpacer} aria-hidden="true" />}</main>
       {/* Inside the content so the mobile navigation (inert content, backdrop) covers it. */}

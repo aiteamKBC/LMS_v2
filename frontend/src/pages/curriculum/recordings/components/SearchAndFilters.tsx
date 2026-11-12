@@ -1,7 +1,9 @@
-import { Search, X, PlayCircle, Layers, Filter, ChevronDown } from 'lucide-react';
+import { Search, X, PlayCircle, Layers, Filter } from 'lucide-react';
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Lecture, RecordingFilter } from "@/pages/curriculum/recordings/types";
 import { formatCompactDate, lectureStatusSummary } from "@/pages/curriculum/recordings/utils";
+import FilterSelect from './FilterSelect';
+import styles from '../Recordings.module.css';
 
 interface SearchAndFiltersProps {
   query: string;
@@ -54,9 +56,9 @@ export default function SearchAndFilters({
 
   return (
     <div className="rounded-lg border border-background-200 bg-background-50 p-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+      <div className={styles.searchRow}>
         <div
-          className="relative flex-1"
+          className="relative min-w-0 flex-1"
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
         >
@@ -126,39 +128,11 @@ export default function SearchAndFilters({
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="relative inline-flex items-center">
-            <span className="sr-only">Filter by programme</span>
-            <Layers size={14} className="pointer-events-none absolute left-3 text-base text-foreground-500" aria-hidden="true" />
-            <select
-              value={programme}
-              onChange={(event) => onProgrammeChange(event.target.value)}
-              className="w-full appearance-none rounded-md border border-background-200 bg-background-50 py-2.5 pl-9 pr-8 text-sm text-foreground-800 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200"
-            >
-              <option value="all">All programmes</option>
-              {programmes.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={14} className="pointer-events-none absolute right-2.5 text-base text-foreground-500" aria-hidden="true" />
-          </label>
-
-          <label className="relative inline-flex items-center">
-            <span className="sr-only">Filter by recording status</span>
-            <Filter size={14} className="pointer-events-none absolute left-3 text-base text-foreground-500" aria-hidden="true" />
-            <select
-              value={statusFilter}
-              onChange={(event) => onStatusFilterChange(event.target.value as RecordingFilter)}
-              className="w-full appearance-none rounded-md border border-background-200 bg-background-50 py-2.5 pl-9 pr-8 text-sm text-foreground-800 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200"
-            >
-              <option value="all">All recordings</option>
-              <option value="ready">Ready to download</option>
-              <option value="attention">Needs attention</option>
-            </select>
-            <ChevronDown size={14} className="pointer-events-none absolute right-2.5 text-base text-foreground-500" aria-hidden="true" />
-          </label>
+        <div className={styles.searchControls}>
+          <FilterSelect ariaLabel="Filter by programme" value={programme} onChange={onProgrammeChange} icon={<Layers size={15} />}
+            searchPlaceholder="Search programmes..." options={[{ value: 'all', label: 'All programmes' }, ...programmes.map(value => ({ value, label: value }))]} />
+          <FilterSelect ariaLabel="Filter by recording status" value={statusFilter} onChange={value => onStatusFilterChange(value as RecordingFilter)} icon={<Filter size={15} />}
+            options={[{ value: 'all', label: 'All recordings' }, { value: 'ready', label: 'Ready to download' }, { value: 'attention', label: 'Needs attention' }]} />
           {actions}
         </div>
       </div>

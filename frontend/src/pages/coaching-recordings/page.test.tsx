@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { loadCoachingCalendar, loadCoachingSession, loadSavedCoachingEvidence, loadCoachLearners, type CoachingCalendar, type CoachingSessionDetails } from '@/api/coachingRecordings';
@@ -35,6 +36,16 @@ const fixture = (): CoachingCalendar => ({
 const mount = (workspace: 'coach' | 'curriculum' = 'curriculum') => render(<MemoryRouter initialEntries={['/?coach=one%40example.invalid']}><CoachingRecordingsPage workspace={workspace} /></MemoryRouter>);
 const details = (): CoachingSessionDetails => ({ eventKey: 'mcr:1', media: fixture().meetings[0].media, partial: false,
   attendance: { state: 'available', reportCount: 1, rows: [{ name: 'Verified Participant', status: 'attended', role: 'learner', totalAttendanceSeconds: 600 }] } });
+
+const selectOption = (name: string | RegExp, label: string) => {
+  fireEvent.click(screen.getByRole('combobox', { name }));
+  fireEvent.click(screen.getByRole('option', { name: label }));
+};
+
+const selectMeetingStatus = (name: string) => {
+  fireEvent.click(screen.getByRole('combobox', { name: 'Meeting status' }));
+  fireEvent.click(screen.getByRole('option', { name }));
+};
 
 describe('Coaching recordings calendar', () => {
   it('keeps ended MCM, PR, Support and Other ready regardless of native booking or AI availability', async () => {
@@ -114,28 +125,32 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount();
     await screen.findByRole('button', { name: /^View Monthly coaching appointment on / });
-    expect(screen.getByRole('button', { name: 'Ready to action' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('Ready to action');
     const types = screen.getByRole('combobox', { name: 'Meeting type' });
-    expect(types).toHaveValue('all');
-    expect(within(types).getAllByRole('option').map(option => option.textContent)).toEqual([
+    expect(types).toHaveTextContent('All types');
+    fireEvent.click(types);
+    const typeOptions = within(screen.getByRole('listbox'));
+    expect(typeOptions.getAllByRole('option').map(option => option.textContent)).toEqual([
       'All types', 'MCM', 'PR (Progress Review)', 'Student Support', 'Other', 'Lectures / subjects',
     ]);
-    expect(within(types).getByRole('group', { name: 'MCM & PR' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
+    expect(typeOptions.getByText('MCM & PR')).toBeInTheDocument();
+    expect(typeOptions.getByText('Other meetings')).toBeInTheDocument();
+    fireEvent.click(types);
+    selectMeetingStatus('All meetings');
     fireEvent.click(screen.getByRole('button', { name: 'Hide lectures / subjects' }));
     const calendar = within(screen.getByRole('region', { name: 'Coach meeting calendar' }));
     const titles = data.meetings.slice(0, 5).map(row => row.title!);
     for (const title of titles) expect(calendar.getByRole('button', { name: `View ${title} on 2026-10-20` })).toBeInTheDocument();
     expect(calendar.queryByRole('button', { name: /^View Subject lecture appointment on / })).not.toBeInTheDocument();
-    fireEvent.change(types, { target: { value: 'PR' } });
+    selectOption('Meeting type', 'PR (Progress Review)');
     fireEvent.click(calendar.getByRole('button', { name: /^View Progress review appointment on / }));
     expect(within(screen.getByRole('dialog', { name: 'Meeting details' })).getByText('PR (Progress Review)')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close meeting details' }));
-    fireEvent.change(types, { target: { value: 'OTHER' } });
+    selectOption('Meeting type', 'Other');
     expect(calendar.getByRole('button', { name: /^View Team planning appointment on / })).toBeInTheDocument();
     expect(calendar.getByRole('button', { name: /^View Catch-up appointment on / })).toBeInTheDocument();
     expect(calendar.queryByRole('button', { name: /^View Monthly coaching appointment on / })).not.toBeInTheDocument();
-    fireEvent.change(types, { target: { value: 'all' } });
+    selectOption('Meeting type', 'All types');
     fireEvent.click(screen.getByRole('button', { name: 'Show lectures / subjects' }));
     for (const row of data.meetings) expect(calendar.getByRole('button', { name: `View ${row.title} on 2026-10-20` })).toBeInTheDocument();
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
@@ -151,13 +166,13 @@ describe('Coaching recordings calendar', () => {
     expect(screen.getByRole('button', { name: /^View Synthetic subject lecture on / })).toBeInTheDocument();
     expect(screen.getByText('Lectures included in Ready to action')).toBeInTheDocument();
     const count = vi.mocked(loadCoachingCalendar).mock.calls.length;
-    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
+    selectMeetingStatus('All meetings');
     fireEvent.click(screen.getByRole('button', { name: 'Hide lectures / subjects' }));
     expect(screen.queryByRole('button', { name: /^View Synthetic subject lecture on / })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show lectures / subjects' }));
     expect(await screen.findByRole('button', { name: /^View Synthetic subject lecture on / })).toBeInTheDocument();
     expect(vi.mocked(loadCoachingCalendar)).toHaveBeenCalledTimes(count);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Meeting type' }), { target: { value: 'OTHER' } });
+    selectOption('Meeting type', 'Other');
     expect(screen.queryByRole('button', { name: /^View Synthetic subject lecture on / })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^View Monthly Coaching Meeting on / })).not.toBeInTheDocument();
   });
@@ -171,8 +186,8 @@ describe('Coaching recordings calendar', () => {
         dateBasis: 'record-updated', sources: ['lms'], recordUpdatedAt: '2026-10-20T11:00:00Z' },
     ];
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
-    mount(); await screen.findByRole('button', { name: 'Cancelled' });
-    fireEvent.click(screen.getByRole('button', { name: 'Cancelled' }));
+    mount(); await screen.findByRole('combobox', { name: 'Meeting status' });
+    selectMeetingStatus('Cancelled');
     fireEvent.click(await screen.findByRole('button', { name: /^View Monthly Coaching Meeting on / }));
     expect(await screen.findByText('Cancellation source: Microsoft + LMS')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close meeting details' }));
@@ -210,7 +225,7 @@ describe('Coaching recordings calendar', () => {
     await act(async () => publish(partial));
     expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Calendar loading progress' })).toHaveAttribute('value', '1');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Learner' }), { target: { value: '1' } });
+    selectOption('Learner', 'Learner One');
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
     await act(async () => complete(fixture()));
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
@@ -223,7 +238,10 @@ describe('Coaching recordings calendar', () => {
       return new Promise(resolve => { complete = resolve; });
     });
     mount();
-    expect(await screen.findByRole('option', { name: 'Coach One' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Coach' })).toHaveTextContent('Coach One'));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Coach' }));
+    expect(screen.getByRole('option', { name: 'Coach One' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Coach' }));
     expect(screen.getByRole('region', { name: 'Loading calendar preview' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Monthly Coaching Meeting' })).not.toBeInTheDocument();
     await act(async () => complete(fixture()));
@@ -259,15 +277,16 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount();
     await screen.findByRole('heading', { name: 'Meeting 0' });
-    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: 'one@example.invalid' } });
+    selectOption(/^Coach$/, 'Coach One');
     await screen.findByRole('region', { name: 'Hourly coach meeting calendar' });
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Calendar period' }), { target: { value: 'month' } });
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Calendar period' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Month' }));
     await screen.findByText(/Showing 30 of 45 matching meetings/);
     const list = await screen.findByRole('region', { name: 'Coaching meetings' });
     fireEvent.click(within(list).getByRole('button', { name: 'Show more meetings (15 remaining)' }));
     expect(within(list).getByText(/45 meetings match the filters/)).toBeInTheDocument();
     fireEvent.click(within(list).getByRole('button', { name: '+42 more · View day' }));
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveValue('day'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveTextContent('Day'));
     const dayList = await screen.findByRole('region', { name: 'Coaching meetings' });
     await waitFor(() => expect(within(dayList).getAllByRole('article')).toHaveLength(45));
     expect(within(dayList).queryByText(/Showing 30/)).not.toBeInTheDocument();
@@ -282,17 +301,18 @@ describe('Coaching recordings calendar', () => {
     expect(screen.queryByRole('region', { name: 'Coaching meetings' })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search coaches' }), { target: { value: 'Two' } });
     expect(screen.queryByRole('option', { name: 'Coach One' })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'two@example.invalid' } });
+    selectOption('Coach', 'Coach Two');
     await waitFor(() => expect(loadCoachingCalendar).toHaveBeenCalledTimes(2));
     expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('two@example.invalid');
   });
 
-  it('shows Ready to action by default and links to the lecture library', async () => {
+  it('shows Ready to action by default without the recording library buttons', async () => {
     mount();
     expect(await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Progress Review' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Lecture recordings' })).toHaveAttribute('href', '/curriculum/recordings');
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('Ready to action');
+    expect(screen.queryByRole('navigation', { name: 'Recording libraries' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Lecture recordings' })).not.toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Coaching meetings' })).getByText('Ended · Recording available')).toBeInTheDocument();
   });
 
@@ -300,55 +320,100 @@ describe('Coaching recordings calendar', () => {
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
     expect(screen.getByRole('button', { name: 'Coach learners' })).toBeEnabled();
     expect(loadCoachLearners).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'one@example.invalid' } });
+    selectOption('Coach', 'Coach One');
     await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
     fireEvent.click(screen.getByRole('button', { name: 'Coach learners' }));
     const dialog = await screen.findByRole('dialog', { name: 'Coach One — learners' });
     await within(dialog).findByRole('heading', { name: 'Learner One' });
     expect(vi.mocked(loadCoachLearners).mock.lastCall?.[0].coachEmail).toBe('one@example.invalid');
     fireEvent.click(within(dialog).getByRole('button', { name: 'View learner meetings' }));
-    expect(screen.getByRole('combobox', { name: 'Learner' })).toHaveValue('1');
+    expect(screen.getByRole('combobox', { name: 'Learner' })).toHaveTextContent('Learner One');
     expect(loadCoachingCalendar).toHaveBeenCalledOnce();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'All meetings', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('All meetings');
   });
 
   it('switches to upcoming meetings and filters matching status', async () => {
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
-    fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
+    selectMeetingStatus('Upcoming');
     expect(screen.getByRole('heading', { name: 'Progress Review' })).toBeInTheDocument();
-    fireEvent.change(screen.getByRole('combobox', { name: 'LMS match' }), { target: { value: 'matched' } });
+    selectOption('LMS match', 'Matched to LMS');
     expect(screen.queryByRole('heading', { name: 'Progress Review' })).not.toBeInTheDocument();
     expect(screen.getByText(/No meetings match/)).toBeInTheDocument();
   });
 
   it('narrows the learner picker to the selected coach and resets the learner on coach change', async () => {
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Learner' }), { target: { value: '1' } });
+    selectOption('Learner', 'Learner One');
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('combobox', { name: 'Learner' })).toHaveValue('1');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'two@example.invalid' } });
+    expect(screen.getByRole('combobox', { name: 'Learner' })).toHaveTextContent('Learner One');
+    selectOption('Coach', 'Coach Two');
     await waitFor(() => expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0]).toMatchObject({ coachEmail: 'two@example.invalid' }));
-    expect(screen.getByRole('combobox', { name: 'Learner' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Learner' })).toHaveTextContent('All learners');
+    fireEvent.click(screen.getByRole('combobox', { name: 'Learner' }));
     await screen.findByRole('option', { name: 'Learner Two' });
-    expect(within(screen.getByRole('combobox', { name: 'Learner' })).queryByRole('option', { name: 'Learner One' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('listbox')).queryByRole('option', { name: 'Learner One' })).not.toBeInTheDocument();
   });
 
   it('selects a calendar day and requests that day only', async () => {
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
-    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: 'one@example.invalid' } });
+    selectOption(/^Coach$/, 'Coach One');
     await screen.findByRole('region', { name: 'Hourly coach meeting calendar' });
     fireEvent.click(screen.getByRole('button', { name: 'Show meetings on 2026-10-22' }));
     await waitFor(() => expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0]).toMatchObject({ start: '2026-10-22', end: '2026-10-22' }));
-    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveValue('day');
+    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveTextContent('Day');
+  });
+
+  it.each(['curriculum', 'coach'] as const)('keeps date and period navigation working with themed controls in %s', async workspace => {
+    const user = userEvent.setup();
+    mount(workspace);
+    await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
+    const date = screen.getByRole('combobox', { name: 'Selected date' });
+    expect(date).toHaveValue('20/10/2026');
+    await user.click(date);
+    const calendar = screen.getByRole('dialog', { name: 'Choose selected date' });
+    await user.click(within(calendar).getByRole('button', { name: 'Thursday, 22 October 2026' }));
+    await waitFor(() => expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0]).toMatchObject({ start: '2026-10-22', end: '2026-10-22', coachEmail: 'one@example.invalid' }));
+    expect(date).toHaveValue('22/10/2026');
+    expect(screen.queryByRole('dialog', { name: 'Choose selected date' })).not.toBeInTheDocument();
+
+    const period = screen.getByRole('combobox', { name: 'Calendar period' });
+    await user.click(period);
+    expect(screen.getByRole('option', { name: 'Day' })).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(period).toHaveTextContent('Week');
+    await waitFor(() => expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0]).toMatchObject({ start: '2026-10-19', end: '2026-10-25', coachEmail: 'one@example.invalid' }));
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(period).toHaveFocus();
+    expect(loadCoachingSession).not.toHaveBeenCalled();
+  });
+
+  it.each(['curriculum', 'coach'] as const)('offers all meeting statuses and supports keyboard filtering in %s', async workspace => {
+    const user = userEvent.setup();
+    mount(workspace);
+    await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
+    const status = screen.getByRole('combobox', { name: 'Meeting status' });
+    await user.click(status);
+    const menu = screen.getByRole('listbox');
+    expect(within(menu).getAllByRole('option').map(option => option.textContent)).toEqual([
+      'Ready to action', 'Needs attention', 'Ended', 'Upcoming', 'Within scheduled time', 'Cancelled', 'All meetings',
+    ]);
+    expect(within(menu).getByRole('option', { name: 'Ready to action' })).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{End}{Enter}');
+    expect(status).toHaveTextContent('All meetings');
+    expect(status).toHaveFocus();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Progress Review' })).toBeInTheDocument();
+    expect(loadCoachingCalendar).toHaveBeenCalledOnce();
+    expect(loadCoachingSession).not.toHaveBeenCalled();
   });
 
   it('shows only the chosen coach meetings in both the calendar and the review list', async () => {
     const data = fixture(); data.meetings[1].coachEmail = 'two@example.invalid';
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
-    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'two@example.invalid' } });
+    selectMeetingStatus('All meetings');
+    selectOption('Coach', 'Coach Two');
     await screen.findByRole('heading', { name: 'Progress Review' });
     const calendar = within(screen.getByRole('region', { name: 'Coach meeting calendar' }));
     expect(calendar.getByText('Coach Two')).toBeInTheDocument();
@@ -366,12 +431,12 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount();
     await screen.findByRole('heading', { name: 'Combined support and monthly discussion' });
-    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
+    selectMeetingStatus('All meetings');
     expect(screen.getByRole('heading', { name: 'Internal planning appointment' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Monthly Coaching Meeting' })).not.toBeInTheDocument();
     const calendar = within(screen.getByRole('region', { name: 'Coach meeting calendar' }));
     expect(calendar.getByText('Internal planning appointment')).toBeInTheDocument();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Learner' }), { target: { value: '1' } });
+    selectOption('Learner', 'Learner One');
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
     await screen.findByRole('heading', { name: 'Combined support and monthly discussion' });
     expect(screen.queryByRole('heading', { name: 'Internal planning appointment' })).not.toBeInTheDocument();
@@ -379,12 +444,12 @@ describe('Coaching recordings calendar', () => {
 
   it('keeps filters when moving to another period or timezone', async () => {
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Meeting type' }), { target: { value: 'PR' } });
+    selectOption('Meeting type', 'PR (Progress Review)');
     fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
     await waitFor(() => expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0]).toMatchObject({ start: '2026-10-21', end: '2026-10-21' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Time zone' }), { target: { value: 'Europe/London' } });
+    selectOption('Time zone', 'Europe/London');
     await waitFor(() => expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].timeZone).toBe('Europe/London'));
-    expect(screen.getByRole('combobox', { name: 'Meeting type' })).toHaveValue('PR');
+    expect(screen.getByRole('combobox', { name: 'Meeting type' })).toHaveTextContent('PR (Progress Review)');
   });
 
   it('shows partial coverage and does not call a failed calendar empty', async () => {
@@ -429,8 +494,8 @@ describe('Coaching recordings calendar', () => {
     expect(within(alert).getByText(/After correcting the saved account, mailbox or app access/)).toBeVisible();
     fireEvent.click(within(alert).getByRole('button', { name: 'View calendar for Coach Two' }));
     await waitFor(() => expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('two@example.invalid'));
-    expect(screen.getByRole('combobox', { name: /^Coach$/ })).toHaveValue('two@example.invalid');
-    expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /^Coach$/ })).toHaveTextContent('Coach Two');
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('Ready to action');
   });
 
   it('keeps an ended appointment in Ready even when the source has no recording', async () => {
@@ -441,7 +506,7 @@ describe('Coaching recordings calendar', () => {
     mount();
     expect(await screen.findByText('1 meeting ready to review · 0 with playable recordings')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('Ready to action');
     fireEvent.click(screen.getByRole('button', { name: 'Show all loaded meetings' }));
     expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Progress Review' })).toBeInTheDocument();
@@ -483,7 +548,7 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingCalendar).mockResolvedValue({ ...fixture(), scope: 'own', coaches: fixture().coaches.slice(0, 1) });
     mount('coach'); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
     expect(screen.queryByRole('link', { name: 'Lecture recordings' })).not.toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Coach' })).toHaveValue('one@example.invalid');
+    expect(screen.getByRole('combobox', { name: 'Coach' })).toHaveTextContent('Coach One');
     expect(screen.getByRole('region', { name: 'Hourly coach meeting calendar' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'All coach meeting agenda' })).not.toBeInTheDocument();
   });
@@ -555,7 +620,7 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingSession).mockResolvedValueOnce({ ...details(), eventKey: 'coach-calendar:verified', reference: 'signed-calendar-reference' });
     mount();
     await screen.findByRole('heading', { name: 'Combined support discussion' });
-    expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('Ready to action');
     expect(screen.queryByRole('heading', { name: 'Progress Review' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ }));
     fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
@@ -568,10 +633,10 @@ describe('Coaching recordings calendar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Play recording 1' }));
     expect(await screen.findByLabelText('Coaching recording player')).toHaveAttribute('src', expect.stringContaining('reference=signed-calendar-reference'));
     fireEvent.click(screen.getByRole('button', { name: 'Close meeting details' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
+    selectMeetingStatus('Upcoming');
     expect(screen.getByRole('heading', { name: 'Progress Review' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Combined support discussion' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
+    selectMeetingStatus('All meetings');
     expect(screen.getByRole('heading', { name: 'Progress Review' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Combined support discussion' })).toBeInTheDocument();
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(1);
@@ -610,7 +675,7 @@ describe('Coaching recordings calendar', () => {
     expect(screen.queryByText(/Archiving|Azure archive|Archived/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Play recording 1' })).toBeEnabled();
     expect(screen.getByRole('link', { name: 'Download recording 1' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('Ready to action');
   });
 
   it('keeps the open recording player stable while background polls renew signed references', async () => {
@@ -715,8 +780,8 @@ describe('Coaching recordings calendar', () => {
     expect(screen.getByRole('region', { name: 'Calendar data status' })).toHaveTextContent('Automatic updates stopped');
     expect(screen.queryByText('Checking for updates')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^View Monthly Coaching Meeting on / })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Meeting type' }), { target: { value: 'PR' } });
+    selectMeetingStatus('All meetings');
+    selectOption('Meeting type', 'PR (Progress Review)');
     await act(async () => { await vi.advanceTimersByTimeAsync(1800000); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
   });
@@ -728,11 +793,11 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingCalendar).mockResolvedValue(data);
     mount();
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    fireEvent.click(screen.getByRole('button', { name: 'All meetings' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Meeting type' }), { target: { value: 'PR' } });
+    selectMeetingStatus('All meetings');
+    selectOption('Meeting type', 'PR (Progress Review)');
     await act(async () => { await vi.advanceTimersByTimeAsync(1800000); });
     expect(loadCoachingCalendar).toHaveBeenCalledOnce();
-    expect(screen.getByRole('combobox', { name: 'Meeting type' })).toHaveValue('PR');
+    expect(screen.getByRole('combobox', { name: 'Meeting type' })).toHaveTextContent('PR (Progress Review)');
     expect(loadCoachingSession).not.toHaveBeenCalled(); expect(loadSavedCoachingEvidence).not.toHaveBeenCalled();
   });
 
@@ -760,7 +825,7 @@ describe('Coaching recordings calendar', () => {
     mount();
     for (let second = 0; second < 100; second++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(4);
-    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: 'two@example.invalid' } });
+    selectOption(/^Coach$/, 'Coach Two');
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(5);
     expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('two@example.invalid');
@@ -901,13 +966,13 @@ describe('Coaching recordings calendar', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Evidence unavailable');
     fireEvent.click(screen.getByRole('button', { name: 'Retry details' }));
     expect(await screen.findByRole('table')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('Ready to action');
   });
 
   it('opens in day view, reads only that day, and fetches details only on a meeting click', async () => {
     mount();
     const event = await screen.findByRole('button', { name: 'View Monthly Coaching Meeting on 2026-10-20' });
-    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveValue('day');
+    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveTextContent('Day');
     expect(vi.mocked(loadCoachingCalendar).mock.calls[0][0]).toMatchObject({ start: '2026-10-20', end: '2026-10-20' });
     expect(screen.getByRole('region', { name: 'Hourly coach meeting calendar' })).toBeInTheDocument();
     expect(loadCoachingSession).not.toHaveBeenCalled();
@@ -935,7 +1000,7 @@ describe('Coaching recordings calendar', () => {
 
   it('shows upcoming meeting details without requesting recording or attendance evidence early', async () => {
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
-    fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
+    selectMeetingStatus('Upcoming');
     fireEvent.click(screen.getByRole('button', { name: 'View Progress Review on 2026-10-20' }));
     const drawer = screen.getByRole('dialog', { name: 'Meeting details' });
     expect(within(drawer).getByText(/once the scheduled meeting begins/)).toBeInTheDocument();
@@ -945,15 +1010,16 @@ describe('Coaching recordings calendar', () => {
 
   it('opens a meeting from month view without changing its occurrence or fetching a separate day', async () => {
     mount(); await screen.findByRole('heading', { name: 'Monthly Coaching Meeting' });
-    fireEvent.change(screen.getByRole('combobox', { name: /^Coach$/ }), { target: { value: 'one@example.invalid' } });
+    selectOption(/^Coach$/, 'Coach One');
     await screen.findByRole('region', { name: 'Hourly coach meeting calendar' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Calendar period' }), { target: { value: 'month' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Calendar period' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Month' }));
     const event = await screen.findByRole('button', { name: 'View Monthly Coaching Meeting on 2026-10-20' });
     fireEvent.click(event);
     await screen.findByRole('dialog', { name: 'Meeting details' });
     expect(loadCoachingSession).toHaveBeenCalledWith('mcr:1', expect.any(AbortSignal), undefined, 'attendance');
     expect(loadCoachingCalendar).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveValue('month');
+    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveTextContent('Month');
   });
 
   it('remembers the selected coach for the signed-in account and validates it against the directory', async () => {
@@ -971,7 +1037,7 @@ describe('Coaching recordings calendar', () => {
     render(<MemoryRouter><CoachingRecordingsPage /></MemoryRouter>);
     await screen.findByText(/Calendars load only after a coach is selected/);
     expect(loadCoachingCalendar).toHaveBeenCalledOnce();
-    expect(screen.getByRole('combobox', { name: 'Coach' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Coach' })).toHaveTextContent('Choose a coach');
   });
 
   it('opens the sole authorised calendar automatically for an own-scope coach', async () => {
@@ -987,11 +1053,11 @@ describe('Coaching recordings calendar', () => {
   it('keeps the Ready filter when switching between selected coaches', async () => {
     mount();
     await screen.findByRole('region', { name: 'Hourly coach meeting calendar' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Coach' }), { target: { value: 'two@example.invalid' } });
+    selectOption('Coach', 'Coach Two');
     await waitFor(() => expect(loadCoachingCalendar).toHaveBeenCalledTimes(2));
     expect(vi.mocked(loadCoachingCalendar).mock.lastCall?.[0].coachEmail).toBe('two@example.invalid');
     expect(screen.getByRole('button', { name: 'Coach learners' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('Ready to action');
   });
 
   it('keeps partial-data issues visible in a compact summary and opens their accessible drawer without new requests', async () => {

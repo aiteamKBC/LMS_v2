@@ -6,6 +6,7 @@ import SavedMeetingEvidence from './SavedMeetingEvidence';
 import { Download, Play, RefreshCw } from 'lucide-react';
 import type { EvidenceTab } from './location';
 import { prepareRecordingPlayback, type RecordingOccurrence } from './recordingPlayback';
+import detailsStyles from '@/components/feature/RecordingsDetails.module.css';
 
 function durationLabel(seconds: number) {
   const value = Math.max(0, Math.floor(seconds));
@@ -108,15 +109,15 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
       {data.media.recordings.length > 0 && <p className="mt-3 text-xs text-foreground-600">{data.media.recordings.length} recording {data.media.recordings.length === 1 ? 'part' : 'parts'}{recordedSeconds(data.media.recordings) > 0 && ` · ${durationLabel(recordedSeconds(data.media.recordings))} recorded in total`}. All saved parts are listed below. Recording and attendance times are shown in {timeZone}.</p>}
       <ul className="mt-3 space-y-3">{data.media.recordings.map((file, index) => {
         const duration = file.startsAt && file.endsAt ? (Date.parse(file.endsAt) - Date.parse(file.startsAt)) / 1000 : null;
-        return <li key={file.id} className="rounded-xl border border-background-200 bg-white p-3 shadow-sm">
+        return <li key={file.id} className={`${detailsStyles.card} rounded-xl border border-background-200 bg-white p-3 shadow-sm`}>
           <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">Recording {index + 1}</span>
-            <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${file.state === 'ready' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{file.state === 'ready' ? 'Ready' : recordingLabels[file.state]}</span></div>
+            <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${file.state === 'ready' ? `${detailsStyles.ready} bg-emerald-50 text-emerald-800` : 'bg-amber-50 text-amber-800'}`}>{file.state === 'ready' ? 'Ready' : recordingLabels[file.state]}</span></div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-foreground-500">{duration !== null && duration > 0 && <span>{durationLabel(duration)} recorded</span>}
             {file.source === 'microsoft' && <span>SharePoint recording</span>}</div>
           {file.startsAt && file.endsAt && duration !== null && duration > 0 && <p className="mt-2 break-words text-[11px] leading-5 text-foreground-600">Microsoft recording times: {stamp(file.startsAt)} – {stamp(file.endsAt)}</p>}
           {file.state === 'ready' && <div className="mt-3 flex flex-wrap gap-2">
-            <button aria-label={`Play recording ${index + 1}`} aria-pressed={playing === file.id} disabled={preparing && playing === file.id} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-50" onClick={() => void play(file.id)}><Play size={13} />Play</button>
-            <a aria-label={`Download recording ${index + 1}`} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700" href={coachingRecordingUrl(data.eventKey, file.id, false, playback?.reference ?? reference)} target="_blank" rel="noopener noreferrer"><Download size={13} />Download</a>
+            <button aria-label={`Play recording ${index + 1}`} aria-pressed={playing === file.id} disabled={preparing && playing === file.id} className={`${detailsStyles.secondary} inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-50`} onClick={() => void play(file.id)}><Play size={13} />Play</button>
+            <a aria-label={`Download recording ${index + 1}`} className={`${detailsStyles.primary} inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700`} href={coachingRecordingUrl(data.eventKey, file.id, false, playback?.reference ?? reference)} target="_blank" rel="noopener noreferrer"><Download size={13} />Download</a>
           </div>}
         </li>;
       })}</ul>

@@ -1,6 +1,8 @@
 import type { RecordingsDelivery, RecordingsModule } from '@/api/sessionResults';
+import { ChevronRight } from 'lucide-react';
 import type { Lecture, RecordingFilter } from '../types';
 import { formatFullDate, lectureNeedsAttention, lectureReadyCount } from '../utils';
+import styles from '../Recordings.module.css';
 
 interface Props {
   modules: RecordingsModule[];
@@ -41,13 +43,13 @@ export default function ModuleDirectory({ modules, deliveries, lectures, query, 
       <span className="text-sm font-semibold text-primary-700">{shown.length} of {modules.length} modules</span>
     </div>
     {shown.length === 0 ? <p className="mt-4 rounded-lg bg-background-100 p-4 text-sm text-foreground-600">No modules match the current search and filters.</p>
-      : <div className="mt-4 max-h-[65vh] space-y-2 overflow-y-auto pr-1 scrollbar-slim">
+      : <div className={`${styles.moduleList} mt-4 max-h-[65vh] overflow-y-auto scrollbar-slim`}>
         {shown.map(module => {
           const sessions = byModule.get(module.moduleId) ?? [];
           const saved = deliveryByModule.get(module.moduleId)?.recordingCount ?? 0;
           const ready = sessions.reduce((count, lecture) => count + lectureReadyCount(lecture), 0);
-          return <details key={module.moduleId} className="group min-w-0 rounded-lg border border-background-200 bg-background-50 open:border-primary-300">
-            <summary className="flex min-w-0 cursor-pointer flex-wrap items-center justify-between gap-2 p-3 marker:text-primary-600 sm:flex-nowrap">
+          return <details key={module.moduleId} className={`${styles.moduleRow} group min-w-0`}>
+            <summary className={`${styles.moduleSummary} flex min-w-0 cursor-pointer flex-wrap items-center justify-between gap-2 sm:flex-nowrap`}>
               <span className="min-w-0 flex-1">
                 <span className="block break-words text-sm font-semibold text-foreground-950">{module.title}</span>
                 <span className="mt-0.5 block break-words text-xs text-foreground-600">{[module.programme, module.cohort, module.group].filter(Boolean).join(' · ') || 'Module delivery'}</span>
@@ -58,6 +60,7 @@ export default function ModuleDirectory({ modules, deliveries, lectures, query, 
                 <span className="rounded-full bg-emerald-50 px-2 py-1">{ready} ready</span>
                 {saved > ready && <span className="rounded-full bg-background-100 px-2 py-1">{saved} recording entries</span>}
               </span>
+              <ChevronRight size={16} aria-hidden="true" className={styles.moduleChevron} />
             </summary>
             <div className="border-t border-background-200 p-3">
               {sessions.length === 0 ? <p className="text-xs text-foreground-600">No dated lecture is saved for this module in the LMS. No Teams meeting or recording is assumed.</p>

@@ -15,6 +15,7 @@
 // what the reader is waiting for there is an outcome, not a layout.
 // ============================================================================
 import { useState } from 'react';
+import './WorkspaceBreadcrumbs.css';
 import { SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP } from './Sidebar';
 import { LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
 
@@ -277,7 +278,7 @@ export function HeroSkeleton() {
  * pulse is what says "loading".
  *
  * The chrome mirrors WorkspaceShell exactly — rail width, the h-14 header, the
- * h-8 breadcrumb strip — so the swap to the real page moves nothing. The header
+ * shared breadcrumb strip — so the swap to the real page moves nothing. The header
  * used to be missing entirely here, which shifted the whole page up 56px and
  * back down again on every navigation.
  *
@@ -327,7 +328,7 @@ export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspace
         </div>
 
         {/* Breadcrumb strip — same height, border and surface as the shell's. */}
-        <div className="mx-2 flex h-8 shrink-0 items-center rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3">
+        <div className="workspace-breadcrumbs mx-2 flex h-8 shrink-0 items-center rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3">
           <SkeletonBlock className="h-2 w-40" />
         </div>
 

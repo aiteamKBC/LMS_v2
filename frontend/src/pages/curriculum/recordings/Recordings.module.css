@@ -1,5 +1,14 @@
 @import './recordings-font.css';
 
+@layer workspace-breadcrumbs-ui {
+  :global(.workspace-content):has(.page) :global(.workspace-breadcrumbs) :global(.workspace-breadcrumb-home),
+  :global(.workspace-content):has(.page) :global(.workspace-breadcrumbs) :global(.kbc-workspace-back) {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+}
+
 /* Scoped layer overrides legacy shell rules only on matched elements.
    Readdy has no dark reference: dark surfaces use the existing theme palette. */
 @layer recordings-ui {
@@ -7,41 +16,176 @@
   .page .calendarLayout:global(.fixed) {
     z-index: 70 !important;
   }
+  /* Shared sizing and theme tokens keep all calendar controls aligned. */
   .page .calendarToolbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
+    --calendar-accent: oklch(var(--primary-700));
+    --calendar-muted: oklch(var(--foreground-500));
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: flex-end !important;
+    gap: 16px !important;
+    padding: 16px 20px !important;
+    border: 1px solid oklch(var(--background-200)) !important;
+    border-radius: 16px !important;
+    background: oklch(var(--background-50)) !important;
   }
-  .page .calendarViews, .page .periodNavigation, .page .timeZone {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
+  .page .calendarField {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .page .calendarFieldLabel {
+    color: var(--calendar-muted) !important;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+  }
+  .page .calendarToolbar :is(button, select) {
+    min-width: 0 !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    margin: 0 !important;
+    padding: 0 12px !important;
+    border: 1px solid oklch(var(--background-300)) !important;
+    border-radius: 10px !important;
+    background: oklch(var(--background-50)) !important;
+    color: oklch(var(--foreground-700)) !important;
+    font-family: inherit !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    line-height: 20px !important;
+    box-shadow: none !important;
   }
   .page .calendarToolbar button {
-    padding: 6px 10px;
-    border-radius: 999px;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 150ms, color 150ms;
   }
-  .page .rangeLabel {
-    flex: 1;
+  .page .calendarToolbar :is(button, select):focus-visible {
+    outline: 2px solid oklch(var(--primary-400)) !important;
+    outline-offset: 2px;
+  }
+  .page .calendarToolbar button:hover {
+    background: oklch(var(--primary-500) / .08) !important;
+    color: var(--calendar-accent) !important;
+  }
+  .page .calendarViews {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid oklch(var(--background-200));
+    border-radius: 11px;
+    background: oklch(var(--background-100));
+  }
+  .page .calendarViews button {
+    height: 32px !important;
+    min-height: 32px !important;
+    padding: 0 12px !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+  }
+  .page .calendarViews button[aria-pressed='true'] {
+    background: oklch(var(--primary-600)) !important;
+    color: white !important;
+  }
+  .page .periodNavigation {
+    display: inline-flex;
+    align-items: center;
+    height: 40px;
+    border: 1px solid oklch(var(--background-300));
+    border-radius: 10px;
+    background: oklch(var(--background-50));
+  }
+  .page .periodNavigation button {
+    flex: 0 0 34px;
+    width: 34px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+  }
+  .page .periodNavigation button:nth-child(2) {
+    flex: 1 0 56px;
+    width: auto !important;
+    color: var(--calendar-accent) !important;
+  }
+  .page .calendarDateField { flex: 1 1 220px; }
+  .page .calendarToolbar .rangeLabel {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+    margin: 0 !important;
+    color: oklch(var(--foreground-900)) !important;
+    font-family: inherit !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    line-height: 22px !important;
+    overflow-wrap: anywhere;
+  }
+  .page .calendarZoneField { flex: 0 1 220px; }
+  .page .timeZone, .page .calendarViewSelect {
+    position: relative;
+    display: flex;
+    align-items: center;
     min-width: 0;
   }
-  .page .calendarViewSelect {
-    display: none;
+  .page .calendarToolbar :is(.timeZone, .calendarViewSelect) select {
+    appearance: none;
+    width: 100%;
+    max-width: 100%;
+    padding-right: 32px !important;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  .page .calendarToolbar .timeZone select { padding-left: 36px !important; }
+  .page :is(.timeZone, .calendarViewSelect) > svg {
+    position: absolute;
+    right: 12px;
+    flex-shrink: 0;
+    color: var(--calendar-muted);
+    pointer-events: none;
+  }
+  .page .timeZone > svg:first-child { right: auto; left: 12px; }
+  .page .calendarToolbar .expandCalendar {
+    flex: 0 0 40px;
+    width: 40px !important;
+    padding: 0 !important;
+  }
+  .page .calendarViewSelect { display: none; }
+  .page .calendarStatusSelect { width: 100%; max-width: 100%; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar {
+    border-color: oklch(.91 .015 305) !important;
+    background: oklch(1 0 0 / .8) !important;
   }
   :global([data-theme='dark']) .page .calendarToolbar {
-    border-bottom: 1px solid var(--theme-border);
-    background: var(--theme-surface);
+    --calendar-accent: #d4b8f2;
+    --calendar-muted: var(--theme-text-muted);
+    border-color: var(--theme-border) !important;
+    background: var(--theme-surface) !important;
   }
-  :global([data-theme='dark']) .page .calendarToolbar :is(button,select) {
-    border: 1px solid var(--theme-border);
-    background: var(--theme-surface);
-    color: var(--theme-text-primary);
-  }
-  :global([data-theme='dark']) .page .calendarViews button[aria-pressed='true'] {
-    background: var(--theme-primary, #65338d);
-    color: white;
+  @media (max-width: 639px) {
+    .page .calendarToolbar {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px 12px !important;
+      padding: 16px !important;
+    }
+    .page .calendarDateField { grid-column: 1 / -1; order: -1; }
+    .page .calendarToolbar .rangeLabel { min-height: 24px; }
+    .page .calendarViews { display: none !important; }
+    .page .calendarViewSelect { display: flex; }
+    .page .calendarZoneField { grid-column: 1 / -1; grid-row: 3; padding-right: 52px; }
+    .page .calendarFilterField { grid-column: 1 / -1; }
+    .page .calendarToolbar .expandCalendar { grid-column: 2; grid-row: 3; justify-self: end; }
   }
   :global([data-theme='dark']) .page .breadcrumb {
     display: flex;
@@ -55,14 +199,6 @@
     flex-wrap: wrap;
     gap: 12px;
     margin-top: 12px;
-  }
-  @media(max-width:639px) {
-    .page .calendarViews {
-      display: none;
-    }
-    .page .calendarViewSelect {
-      display: block;
-    }
   }
   .page:where(:not(:global([data-theme='dark']) *)) {
     --recording-surface: oklch(0.998 0.002 305 / 0.62);
@@ -195,19 +331,6 @@
     font-size: 10.5px !important;
     font-weight: 600 !important;
   }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose lecture date'] > div {
-    padding: 12px !important;
-    border-color: var(--recording-control-line) !important;
-    border-radius: 16px !important;
-    background: oklch(0.94 0.014 305 / 0.7) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose lecture date'] button[aria-current='date'] {
-    background: var(--recording-purple) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose lecture date'] button[aria-label^='Select '] {
-    width: 100% !important;
-    font-size: 12px !important;
-  }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly lecture calendar'] {
     border-color: var(--recording-line) !important;
     border-radius: 16px !important;
@@ -227,52 +350,6 @@
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] h2 {
     font-size: 14px !important;
     font-weight: 600 !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] details {
-    border-color: var(--recording-line) !important;
-    border-radius: 12px !important;
-    background: var(--recording-surface) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] summary {
-    padding: 12px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] {
-    max-width: 600px !important;
-    border-color: var(--recording-line) !important;
-    background: oklch(0.968 0.005 305) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] > div:first-child {
-    border-color: var(--recording-control-line) !important;
-    padding: 20px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] h2 {
-    font-size: 18px !important;
-    font-weight: 600 !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] dl {
-    gap: 16px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] dt {
-    color: oklch(0.515 0.022 60) !important;
-    font-size: 10.5px !important;
-    letter-spacing: 0.08em !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] dd {
-    font-size: 12px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Teaching quality check'] {
-    padding: 12px !important;
-    border-color: var(--recording-control-line) !important;
-    border-radius: 12px !important;
-    background: var(--recording-surface) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Teaching quality check'] h3 {
-    font-size: 12px !important;
-    font-weight: 600 !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Teaching quality check'] button {
-    border-radius: 10px !important;
-    background: var(--recording-purple) !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) .recordingCard {
     padding: 12px !important;
@@ -301,9 +378,6 @@
     }
     .page:where(:not(:global([data-theme='dark']) *)) .search label {
       min-width: 0 !important;
-      max-width: 100% !important;
-    }
-    .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] {
       max-width: 100% !important;
     }
   }
@@ -426,69 +500,6 @@
   }
   .page:where(:not(:global([data-theme='dark']) *)) .calendarLayout {
     gap: 16px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose lecture date'] {
-    width: 242px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose lecture date'] > .miniCalendar {
-    padding: 0 !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar > div {
-    padding: 10px !important;
-    border: 1px solid var(--recording-control-line) !important;
-    border-radius: 16px !important;
-    background: oklch(.94 .014 305 / .7) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar > div:first-child > div:nth-last-child(2) {
-    margin-top: 8px !important;
-    gap: 1px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar > div:first-child > div:last-child {
-    gap: 1px !important;
-    margin-top: 0 !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar p {
-    font-size: 12px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar button[aria-label^='Select '] {
-    width: 100% !important;
-    height: 24px !important;
-    border-radius: 999px !important;
-    font-size: 11px !important;
-    box-shadow: none !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar button[aria-current='date'] {
-    background: var(--recording-purple) !important;
-    color: white !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar button[aria-label^='Select '] > span:last-child:not(:first-child) {
-    width: 3px !important;
-    height: 3px !important;
-    right: calc(50% - 1.5px) !important;
-    top: auto !important;
-    bottom: 1px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar .legend {
-    margin-top: 12px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .legend > p {
-    font-size: 10.5px !important;
-    line-height: 1.6 !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .legend > p:nth-child(2) {
-    font-size: 10px !important;
-    letter-spacing: .14em !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .legend li {
-    font-size: 11.5px !important;
-    gap: 8px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .legend li > span {
-    width: 8px !important;
-    height: 8px !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings calendar'] {
     overflow: hidden !important;
@@ -650,58 +661,6 @@
     border-radius: 50%;
     background: var(--event-tone);
   }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] {
-    box-shadow: -16px 0 48px oklch(.182 .07 305 / .12) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] > div:first-child {
-    background: var(--recording-surface) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] > div:last-child {
-    padding: 20px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] h3 {
-    font-family: inherit !important;
-    font-size: 12.5px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] dl {
-    margin-top: 0 !important;
-    padding: 16px !important;
-    border: 1px solid var(--recording-line) !important;
-    border-radius: 12px !important;
-    background: var(--recording-surface) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture transcript'] {
-    border-color: var(--recording-line) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture transcript'] > div {
-    border-color: var(--recording-control-line) !important;
-    border-radius: 12px !important;
-    background: var(--recording-surface) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture transcript'] button {
-    font-size: 12.5px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] :has(> [aria-label^='Attendance for ']) {
-    padding: 12px !important;
-    border: 1px solid var(--recording-line) !important;
-    border-radius: 12px !important;
-    background: var(--recording-surface) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] :is(th, td) {
-    padding: 10px !important;
-    font-size: 11px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] th {
-    background: oklch(.94 .014 305) !important;
-    color: oklch(.415 .018 60) !important;
-    font-weight: 600 !important;
-    text-transform: none !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture transcript'] > div > button {
-    display: flex !important;
-    justify-content: space-between !important;
-    color: var(--recording-purple) !important;
-  }
   .page:where(:not(:global([data-theme='dark']) *)) .recordingCard :is(button,a) {
     box-shadow: none !important;
     border-radius: 10px !important;
@@ -714,9 +673,6 @@
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] summary {
     gap: 12px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] details[open] {
-    border-color: oklch(.79 .099 305) !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] summary > span:first-child > span:first-child {
     font-size: 12.5px !important;
@@ -772,107 +728,9 @@
     .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child > div:first-child > div:last-child > label {
       flex: 1 !important;
     }
-    .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Lecture details'] > div:last-child {
-      padding: 16px !important;
-    }
     .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] details button {
       flex-wrap: wrap !important;
     }
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar {
-    display: flex !important;
-    flex-wrap: wrap !important;
-    align-items: center !important;
-    gap: 10px !important;
-    padding: 10px 12px !important;
-    border-bottom: 1px solid var(--recording-control-line) !important;
-    background: transparent !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar button {
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    min-height: 30px !important;
-    padding: 5px 10px !important;
-    border: 1px solid var(--recording-control-line) !important;
-    border-radius: 999px !important;
-    background: var(--recording-surface) !important;
-    color: oklch(.3 .018 60) !important;
-    font-size: 11.5px !important;
-    font-weight: 500 !important;
-    box-shadow: none !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarViews {
-    display: inline-flex !important;
-    gap: 2px !important;
-    padding: 2px !important;
-    border: 1px solid var(--recording-control-line) !important;
-    border-radius: 999px !important;
-    background: oklch(.94 .014 305) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarViews button {
-    min-height: 28px !important;
-    padding: 4px 8px !important;
-    border: 0 !important;
-    border-radius: 999px !important;
-    background: transparent !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarViews button[aria-pressed=true] {
-    background: var(--recording-purple) !important;
-    color: white !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .periodNavigation {
-    display: flex !important;
-    align-items: center !important;
-    gap: 4px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .periodNavigation button:not(:nth-child(2)) {
-    width: 28px !important;
-    height: 28px !important;
-    min-height: 28px !important;
-    padding: 0 !important;
-    font-size: 17px !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar .rangeLabel {
-    min-width: 0 !important;
-    flex: 1 !important;
-    margin: 0 !important;
-    font-family: inherit !important;
-    font-size: 12.5px !important;
-    font-weight: 600 !important;
-    line-height: 1.5 !important;
-    color: oklch(.2 .015 52) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .timeZone {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 6px !important;
-    max-width: 100% !important;
-    padding: 0 10px !important;
-    border: 1px solid var(--recording-control-line) !important;
-    border-radius: 999px !important;
-    background: var(--recording-surface) !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .timeZone select {
-    max-width: 100% !important;
-    min-height: 30px !important;
-    padding: 4px 0 !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-    font-size: 11.5px !important;
-    font-weight: 400 !important;
-    color: oklch(.3 .018 60) !important;
-    box-shadow: none !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar .expandCalendar {
-    width: 28px !important;
-    height: 28px !important;
-    min-height: 28px !important;
-    padding: 0 !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarViewSelect {
-    display: none !important;
   }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings view'] button[aria-pressed=false] {
     background: transparent !important;
@@ -890,33 +748,6 @@
     font-family: inherit !important;
     font-weight: 400 !important;
     box-shadow: none !important;
-  }
-  .page:where(:not(:global([data-theme='dark']) *)) .miniCalendar > div {
-    box-shadow: none !important;
-  }
-  @media(max-width:639px) {
-    .page:where(:not(:global([data-theme='dark']) *)) .calendarViews {
-      display: none !important;
-    }
-    .page:where(:not(:global([data-theme='dark']) *)) .calendarViewSelect {
-      display: block !important;
-      order: -1 !important;
-    }
-    .page:where(:not(:global([data-theme='dark']) *)) .calendarViewSelect select {
-      min-height: 32px !important;
-      padding: 4px 8px !important;
-      border: 1px solid var(--recording-control-line) !important;
-      border-radius: 999px !important;
-      background: var(--recording-surface) !important;
-      font-size: 12px !important;
-    }
-    .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar .rangeLabel {
-      flex-basis: 100% !important;
-      order: 1 !important;
-    }
-    .page:where(:not(:global([data-theme='dark']) *)) .periodNavigation {
-      margin-right: auto !important;
-    }
   }
   :global([data-theme='dark']) .page .hero {
     display: flex !important;
@@ -1001,70 +832,6 @@
     line-height: 1.4 !important;
     color: var(--theme-text-muted) !important;
   }
-  :global([data-theme='dark']) .page .calendarToolbar {
-    display: flex !important;
-    align-items: center !important;
-    flex-wrap: wrap !important;
-    gap: 10px !important;
-    padding: 10px 12px !important;
-    border: 1px solid var(--theme-border) !important;
-    border-radius: 16px !important;
-    background: var(--theme-surface) !important;
-  }
-  :global([data-theme='dark']) .page .calendarToolbar button {
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    min-height: 30px !important;
-    padding: 5px 10px !important;
-    border: 1px solid var(--theme-border) !important;
-    border-radius: 999px !important;
-    font-size: 11.5px !important;
-    box-shadow: none !important;
-    color: var(--theme-text-primary) !important;
-    background: var(--theme-bg) !important;
-  }
-  :global([data-theme='dark']) .page .calendarViews {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 2px !important;
-    padding: 2px !important;
-    border: 1px solid var(--theme-border) !important;
-    border-radius: 999px !important;
-    background: var(--theme-bg) !important;
-  }
-  :global([data-theme='dark']) .page .calendarViews button {
-    border: 0 !important;
-    background: transparent !important;
-  }
-  :global([data-theme='dark']) .page .calendarViews button[aria-pressed='true'] {
-    background: #65338d !important;
-    color: white !important;
-  }
-  :global([data-theme='dark']) .page .periodNavigation {
-    display: flex !important;
-    align-items: center !important;
-    gap: 4px !important;
-  }
-  :global([data-theme='dark']) .page .timeZone {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 6px !important;
-  }
-  :global([data-theme='dark']) .page .calendarToolbar select {
-    max-width: 100% !important;
-    padding: 6px 10px !important;
-    border: 1px solid var(--theme-border) !important;
-    border-radius: 999px !important;
-    font-size: 11.5px !important;
-    background: var(--theme-bg) !important;
-    color: var(--theme-text-primary) !important;
-  }
-  :global([data-theme='dark']) .page .rangeLabel {
-    margin: 0 !important;
-    font-size: 12.5px !important;
-    font-weight: 600 !important;
-  }
   :global([data-theme='dark']) .page .weekCalendar {
     background: var(--theme-surface) !important;
     border-color: var(--theme-border) !important;
@@ -1113,13 +880,6 @@
       gap: 8px !important;
       padding: 10px !important;
     }
-    :global([data-theme='dark']) .page .calendarViews {
-      display: none !important;
-    }
-    :global([data-theme='dark']) .page .rangeLabel {
-      flex-basis: 100% !important;
-      order: 1 !important;
-    }
   }
 }
 
@@ -1131,13 +891,9 @@
   .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > i { border-radius: 50% !important; }
   .page .filters[hidden] { display: none !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child { padding: 12px !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child > div:first-child { flex-wrap: nowrap !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .moreFilters { display: inline-flex !important; align-items: center !important; gap: 6px !important; min-height: 34px !important; padding: 6px 12px !important; border: 1px solid var(--recording-control-line) !important; border-radius: 999px !important; background: var(--recording-surface) !important; color: oklch(.3 .015 52) !important; font-size: 12px !important; box-shadow: none !important; white-space: nowrap !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .moreFilters[aria-expanded='true'] { background: oklch(.94 .014 305) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .resultCount { color: oklch(.515 .022 60) !important; font-size: 11.5px !important; white-space: nowrap !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar :is(button,select) { color: oklch(.3 .015 52) !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .calendarViews button[aria-pressed='true'] { color: white !important; }
-  @media(max-width:1100px) { .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child > div:first-child { flex-wrap: wrap !important; } }
   @media(max-width:639px) { .page .search .moreFilters { min-height: 40px !important; } }
 }
 
@@ -1153,4 +909,92 @@
 
 @layer recordings-ui {
   .page:where(:not(:global([data-theme='dark']) *)) { font-size: 16px !important; }
+}
+
+@layer recordings-ui {
+  .page .search .searchRow { display: grid !important; grid-template-columns: minmax(220px, 1fr) minmax(0, auto); align-items: center; gap: 12px; }
+  .page .search .searchControls { display: grid; grid-template-columns: minmax(170px, 240px) minmax(170px, 190px) auto auto; align-items: center; gap: 10px; min-width: 0; }
+  .page .search input[type='text'] { height: 42px !important; border-radius: 12px !important; }
+  .page .search .moreFilters { display: inline-flex; align-items: center; gap: 6px; min-height: 42px !important; padding: 6px 12px; border: 1px solid var(--recording-control-line, var(--theme-border)); border-radius: 12px !important; justify-content: center; white-space: nowrap; font-size: 12px; }
+  .page .search .moreFilters[aria-expanded='true'] { border-color: var(--recording-purple, oklch(.44 .145 305)) !important; color: var(--recording-purple, oklch(.44 .145 305)) !important; }
+  .page .filters { padding: 16px !important; }
+  .page .inactiveFilter { min-height: 24px; }
+  .page .inactiveFilter input { width: 15px; height: 15px; accent-color: var(--recording-purple, oklch(.44 .145 305)); }
+  .page .filterGrid { display: grid; grid-template-columns: minmax(140px, .7fr) repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 12px; }
+  .filterField { display: grid; min-width: 0; gap: 6px; }
+  .filterField > span { font-size: 12px; font-weight: 500; color: var(--theme-text-secondary, oklch(.43 .03 305)); }
+  .page .clearFilters { min-height: 42px; padding: 0 10px; border-radius: 10px; font-size: 12px !important; color: var(--recording-purple, oklch(.44 .145 305)) !important; white-space: nowrap; }
+  .page .clearFilters:hover { background: oklch(.94 .025 305 / .5); }
+  @media (max-width: 1279px) {
+    .page .search .searchRow { grid-template-columns: minmax(0, 1fr); }
+    .page .search .searchControls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; }
+    .page .filterGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .page .clearFilters { justify-self: start; }
+  }
+  @media (max-width: 639px) {
+    .page .search .searchControls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .page .search .resultCount { text-align: end; }
+    .page .filterGrid { grid-template-columns: minmax(0, 1fr); }
+    .page .filters [aria-label='Lecture status'] > span { flex-basis: 100%; margin-top: 4px; }
+  }
+}
+
+@layer recordings-ui {
+  .page [aria-label='All LMS modules'] {
+    --module-divider: oklch(.87 .012 305 / .6);
+    --module-highlight: oklch(.95 .018 305 / .55);
+    box-shadow: none !important;
+  }
+  .page .moduleList {
+    border-block: 1px solid var(--module-divider);
+  }
+  .page .moduleRow {
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  .page .moduleRow + .moduleRow {
+    border-top: 1px solid var(--module-divider) !important;
+  }
+  .page .moduleSummary {
+    min-height: 72px;
+    padding: 14px 12px;
+    list-style: none;
+    border-radius: 6px;
+    box-shadow: none !important;
+  }
+  .page .moduleSummary::-webkit-details-marker { display: none; }
+  .page .moduleSummary:hover,
+  .page .moduleRow[open] > .moduleSummary {
+    background: var(--module-highlight) !important;
+  }
+  .page .moduleSummary:focus-visible {
+    outline-offset: -3px !important;
+  }
+  .page .moduleChevron {
+    flex-shrink: 0;
+    color: oklch(var(--foreground-500));
+  }
+  .page .moduleRow[open] .moduleChevron { transform: rotate(90deg); }
+  .page .moduleRow > div {
+    margin-inline: 12px;
+    padding-inline: 0;
+    border-color: var(--module-divider) !important;
+  }
+  .page .moduleRow button { box-shadow: none !important; }
+  :global([data-theme='dark']) .page [aria-label='All LMS modules'] {
+    --module-divider: color-mix(in srgb, var(--theme-border) 70%, transparent);
+    --module-highlight: color-mix(in srgb, var(--theme-primary, #65338d) 12%, transparent);
+  }
+  @media (max-width: 639px) {
+    .page .moduleSummary { position: relative; padding: 14px 32px 14px 8px; }
+    .page .moduleSummary > span:first-child { flex-basis: 100% !important; }
+    .page .moduleChevron { position: absolute; right: 8px; top: 18px; }
+    .page .moduleRow > div { margin-inline: 8px; }
+  }
+}
+
+@layer recordings-ui {
+  .page [aria-label='Choose lecture date'] { width: 280px !important; }
 }

@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Info, ShieldCheck, Users, Video, X } from 'lucide-react';
+import { FileText, Info, ShieldCheck, Users, Video } from 'lucide-react';
+import RecordingsDetailsHeader from '@/components/feature/RecordingsDetailsHeader';
+import detailsStyles from '@/components/feature/RecordingsDetails.module.css';
 import type { CoachingMeeting } from '@/api/coachingRecordings';
 import { formatFullDate } from '@/pages/curriculum/recordings/utils';
 import { meetingDate, meetingPhase, meetingTitle, meetingCategory, categoryLabels } from './model';
@@ -77,15 +79,11 @@ export default function MeetingDetailsDrawer({ meeting, reference, timeZone, now
   const phase = meetingPhase(meeting, now);
   const clock = (stamp: string) => new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit' }).format(new Date(stamp));
   const canReview = Boolean(reference || (meeting.match === 'matched' && meeting.eventKey));
-  return createPortal(<div className="fixed inset-0 z-50 bg-black/40" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <aside ref={panel} role="dialog" aria-modal={modalOpen ? undefined : true} aria-hidden={modalOpen || undefined} aria-labelledby={titleId} className="absolute inset-y-0 right-0 flex w-full max-w-[600px] flex-col border-l border-background-200 bg-white shadow-2xl">
-      <header className="flex items-start justify-between gap-3 border-b border-background-200 p-5">
-        <div className="min-w-0"><p id={titleId} className="text-[10px] font-bold uppercase tracking-wider text-primary-600">Meeting details</p>
-          <h2 className="mt-1 break-words text-base font-bold text-foreground-950">{meetingTitle(meeting)}</h2></div>
-        <button ref={closeButton} type="button" aria-label="Close meeting details" onClick={onClose} className="rounded-md p-1.5 text-foreground-500 hover:bg-background-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"><X size={18} /></button>
-      </header>
-      <div className="shrink-0 border-b border-background-200 bg-background-50 px-4 py-3">
-        <div role="tablist" aria-label="Meeting detail sections" className="flex gap-1 overflow-x-auto rounded-2xl border border-background-200 bg-background-100 p-1 scrollbar-slim">
+  return createPortal(<div className={detailsStyles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <aside ref={panel} role="dialog" aria-modal={modalOpen ? undefined : true} aria-hidden={modalOpen || undefined} aria-labelledby={titleId} className={detailsStyles.drawer}>
+      <RecordingsDetailsHeader eyebrow="Meeting details" title={meetingTitle(meeting)} titleId={titleId} closeLabel="Close meeting details" onClose={onClose} closeButtonRef={closeButton} />
+      <div className={detailsStyles.tabBar}>
+        <div role="tablist" aria-label="Meeting detail sections" className={`${detailsStyles.tabs} scrollbar-slim`}>
           {visibleTabs.map(({ id, label, icon: Icon }) => <button key={id} id={`${titleId}-tab-${id}`} type="button" role="tab"
             aria-selected={selectedTab === id} aria-controls={`${titleId}-panel`} tabIndex={selectedTab === id ? 0 : -1}
             onClick={() => selectTab(id)} onKeyDown={event => {
@@ -94,14 +92,14 @@ export default function MeetingDetailsDrawer({ meeting, reference, timeZone, now
               if (next === null) return;
               event.preventDefault(); selectTab(visibleTabs[next].id);
               document.getElementById(`${titleId}-tab-${visibleTabs[next].id}`)?.focus();
-            }} className={`inline-flex min-h-10 shrink-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-2 text-[11px] font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 ${selectedTab === id ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-white hover:text-primary-800'}`}>
+            }} className={`${detailsStyles.tab} inline-flex min-h-10 shrink-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-2 text-[11px] font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 ${selectedTab === id ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-white hover:text-primary-800'}`}>
             <Icon size={13} aria-hidden="true" />{label}
           </button>)}
         </div>
       </div>
-      <div ref={body} role="tabpanel" id={`${titleId}-panel`} aria-labelledby={`${titleId}-tab-${selectedTab}`} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto p-5 scrollbar-slim focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-primary-500">
+      <div ref={body} role="tabpanel" id={`${titleId}-panel`} aria-labelledby={`${titleId}-tab-${selectedTab}`} tabIndex={0} className={`${detailsStyles.body} scrollbar-slim focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-primary-500`}>
         <div hidden={selectedTab !== 'overview'}>
-        <dl className="grid grid-cols-2 gap-x-5 gap-y-5 text-sm">
+        <dl className={detailsStyles.metadata}>
           {[['Date', formatFullDate(meetingDate(meeting.startsAt, timeZone))], ['Time', `${clock(meeting.startsAt)}–${clock(meeting.endsAt)} (${timeZone})${meetingDate(meeting.endsAt, timeZone) !== meetingDate(meeting.startsAt, timeZone) ? ` · Ends ${formatFullDate(meetingDate(meeting.endsAt, timeZone))}` : ''}`],
             ['Coach', coachName], ['Meeting type', categoryLabels[meetingCategory(meeting)]],
             ['Learners', learnerNames.join(', ') || 'No learner linked'], ['Calendar status', phase === 'ended' ? 'Ended' : phase === 'upcoming' ? 'Upcoming' : phase === 'cancelled' ? 'Cancelled' : 'Within scheduled time']].map(([label, value]) =>
@@ -113,7 +111,7 @@ export default function MeetingDetailsDrawer({ meeting, reference, timeZone, now
         </div>
         {qualityEnabled && <div hidden={selectedTab !== 'quality'}>
           <button type="button" onClick={() => { setReviewId(undefined); setQualityOpen(true); }}
-            className="w-full rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-left text-sm font-semibold text-primary-800 hover:bg-primary-100">Quality Check<span className="mt-1 block text-xs font-normal">Choose a feedback form and complete a review for one learner</span></button>
+            className={`${detailsStyles.quality} w-full text-left text-sm font-semibold`}>Quality Check<span className="mt-1 block text-xs font-normal">Choose a feedback form and complete a review for one learner</span></button>
           <MeetingQualityChecks meetingId={meeting.meetingId} refresh={qualityRefresh} onOpen={id => { setReviewId(id); setQualityOpen(true); }} onPreviewChange={setReportOpen} />
         </div>}
         <div hidden={selectedTab === 'overview' || selectedTab === 'quality'}>

@@ -1,9 +1,31 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400;1,9..40,500&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&display=swap');
 
+/* Important interaction rules take precedence over page-specific layers too. */
+@layer interaction-feedback;
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer interaction-feedback {
+  /* Keep existing borders and Tailwind elevation, without interaction strokes.
+     Include focus-within wrappers and portalled menus and dialogs. */
+  :is(:hover, :active, :focus, :focus-within),
+  :is(:hover, :active, :focus, :focus-within)::before,
+  :is(:hover, :active, :focus, :focus-within)::after {
+    outline: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
+    --tw-ring-color: transparent !important;
+    --tw-ring-offset-color: transparent !important;
+  }
+
+  /* Some shared fields and page controls draw their focus ring directly. */
+  :is(:focus, :focus-within) {
+    box-shadow: var(--tw-shadow, 0 0 #0000) !important;
+  }
+}
 
 /* Signature face. Bundled locally rather than fetched from Google Fonts so a
    signature renders identically offline and matches the font embedded in

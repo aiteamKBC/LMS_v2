@@ -1,0 +1,217 @@
+/* Keep the recording date pickers consistent inside legacy workspace themes. */
+@layer recordings-ui {
+  .root {
+    --calendar-line: oklch(var(--primary-200) / .45);
+    --calendar-muted: oklch(.52 .025 295);
+    min-width: 0;
+    color: oklch(var(--foreground-800));
+  }
+  .root.card, .root .card {
+    min-width: 0;
+    padding: 16px !important;
+    border: 1px solid var(--calendar-line) !important;
+    border-radius: 16px !important;
+    background: oklch(var(--background-50)) !important;
+    box-shadow: 0 2px 8px -4px oklch(var(--primary-900) / .16) !important;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .root .heading {
+    margin: 0;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    line-height: 1.4;
+    color: oklch(var(--foreground-900));
+  }
+  .monthNavigation {
+    display: flex;
+    gap: 2px;
+  }
+  .root .navigation, .root .today {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 9px !important;
+    background: transparent !important;
+    color: oklch(var(--foreground-700)) !important;
+    box-shadow: none !important;
+  }
+  .root .today {
+    padding: 0 18px !important;
+    background: oklch(var(--primary-100) / .55) !important;
+    color: oklch(var(--primary-700)) !important;
+    font-size: 13px !important;
+    font-weight: 600;
+  }
+  .weekdays, .days {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    column-gap: 2px;
+    text-align: center;
+  }
+  .weekdays {
+    margin-top: 16px;
+  }
+  .weekday {
+    padding: 7px 0;
+    color: var(--calendar-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .days {
+    margin-top: 4px;
+    row-gap: 4px;
+  }
+  .root .day {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 36px;
+    height: 36px !important;
+    min-height: 36px !important;
+    margin: 0 auto;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    background: transparent !important;
+    color: oklch(var(--foreground-800)) !important;
+    font-size: 13px !important;
+    font-variant-numeric: tabular-nums;
+    box-shadow: none !important;
+  }
+  .root .outside {
+    color: var(--calendar-muted) !important;
+  }
+  .root .day[aria-current='date'] {
+    background: oklch(var(--primary-600)) !important;
+    color: white !important;
+    font-weight: 700;
+  }
+  .root .day:hover:not([aria-current]), .root .navigation:hover, .root .today:hover {
+    background: oklch(var(--primary-100) / .7) !important;
+  }
+  .root button:focus-visible {
+    background: oklch(var(--primary-100) / .9) !important;
+    color: oklch(var(--foreground-700)) !important;
+  }
+  .root .day[aria-current='date']:focus-visible {
+    background: oklch(var(--primary-700)) !important;
+  }
+  .dot {
+    position: absolute;
+    bottom: 5px;
+    left: calc(50% - 2px);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: oklch(var(--primary-500));
+  }
+  .day[aria-current='date'] .dot {
+    background: white;
+  }
+  .todayMark {
+    position: absolute;
+    bottom: 2px;
+    left: 25%;
+    width: 50%;
+    height: 2px;
+    border-radius: 2px;
+    background: oklch(var(--primary-400));
+  }
+  .dayNavigation {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--calendar-line) !important;
+  }
+  .root .note {
+    margin: 14px 0 0 !important;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: oklch(var(--primary-100) / .28);
+    color: oklch(var(--foreground-600));
+    font-size: 12px !important;
+    line-height: 1.65 !important;
+  }
+  .legend {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--calendar-line) !important;
+  }
+  .legend > .note:first-child {
+    margin: 0 0 16px !important;
+  }
+  .root .legendTitle {
+    margin: 0 0 12px !important;
+    color: var(--calendar-muted);
+    font-size: 11px !important;
+    font-weight: 700;
+    line-height: 1.5;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .statusList {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .root .status {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    color: oklch(var(--foreground-700));
+    font-size: 12px !important;
+    line-height: 1.5;
+  }
+  .statusDot {
+    flex: 0 0 8px;
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 50%;
+  }
+  .root .timeZone {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 16px 0 0 !important;
+    padding-top: 12px;
+    border-top: 1px solid var(--calendar-line) !important;
+    color: var(--calendar-muted);
+    font-size: 11px !important;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  .timeZone svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .root:where(:global([data-theme='dark']) *) {
+    --calendar-muted: oklch(.72 .025 295);
+    --calendar-line: var(--theme-border, #2a2a36);
+  }
+  .root:where(:global([data-theme='dark']) *) .today {
+    color: oklch(.84 .07 305) !important;
+  }
+  .root:where(:not(:global([data-theme='dark']) *)) {
+    --primary-600: .44 .145 305;
+    --primary-700: .402 .145 305;
+  }
+}

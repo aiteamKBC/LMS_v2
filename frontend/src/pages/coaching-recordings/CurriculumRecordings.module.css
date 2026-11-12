@@ -1,5 +1,55 @@
 @import '../curriculum/recordings/recordings-font.css';
 
+@layer workspace-breadcrumbs-ui {
+  :global(.workspace-content):has(.page) :global(.workspace-breadcrumbs) :global(.workspace-breadcrumb-home),
+  :global(.workspace-content):has(.page) :global(.workspace-breadcrumbs) :global(.kbc-workspace-back) {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+}
+
+/* These hooks also follow the shared controls into their body portals. */
+.periodDate { width: 174px; max-width: 100%; }
+.periodDate > span { display: none; }
+.periodDate > div { height: 40px; margin-top: 0; border-radius: 10px; }
+.periodDate input { font-size: 13px; font-weight: 500; }
+.period .periodDate input[role='combobox'],
+.period .periodDate input[role='combobox']:focus {
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+.periodView { width: 132px; max-width: 100%; }
+.period { align-items: flex-end; }
+.periodField, .periodNavigation { display: contents; }
+.statusFilter { width: 260px; max-width: 100%; }
+.datePanel { box-shadow: 0 12px 36px rgb(55 30 85 / 16%); }
+.datePanel { max-height: calc(100dvh - 24px); overflow-y: auto; }
+/* Navigation requires a date, so the optional form-field reset is not shown. */
+.datePanel > div:last-child { justify-content: flex-end; }
+.datePanel > div:last-child > button:first-child { display: none; }
+
+.periodDate:where(:not(:global([data-theme='dark']) *)) > div {
+  border-color: oklch(.84 .028 305);
+  background-color: oklch(.998 .002 305 / .62);
+}
+.datePanel:where(:not(:global([data-theme='dark']) *)) {
+  --primary-50: .975 .012 305;
+  --primary-100: .94 .025 305;
+  --primary-600: .44 .145 305;
+  --primary-700: .402 .145 305;
+  border-color: oklch(.895 .021 305);
+  background-color: #fff;
+}
+@media (max-width: 359px) {
+  .datePanel { left: 12px !important; width: calc(100vw - 24px) !important; }
+}
+
 /* Scoped layer overrides legacy shell rules only on matched elements.
    Readdy has no dark reference: existing dark styling stays unchanged. */
 @layer recordings-ui {/* This root is applied only for workspace="curriculum", never /coach/recordings. */
@@ -73,18 +123,6 @@
   background: var(--coaching-surface) !important;
 }
 
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] { width: 100% !important; gap: 8px !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] > button {
-  min-height: 36px !important;
-  padding: 8px 14px !important;
-  border-color: var(--coaching-control-line) !important;
-  border-radius: 12px !important;
-  font-size: 12.5px !important;
-  font-weight: 500 !important;
-}
-
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] > button[aria-pressed='true'] { background: var(--coaching-purple) !important; color: oklch(0.968 0.005 305) !important; }
-
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] {
   gap: 12px 20px !important;
   padding: 10px 14px !important;
@@ -96,11 +134,6 @@
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] > div { padding: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; font-size: 11.5px !important; }
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] svg { color: var(--coaching-purple) !important; }
 
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] h2 { font-size: 12px !important; font-weight: 600 !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] button[aria-current='date'] { background: var(--coaching-purple) !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] > p { font-size: 10px !important; }
-.page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] > div:last-child { font-size: 10.5px !important; }
 
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] { padding: 12px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; }
 .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Coach meeting calendar'] > div:first-child h2 { font-size: 12.5px !important; font-weight: 600 !important; }
@@ -157,12 +190,9 @@
   .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters :is(select,input) { box-shadow: none !important; font-size: 14px !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > label { color: oklch(.3 .015 52) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) .extraControl { min-height: 26px !important; padding: 4px 8px !important; border: 0 !important; border-radius: 8px !important; background: transparent !important; box-shadow: none !important; color: oklch(.415 .018 60) !important; font-size: 11px !important; order: 2 !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .period { margin-top: 8px !important; align-items: flex-start !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .period > button { min-width: 40px !important; height: 40px !important; box-shadow: none !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .periodLabels { display: grid !important; width: 100% !important; grid-template-columns: minmax(0,172px) minmax(0,174px) minmax(0,132px) !important; gap: 8px !important; color: oklch(.3 .015 52) !important; font-size: 12px !important; font-weight: 600 !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) .statusLabel { width: 100% !important; margin: 0 0 2px !important; color: oklch(.3 .015 52) !important; font-size: 12px !important; font-weight: 600 !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] > button { border-radius: 16px !important; box-shadow: none !important; color: oklch(.3 .015 52) !important; background: oklch(.998 .002 305 / .62) !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] > button[aria-pressed='true'] { color: white !important; background: var(--coaching-purple) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .period { margin-top: 8px !important; align-items: flex-end !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .periodNavigation > button { min-width: 40px !important; height: 40px !important; box-shadow: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) :is(.periodLabel, .statusLabel) { color: oklch(.3 .015 52) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] { margin-top: 10px !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] > div:not(:first-child) { padding-left: 20px !important; border-left: 1px solid var(--coaching-control-line) !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar data status'] { margin-top: 10px !important; padding: 10px 14px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; box-shadow: none !important; }
@@ -171,17 +201,14 @@
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] > button { margin-top: 12px !important; font-size: 12px !important; box-shadow: none !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] li::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #d6a42b; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] li[data-recording-label='Recording available']::before { background: #10b981; }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] { background: oklch(.94 .014 305 / .7) !important; }
-  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] button[aria-label^='Show meetings'] { width: 24px !important; height: 24px !important; font-size: 11px !important; border-radius: 50% !important; }
   @media(min-width:768px) {
     .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr)) !important; }
     .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > div { display: contents !important; }
   }
-  @media(min-width:1024px) { .page:where(:not(:global([data-theme='dark']) *)) .calendarLayout { grid-template-columns: 220px minmax(0,1fr) !important; gap: 12px !important; } }
+  @media(min-width:1024px) { .page:where(:not(:global([data-theme='dark']) *)) .calendarLayout { grid-template-columns: 280px minmax(0,1fr) !important; gap: 12px !important; } }
   @media(max-width:1100px) { .page:where(:not(:global([data-theme='dark']) *)) .heroHeading { flex-direction: column !important; gap: 12px !important; } }
   @media(max-width:639px) {
     .page:where(:not(:global([data-theme='dark']) *)) .heroStats { grid-template-columns: 1fr !important; }
-    .page:where(:not(:global([data-theme='dark']) *)) .periodLabels { display: none !important; }
     .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters { margin-top: 10px !important; }
     .page:where(:not(:global([data-theme='dark']) *)) .calendarLayout { grid-template-columns: minmax(0,1fr) !important; }
   }
@@ -207,8 +234,6 @@
   :global([data-theme='dark']) .page .heroStats strong { font-size: 21px; }
   :global([data-theme='dark']) .page .heroStats span { font-size: 11.5px; }
   :global([data-theme='dark']) .page .libraries { margin-top: 12px; }
-  :global([data-theme='dark']) .page .periodLabels { display: none; }
-  :global([data-theme='dark']) .page .statusLabel { width: 100%; font-size: 12px; }
   @media(max-width:639px) { :global([data-theme='dark']) .page .heroStats { grid-template-columns: 1fr; } }
 }
 
@@ -224,5 +249,131 @@
     .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > button.extraControl { right: 132px !important; }
     .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > a.extraControl { right: 8px !important; }
     .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > div > .extraControl { right: 264px !important; }
+  }
+}
+
+/* Keep timed cards aligned to their start; the slot height still represents duration. */
+@layer recordings-ui {
+  .page [data-meeting-card][data-compact] {
+    display: flex !important;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 5px;
+    padding: 12px 14px !important;
+    border-left-width: 3px !important;
+    border-radius: 6px !important;
+    box-shadow: none !important;
+  }
+  .page [data-meeting-card] > * { flex-shrink: 0; max-width: 100%; }
+  .page [data-meeting-card] h3 { margin: 0; font-size: 13px !important; font-weight: 600 !important; line-height: 18px !important; }
+  .page [data-meeting-time] { font-size: 11px; line-height: 15px; }
+  .page [data-meeting-people]:not(:global(.sr-only)) {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 2px 8px;
+    min-width: 0;
+    font-size: 11px;
+    line-height: 15px;
+  }
+  .page [data-meeting-coach] { margin-top: 0 !important; }
+  .page [data-coach-lane='false'] [data-meeting-learners]::before { content: '·'; margin-right: 8px; opacity: .5; }
+  .page [data-meeting-status] { margin-top: 2px; font-size: 10px; line-height: 16px; }
+  .page:where(:not(:global([data-theme='dark']) *)) [data-meeting-card]:not([data-phase='cancelled']) {
+    border-color: oklch(.91 .025 305) !important;
+    border-left-color: oklch(.58 .15 305) !important;
+    background: oklch(.99 .006 305) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [data-meeting-card] h3 { color: oklch(.31 .075 305) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [data-meeting-time] { color: oklch(.43 .045 305) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [data-meeting-people] { color: oklch(.49 .02 305) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [data-meeting-people] > span { color: inherit !important; }
+  .page [data-compact='false'][data-media-state='failed']:not([data-phase='upcoming'], [data-phase='cancelled']) [data-meeting-status] {
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: oklch(.48 .105 65) !important;
+    background: oklch(.96 .035 85) !important;
+  }
+  .page [data-meeting-card][data-compact='true'] { gap: 0; padding: 3px 8px !important; }
+  .page [data-compact='true'] h3 { font-size: 12px !important; line-height: 16px !important; }
+  .page [data-compact='true'] [data-meeting-time] { line-height: 14px; }
+  .page [data-compact='true'] [data-meeting-status] { margin-top: 0; line-height: 14px; }
+}
+
+/* The same calendar toolbar is used in the curriculum and coach workspaces. */
+@layer recordings-ui {
+  .period, .page .period {
+    gap: 20px !important;
+    padding: 16px 20px !important;
+    border: 1px solid oklch(var(--background-200)) !important;
+    border-radius: 16px !important;
+    background: oklch(var(--background-50)) !important;
+  }
+  .period :is(.periodField, .statusFilter) {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    max-width: 100%;
+    align-content: start;
+    gap: 8px !important;
+  }
+  .period :is(.periodLabel, .statusLabel) {
+    display: block;
+    margin: 0 !important;
+    color: oklch(var(--foreground-500));
+    font-size: 11px !important;
+    font-weight: 600;
+    line-height: 18px !important;
+  }
+  .period .periodNavigation {
+    display: flex !important;
+    align-items: center;
+    gap: 0;
+    border: 1px solid oklch(var(--background-200)) !important;
+    border-radius: 10px !important;
+    background: oklch(var(--background-50)) !important;
+  }
+  .period .periodNavigation > button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    padding: 0 10px !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    color: oklch(var(--foreground-600));
+    font-size: 13px;
+    font-weight: 500;
+    transition: background-color 150ms, color 150ms;
+  }
+  .period .periodNavigation > button:nth-child(2) { min-width: 68px !important; color: oklch(var(--primary-700)); }
+  .period .periodNavigation > button:hover { background: oklch(var(--primary-500) / .08) !important; color: oklch(var(--primary-700)); }
+  .period .periodNavigation > button:focus-visible { outline-offset: -3px; }
+  .period button[role='combobox'] { height: 40px !important; min-height: 40px !important; border-radius: 10px !important; }
+  .period .dateField { width: 180px; }
+  .period .viewField { width: 156px; }
+  .period .statusFilter { flex: 1 1 220px; max-width: 300px !important; }
+  .period :is(.periodDate, .periodView) { width: 100% !important; min-width: 0; }
+  .period:where(:not(:global([data-theme='dark']) *)),
+  .page .period:where(:not(:global([data-theme='dark']) *)) { border-color: oklch(.91 .015 305) !important; background: oklch(1 0 0 / .8) !important; }
+  .period:where(:not(:global([data-theme='dark']) *)) .periodNavigation { border-color: oklch(.87 .018 305) !important; }
+  .period:where(:not(:global([data-theme='dark']) *)) :is(.periodLabel, .statusLabel) { color: oklch(.49 .025 305) !important; }
+
+  @media (max-width: 639px) {
+    .period, .page .period { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .period > :is(.periodField, .statusFilter) { width: 100% !important; max-width: none !important; }
+    .periodNavigation > button:nth-child(2) { flex: 1; }
+  }
+  @media (max-width: 479px) {
+    .period, .page .period { grid-template-columns: minmax(0, 1fr); padding: 16px !important; gap: 16px !important; }
+  }
+}
+
+@layer recordings-ui {
+  @media (min-width: 1024px) {
+    .calendarLayout { grid-template-columns: 280px minmax(0, 1fr) !important; }
   }
 }

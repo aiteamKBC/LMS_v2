@@ -3,13 +3,13 @@ import { ArrowRight, CalendarCheck, CalendarDays, CloudDownload, FileBarChart, F
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import styles from './RecordingsHub.module.css';
+import { RecordingsPageHelp } from './help/RecordingsPageHelp';
 
 export default function RecordingsHub() {
   return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
     workspaceLabel="Curriculum Studio" pageTitle="Coach & Tutor Recordings"
     pageSubtitle="Choose a recording workspace to review sessions and quality checks.">
     <main className={styles.page}>
-      <div className={styles.backdrop} aria-hidden="true"><span /><span /><span /><span /><span /></div>
       <div className={styles.introduction}>
         <h1>Coach & Tutor Recordings</h1>
         <p>Choose the sessions you want to review.</p>
@@ -62,5 +62,6 @@ export default function RecordingsHub() {
           </Link>)}
       </div>
     </main>
+    <RecordingsPageHelp guideId="recordings-hub" />
   </WorkspaceShell>;
 }

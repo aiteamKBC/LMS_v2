@@ -1,23 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CalendarDays, ChevronRight, CircleAlert, CircleCheck, Loader2, RefreshCw, ShieldCheck, Users, Video } from 'lucide-react';
+import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Loader2, RefreshCw, ShieldCheck, Users, Video } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { loadCoachingCalendar, loadLinkedCoachingMeeting, COACHING_CALENDAR_REQUEST_TIMEOUT, type LinkedCoachingMeeting, type CoachingCalendar, type CoachingCalendarQuery } from '@/api/coachingRecordings';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
+import { DatePickerField } from '@/components/feature/DatePickerField';
+import RecordingSelect from './RecordingSelect';
 import { coachNavItems, curriculumNavItems } from '@/mocks/navigation';
 import { addDays, CALENDAR_TIME_ZONES, formatFullDate, parseIsoDate, todayIso } from '@/pages/curriculum/recordings/utils';
 import { periodBounds, type Period } from '@/pages/curriculum/recordings/filters';
 import { filterMeetings, hasPlayableRecording, hiddenReadyReasons, initialChecksPending, meetingDate, meetingKey, meetingCategory, recordingLabel, categoryLabels, type MatchFilter, type MeetingFilter } from './model';
 import MeetingDetailsDrawer from './MeetingDetailsDrawer';
 import CoachMiniCalendar from './CoachMiniCalendar';
+import CoachingCalendarSkeleton from './CoachingCalendarSkeleton';
 import MeetingCalendar from './MeetingCalendar';
 import CoachLearnersDialog from './CoachLearnersDialog';
 import SyncReviewDrawer from './SyncReviewDrawer';
 import { readLocation, writeLocation, type CoachingLocation } from './location';
 import styles from './CurriculumRecordings.module.css';
+import { RecordingsPageHelp } from '@/pages/curriculum/recordings/help/RecordingsPageHelp';
 
 const control = 'max-w-full min-w-0 rounded-lg border border-background-200 bg-white px-3 py-2 text-sm text-foreground-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
 const phaseLabels = { ended: 'Ended', upcoming: 'Upcoming', 'in-progress': 'Within scheduled time', cancelled: 'Cancelled' };
 const filterLabels = { ...phaseLabels, ready: 'Ready to action', attention: 'Needs attention', all: 'All meetings' };
+const meetingStatusOptions = [
+  { value: 'ready', label: filterLabels.ready, icon: 'ri-checkbox-circle-line' },
+  { value: 'attention', label: filterLabels.attention, icon: 'ri-error-warning-line' },
+  { value: 'ended', label: filterLabels.ended, icon: 'ri-check-double-line' },
+  { value: 'upcoming', label: filterLabels.upcoming, icon: 'ri-calendar-line' },
+  { value: 'in-progress', label: filterLabels['in-progress'], icon: 'ri-time-line' },
+  { value: 'cancelled', label: filterLabels.cancelled, icon: 'ri-close-circle-line' },
+  { value: 'all', label: filterLabels.all, icon: 'ri-list-check' },
+];
 
 function coachPreference(value?: string): string {
   try {
@@ -286,10 +300,6 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           ].map(({ label, count, icon: Icon }) => <div key={label}><i aria-hidden="true"><Icon size={18} /></i><div><strong>{data ? count : '—'}</strong><span>{label}</span></div></div>)}
         </div>
       </header>}
-      {workspace === 'curriculum' && <nav aria-label="Recording libraries" className={`${styles.libraries} flex gap-2 text-sm font-semibold`}>
-        <Link to="/curriculum/recordings" className={`${control} hover:bg-primary-50`}>Lecture recordings</Link>
-        <span aria-current="page" className="rounded-lg bg-primary-600 px-3 py-2 text-white">Coach Meetings &amp; Recordings</span>
-      </nav>}
       {workspace === 'coach' && <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="mb-2 text-xs font-bold uppercase tracking-widest text-primary-600">Coaching workspace</p><h1 className="font-heading text-2xl font-extrabold text-foreground-950">Coach Meetings &amp; Recordings</h1>
           <p className="mt-1 text-sm text-foreground-600">See every meeting on a coach's calendar by its original title. Filter by coach, learner, date or status.</p></div>
@@ -297,62 +307,84 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <button type="button" className={`${control} inline-flex items-center gap-2 disabled:opacity-50`} disabled={loading || refreshing} onClick={() => setRevision(value => value + 1)}><RefreshCw aria-hidden="true" size={16} />Refresh calendars</button>
         </div>
       </div>}
-      {loading && <div role="status" className="mt-4 rounded-xl border border-primary-100 bg-white p-4">
-        <div className="flex items-start gap-3"><Loader2 aria-hidden="true" size={19} className="mt-0.5 shrink-0 animate-spin text-primary-600 motion-reduce:animate-none" /><div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">{coach ? 'Loading coach calendar…' : 'Loading coach list…'}</p>
-          <p className="mt-1 text-xs text-foreground-600">{coach ? 'Checking the selected coach only. Saved meetings appear as soon as they are available.' : 'Choose one coach to load their meetings.'}</p>
+      {loading && <div role="status" aria-busy="true" className="mt-4 rounded-xl border border-primary-100 bg-white p-4">
+        <div className="min-w-0">
+          <p className="sr-only">{coach ? 'Loading coach calendar…' : 'Loading coach list…'}</p>
+          <div aria-hidden="true" className="space-y-3">
+            <SkeletonBlock className="h-4 w-40 max-w-full" />
+            <SkeletonBlock className="h-3 w-2/3" />
+          </div>
+          <p className="mt-3 text-xs text-foreground-600">{coach ? 'Checking the selected coach only. Saved meetings appear as soon as they are available.' : 'Choose one coach to load their meetings.'}</p>
           {data && <progress aria-label="Calendar loading progress" className="mt-3 h-1.5 w-full accent-primary-600" max={Math.max(1, data.coverage.totalCoaches)} value={data.coverage.checkedCoachEmails.length} />}
           {slow && <p className="mt-2 text-xs text-amber-800">Microsoft is responding slowly. Choose one coach to narrow the request; unavailable calendars will be identified separately.</p>}
-        </div></div>
+        </div>
       </div>}
       <section aria-label="Calendar filters" className={`${styles.calendarFilters} mt-5 flex flex-wrap items-end gap-3 rounded-xl border border-background-200 bg-white p-4`}>
         {catalog?.scope !== 'own' && <label className="grid gap-1 text-xs font-semibold">Search coaches<input type="search" className={control} value={coachSearch} onChange={event => setCoachSearch(event.target.value)} placeholder="Search by name or email" /></label>}
-        <label className="grid gap-1 text-xs font-semibold">Coach<select aria-label="Coach" value={coach} className={control} onChange={event => navigate({ coach: event.target.value, learner: '' })}>
-          <option value="" disabled>Choose a coach</option>
-          {catalog?.coaches.filter(row => row.email === coach || `${row.name} ${row.email}`.toLowerCase().includes(coachSearch.toLowerCase())).map(row => <option key={row.email} value={row.email}>{row.name}</option>)}
-          {coach && !catalog?.coaches.some(row => row.email === coach) && <option value={coach}>{coach}</option>}
-        </select></label>
+        <label className="grid gap-1 text-xs font-semibold">Coach<RecordingSelect ariaLabel="Coach" value={coach} onChange={value => navigate({ coach: value, learner: '' })}
+          options={[
+            { value: '', label: 'Choose a coach', disabled: true },
+            ...(catalog?.coaches.filter(row => row.email === coach || `${row.name} ${row.email}`.toLowerCase().includes(coachSearch.toLowerCase())).map(row => ({ value: row.email, label: row.name })) ?? []),
+            ...(coach && !catalog?.coaches.some(row => row.email === coach) ? [{ value: coach, label: coach }] : []),
+          ]} /></label>
         <button type="button" className={`${styles.extraControl} ${control} inline-flex items-center gap-2 disabled:opacity-50`} disabled={!rosterCoach} onClick={() => setShowLearners(true)}><Users size={16} aria-hidden="true" />Coach learners</button>
         {workspace === 'curriculum' && <Link className={`${styles.extraControl} ${control}`} to="/curriculum/quality/forms">Edit quality forms</Link>}
-        <label className="grid gap-1 text-xs font-semibold">Learner<select aria-label="Learner" value={learner} className={control} onChange={event => navigate({ learner: event.target.value })}>
-          <option value="">All learners</option>{learners.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
-          {learner && !learners.some(row => row.id === learner) && <option value={learner}>Selected learner</option>}
-        </select></label>
+        <label className="grid gap-1 text-xs font-semibold">Learner<RecordingSelect ariaLabel="Learner" value={learner} onChange={value => navigate({ learner: value })}
+          options={[{ value: '', label: 'All learners' }, ...learners.map(row => ({ value: row.id, label: row.name })),
+            ...(learner && !learners.some(row => row.id === learner) ? [{ value: learner, label: 'Selected learner' }] : [])]} /></label>
         <button type="button" className={`${control} sm:hidden`} aria-expanded={moreFilters} aria-controls="coaching-extra-filters" onClick={() => setMoreFilters(value => !value)}>More filters</button>
         <div id="coaching-extra-filters" className={`${moreFilters ? 'flex' : 'hidden'} min-w-0 flex-wrap items-end gap-3 sm:flex`}>
-        <label className="grid min-w-0 max-w-full gap-1 text-xs font-semibold">Meeting type<select aria-label="Meeting type" value={family} className={control} onChange={event => setFamily(event.target.value)}>
-          <option value="all">All types</option>
-          <optgroup label="MCM & PR"><option value="MCM">{categoryLabels.MCM}</option><option value="PR">{categoryLabels.PR}</option></optgroup>
-          <optgroup label="Other meetings"><option value="SUPPORT">{categoryLabels.SUPPORT}</option><option value="OTHER">{categoryLabels.OTHER}</option></optgroup>
-          {showLectures && <option value="LECTURE">Lectures / subjects</option>}
-        </select></label>
+        <label className="grid min-w-0 max-w-full gap-1 text-xs font-semibold">Meeting type<RecordingSelect ariaLabel="Meeting type" value={family} onChange={setFamily}
+          options={[
+            { value: 'all', label: 'All types' },
+            { value: 'MCM', label: categoryLabels.MCM, group: 'MCM & PR' },
+            { value: 'PR', label: categoryLabels.PR, group: 'MCM & PR' },
+            { value: 'SUPPORT', label: categoryLabels.SUPPORT, group: 'Other meetings' },
+            { value: 'OTHER', label: categoryLabels.OTHER, group: 'Other meetings' },
+            ...(showLectures ? [{ value: 'LECTURE', label: 'Lectures / subjects' }] : []),
+          ]} /></label>
         {phase === 'ready' ? <p className={`${styles.extraControl} max-w-full rounded-lg bg-primary-50 px-3 py-2 text-xs font-medium text-primary-800`}>Lectures included in Ready to action</p>
           : <button type="button" aria-pressed={showLectures} className={`${styles.extraControl} ${control} ${showLectures ? 'border-primary-300 bg-primary-50 text-primary-800' : ''}`}
             onClick={() => navigate({ lectures: !showLectures, family: family === 'LECTURE' ? 'all' : family })}>{showLectures ? 'Hide lectures / subjects' : 'Show lectures / subjects'}</button>}
-        <label className="grid gap-1 text-xs font-semibold">Match<select aria-label="LMS match" value={match} className={control} onChange={event => setMatch(event.target.value as MatchFilter)}>
-          <option value="all">All matches</option><option value="matched">Matched to LMS</option><option value="review">Needs matching review</option>
-        </select></label>
-        <label className="grid gap-1 text-xs font-semibold">Time zone<select aria-label="Time zone" value={zone} className={control} onChange={event => navigate({ zone: event.target.value })}>
-          {!CALENDAR_TIME_ZONES.includes(zone) && <option value={zone}>{zone}</option>}
-          {CALENDAR_TIME_ZONES.map(value => <option key={value}>{value}</option>)}
-        </select></label>
+        <label className="grid gap-1 text-xs font-semibold">Match<RecordingSelect ariaLabel="LMS match" value={match} onChange={value => setMatch(value as MatchFilter)}
+          options={[{ value: 'all', label: 'All matches' }, { value: 'matched', label: 'Matched to LMS' }, { value: 'review', label: 'Needs matching review' }]} /></label>
+        <label className="grid gap-1 text-xs font-semibold">Time zone<RecordingSelect ariaLabel="Time zone" value={zone} onChange={value => navigate({ zone: value })}
+          options={[...new Set([...(!CALENDAR_TIME_ZONES.includes(zone) ? [zone] : []), ...CALENDAR_TIME_ZONES])].map(value => ({ value, label: value }))} /></label>
         </div>
         {!rosterCoach && <p className="w-full text-xs text-foreground-500">Choose one coach to view their learners.</p>}
       </section>
       {!coach && !loading && !error && <p role="status" className="mt-4 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">Choose a coach to view their meetings. Calendars load only after a coach is selected.</p>}
       <div className={`${styles.period} mt-4 flex flex-wrap items-center gap-2`}>
-        {workspace === 'curriculum' && <div className={styles.periodLabels} aria-hidden="true"><span>Date</span><span>Pick a date</span><span>View</span></div>}
-        <button className={control} aria-label="Previous period" onClick={() => shift(-1)}>‹</button>
-        <button className={control} onClick={() => setDate(todayIso(zone))}>Today</button>
-        <button className={control} aria-label="Next period" onClick={() => shift(1)}>›</button>
-        <label className="sr-only" htmlFor="coaching-date">Selected date</label><input id="coaching-date" aria-label="Selected date" type="date" className={control} value={date} onChange={event => { if (event.target.value) setDate(event.target.value); }} />
-        <select aria-label="Calendar period" className={control} value={period} onChange={event => setPeriod(event.target.value as Period)}>
-          <option value="day">Day</option><option value="week">Week</option><option value="month">Month</option>
-        </select>
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Meeting status">
-          {workspace === 'curriculum' && <p className={styles.statusLabel}>Meeting status</p>}
-          {(['ready', 'attention', 'ended', 'upcoming', 'in-progress', 'cancelled', 'all'] as const).map(value => <button key={value} aria-pressed={phase === value} onClick={() => { setPhase(value); setSelectedSession(null); }}
-            className={phase === value ? 'rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white' : control}>{filterLabels[value]}</button>)}
+        <div className={styles.periodField}>
+          <span className={styles.periodLabel} aria-hidden="true">Date</span>
+          <div className={styles.periodNavigation}>
+            <button className={control} aria-label="Previous period" onClick={() => shift(-1)}><ChevronLeft size={16} aria-hidden="true" /></button>
+            <button className={control} onClick={() => setDate(todayIso(zone))}>Today</button>
+            <button className={control} aria-label="Next period" onClick={() => shift(1)}><ChevronRight size={16} aria-hidden="true" /></button>
+          </div>
+        </div>
+        <div className={`${styles.periodField} ${styles.dateField}`}>
+          <span className={styles.periodLabel} aria-hidden="true">Pick a date</span>
+          <DatePickerField label="Selected date" value={date} onChange={value => { if (value) setDate(value); }}
+            className={styles.periodDate} panelClassName={styles.datePanel} />
+        </div>
+        <div className={`${styles.periodField} ${styles.viewField}`}>
+          <span className={styles.periodLabel} aria-hidden="true">View</span>
+          <RecordingSelect ariaLabel="Calendar period" value={period} onChange={value => setPeriod(value as Period)}
+            options={[
+              { value: 'day', label: 'Day', icon: 'ri-calendar-line' },
+              { value: 'week', label: 'Week', icon: 'ri-calendar-2-line' },
+              { value: 'month', label: 'Month', icon: 'ri-calendar-event-line' },
+            ]}
+            searchable={false} size="sm" menuMinWidth={160} className={styles.periodView}
+            />
+        </div>
+        <div className={`${styles.statusFilter} grid gap-1`}>
+          <label htmlFor="coaching-status" className={styles.statusLabel}>Meeting status</label>
+          <RecordingSelect id="coaching-status" ariaLabel="Meeting status" value={phase}
+            onChange={value => { setPhase(value as MeetingFilter); setSelectedSession(null); }}
+            options={meetingStatusOptions} searchable={false} size="sm" menuMinWidth={280}
+            />
         </div>
       </div>
       <div className="mt-4 flex flex-wrap gap-2" aria-label="Meeting summary">
@@ -366,10 +398,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <span className="text-foreground-600">{label}{loading && data ? ' · loading' : ''}</span>
         </div>)}
       </div>
-      {loading && !data && <section aria-label="Loading calendar preview" aria-busy="true" className="mt-4 overflow-hidden rounded-xl border border-background-200 bg-white p-4">
-        <div className="h-5 w-40 rounded bg-background-200 motion-safe:animate-pulse" />
-        <div aria-hidden="true" className="mt-5 space-y-3">{Array.from({ length: 4 }, (_, index) => <div key={index} className="flex h-16 items-center gap-5 rounded-lg border border-background-100 px-4"><div className="h-3 w-16 rounded bg-background-200" /><div className="h-3 w-1/2 rounded bg-primary-100 motion-safe:animate-pulse" /></div>)}</div>
-      </section>}
+      {loading && !data && <CoachingCalendarSkeleton className={styles.calendarLayout} />}
       {error && <div role="alert" className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">{error} <button className="font-semibold underline" onClick={() => setRevision(value => value + 1)}>Retry</button></div>}
       {data && <>
         <section aria-label="Calendar data status" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-background-200 bg-white px-4 py-3">
@@ -429,5 +458,6 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
         meetings={(data?.meetings ?? []).filter(row => row.coachEmail === rosterCoach)} calendarPartial={loading || !data || data.partial}
         onClose={() => setShowLearners(false)} onViewMeetings={viewLearnerMeetings} />}
     </main>
+    {workspace === 'curriculum' && <RecordingsPageHelp guideId="coach-meetings" />}
   </WorkspaceShell>;
 }
