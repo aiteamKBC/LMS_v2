@@ -219,7 +219,7 @@ def rule_for(path):
     # session. The integration view performs its own session-or-HMAC check and
     # then applies tenant connection scope, so the prefix gate must leave the
     # request available to that view.
-    if path.startswith('/integrations_api/'):
+    if path.startswith(('/integrations_api/', '/login_api/hr-integrations/')):
         return None
     # Email approval authenticates with an expiring, single-use signed request.
     # Exact path only: the learner's attendance APIs still require a session.

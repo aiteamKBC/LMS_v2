@@ -49,12 +49,13 @@ export interface BreatheSchedulingConflict {
   proposedSlots: string[];
 }
 
-const BASE = '/integrations_api/breathe/connections';
+// login_api is already forwarded to Django by the deployed edge router.
+const BASE = '/login_api/hr-integrations/breathe/connections';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const csrfHeaders: Record<string, string> = {};
   if (init?.method && !['GET', 'HEAD', 'OPTIONS'].includes(init.method.toUpperCase())) {
-    const { csrfToken } = await request<{ csrfToken: string }>('/integrations_api/breathe/csrf');
+    const { csrfToken } = await request<{ csrfToken: string }>('/login_api/hr-integrations/breathe/csrf');
     if (!csrfToken) throw new Error('Could not obtain the integration security token.');
     csrfHeaders['X-CSRFToken'] = csrfToken;
   }
