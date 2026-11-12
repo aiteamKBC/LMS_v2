@@ -1,0 +1,15 @@
+.trigger { height: 40px; border-radius: 10px; }
+.trigger > span { font-size: 13px; font-weight: 500; }
+.menu { border-radius: 10px; box-shadow: 0 8px 24px -6px rgb(35 20 55 / 16%); }
+.trigger:where(:not(:global([data-theme='dark']) *)) {
+  border-color: oklch(.84 .028 305);
+  background-color: oklch(.998 .002 305 / .62);
+}
+.menu:where(:not(:global([data-theme='dark']) *)) {
+  --primary-50: .975 .012 305;
+  --primary-100: .94 .025 305;
+  --primary-600: .44 .145 305;
+  --primary-700: .402 .145 305;
+  border-color: oklch(.895 .021 305);
+  background-color: #fff;
+}

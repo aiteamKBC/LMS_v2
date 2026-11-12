@@ -13,6 +13,7 @@ import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
+import './WorkspaceBreadcrumbs.css';
 import './CoachResponsive.css';
 import { activePersonalLearning } from '@/lib/personalLearning';
 import { PersonalLearningBanner } from './PersonalLearningBanner';
@@ -552,7 +553,7 @@ export function WorkspaceShell({
             {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${usesLearnerSidebar || role === 'coach' || role === 'curriculum' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
                 <>
-                  <Link to="/" className="workspace-breadcrumb-home text-foreground-300 hover:text-foreground-500 transition-smooth">
+                  <Link to="/" aria-label="Home" className="workspace-breadcrumb-home text-foreground-300 hover:text-foreground-500 transition-smooth">
                     <AppIcon className="ri-home-3-line text-base"></AppIcon>
                   </Link>
                   <AppIcon className="workspace-breadcrumb-home-separator ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>

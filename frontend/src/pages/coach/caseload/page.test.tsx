@@ -41,7 +41,7 @@ describe('Coach caseload loading', () => {
   it('opens the learner profile with the exact activity counts shown in the selected table row', async () => {
     function Destination() {
       const location = useLocation();
-      return <output data-testid="destination">{JSON.stringify({ pathname: location.pathname, state: location.state })}</output>;
+      return <output data-testid="destination">{JSON.stringify({ pathname: location.pathname, search: location.search, state: location.state })}</output>;
     }
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[{
       ...learner, componentsCompleted: 137, componentsPlanned: 157,
@@ -50,6 +50,7 @@ describe('Coach caseload loading', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'View Profile' }));
     const destination = JSON.parse(screen.getByTestId('destination').textContent || '{}');
     expect(destination.pathname).toBe('/coach/learner-case-file');
+    expect(destination.search).toBe('?id=42');
     expect(destination.state).toMatchObject({ learnerId: '42',
       activitySnapshot: { learnerId: '42', completed: 137, total: 157, percent: 87.26 },
       otjhSnapshot: { learnerId: '42', completed: 70, target: 90, planned: null, percent: 77.77777777777779 },

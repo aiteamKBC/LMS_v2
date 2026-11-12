@@ -95,23 +95,11 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
     source._canonical_profile = owner
     source._case_file_profile = profile
     selection = _selection(week_id, module_id)
-    context = SimpleNamespace(source=source, profile=profile)
     try:
-        payload = read_weekly_learning(context, selection,
+        payload = read_weekly_learning(SimpleNamespace(source=source, profile=profile), selection,
                                       module_id=module_id, include_weeks=week_id is None, include_actions=True)
     except LookupError:
-        # The compact Header can briefly retain a module that has since been
-        # removed from the learner's effective plan. On the initial dashboard
-        # read, recover by letting the canonical reader choose a valid module;
-        # an explicitly requested week remains strict below.
-        if week_id is None and module_id is not None:
-            try:
-                payload = read_weekly_learning(context, selection,
-                                              module_id=None, include_weeks=True, include_actions=True)
-            except LookupError:
-                raise ServiceError('Week not found.', 'not_found', 404)
-        else:
-            raise ServiceError('Week not found.', 'not_found', 404)
+        raise ServiceError('Week not found.', 'not_found', 404)
     selected = payload['selectedWeek']
     navigation = next((week for week in payload['weeks'] if selected and week['id'] == selected['weekId']), None)
     if week_id is not None and (navigation is None or slot_id(navigation['moduleId'], {

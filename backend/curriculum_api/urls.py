@@ -27,6 +27,7 @@ from .teams_create_guard import teams_create_status, teams_meeting_collection
 from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
 from .teams_calendar_state import sync_calendar_state
+from .teams_people_refresh import teams_people_refresh
 from .teams_directory import search_teams_directory
 from .bulk_attendance_learners import bulk_attendance_learners
 from .bulk_attendance_kbc_history import (
@@ -241,6 +242,7 @@ urlpatterns = [
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/forward-email/', forward_schedule_email, name='curriculum-teams-forward-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
+    path('curriculum/teams-meetings/<str:live_session_id>/refresh-people/', teams_people_refresh, name='curriculum-teams-people-refresh'),
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),
     path('curriculum/teams-meetings/<str:live_session_id>/permission-check/', teams_meeting_permission_check, name='curriculum-teams-permission-check'),

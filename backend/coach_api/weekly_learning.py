@@ -179,12 +179,15 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         # Match learnerHeaderPlan's default module ordering/window selection.
         candidates = sorted([row for row in modules if spine[row['id']].get('curriculumSlots')],
                             key=lambda row: (str(row['start_date'] or '9999'), row['title'], row['id']))
-        active = [row for row in candidates if row['start_date'] and row['end_date']
+        # Source memberships retain historical navigation, while the effective
+        # teaching plan owns the initial module. Explicit selections stay valid.
+        default_candidates = [row for row in candidates if row['id'] in content_ids] or candidates
+        active = [row for row in default_candidates if row['start_date'] and row['end_date']
                   and str(row['start_date'])[:10] <= today <= str(row['end_date'])[:10]]
-        future = [row for row in candidates if row['start_date'] and str(row['start_date'])[:10] > today]
-        past = sorted([row for row in candidates if row['end_date'] and str(row['end_date'])[:10] < today],
+        future = [row for row in default_candidates if row['start_date'] and str(row['start_date'])[:10] > today]
+        past = sorted([row for row in default_candidates if row['end_date'] and str(row['end_date'])[:10] < today],
                       key=lambda row: (str(row['end_date']), row['id']), reverse=True)
-        default_module = module_id or (active or future or past or candidates or [{}])[0].get('id')
+        default_module = module_id or (active or future or past or default_candidates or [{}])[0].get('id')
         weeks = week_rows([spine[row['id']] for row in modules], today)
         default_weeks = [week for week in weeks if week['moduleId'] == default_module]
         selected = next((week for week in weeks if week['id'] == selection), None) if selection else (
@@ -306,7 +309,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         weeks = visible_week_rows(weeks, markers)
         navigation_weeks = display_weeks(weeks, policies, today)
         retained_modules = {week['moduleId'] for week in navigation_weeks}
-        default_module = module_id or next((row['id'] for row in active + future + past + candidates
+        default_module = module_id or next((row['id'] for row in active + future + past + default_candidates
                                if row['id'] in retained_modules), None)
         default_weeks = [week for week in navigation_weeks if week['moduleId'] == default_module]
         selected_navigation = next((week for week in navigation_weeks if week['id'] == selection), None) if selection else default_week(
