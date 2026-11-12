@@ -82,7 +82,7 @@ class DirectoryDetailsEndpointTests(SimpleTestCase):
         self.atomic = self.enterContext(patch.object(details.transaction, 'atomic', side_effect=lambda **kwargs: nullcontext()))
         self.invalidate = self.enterContext(patch('curriculum_api.views.invalidate_curriculum_cache'))
         self.source = SimpleNamespace(pk=91, programme='Example programme', programme_status='Active', save=Mock())
-        self.profile = SimpleNamespace(programme='Example programme', programme_status='Active', lifecycle_status='active', save=Mock(), learning_plan=[{'moduleId': 'M1'}])
+        self.profile = SimpleNamespace(programme='Example programme', programme_status='Active', lifecycle_status='active', save=Mock(), plan_marker=[{'moduleId': 'M1'}])
         self.enrolments.all_learners.select_for_update.return_value.filter.return_value.first.return_value = self.source
         self.profiles.objects.using.return_value.select_for_update.return_value.filter.return_value.first.return_value = self.profile
 
@@ -98,7 +98,7 @@ class DirectoryDetailsEndpointTests(SimpleTestCase):
                 response = self.post(action=action, expectedStatus=before)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(self.profile.lifecycle_status, after)
-                self.assertEqual(self.profile.learning_plan, [{'moduleId': 'M1'}])
+                self.assertEqual(self.profile.plan_marker, [{'moduleId': 'M1'}])
                 self.source.save.assert_called_with(using='enrolment', update_fields=['programme_status'])
                 self.profile.save.assert_called_with(using='enrolment', update_fields=['programme_status', 'lifecycle_status', 'updated_at'])
                 self.profiles.objects.using.return_value.select_for_update.return_value.filter.assert_called_with(pk='7', enrolment_id=91)

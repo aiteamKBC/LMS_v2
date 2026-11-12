@@ -40,7 +40,7 @@ def identity_rules(module_ids, database='default'):
                      OR target.teams_shared_source_module_id=s.module_catalogue_id)
                     AND target.status NOT IN ('inactive')
                 JOIN "Learner".learner_training_plan_modules p
-                  ON p.module_ref=target.module_catalogue_id AND p.learner_id=l.learner_profile_id
+                  ON p.curriculum_module_id=target.module_catalogue_id AND p.learner_id=l.learner_profile_id
             ), scoped AS (SELECT candidates.*,count(*) OVER (PARTITION BY id) AS module_count FROM candidates)
             SELECT module_catalogue_id,display_name,learner_profile_id,canonical_email
             FROM scoped WHERE module_count=1 AND module_catalogue_id=ANY(%s)''', [list(module_ids)])

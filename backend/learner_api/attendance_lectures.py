@@ -1165,9 +1165,11 @@ def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
     # Historical/source-only modules remain available through the lecture list.
     assigned_modules = read_assigned_modules(source)
     mode = read_mode(source, kind)
+    from .learner_coach_columns import owner_coach_sql
+
     with connections['enrolment'].cursor() as cur:
-        cur.execute('''SELECT coach_name,coach_email FROM "Learner".learners
-            WHERE enrolment_id=%s''', [source.id])
+        cur.execute(f'''SELECT {owner_coach_sql('learner', 'enrolment')}
+            FROM "Learner".learners learner WHERE enrolment_id=%s''', [source.id])
         profiles = dict_rows(cur)
         coach = (profiles[0].get('coach_name') or profiles[0].get('coach_email') or '') if len(profiles) == 1 else ''
         cur.execute('''SELECT id,attendance_id,status,session_title,created_at,updated_at,

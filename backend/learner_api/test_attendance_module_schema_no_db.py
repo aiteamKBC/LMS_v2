@@ -20,13 +20,13 @@ class AttendanceModuleSchemaTests(SimpleTestCase):
             ATTACH DATABASE ':memory:' AS Learner;
             CREATE TABLE curriculum.modules (module_catalogue_id TEXT PRIMARY KEY,
                 title TEXT, programme_id TEXT, cohort_id TEXT, group_id TEXT,
-                teams_shared_source_module_id TEXT);
+                teams_shared_source_module_id TEXT, status TEXT);
             CREATE TABLE curriculum.groups (group_id TEXT PRIMARY KEY, group_name TEXT);
             CREATE TABLE curriculum.cohorts (cohort_id TEXT PRIMARY KEY, cohort_name TEXT);
             INSERT INTO curriculum.modules VALUES
-                ('M1','Module','P1','C1','G1',NULL),
-                ('M2','Module copy','P1','C1','G2','M1'),
-                ('M3','Unassigned',NULL,NULL,NULL,NULL);
+                ('M1','Module','P1','C1','G1',NULL,'active'),
+                ('M2','Module copy','P1','C1','G2','M1','active'),
+                ('M3','Unassigned',NULL,NULL,NULL,NULL,'active');
             INSERT INTO curriculum.groups VALUES ('G1','First group'), ('G2','Second group');
             INSERT INTO curriculum.cohorts VALUES ('C1','Cohort');
         ''')
@@ -35,6 +35,16 @@ class AttendanceModuleSchemaTests(SimpleTestCase):
         sql, params = query.query.sql_with_params()
         cursor = self.db.execute(sql.replace('%s', '?'), params)
         return [dict(zip([c[0] for c in cursor.description], row)) for row in cursor.fetchall()]
+
+    def test_plan_module_model_uses_the_normalized_curriculum_fk(self):
+        from .models import LearnerTrainingPlanModule
+
+        field = LearnerTrainingPlanModule._meta.get_field('curriculum_module')
+        self.assertEqual(field.db_column, 'curriculum_module_id')
+        sql = str(LearnerTrainingPlanModule.objects.all().query)
+        self.assertIn('curriculum_module_id', sql)
+        self.assertNotIn('learner_training_plan_modules"."module_ref', sql)
+        self.assertNotIn('learner_training_plan_modules"."module_title', sql)
 
     def test_verified_attendance_projects_group_label_through_fk(self):
         # Execute the production queryset construction without running the full
@@ -63,7 +73,7 @@ class AttendanceModuleSchemaTests(SimpleTestCase):
                 (id TEXT, occurrence_id TEXT, display_name TEXT, learner_profile_id INTEGER, canonical_email TEXT);
             CREATE TABLE curriculum.live_session_occurrences (id TEXT, live_session_id TEXT);
             CREATE TABLE curriculum.live_sessions (id TEXT, module_catalogue_id TEXT);
-            CREATE TABLE Learner.learner_training_plan_modules (module_ref TEXT, learner_id INTEGER);
+            CREATE TABLE Learner.learner_training_plan_modules (curriculum_module_id TEXT, learner_id INTEGER);
             INSERT INTO curriculum.live_session_attendance_identity_links VALUES ('L1','O1','Example',11,'example@example.invalid');
             INSERT INTO curriculum.live_session_occurrences VALUES ('O1','S1');
             INSERT INTO curriculum.live_sessions VALUES ('S1','M1');

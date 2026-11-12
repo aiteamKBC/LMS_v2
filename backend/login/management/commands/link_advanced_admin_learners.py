@@ -68,7 +68,7 @@ class Command(BaseCommand):
                     learner_type='commercial',
                     programme_status='Active',
                     invite_to_platform=True,
-                    training_plan=profile.learning_plan,
+                    training_plan=profile.training_plan,
                 )
                 LearnerProfile.objects.using('enrolment').filter(pk=profile.pk, enrolment_id__isnull=True).update(
                     enrolment_id=created.pk, learner_type='commercial',

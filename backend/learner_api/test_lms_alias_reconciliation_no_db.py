@@ -1,4 +1,6 @@
 """Database-free safety regressions for LMS alias reconciliation."""
+import inspect
+from pathlib import Path
 import unittest
 from unittest.mock import MagicMock
 
@@ -40,6 +42,21 @@ class LmsAliasReconciliationTests(unittest.TestCase):
         })
         self.assertEqual(payload['source_email'], 'former@example.org')
         self.assertEqual(payload['identity_import'], reconciliation.RUN_KIND)
+
+    def test_external_identity_writes_do_not_name_removed_enrolment_id(self):
+        source = inspect.getsource(reconciliation.apply)
+        identity_insert = source.split('learner_external_identities AS existing (', 1)[1].split(
+            'ON CONFLICT', 1,
+        )[0]
+        self.assertNotIn('enrolment_id', identity_insert)
+
+        script = (Path(__file__).resolve().parents[1] / 'scripts' / 'sync_legacy_lms_identities.py').read_text(
+            encoding='utf-8-sig',
+        )
+        script_insert = script.split('INSERT INTO "Learner".learner_external_identities', 1)[1].split(
+            'VALUES', 1,
+        )[0]
+        self.assertNotIn('enrolment_id', script_insert)
 
 
 if __name__ == '__main__':

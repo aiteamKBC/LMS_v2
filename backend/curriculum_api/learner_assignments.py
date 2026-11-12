@@ -267,21 +267,18 @@ def module_assignment_roster(module_id, placement_learners, lifecycle_status='')
     """Include direct module membership without broadening programme/cohort rosters."""
     placed = {str(row['id']): row for row in placement_learners}
     profiles = LearnerProfile.objects.select_related(*RELATIONS).filter(
-        Q(pk__in=list(placed)) | Q(learning_plan__contains=[{'moduleId': module_id}])
-    )
+        Q(pk__in=list(placed)) | Q(plan_modules__curriculum_module_id=module_id)
+    ).prefetch_related('plan_modules').distinct()
     if lifecycle_status:
         profiles = profiles.filter(lifecycle_status__iexact=lifecycle_status)
     result = dict(placed)
     for profile in profiles:
-        plan = profile.learning_plan
-        if isinstance(plan, str):
-            try:
-                plan = json.loads(plan)
-            except ValueError:
-                plan = None
-        entries = [entry for entry in plan if isinstance(entry, dict)] if isinstance(plan, list) else []
-        explicit = any(entry.get('assignmentMode') == 'explicit' for entry in entries)
-        assigned = any(str(entry.get('moduleId')) == module_id for entry in entries)
+        module_refs = {
+            str(module.module_ref) for module in profile.plan_modules.all()
+            if module.module_ref
+        }
+        explicit = bool(module_refs)
+        assigned = module_id in module_refs
         key = str(profile.pk)
         if explicit and not assigned:
             result.pop(key, None)

@@ -10,10 +10,9 @@ Two places, because they do different jobs
 ``enrolment."Created_users".Coach_name/Coach_email`` is the enrolment-side
 record: what the directory shows, and what survives a mirror being rebuilt.
 
-``"Learner".learners.coach_email`` is what the coach workspace actually reads --
-the caseload, the marking queue and the timetable all scope on it. Writing only
-to the enrolment table would look right in the directory while every coach's
-workspace stayed empty, which is the failure worth avoiding here.
+``"Learner".learners.coach_id`` is what the coach workspace actually reads,
+resolved through ``curriculum.coaches``. The caseload, marking queue and
+timetable all scope on that normalized relationship.
 
 Most imported learners have no mirror row yet (it is created on activation), so
 one is created via ``sync_active_user`` before the coach is written. That is the
@@ -96,12 +95,16 @@ class Command(BaseCommand):
         """
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                'select lower(btrim("Email")), id, "Username", "Access" '
-                'from enrolment."Staff_users" '
-                'where coalesce(btrim("Email"), \'\') <> \'\''
+                'select lower(btrim(staff."Email")), staff.id, staff."Username", '
+                'staff."Access", coach.id '
+                'from enrolment."Staff_users" staff '
+                'left join curriculum.coaches coach '
+                'on lower(btrim(coach.email))=lower(btrim(staff."Email")) '
+                'where coalesce(btrim(staff."Email"), \'\') <> \'\''
             )
             return {
-                row[0]: {"id": row[1], "name": _s(row[2]), "access": _s(row[3])}
+                row[0]: {"id": row[1], "name": _s(row[2]), "access": _s(row[3]),
+                         "coach_id": _s(row[4])}
                 for row in cur.fetchall()
             }
 
@@ -123,7 +126,7 @@ class Command(BaseCommand):
         planned, unmatched = [], {}
         for row in rows:
             coach = staff.get(row["coach_email"])
-            if coach is None:
+            if coach is None or not coach["coach_id"]:
                 unmatched.setdefault(row["coach_email"], []).append(row["learner_email"])
                 continue
             planned.append((row, coach))
@@ -222,7 +225,7 @@ class Command(BaseCommand):
                     # writes to whatever mirror actually exists now.
                     LearnerProfile.objects.filter(
                         enrolment_id=row["enrolment_id"]
-                    ).update(coach_name=coach_name, coach_email=coach_email)
+                    ).update(coach_id=coach["coach_id"])
 
                 if grant_to:
                     # Only staff with no grant at all; an existing role is never

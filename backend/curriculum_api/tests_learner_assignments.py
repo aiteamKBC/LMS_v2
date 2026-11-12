@@ -206,16 +206,22 @@ class AssignmentEndpointTests(SimpleTestCase):
 
 
 class ModuleRosterTests(SimpleTestCase):
+    @staticmethod
+    def roster(model, profiles):
+        query = model.objects.select_related.return_value.filter.return_value
+        query.prefetch_related.return_value.distinct.return_value = profiles
+
     def test_direct_assignment_is_visible_without_changing_other_scope_membership(self):
+        modules = SimpleNamespace(all=lambda: [SimpleNamespace(module_ref='MOD-1')])
         profile = SimpleNamespace(
             pk=2, enrolment_id=91, full_name='Direct learner', email='direct@example.com',
             programme='Other programme', programme_status='Active', cohort='Other cohort',
             cohort_id='COHORT-OTHER', group_name='Other group', group_id='GROUP-OTHER',
             lifecycle_status='active', coach_name='', coach_email='', progress_variance=None, otjh_status='',
-            learning_plan=[{'moduleId': 'MOD-1', 'assignmentMode': 'explicit'}],
+            plan_modules=modules,
         )
         with patch.object(assignments, 'LearnerProfile') as model:
-            model.objects.filter.return_value = [profile]
+            self.roster(model, [profile])
             roster = assignments.module_assignment_roster('MOD-1', [])
         self.assertEqual([row['id'] for row in roster], [2])
         self.assertEqual(roster[0]['enrolmentId'], 91)
@@ -227,9 +233,12 @@ class ModuleRosterTests(SimpleTestCase):
         self.assertEqual(assigned_plan, {'otjh': 12, 'ksbWeights': {'K1': 2}, 'basis': 'module'})
 
     def test_explicit_module_only_plan_is_excluded_from_sibling_roster(self):
-        profile = SimpleNamespace(pk=1, learning_plan=[{'moduleId': 'MOD-1', 'assignmentMode': 'explicit'}])
+        profile = SimpleNamespace(
+            pk=1,
+            plan_modules=SimpleNamespace(all=lambda: [SimpleNamespace(module_ref='MOD-1')]),
+        )
         with patch.object(assignments, 'LearnerProfile') as model:
-            model.objects.filter.return_value = [profile]
+            self.roster(model, [profile])
             self.assertEqual(assignments.module_assignment_roster('MOD-2', [{'id': 1, 'name': 'Same group'}]), [])
 
 

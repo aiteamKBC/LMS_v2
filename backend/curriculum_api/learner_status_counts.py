@@ -55,16 +55,14 @@ def learner_facts(module_ids):
     plan_join = ''
     params = []
     if module_ids:
-        if 'learning_plan' not in columns:
-            raise DatabaseError('Module membership is unavailable.')
-        plan_select = "membership.explicit, membership.module_ids, jsonb_typeof(p.learning_plan::jsonb) = 'string' AS ambiguous"
+        plan_select = "coalesce(membership.explicit,false) AS explicit, coalesce(membership.module_ids,ARRAY[]::text[]) AS module_ids, false AS ambiguous"
         plan_join = """
             LEFT JOIN LATERAL (
-                SELECT coalesce(bool_or(entry->>'assignmentMode' = 'explicit'), false) AS explicit,
-                       coalesce(array_agg(DISTINCT entry->>'moduleId')
-                           FILTER (WHERE entry->>'moduleId' = ANY(%s)), ARRAY[]::text[]) AS module_ids
-                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.learning_plan::jsonb) = 'array'
-                     THEN p.learning_plan::jsonb ELSE '[]'::jsonb END) entry
+                SELECT count(*) > 0 AS explicit,
+                       coalesce(array_agg(DISTINCT plan.curriculum_module_id)
+                           FILTER (WHERE plan.curriculum_module_id = ANY(%s)), ARRAY[]::text[]) AS module_ids
+                FROM "Learner".learner_training_plan_modules plan
+                WHERE plan.learner_id=p.id
             ) membership ON true
         """
         params.append(sorted(module_ids))
@@ -78,13 +76,6 @@ def learner_facts(module_ids):
         """, params)
         names = [column[0] for column in cursor.description]
         rows = [dict(zip(names, row)) for row in cursor.fetchall()]
-    ambiguous = [row['id'] for row in rows if row['ambiguous']]
-    if ambiguous:
-        from learner_api.models import LearnerProfile
-        plans = {profile.pk: profile.learning_plan for profile in LearnerProfile.objects.only('id', 'learning_plan').filter(pk__in=ambiguous)}
-        for row in rows:
-            if row['ambiguous']:
-                row['explicit'], row['module_ids'] = plan_membership(plans.get(row['id']), module_ids)
     return rows
 
 

@@ -642,8 +642,7 @@ def replace_training_plan(learner, plan):
         LearnerTrainingPlanModule(
             learner=learner,
             position=module_position,
-            module_ref=_s(module.get("moduleId")) or None,
-            module_title=_s(module.get("moduleTitle")),
+            curriculum_module_id=_s(module.get("moduleId")) or None,
         )
         for module_position, module in enumerate(modules, 1)
     ])

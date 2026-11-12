@@ -259,7 +259,7 @@ def tutor_learners(request):
         plan_learner_ids = (
             LearnerTrainingPlanModule.objects.using('enrolment')
             .filter(
-                module_ref__in=requested_module_ids,
+                curriculum_module_id__in=requested_module_ids,
                 learner__lifecycle_status__iexact='active',
             )
             .values_list('learner_id', flat=True)

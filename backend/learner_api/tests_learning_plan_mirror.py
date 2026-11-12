@@ -81,24 +81,25 @@ class SyncMirrorTests(SimpleTestCase):
         return count, enrolment, profile, child_rows
 
     def test_the_mirror_gets_the_structured_plan(self):
-        _count, _enrolment, profile, _child = self._sync(PLAN)
+        _count, _enrolment, profile, child = self._sync(PLAN)
 
-        profile.objects.filter.assert_called_with(enrolment_id=19)
-        profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=PLAN)
+        profile.objects.only.assert_called_once_with("id", "enrolment_id")
+        profile.objects.only.return_value.filter.assert_called_with(enrolment_id=19)
+        child.assert_called_once_with(profile.objects.only.return_value.filter.return_value.first.return_value, PLAN)
 
     def test_a_cleared_plan_nulls_the_mirror(self):
         # Not skipped: a learner whose plan was removed must not keep a copy of
         # it in the table every coach surface reads.
-        _count, _enrolment, profile, _child = self._sync([])
+        _count, _enrolment, profile, child = self._sync([])
 
-        profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=None)
+        child.assert_called_once_with(profile.objects.only.return_value.filter.return_value.first.return_value, [])
 
     def test_the_mirror_is_matched_on_enrolment_id(self):
         # Never on a LearnerProfile pk: that reference goes stale after
         # sync_active_user, which silently missed 367 rows once already.
         _count, _enrolment, profile, _child = self._sync(PLAN, pk=101)
 
-        profile.objects.filter.assert_called_with(enrolment_id=101)
+        profile.objects.only.return_value.filter.assert_called_with(enrolment_id=101)
 
     def test_a_learner_with_no_pk_is_left_alone(self):
         self.assertEqual(sync_learning_plan_mirror(None), 0)
@@ -110,7 +111,7 @@ class SyncMirrorTests(SimpleTestCase):
         with patch("learner_api.mappers.get_training_plan", return_value=PLAN), \
                 patch("learner_api.active_users.replace_training_plan"), \
                 patch("learner_api.models.LearnerProfile") as profile:
-            profile.objects.filter.side_effect = DatabaseError("pooler said no")
+            profile.objects.only.side_effect = DatabaseError("pooler said no")
             self.assertEqual(sync_learning_plan_mirror(source), 0)
 
     def test_the_child_rows_the_learner_page_reads_are_written(self):

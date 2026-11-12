@@ -58,7 +58,9 @@ def live_learner_count(module_id):
     from learner_api.models import LearnerTrainingPlanModule
 
     try:
-        return LearnerTrainingPlanModule.objects.filter(module_ref=module_id).values("learner_id").distinct().count()
+        return LearnerTrainingPlanModule.objects.filter(
+            curriculum_module_id=module_id,
+        ).values("learner_id").distinct().count()
     except DatabaseError:
         return None
 
