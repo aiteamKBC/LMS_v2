@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({ list: vi.fn(), runs: vi.fn() }));
 vi.mock('@/api/breatheIntegration', () => ({ listBreatheConnections: api.list, getBreatheRuns: api.runs }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { displayName: 'Demo Administrator' } } }) }));
 // Exercise the page without global auth, learner or search service side effects.
-vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, navItems }: { children: ReactNode; navItems: SidebarNavItem[] }) => <><nav>{navItems.map(item => <Link key={item.id} to={item.href!}>{item.label}</Link>)}</nav>{children}</> }));
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, navItems }: { children: ReactNode; navItems: SidebarNavItem[] }) => <><nav>{navItems.map(item => <Link key={item.id} to={item.href!}>{item.label}</Link>)}</nav><main className="workspace-main">{children}</main></> }));
 
 function show(view = '') {
   return render(<MemoryRouter initialEntries={[`/workspace/hr-system${view ? `?view=${view}` : ''}`]}><HRSystemWorkspace /></MemoryRouter>);
@@ -23,6 +23,22 @@ beforeEach(() => {
 });
 
 describe('programme demonstration', () => {
+  it('starts each HR section at the top while retaining learner filters', async () => {
+    const user = userEvent.setup();
+    show();
+    await user.click(screen.getByRole('button', { name: /At risk\s*1/ }));
+    const main = screen.getByRole('main');
+    main.scrollTop = 180;
+    await user.click(screen.getByRole('link', { name: 'Learners' }));
+    expect(main.scrollTop).toBe(0);
+    expect(within(screen.getByRole('table', { name: 'Demo programme learner progress' })).getAllByRole('row')).toHaveLength(2);
+    main.scrollTop = 100;
+    await user.click(screen.getByRole('link', { name: 'Programme & modules' }));
+    expect(main.scrollTop).toBe(0);
+    expect(screen.getByRole('table', { name: 'Module breakdown for Demo Learner 01' })).toBeInTheDocument();
+    expect(api.list).not.toHaveBeenCalled();
+  });
+
   it('reconciles programme hours and distinct KSBs with all four modules for every learner', () => {
     expect(DEMO_MODULES).toHaveLength(4);
     expect(DEMO_MODULES.reduce((sum, module) => sum + module.plannedHours, 0)).toBe(DEMO_PROGRAMME.plannedHours);
