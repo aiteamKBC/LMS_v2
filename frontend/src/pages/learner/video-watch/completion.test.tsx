@@ -720,6 +720,58 @@ it.each(['commercial', 'apprenticeship'])('hides retakes after verified Teams at
   expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
 });
 
+it.each(['commercial', 'apprenticeship'])('limits Live Session retakes using credited time for %s learners', async kind => {
+  const cases = [
+    { type: 'live_session', time: { timeTaken: '02:29:59' }, hidden: false },
+    { type: 'live_session', time: { timeTaken: null, reportedTime: '150 minutes', timeTrackingSource: 'verified_recording_watch' }, hidden: true },
+    { type: 'live_session', time: { timeTaken: '150:00' }, hidden: true },
+    { type: 'live_session', time: { claimedSeconds: 9000, timeTrackingSource: 'signed:input' }, hidden: true },
+    { type: 'live_session', time: { timeTaken: '03:00:00' }, hidden: true },
+    { type: 'reading', time: { timeTaken: '02:30:00' }, hidden: false },
+  ];
+  for (const { type, time, hidden } of cases) {
+    vi.mocked(fetchLearnerDetail).mockResolvedValue({
+      ...detail(true), components: [{ ...first, type, contentHtml: '<p>Synthetic learning material</p>' }],
+      componentProgress: [{ ...progress, ...time }],
+    } as unknown as LearnerDetail);
+    mount('C1', kind);
+    expect(await screen.findByText('Completed')).toBeVisible();
+    const retake = screen.queryByRole('button', { name: 'Record another attempt' });
+    if (hidden) expect(retake).not.toBeInTheDocument();
+    else expect(retake).toBeVisible();
+    if (type === 'live_session') {
+      expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
+    }
+    expect(submitComponentProgress).not.toHaveBeenCalled();
+    cleanup();
+  }
+});
+
+it.each(['commercial', 'apprenticeship'])('uses the fixed Live Session credit after manual completion and reopening for %s', async kind => {
+  vi.mocked(readLearnerAttendanceMode).mockResolvedValue('lazy');
+  const credited = { ...detail(true), componentProgress: [{ ...progress,
+    componentType: 'live_session', reportedTime: '150 minutes', timeTaken: null,
+    claimedSeconds: null, timeTrackingSource: 'completed_live_session', retakeTimeChoice: 'correct',
+  }] } as unknown as LearnerDetail;
+  vi.mocked(fetchLearnerDetail).mockResolvedValueOnce(detail()).mockResolvedValue(credited);
+  vi.mocked(submitComponentProgress).mockResolvedValue({ record: { ...progress,
+    timeTaken: '120:00', countedSeconds: 7200,
+  } } as unknown as ComponentProgressResponse);
+  const view = mount('C1', kind);
+  await finish();
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('02:30:00'));
+  expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
+  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+  view.unmount();
+  mount('C1', kind);
+  expect(await screen.findByText('Completed')).toBeVisible();
+  expect(screen.getByRole('status')).toHaveTextContent('02:30:00');
+  expect(screen.queryByRole('button', { name: 'Record another attempt' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Manage reflection time' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Add lecture reflection' })).toBeVisible();
+});
+
 it('retains live-session time on cancelling the prompt and restores keyboard focus', async () => {
   mount();
   const finishButton = await screen.findByRole('button', { name: 'Finish' });
