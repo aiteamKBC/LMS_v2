@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { coachFetch } from '@/lib/coachFetch';
-import { refreshTeamsPeople } from '../meetingPeopleSync';
+import { refreshTeamsPeople, readTeamsPeopleState } from '../meetingPeopleSync';
 
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 const form = { organizerEmail: 'owner@example.invalid', attendees: ['learner@example.invalid'],
@@ -30,5 +30,18 @@ describe('refreshTeamsPeople', () => {
     await expect(refreshTeamsPeople('LIVE')).rejects.toThrow('Roles are not verified.');
     vi.mocked(coachFetch).mockResolvedValueOnce(new Response('<html>unavailable</html>', { status: 502 }));
     await expect(refreshTeamsPeople('LIVE')).rejects.toThrow('could not be refreshed');
+  });
+
+  it('polls the local saved status with GET and no write body', async () => {
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ form,
+      syncInfo: { status: 'synced', checkedAt: '2026-11-12T10:00:00Z' } })));
+    expect((await readTeamsPeopleState('LIVE')).syncInfo.status).toBe('synced');
+    expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/LIVE/refresh-people/'), expect.objectContaining({ method: 'GET' }));
+    expect(vi.mocked(coachFetch).mock.calls[0][1]).not.toHaveProperty('body');
+  });
+
+  it('does not present an unreadable worker status as synced', async () => {
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ form, syncInfo: { status: 'synced', checkedAt: 'bad' } })));
+    await expect(readTeamsPeopleState('LIVE')).rejects.toThrow('saved Teams people sync status');
   });
 });

@@ -395,7 +395,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, addedInvitees, updateDrawer, pushDates, resendSchedule,
     selectedScopeRows, chooseMeetingScope, reattach, externalCalendar, calendarLinksLoading, calendarLinksError,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
-    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar, refreshPeopleFromTeams, peopleRefreshing,
+    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar, refreshPeopleFromTeams, peopleRefreshing, peopleSyncInfo,
   } = workspace;
   const actionBlockedReason = blockedReason
     || (peopleRefreshing ? 'Wait for people and roles to finish refreshing from Teams.' : '')
@@ -447,6 +447,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             actions, then the same dialog fills in rather than a second popping up. */}
         {selected && (
           <Modal
+            className="teams-meeting-dialog !mt-0 !max-h-[calc(100dvh-2rem)] sm:!mt-[5vh] sm:!max-h-[90dvh] [&>div>h2]:min-w-0"
             /* Two lines rather than one long "name — Teams meeting" string: the
                module is the subject, its cohort and group are the context. */
             title={(
@@ -467,7 +468,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                its own button inside it, so this is hidden rather than left
                there acting on a calendar the reader is not looking at. */
             footer={!teamsLoaded || calendarLinksLoading || calendarLinksError || onSecondTab ? undefined : (
-              <div className="flex w-full flex-wrap items-center justify-end gap-2">
+              <div className="max-h-[40dvh] w-full overflow-y-auto sm:max-h-none sm:overflow-visible flex flex-wrap items-center justify-end gap-2">
                 {actionMessage && <p id={actionFeedbackId} ref={actionFeedbackRef} role="status" aria-live="polite" aria-atomic="true"
                   aria-label="Teams calendar action" tabIndex={-1}
                   className="w-full max-h-32 overflow-y-auto rounded-lg border border-primary-200 bg-primary-50 p-3 text-[12px] font-semibold leading-relaxed text-foreground-700 outline-none focus:ring-2 focus:ring-primary-300">
@@ -507,7 +508,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             {externalCalendar && !selected.summary ? (
               <button type="button" disabled className="inline-flex h-10 items-center rounded-lg bg-primary-600 px-4 text-xs font-bold text-white opacity-40">Update Teams calendar</button>
             ) : selected.summary ? (
-                  <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                  <div className="flex w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-10 [&>button]:w-full [&>button]:whitespace-normal [&>button]:py-2 [&>button]:text-left sm:[&>button]:w-auto">
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
                       disabled={Boolean(busy) || Boolean(updateProgress) || (Boolean(blockedReason) || originalCalendarBlocked) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-line text-sm"></AppIcon>Edit session dates</button>
@@ -957,10 +958,14 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     </p>
                     <button type="button" onClick={refreshPeopleFromTeams}
                       disabled={peopleRefreshing || originalCalendar?.loading || Boolean(busy) || Boolean(blockedReason) || calendarLinksLoading || updateDrawer.saving || Boolean(updateProgress) || !graphConfigured}
-                      className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-primary-700 underline disabled:opacity-50">
+                      className="mt-2 inline-flex min-h-10 max-w-full items-center gap-2 whitespace-normal text-left text-xs font-bold text-primary-700 underline disabled:opacity-50">
                       <AppIcon className={peopleRefreshing || originalCalendar?.loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} />
                       {peopleRefreshing || originalCalendar?.loading ? 'Reading people and roles…' : 'Sync people and roles from Teams'}
                     </button>
+                    <p role="status" aria-live="polite" className={`mt-1 break-words text-[11px] ${peopleSyncInfo?.status === 'failed' ? 'text-amber-800' : 'text-foreground-500'}`}>
+                      {peopleSyncInfo?.message || 'Roles are checked automatically by the existing session worker. Sync checks this meeting now.'}
+                      {updateDrawer.dirty && ' Your unsaved edits stay on screen until you save or confirm Sync.'}
+                    </p>
                   </div>
                   {originalCalendarBlocked && originalCalendar && !originalCalendar.loading && <>
                     <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
@@ -973,7 +978,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     Microsoft meeting roles are not verified. The saved people below may be incomplete; their Teams permissions have not been removed.
                     {' '}<button type="button" onClick={refreshOriginalCalendar} className="font-bold underline">Retry role check</button>
                   </p>}
-                  <fieldset disabled={peopleRefreshing || originalCalendarBlocked || originalRolesBlocked} className="grid gap-4 sm:grid-cols-2 disabled:opacity-60">
+                  <fieldset disabled={peopleRefreshing || originalCalendarBlocked || originalRolesBlocked} className="grid min-w-0 gap-4 sm:grid-cols-2 disabled:opacity-60 [&>label]:min-w-0">
                     <FormField label="Organizer Microsoft 365 email" hint="This organizer owns the existing calendar.">
                       <input aria-label="Organizer" readOnly value={updateDrawer.form.organizerEmail}
                         className="h-11 w-full rounded-lg border border-background-200 bg-background-100 px-3 text-[13px]" />

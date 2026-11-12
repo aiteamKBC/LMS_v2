@@ -4,7 +4,7 @@ import * as calendarHealth from '../calendarHealth';
 import { calendarAction } from '../calendarActions';
 import { compareTeamsAttendees } from '../attendeeComparison';
 import { searchEntraPeople } from '../entraDirectory';
-import { refreshTeamsPeople } from '../meetingPeopleSync';
+import { refreshTeamsPeople, readTeamsPeopleState } from '../meetingPeopleSync';
 import { loadModuleStructure, loadTeamsMeetingArtifacts, loadTeamsMeetingConfiguration, type ModuleCatalogueItem, type ModuleComponent } from '../../module-builder/moduleAuthoringData';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -173,7 +173,7 @@ vi.mock('../creationResult', () => ({ finishTeamsCreation: vi.fn(), finishTeamsU
 vi.mock('../calendarState', () => ({ syncTeamsCalendarState: vi.fn() }));
 vi.mock('../calendarActions', () => ({ calendarAction: vi.fn() }));
 vi.mock('../entraDirectory', () => ({ searchEntraPeople: vi.fn() }));
-vi.mock('../meetingPeopleSync', () => ({ refreshTeamsPeople: vi.fn() }));
+vi.mock('../meetingPeopleSync', () => ({ refreshTeamsPeople: vi.fn(), readTeamsPeopleState: vi.fn() }));
 // Only the Microsoft read is replaced; the pure helpers beside it are the real
 // ones, so the panel's "not published yet" list is the shipped logic.
 vi.mock('../attendeeComparison', async importOriginal => ({
@@ -297,6 +297,9 @@ function rowFor(name: string) {
 describe('Teams Meetings page', () => {
   beforeEach(() => {
     vi.mocked(refreshTeamsPeople).mockReset();
+    vi.mocked(refreshTeamsPeople).mockResolvedValue({});
+    vi.mocked(readTeamsPeopleState).mockReset();
+    vi.mocked(readTeamsPeopleState).mockResolvedValue({ form: {}, syncInfo: { status: 'never', checkedAt: null } });
     vi.mocked(searchEntraPeople).mockReset();
     vi.mocked(searchEntraPeople).mockResolvedValue({ people: [], hasMore: false });
     vi.mocked(readImportedMeetingEditor).mockReset();
@@ -1064,6 +1067,36 @@ describe('Teams Meetings page', () => {
     }), expect.anything()));
     expect((updateTeamsMeetingSchedule.mock.calls[0] as unknown[])[1]).not.toHaveProperty('coOrganizers');
     expect(createTeamsMeeting).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('reads automatic worker roles without overwriting unsaved edits (dirty: %s)', async dirty => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    try {
+      window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+      await renderPage();
+      await screen.findByText('Data Foundations');
+      await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+      const dialog = within(await screen.findByRole('dialog'));
+      await waitFor(() => expect(readTeamsPeopleState).toHaveBeenCalled());
+      if (dirty) {
+        const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+        fireEvent.change(attendees, { target: { value: 'unsaved@example.invalid' } });
+        fireEvent.keyDown(attendees, { key: 'Enter' });
+      }
+      vi.mocked(readTeamsPeopleState).mockResolvedValue({ form: { organizerEmail: 'tutor@example.com',
+        attendees: 'learner@example.com', presenters: '', coOrganizers: 'worker.co@example.invalid' },
+        syncInfo: { status: 'synced', checkedAt: '2026-11-12T12:00:00Z', message: 'People and roles are synced with Teams.' } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+      if (dirty) {
+        expect(dialog.getByRole('button', { name: 'Remove unsaved@example.invalid' })).toBeVisible();
+        expect(dialog.queryByRole('button', { name: 'Remove worker.co@example.invalid' })).not.toBeInTheDocument();
+      } else {
+        expect(await dialog.findByRole('button', { name: 'Remove worker.co@example.invalid' })).toBeVisible();
+        expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+      }
+      expect(refreshTeamsPeople).not.toHaveBeenCalled();
+      expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 
   it('adds ordinary attendees at the co-organizer limit without changing meeting roles', async () => {

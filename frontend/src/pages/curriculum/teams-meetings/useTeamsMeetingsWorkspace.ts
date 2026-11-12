@@ -13,7 +13,7 @@ import { UNCERTAIN_MESSAGE, waitForSavedCreate, type CreateProgress, type Create
 import { type UpdateProgress } from './updateProgress';
 import { syncTeamsCalendarState } from './calendarState';
 import { compareTeamsAttendees, type AttendeeComparison } from './attendeeComparison';
-import { refreshTeamsPeople } from './meetingPeopleSync';
+import { refreshTeamsPeople, readTeamsPeopleState, type TeamsPeopleSyncInfo } from './meetingPeopleSync';
 import { type CalendarActionTarget } from './CalendarActionDialog';
 import { calendarAction, type ActionResult, type ActionReview } from './calendarActions';
 import { leftoverSlotLabel } from './leftoverSlots';
@@ -29,6 +29,7 @@ import {
   type CurriculumSession,
   type CurriculumTeamsMeetingSummary,
   readImportedMeetingEditor,
+  clearCurriculumGetCache,
   type ImportedMeetingEditor,
 } from '@/lib/curriculumApi';
 import {
@@ -772,6 +773,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const [originalRead, setOriginalRead] = useState<{ id: string; loading: boolean; data?: ImportedMeetingEditor; error?: string }>({ id: '', loading: false });
   const [originalRevision, setOriginalRevision] = useState(0);
   const [peopleRefreshing, setPeopleRefreshing] = useState(false);
+  const [peopleSyncInfo, setPeopleSyncInfo] = useState<TeamsPeopleSyncInfo | null>(null);
+  const savedPeopleRevision = useRef('');
   const discardOnOriginalRead = useRef(false);
   const invitationDirty = useRef(updateDrawer.dirty);
   invitationDirty.current = updateDrawer.dirty;
@@ -1175,6 +1178,17 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     };
   };
 
+  const originalInvitationForm = (data: ImportedMeetingEditor, row: MeetingRow): TeamsCalendarForm => {
+    const roles = new Set([...(data.presenters || []), ...(data.coOrganizers || [])].map(value => value.toLowerCase()));
+    const saved = invitationForm(row);
+    return { ...saved, organizerEmail: data.organizer || row.summary?.organizerEmail || '',
+      attendees: (data.attendees || []).filter(value => !roles.has(value.toLowerCase())).join('\n'),
+      presenters: (data.presenters || []).join('\n'), coOrganizers: (data.coOrganizers || []).join('\n'),
+      recording: data.options ? data.options.recordAutomatically ? data.options.allowTranscription ? 'record-transcribe' : 'record' : 'none' : saved.recording,
+      lobbyBypass: data.options?.lobbyBypassSettings?.scope === 'organizationExcludingGuests' ? 'organization-excluding-guests' : data.options?.lobbyBypassSettings?.scope || saved.lobbyBypass,
+      spokenLanguage: data.options?.meetingSpokenLanguageTag || saved.spokenLanguage };
+  };
+
   /** Fill the dialog's invitation fields from the calendar, as their untouched starting point. */
   const seedInvitations = (row: MeetingRow) => {
     if (!row.summary) return;
@@ -1209,7 +1223,6 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
 
   const refreshPeopleFromTeams = () => {
     if (!selected?.summary || peopleRefreshing || updateDrawer.saving || busy) return;
-    if (originalCalendar) { refreshOriginalCalendar(); return; }
     const row = selected;
     const liveId = row.summary!.liveSessionId;
     const read = async () => {
@@ -1219,10 +1232,20 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       try {
         const values = await refreshTeamsPeople(liveId);
         if (selectedLiveId.current !== liveId) return;
+        let verifiedOriginal: ImportedMeetingEditor | undefined;
+        if (externalCalendar?.originalSeriesId === liveId) {
+          verifiedOriginal = await readImportedMeetingEditor(liveId, { standard: true });
+          if (selectedLiveId.current !== liveId) return;
+          setOriginalRead({ id: liveId, loading: false, data: verifiedOriginal });
+          if (verifiedOriginal.status !== 'editable' || verifiedOriginal.rolesEditable !== true) {
+            throw new Error(verifiedOriginal.message || 'The original meeting roles could not be verified. Retry Sync.');
+          }
+        }
         await loadTeamsState();
         await loadDetail(liveId);
         if (selectedLiveId.current !== liveId) return;
-        settleInvitations({ ...invitationForm(row), ...values });
+        settleInvitations(verifiedOriginal ? originalInvitationForm(verifiedOriginal, row) : { ...invitationForm(row), ...values });
+        setPeopleSyncInfo({ status: 'synced', checkedAt: new Date().toISOString(), message: 'People and roles are synced with Teams.' });
         setComparison(null);
         notifyChanged(row.catalogueId);
       } catch (error) {
@@ -2095,8 +2118,32 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const detailSeries = detail?.series;
   const originalId = externalCalendar?.originalSeriesId || '';
   const originalCalendar = originalId && originalRead.id === originalId ? originalRead : undefined;
+  useEffect(() => { setPeopleSyncInfo(null); }, [selected?.summary?.liveSessionId]);
   const originalCalendarBlocked = Boolean(originalId && (!originalCalendar || originalCalendar.loading || originalCalendar.data?.status !== 'editable'));
   const originalRolesBlocked = Boolean(originalCalendar?.data?.status === 'editable' && originalCalendar.data.rolesEditable !== true);
+  useEffect(() => {
+    const id = selected?.summary?.liveSessionId;
+    if (!id || !teamsLoaded || calendarLinksLoading) return;
+    let active = true;
+    void readTeamsPeopleState(id).then(async result => {
+      if (!active || selectedLiveId.current !== id) return;
+      setPeopleSyncInfo(result.syncInfo);
+      const revision = `${id}:${result.syncInfo.checkedAt || ''}`;
+      if (!result.syncInfo.checkedAt || result.syncInfo.status !== 'synced' || invitationDirty.current
+        || peopleRefreshing || savedPeopleRevision.current === revision) return;
+      if (originalId) { savedPeopleRevision.current = revision; reloadOriginalCalendar(); return; }
+      clearCurriculumGetCache();
+      await Promise.all([loadTeamsState(), loadDetail(id)]);
+      if (!active || selectedLiveId.current !== id || invitationDirty.current) return;
+      savedPeopleRevision.current = revision;
+      settleInvitations({ ...peopleFormsRef.current.update, ...result.form });
+    }).catch(() => {
+      if (active) setPeopleSyncInfo({ status: 'failed', checkedAt: null, message: 'The saved role sync status could not be read. Retry Sync.' });
+    });
+    return () => { active = false; };
+    // The existing minute hand reads local saved results, never Microsoft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.summary?.liveSessionId, teamsLoaded, calendarLinksLoading, now]);
   useEffect(() => {
     if (!originalId) return;
     let active = true;
@@ -2107,13 +2154,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       if (!active || selectedLiveId.current !== originalId) return;
       setOriginalRead({ id: originalId, loading: false, data });
       if (data.status !== 'editable' || data.rolesEditable !== true || (invitationDirty.current && !discardEdits)) return;
-      const roles = new Set([...(data.presenters || []), ...(data.coOrganizers || [])].map(value => value.toLowerCase()));
-      const form = { ...emptyTeamsCalendarForm(), organizerEmail: data.organizer || selected?.summary?.organizerEmail || '',
-        attendees: (data.attendees || []).filter(value => !roles.has(value.toLowerCase())).join('\n'),
-        presenters: (data.presenters || []).join('\n'), coOrganizers: (data.coOrganizers || []).join('\n'),
-        recording: data.options ? data.options.recordAutomatically ? data.options.allowTranscription ? 'record-transcribe' : 'record' : 'none' : invitationForm(selected!).recording,
-        lobbyBypass: data.options?.lobbyBypassSettings?.scope === 'organizationExcludingGuests' ? 'organization-excluding-guests' : data.options?.lobbyBypassSettings?.scope || invitationForm(selected!).lobbyBypass,
-        spokenLanguage: data.options?.meetingSpokenLanguageTag || invitationForm(selected!).spokenLanguage };
+      const form = originalInvitationForm(data, selected!);
       updateBaseline.current = form;
       invitationsFor.current = originalId;
       updateDrawer.openWith(form);
@@ -2249,7 +2290,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
     selectedScopeRows, chooseMeetingScope, refreshMeetingScopes,
     externalCalendar, calendarLinksLoading, calendarLinksError,
-    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar, refreshPeopleFromTeams, peopleRefreshing,
+    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar, refreshPeopleFromTeams, peopleRefreshing, peopleSyncInfo,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };
 }
