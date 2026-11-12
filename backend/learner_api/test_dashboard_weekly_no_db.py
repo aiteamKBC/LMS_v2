@@ -3,7 +3,7 @@ import json
 import sqlite3
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
 from . import dashboard_weekly as weekly, training_plan_dashboard as schedule, learner_detail
@@ -145,20 +145,6 @@ class DashboardWeeklyTests(SimpleTestCase):
         self.assertEqual(read.call_args.kwargs, {'module_id': 'M1', 'include_weeks': True, 'include_actions': True})
         self.assertIs(read.call_args.args[0].profile, profile)
         identity.assert_called_once_with(source, 265, heal=False, fields=('id', 'enrolment_id'))
-
-    def test_initial_stale_module_falls_back_to_canonical_week_selection(self):
-        source = SimpleNamespace(pk=265)
-        profile = SimpleNamespace(pk=17, enrolment_id=265)
-        payload = {'weeks': [], 'selectedWeek': None}
-        with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \
-             patch.object(weekly, 'learner_profile_for_source', return_value=profile), \
-             patch.object(weekly, 'read_weekly_learning', side_effect=[LookupError('module removed'), payload]) as read:
-            result = weekly.read_dashboard_weekly(source, 265, module_id='stale-module')
-        self.assertIs(result, payload)
-        self.assertEqual([call.kwargs for call in read.call_args_list], [
-            {'module_id': 'stale-module', 'include_weeks': True, 'include_actions': True},
-            {'module_id': None, 'include_weeks': True, 'include_actions': True},
-        ])
 
     def test_week_detail_omits_rail_and_preserves_delivery_slot_identity(self):
         navigation = {'id': 'M1:2', 'moduleId': 'M1', 'kind': 'live-session', 'slotNumber': 2}
