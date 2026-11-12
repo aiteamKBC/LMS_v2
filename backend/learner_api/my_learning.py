@@ -260,7 +260,7 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .subject_origins import imported_course_links
     # curriculum.modules no longer stores placement names or a deletion
     # marker: names come through the ids, and every requested module resolves.
-    cur.execute('''WITH requested AS (
+    cur.execute(f'''WITH requested AS (
         SELECT * FROM curriculum.modules WHERE module_catalogue_id=ANY(%s)
     ), programme_names AS (
         SELECT placement.programme_id,

@@ -554,12 +554,11 @@ def apply(cursor, expected_branch_id):
         for alias in bundle['aliases']:
             payload = _identity_payload(alias)
             cursor.execute('''INSERT INTO "Learner".learner_external_identities AS existing (
-                learner_id,enrolment_id,source_system,source_learner_id,source_payload,
+                learner_id,source_system,source_learner_id,source_payload,
                 first_seen_at,last_seen_at
-            ) VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s)
+            ) VALUES (%s,%s,%s,%s::jsonb,%s,%s)
             ON CONFLICT (source_system,source_learner_id) WHERE deleted_at IS NULL
             DO UPDATE SET
-                enrolment_id=EXCLUDED.enrolment_id,
                 source_payload=(CASE
                   WHEN jsonb_typeof(existing.source_payload)='object'
                   THEN existing.source_payload ELSE '{}'::jsonb END)
@@ -568,7 +567,7 @@ def apply(cursor, expected_branch_id):
                 last_seen_at=greatest(existing.last_seen_at,EXCLUDED.last_seen_at)
             WHERE existing.learner_id=EXCLUDED.learner_id
             RETURNING id''', [
-                owner['learner_id'], owner.get('enrolment_id'), SOURCE_SYSTEM,
+                owner['learner_id'], SOURCE_SYSTEM,
                 str(alias['lms_learner_id']), _json(payload),
                 alias.get('first_seen') or datetime.now(timezone.utc),
                 alias.get('last_seen') or datetime.now(timezone.utc),

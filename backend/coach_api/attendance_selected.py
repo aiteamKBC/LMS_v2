@@ -25,7 +25,7 @@ ASSIGNMENTS_SQL = '''WITH source AS (
     CROSS JOIN LATERAL jsonb_array_elements(
         CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END) entry
     UNION
-    SELECT source.id,source.email,coalesce(m.curriculum_module_id,nullif(m.module_ref,''))
+    SELECT source.id,source.email,m.curriculum_module_id
     FROM source JOIN "Learner".learners l ON l.enrolment_id=source.id
     JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
 ), eligible AS (

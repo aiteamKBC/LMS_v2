@@ -5,6 +5,8 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_protect
 
+from learner_api.learner_coach_columns import learner_coach_sql
+from old_otjh import repository
 from old_otjh.repository import query
 from old_otjh.service import ServiceError, normalize
 from .auth import coach_access_required
@@ -28,10 +30,17 @@ def endpoint(view):
     return wrapped
 
 
+def _coach_email_sql():
+    return learner_coach_sql('l', 'email', repository._query_alias.get() or repository.DB)
+
+
 def caseload(email):
-    return query('''SELECT l.enrolment_id AS id,l.learner_type AS kind,l.full_name AS name,l.programme
+    # programme: the learner's programme name by programme_id (the copied
+    # name column is gone on the canonical schema), as LearnerProfile.programme.
+    return query(f'''SELECT l.enrolment_id AS id,l.learner_type AS kind,l.full_name AS name,
+        (SELECT p.name FROM curriculum.programmes p WHERE p.programme_id=l.programme_id) AS programme
         FROM "Learner".learners l JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
-        WHERE lower(btrim(l.coach_email))=%s AND lower(btrim(l.email))=lower(btrim(u."Email"))
+        WHERE lower(btrim({_coach_email_sql()}))=%s AND lower(btrim(l.email))=lower(btrim(u."Email"))
           AND l.learner_type IN ('commercial','apprenticeship')
         ORDER BY l.full_name,l.id''', [normalize(email)])
 
@@ -55,7 +64,7 @@ def activities(request):
                 'accepted': ['accepted', 'partial'], 'referred': ['referred', 'rejected']}
     if status not in statuses:
         raise ServiceError('Choose a valid activity status.')
-    clauses = ["s.activity_type='extra_activity'", "s.status<>'draft'", 'lower(btrim(l.coach_email))=%s']
+    clauses = ["s.activity_type='extra_activity'", "s.status<>'draft'", f'lower(btrim({_coach_email_sql()}))=%s']
     params = [normalize(request.coach_email)]
     if request.GET.get('learner'):
         clauses.append('s.learner_id=%s'); params.append(request.GET['learner'])

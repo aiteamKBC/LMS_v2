@@ -213,8 +213,8 @@ def _assigned_learner_emails_by_module(database: str, module_refs) -> dict[str, 
         return result
     rows = (
         LearnerTrainingPlanModule.objects.using(database)
-        .filter(module_ref__in=wanted)
-        .values_list("module_ref", "learner__email")
+        .filter(curriculum_module_id__in=wanted)
+        .values_list("curriculum_module_id", "learner__email")
     )
     for module_ref, email in rows:
         email_key = _email(email)
@@ -359,7 +359,7 @@ def fetch_verified_teams_attendance_rows(
         # entire selected module roster before resolving ambiguous identities.
         assigned_refs = LearnerTrainingPlanModule.objects.using(database).filter(
             learner__email_normalized__in=list(identity_learners_by_email),
-        ).values('module_ref')
+        ).values('curriculum_module_id')
         guest_ids = [key for key, guests in approved_guests.items()
                      if set(guests) & identity_learners_by_email.keys()]
         session_queryset = session_queryset.filter(

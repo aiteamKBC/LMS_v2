@@ -26,6 +26,7 @@ from django.db.models.functions import Lower, Trim
 from system_audit.writes import AuditedQuerySet
 from config.cache_versions import VersionBumpQuerySetMixin
 from config.legacy_identity import legacy_field_alias
+from .learner_coach_columns import LearnerCoachEmailField, LearnerCoachTextField
 
 
 class SafeJSONField(models.JSONField):
@@ -286,10 +287,8 @@ class EnrolmentUser(models.Model):
     # originally provisioned, while Last_audit stores the same value as bigint.
     aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
 
-    # The coach this learner is assigned to, on the enrolment side. The coach
-    # workspace itself scopes on Learner.learners.coach_email -- these are the
-    # enrolment record, kept in step by assign_audit_coaches, so the assignment
-    # survives a mirror being rebuilt.
+    # Enrolment-side contact snapshot. The coach workspace resolves the
+    # canonical Learner.learners.coach_id relationship instead.
     coach_name = models.TextField(db_column="Coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="Coach_email", null=True, blank=True)
 
@@ -621,6 +620,11 @@ class LearnerPlanModuleQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
     """Bulk writes (the mirror rebuild) retire the learner's cached subject rows."""
 
 
+class LearnerPlanModuleManager(models.Manager.from_queryset(LearnerPlanModuleQuerySet)):
+    def get_queryset(self):
+        return super().get_queryset().select_related("curriculum_module")
+
+
 class LearnerProfile(models.Model):
     """Permanent learner identity shared by active and inactive workflows."""
 
@@ -699,8 +703,12 @@ class LearnerProfile(models.Model):
     progress_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     progress_variance = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
     otjh_status = models.CharField(max_length=50, blank=True)
-    coach_name = models.TextField(blank=True)
-    coach_email = models.EmailField(max_length=320, blank=True)
+    # Read through coach_id -> curriculum.coaches on the canonical schema (which
+    # has no copied coach columns), and as the copied columns on the legacy one.
+    # See learner_coach_columns; writes are not translated.
+    coach_id = models.CharField(max_length=255, null=True, blank=True)
+    coach_name = LearnerCoachTextField(blank=True)
+    coach_email = LearnerCoachEmailField(max_length=320, blank=True)
 
     # What a coach has actually decided about this learner's work. Recomputed
     # from Learner.learning_reflection_submissions after every marking decision
@@ -711,16 +719,9 @@ class LearnerProfile(models.Model):
     accepted_reflections = models.IntegerField(default=0)
     rejected_reflections = models.IntegerField(default=0)
 
-    # The learner's assigned plan -- the modules, weeks and components their
-    # "My learning" page shows -- mirrored from
-    # enrolment."Created_users"."Learning_plan", which stays the record staff
-    # edit. Held here because every coach and reporting surface already reads
-    # this table and had no way to see what a learner was actually assigned
-    # without joining back to enrolment. Kept in step by
-    # learning_plan.sync_learning_plan_mirror on every save of the plan; null
-    # means no plan has been assigned, which for most learners is the honest
-    # answer rather than a missing mirror.
-    learning_plan = models.JSONField(null=True, blank=True)
+    # The assigned plan is normalized below through plan_modules -> weeks ->
+    # components. Do not add a JSON field here: the physical learners table
+    # deliberately has no learning_plan column.
     # Programme and individual learner dates are distinct physical date columns.
     learner_start_date = models.DateField(null=True, blank=True)
     learner_end_date = models.DateField(null=True, blank=True)
@@ -1098,10 +1099,29 @@ class LearnerKsbAssignment(models.Model):
 class LearnerTrainingPlanModule(models.Model):
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="plan_modules")
     position = models.PositiveIntegerField()
-    module_ref = models.TextField(null=True, blank=True)
-    module_title = models.TextField(blank=True)
+    curriculum_module = models.ForeignKey(
+        "curriculum_api.ModuleAuthoringModule",
+        db_column="curriculum_module_id",
+        on_delete=models.PROTECT,
+        related_name="learner_plan_assignments",
+        null=True,
+        blank=True,
+    )
 
-    objects = models.Manager.from_queryset(LearnerPlanModuleQuerySet)()
+    objects = LearnerPlanModuleManager()
+
+    @property
+    def module_ref(self):
+        return self.curriculum_module_id
+
+    @module_ref.setter
+    def module_ref(self, value):
+        self.curriculum_module_id = value
+
+    @property
+    def module_title(self):
+        module = self.curriculum_module
+        return module.title if module is not None else ""
 
     @classmethod
     def cache_version_fields(cls):

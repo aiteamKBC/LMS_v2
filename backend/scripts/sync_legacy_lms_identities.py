@@ -98,10 +98,10 @@ def apply_plan(cur, state, plan, fingerprint):
             changed_payloads[item['identity_id']] = payload
             continue
         cur.execute('''INSERT INTO "Learner".learner_external_identities
-            (learner_id,enrolment_id,source_system,source_learner_id,source_payload,
+            (learner_id,source_system,source_learner_id,source_payload,
              first_seen_at,last_seen_at)
-            VALUES (%s,%s,'old_lms',%s,%s,now(),now())''',
-            [item['learner_id'], item['enrolment_id'], item['source_learner_id'], Jsonb(payload)])
+            VALUES (%s,'old_lms',%s,%s,now(),now())''',
+            [item['learner_id'], item['source_learner_id'], Jsonb(payload)])
     if not cur.execute('SELECT 1 FROM django_migrations WHERE app=%s AND name=%s',
                        ['learner_api', MIGRATION]).fetchone():
         cur.execute('INSERT INTO django_migrations (app,name,applied) VALUES (%s,%s,now())',
