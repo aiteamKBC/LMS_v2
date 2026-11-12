@@ -44,6 +44,8 @@ export interface StudentActivityItem {
   best_score_percent?: number | null;
   historical_completed?: boolean;
   new_attempt_count?: number;
+  /** Latest saved learner interaction, separate from authored/upload dates. */
+  last_activity_at?: string | null;
 }
 
 export interface DirectOtjhActivity {

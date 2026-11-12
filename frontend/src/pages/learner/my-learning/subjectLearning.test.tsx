@@ -406,6 +406,36 @@ describe('map and My Learning navigation', () => {
     expect(screen.queryByRole('heading', { name: 'Continue learning' })).not.toBeInTheDocument();
   });
 
+  it.each(['commercial', 'apprenticeship'] as const)('continues after saved later work despite an unfinished masterclass (%s)', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {}, activity_dates: {
+      MASTER: { date: '2026-09-01', date_source: 'builder_week' },
+      L4: { date: '2026-10-21', date_source: 'builder_week' },
+      NEXT: { date: '2026-10-21', date_source: 'builder_week' },
+    } });
+    const real = { modules: ['Leadership'], components: ['MASTER', 'L4', 'NEXT'].map(componentId => ({
+      componentId, moduleId: 'M1', module: 'Leadership', week: componentId === 'MASTER' ? 'Week 1' : 'Week 5',
+      component: componentId, type: 'reading', contentAvailable: true,
+    })), componentProgress: [{ componentId: 'L4', kind: 'component', submittedAt: '2026-11-11T10:00:00Z' }],
+      videoProgress: [], quizAttempts: [] } as unknown as LearnerDetail;
+    render(<MemoryRouter initialEntries={[`/learner/my-learning/${kind}/132?subject=current%3AM1&resume=1`]}><Routes>
+      <Route path={`/learner/my-learning/${kind}/132`} element={<StudentActivityPanel data={null} real={real} kind={kind} learnerId="132" loading={false} error={null} onRetry={() => {}} />} />
+      <Route path={`/learner/component/${kind}/132/:activityId`} element={<p>Activity player</p>} />
+    </Routes><Navigation /></MemoryRouter>);
+    expect(await screen.findByText('Activity player')).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/component/${kind}/132/NEXT?`);
+    expect(screen.getByTestId('location')).not.toHaveTextContent('resume=');
+  });
+
+  it('does not use automatic attendance as the last learner interaction', () => {
+    const real = { modules: ['Leadership'], components: [{ moduleId: 'M1', module: 'Leadership',
+      componentId: 'LIVE', component: 'Live lecture', type: 'live_session', attendanceCompleted: true }],
+      componentProgress: [{ componentId: 'LIVE', kind: 'component', submittedAt: '2026-11-11T10:00:00Z',
+        timeTrackingSource: 'verified_teams_attendance', startedAt: null }], videoProgress: [], quizAttempts: [] } as unknown as LearnerDetail;
+    const subjects = subjectsFrom(null, real, { covers: {}, current_subjects: [{ id: 'M1', title: 'Leadership' }] });
+    expect(subjects[0].activities[0].completed).toBe(true);
+    expect(subjects[0].activities[0].lastActivityAt).toBeUndefined();
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('resumes the earlier incomplete activity for %s instead of the calendar week', async kind => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {}, activity_dates: {
       DONE: { date: '2026-09-01', date_source: 'builder_week' },
