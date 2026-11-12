@@ -144,14 +144,17 @@ def lecture_row(session, lecture, title, tutor, now):
 def response(month, navigation, required, achieved, codes, selected, reviews, lectures, kind, learner_id, coach_name, now):
     difference = achieved - required if achieved is not None and required is not None else None
     tomorrow = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), tzinfo=UK)
+    # Reports can arrive after the lecture ends, without a learner save to
+    # invalidate the open board. Poll persisted hours using real elapsed time.
+    refresh = min(tomorrow, datetime.fromtimestamp(now.timestamp() + 60, UK))
     return {'version': 2, 'month': month, 'title': f'{MONTHS[int(month[5:]) - 1]} {month[:4]}', 'navigation': navigation,
         'summary': {'requiredHours': hours(required), 'achievedHours': hours(achieved), 'difference': hours(difference, signed=True),
             'differenceTone': 'positive' if difference is not None and difference >= 0 else None,
             'differenceDirection': 'down' if difference is not None and difference < 0 else 'up' if difference is not None and difference > 0 else 'equal',
             'ksbs': codes},
         'activitiesHref': f"/learner/modules/{kind}/{learner_id}?subject={quote(selected['id'], safe='')}" if selected else None,
-        # Refresh at the earliest business boundary; the browser only schedules
-        # this deadline and never recalculates attendance/meeting eligibility.
-        'refreshAt': tomorrow.isoformat(),
+        # The reader may shorten this deadline for a session ending sooner.
+        # Attendance eligibility and hour calculations remain server-owned.
+        'refreshAt': refresh.isoformat(),
         'reviews': [review_row(r, kind, learner_id, coach_name, now) for r in reviews],
         'assignments': [], 'lectures': lectures}

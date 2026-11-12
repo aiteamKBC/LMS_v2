@@ -84,7 +84,7 @@ export function CurriculumTimeline({
               {/* States the clash and stops there: the session still runs, so
                   this is a heads-up next to it, not a closure notice. */}
               {row.holidays.map((holiday, index) => <p key={`${holiday.id || holiday.label}-${index}`} className={layout.holiday}>
-                <strong>Heads up, holiday:</strong> {holiday.label || 'Holiday'}
+                <strong>Holiday information:</strong> {holiday.label || 'Holiday'}
                 {' · '}{dateLabel(holiday.startDate)}
                 {holiday.endDate && holiday.endDate !== holiday.startDate ? ` – ${dateLabel(holiday.endDate)}` : ''}
                 {holiday.type ? ` · ${holiday.type}` : ''}

@@ -19,7 +19,7 @@ from curriculum_api.teams_presenter_rooms import (
 )
 
 
-EVENT_FIELDS = 'id,subject,start,end,isCancelled,hideAttendees,organizer,attendees,onlineMeeting'
+EVENT_FIELDS = 'id,subject,start,end,type,recurrence,isCancelled,hideAttendees,organizer,attendees,onlineMeeting'
 
 
 class Command(BaseCommand):

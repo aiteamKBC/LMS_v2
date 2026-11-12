@@ -67,6 +67,8 @@ const RULES: ReadonlyArray<readonly [string, readonly Role[]]> = [
   // Workspaces, which do not share one audience.
   ['/workspace/learner', LEARNER_AND_STAFF],
   ['/workspace/employer', EMPLOYER_AND_STAFF],
+  ['/workspace/integrations', [...STAFF, 'employer']],
+  ['/workspace/hr-system', STAFF],
   ['/workspace/admin', ADMIN],
   ['/workspace', STAFF],
 
@@ -145,6 +147,10 @@ export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'a
   }
   if (path === '/support/ticket-queue') {
     return account.role === 'admin' || (account.role === 'staff' && grants.includes('support'));
+  }
+  if (path === '/workspace/hr-system' || path.startsWith('/workspace/hr-system/')) {
+    return account.role === 'admin' || (account.role === 'staff'
+      && grants.some(grant => grant === 'super-admin' || grant === 'integrations'));
   }
   if (['/admin/coach_directory', '/users/coach-directory', '/curriculum/coach-directory'].includes(path)) {
     return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment', 'curriculum'].includes(grant ?? ''));

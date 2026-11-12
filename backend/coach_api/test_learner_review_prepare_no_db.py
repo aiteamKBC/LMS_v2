@@ -1,6 +1,6 @@
 """Security and identity checks without database or external services."""
 import json
-from contextlib import nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -124,11 +124,68 @@ class LearnerReviewPrepareTests(SimpleTestCase):
             self.assertTrue(resolve.call_args.kwargs['preview_only'])
             initialize.assert_not_called()
 
-    def test_admin_preview_refuses_learner_and_other_staff(self):
+    def test_preview_refuses_learner_and_employer(self):
         request = self.factory.get('/preview')
-        for role in ('learner', 'staff', 'employer'):
+        for role in ('learner', 'employer'):
             with self.subTest(role=role), patch.object(api, 'authenticate_request', return_value=SimpleNamespace(role=role)):
                 self.assertEqual(api.preview_learner_review(request, 'imported-review:synthetic', 'commercial', 71).status_code, 403)
+
+    @contextmanager
+    def _preview_as(self, account, definition):
+        """Resolve a learner for the preview endpoint, yielding the two mocks
+        that must stay untouched when the caller is not authorized."""
+        model = SimpleNamespace(all_learners=MagicMock())
+        model.all_learners.filter.return_value.first.return_value = self.learner
+        overlays = MagicMock()
+        overlays.__getitem__.return_value = []
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(api, 'authenticate_request', return_value=account))
+            stack.enter_context(patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': model}))
+            stack.enter_context(patch.object(api, 'review_profile_for_source', return_value=self.profile))
+            stack.enter_context(patch.object(api, 'source_for_learner', return_value=SimpleNamespace(kind='aptem')))
+            stack.enter_context(patch.object(api.ImportedReviewInstance.objects, 'filter', return_value=overlays))
+            resolve = stack.enter_context(
+                patch('coach_api.views._imported_review_definition', return_value=definition))
+            initialize = stack.enter_context(patch.object(api, 'initialize_imported_review'))
+            yield resolve, initialize
+
+    def _preview(self):
+        return api.preview_learner_review(
+            self.factory.get('/preview'), 'imported-review:synthetic', 'commercial', 71)
+
+    def test_coach_preview_is_confined_to_their_own_caseload(self):
+        """A coach signs in as staff, so only the assigned coach_email may read."""
+        account = SimpleNamespace(role='staff', email='other-coach@example.invalid')
+        definition = {**self.definition, 'previewOnly': True, 'readOnly': False}
+        with self._preview_as(account, definition) as (resolve, initialize):
+            response = self._preview()
+            self.assertEqual(response.status_code, 403)
+            self.assertIn('caseload', json.loads(response.content)['detail'])
+            # The form is never resolved for a learner this account does not own.
+            resolve.assert_not_called()
+            initialize.assert_not_called()
+
+    def test_coach_preview_of_own_learner_is_read_only(self):
+        # Addresses differ only by case between the login account and the profile.
+        account = SimpleNamespace(role='staff', email='Coach@Example.Invalid')
+        definition = {**self.definition, 'previewOnly': True, 'readOnly': False}
+        with self._preview_as(account, definition) as (resolve, initialize):
+            response = self._preview()
+            self.assertEqual(response.status_code, 200)
+            body = json.loads(response.content)
+            self.assertTrue(body['readOnly'])
+            self.assertEqual(response['Cache-Control'], 'private, no-store')
+            self.assertNotIn('historicalReview', body)
+            self.assertTrue(resolve.call_args.kwargs['preview_only'])
+            initialize.assert_not_called()
+
+    def test_preview_refuses_staff_when_the_learner_has_no_assigned_coach(self):
+        account = SimpleNamespace(role='staff', email='coach@example.invalid')
+        self.profile.coach_email = ''
+        with self._preview_as(account, {**self.definition, 'previewOnly': True}) as (resolve, initialize):
+            self.assertEqual(self._preview().status_code, 403)
+            resolve.assert_not_called()
+            initialize.assert_not_called()
 
     def test_admin_preview_rejects_wrong_learner_kind(self):
         model = SimpleNamespace(all_learners=MagicMock())

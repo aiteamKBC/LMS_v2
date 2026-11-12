@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, ChevronRight, LogOut, UserRoundPlus, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, LogOut, UserRoundPlus, X } from 'lucide-react';
 import type { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { Header, SignOutConfirmModal } from '@/components/feature/Header';
 import { GlobalSearch } from '@/components/feature/GlobalSearch';
@@ -15,7 +15,7 @@ import { tutorialForLocation } from '../help/tutorials';
 import tutorialStyles from '../help/EnrolmentTutorial.module.css';
 
 type Props = ComponentProps<typeof WorkspaceShell> & { directoryLayout?: boolean };
-const navigationOrder = ['/users', '/users/first-sessions', '/users/coach-directory', '/users/progress-transfers', '/users/my-courses'];
+const navigationOrder = ['/users', '/users/first-sessions', '/users/coach-directory', '/users/progress-transfers'];
 const logoUrl = 'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
 
 /** Enrollment-only frame. Shared headers, search, routes and permission checks are reused. */
@@ -89,7 +89,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
 
   const renderItem = (item: SidebarNavItem) => {
     const active = item.active ?? item.href === activeHref;
-    const content = <>{item.id === 'enrolment-courses' ? <BookOpen size={18} /> : <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />}
+    const content = <><SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
       <span className={styles.navLabel}>{item.label}</span>
       {item.statusDot && <span className={styles.statusDot} data-tone={item.statusDot} aria-hidden="true" />}
       {item.badge ? <span className={styles.count}>{item.badge}</span> : null}

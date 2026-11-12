@@ -30,16 +30,29 @@ export type MyLearningModule = {
 const cataloguePath = (kind: LearnerKind, id: string) => `/learner_api/my-learning/${kind}/${encodeURIComponent(id)}/`;
 const modulePath = (kind: LearnerKind, id: string, subject: string) => `${cataloguePath(kind, id)}modules/${encodeURIComponent(subject)}/`;
 
+function validCatalogue(result: MyLearningCatalogue | null | undefined, kind: LearnerKind, id: string): result is MyLearningCatalogue {
+  return Boolean(result && result.learner?.id === id && result.learner.kind === kind
+    && Array.isArray(result.modules) && Array.isArray(result.upcoming)
+    && result.summary?.current && result.summary.previous && result.otjh);
+}
+
+function validModule(result: MyLearningModule | null | undefined, learner: string): result is MyLearningModule {
+  return Boolean(result?.subjectId && String(result.detail?.id) === learner
+    && Array.isArray(result.detail?.components) && result.metadata && result.schedule);
+}
+
 export const myLearningCatalogue = {
   read: async (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) => {
     const result = await readLearnerJson<MyLearningCatalogue>(cataloguePath(kind, id), { signal, revalidate: fresh, ttlMs: 30_000 });
-    if (result.learner?.id !== id || result.learner.kind !== kind
-      || !Array.isArray(result.modules) || !Array.isArray(result.upcoming) || !result.summary?.current || !result.summary.previous || !result.otjh) {
+    if (!validCatalogue(result, kind, id)) {
       throw new Error('Could not load your subjects. Please try again.');
     }
     return result;
   },
-  peek: (kind: LearnerKind, id: string) => peekLearnerJson<MyLearningCatalogue>(cataloguePath(kind, id)),
+  peek: (kind: LearnerKind, id: string) => {
+    const result = peekLearnerJson<MyLearningCatalogue>(cataloguePath(kind, id));
+    return validCatalogue(result, kind, id) ? result : undefined;
+  },
 };
 
 export function useMyLearningCatalogue(kind?: LearnerKind, id?: string, enabled = true) {
@@ -52,14 +65,15 @@ export function useMyLearningModule(kind?: LearnerKind, id?: string, subject?: s
   const read = useCallback(async (readKind: LearnerKind, identity: string, signal?: AbortSignal, fresh = false) => {
     const [learner, selected] = JSON.parse(identity) as [string, string];
     const result = await readLearnerJson<MyLearningModule>(modulePath(readKind, learner, selected), { signal, revalidate: fresh, ttlMs: 30_000 });
-    if (!result.subjectId || String(result.detail?.id) !== learner || !Array.isArray(result.detail?.components) || !result.metadata || !result.schedule) {
+    if (!validModule(result, learner)) {
       throw new Error('Could not load this subject. Please try again.');
     }
     return result;
   }, []);
   const peek = useCallback((readKind: LearnerKind, identity: string) => {
     const [learner, selected] = JSON.parse(identity) as [string, string];
-    return peekLearnerJson<MyLearningModule>(modulePath(readKind, learner, selected));
+    const result = peekLearnerJson<MyLearningModule>(modulePath(readKind, learner, selected));
+    return validModule(result, learner) ? result : undefined;
   }, []);
   return useLiveLearnerRead(kind, key, !!key, read, peek);
 }

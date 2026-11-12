@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { ArrowRight, CalendarDays, CheckCircle2, LocateFixed, Maximize2, MessageSquareText, Minimize2 } from 'lucide-react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { Modal } from '@/pages/users/components/Modal';
@@ -249,7 +250,7 @@ export function ModuleTimeline<T extends DisplayTimelineModule>({ data, modules,
                     <span className={layout.weekNoteTooltipBody}>
                       <strong>Week {slot.slotNumber}{slot.weekTitle ? ` · ${slot.weekTitle}` : ''}</strong>
                       {slot.holidays?.length > 0 && <span className={layout.weekNoteHoliday}>
-                        <strong>Heads up, holiday:</strong>{' '}
+                        <strong>Holiday information:</strong>{' '}
                         {slot.holidays.map((holiday, index) => <span key={`${holiday.id || holiday.label}-${index}`}>
                           {holiday.label || 'Holiday'} · {dateLabel(holiday.startDate)}{holiday.endDate && holiday.endDate !== holiday.startDate ? ` – ${dateLabel(holiday.endDate)}` : ''}{holiday.type ? ` · ${holiday.type}` : ''}{holiday.notes ? ` · ${holiday.notes}` : ''}{index < slot.holidays.length - 1 ? '; ' : ''}
                         </span>)}
@@ -277,7 +278,7 @@ export function ModuleTimeline<T extends DisplayTimelineModule>({ data, modules,
           </div></div>}
         </div>
       </div>
-      {inspected && detailLoading ? <aside className={layout.inspector} role="status">Loading module details?</aside> : inspected && detailError ? <aside className={layout.inspector} role="alert">{detailError} <button type="button" onClick={onRetryDetail}>Retry module details</button></aside> : inspected && <TimelineInspector module={inspected} coach={data.coach.name} href={canOpenActivities ? subjectHref(inspected.id) : undefined} onClose={closeInspector} />}
+      {inspected && detailLoading ? <aside className={layout.inspector} role="status">Loading module details…</aside> : inspected && detailError ? <aside className={layout.inspector}><LearnerLoadError title="Could not load the latest module details" error={detailError} onRetry={onRetryDetail} retryLabel="Retry module details" /></aside> : inspected && <TimelineInspector module={inspected} coach={data.coach.name} href={canOpenActivities ? subjectHref(inspected.id) : undefined} onClose={closeInspector} />}
     </div>
   </section>;
   return fullscreen ? <><div aria-hidden="true" style={{ height: placeholderHeight.current }} /><Modal title="Programme timeline" size="max-w-none" className={layout.fullscreen} onClose={() => { saveScroll(); setFullscreen(false); }} returnFocusRef={fullButton}>

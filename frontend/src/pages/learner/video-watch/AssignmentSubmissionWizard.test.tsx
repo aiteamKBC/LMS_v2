@@ -14,7 +14,7 @@ vi.mock('./page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) =
 vi.mock('@/api/reflectionSubmission', () => ({
   loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn(),
 }));
-vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: () => <div>Evidence uploader</div> }));
+vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: ({ onRemoved }: { onRemoved?: (id: string) => void }) => <div>Evidence uploader<button onClick={() => onRemoved?.('new-file')}>Delete mistaken upload</button></div> }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }), bookLearnerCalendarSession: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn().mockResolvedValue({ artifacts: [] }), learnerMeetingArtifactContentUrl: vi.fn() }));
 vi.mock('@/api/assignmentTopics', () => ({ loadAssignmentTopicStates: vi.fn().mockResolvedValue([]) }));
@@ -86,6 +86,34 @@ it('returns to assignment hours for correction before any completion request', a
   await waitFor(() => expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ timeTakenSeconds: 17640, timeEntrySource: 'input' })));
 });
 describe('monthly assignment drafts', () => {
+  it('excludes a removed old version from the revised draft without deleting its history', async () => {
+    const monthly = emptyMonthlyAssignment([], '2026-10');
+    monthly.evidence = [{ id: 'old-file', name: 'Old.pdf', points: '' }, { id: 'new-file', name: 'New.pdf', points: '' }];
+    monthly.claims = [{ code: 'K1', explanation: 'Evidence explanation', evidenceIds: ['old-file', 'new-file'] }];
+    const history = [{ number: 1, status: 'rejected', answer: 'Original', coachFeedback: 'Revise', submittedAt: null, reviewedAt: null, reviewedBy: 'Coach' }];
+    vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ status: 'rejected', monthlyAssignment: monthly, submissionAttempts: history } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+    render(<AssignmentSubmissionWizard {...props} evidenceFiles={[
+      { id: 'old-file', filename: 'Old.pdf', status: 'approved', sizeBytes: 12, canDelete: false },
+      { id: 'new-file', filename: 'New.pdf', status: 'approved', sizeBytes: 12, canDelete: true },
+    ] as import('@/api/evidence').EvidenceRecord[]} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Evidence & cross-referencing/ }));
+    const old = screen.getByRole('heading', { name: 'Old.pdf' }).closest('article')!;
+    fireEvent.click(within(old).getByRole('button', { name: 'Remove from submission' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
+      evidenceFiles: ['New.pdf'], monthlyAssignment: expect.objectContaining({
+        evidence: [{ id: 'new-file', name: 'New.pdf', points: '' }],
+        claims: [expect.objectContaining({ evidenceIds: ['new-file'] })],
+      }),
+    })));
+    expect(screen.getByText('Original')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete mistaken upload' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
+      evidenceFiles: [], monthlyAssignment: expect.objectContaining({ evidence: [], claims: [expect.objectContaining({ evidenceIds: [] })] }),
+    })));
+  });
+
   it('keeps a partially accepted topic locked and shows the question it answered', async () => {
     vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
       status: 'partial', assignmentTopicId: '2', assignmentQuestion: 'The original Topic 2 question.',

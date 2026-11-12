@@ -49,6 +49,7 @@ export interface JourneyComponent {
   recordingSeriesId?: string | null;
   recordingSessionNumber?: number | null;
   recordingDate?: string | null;
+  linkedSessionComponentId?: string | null;
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
@@ -708,6 +709,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             recordingSeriesId: c.recordingSeriesId,
             recordingSessionNumber: c.recordingSessionNumber,
             recordingDate: c.recordingDate,
+              linkedSessionComponentId: c.linkedSessionComponentId,
             sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
               // Normalised progress rows store quiz_ref as text, while the

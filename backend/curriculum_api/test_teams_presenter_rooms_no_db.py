@@ -19,6 +19,7 @@ class ExistingRoomPermissionsTests(unittest.TestCase):
         self.target = {'joinUrl': 'https://teams.microsoft.com/meet/synthetic',
                        'ownerId': 'owner-id', 'organizerEmail': 'owner@example.invalid'}
         self.meeting = {
+            'meetingType': 'scheduled',
             'id': 'meeting-id', 'joinWebUrl': self.target['joinUrl'], 'allowBreakoutRooms': True,
             'allowRecording': True, 'recordAutomatically': True, 'lobbyBypassSettings': {'scope': 'invited'},
             'participants': {
@@ -67,6 +68,20 @@ class ExistingRoomPermissionsTests(unittest.TestCase):
             {'upn': f'co{i}@example.invalid', 'role': 'coorganizer'} for i in range(9))
         with self.assertRaisesRegex(UnsafeRoomPromotion, 'coorganizer_limit'):
             self.plan()
+
+    def test_recurring_or_unconfirmed_meeting_type_is_skipped_before_role_writes(self):
+        for meeting_type in ('recurring', 'unknownFutureValue', None):
+            with self.subTest(meeting_type=meeting_type):
+                self.meeting['meetingType'] = meeting_type
+                original = copy.deepcopy(self.meeting)
+                with self.assertRaisesRegex(UnsafeRoomPromotion, 'meeting_type_role_update_requires_review'):
+                    self.plan()
+                self.assertEqual(self.meeting, original)
+
+    def test_existing_coorganizer_metadata_can_be_reconciled_without_patching_a_series(self):
+        self.meeting['meetingType'] = 'recurring'
+        self.meeting['participants']['attendees'][0]['role'] = 'coorganizer'
+        self.assertIsNone(self.plan()['payload'])
 
     def test_student_external_disabled_or_unverified_accounts_are_never_promoted(self):
         for changes in ({'staffVerified': False}, {'userType': 'Guest'}, {'accountEnabled': False}):

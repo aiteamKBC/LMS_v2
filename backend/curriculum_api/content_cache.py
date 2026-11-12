@@ -8,22 +8,26 @@ learner, yet each request read them again: about 1,900 component rows per page.
 
 This keeps those rows in the shared Django cache (Valkey on AWS):
 
-* ``cmc:v1:<epoch>:<part>:<sql>:<module>`` holds one module's rows for one
-  statement. ``<sql>`` is a digest of the exact statement text, so a different
-  projection, or a code change to it, is a different key by construction.
-* ``cmc:v1:<epoch>:otjh`` holds ``{component id: expected_otjh}`` for every
-  component, as the unfiltered by-id lookups read it.
+* ``cmc:v2:<part>:<sql>:<module>:<version>:<generation>`` holds one module's
+  rows for one statement. ``<sql>`` is a digest of the exact statement text, so
+  a different projection, or a code change to it, is a different key.
+* ``expected_otjh`` uses the same per-module entries (part ``otjh``) and a
+  ``{component id: module id}`` index kept per generation.
 
-Freshness: ``<epoch>`` is the shared curriculum epoch. Every curriculum write
-calls ``invalidate_curriculum_cache()``, which moves it, so all keys of the old
-generation stop being read at once. Another process notices within
-``SHARED_EPOCH_POLL_SECONDS`` (3 s), as every curriculum cache already does. Old
-generations expire after ``CONTENT_CACHE_TTL_SECONDS``.
+Freshness is PER MODULE (config.cache_versions, namespace ``cmod``). Every
+write helper in views.py reports the rows it wrote (note_live_rows ->
+note_rows); a write to a module, week, component or KSB mapping row moves
+that module's version once the request or command commits, so authoring one
+module never retires the other modules' entries. An update or upsert that
+could move a row to another module reads the old module first, so both move.
+A raw-SQL writer that no helper sees calls ``invalidate_curriculum_cache(
+content_scope='all')``, which moves the namespace generation and retires every
+module at once. A missing version is a miss. The global curriculum epoch,
+which every curriculum write moves, is deliberately not part of these keys.
 
-Writers that bypass ``invalidate_curriculum_cache()`` -- the one-off scripts in
-``backend/scripts/`` -- leave learner pages up to ``CONTENT_CACHE_TTL_SECONDS``
-(600 s) stale after they run. Call ``invalidate_curriculum_cache()`` at the end
-of such a script, or wait out the TTL.
+Writers that bypass both -- the one-off scripts in ``backend/scripts/`` --
+leave learner pages up to ``CONTENT_CACHE_TTL_SECONDS`` (600 s) stale. Call
+``invalidate_curriculum_cache(content_scope='all')`` at the end of such a script.
 
 Nothing learner-specific is stored: no progress, plan, assignment or snapshot.
 Quiz links, quiz metadata and live-session rows are not cached here (they are
@@ -56,7 +60,8 @@ from . import shared_build
 
 logger = logging.getLogger(__name__)
 
-KEY_PREFIX = 'cmc:v1'
+KEY_PREFIX = 'cmc:v2'
+NAMESPACE = 'cmod'
 CONTENT_CACHE_TTL_SECONDS = int(os.environ.get('CURRICULUM_CONTENT_CACHE_TTL', '600'))
 #: How long a request waits for another worker's build of the same rows before
 #: reading them itself. Short: a learner request holds a worker thread.
@@ -69,7 +74,7 @@ _COLLATION_TABLES = ('modules', 'weeks', 'components', 'ksb_mappings')
 _state = {'collation_ok': None}
 _state_lock = threading.Lock()
 _build_locks = {}
-_otjh_local = {'epoch': None, 'expires': 0.0, 'value': None}
+_otjh_local = {'generation': None, 'expires': 0.0, 'index': None}
 _otjh_lock = threading.Lock()
 
 
@@ -130,11 +135,6 @@ def _read_collation_ok(cursor):
             and column_collations <= _C_COLLATIONS)
 
 
-def _epoch():
-    from .views import shared_curriculum_epoch
-    return shared_curriculum_epoch()
-
-
 def _digest(text) -> str:
     return hashlib.sha1(str(text).encode()).hexdigest()[:16]
 
@@ -185,6 +185,29 @@ def _set_many(values):
         logger.warning('Unable to populate the curriculum content cache.', exc_info=True)
 
 
+def _module_versions(module_ids):
+    """``{module id: version}`` and the generation, creating missing keys.
+
+    A missing key is a miss, never a match: a new unique value is SET (no
+    INCR), so a key lost to a restart or eviction cannot collide with an
+    entry built before it.
+    """
+    from config import cache_versions
+    found = cache_versions.read(NAMESPACE, module_ids)
+    missing = [mid for mid in module_ids if mid not in found]
+    if missing or 'gen' not in found:
+        for mid in missing:
+            cache_versions.strict('add', cache_versions.version_key(NAMESPACE, mid),
+                                  cache_versions.new_version(), timeout=None)
+        if 'gen' not in found:
+            cache_versions.strict('add', cache_versions.generation_key(NAMESPACE),
+                                  cache_versions.new_version(), timeout=None)
+        found = cache_versions.read(NAMESPACE, module_ids)
+    if 'gen' not in found or any(mid not in found for mid in module_ids):
+        raise cache_versions.Unavailable('module content versions could not be read back')
+    return {mid: found[mid] for mid in module_ids}, found['gen']
+
+
 def module_rows(cursor, part, sql, module_ids, module_index):
     """``{module id: [rows]}`` for ``sql`` run with ``[module_ids]``.
 
@@ -193,21 +216,28 @@ def module_rows(cursor, part, sql, module_ids, module_index):
     statement's own order. Returns None when the cache cannot be used, so the
     caller runs its original statement.
     """
+    from config import cache_versions
     module_ids = list(dict.fromkeys(str(mid) for mid in module_ids if mid))
     if not module_ids or not enabled() or not collation_ok(cursor):
         return None
-    epoch = _epoch()
+    try:
+        # Read before the database, so rows read after a write committed are
+        # never stored under a version older than that write.
+        versions, generation = _module_versions(module_ids)
+    except cache_versions.Unavailable:
+        return None
     statement = _digest(sql)
-    keys = {mid: f'{KEY_PREFIX}:{epoch}:{part}:{statement}:{_id_part(mid)}' for mid in module_ids}
+    keys = {mid: f'{KEY_PREFIX}:{part}:{statement}:{_id_part(mid)}:{_digest(versions[mid])}:{_digest(generation)}'
+            for mid in module_ids}
     found = _get_many(list(keys.values()))
     missing = [mid for mid in module_ids if keys[mid] not in found]
     if missing:
-        found.update(_build(cursor, sql, missing, module_index, keys, epoch, statement))
+        found.update(_build(cursor, sql, missing, module_index, keys, statement))
     return {mid: found[keys[mid]] for mid in module_ids}
 
 
-def _build(cursor, sql, missing, module_index, keys, epoch, statement):
-    name = f'{KEY_PREFIX}:{epoch}:build:{statement}:{_digest(",".join(sorted(missing)))}'
+def _build(cursor, sql, missing, module_index, keys, statement):
+    name = f'{KEY_PREFIX}:build:{statement}:{_digest(",".join(keys[mid] for mid in sorted(missing)))}'
     with _local_lock(name):
         # Another thread here may have just built these.
         found = _get_many([keys[mid] for mid in missing])
@@ -244,48 +274,134 @@ def null_last(value):
     return (value is None, '' if value is None else value)
 
 
-def expected_otjh_map(cursor):
-    """``{component id: expected_otjh}`` for every component, or None.
+OTJH_SQL = 'SELECT id, expected_otjh, module_catalogue_id FROM curriculum.components WHERE module_catalogue_id = ANY(%s)'
+INDEX_SQL = 'SELECT id, module_catalogue_id FROM curriculum.components'
 
-    The same rows ``SELECT id, expected_otjh FROM curriculum.components WHERE
-    id = ANY(...)`` returns, before any filtering, for all ids at once. A per-
-    process copy saves the Valkey read for the rest of the generation.
+
+def _component_index(cursor):
+    """``{component id: module id}`` for every component, per generation.
+
+    Only a generation change (a write no module can be named for) rebuilds it.
+    A component added or moved since is either absent or points at a module
+    whose own version has moved, and its per-module entry then lacks it --
+    both read the database for that id, so the index can be stale but never
+    wrong.
     """
-    if not enabled():
-        return None
-    epoch = _epoch()
+    from config import cache_versions
+    _none, generation = _module_versions([])  # creates the generation key if missing
     now = time.monotonic()
     with _otjh_lock:
-        if _otjh_local['epoch'] == epoch and _otjh_local['expires'] > now:
-            return _otjh_local['value']
-    key = f'{KEY_PREFIX}:{epoch}:otjh'
-    sql = 'SELECT id, expected_otjh FROM curriculum.components'
-    found = _get_many([key])
-    if key in found:
-        value = found[key]
-    else:
+        if _otjh_local['generation'] == generation and _otjh_local['expires'] > now:
+            return _otjh_local['index']
+    key = f'{KEY_PREFIX}:cidx:{_digest(generation)}'
+    index = _get_many([key]).get(key)
+    if index is None:
         with _local_lock(key):
-            found = _get_many([key])
-            if key in found:
-                value = found[key]
-            else:
-                acquired, token = shared_build.try_acquire(cache, key)
-                value = None
-                try:
-                    if not acquired:
-                        deadline = time.monotonic() + WAIT_SECONDS
-                        while value is None and time.monotonic() < deadline:
-                            time.sleep(POLL_SECONDS)
-                            value = _get_many([key]).get(key)
-                    if value is None:
-                        cursor.execute(sql)
-                        value = dict(cursor.fetchall())
-                        _set_many({key: value})
-                finally:
-                    shared_build.release(cache, key, token)
+            index = _get_many([key]).get(key)
+            if index is None:
+                cursor.execute(INDEX_SQL)
+                index = {cid: str(mid) for cid, mid in cursor.fetchall()}
+                _set_many({key: index})
     with _otjh_lock:
-        _otjh_local.update(epoch=epoch, expires=time.monotonic() + CONTENT_CACHE_TTL_SECONDS, value=value)
-    return value
+        _otjh_local.update(generation=generation, expires=time.monotonic() + CONTENT_CACHE_TTL_SECONDS, index=index)
+    return index
+
+
+def expected_otjh(cursor, component_ids):
+    """``{component id: expected_otjh}`` for these ids, or None (read live).
+
+    The same pairs ``SELECT id, expected_otjh FROM curriculum.components WHERE
+    id = ANY(ids)`` returns: unknown ids absent, NULL kept. Each module's values
+    are cached under that module's content version; ids the index or a module
+    entry does not account for are read by id from the database.
+    """
+    from config import cache_versions
+    ids = list(dict.fromkeys(component_ids))
+    if not ids or not enabled() or not collation_ok(cursor):
+        return None
+    try:
+        index = _component_index(cursor)
+    except cache_versions.Unavailable:
+        return None
+    modules = sorted({index[cid] for cid in ids if cid in index})
+    per_module = module_rows(cursor, 'otjh', OTJH_SQL, modules, 2) if modules else {}
+    if per_module is None:
+        return None
+    values = {}
+    for rows in per_module.values():
+        for cid, otjh, _module in rows:
+            values[cid] = otjh
+    result = {cid: values[cid] for cid in ids if cid in values}
+    unaccounted = [cid for cid in ids if cid not in values]
+    if unaccounted:
+        cursor.execute('SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)', [unaccounted])
+        result.update(dict(cursor.fetchall()))
+    return result
+
+
+# --- write side ---------------------------------------------------------------
+
+#: The tables whose rows module_rows caches. Writes to anything else never
+#: retire a module's content entries.
+CONTENT_TABLES = frozenset({'modules', 'weeks', 'components', 'ksb_mappings'})
+_pending = threading.local()
+
+
+def _bare(table):
+    return str(table or '').split('.')[-1].strip('"')
+
+
+def begin_write_scope():
+    _pending.modules = set()
+    _pending.active = True
+
+
+def end_write_scope():
+    modules = getattr(_pending, 'modules', None) or set()
+    _pending.modules = set()
+    _pending.active = False
+    if modules:
+        _bump_modules(modules)
+
+
+def note_rows(table, rows):
+    """Retire the content entries of every module these written rows belong to."""
+    try:
+        if _bare(table) not in CONTENT_TABLES:
+            return
+        modules = {str(row.get('module_catalogue_id') or '').strip() for row in rows or [] if isinstance(row, dict)}
+        modules.discard('')
+        note_modules(modules)
+    except Exception:
+        logger.warning('Unable to note a curriculum content write; retiring all content.', exc_info=True)
+        retire_all()
+
+
+def note_modules(modules):
+    modules = {str(mid) for mid in modules if mid}
+    if not modules:
+        return
+    if getattr(_pending, 'active', False):
+        _pending.modules.update(modules)
+        return
+    _bump_modules(modules)
+
+
+def _bump_modules(modules):
+    from config import cache_versions
+    # After commit (cache_versions.bump), so a reader that sees the new
+    # version also sees the committed rows.
+    cache_versions.bump(NAMESPACE, sorted(modules))
+
+
+def retire_all():
+    """Retire every module's content entries: for a write no module can be named for."""
+    from config import cache_versions
+    from django.db import transaction
+    try:
+        transaction.on_commit(lambda: cache_versions.bump_generation(NAMESPACE))
+    except Exception:
+        cache_versions.bump_generation(NAMESPACE)
 
 
 def reset_for_tests():
@@ -293,4 +409,6 @@ def reset_for_tests():
         _state['collation_ok'] = None
         _build_locks.clear()
     with _otjh_lock:
-        _otjh_local.update(epoch=None, expires=0.0, value=None)
+        _otjh_local.update(generation=None, expires=0.0, index=None)
+    _pending.modules = set()
+    _pending.active = False

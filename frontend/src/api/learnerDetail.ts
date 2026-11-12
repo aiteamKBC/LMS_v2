@@ -104,6 +104,8 @@ export interface LearnerComponentEntry {
   recordingSeriesId?: string | null;    // saved series owning a dated recorded event
   recordingSessionNumber?: number | null;
   recordingDate?: string | null;        // recording day in Europe/London
+  /** Explicit same-module recording link; display grouping never changes activity identity. */
+  linkedSessionComponentId?: string | null;
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;

@@ -1,4 +1,5 @@
 import { fileProbe } from './page.helpers';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { archiveTimingDraft, timingSessionExpired } from '@/lib/timingRecovery';
 import { useManualTimeConfirmation } from '@/hooks/useManualTimeConfirmation';
 import { ActivityRetakeTimeDialog, ActivityTimeLimitNotice } from '@/components/feature/ActivityRetakeTimeDialog';
@@ -36,7 +37,7 @@ import {
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
 import { SavedReflection } from '@/components/feature/SavedReflection';
-import { formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow.helpers';
+import { formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow.helpers';
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -341,9 +342,17 @@ export default function ComponentViewPage() {
   const completed = !!component && isComponentComplete(component, completedIds);
   const recordingAttempt = isAssignment || !completed || repeating;
   const nextActivity = useMemo(() => nextActivityRoute(detail, componentId, kind, id), [detail, componentId, kind, id]);
-  const completedTime = record?.activityKey === timerStorageKey
+  const hasFixedLiveCredit = isLiveSession && detail?.componentProgress?.some(
+    entry => entry.componentId === componentId && entry.timeTrackingSource === 'completed_live_session' && entry.passed !== false,
+  );
+  const completedTime = hasFixedLiveCredit && component
+    ? completionTimeFor(component, detail)
+    : record?.activityKey === timerStorageKey
     ? formatRecordedClock(record.timeTaken)
     : component ? completionTimeFor(component, detail) : null;
+  const liveSessionRetakeLocked = isLiveSession && (
+    component?.attendanceCompleted === true || (parseClockSeconds(completedTime) ?? 0) >= 150 * 60
+  );
   const noun = componentNoun(component?.type);
   const contentOpenable = component ? isOpenableComponent(component) || (isAssignment && !!component.componentId) : false;
   const savedAssignment = useSavedAssignmentAccess(kind, id, componentId, isAssignment && !contentOpenable && canUseComponent);
@@ -846,17 +855,6 @@ export default function ComponentViewPage() {
       hideBreadcrumbs
     >
       <div className="mx-auto page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        <button
-          onClick={() => navigate(backHref)}
-          className="mb-5 inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-4 py-2.5 text-[13px] font-semibold text-foreground-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:text-primary-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 cursor-pointer"
-        >
-          <span className="grid h-6 w-6 place-items-center rounded-lg bg-primary-50 text-primary-700">
-            <AppIcon className="ri-arrow-left-line text-sm" />
-          </span>
-          Back to training plan
-        </button>
-
-
         {expiredTiming && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4">
           <p>Your time needs to sync before you finish. Your previous time and answers are kept.</p>
           <button type="button" disabled={recoveringTiming} onClick={restartTiming} className="mt-2 font-semibold underline">{recoveringTiming ? 'Restoring...' : 'Restore saved time'}</button>
@@ -866,13 +864,7 @@ export default function ComponentViewPage() {
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError ? (
-          <div role="alert" className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6">
-            <EmptyState text={loadError} />
-            <button type="button" onClick={() => setLoadRevision(value => value + 1)}
-              className="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">
-              Try again
-            </button>
-          </div>
+          <LearnerLoadError title="Could not load this learning activity" error={loadError} onRetry={() => setLoadRevision(value => value + 1)} />
         ) : !component ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
         ) : !canProgress ? (
@@ -1131,7 +1123,7 @@ export default function ComponentViewPage() {
                     {nextActivity && <button type="button" onClick={() => navigate(nextActivity.href)} className="rounded-lg bg-emerald-700 px-3 py-2 text-left text-xs font-semibold text-white hover:bg-emerald-800">
                       Next activity: {nextActivity.label}
                     </button>}
-                    {!repeating && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
+                    {!repeating && !liveSessionRetakeLocked && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
                   </div>
                 </div>
               )}

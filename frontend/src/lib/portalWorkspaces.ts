@@ -64,6 +64,14 @@ export const PORTAL_WORKSPACES: PortalWorkspace[] = [
     blurb: 'Accounts, access control and platform health',
   },
   {
+    slug: 'integrations',
+    label: 'HR System',
+    icon: 'ri-links-line',
+    path: '/workspace/hr-system',
+    demoEmail: null,
+    blurb: 'Programme learning, HR requests and delivery',
+  },
+  {
     slug: 'my-courses',
     label: 'My Courses',
     icon: 'ri-graduation-cap-line',

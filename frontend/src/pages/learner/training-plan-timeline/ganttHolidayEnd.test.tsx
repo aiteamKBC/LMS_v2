@@ -198,7 +198,7 @@ describe('curriculum notes on the module timeline', () => {
     fireEvent.focus(marker);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Reading Week');
     expect(screen.getByRole('tooltip')).toHaveTextContent('Week 9');
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Heads up, holiday:');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Holiday information:');
     expect(screen.getByRole('tooltip')).toHaveTextContent('Workshop Oct');
     expect(screen.getByRole('tooltip')).toHaveTextContent(note);
   });
