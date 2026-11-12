@@ -8,10 +8,9 @@
 #   backend        Docker image, Django checks, no-database tests (each
 #                  module in its own process: they stub parts of Django),
 #                  /health/ smoke test, image vulnerability scan (Trivy)
-#   backend-db     Django tests against a throwaway Neon branch holding the
-#                  production *schema only* (no data); deleted afterwards.
-#                  Report-only until the suite is green (needs NEON_API_KEY)
 #   frontend       lint, type-check, build (blocking); unit tests (report)
+#   teams          Teams regression checks (teams-checks.yml, AGENTS.md
+#                  sections 5-7): blocks the deploy on FAIL or BLOCKED
 #   security       leaked-secret scan of the new commits (gitleaks),
 #                  dependency audits (npm audit, pip-audit)
 #   deploy         push image -> roll ECS services (new tasks start before
@@ -72,6 +71,7 @@ jobs:
     outputs:
       backend: ${{ steps.diff.outputs.backend }}
       frontend: ${{ steps.diff.outputs.frontend }}
+      base: ${{ steps.diff.outputs.base }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +90,7 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/deploy-aws.yml/runs?branch=main&status=success&per_page=1" \
             | python3 -c 'import json,sys;r=json.load(sys.stdin)["workflow_runs"];print(r[0]["head_sha"] if r else "")') || BASE=""
           if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then all "no earlier successful deploy found"; fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
           FILES=$(git diff --name-only "$BASE" "$CHECKOUT_REF")
           echo "Changed since $BASE (last successful deploy):"; echo "$FILES" | sed 's/^/  /' | head -50
           echo "$FILES" | grep -q '^\.github/' && all "CI files changed"
@@ -206,61 +207,6 @@ jobs:
             -e SHARD=${{ matrix.shard }} -e SHARDS=4 \
             -v "$PWD/.github/ci:/ci:ro" --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
 
-  # ------------------------------------------- backend tests with a database
-  backend-db:
-    name: Backend - database tests (Neon schema branch)
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
-    # Report-only until the suite passes; then remove continue-on-error and
-    # add this job to deploy.needs
-    continue-on-error: true
-    env:
-      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
-      NEON_PARENT_BRANCH_ID: ${{ vars.NEON_PARENT_BRANCH_ID }}
-    steps:
-      - name: Skip when Neon is not configured
-        if: env.NEON_API_KEY == '' || env.NEON_PROJECT_ID == ''
-        run: echo "::notice::NEON_API_KEY / NEON_PROJECT_ID not set - database tests skipped"
-
-      - uses: actions/checkout@v4
-        if: env.NEON_API_KEY != '' && env.NEON_PROJECT_ID != ''
-        with:
-          ref: ${{ env.CHECKOUT_REF }}
-
-      - name: Create a schema-only Neon branch (no data)
-        if: env.NEON_API_KEY != '' && env.NEON_PROJECT_ID != ''
-        id: neon
-        run: bash .github/ci/neon_branch.sh create
-
-      - name: Run Django tests on the branch
-        if: steps.neon.outcome == 'success'
-        env:
-          BRANCH_URL: ${{ steps.neon.outputs.url }}
-          BRANCH_ID: ${{ steps.neon.outputs.id }}
-        run: |
-          set -o pipefail
-          cd backend
-          python3 -m pip install -q -r requirements.txt
-          # DATABASE_URL is only compared (by host) to prove the branch is not
-          # production; settings never connect to it in branch mode
-          export DATABASE_URL="postgresql://ci@${{ vars.NEON_PRODUCTION_HOST || 'production.invalid' }}/neondb"
-          export security_Database_url="$BRANCH_URL" SECURITY_TEST_BRANCH_ID="$BRANCH_ID"
-          export USE_SECURITY_TEST_BRANCH=true DJANGO_SECRET_KEY=ci DJANGO_DEBUG=false DB_POOL=false
-          python3 manage.py test --keepdb --noinput --pattern="tests*.py" \
-            --testrunner=login.test_runner.EnrolmentTestRunner 2>&1 | tee ../db-tests.txt
-      - name: Summary
-        if: always() && steps.neon.outcome == 'success'
-        run: |
-          { echo '### Database tests'; echo '```'; tail -5 db-tests.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Delete the Neon branch
-        if: always() && steps.neon.outputs.id != ''
-        env:
-          BRANCH_ID: ${{ steps.neon.outputs.id }}
-        run: bash .github/ci/neon_branch.sh delete "$BRANCH_ID"
-
   # --------------------------------------------------------------- frontend
   frontend:
     name: Frontend - lint, types, build
@@ -328,6 +274,19 @@ jobs:
         run: |
           { echo '### Frontend unit tests'; echo '```'; grep -E "Test Files|Tests  " vitest.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
+  # ------------------------------------------------------------------ Teams
+  # AGENTS.md sections 5-7, compared with the same base as above (what is
+  # live); also runs on pull requests by itself. Blocks the deploy on FAIL
+  # or BLOCKED. Manual runs and unknown bases run every Teams check.
+  teams:
+    name: Teams checks
+    needs: changes
+    uses: ./.github/workflows/teams-checks.yml
+    with:
+      base: ${{ needs.changes.outputs.base }}
+      ref: ${{ inputs.ref || github.sha }}
+    secrets: inherit
+
   # --------------------------------------------------------------- security
   security:
     name: Security - secrets and dependencies
@@ -368,7 +327,7 @@ jobs:
   # ------------------------------------------------------------------ deploy
   deploy:
     name: Deploy to AWS
-    needs: [changes, backend, backend-tests, frontend, security]
+    needs: [changes, backend, backend-tests, frontend, security, teams]
     # Runs when the changed parts passed; parts that didn't change are skipped
     if: >-
       !cancelled()

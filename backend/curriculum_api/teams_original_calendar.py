@@ -55,8 +55,8 @@ def read_original_online(series, access, client):
         return None, None
     path = 'users/' + quote(owner, safe='') + '/onlineMeetings/' + quote(identity, safe='')
     class ApplicationReader:
-        def read(self, target):
-            return microsoft_graph_request('GET', target)
+        def read(self, target, *, prefer=''):
+            return microsoft_graph_request('GET', target, extra_headers={'Prefer': prefer} if prefer else None)
     try:
         return path, read_online(ApplicationReader(), series, path)
     except (RuntimeError, httpx.HTTPError):
@@ -147,12 +147,12 @@ def bind_calendar(series, rows, master, events, online=None, *, original_path=No
         if not event.get('isCancelled') and (event.get('onlineMeeting') or {}).get('joinUrl') == series['join_url']:
             by_slot.setdefault(imported.event_slot(event), []).append(event)
     signature = state_signature(series, rows)
-    from .teams_imported_meeting_edit import people
+    from .teams_imported_meeting_edit import people, confirmed_roles, presenter_labels
     addresses = people(master)
     verified_fields = {'attendees': addresses}
-    roles = (online or {}).get('participants', {}).get('attendees')
-    if isinstance(roles, list) and all(item.get('upn') and item.get('role') in ('attendee', 'presenter', 'coorganizer') for item in roles):
-        verified_fields['presenters'] = [item['upn'] for item in roles if item['role'] == 'presenter']
+    roles = confirmed_roles(online)
+    if roles is not None:
+        verified_fields['presenters'] = presenter_labels(roles, series.get('presenters'))
         verified_fields['co_organizers'] = [item['upn'] for item in roles if item['role'] == 'coorganizer']
     with transaction.atomic():
         current, current_rows, snapshot = load_calendar_state(series['id'], lock=True)
@@ -248,6 +248,10 @@ def original_calendar_request(view, *, read_only=False):
                     raise imported.Blocked('original_calendar_changed', 'Microsoft changed after this form was opened. Refresh the calendar before saving; no edit was sent.')
                 if online is None and request.method == 'PATCH' and any(key in payload for key in ('presenters', 'coOrganizers', 'recording', 'lobbyBypass', 'spokenLanguage')):
                     raise imported.Blocked('meeting_roles_unverified', 'Microsoft meeting roles could not be verified. Refresh the original calendar before changing them.')
+                if request.method == 'PATCH' and any(key in payload for key in ('attendees', 'presenters', 'coOrganizers')):
+                    from .teams_imported_meeting_edit import confirmed_roles
+                    if confirmed_roles(online) is None:
+                        raise imported.Blocked('meeting_roles_unverified', 'Microsoft meeting roles could not be verified. Refresh the original calendar before changing people; existing roles were preserved.')
                 if not read_only:
                     bind_calendar(series, rows, master, events, online, original_path=path)
                 token = _original.set(OriginalCalendar(series, access, path, client, read_only=read_only))
@@ -343,7 +347,8 @@ def update_original_schedule(request, live_id, access, view, args, kwargs):
     change_id = str(operation.get('id') or result.get('operationId') or body.get('changeId') or '')
     body.update(announced=notify and changed, changeId=change_id,
                 changeNotice=issue_change_notice(live_id, before, after, notice_id=change_id or None))
-    if notify and changed and body['changeNotice'] and may_send_schedule_email(request):
+    from .teams_notification_preferences import lms_email_requested
+    if notify and changed and body['changeNotice'] and lms_email_requested(request) and may_send_schedule_email(request):
         # The ordinary save already invited/emailed the added people. They
         # receive no second change email; the shared notice ledger dedupes retries.
         body['scheduleEmail'] = send_change_emails(live_id, body['changeNotice'], exclude=body.get('addedPeople') or [])

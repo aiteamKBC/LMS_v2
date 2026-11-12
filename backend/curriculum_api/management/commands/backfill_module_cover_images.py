@@ -102,7 +102,7 @@ class Command(BaseCommand):
 
         if apply_changes:
             # The module lists and the payload build all read this column.
-            views.invalidate_curriculum_cache()
+            views.invalidate_curriculum_cache(content_scope='all')
             self.stdout.write(self.style.SUCCESS(
                 f'Moved {moved} cover image(s), {moved_bytes:,} bytes out of the column.'
             ))

@@ -23,9 +23,12 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Enrolment personal courses', () => {
-  it('links both enrolment sidebars to the new page', () => {
+  // The My Courses workspace owns personal learning, so neither enrolment
+  // sidebar offers it: one page reached two ways read as two sections.
+  it('keeps personal courses out of both enrolment sidebars', () => {
     for (const items of [apprenticeNavItems, enrolmentNavItems]) {
-      expect(items.find(item => item.id === 'enrolment-courses')?.href).toBe('/users/my-courses');
+      expect(items.some(item => item.id === 'enrolment-courses')).toBe(false);
+      expect(items.some(item => item.label === 'My Courses')).toBe(false);
       expect(items.some(item => item.href?.startsWith('/curriculum/'))).toBe(false);
     }
   });

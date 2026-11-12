@@ -214,7 +214,9 @@ import {
 import { RichTextDraft } from './RichTextEditor';
 import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
 import { useOffScheduleRuns } from './useOffScheduleRuns';
-import { offScheduleRunLabel, offScheduleRunSentence } from '../teams-meetings/offScheduleRuns';
+import { offScheduleRunLabel } from '../teams-meetings/offScheduleRuns';
+import { OffScheduleRunDetails } from '../teams-meetings/OffScheduleRunDetails';
+import { KsbRemapNotice } from './KsbRemapNotice';
 import { reviewDateLabel } from '../teams-meetings/calendarTime';
 import { linkedRecordingsOf, moveComponentToWeek, relinkCopiedComponents, withLinkedRecordings, withRecordingLink, type RecordingLinkContext } from '../shared/entities/liveSessionRecordingLink';
 
@@ -3644,15 +3646,7 @@ function ModuleBuilderContent() {
               module={workingModule}
             />
           )}
-          {workingModule.ksbRemapReport?.unmatched?.length ? (
-            <details data-testid="module-ksb-remap-report" className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] text-amber-900">
-              <summary className="cursor-pointer font-bold">KSB remap review required ({workingModule.ksbRemapReport.unmatched.length} unmatched)</summary>
-              <p className="mt-2">This duplicate was created successfully, but the following source mappings were not found in the destination Programme:</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {workingModule.ksbRemapReport.unmatched.map((entry, index) => <li key={`${entry.path || entry.code}-${index}`}>{entry.code || 'Unknown code'} — {entry.reason || 'Review this mapping.'}</li>)}
-              </ul>
-            </details>
-          ) : null}
+          <KsbRemapNotice report={workingModule.ksbRemapReport} onReview={() => { void openKsbMap(workingModule); }} />
 
           {/* The receipt for a merge that has already happened -- their work is
               in the weeks on screen by the time this renders.
@@ -3808,6 +3802,7 @@ function ModuleBuilderContent() {
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
+                    onSelectComponent={componentId => { void requestSelectionChange({ kind: 'component', weekId: selectedWeek.id, componentId }); }}
                     selfStudyOnly={workingModule.isFreeCourse}
                     displayWeek={selectedWeek}
                     onChange={updates => updateWorkingModule(module =>
@@ -5223,12 +5218,12 @@ function CourseStructure({ pointDrafts, module, selection, dragState, onDragStat
                 </p>
               </div>
             ) : (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
-                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                  <AppIcon className="ri-calendar-close-line text-sm"></AppIcon>
+              <div className="rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+                <p className="flex items-center gap-1.5 text-[13px] font-semibold leading-5 text-foreground-700">
+                  <AppIcon className="ri-calendar-event-line text-base text-primary-600"></AppIcon>
                   No delivery date in this calendar week
                 </p>
-                <p className="mt-1 text-[10px] leading-4 text-amber-800">
+                <p className="mt-1 text-[12px] leading-5 text-foreground-600">
                   {moduleStartDate && moduleStartWeekday && deliveryDays ? (
                     <>
                       This module starts on {moduleStartWeekday}, {formatDateLabel(moduleStartDate)}. Its delivery day{deliveryDays.includes(',') ? 's are' : ' is'} {deliveryDays}, which {deliveryDays.includes(',') ? 'do' : 'does'} not fall within this opening calendar week.
@@ -5247,7 +5242,7 @@ function CourseStructure({ pointDrafts, module, selection, dragState, onDragStat
                   strip alone: run down the card's full height so an expanded
                   week's components stay under it. */}
               {weekHolidayNotices.length > 0 && (
-                <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] rounded-l-xl bg-amber-400"></span>
+                <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] rounded-l-xl bg-primary-200"></span>
               )}
               <div
                 draggable
@@ -5287,15 +5282,14 @@ function CourseStructure({ pointDrafts, module, selection, dragState, onDragStat
                     <span>{totalOtjh.toFixed(1)}h</span>
                     {!hasDeliveryDate && (
                       <>
-                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
-                        <span className="font-semibold text-amber-700">No delivery date this week</span>
+                        <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
+                        <span className="text-[12px] font-semibold text-foreground-500">No delivery date this week</span>
                       </>
                     )}
                     {offScheduleByWeek.has(week.id) && (
                       <>
-                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
-                        <span className="truncate font-semibold text-amber-700"
-                          title={offScheduleByWeek.get(week.id)!.runs.map(run => offScheduleRunSentence(run, iso => reviewDateLabel(iso, offScheduleByWeek.get(week.id)!.timeZone))).join(' ')}>
+                        <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
+                        <span className="font-semibold text-foreground-500">
                           {offScheduleRunLabel(offScheduleByWeek.get(week.id)!.runs)}
                         </span>
                       </>
@@ -5368,12 +5362,14 @@ function CourseStructure({ pointDrafts, module, selection, dragState, onDragStat
                       warns and stops there -- the session keeps its date, its
                       week and its Teams meeting. */}
                   <WeekComponentRail
+                    componentSectionKey={componentId => pointDrafts.get(module.catalogueId || module.id, week.id)?.points
+                      .find(point => point.componentIds.includes(componentId))?.id || null}
                     renderComponentList={(items, searchTerm) => <WeekPointsNavigation
                       key={`${module.catalogueId || module.id}:${week.id}`}
                       moduleId={module.catalogueId || module.id}
                       weekId={week.id}
                       drafts={pointDrafts}
-                      components={items.map(item => item.component)}
+                      components={items.flatMap(item => item.members || [item.component])}
                       selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
                       onSelect={componentId => onSelectComponent(week.id, componentId)}
                       renderActivity={componentId => items.find(item => item.component.id === componentId)?.node}
@@ -5816,11 +5812,7 @@ function ModuleWeekPanel({ pointDrafts, saving, week, module, groupOptions, onCh
   return (
     <section className="space-y-4">
       {offSchedule && (
-        <div role="note" className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-900">
-          {offSchedule.runs.map(run => (
-            <p key={`${run.runStartUtc}-${run.runEndUtc}`}>{offScheduleRunSentence(run, iso => reviewDateLabel(iso, offSchedule.timeZone))}</p>
-          ))}
-        </div>
+        <OffScheduleRunDetails key={week.id} runs={offSchedule.runs} when={iso => reviewDateLabel(iso, offSchedule.timeZone)} />
       )}
       <div className="grid gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-5">
         <div className="min-w-0">

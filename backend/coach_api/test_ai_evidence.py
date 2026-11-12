@@ -99,7 +99,7 @@ class UploadedEvidenceTests(SimpleTestCase):
         self.db.execute('''CREATE TABLE Learner.evidence_files (
             learner_kind TEXT, learner_id TEXT, section_ref TEXT, component_ref TEXT,
             status TEXT, container TEXT, blob_name TEXT, original_filename TEXT,
-            content_type TEXT, size_bytes INTEGER, uploaded_at INTEGER)''')
+            content_type TEXT, size_bytes INTEGER, uploaded_at INTEGER, id TEXT)''')
         self.cursor = MagicMock()
         self.cursor.__enter__.return_value = self.cursor
 
@@ -120,8 +120,24 @@ class UploadedEvidenceTests(SimpleTestCase):
 
     def add_file(self, *, kind="apprenticeship", learner="17", section="COMP-1", component=None,
                  status="approved", filename="report.docx", mime="application/octet-stream"):
-        self.db.execute("INSERT INTO Learner.evidence_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (kind, learner, section, component, status, "approved", filename, filename, mime, 100, 1))
+        self.db.execute("INSERT INTO Learner.evidence_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (kind, learner, section, component, status, "approved", filename, filename, mime, 100, 1, filename))
+
+    def test_revised_submission_reads_only_selected_owned_approved_files(self):
+        self.add_file(filename='old.docx')
+        self.add_file(filename='new.docx')
+        self.add_file(filename='library.docx', section='COMP-2')
+        self.add_file(filename='foreign.docx', learner='18')
+        self.add_file(filename='pending.docx', status='pending')
+        files = ai_marking.collect_evidence_files('apprenticeship', '17', 'COMP-1',
+            selected_file_ids=['new.docx', 'library.docx', 'foreign.docx', 'pending.docx'])
+        self.assertEqual({file['filename'] for file in files}, {'new.docx', 'library.docx'})
+        self.assertEqual(self.download.call_count, 2)
+
+    def test_an_explicit_empty_attachment_selection_does_not_read_old_uploads(self):
+        self.add_file(filename='old.docx')
+        self.assertEqual(ai_marking.collect_evidence_files('apprenticeship', '17', 'COMP-1', selected_file_ids=[]), [])
+        self.download.assert_not_called()
 
     def test_approved_files_match_the_ui_even_without_component_lineage(self):
         for kind in ("apprenticeship", "commercial"):
@@ -166,9 +182,11 @@ class UploadedEvidenceTests(SimpleTestCase):
         files = ai_marking.collect_evidence_files("apprenticeship", "17", "COMP-1")
         self.assertEqual(len(files[0]["text"]), ai_marking.MAX_FILE_CHARS)
 
-    def generate(self, *, reflection=False, written="The learner's typed answer.", prompt=None):
+    def generate(self, *, reflection=False, written="The learner's typed answer.", prompt=None, monthly=None):
         submission = {"learnerKind": "apprenticeship", "learnerId": "17", "activityId": "COMP-1",
                       "activityType": "video" if reflection else "assignment", "learningReflection": written}
+        if monthly is not None:
+            submission['monthlyAssignment'] = monthly
         module = ai_reflection if reflection else ai_marking
         with patch.object(module, "load_component_ksbs", return_value=("K1: Assigned criterion", 1)), \
                 patch.object(ai_marking, "load_epa_plan", return_value=("Original EPA criteria", "plan.pdf")), \
@@ -183,6 +201,16 @@ class UploadedEvidenceTests(SimpleTestCase):
             result = generator(submission, prompt=prompt)
             messages = client.return_value.chat.completions.create.call_args.kwargs["messages"]
         return result, messages
+
+    def test_revised_attachment_selection_reaches_the_marking_model(self):
+        self.add_file(filename='old.docx')
+        self.add_file(filename='new.docx')
+        self.add_file(filename='slides.pptx', mime='image/png')
+        (_, meta), _ = self.generate(monthly={'evidence': [{'id': 'new.docx'}],
+            'uploadedPresentation': {'id': 'slides.pptx'}})
+        self.assertEqual([file['filename'] for file in meta['evidenceFiles']], ['new.docx', 'slides.pptx'])
+        (_, meta), _ = self.generate(monthly={'evidence': []})
+        self.assertEqual(meta['evidenceFiles'], [])
 
     def test_document_content_reaches_both_models_without_replacing_the_policy_or_writing(self):
         self.add_file()

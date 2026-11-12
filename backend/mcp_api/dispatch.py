@@ -33,6 +33,8 @@ METHODS = frozenset({"GET", "POST", "PUT", "PATCH"})
 _SEG = r"[^/?#]+"
 VIDEO_UPLOAD_PATH = r"/curriculum_api/curriculum/videos/module/[\w-]+/[\w-]+/"
 COMPONENT_CREATE_PATH = "/curriculum_api/curriculum/components/"
+FILE_UPLOAD_PATH = r"/curriculum_api/curriculum/components/[\w-]+/upload/"
+UPLOAD_PATHS = (VIDEO_UPLOAD_PATH, FILE_UPLOAD_PATH)
 ALLOWED_CALLS = (
     ("GET", r"/curriculum_api/curriculum/programmes/"),
     ("GET", rf"/curriculum_api/curriculum/programmes/{_SEG}/cohorts/"),
@@ -46,6 +48,25 @@ ALLOWED_CALLS = (
     ("GET", r"/curriculum_api/knowledge-base/books/"),
     ("POST", VIDEO_UPLOAD_PATH),
     ("POST", COMPONENT_CREATE_PATH),
+    # save_component_file: the Module Builder's component file upload (multipart).
+    ("POST", FILE_UPLOAD_PATH),
+    # Step 7 (create_quiz_draft): a draft quiz, its settings, the component link and KSB mappings.
+    ("POST", r"/quiz_api/quizzes/create-with-questions/"),
+    ("PATCH", r"/quiz_api/quizzes/\d+/"),
+    ("PATCH", rf"/curriculum_api/curriculum/components/{_SEG}/"),
+    ("POST", rf"/curriculum_api/curriculum/components/{_SEG}/ksb-mappings/"),
+    # Step 8 (edit_quiz_draft): add/update/archive questions of an unattempted draft quiz.
+    ("PATCH", r"/quiz_api/quizzes/\d+/questions/"),
+    # Step 10 (tools/structure.py): single-entity creates only -- never programmes/tree/, never PATCH/DELETE.
+    ("GET", r"/curriculum_api/curriculum/standards/"),
+    ("GET", rf"/curriculum_api/curriculum/standards/{_SEG}/"),
+    ("GET", r"/curriculum_api/curriculum/coaches/"),
+    ("POST", r"/curriculum_api/curriculum/programmes/"),
+    ("POST", rf"/curriculum_api/curriculum/programmes/{_SEG}/cohorts/"),
+    ("POST", rf"/curriculum_api/curriculum/cohorts/{_SEG}/groups/"),
+    ("POST", r"/curriculum_api/curriculum/modules/"),
+    # Step 9 (map_ksbs): change an existing mapping. Its DELETE is not allowed.
+    ("PATCH", rf"/curriculum_api/curriculum/ksb-mappings/{_SEG}/"),
 )
 
 FORBIDDEN_KEYS = frozenset({"removemissing", "hydrationcomplete", "permanent"})
@@ -110,10 +131,12 @@ def call_api(request, method, path, *, query=None, json_body=None, uploaded_file
         raise DispatchError("That LMS action is not available to the assistant.")
     if not is_allowed(method, path):
         raise DispatchError("That LMS action is not available to the assistant.")
-    if uploaded_file is not None and (method != "POST" or not re.fullmatch(VIDEO_UPLOAD_PATH, path, re.ASCII)):
-        raise DispatchError("File uploads are only available for an existing curriculum video component.")
-    if method == "POST" and re.fullmatch(VIDEO_UPLOAD_PATH, path, re.ASCII) and uploaded_file is None:
-        raise DispatchError("Provide an MP4 file for this video upload.")
+    is_upload = method == "POST" and any(re.fullmatch(p, path, re.ASCII) for p in UPLOAD_PATHS)
+    if uploaded_file is not None and not is_upload:
+        raise DispatchError("File uploads are only available for an existing curriculum component.")
+    if is_upload and uploaded_file is None:
+        raise DispatchError("Provide an MP4 file for this video upload." if re.fullmatch(VIDEO_UPLOAD_PATH, path, re.ASCII)
+                            else "Provide the file for this upload.")
     if json_body is not None:
         found = forbidden_key(json_body)
         if found:

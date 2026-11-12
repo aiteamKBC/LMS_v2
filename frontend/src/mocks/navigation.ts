@@ -223,6 +223,14 @@ export const employerNavItems: SidebarNavItem[] = [
   { id: 'employer-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/employer/reports' },
 ];
 
+// HR INTEGRATIONS WORKSPACE
+export const integrationsNavItems: SidebarNavItem[] = [
+  { id: 'integrations-home', label: 'Breathe HR', icon: 'ri-links-line', href: '/workspace/integrations/breathe' },
+  { id: 'integrations-matches', label: 'Identity review', icon: 'ri-user-search-line', href: '/workspace/integrations/breathe?view=matches' },
+  { id: 'integrations-conflicts', label: 'Scheduling conflicts', icon: 'ri-calendar-close-line', href: '/workspace/integrations/breathe?view=conflicts' },
+  { id: 'integrations-runs', label: 'Sync history', icon: 'ri-history-line', href: '/workspace/integrations/breathe?view=runs' },
+];
+
 // ============================================================================
 // CURRICULUM STUDIO — Grouped sidebar
 // ============================================================================
@@ -373,7 +381,6 @@ export const apprenticeNavItems: SidebarNavItem[] = [
   { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
-  { id: 'enrolment-courses', label: 'My Courses', icon: 'ri-book-open-line', href: '/users/my-courses' },
 ];
 
 /**
@@ -385,7 +392,6 @@ export const enrolmentNavItems: SidebarNavItem[] = [
   { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
-  { id: 'enrolment-courses', label: 'My Courses', icon: 'ri-book-open-line', href: '/users/my-courses' },
 ];
 
 // ============================================================================
@@ -829,6 +835,7 @@ const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; w
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },
   tutor: { items: tutorNavItems, label: 'Tutor', workspaceLabel: 'Tutor Workspace' },
   employer: { items: employerNavItems, label: 'Employer', workspaceLabel: 'Employer Workspace' },
+  integrations: { items: integrationsNavItems, label: 'HR Integrations', workspaceLabel: 'Breathe HR Workspace' },
   curriculum: { items: curriculumNavItems, label: 'Curriculum Designer', workspaceLabel: 'Curriculum Studio' },
   engagement: { items: engagementNavItems, label: 'Engagement Manager', workspaceLabel: 'Engagement Command Centre' },
   compliance: { items: enrolmentNavItems, label: 'Enrolment Officer', workspaceLabel: 'Enrolment Workspace' },

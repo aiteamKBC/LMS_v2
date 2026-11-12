@@ -108,11 +108,19 @@ CURRICULUM_LEARNER_DATA_TTL_SECONDS = 60
 # load -- it asks for `?visibility=all` and the default in the same burst, and
 # each used to pay for its own full read.
 #
-# Shared between processes (Valkey) and compressed, with the payload TTL: the
-# shared epoch is what retires them after a write, in this process or another,
-# so the TTL only bounds how long an unused generation lingers. It used to be a
-# 60 s process-local copy, which every worker re-read from Neon each minute.
-CURRICULUM_ROWS_CACHE_TTL_SECONDS = CURRICULUM_CACHE_TTL_SECONDS
+# Shared between processes (Valkey) and compressed. The shared epoch is what
+# retires them after a write, in this process or another, so the TTL only
+# bounds how long an unused generation lingers; 300 s, like every shared copy
+# (CURRICULUM_SHARED_TTL_SECONDS). It used to be a 60 s process-local copy,
+# which every worker re-read from Neon each minute.
+CURRICULUM_ROWS_CACHE_TTL_SECONDS = 300
+# The SHARED (Valkey) copy of any payload expires after at most this long; the
+# process copy keeps the payload's own TTL. Freshness comes from the epoch,
+# which retires a generation's keys by changing them, not by deleting them: a
+# retired generation simply lingers until its TTL. At hundreds of bumps a day a
+# 1800 s shared TTL kept 15-30 dead generations (~1.8 GB) in Valkey and pushed
+# out live keys. 300 s keeps at most a handful.
+CURRICULUM_SHARED_TTL_SECONDS = int(os.environ.get('CURRICULUM_SHARED_TTL_SECONDS', '300'))
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
 # One lock per payload key, so concurrent misses on the same key rebuild once
@@ -168,8 +176,19 @@ SOFT_DELETE_COLUMNS = {'deleted_at', 'deleted_by', 'deleted_via_parent'}
 SUPPORTED_KSB_WEIGHT_CLASSES = {'hard', 'soft', 'possible'}
 
 
-def invalidate_curriculum_cache():
+def invalidate_curriculum_cache(content_scope=None):
+    """Retire curriculum caches after a write.
+
+    ``content_scope='all'`` is for a writer that changed modules, weeks,
+    components or KSB mappings by raw SQL, which no write helper reported: it
+    also retires every module's learner content entries (content_cache). Writes
+    made through the helpers below retire only their own modules' entries, by
+    themselves, so the default leaves learner content alone.
+    """
     global _CURRICULUM_CACHE_EPOCH
+    if content_scope == 'all':
+        from . import content_cache
+        content_cache.retire_all()
     with _CURRICULUM_CACHE_LOCK:
         # Programme-scoped entries stay: their generation is checked on every
         # read, and the bump this write owes retires exactly the ones it touched.
@@ -646,10 +665,15 @@ def begin_curriculum_write_scope():
     _CURRICULUM_EPOCH_BUMP.read_model_queued = False
     from .module_live import begin_request
     begin_request()
+    from . import content_cache
+    content_cache.begin_write_scope()
 
 
 def end_curriculum_write_scope(scopes=None):
     """Make the request's one bump, if anything in it invalidated."""
+    from . import content_cache
+    # The modules this request wrote: one version move each, after the view.
+    content_cache.end_write_scope()
     pending = getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False)
     _CURRICULUM_EPOCH_BUMP.scoped = False
     _CURRICULUM_EPOCH_BUMP.pending = False
@@ -924,7 +948,8 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, sc
                 # This key includes the generation: a concurrent invalidation
                 # retires it even if this network write finishes afterwards.
                 try:
-                    cache.set(shared_key, _pack_shared(value) if compress else value, timeout=ttl)
+                    cache.set(shared_key, _pack_shared(value) if compress else value,
+                              timeout=min(ttl, CURRICULUM_SHARED_TTL_SECONDS))
                 except Exception:
                     logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
         finally:
@@ -2290,7 +2315,7 @@ def teams_calendar_subject(payload, series=None):
     )
 
 
-def teams_event_payload(payload, graph_settings):
+def teams_event_payload(payload, graph_settings, *, promote_presenters=True):
     title = teams_calendar_subject(payload)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
@@ -2309,10 +2334,15 @@ def teams_event_payload(payload, graph_settings):
         raise ValueError('Unsupported repeat option.')
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or 12)))
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
-    co_organizer_set = set(co_organizers)
     # A co-organiser may also be listed as a presenter. Teams gives each person
     # one role (co-organiser wins), so keeping both only keeps the author's list.
     presenters = teams_attendee_emails(payload.get('presenters'))
+    if promote_presenters:
+        from .teams_presenter_roles import presenter_co_organizers
+        co_organizers = presenter_co_organizers(
+            presenters, co_organizers, payload.get('organizerEmail') or teams_meeting_default_organizer(),
+        )
+    co_organizer_set = set(co_organizers)
     elevated = co_organizer_set | set(presenters)
     attendees = [
         email for email in teams_attendee_emails(payload.get('attendees'))
@@ -3083,44 +3113,15 @@ def teams_newly_invited(stored, invited):
 
 
 def forward_teams_invitation(request, owner_key, event_ids, recipients, comment=''):
-    """Send the meeting to the people a people-only save just added.
+    """Microsoft forwarding is disabled; optional email is sent by the LMS.
 
-    Microsoft's invitation preference is per write, never per person: the silent
-    attendee patch that keeps an update out of every existing invitee's mailbox
-    keeps it out of the new learner's too, and a meeting only reaches somebody's
-    calendar when something is sent to them. Forwarding is the one call Graph
-    offers that reaches named recipients alone, so the people already invited
-    stay unbothered while the person just added still gets a real Teams
-    invitation rather than only a link in an email.
-
-    Failures come back as warnings instead of raising: the calendar is already
-    saved and verified by the time this runs, and a mailbox refusing a forward
-    must not undo it or hide itself.
+    This prevents explicit /forward calls. It does not certify suppression of
+    the messages Exchange may generate from an event PATCH.
     """
-    warnings = []
     if not recipients:
-        return warnings
-    payload = {'ToRecipients': [{'emailAddress': {'address': clean_str(email)}} for email in recipients]}
-    if comment:
-        payload['Comment'] = comment
-    for event_id in dict.fromkeys(clean_str(value) for value in event_ids):
-        if not event_id:
-            continue
-        try:
-            request(
-                'POST',
-                f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}/forward',
-                payload=payload,
-            )
-        except (RuntimeError, ValueError) as exc:
-            warnings.append({
-                'code': 'teams_invitation_not_forwarded',
-                'message': 'Microsoft did not send the meeting invitation to everyone this save added. '
-                           'They are on the meeting and receive the LMS schedule email; forward the '
-                           'invitation from the calendar if it is still missing from theirs.',
-                'detail': str(exc),
-            })
-    return warnings
+        return []
+    return [{'code': 'teams_calendar_mail_disabled',
+             'message': 'No Microsoft invitation was requested. Use the LMS email option if you want to email the people added.'}]
 
 
 def reschedule_single_live_session_occurrence(
@@ -4209,7 +4210,9 @@ def with_schedule_change_notice(response, live_session_id, before, request=None,
     body['changeNotice'] = issue_change_notice(live_session_id, before, held_schedule_snapshot(live_session_id),
                                                notice_id=clean_str(body.get('changeId')) or None)
     from .teams_week_meeting import may_send_schedule_email
-    if request is not None and may_send_schedule_email(request):
+    from .teams_notification_preferences import lms_email_requested
+    body['lmsEmailRequested'] = bool(lms_email_requested(request) and may_send_schedule_email(request))
+    if body['lmsEmailRequested']:
         from .teams_schedule_delivery import send_change_emails, send_creation_emails
         added = []
         if series_before is not None:
@@ -4339,11 +4342,14 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             teams_attendee_emails(payload['coOrganizers'])
             if 'coOrganizers' in payload else stored_co_organizers
         )
-        co_organizer_set = set(co_organizers)
         presenters = (
             teams_attendee_emails(payload['presenters'])
             if 'presenters' in payload else stored_presenters
         )
+        from .teams_presenter_roles import presenter_co_organizers, roles_changed
+        if roles_changed(presenters, co_organizers, stored_presenters, stored_co_organizers):
+            co_organizers = presenter_co_organizers(presenters, co_organizers, organizer)
+        co_organizer_set = set(co_organizers)
         elevated = co_organizer_set | set(presenters)
         attendees = [
             email for email in (
@@ -4443,6 +4449,13 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         except CalendarMismatch as mismatch:
             # A known difference is the reason to update. Read failures still abort.
             if people_only:
+                if mismatch.code == 'teams_attendee_privacy_unconfirmed':
+                    return json_error(
+                        'Attendee email privacy is not confirmed on the original Teams calendar. '
+                        'The invitations were not saved and no invitation was sent. '
+                        'Updating session dates does not resolve this privacy check.',
+                        status=409, code=mismatch.code, detail=str(mismatch), liveSessionId=live_session_id,
+                    )
                 # Except on a people-only save, which must never touch a date.
                 # Repairing the drift here would move, or re-create, sessions
                 # as a side effect of saving who is invited. Nothing has been
@@ -4780,6 +4793,9 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if unresolved_components:
         warnings.append({'code': 'teams_component_binding_missing',
                          'message': f'{len(unresolved_components)} existing session link(s) were preserved because their calendar occurrence could not be matched. Review Calendar health before changing those sessions.'})
+    # Keep actual permission/settings failures ahead of the informational mail policy notice.
+    mail_notices = [item for item in warnings if item.get('code') == 'teams_calendar_mail_disabled']
+    warnings = [item for item in warnings if item.get('code') != 'teams_calendar_mail_disabled']
     return with_schedule_change_notice(JsonResponse({
         'updated': True,
         'meeting': {
@@ -4796,7 +4812,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'presenters': presenters,
             'coOrganizers': co_organizers,
         },
-        'warnings': [*warnings, *[reported_failure(item) for item in option_failures]],
+        'warnings': [*warnings, *[reported_failure(item) for item in option_failures], *mail_notices],
         # The onlineMeeting options, reported apart from the invitation: which
         # groups this save sent, whether Microsoft took them, and what is still
         # unapplied from this or an earlier save.
@@ -5743,6 +5759,47 @@ def note_live_rows(table, rows):
         note_rows(table, rows)
     except Exception:
         logger.debug('Unable to note a write for live sync.', exc_info=True)
+    # Learner content entries of these rows' modules (never raises; on any
+    # doubt it retires all modules).
+    from . import content_cache
+    content_cache.note_rows(table, rows)
+
+
+def note_previous_content_modules(table, *, where_sql=None, where_params=None, key_columns=None, payloads=()):
+    """Before a write that sets module_catalogue_id, retire the rows' CURRENT modules.
+
+    The rows a write returns name only the module they now belong to; a row
+    moved out of a module must retire that module's cached content too. Read
+    with the write's own WHERE or key, so it costs one small query, and only
+    for writes that can move a row.
+    """
+    from . import content_cache
+    bare = str(table or '').split('.')[-1].strip('"')
+    if bare not in content_cache.CONTENT_TABLES or bare == AUTHORING_MODULES_TABLE:
+        return
+    if not any('module_catalogue_id' in (payload or {}) for payload in payloads):
+        return
+    if connection.vendor != 'postgresql':
+        content_cache.retire_all()
+        return
+    try:
+        if where_sql is not None:
+            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where {where_sql}',
+                             list(where_params or []))
+        elif list(key_columns or []) == ['id']:
+            ids = [payload.get('id') for payload in payloads if payload and payload.get('id') not in (None, '')]
+            if not ids:
+                return
+            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where id = any(%s)',
+                             [ids])
+        else:
+            content_cache.retire_all()
+            return
+        content_cache.note_modules(row['module_catalogue_id'] for row in rows)
+    except Exception:
+        logger.warning('Unable to read the modules a write moves rows from; retiring all content.',
+                       exc_info=True)
+        content_cache.retire_all()
 
 
 def insert_row(table, payload):
@@ -5792,6 +5849,7 @@ def update_rows(table, where_sql, where_params, payload, allow_null_columns=None
         raise ValueError(f'No writable columns found for {table}.')
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in values)
     query = f'update {table_name(table)} set {assignments} where {where_sql} returning *'
+    note_previous_content_modules(table, where_sql=where_sql, where_params=where_params, payloads=[values])
     rows = execute_returning(query, [*values.values(), *where_params])
     versioning.record_rows(table, rows)
     note_live_rows(table, rows)
@@ -8297,6 +8355,10 @@ def set_programme_modules_ksb_source(programme_values, source_value):
                 ''',
                 [*params, *raw_targets],
             )
+            # Raw SQL across a programme's modules: no helper reported it.
+            # Rare, so retiring every module's learner content costs little.
+            from . import content_cache
+            content_cache.retire_all()
             return cursor.rowcount
     updated = 0
     for module in authoring_fetch_all(AUTHORING_MODULES_TABLE):
@@ -16277,6 +16339,7 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
             f'values ({placeholders})'
         )
     key_value = ' '.join(clean_str(values.get(column)) for column in key_columns)
+    note_previous_content_modules(table, key_columns=key_columns, payloads=[values])
     with connection.cursor() as cursor:
         cursor.execute(query, [values[column] for column in columns])
         if connection.vendor == 'postgresql':
@@ -16308,6 +16371,7 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
         if payload
     ]
     payloads = [payload for payload in payloads if payload]
+    note_previous_content_modules(table, key_columns=key_columns, payloads=payloads)
     if not payloads:
         return
     now = datetime.utcnow()
@@ -16514,6 +16578,8 @@ def update_authoring_rows(table, where_sql, where_params, payload):
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in columns)
     params = [payload[column] for column in columns] + list(where_params)
     key_value = ' '.join(clean_str(value) for value in where_params)
+    note_previous_content_modules(table, where_sql=where_sql, where_params=where_params,
+                                  payloads=[{column: payload[column] for column in columns}])
     with connection.cursor() as cursor:
         if connection.vendor == 'postgresql':
             cursor.execute(

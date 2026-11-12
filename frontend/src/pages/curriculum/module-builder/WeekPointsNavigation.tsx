@@ -76,14 +76,20 @@ export function WeekPointsNavigation({ moduleId, weekId, drafts, components, sel
         </button>
         <div id={panelId} hidden={!open} className="border-t border-primary-100 px-2 py-1">
           {activities.length ? <ul className="space-y-1">
-            {activities.map(activity => <li key={activity.id}>
-              {renderActivity ? renderActivity(activity.id) :
+            {activities.map(activity => {
+              const rendered = renderActivity?.(activity.id);
+              // A recording can already be rendered within its live session's
+              // card. It still counts as an activity and can reveal this Point.
+              if (renderActivity && rendered == null) return null;
+              return <li key={activity.id}>
+              {renderActivity ? rendered :
               <button type="button" onClick={() => onSelect(activity.id)} aria-current={selectedId === activity.id ? 'true' : undefined}
                 className={`w-full rounded-md px-2 py-2 text-left focus-visible:outline-primary-500 ${selectedId === activity.id ? 'bg-primary-100 text-primary-900' : 'text-foreground-800 hover:bg-primary-50'}`}>
                 <span className="block break-words text-[11px] font-medium [overflow-wrap:anywhere]">{activity.title || 'Untitled activity'}</span>
                 <span className="mt-0.5 block text-[10px] text-primary-600">{componentAuthoringDefinitions.find(item => item.type === activity.type)?.label || activity.type}</span>
               </button>}
-            </li>)}
+            </li>;
+            })}
           </ul> : <p className="px-2 py-2 text-[11px] text-foreground-500">No activities to show.</p>}
         </div>
       </div>;

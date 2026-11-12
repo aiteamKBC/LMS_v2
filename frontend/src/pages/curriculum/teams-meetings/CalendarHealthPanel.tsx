@@ -127,8 +127,8 @@ export function CalendarHealthPanel({ liveSessionId, disabled, refreshKey = 0, p
           </p>}
           {health.warnings.map(warning => (
             <div key={warning.category} role={warning.severity === 'error' ? 'alert' : 'note'}
-              className={`rounded-lg border p-3 text-[12px] ${warning.severity === 'notice' ? 'border-slate-200 bg-slate-50 text-slate-800'
-                : warning.severity === 'error' ? 'border-red-200 bg-red-50 text-red-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
+              className={`rounded-xl border border-l-4 bg-background-50 p-4 text-sm leading-6 ${warning.severity === 'notice' ? 'border-background-200 border-l-primary-300 text-foreground-700'
+                : warning.severity === 'error' ? 'border-red-200 border-l-red-500 text-red-900' : 'border-background-200 border-l-amber-400 text-foreground-800'}`}>
               <p className="font-bold">{warning.title}</p>
               <p className="mt-1">{warning.explanation}</p>
               <p className="mt-1 text-[11px]"><span className="font-semibold">Next step:</span> {warning.nextAction}</p>

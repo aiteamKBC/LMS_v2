@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, ChevronRight, CirclePlay, LogOut, UserRoundPlus, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, LogOut, UserRoundPlus, X } from 'lucide-react';
 import type { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { Header, SignOutConfirmModal } from '@/components/feature/Header';
 import { GlobalSearch } from '@/components/feature/GlobalSearch';
@@ -9,11 +9,12 @@ import { SidebarIcon, type SidebarNavItem } from '@/components/feature/Sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import styles from './EnrolmentWorkspace.module.css';
 import { EnrolmentTutorial } from '../help/EnrolmentTutorial';
+import { EnrolmentHelpLauncher } from '../help/EnrolmentHelpLauncher';
 import { tutorialForLocation } from '../help/tutorials';
 import tutorialStyles from '../help/EnrolmentTutorial.module.css';
 
 type Props = ComponentProps<typeof WorkspaceShell> & { directoryLayout?: boolean };
-const navigationOrder = ['/users', '/users/first-sessions', '/users/coach-directory', '/users/progress-transfers', '/users/my-courses'];
+const navigationOrder = ['/users', '/users/first-sessions', '/users/coach-directory', '/users/progress-transfers'];
 const logoUrl = 'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
 
 /** Enrollment-only frame. Shared headers, search, routes and permission checks are reused. */
@@ -87,7 +88,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
 
   const renderItem = (item: SidebarNavItem) => {
     const active = item.active ?? item.href === activeHref;
-    const content = <>{item.id === 'enrolment-courses' ? <BookOpen size={18} /> : <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />}
+    const content = <><SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
       <span className={styles.navLabel}>{item.label}</span>
       {item.statusDot && <span className={styles.statusDot} data-tone={item.statusDot} aria-hidden="true" />}
       {item.badge ? <span className={styles.count}>{item.badge}</span> : null}
@@ -123,9 +124,7 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
     </aside>
     <div className={`workspace-content ${styles.content}`} inert={mobileOpen || undefined} aria-hidden={mobileOpen || undefined}>
       {!hidePageChrome && <Header accountButtonRef={accountRef} pageTitle={pageTitle} pageSubtitle={pageSubtitle}
-        headerExtras={headerExtras || pageGuide ? <div className={tutorialStyles.extras}>{headerExtras}{pageGuide && <button type="button"
-          className={tutorialStyles.trigger} aria-label={`Watch ${pageGuide.tutorial.title} page guide`} title="Watch this page's guide (English)"
-          aria-haspopup="dialog" onClick={() => setGuideLocation(locationKey)}><CirclePlay size={21} aria-hidden="true" /></button>}</div> : undefined}
+        headerExtras={headerExtras}
         userName={displayName} role={chromeRole} appearance={directoryLayout ? 'enrolment' : undefined} workspaceLabel={workspaceLabel} sidebarSignOut
         pageIcon={activeHref ? <SidebarIcon id={destinations.find(item => item.href === activeHref)?.id} label={pageTitle} /> : undefined}
         onToggleMobileSidebar={() => setMobileOpen(value => !value)} mobileSidebarOpen={mobileOpen} mobileMenuButtonRef={menuRef}
@@ -137,7 +136,9 @@ export function EnrolmentWorkspaceShell({ children, role, roleLabel, navItems, p
         }}><ArrowLeft size={15} aria-hidden="true" />Back</button>}
         {!hideBreadcrumbs && <nav aria-label="Breadcrumb"><Link to="/users">{workspaceLabel}</Link><ChevronRight size={13} aria-hidden="true" /><span>{breadcrumbCurrentLabel || pageTitle}</span></nav>}
       </div>}
-      <main className={`workspace-main ${styles.main}`}>{children}</main>
+      <main className={`workspace-main ${styles.main}`}>{children}{pageGuide && <div className={tutorialStyles.launcherSpacer} aria-hidden="true" />}</main>
+      {/* Inside the content so the mobile navigation (inert content, backdrop) covers it. */}
+      {pageGuide && <EnrolmentHelpLauncher title={pageGuide.tutorial.title} onOpen={() => setGuideLocation(locationKey)} />}
     </div>
     <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} appearance="enrolment" />
     {guideLocation === locationKey && pageGuide && <EnrolmentTutorial key={locationKey} tutorial={pageGuide.tutorial} initialChapter={pageGuide.chapter} onClose={() => setGuideLocation(null)} />}

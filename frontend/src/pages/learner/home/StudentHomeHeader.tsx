@@ -155,7 +155,7 @@ export function StudentHomeHeader({ name, homeHref, identity, events, loading, e
         {error ? <div role="alert"><p>Some reminders could not be loaded.</p><button className={styles.headerDialogLink} onClick={onRetry}>Try again</button></div>
           : !loading && !notifications.length && <p>You’re all caught up. No upcoming reminders.</p>}
       </div> : panel === 'settings' ? <AccountSettings/> : <div className={styles.headerDialogBody}>
-        <p>Use Continue Learning to open this week’s material, and Dashboard to explore your progress and learning tools.</p>
+        <p>Use Continue Learning to open your next incomplete activity, and Dashboard to explore your progress and learning tools.</p>
         <Link className={styles.headerDialogLink} to="/user-guide">Open the learner guide<ArrowRight aria-hidden="true"/></Link>
         <Link className={styles.headerDialogLink} to={supportHref}>Get learning support from your coach<ArrowRight aria-hidden="true"/></Link>
       </div>}

@@ -72,7 +72,7 @@ it('keeps assigned work available when previous assignment history fails', async
   assignedRequests({ failHistory: true });
   render(<MemoryRouter><AssignmentsTab kind="commercial" id="92" real={assignedDetail} /></MemoryRouter>);
   expect(await screen.findByRole('link', { name: 'Start assignment' })).toBeVisible();
-  expect(await screen.findByRole('alert')).toHaveTextContent('Service unavailable');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Previous assignments could not be loaded');
 });
 
 it('keeps an empty assigned component visible and explains why its answer form is unavailable', async () => {
@@ -143,7 +143,7 @@ it('shows a failed training plan as a retryable error without claiming no assign
   assignedRequests();
   const retry = vi.fn();
   render(<MemoryRouter><AssignmentsTab kind="commercial" id="92" loadError="Could not load the plan" onRetry={retry} /></MemoryRouter>);
-  expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the plan');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Your assignments could not be loaded');
   fireEvent.click(screen.getByRole('button', { name: 'Retry assignments' }));
   expect(retry).toHaveBeenCalledOnce();
   expect(screen.queryByText('No assignments linked yet')).not.toBeInTheDocument();
@@ -169,7 +169,7 @@ it('groups saved submissions by month and opens the existing assignment template
 it('shows a failed request as an error rather than an empty history', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: 'Access denied' }) }));
   render(<MemoryRouter><AssignmentsTab kind="apprenticeship" id="92" /></MemoryRouter>);
-  expect((await screen.findByRole('alert')).textContent).toBe('Access denied');
+  expect(await screen.findByRole('alert')).toHaveTextContent('You do not have access to this page');
   expect(screen.queryByText('No classified assignments available yet')).toBeNull();
 });
 

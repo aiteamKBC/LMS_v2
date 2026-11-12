@@ -157,6 +157,10 @@ export default defineConfig(({ mode }) => {
         target: apiTarget,
         changeOrigin: true,
       },
+      "/integrations_api": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
       // Authentication. Same-origin through the proxy so the kbc_session
       // cookie (HttpOnly, SameSite=Lax) is set on and sent back to :3000.
       "/login_api": {

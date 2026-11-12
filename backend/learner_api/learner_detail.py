@@ -310,9 +310,9 @@ def _display_component_title(type_, title):
     return f"{type_label} · {title}" if show_title else (type_label or title)
 
 
-def _cached_expected_otjh(cur):
+def _cached_expected_otjh(cur, ids):
     try:
-        return content_cache.expected_otjh_map(cur)
+        return content_cache.expected_otjh(cur, ids)
     except DatabaseError:
         raise
     except Exception:
@@ -328,9 +328,9 @@ def _otjh_by_component_id(components):
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
-            # Every component's value, shared per curriculum generation; None
+            # Per-module cached values (content_cache.expected_otjh); None
             # when the cache is off, and then the by-id read below as before.
-            known = _cached_expected_otjh(cur)
+            known = _cached_expected_otjh(cur, ids)
             if known is not None:
                 return {cid: (float(known[cid]) if known[cid] is not None else None)
                         for cid in ids if cid in known}
@@ -1859,6 +1859,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                              if mid in master_module_title]
                 week_lookup = {(row['moduleId'], row['weekId']): row for row in out_weeks}
                 valid = set(week_lookup)
+                live_ids = {(_s(mid), _s(cid)) for cid, wid, mid, ctype, *_ in master_components
+                            if (mid, wid) in valid and _s(ctype).lower().replace('-', '_') == 'live_session'}
                 out_components = []
                 for cid, wid, mid, ctype, title, _, settings, link, *_ in master_components:
                     if (mid, wid) not in valid:
@@ -1885,7 +1887,13 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                             and _s(settings.get('recordingDate')))):
                         continue
                     week = week_lookup[(mid, wid)]
+                    linked_id = _s(settings.get(LINK_KEY))
+                    linked_module = _s(settings.get(LINK_MODULE_KEY)) or _s(mid)
+                    presentation_link = ({'linkedSessionComponentId': linked_id}
+                                         if _s(ctype).lower().replace('-', '_') == 'recording_placeholder'
+                                         and linked_module == _s(mid) and (linked_module, linked_id) in live_ids else {})
                     out_components.append({**week, 'componentId': cid, 'isQuiz': bool(quiz),
+                                           **presentation_link,
                                            'quizMeta': quiz, 'component': title, **point_projection(settings),
                                            **({'type': ctype, 'sessionDate': _s(settings.get('sessionDate')) or None,
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
@@ -2283,6 +2291,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "recordingSeriesId": comp["recordingSeriesId"],
                     "recordingSessionNumber": comp["recordingSessionNumber"],
                     "recordingDate": comp["recordingDate"],
+                    **({"linkedSessionComponentId": comp["linkedSessionComponentId"]}
+                       if comp.get("linkedSessionComponentId") else {}),
                     "sessionDate": comp["sessionDate"],
                     "sessionTime": comp["sessionTime"],
                     "sessionDateTimeUtc": comp["sessionDateTimeUtc"],

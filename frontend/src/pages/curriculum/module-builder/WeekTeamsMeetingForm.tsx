@@ -2,10 +2,11 @@ import { emptyWeekTeamsMeetingForm, liveSessionsOf, heldAdditionalMeeting, booke
 export type { WeekTeamsMeetingForm } from './WeekTeamsMeetingForm.helpers';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { Notice } from '@/components/ui/Notice';
 import { formatSystemTimestamp } from '@/lib/format';
 import { EntraPeopleInput } from '../teams-meetings/EntraPeopleInput';
 import { TeamsMeetingOptionFields, TeamsPeopleFields, type TeamsCalendarForm } from '../teams-meetings/createCalendarForm';
-import { calendarLabel } from "../teams-meetings/createCalendarForm.helpers";
+import { calendarLabel, presenterCoOrganizers } from "../teams-meetings/createCalendarForm.helpers";
 import { emailList } from "./EmailChipsInput.helpers";
 import { cleanText, formatDateLabel } from '../shared/entities/model';
 import { bookedOnModuleSeries, reservedForModuleCalendar } from '../shared/entities/liveSessionMeetingScope';
@@ -462,7 +463,7 @@ export function WeekTeamsMeetingPanel({
         organizerEmail: cleanText(form.organizerEmail),
         attendees: emailList(form.attendees),
         presenters: emailList(form.presenters),
-        coOrganizers: emailList(form.coOrganizers),
+        coOrganizers: presenterCoOrganizers(form.presenters, form.coOrganizers, form.organizerEmail),
         localStartDateTime: naive,
         startDateTimeUtc: zonedNaiveToUtcIso(naive, form.scheduleTimeZone),
         durationMinutes: Math.max(15, Number(form.durationMinutes) || 60),
@@ -535,9 +536,9 @@ export function WeekTeamsMeetingPanel({
         {created.email && <ScheduleEmailNote email={created.email} />}
         {created.added && <ScheduleEmailNote email={created.added} kind="added" />}
         {created.moved && <ScheduleEmailNote email={created.moved} kind="moved" />}
-        {created.warnings.map(warning => (
-          <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] font-semibold text-amber-800">{warning}</p>
-        ))}
+        {created.warnings.length > 0 && <Notice tone="attention" role="status" title="Meeting notices">
+          <ul className="list-disc space-y-1 pl-5">{created.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
+        </Notice>}
         <button
           type="button"
           onClick={() => {

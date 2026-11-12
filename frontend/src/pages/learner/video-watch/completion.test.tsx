@@ -182,6 +182,7 @@ it.each(['commercial', 'apprenticeship'])('refreshes the %s recording chip after
   vi.mocked(readLearnerAttendanceMode).mockResolvedValue('lazy');
   await act(async () => { mount('C1', kind); });
   const player = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  expect(screen.queryByRole('button', { name: /back to training plan/i })).not.toBeInTheDocument();
   expect(screen.queryByText('Completed')).not.toBeInTheDocument();
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...original, componentProgress: [{ ...progress,
     timeTaken: null, reportedTime: '150 minutes', timeTrackingSource: 'verified_recording_watch' }] } as LearnerDetail);
@@ -467,7 +468,7 @@ it.each(['commercial', 'apprenticeship'])('retries a failed %s activity read wit
     .mockRejectedValueOnce(new Error('Loading is taking longer than expected. Please try again.'))
     .mockResolvedValueOnce(assignment);
   mount('C1', kind);
-  expect(await screen.findByRole('alert')).toHaveTextContent('Loading is taking longer than expected.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not load this learning activity');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('button', { name: 'Submit synthetic assignment' })).toBeEnabled();
   expect(fetchLearnerDetail).toHaveBeenCalledTimes(2);

@@ -3921,7 +3921,7 @@ function peopleAddedBySave(
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean; invitationsOnly?: boolean; originalSourceToken?: string }, options: { onSubmitted?: () => void } = {}) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean; sendLmsEmails?: boolean; invitationsOnly?: boolean; originalSourceToken?: string }, options: { onSubmitted?: () => void } = {}) {
   // `settingsOnly` only labels the review ("meeting settings" rather than
   // "invitations"); the transport is the same people-only update either way.
   const { settingsOnly, ...sent } = input;
@@ -3974,7 +3974,7 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // The review is complete. The caller can now replace its form with a
   // progress panel without showing it behind the confirmation dialog.
   options.onSubmitted?.();
-  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string; leftoverSlots?: TeamsLeftoverSlot[]; scheduleEmail?: TeamsMeetingResult['scheduleEmail']; addedPeople?: string[]; addedEmail?: TeamsMeetingResult['scheduleEmail']; addedEmailKey?: string; announced?: boolean; microsoftUpdate?: TeamsMicrosoftUpdate }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string; leftoverSlots?: TeamsLeftoverSlot[]; scheduleEmail?: TeamsMeetingResult['scheduleEmail']; addedPeople?: string[]; addedEmail?: TeamsMeetingResult['scheduleEmail']; addedEmailKey?: string; lmsEmailRequested?: boolean; announced?: boolean; microsoftUpdate?: TeamsMicrosoftUpdate }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify({ ...reviewed, notifyAttendees }),
     // One update is around ten SERIAL Microsoft Graph round trips -- read the

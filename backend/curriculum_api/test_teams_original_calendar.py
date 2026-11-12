@@ -215,6 +215,19 @@ class OriginalCalendarBindingTests(SimpleTestCase):
         for call in write.call_args_list:
             self.assertLessEqual(set(call.args[3]), {'graph_event_id', 'attendees', 'presenters', 'co_organizers'})
 
+    def test_verified_coorganizers_are_imported_without_rewriting_calendar_or_attendance(self):
+        online = {'participants': {'attendees': [{'upn': 'tutor@example.invalid', 'role': 'coorganizer'},
+                                                {'upn': 'learner@example.invalid', 'role': 'attendee'}]}}
+        before = copy.deepcopy(self.rows)
+        with patch.object(original.transaction, 'atomic', nullcontext), \
+             patch.object(state, 'load_calendar_state', return_value=(self.series, self.rows, {})), \
+             patch.object(views, 'update_authoring_rows') as write:
+            original.bind_calendar(self.series, self.rows, self.master, self.events, online)
+        updates = write.call_args_list[0].args[3]
+        self.assertEqual(views.parse_json_value(updates['co_organizers'], []), ['tutor@example.invalid'])
+        self.assertLessEqual(set(updates), {'graph_event_id', 'attendees', 'presenters', 'co_organizers'})
+        self.assertEqual(self.rows, before)
+
     def test_ambiguous_or_foreign_meeting_does_not_acquire_an_occurrence_id(self):
         for ambiguous in (False, True):
             with self.subTest(ambiguous=ambiguous):
@@ -406,6 +419,65 @@ class StandardOriginalCalendarRequestTests(SimpleTestCase):
 
 
 class StandardEditorReadTests(SimpleTestCase):
+    def test_unknown_roles_block_attendee_updates_before_binding_or_microsoft_writes(self):
+        series, rows, master, events = fixtures()
+        access = {'mode': 'application', 'actorId': 'APP', 'calendarKind': 'group', 'tenantId': 'TENANT'}
+        source = {'standard': True, 'kind': editing.KIND, 'liveId': 'LIVE', 'actor': '7', 'version': 'CURRENT',
+                  'accessMode': 'application', 'accessActor': 'APP', 'calendarKind': 'group', 'tenantId': 'TENANT',
+                  'path': 'groups/GROUP/events/ROOT', 'master': master, 'joinUrl': JOIN}
+        request = RequestFactory().patch('/schedule/', data=json.dumps({'peopleOnly': True,
+            'attendees': ['learner@example.invalid'], 'originalSourceToken': signing.dumps(source, salt=editing.SALT)}),
+            content_type='application/json')
+        request.login_account = SimpleNamespace(pk=7)
+        callback = Mock(return_value=JsonResponse({'updated': True}))
+        callback.__name__ = 'curriculum_teams_meeting_schedule'
+        client = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+        client.__enter__.return_value = client
+        with patch.object(views, 'authoring_fetch_all', return_value=[series]), \
+             patch.object(state, 'load_calendar_state', return_value=(series, rows, {})), \
+             patch.object(imported, 'access_for', return_value=access), patch.object(imported, 'require_access'), \
+             patch.object(imported, 'CalendarClient', return_value=client), \
+             patch.object(editing, 'load_edit', return_value=(series, rows, {}, {}, 'CURRENT')), \
+             patch.object(editing, 'verified_context', return_value=('groups/GROUP/events/ROOT', master, events, None)), \
+             patch.object(original, 'read_original_online', return_value=('users/OWNER/onlineMeetings/ONLINE',
+                {'participants': {'attendees': [{'upn': 'tutor@example.invalid', 'role': 'unknownFutureValue'}]}})), \
+             patch.object(original, 'bind_calendar') as bind:
+            result = original.original_calendar_request(callback)(request, 'LIVE')
+        self.assertEqual(result.status_code, 409)
+        self.assertEqual(json.loads(result.content)['code'], 'meeting_roles_unverified')
+        callback.assert_not_called()
+        bind.assert_not_called()
+        client.client.patch.assert_not_called()
+
+    def test_online_role_read_requests_coorganizer_enum_without_writes(self):
+        import httpx
+        series, _, _, _ = fixtures()
+        calls = []
+        def graph(request):
+            calls.append(request)
+            role = 'coorganizer' if request.headers.get('Prefer') == 'include-unknown-enum-members' else 'unknownFutureValue'
+            return httpx.Response(200, json={'id': 'ONLINE', 'joinWebUrl': JOIN,
+                'participants': {'organizer': {'identity': {'user': {'id': OWNER}}},
+                                 'attendees': [{'upn': 'tutor@example.invalid', 'role': role}]}})
+        client = imported.CalendarClient.__new__(imported.CalendarClient)
+        with httpx.Client(base_url='https://graph.microsoft.com/v1.0/', transport=httpx.MockTransport(graph)) as transport:
+            client.client = transport
+            actual = editing.read_online(client, series, f'users/{OWNER}/onlineMeetings/ONLINE')
+        self.assertEqual(actual['participants']['attendees'][0]['role'], 'coorganizer')
+        self.assertEqual([request.method for request in calls], ['GET'])
+
+    def test_unrecognized_roles_remain_unconfirmed_instead_of_an_empty_confirmed_roster(self):
+        self.assertIsNone(editing.confirmed_roles({'participants': {'attendees': [
+            {'upn': 'tutor@example.invalid', 'role': 'unknownFutureValue'}]}}))
+        self.assertEqual(editing.confirmed_roles({'participants': {'attendees': []}}), [])
+
+    def test_existing_tutor_label_survives_promotion_but_not_a_role_removed_in_teams(self):
+        roles = [{'upn': 'tutor@example.invalid', 'role': 'coorganizer'},
+                 {'upn': 'co@example.invalid', 'role': 'coorganizer'},
+                 {'upn': 'removed@example.invalid', 'role': 'attendee'}]
+        self.assertEqual(editing.presenter_labels(roles, '["tutor@example.invalid", "removed@example.invalid"]'),
+                         ['tutor@example.invalid'])
+
     def test_group_calendar_permission_report_checks_the_online_organizer_separately(self):
         from . import teams_permission_check as permissions
         series, _, _, _ = fixtures()
@@ -428,7 +500,7 @@ class StandardEditorReadTests(SimpleTestCase):
             path, actual = original.read_original_online(series, {'scopes': ['Group.ReadWrite.All']}, Mock())
         self.assertEqual(actual, meeting)
         self.assertEqual(path, f'users/{OWNER}/onlineMeetings/ONLINE')
-        graph.assert_called_once_with('GET', path)
+        graph.assert_called_once_with('GET', path, extra_headers={'Prefer': 'include-unknown-enum-members'})
 
     def test_standard_read_binds_proven_identifiers_before_signing_the_fresh_version(self):
         series, rows, master, events = fixtures()

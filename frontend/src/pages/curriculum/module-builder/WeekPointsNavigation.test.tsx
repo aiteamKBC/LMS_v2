@@ -42,6 +42,49 @@ beforeEach(() => {
 });
 
 describe('Course structure Week Points navigation', () => {
+  it.each([
+    { name: 'both activities in one Point', points: [{ id: 'P', title: 'Session', componentIds: ['LIVE', 'RECORDING'] }], grouped: true },
+    { name: 'both activities in Other components', points: [], grouped: true },
+    { name: 'only the live session in a Point', points: [{ id: 'P', title: 'Session', componentIds: ['LIVE'] }], grouped: false },
+    { name: 'only the recording in a Point', points: [{ id: 'P', title: 'Session', componentIds: ['RECORDING'] }], grouped: false },
+    { name: 'activities in different Points', points: [{ id: 'P', title: 'Session', componentIds: ['LIVE'] }, { id: 'R', title: 'Review', componentIds: ['RECORDING'] }], grouped: false },
+  ])('preserves session grouping and exact Point membership with $name', async ({ points, grouped }) => {
+    const live = { ...createEmptyComponent('W1', 'live-session', 1), id: 'LIVE', title: 'Live workshop' };
+    const recording = { ...createEmptyComponent('W1', 'recording-placeholder', 2), id: 'RECORDING', title: 'Workshop replay',
+      settings: { linkedLiveSessionComponentId: 'LIVE', linkedLiveSessionModuleId: '' } };
+    const all = [live, recording];
+    const change = vi.fn();
+    vi.mocked(authoredWeekPoints).mockResolvedValue({ ...initial, points });
+    function SessionWeek() {
+      const drafts = useWeekPointDrafts('M1', ['W1']);
+      return <WeekComponentRail weekId="W1" components={all} selectedId="RECORDING" onSelectId={onSelect} onChange={change} pointsByType={{}} variant="nested"
+        componentSectionKey={id => drafts.get('M1', 'W1')?.points.find(point => point.componentIds.includes(id))?.id || null}
+        renderComponentList={(items, searchTerm) => <WeekPointsNavigation moduleId="M1" weekId="W1" drafts={drafts}
+          components={items.flatMap(item => item.members)} selectedId="RECORDING" onSelect={onSelect} expandAll={Boolean(searchTerm)} revealComponentId="RECORDING"
+          renderActivity={id => items.find(item => item.component.id === id)?.node} />} />;
+    }
+    render(<SessionWeek />);
+    await screen.findByRole('navigation', { name: 'Week Points navigation' });
+    const assigned = new Set(points.flatMap(point => point.componentIds));
+    for (const group of [...points.map(point => ({ title: point.title, count: point.componentIds.length })), { title: 'Other components', count: 2 - assigned.size }]) {
+      const header = screen.getByRole('button', { name: `${group.title}, ${group.count} ${group.count === 1 ? 'activity' : 'activities'}` });
+      const panel = document.getElementById(header.getAttribute('aria-controls')!)!;
+      const ids = group.title === 'Other components' ? all.filter(component => !assigned.has(component.id)).map(component => component.id)
+        : points.find(point => point.title === group.title)!.componentIds;
+      if (ids.includes('RECORDING')) expect(header).toHaveAttribute('aria-expanded', 'true');
+      if (header.getAttribute('aria-expanded') === 'false') fireEvent.click(header);
+      expect(within(panel).queryByRole('button', { name: 'Delete Workshop replay' }) !== null).toBe(ids.includes('RECORDING'));
+      expect(within(panel).queryByRole('button', { name: 'Delete Live workshop' }) !== null).toBe(ids.includes('LIVE'));
+    }
+    expect(screen.queryAllByTestId('grouped-session-recording')).toHaveLength(grouped ? 1 : 0);
+    expect(screen.getAllByRole('button', { name: 'Delete Workshop replay' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Workshop replay' }));
+    expect(change).toHaveBeenCalledExactlyOnceWith([live]);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'replay' } });
+    expect(screen.getByRole('button', { name: 'Delete Workshop replay' })).toBeVisible();
+    expect(change).toHaveBeenCalledTimes(1);
+  });
+
   it('groups editable cards once while copy, delete and search still use the whole week', async () => {
     const all = components.map((component, index) => ({ ...createEmptyComponent('W1', component.type, index + 1), ...component }));
     const onChange = vi.fn();

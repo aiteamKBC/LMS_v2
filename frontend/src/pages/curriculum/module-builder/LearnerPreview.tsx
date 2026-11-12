@@ -7,6 +7,8 @@ import { parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { parseQuizPairAnswer } from '@/lib/quizPairAnswers';
 import type { QuizQuestion, QuizAnswerValue } from '@/api/quizzes';
 import type { ModuleCatalogueItem } from './moduleAuthoringData';
+import { authoredSessionGroups } from '../shared/entities/sessionActivityPresentation';
+import { linkedLiveSessionOf } from '../shared/entities/liveSessionRecordingLink';
 
 const ComponentBody = lazy(() => import('@/pages/learner/video-watch/page').then(module => ({ default: module.ComponentBody })));
 const QuestionInput = lazy(() => import('@/pages/learner/quiz-take/page').then(module => ({ default: module.QuestionInput })));
@@ -55,6 +57,8 @@ export function LearnerPreview({ module, initialComponentId, onClose }: {
   }, []);
   const current = components.find(item => item.component.id === selected);
   const component = current ? previewComponent(current.component) : undefined;
+  const linkedSession = current && linkedLiveSessionOf(components.map(item => item.component), current.component, module.catalogueId || module.id);
+  const recordingSession = linkedSession ? previewComponent(linkedSession) : undefined;
   const quizId = String(current?.component.settings.linkedQuizId || '');
   return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm" onClick={onClose}>
     <div ref={dialog} role="dialog" aria-modal="true" aria-label="Preview as learner" tabIndex={-1}
@@ -68,15 +72,26 @@ export function LearnerPreview({ module, initialComponentId, onClose }: {
         }
       }} className="flex h-[90vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
       <header className="flex items-center justify-between gap-4 border-b bg-white p-5"><div><p className="text-xs font-bold uppercase text-primary-600">Preview as learner</p><h2 className="mt-1 text-lg font-bold">{module.title}</h2><p className="mt-1 text-xs text-foreground-500">Preview only. Progress, attendance and assessment results are not saved.</p></div><button onClick={onClose} aria-label="Close learner preview" className="rounded-lg border px-3 py-2">Close</button></header>
-      <div className="grid min-h-0 flex-1 md:grid-cols-[250px_minmax(0,1fr)]"><nav aria-label="Module content" className="overflow-auto border-r bg-white p-3">{module.weekStructure.map(week => <div key={week.id} className="mb-5"><h3 className="px-2 py-2 text-xs font-bold uppercase text-foreground-500">Week {week.weekNumber} · {week.title}</h3>{week.components.map(item => <button key={item.id} onClick={() => setSelected(item.id)} aria-current={selected === item.id ? 'true' : undefined} className={`mb-1 block w-full rounded-lg px-3 py-3 text-left text-sm ${selected === item.id ? 'bg-primary-50 font-semibold text-primary-700' : 'hover:bg-background-50'}`}>{item.title || 'Untitled component'}</button>)}</div>)}</nav>
+      <div className="grid min-h-0 flex-1 md:grid-cols-[250px_minmax(0,1fr)]"><nav aria-label="Module content" className="overflow-auto border-r bg-white p-3">{module.weekStructure.map(week => <div key={week.id} className="mb-5"><h3 className="px-2 py-2 text-xs font-bold uppercase text-foreground-500">Week {week.weekNumber} · {week.title}</h3>{authoredSessionGroups(week.components, module.catalogueId || module.id).map(({ primary, recordings }) => recordings.length ? (
+        <section key={primary.id} aria-label={`${primary.title} live session and recording`} className="mb-2 overflow-hidden rounded-xl border border-primary-200">
+          <h4 className="bg-primary-50 px-3 py-3 text-sm font-semibold text-primary-900">{primary.title || 'Live session'}</h4>
+          {[primary, ...recordings].map(item => <button key={item.id} onClick={() => setSelected(item.id)} aria-current={selected === item.id ? 'true' : undefined}
+            className={`block w-full border-t border-primary-100 px-3 py-3 text-left text-sm ${selected === item.id ? 'bg-primary-50 font-semibold text-primary-700' : 'hover:bg-background-50'}`}>
+            {item.id === primary.id ? 'Live session' : recordings.length === 1 ? 'Recording' : item.title || 'Recording'}
+          </button>)}
+        </section>
+      ) : <button key={primary.id} onClick={() => setSelected(primary.id)} aria-current={selected === primary.id ? 'true' : undefined} className={`mb-1 block w-full rounded-lg px-3 py-3 text-left text-sm ${selected === primary.id ? 'bg-primary-50 font-semibold text-primary-700' : 'hover:bg-background-50'}`}>{primary.title || 'Untitled component'}</button>)}</div>)}</nav>
         <main className="overflow-auto p-4 md:p-7"><Suspense fallback={<p role="status">Loading content preview…</p>}>{!component ? <p>No components have been added yet.</p> : <div key={selected} className="mx-auto max-w-4xl space-y-5"><h2 className="text-xl font-bold">{component.title}</h2>
           {(current?.component.type === 'quiz' || current?.component.type === 'monthly-ksb-quiz') && quizId ? <QuizPreview quizId={quizId} /> : <>
             {component.assignmentBrief && !component.assignmentBriefHtml && <p className="whitespace-pre-wrap rounded-xl border bg-white p-5">{component.assignmentBrief}</p>}
             {component.assignmentBriefHtml && <div className="rich-text-surface rounded-xl border bg-white p-5" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(component.assignmentBriefHtml) }} />}
-            <ComponentBody component={component} contentKind={componentContentKind(component.type)} parsed={component.videoUrl ? parseVideoUrl(component.videoUrl) : null} title={component.title} preview onDuration={noop} onProgress={noop} onPlayingChange={noop} onEnded={noop} onUnsupported={noop} />
+            {recordingSession ? (recordingSession.teamsLiveSessionId && recordingSession.teamsSessionNumber
+              ? <SessionResults seriesId={recordingSession.teamsLiveSessionId} sessionNumber={recordingSession.teamsSessionNumber} recordingsOnly preview />
+              : <p className="rounded-xl border border-background-200 bg-background-50 p-4 text-sm text-foreground-700">The recording will appear here when it is available for the linked session.</p>)
+              : <ComponentBody component={component} contentKind={componentContentKind(component.type)} parsed={component.videoUrl ? parseVideoUrl(component.videoUrl) : null} title={component.title} preview onDuration={noop} onProgress={noop} onPlayingChange={noop} onEnded={noop} onUnsupported={noop} />}
             {component.type === 'live_session' && (component.teamsLiveSessionId && component.teamsSessionNumber
               ? <SessionResults seriesId={component.teamsLiveSessionId} sessionNumber={component.teamsSessionNumber} preview />
-              : <p className="rounded-xl border bg-amber-50 p-4 text-sm">Link this component to a Teams session to preview its saved recording and transcript.</p>)}
+              : <p className="rounded-xl border border-background-200 bg-background-50 p-4 text-sm leading-6 text-foreground-700">Link this component to a Teams session to preview its saved recording and transcript.</p>)}
             {component.reflectionRequired && <label className="block rounded-xl border bg-white p-4 text-sm font-semibold">{component.reflectionQuestion || 'Your reflection'}<textarea className="mt-3 min-h-28 w-full rounded-lg border p-3 font-normal" placeholder="Try the learner reflection field…" /></label>}
           </>}</div>}</Suspense></main>
       </div>

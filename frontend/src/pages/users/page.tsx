@@ -1,12 +1,12 @@
 import { DELIVERY_STATUS, PLAN_EDITABLE_STATUSES, isLearnerRow, combinedType, fillBlanks, mergeDirectoryRows, differs, rowTypes, matches, type DirectoryRow } from './page.helpers';
 import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useId, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { Building2, Columns2, ListFilter, MoreVertical, ShieldUser, Upload } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { EnrolmentWorkspaceShell as WorkspaceShell } from './presentation/EnrolmentWorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { SelectMenu } from '@/components/feature/SelectField';
+import { FloatingMenu } from '@/components/ui/FloatingMenu';
 import { EnrolmentHero as AdminPageHeader } from './presentation/EnrolmentPage';
 import design from './presentation/EnrolmentWorkspace.module.css';
 import { useAuth } from '@/hooks/useAuth';
@@ -76,41 +76,26 @@ function initials(name: string) {
 }
 
 function MultiSelect({ label, placeholder, options, selected, onChange, disabled = false }: { label: string; placeholder: string; options: string[]; selected: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
-  // A filter that becomes disabled while its list is open would otherwise leave
-  // the panel hanging over the card with nothing behind it.
-  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
+  const id = useId();
   const toggle = (opt: string) => onChange(selected.includes(opt) ? selected.filter((s) => s !== opt) : [...selected, opt]);
   return (
     <div>
-      <label className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
-      <div className="relative" ref={ref}>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => setOpen((o) => !o)}
-          className={`${inputClass} ${design.filterSelectTrigger} text-left flex items-center justify-between ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
-        >
+      <label htmlFor={id} className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
+      {/* Portalled so the filter card's rounded clipping never cuts the list off. */}
+      <FloatingMenu triggerId={id} disabled={disabled} align="start" matchWidth maxHeight={224} panelLabel={`${label} options`}
+        triggerClassName={`${inputClass} ${design.filterSelectTrigger} text-left flex items-center justify-between ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+        panelClassName={`${design.shellFont} ${design.filterMultiMenu}`}
+        trigger={<>
           <span className={selected.length ? 'text-foreground-900 truncate' : 'text-foreground-300'}>{selected.length ? selected.join(', ') : placeholder}</span>
           <AppIcon className="ri-arrow-down-s-line text-foreground-400 shrink-0" />
-        </button>
-        {open && !disabled && (
-          <div className={`${design.filterMultiMenu} absolute mt-1 w-full max-h-56 overflow-y-auto py-1`}>
-            {options.length === 0 && <p className="px-3 py-1.5 text-[12px] text-foreground-300">No options</p>}
-            {options.map((opt) => (
-              <label key={opt} className="flex items-center gap-2 px-3 py-1.5 text-[12px] text-foreground-700 hover:bg-background-100 cursor-pointer">
-                <input type="checkbox" checked={selected.includes(opt)} onChange={() => toggle(opt)} className="accent-primary-500" />{opt}
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
+        </>}>
+        {options.length === 0 && <p className="px-3 py-1.5 text-[12px] text-foreground-300">No options</p>}
+        {options.map((opt) => (
+          <label key={opt} className="flex items-center gap-2 px-3 py-1.5 text-[12px] text-foreground-700 hover:bg-background-100 cursor-pointer">
+            <input type="checkbox" checked={selected.includes(opt)} onChange={() => toggle(opt)} className="accent-primary-500" />{opt}
+          </label>
+        ))}
+      </FloatingMenu>
     </div>
   );
 }
@@ -204,7 +189,6 @@ export default function UsersListPage() {
   const quickSearch = String(query.search);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const page = Number(query.page);
-  const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -212,11 +196,6 @@ export default function UsersListPage() {
   const [createTutorOpen, setCreateTutorOpen] = useState(false);
   const [createEmployerOpen, setCreateEmployerOpen] = useState(false);
   const [createOrgOpen, setCreateOrgOpen] = useState(false);
-  const createRef = useRef<HTMLDivElement>(null);
-  const createBtnRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  // Viewport coords for the portalled Create menu, measured from the button.
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
   // Saved attendance modes keyed by learner id; a learner with no entry is on
@@ -325,34 +304,6 @@ export default function UsersListPage() {
       .catch(() => { if (!cancelled) setCascadeGroups([]); });
     return () => { cancelled = true; };
   }, [draft.programme, draft.cohort]);
-
-  // The menu lives in a portal, so an outside-click test has to exempt it too.
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (createRef.current?.contains(t) || menuRef.current?.contains(t)) return;
-      setCreateOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
-
-  // Anchor the portalled menu under the button, and keep it there while the
-  // page scrolls or resizes (fixed positioning doesn't follow the anchor).
-  useEffect(() => {
-    if (!createOpen) { setMenuPos(null); return; }
-    const place = () => {
-      const r = createBtnRef.current?.getBoundingClientRect();
-      if (r) setMenuPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
-    };
-    place();
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
-    };
-  }, [createOpen]);
 
   // The curriculum list is the source of truth, but rows created before a
   // programme was renamed (or imported from elsewhere) can carry a name that
@@ -522,40 +473,29 @@ export default function UsersListPage() {
               <button type="button" className={design.heroSecondary} onClick={() => setImportModalOpen(true)}>
                 <AppIcon className="ri-upload-2-line" />Upload learners
               </button>
-            <div ref={createRef} className="relative">
-              <button
-                type="button"
-                ref={createBtnRef}
-                onClick={() => setCreateOpen((o) => !o)}
-                className={design.heroPrimary}
-              >
-                <AppIcon className="ri-user-add-line" />Create user
-              </button>
-              {createOpen && menuPos && createPortal(
-                <div
-                  ref={menuRef}
-                  style={{ top: menuPos.top, right: menuPos.right }}
-                  className={`fixed ${design.portalMenu} w-56 rounded-xl border border-foreground-200 bg-background-50 py-1.5 shadow-xl`}
-                >
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><AppIcon className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><AppIcon className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateTutorOpen(true); }}><AppIcon className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><AppIcon className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><AppIcon className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
-                </div>,
-                document.body,
-              )}
+            <div className="relative">
+              <FloatingMenu trigger={<><AppIcon className="ri-user-add-line" />Create user</>} triggerClassName={design.heroPrimary}
+                panelLabel="Create" panelClassName={`${design.shellFont} ${design.createMenu}`}>{close => {
+                  const pick = (open: (value: boolean) => void) => () => { close({ restoreFocus: false }); open(true); };
+                  return <>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateModalOpen)}><AppIcon className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateAdminOpen)}><AppIcon className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateTutorOpen)}><AppIcon className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateEmployerOpen)}><AppIcon className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateOrgOpen)}><AppIcon className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
+                  </>;
+                }}</FloatingMenu>
             </div>
-            <details className={design.heroTools}>
-              <summary aria-label="Directory tools" title="Directory tools"><AppIcon name="ri-settings-3-line" aria-hidden="true" /></summary>
-              <div className={design.heroToolsMenu}>
+            <div className={design.heroTools}>
+              <FloatingMenu label="Directory tools" trigger={<AppIcon name="ri-settings-3-line" aria-hidden="true" />} triggerClassName={design.heroToolsTrigger}
+                panelLabel="Directory tool actions" panelClassName={`${design.shellFont} ${design.heroToolsMenu}`}>{close => <>
                 <button type="button" className={btnSecondary} onClick={() => navigate('/users/wizard-builder')}><AppIcon name="ri-magic-line" />Edit apprenticeship wizard</button>
                 <button type="button" className={btnSecondary} onClick={() => navigate('/users/eligibility-builder')}><AppIcon name="ri-task-line" />Edit eligibility form</button>
                 <DownloadLearnerTemplateButton />
                 {/* The attendance mode endpoint rejects writes from other roles. */}
-                {isAdmin && <button type="button" className={btnSecondary} onClick={() => setBulkOpen(true)} disabled={loading}><AppIcon name="ri-checkbox-multiple-line" />Bulk actions</button>}
-              </div>
-            </details>
+                {isAdmin && <button type="button" className={btnSecondary} onClick={() => { close({ restoreFocus: false }); setBulkOpen(true); }} disabled={loading}><AppIcon name="ri-checkbox-multiple-line" />Bulk actions</button>}
+              </>}</FloatingMenu>
+            </div>
             </div>
           }
         />
@@ -734,21 +674,13 @@ export default function UsersListPage() {
                       </span>
                     </td>
                     <td role="cell" data-label="Learning plan" className="py-2.5 px-3 text-center">
-                      <details className={design.rowMore} name="users-row-actions" onKeyDown={event => {
-                        if (event.key === 'Escape') {
-                          event.preventDefault();
-                          event.currentTarget.open = false;
-                          event.currentTarget.querySelector('summary')?.focus();
-                        }
-                      }} onBlur={event => {
-                        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) event.currentTarget.open = false;
-                      }}>
-                      <summary aria-label={`More actions for ${row.name}`} title={`More actions for ${row.name}`}><MoreVertical size={16} aria-hidden="true" /></summary>
-                      <span className="flex flex-wrap items-center justify-center gap-2">
-                        <button type="button" className={btnSecondary} onClick={openInPlace ?? (() => openUser(row))}><AppIcon name="ri-user-line" aria-hidden="true" />Open record</button>
+                      <FloatingMenu label={`More actions for ${row.name}`} panelLabel={`Actions for ${row.name}`}
+                        trigger={<MoreVertical size={16} aria-hidden="true" />} triggerClassName={design.rowMoreTrigger}
+                        panelClassName={`${design.shellFont} ${design.rowMoreMenu}`}>{close => <>
+                        <button type="button" className={btnSecondary} onClick={() => { close({ restoreFocus: false }); (openInPlace ?? (() => openUser(row)))(); }}><AppIcon name="ri-user-line" aria-hidden="true" />Open record</button>
                         {isLearner && PLAN_EDITABLE_STATUSES.includes(row.programmeStatus || '') ? (
                           <button
-                            onClick={() => setPlanFor(row)}
+                            onClick={() => { close({ restoreFocus: false }); setPlanFor(row); }}
                             title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
                             className="inline-flex max-w-full items-center gap-1 rounded-lg border border-foreground-200 px-2 py-1 text-[11px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
@@ -760,7 +692,7 @@ export default function UsersListPage() {
                           // same modal read-only rather than routing to the
                           // learner's record, which is not their plan.
                           <button
-                            onClick={() => setPlanFor(row)}
+                            onClick={() => { close({ restoreFocus: false }); setPlanFor(row); }}
                             title={`View ${row.name}'s learning plan`}
                             className="text-primary-600 hover:underline cursor-pointer"
                           >
@@ -774,7 +706,7 @@ export default function UsersListPage() {
                         {isLearner && row.hasLearningPlan
                           && SHIFT_STATUSES.includes(row.programmeStatus || '') && (
                           <button
-                            onClick={() => setShiftFor(row)}
+                            onClick={() => { close({ restoreFocus: false }); setShiftFor(row); }}
                             title={`Shift ${row.name} from one module to another`}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
@@ -801,8 +733,7 @@ export default function UsersListPage() {
                         {!row.hasSignedIn && isLearner && (
                           <CopyInvitationLinkButton subjectId={Number(row.id)} name={row.name} onIssued={refreshInPlace} />
                         )}
-                      </span>
-                      </details>
+                      </>}</FloatingMenu>
                     </td>
                     <td role="cell" data-label="Programme status" className="py-2.5 px-3">{isLearner && row.programmeStatus ? <span className={design.programmeStatus} data-status={row.programmeStatus} title={`Programme status: ${row.programmeStatus}`}><span className={design.rowDot} aria-hidden="true" /><span className="sr-only"><StatusBadge status={row.programmeStatus} /></span></span> : null}</td>
                     <td role="cell" data-label="Attendance mode" className="py-2.5 px-3 whitespace-nowrap">

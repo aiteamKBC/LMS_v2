@@ -17,6 +17,7 @@ from .teams_calendar_actions import eligible, load_module, persist_move, store_s
 from .teams_calendar_state import load_calendar_state
 from .teams_imported_participants import join_context_oid, text
 from .session_overrides import schedule_override
+from .teams_meeting_options_policy import stored_email_list
 
 SALT = 'curriculum.imported-meeting-edit.v1'
 KIND = 'meeting-edit'
@@ -85,12 +86,29 @@ def online_path(series, access):
 
 
 def read_online(client, series, path):
-    meeting = client.read(path)
+    # Graph otherwise represents coorganizer as unknownFutureValue, which must
+    # never become an empty editor list and overwrite the actual meeting roles.
+    meeting = client.read(path, prefer='include-unknown-enum-members')
     organizer = (((meeting.get('participants') or {}).get('organizer') or {}).get('identity') or {}).get('user') or {}
     if (meeting.get('id') != series.get('online_meeting_id') or meeting.get('joinWebUrl') != series.get('join_url')
             or text(organizer.get('id')).casefold() != join_context_oid(series.get('join_url')).casefold()):
         raise calendar.Blocked('meeting_identity_mismatch', 'Microsoft returned a different online meeting. No edit is allowed.')
     return meeting
+
+
+def confirmed_roles(meeting):
+    roles = (meeting or {}).get('participants', {}).get('attendees')
+    if isinstance(roles, list) and all(text(item.get('upn')) and item.get('role') in
+                                      {'attendee', 'presenter', 'coorganizer'} for item in roles):
+        return roles
+    return None
+
+
+def presenter_labels(roles, stored):
+    """Keep an LMS tutor label while Teams holds its higher co-organizer role."""
+    co = {text(item.get('upn')).casefold() for item in roles if item.get('role') == 'coorganizer'}
+    return list(dict.fromkeys([text(item['upn']).casefold() for item in roles if item.get('role') == 'presenter']
+                             + [email for email in stored_email_list(stored) if email.casefold() in co]))
 
 
 def verified_context(series, rows, client):
@@ -122,9 +140,8 @@ def read_edit(live_id, actor, access, *, standard=False):
         if standard and meeting is None:
             from .teams_original_calendar import read_original_online
             meeting_path, meeting = read_original_online(series, access, client)
-    roles = (meeting or {}).get('participants', {}).get('attendees')
-    roles_editable = isinstance(roles, list) and all(text(item.get('upn')) and item.get('role') in
-                          {'attendee', 'presenter', 'coorganizer'} for item in roles)
+    roles = confirmed_roles(meeting)
+    roles_editable = roles is not None
     if standard:
         from .teams_original_calendar import bind_calendar
         bind_calendar(series, rows, master, events, meeting, original_path=path)
@@ -146,7 +163,7 @@ def read_edit(live_id, actor, access, *, standard=False):
             'attendees': addresses, 'joinUrl': series['join_url'], 'timeZone': zone_name,
             'options': {key: meeting.get(key) for key in ONLINE_FIELDS if key not in {'id', 'joinWebUrl', 'participants'}} if meeting else None,
             'rolesEditable': roles_editable,
-            'presenters': [item['upn'] for item in roles or [] if item.get('role') == 'presenter'] if roles_editable else [],
+            'presenters': presenter_labels(roles, series.get('presenters')) if roles_editable else [],
             'coOrganizers': [item['upn'] for item in roles or [] if item.get('role') == 'coorganizer'] if roles_editable else [],
             'sessions': [{'sessionNumber': row['session_number'], 'start': calendar.iso(row['scheduled_start']),
                           'end': calendar.iso(row['scheduled_end']), 'editable': eligible(row)
