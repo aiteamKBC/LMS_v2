@@ -1,5 +1,5 @@
 import { Search, X, PlayCircle, Layers, Filter, ChevronDown } from 'lucide-react';
-import { useState, type KeyboardEvent } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Lecture, RecordingFilter } from "@/pages/curriculum/recordings/types";
 import { formatCompactDate, lectureStatusSummary } from "@/pages/curriculum/recordings/utils";
 
@@ -14,6 +14,7 @@ interface SearchAndFiltersProps {
   results: Lecture[];
   searchScope?: string;
   onSelectResult: (lecture: Lecture) => void;
+  actions?: ReactNode;
 }
 
 export default function SearchAndFilters({
@@ -27,6 +28,7 @@ export default function SearchAndFilters({
   results,
   searchScope,
   onSelectResult,
+  actions,
 }: SearchAndFiltersProps) {
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -157,6 +159,7 @@ export default function SearchAndFilters({
             </select>
             <ChevronDown size={14} className="pointer-events-none absolute right-2.5 text-base text-foreground-500" aria-hidden="true" />
           </label>
+          {actions}
         </div>
       </div>
 

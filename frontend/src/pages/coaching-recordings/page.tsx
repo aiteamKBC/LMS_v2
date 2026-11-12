@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Loader2, RefreshCw, Users, Video } from 'lucide-react';
+import { ArrowLeft, CalendarDays, ChevronRight, CircleAlert, CircleCheck, Loader2, RefreshCw, ShieldCheck, Users, Video } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { loadCoachingCalendar, loadLinkedCoachingMeeting, COACHING_CALENDAR_REQUEST_TIMEOUT, type LinkedCoachingMeeting, type CoachingCalendar, type CoachingCalendarQuery } from '@/api/coachingRecordings';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -247,7 +247,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
   const selectDay = (value: string) => navigate({ date: value, period: 'day' });
   const selectMeeting = (row: CoachingCalendar['meetings'][number]) => {
     selectedReference.current = row.recordingsReference; setSelectedSession(row.meetingId ? null : meetingKey(row));
-    if (row.meetingId) navigate({ meeting: row.meetingId, occurrenceDate: meetingDate(row.startsAt, zone) < requested.start ? requested.start : meetingDate(row.startsAt, zone), tab: 'recordings' }, false);
+    if (row.meetingId) navigate({ meeting: row.meetingId, occurrenceDate: meetingDate(row.startsAt, zone) < requested.start ? requested.start : meetingDate(row.startsAt, zone), tab: 'overview' }, false);
   };
   const closeMeeting = () => { setSelectedSession(null); navigate({ meeting: '', tab: 'recordings' }, false); };
   const rosterCoach = coach || (catalog?.scope === 'own' ? catalog.coaches[0]?.email ?? '' : '');
@@ -260,19 +260,43 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
     navItems={workspace === 'coach' ? coachNavItems : curriculumNavItems}
     pageTitle="Coach Meetings & Recordings" pageSubtitle="Coach calendars, learners, meeting recordings and attendance">
     <main className={`${workspace === 'curriculum' ? styles.page : ''} min-h-full bg-background-100 px-4 py-5 sm:px-6 lg:px-7`}>
-      {workspace === 'curriculum' && <nav aria-label="Recording libraries" className="mb-5 flex gap-2 text-sm font-semibold">
+      {workspace === 'curriculum' && <header className={styles.hero}>
+        <nav aria-label="Breadcrumb" className={styles.breadcrumb}>
+          <Link to="/curriculum">Curriculum</Link><ChevronRight size={12} aria-hidden="true" />
+          <Link to="/curriculum/recordings-hub">Recordings hub</Link><ChevronRight size={12} aria-hidden="true" />
+          <span aria-current="page">Coach meetings &amp; recordings</span>
+        </nav>
+        <div className={styles.heroHeading}>
+          <div><h1>Coach Meetings &amp; Recordings</h1><p>See every meeting on a coach's calendar by its original title, with the recording, attendance and quality check attached to it.</p></div>
+          <div className={styles.heroActions}>
+            <Link to="/curriculum/recordings-hub"><ArrowLeft size={14} aria-hidden="true" />Recordings hub</Link>
+            <Link to="/curriculum/coaching-recordings/reviews"><ShieldCheck size={14} aria-hidden="true" />Quality checks</Link>
+            <button type="button" disabled={loading || refreshing} onClick={() => setRevision(value => value + 1)}><RefreshCw size={14} aria-hidden="true" />Refresh calendars</button>
+          </div>
+        </div>
+        <div className={styles.heroBadges}>
+          <span><Users size={13} aria-hidden="true" />Showing: {coach ? coachName(coach) : 'Choose a coach'}</span>
+          <span><Users size={13} aria-hidden="true" />{data?.coverage.checkedCoachEmails.length ?? 0} coach {data?.coverage.checkedCoachEmails.length === 1 ? 'calendar' : 'calendars'} checked</span>
+        </div>
+        <div className={styles.heroStats} aria-label="Loaded meeting totals">
+          {[
+            { label: 'Meetings', count: scopedMeetings.length, icon: CalendarDays },
+            { label: 'Recordings ready', count: scopedMeetings.filter(row => hasPlayableRecording(row, now)).length, icon: CircleCheck },
+            { label: 'Need attention', count: filterMeetings(scopedMeetings, 'attention', 'all', 'all', now).length, icon: CircleAlert },
+          ].map(({ label, count, icon: Icon }) => <div key={label}><i aria-hidden="true"><Icon size={18} /></i><div><strong>{data ? count : '—'}</strong><span>{label}</span></div></div>)}
+        </div>
+      </header>}
+      {workspace === 'curriculum' && <nav aria-label="Recording libraries" className={`${styles.libraries} flex gap-2 text-sm font-semibold`}>
         <Link to="/curriculum/recordings" className={`${control} hover:bg-primary-50`}>Lecture recordings</Link>
         <span aria-current="page" className="rounded-lg bg-primary-600 px-3 py-2 text-white">Coach Meetings &amp; Recordings</span>
       </nav>}
-      <div className={`${styles.hero} flex flex-wrap items-start justify-between gap-3`}>
+      {workspace === 'coach' && <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="mb-2 text-xs font-bold uppercase tracking-widest text-primary-600">Coaching workspace</p><h1 className="font-heading text-2xl font-extrabold text-foreground-950">Coach Meetings &amp; Recordings</h1>
           <p className="mt-1 text-sm text-foreground-600">See every meeting on a coach's calendar by its original title. Filter by coach, learner, date or status.</p></div>
         <div className="flex flex-wrap gap-2">
-          {workspace === 'curriculum' && <Link className={`${control} inline-flex items-center gap-2 font-semibold text-primary-700`} to="/curriculum/coaching-recordings/reviews">Quality Checks</Link>}
-          {workspace === 'curriculum' && <Link className={`${control} inline-flex items-center gap-2 font-semibold text-primary-700`} to="/curriculum/quality/forms">Edit quality forms</Link>}
           <button type="button" className={`${control} inline-flex items-center gap-2 disabled:opacity-50`} disabled={loading || refreshing} onClick={() => setRevision(value => value + 1)}><RefreshCw aria-hidden="true" size={16} />Refresh calendars</button>
         </div>
-      </div>
+      </div>}
       {loading && <div role="status" className="mt-4 rounded-xl border border-primary-100 bg-white p-4">
         <div className="flex items-start gap-3"><Loader2 aria-hidden="true" size={19} className="mt-0.5 shrink-0 animate-spin text-primary-600 motion-reduce:animate-none" /><div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">{coach ? 'Loading coach calendar…' : 'Loading coach list…'}</p>
@@ -281,14 +305,15 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           {slow && <p className="mt-2 text-xs text-amber-800">Microsoft is responding slowly. Choose one coach to narrow the request; unavailable calendars will be identified separately.</p>}
         </div></div>
       </div>}
-      <section aria-label="Calendar filters" className="mt-5 flex flex-wrap items-end gap-3 rounded-xl border border-background-200 bg-white p-4">
+      <section aria-label="Calendar filters" className={`${styles.calendarFilters} mt-5 flex flex-wrap items-end gap-3 rounded-xl border border-background-200 bg-white p-4`}>
         {catalog?.scope !== 'own' && <label className="grid gap-1 text-xs font-semibold">Search coaches<input type="search" className={control} value={coachSearch} onChange={event => setCoachSearch(event.target.value)} placeholder="Search by name or email" /></label>}
         <label className="grid gap-1 text-xs font-semibold">Coach<select aria-label="Coach" value={coach} className={control} onChange={event => navigate({ coach: event.target.value, learner: '' })}>
           <option value="" disabled>Choose a coach</option>
           {catalog?.coaches.filter(row => row.email === coach || `${row.name} ${row.email}`.toLowerCase().includes(coachSearch.toLowerCase())).map(row => <option key={row.email} value={row.email}>{row.name}</option>)}
           {coach && !catalog?.coaches.some(row => row.email === coach) && <option value={coach}>{coach}</option>}
         </select></label>
-        <button type="button" className={`${control} inline-flex items-center gap-2 disabled:opacity-50`} disabled={!rosterCoach} onClick={() => setShowLearners(true)}><Users size={16} aria-hidden="true" />Coach learners</button>
+        <button type="button" className={`${styles.extraControl} ${control} inline-flex items-center gap-2 disabled:opacity-50`} disabled={!rosterCoach} onClick={() => setShowLearners(true)}><Users size={16} aria-hidden="true" />Coach learners</button>
+        {workspace === 'curriculum' && <Link className={`${styles.extraControl} ${control}`} to="/curriculum/quality/forms">Edit quality forms</Link>}
         <label className="grid gap-1 text-xs font-semibold">Learner<select aria-label="Learner" value={learner} className={control} onChange={event => navigate({ learner: event.target.value })}>
           <option value="">All learners</option>{learners.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
           {learner && !learners.some(row => row.id === learner) && <option value={learner}>Selected learner</option>}
@@ -301,8 +326,8 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <optgroup label="Other meetings"><option value="SUPPORT">{categoryLabels.SUPPORT}</option><option value="OTHER">{categoryLabels.OTHER}</option></optgroup>
           {showLectures && <option value="LECTURE">Lectures / subjects</option>}
         </select></label>
-        {phase === 'ready' ? <p className="max-w-full rounded-lg bg-primary-50 px-3 py-2 text-xs font-medium text-primary-800">Lectures included in Ready to action</p>
-          : <button type="button" aria-pressed={showLectures} className={`${control} ${showLectures ? 'border-primary-300 bg-primary-50 text-primary-800' : ''}`}
+        {phase === 'ready' ? <p className={`${styles.extraControl} max-w-full rounded-lg bg-primary-50 px-3 py-2 text-xs font-medium text-primary-800`}>Lectures included in Ready to action</p>
+          : <button type="button" aria-pressed={showLectures} className={`${styles.extraControl} ${control} ${showLectures ? 'border-primary-300 bg-primary-50 text-primary-800' : ''}`}
             onClick={() => navigate({ lectures: !showLectures, family: family === 'LECTURE' ? 'all' : family })}>{showLectures ? 'Hide lectures / subjects' : 'Show lectures / subjects'}</button>}
         <label className="grid gap-1 text-xs font-semibold">Match<select aria-label="LMS match" value={match} className={control} onChange={event => setMatch(event.target.value as MatchFilter)}>
           <option value="all">All matches</option><option value="matched">Matched to LMS</option><option value="review">Needs matching review</option>
@@ -316,6 +341,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
       </section>
       {!coach && !loading && !error && <p role="status" className="mt-4 rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">Choose a coach to view their meetings. Calendars load only after a coach is selected.</p>}
       <div className={`${styles.period} mt-4 flex flex-wrap items-center gap-2`}>
+        {workspace === 'curriculum' && <div className={styles.periodLabels} aria-hidden="true"><span>Date</span><span>Pick a date</span><span>View</span></div>}
         <button className={control} aria-label="Previous period" onClick={() => shift(-1)}>‹</button>
         <button className={control} onClick={() => setDate(todayIso(zone))}>Today</button>
         <button className={control} aria-label="Next period" onClick={() => shift(1)}>›</button>
@@ -324,6 +350,7 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <option value="day">Day</option><option value="week">Week</option><option value="month">Month</option>
         </select>
         <div className="flex flex-wrap gap-1" role="group" aria-label="Meeting status">
+          {workspace === 'curriculum' && <p className={styles.statusLabel}>Meeting status</p>}
           {(['ready', 'attention', 'ended', 'upcoming', 'in-progress', 'cancelled', 'all'] as const).map(value => <button key={value} aria-pressed={phase === value} onClick={() => { setPhase(value); setSelectedSession(null); }}
             className={phase === value ? 'rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white' : control}>{filterLabels[value]}</button>)}
         </div>
@@ -360,14 +387,14 @@ export default function CoachingRecordingsPage({ workspace = 'curriculum' }: { w
           <div className="min-w-0">
             <p className="font-semibold">{visible.length} {visible.length === 1 ? 'meeting' : 'meetings'} ready to review · {visible.filter(row => hasPlayableRecording(row, now)).length} with playable recordings</p>
             <p className="mt-1 text-xs text-foreground-600">Ready to action includes meetings past their scheduled end and started meetings with playable recordings, including lectures. Published evidence can be reviewed before the scheduled end; a recording does not confirm that the call has ended.</p>
-            <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-700">{[...recordingStates].map(([label, count]) => <li key={label}>{count} · {label}</li>)}</ul>
+            <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-700">{[...recordingStates].map(([label, count]) => <li key={label} data-recording-label={label}>{count} · {label}</li>)}</ul>
             {hiddenReasons.length > 0 && <p className="mt-2 text-xs text-foreground-600">Outside Ready to action: {hiddenReasons.map(([label, count]) => `${count} ${label.toLowerCase()}`).join(' · ')}.</p>}
             {preparing && <p className="mt-1 text-xs">{updatesPaused ? 'Some recording checks are still pending.' : 'Initial recording checks are still pending.'}</p>}
             {data.partial && <p className="mt-1 text-xs text-amber-900">Some calendar or recording checks failed. Loaded counts may be incomplete; see Sync & booking details.</p>}
           </div>
           {hiddenReasons.length > 0 && <button className={control} onClick={() => setPhase('all')}>Show all loaded meetings</button>}
         </section>}
-        <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <div className={`${styles.calendarLayout} mt-4 grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]`}>
           <div className="hidden lg:block"><CoachMiniCalendar date={date} timeZone={zone} meetingDates={meetingDates} onSelectDay={selectDay} /></div>
           <section aria-label="Coaching meetings" className="min-w-0 space-y-4">
             {!loading && !preparing && !visible.length && !cancellations.length && <p className="rounded-xl border border-background-200 bg-white p-6 text-sm text-foreground-600">{data.partial ? 'No meetings loaded for these filters. Some calendars or recordings could not be checked.' : phase === 'ready' ? 'No meetings ready to review match these filters in the selected period.' : 'No meetings match these filters in the selected period.'}</p>}

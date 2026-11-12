@@ -87,11 +87,11 @@ describe('Coaching recordings calendar', () => {
     const drawer = within(screen.getByRole('dialog', { name: 'Meeting details' }));
     await drawer.findByText('Verified Participant');
     expect(loadSavedCoachingEvidence).not.toHaveBeenCalled();
+    fireEvent.click(drawer.getByRole('tab', { name: 'Transcript' }));
     if (category === 'OTHER') {
       expect(drawer.getByText('MCM & PR only')).toBeInTheDocument();
       expect(drawer.queryByRole('button', { name: 'AI analysis' })).not.toBeInTheDocument();
     } else expect(drawer.getByRole('button', { name: 'AI analysis' })).toBeInTheDocument();
-    fireEvent.click(drawer.getByRole('button', { name: 'Transcript' }));
     expect(await drawer.findByText(/Microsoft has not published a transcript/)).toBeInTheDocument();
     expect(loadSavedCoachingEvidence).toHaveBeenCalledWith('mcr:1', expect.any(AbortSignal), 'signed-reference', true);
     expect(loadCoachingCalendar).toHaveBeenCalledOnce();
@@ -533,8 +533,10 @@ describe('Coaching recordings calendar', () => {
   it('loads saved attendance and exposes protected playback and download paths', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
     expect(await screen.findByRole('table', { name: 'Saved meeting attendance' })).toHaveTextContent('Verified Participant');
     expect(screen.getByRole('table')).toHaveTextContent('attended');
+    fireEvent.click(screen.getByRole('tab', { name: 'Recording' }));
     expect(screen.getByRole('link', { name: 'Download recording 1' })).toHaveAttribute('href', expect.stringContaining('recordingId=file%2Fone%2B'));
     fireEvent.click(screen.getByRole('button', { name: 'Play recording 1' }));
     const player = await screen.findByLabelText('Coaching recording player');
@@ -556,8 +558,10 @@ describe('Coaching recordings calendar', () => {
     expect(screen.getByRole('button', { name: 'Ready to action', pressed: true })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Progress Review' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
     expect(await screen.findByRole('table', { name: 'Saved meeting attendance' })).toHaveTextContent('Verified Participant');
     expect(loadCoachingSession).toHaveBeenCalledWith('', expect.any(AbortSignal), 'signed-calendar-reference', 'attendance');
+    fireEvent.click(screen.getByRole('tab', { name: 'Recording' }));
     const params = new URL(screen.getByRole('link', { name: 'Download recording 1' }).getAttribute('href')!, 'http://localhost').searchParams;
     expect(params.get('eventKey')).toBe('coach-calendar:verified');
     expect(params.get('reference')).toBe('signed-calendar-reference');
@@ -579,17 +583,19 @@ describe('Coaching recordings calendar', () => {
     const event = await screen.findByRole('button', { name: /^View Monthly Coaching Meeting on / });
     fireEvent.click(event);
     const drawer = within(screen.getByRole('dialog', { name: 'Meeting details' }));
-    expect(await drawer.findByRole('button', { name:'Play recording 1' })).toBeInTheDocument();
-    expect(drawer.getByRole('button', { name:'Transcript' })).toBeInTheDocument();
-    expect(drawer.getByText('Within scheduled time')).toBeInTheDocument();
+    expect(drawer.getByText('Within scheduled time')).toBeVisible();
     expect(drawer.queryByText('Ended')).not.toBeInTheDocument();
+    fireEvent.click(drawer.getByRole('tab', { name: 'Recording' }));
+    expect(await drawer.findByRole('button', { name:'Play recording 1' })).toBeInTheDocument();
+    expect(drawer.getByRole('tab', { name:'Transcript' })).toBeInTheDocument();
     expect(loadCoachingSession).toHaveBeenCalledOnce();
   });
 
   it('keeps attendance pending when a report has not arrived', async () => {
     vi.mocked(loadCoachingSession).mockResolvedValue({ ...details(), attendance: { state: 'pending', reportCount: 0, rows: [] } });
     mount(); fireEvent.click(await screen.findByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ }));
-    expect(await screen.findByText(/Attendance remains pending/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
+    expect(await screen.findByText(/Attendance remains pending/)).toBeVisible();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
@@ -599,6 +605,7 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingSession).mockResolvedValueOnce(saved);
     mount();
     fireEvent.click(await screen.findByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recording' }));
     expect(await screen.findByText('SharePoint recording')).toBeInTheDocument();
     expect(screen.queryByText(/Archiving|Azure archive|Archived/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Play recording 1' })).toBeEnabled();
@@ -619,6 +626,7 @@ describe('Coaching recordings calendar', () => {
     vi.mocked(loadCoachingSession).mockResolvedValueOnce({ ...details(), reference: 'first-reference', eventKey: 'coach-calendar:verified' });
     mount();
     fireEvent.click(await screen.findByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recording' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
     const player = await screen.findByLabelText('Coaching recording player');
     const renewed = { ...data, meetings: [{ ...data.meetings[0], recordingsReference: 'renewed-reference' }, data.meetings[1]] };
@@ -889,6 +897,7 @@ describe('Coaching recordings calendar', () => {
   it('retries a failed detail read without losing the calendar filters', async () => {
     vi.mocked(loadCoachingSession).mockRejectedValueOnce(new Error('Evidence unavailable'));
     mount(); fireEvent.click(await screen.findByRole('button', { name: /^View .+ on \d{4}-\d{2}-\d{2}$/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Evidence unavailable');
     fireEvent.click(screen.getByRole('button', { name: 'Retry details' }));
     expect(await screen.findByRole('table')).toBeInTheDocument();
@@ -908,7 +917,9 @@ describe('Coaching recordings calendar', () => {
     expect(within(drawer).getByRole('heading', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
     expect(within(drawer).getByText('Coach One')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close meeting details' })).toHaveFocus();
+    fireEvent.click(within(drawer).getByRole('tab', { name: 'Recording' }));
     await within(drawer).findByRole('link', { name: 'Download recording 1' });
+    screen.getByRole('button', { name: 'Close meeting details' }).focus();
     fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
     expect(within(drawer).getByRole('link', { name: 'Download recording 1' })).toHaveFocus();
     fireEvent.keyDown(document, { key: 'Tab' });

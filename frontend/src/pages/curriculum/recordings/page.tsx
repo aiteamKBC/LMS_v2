@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, CalendarDays, Folder, Globe2, Maximize2, Minimize2 } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Folder, Globe2, Maximize2, Minimize2, SlidersHorizontal } from 'lucide-react';
 import { loadRecordingsLibrary, type RecordingsLibrary } from '@/api/sessionResults';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -48,6 +48,7 @@ export default function CurriculumRecordingsPage() {
   const periodOnly = agendaFilter === 'ended' || agendaFilter === 'notEnded';
   const [includeInactive, setIncludeInactive] = useState(true);
   const [mobileCalendarOpen, setMobileCalendarOpen] = useState(false);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [period, setPeriod] = useState<Period>('day');
   const [searchEverywhere, setSearchEverywhere] = useState(false);
   const [expandedCalendar, setExpandedCalendar] = useState(false);
@@ -225,15 +226,20 @@ export default function CurriculumRecordingsPage() {
             <div className={`${styles.search} mt-5`}>
               <SearchAndFilters query={query} onQueryChange={setQuery} programmes={programmes} programme={programme}
                 onProgrammeChange={value => { setProgramme(value); setCohort('all'); setGroup('all'); setModuleId('all'); closePanel(); }} statusFilter={statusFilter} onStatusFilterChange={chooseFilter}
-                results={searchResults} searchScope={viewMode === 'modules' || allDateSearch ? 'all dates' : `selected ${periodName}`} onSelectResult={selectResult} />
-              <label className="mt-2.5 inline-flex items-center gap-2 text-xs font-medium text-foreground-700">
-                <input type="checkbox" checked={includeInactive} onChange={event => { setIncludeInactive(event.target.checked); closePanel(); }} />
-                Include draft programmes and archived modules
-              </label>
+                results={searchResults} searchScope={viewMode === 'modules' || allDateSearch ? 'all dates' : `selected ${periodName}`} onSelectResult={selectResult}
+                actions={<>
+                  <button type="button" className={styles.moreFilters} aria-expanded={advancedFiltersOpen} aria-controls="recordings-advanced-filters" onClick={() => setAdvancedFiltersOpen(value => !value)}><SlidersHorizontal size={13} aria-hidden="true" />More filters ({[cohort, group, moduleId].filter(value => value !== 'all').length})</button>
+                  <span className={styles.resultCount}>{resultLectures.length} sessions</span>
+                </>} />
             </div>
 
             {allDateSearch && <p role="status" className="mt-3 text-sm text-foreground-600">All dates search uses saved LMS meetings from all organizers.</p>}
-            {viewMode === 'calendar' && <div className={`${styles.filters} mt-3 space-y-3 rounded-lg border border-background-200 bg-background-50 p-3`}>
+            <div id="recordings-advanced-filters" hidden={!advancedFiltersOpen} className={`${styles.filters} mt-3 space-y-3 rounded-lg border border-background-200 bg-background-50 p-3`}>
+              <label className="inline-flex items-center gap-2 text-xs font-medium text-foreground-700">
+                <input type="checkbox" checked={includeInactive} onChange={event => { setIncludeInactive(event.target.checked); closePanel(); }} />
+                Include draft programmes and archived modules
+              </label>
+              {viewMode === 'calendar' && <>
               <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Lecture status">
                 {(['all', 'ready', 'ended', 'notEnded', 'attention'] as const).map(value => <button key={value} type="button" aria-pressed={agendaFilter === value}
                   onClick={() => chooseFilter(value)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${agendaFilter === value ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-200 text-foreground-700'}`}>
@@ -247,17 +253,15 @@ export default function CurriculumRecordingsPage() {
                     <option value="period">Selected {periodName}</option><option value="all" disabled={periodOnly}>All dates</option>
                   </select>
                 </label>
-                <details className="w-full min-w-0 sm:w-auto sm:flex-1">
-                  <summary className="cursor-pointer text-xs font-semibold text-primary-700">More filters ({[cohort, group, moduleId].filter(value => value !== 'all').length})</summary>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <div className="grid w-full min-w-0 gap-2 sm:flex-1 sm:grid-cols-3">
                     <label className="text-xs">Cohort<select aria-label="Filter by cohort" value={cohort} onChange={event => { setCohort(event.target.value); setGroup('all'); setModuleId('all'); closePanel(); }} className="mt-1 w-full rounded-md border bg-background-50 p-2"><option value="all">All cohorts</option>{cohorts.map(value => <option key={value}>{value}</option>)}</select></label>
                     <label className="text-xs">Group<select aria-label="Filter by group" value={group} onChange={event => { setGroup(event.target.value); setModuleId('all'); closePanel(); }} className="mt-1 w-full rounded-md border bg-background-50 p-2"><option value="all">All groups</option>{groups.map(value => <option key={value}>{value}</option>)}</select></label>
                     <label className="text-xs">Module<select aria-label="Filter by module" value={moduleId} onChange={event => { setModuleId(event.target.value); closePanel(); }} className="mt-1 w-full rounded-md border bg-background-50 p-2"><option value="all">All modules</option>{modules.map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select></label>
-                  </div>
-                </details>
+                </div>
                 <button type="button" onClick={clearFilters} className="text-xs font-semibold text-primary-700 underline">Clear all filters</button>
               </div>
-            </div>}
+              </>}
+            </div>
 
             {viewMode === 'modules' ? <ModuleDirectory modules={library.modules ?? []} deliveries={library.deliveries}
               lectures={calendar.lectures} query={query} programme={programme} statusFilter={statusFilter} includeInactive={includeInactive}
@@ -310,7 +314,7 @@ export default function CurriculumRecordingsPage() {
                     lectureDates={lectureDates} timeZone={timeZone} onSelectDate={iso => { setPeriod('day'); goToDate(iso); }} onMonthChange={moveMonth} onToday={() => { setPeriod('day'); goToDate(todayIso(timeZone)); }}
                     onPrevDay={() => goToDate(addDays(selectedDate, -1))} onNextDay={() => goToDate(addDays(selectedDate, 1))} /></div>}
                 </div>
-                <div className={`mt-3 ${expandedCalendar ? "flex min-h-0 flex-1 flex-col" : ""}`}>
+                <div className={`${styles.calendarContent} mt-3 ${expandedCalendar ? "flex min-h-0 flex-1 flex-col" : ""}`}>
                   {library.calendarAvailable !== false && <>
                     <p role="status" className="mb-3 text-xs text-foreground-600">{resultLectures.length} lectures{allDateSearch ? ' across all dates' : ` in selected ${periodName}`}{query.trim() ? ` matching "${query.trim()}"` : ''}</p>
                     {!allDateSearch && period !== 'month' ? <CalendarTimeline startDate={bounds.start} endDate={bounds.end} lectures={resultLectures}

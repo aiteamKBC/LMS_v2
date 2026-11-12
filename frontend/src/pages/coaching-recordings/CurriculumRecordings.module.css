@@ -1,3 +1,5 @@
+@import '../curriculum/recordings/recordings-font.css';
+
 /* Scoped layer overrides legacy shell rules only on matched elements.
    Readdy has no dark reference: existing dark styling stays unchanged. */
 @layer recordings-ui {/* This root is applied only for workspace="curriculum", never /coach/recordings. */
@@ -120,4 +122,107 @@
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > div { width: 100% !important; }
   .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar filters'] > div > label { flex: 1 1 100% !important; }
 }
+}
+
+/* Readdy V521: page typography, hero hierarchy and the six primary filters. */
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) {
+    font-family: 'Recordings Roboto', Roboto, system-ui, sans-serif !important;
+    color: oklch(.15 .015 52) !important;
+    line-height: 1.55 !important;
+    background: radial-gradient(ellipse at 0 0, oklch(.94 .014 305 / .3), transparent 55%), oklch(.968 .005 305) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) :is(h1,h2,h3,p,span,label,input,select,button,a,summary,strong) { font-family: inherit !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero { display: block !important; margin-bottom: 12px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .breadcrumb { display: flex !important; align-items: center !important; flex-wrap: wrap !important; gap: 8px !important; min-height: 22px !important; margin-bottom: 12px !important; color: oklch(.968 .005 305 / .65) !important; font-size: 11.5px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .breadcrumb a { color: inherit !important; text-decoration: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .breadcrumb [aria-current] { color: oklch(.968 .005 305) !important; font-weight: 600 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroHeading { display: flex !important; align-items: flex-start !important; justify-content: space-between !important; gap: 24px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroHeading > div:first-child { min-width: 0 !important; max-width: 600px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero h1 { margin: 0 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroHeading p { margin: 8px 0 0 !important; color: oklch(.968 .005 305 / .8) !important; font-size: 13.5px !important; line-height: 1.65 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroActions { display: flex !important; flex-wrap: wrap !important; flex-shrink: 0 !important; gap: 8px !important; padding-top: 4px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroActions :is(a,button) { display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 6px !important; min-height: 36px !important; padding: 6px 12px !important; border: 1px solid oklch(.968 .005 305 / .3) !important; border-radius: 16px !important; color: oklch(.968 .005 305) !important; background: oklch(.968 .005 305 / .1) !important; font-size: 13px !important; font-weight: 500 !important; box-shadow: none !important; text-decoration: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroBadges { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; margin-top: 12px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroBadges span { display: inline-flex !important; align-items: center !important; gap: 6px !important; padding: 5px 10px !important; border: 1px solid oklch(.968 .005 305 / .2) !important; border-radius: 999px !important; background: oklch(.968 .005 305 / .08) !important; color: oklch(.968 .005 305 / .85) !important; font-size: 11.5px !important; line-height: 1.4 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroStats { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr)) !important; gap: 10px !important; margin-top: 16px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroStats > div { display: flex !important; align-items: center !important; gap: 12px !important; padding: 12px 16px !important; border: 1px solid oklch(.968 .005 305 / .15) !important; border-radius: 20px !important; background: oklch(.968 .005 305 / .09) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroStats i { display: flex !important; align-items: center !important; justify-content: center !important; width: 36px !important; height: 36px !important; flex-shrink: 0 !important; border-radius: 50% !important; background: oklch(.968 .005 305 / .15) !important; color: oklch(.968 .005 305) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroStats strong { display: block !important; color: oklch(.968 .005 305) !important; font-size: 21px !important; line-height: 1.2 !important; font-weight: 600 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroStats span { display: block !important; color: oklch(.968 .005 305 / .7) !important; font-size: 11.5px !important; line-height: 1.4 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .libraries { margin: 0 0 10px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .libraries > * { display: inline-flex !important; align-items: center !important; min-height: 36px !important; padding: 7px 14px !important; color: oklch(.3 .015 52) !important; border: 1px solid var(--coaching-control-line) !important; box-shadow: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .libraries > [aria-current] { color: white !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters { margin-top: 0 !important; gap: 12px !important; box-shadow: inset 0 1px 0 oklch(1 0 0 / .26) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters :is(select,input) { box-shadow: none !important; font-size: 14px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > label { color: oklch(.3 .015 52) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .extraControl { min-height: 26px !important; padding: 4px 8px !important; border: 0 !important; border-radius: 8px !important; background: transparent !important; box-shadow: none !important; color: oklch(.415 .018 60) !important; font-size: 11px !important; order: 2 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .period { margin-top: 8px !important; align-items: flex-start !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .period > button { min-width: 40px !important; height: 40px !important; box-shadow: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .periodLabels { display: grid !important; width: 100% !important; grid-template-columns: minmax(0,172px) minmax(0,174px) minmax(0,132px) !important; gap: 8px !important; color: oklch(.3 .015 52) !important; font-size: 12px !important; font-weight: 600 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .statusLabel { width: 100% !important; margin: 0 0 2px !important; color: oklch(.3 .015 52) !important; font-size: 12px !important; font-weight: 600 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] > button { border-radius: 16px !important; box-shadow: none !important; color: oklch(.3 .015 52) !important; background: oklch(.998 .002 305 / .62) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting status'] > button[aria-pressed='true'] { color: white !important; background: var(--coaching-purple) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] { margin-top: 10px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Meeting summary'] > div:not(:first-child) { padding-left: 20px !important; border-left: 1px solid var(--coaching-control-line) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Calendar data status'] { margin-top: 10px !important; padding: 10px 14px !important; border-color: var(--coaching-line) !important; border-radius: 16px !important; background: var(--coaching-surface) !important; box-shadow: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] { display: block !important; margin-top: 8px !important; padding: 16px !important; border-color: oklch(.885 .063 305) !important; background: oklch(.975 .012 305 / .6) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] > div > p:nth-child(2) { max-width: 760px !important; line-height: 1.6 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] > button { margin-top: 12px !important; font-size: 12px !important; box-shadow: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] li::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #d6a42b; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Ready to action summary'] li[data-recording-label='Recording available']::before { background: #10b981; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] { background: oklch(.94 .014 305 / .7) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Choose meeting date'] button[aria-label^='Show meetings'] { width: 24px !important; height: 24px !important; font-size: 11px !important; border-radius: 50% !important; }
+  @media(min-width:768px) {
+    .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr)) !important; }
+    .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > div { display: contents !important; }
+  }
+  @media(min-width:1024px) { .page:where(:not(:global([data-theme='dark']) *)) .calendarLayout { grid-template-columns: 220px minmax(0,1fr) !important; gap: 12px !important; } }
+  @media(max-width:1100px) { .page:where(:not(:global([data-theme='dark']) *)) .heroHeading { flex-direction: column !important; gap: 12px !important; } }
+  @media(max-width:639px) {
+    .page:where(:not(:global([data-theme='dark']) *)) .heroStats { grid-template-columns: 1fr !important; }
+    .page:where(:not(:global([data-theme='dark']) *)) .periodLabels { display: none !important; }
+    .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters { margin-top: 10px !important; }
+    .page:where(:not(:global([data-theme='dark']) *)) .calendarLayout { grid-template-columns: minmax(0,1fr) !important; }
+  }
+}
+
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) { padding: 28px 24px !important; }
+  @media(max-width:639px) { .page:where(:not(:global([data-theme='dark']) *)) { padding: 20px 16px !important; } }
+}
+
+@layer recordings-ui {
+  :global([data-theme='dark']) .page .hero { padding: 20px 24px; border: 1px solid var(--theme-border); border-radius: 26px; background: var(--theme-surface); }
+  :global([data-theme='dark']) .page .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; }
+  :global([data-theme='dark']) .page .heroHeading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; }
+  :global([data-theme='dark']) .page .hero h1 { font-size: 30px; font-weight: 600; line-height: 1.25; }
+  :global([data-theme='dark']) .page .heroHeading p { max-width: 600px; margin-top: 8px; font-size: 13.5px; }
+  :global([data-theme='dark']) .page .heroActions, :global([data-theme='dark']) .page .heroBadges { display: flex; flex-wrap: wrap; gap: 8px; }
+  :global([data-theme='dark']) .page .heroBadges { margin-top: 12px; }
+  :global([data-theme='dark']) .page .heroActions :is(a,button), :global([data-theme='dark']) .page .heroBadges span { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--theme-border); border-radius: 16px; font-size: 12px; }
+  :global([data-theme='dark']) .page .heroStats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-top: 16px; }
+  :global([data-theme='dark']) .page .heroStats > div { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--theme-border); border-radius: 20px; background: var(--theme-bg); }
+  :global([data-theme='dark']) .page .heroStats strong, :global([data-theme='dark']) .page .heroStats span { display: block; }
+  :global([data-theme='dark']) .page .heroStats strong { font-size: 21px; }
+  :global([data-theme='dark']) .page .heroStats span { font-size: 11.5px; }
+  :global([data-theme='dark']) .page .libraries { margin-top: 12px; }
+  :global([data-theme='dark']) .page .periodLabels { display: none; }
+  :global([data-theme='dark']) .page .statusLabel { width: 100%; font-size: 12px; }
+  @media(max-width:639px) { :global([data-theme='dark']) .page .heroStats { grid-template-columns: 1fr; } }
+}
+
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) { font-size: 16px !important; }
+}
+
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters { position: relative !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters label { gap: 0 !important; line-height: 18.5px !important; }
+  @media(min-width:1280px) {
+    .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters .extraControl { position: absolute !important; top: -44px !important; width: max-content !important; margin: 0 !important; white-space: nowrap !important; }
+    .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > button.extraControl { right: 132px !important; }
+    .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > a.extraControl { right: 8px !important; }
+    .page:where(:not(:global([data-theme='dark']) *)) .calendarFilters > div > .extraControl { right: 264px !important; }
+  }
 }

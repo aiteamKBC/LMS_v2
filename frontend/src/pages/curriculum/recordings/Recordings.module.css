@@ -1,3 +1,5 @@
+@import './recordings-font.css';
+
 /* Scoped layer overrides legacy shell rules only on matched elements.
    Readdy has no dark reference: dark surfaces use the existing theme palette. */
 @layer recordings-ui {
@@ -1121,3 +1123,34 @@
   }
 }
 
+
+/* Match the reference font and keep operational filters in its disclosure. */
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) { font-family: 'Recordings Roboto', Roboto, system-ui, sans-serif !important; color: oklch(.15 .015 52) !important; line-height: 1.55 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) :is(h1,h2,h3,h4,p,span,label,input,select,button,a,summary,strong,dt,dd,td,th) { font-family: inherit !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > i { border-radius: 50% !important; }
+  .page .filters[hidden] { display: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child { padding: 12px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child > div:first-child { flex-wrap: nowrap !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .moreFilters { display: inline-flex !important; align-items: center !important; gap: 6px !important; min-height: 34px !important; padding: 6px 12px !important; border: 1px solid var(--recording-control-line) !important; border-radius: 999px !important; background: var(--recording-surface) !important; color: oklch(.3 .015 52) !important; font-size: 12px !important; box-shadow: none !important; white-space: nowrap !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .moreFilters[aria-expanded='true'] { background: oklch(.94 .014 305) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .resultCount { color: oklch(.515 .022 60) !important; font-size: 11.5px !important; white-space: nowrap !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar :is(button,select) { color: oklch(.3 .015 52) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarViews button[aria-pressed='true'] { color: white !important; }
+  @media(max-width:1100px) { .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child > div:first-child { flex-wrap: wrap !important; } }
+  @media(max-width:639px) { .page .search .moreFilters { min-height: 40px !important; } }
+}
+
+@layer recordings-ui {
+  .page .calendarContent { display: flex !important; flex-direction: column !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarContent > p[role='status'] { order: 1 !important; margin: 12px -12px -12px !important; padding: 12px !important; border-top: 1px solid var(--recording-line) !important; color: oklch(.515 .022 60) !important; }
+}
+
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) { padding: 28px 24px !important; }
+  @media(max-width:639px) { .page:where(:not(:global([data-theme='dark']) *)) { padding: 20px 16px !important; } }
+}
+
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) { font-size: 16px !important; }
+}

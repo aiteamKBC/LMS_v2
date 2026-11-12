@@ -64,6 +64,7 @@ const library: RecordingsLibrary = {
 
 const renderPage = async (showAll = true) => {
   render(<MemoryRouter><CurriculumRecordingsPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'More filters (0)' }));
   if (showAll) {
     fireEvent.change(await screen.findByRole('combobox', { name: 'Filter by recording status' }), { target: { value: 'all' } });
     await screen.findByText(/Calendar events not matched to LMS/);
@@ -273,10 +274,26 @@ describe('Session recordings calendar', () => {
   it('shows a load error and retries the authenticated library request', async () => {
     const user = userEvent.setup();
     vi.mocked(loadRecordingsLibrary).mockRejectedValueOnce(new Error('Library unavailable'));
-    await renderPage(false);
+    render(<MemoryRouter><CurriculumRecordingsPage /></MemoryRouter>);
     expect(await screen.findByRole('alert')).toHaveTextContent('Library unavailable');
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.getAllByRole('button', { name: /Introduction \(Live Teams Session\)/ }).length).toBeGreaterThan(0));
+  });
+
+  it('keeps advanced filters behind More filters and retains the selected programme when collapsed', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><CurriculumRecordingsPage /></MemoryRouter>);
+    const more = await screen.findByRole('button', { name: 'More filters (0)' });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('combobox', { name: 'Search date scope' })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by programme' }), 'Level 4');
+    await user.click(more);
+    expect(screen.getByRole('combobox', { name: 'Search date scope' })).toBeVisible();
+    await user.click(more);
+    expect(screen.queryByRole('combobox', { name: 'Search date scope' })).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Filter by programme' })).toHaveValue('Level 4');
+    await user.click(more);
+    expect(screen.getByRole('combobox', { name: 'Filter by programme' })).toHaveValue('Level 4');
   });
   it('keeps ended lectures inside the selected day or week, independent of saved recordings', async () => {
     const user = userEvent.setup();
@@ -324,7 +341,7 @@ describe('Session recordings calendar', () => {
     }] });
     await renderPage();
     await screen.findAllByRole('button', { name: /Introduction \(Live Teams Session\)/ });
-    await user.click(screen.getByText('More filters (0)'));
+    expect(screen.getByRole('button', { name: 'More filters (0)' })).toHaveAttribute('aria-expanded', 'true');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by programme' }), 'Level 4');
     expect(screen.getByRole('combobox', { name: 'Filter by group' })).not.toHaveTextContent('Group B');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by group' }), 'Group A');

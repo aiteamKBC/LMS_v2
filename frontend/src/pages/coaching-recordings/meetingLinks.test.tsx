@@ -27,12 +27,16 @@ describe('Meeting deep links', () => {
   it('writes a stable meeting ID and tab, and Back/Forward restore them without more calendar or PDF requests', async () => {
     mount(); fireEvent.click(await screen.findByRole('button', { name: /^View Synthetic linked MCM/ }));
     const drawer = within(screen.getByRole('dialog', { name: 'Meeting details' }));
+    fireEvent.click(drawer.getByRole('tab', { name: 'Transcript' }));
     fireEvent.click(await drawer.findByRole('button', { name: 'AI analysis' }));
     await drawer.findByText(/no saved AI report is linked/);
     expect(screen.getByTestId('url')).toHaveTextContent(`meeting=${id}`); expect(screen.getByTestId('url')).toHaveTextContent('tab=analysis');
     expect(screen.getByTestId('url').textContent).not.toContain('renewed-reference');
     fireEvent.click(screen.getByRole('button', { name: 'Browser Back' }));
     await waitFor(() => expect(drawer.getByRole('button', { name: 'AI analysis' })).toHaveAttribute('aria-expanded', 'false'));
+    expect(drawer.getByRole('tab', { name: 'Transcript', selected: true })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Browser Back' }));
+    expect(drawer.getByRole('tab', { name: 'Overview', selected: true })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Browser Back' }));
     expect(screen.queryByRole('dialog', { name: 'Meeting details' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Browser Forward' }));
