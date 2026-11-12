@@ -126,6 +126,29 @@ describe('OTJ hours activity log', () => {
     expect(screen.getByRole('heading', { name: 'Progress against current target' })).toBeVisible();
   });
 
+  it.each(['learner', 'observer'] as const)('uses the dashboard programme plan for overall %s OTJH progress', audience => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
+    const monthlyPlan = {
+      months: { '2026-09': { label: '', topics: [], planned: 10, source: 'contract' } },
+      monthlyOtjh: { '2026-09': { planned: 10, submitted: 0, actual: 60, missingPlannedActivities: 0 } },
+      actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [],
+      coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
+      programmeStartDate: '2026-09-01', programmeEndDate: '2026-10-01', requiredOtjh: 300,
+    } as TrainingPlanDashboard;
+    render(<OtjhBody real={detail({ learnerStartDate: '2026-09-01' })} loading={false}
+      showHero={false} audience={audience} monthlyPlan={monthlyPlan} dashboardHours={{ actual: 60, planned: 120 }} />);
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    // Overall progress uses the same 120-hour programme plan as the summary.
+    // The 56-hour target-to-date remains the variance reference; monthly bars
+    // still show the authored 10-hour monthly target.
+    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' }))
+      .toHaveAttribute('aria-valuenow', '50');
+    expect(chart.getByText('+7% (+4h)')).toBeVisible();
+    expect(chart.getByRole('button', { name: /September 2026: target 10 hours.*completed 60 hours/ })).toBeVisible();
+  });
+
   it('uses the chart monthly target-to-date when the programme total is zero', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));

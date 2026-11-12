@@ -259,7 +259,9 @@ describe('normaliseComponentSettings week-template compatibility', () => {
       legacySettings: JSON.stringify({ teamsOccurrenceId: 'OLD', teamsSessionNumber: 3 }) });
     expect(settings.teamsOccurrenceId).toBe('');
     expect(settings.teamsSessionNumber).toBe('');
-    expect(normaliseComponentSettings('live-session', {})).not.toHaveProperty('teamsSessionNumber');
+    // The live-session schema uses an empty default so duplicated components
+    // remain saveable without carrying a real occurrence number.
+    expect(normaliseComponentSettings('live-session', {})).toHaveProperty('teamsSessionNumber', '');
   });
 });
 

@@ -9,11 +9,11 @@
 @tailwind utilities;
 
 @layer interaction-feedback {
-  /* Keep existing borders and Tailwind elevation, without interaction strokes.
-     Include focus-within wrappers and portalled menus and dialogs. */
-  :is(:hover, :active, :focus, :focus-within),
-  :is(:hover, :active, :focus, :focus-within)::before,
-  :is(:hover, :active, :focus, :focus-within)::after {
+  /* Pointer interactions keep the existing borders and elevation. Keyboard
+     focus, including a focused descendant, retains its visible indicator. */
+  :is(:hover, :active, :focus, :focus-within):not(:focus-visible):not(:has(:focus-visible)),
+  :is(:hover, :active, :focus, :focus-within):not(:focus-visible):not(:has(:focus-visible))::before,
+  :is(:hover, :active, :focus, :focus-within):not(:focus-visible):not(:has(:focus-visible))::after {
     outline: none !important;
     --tw-ring-shadow: 0 0 #0000 !important;
     --tw-ring-offset-shadow: 0 0 #0000 !important;
@@ -22,7 +22,7 @@
   }
 
   /* Some shared fields and page controls draw their focus ring directly. */
-  :is(:focus, :focus-within) {
+  :is(:focus, :focus-within):not(:focus-visible):not(:has(:focus-visible)) {
     box-shadow: var(--tw-shadow, 0 0 #0000) !important;
   }
 }

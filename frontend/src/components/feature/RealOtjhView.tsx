@@ -512,6 +512,7 @@ export function OtjhBody({
           <div className={progressChartStyles.charts}>
             <OtjHoursChart
               data={monthlyPlan}
+              plannedHours={dashboardHours?.planned}
               programmeStartMonth={chartStartMonth}
               programmeEndMonth={chartEndMonth}
               targetAsOfToday={target}

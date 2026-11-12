@@ -439,7 +439,7 @@ class EmailTests(unittest.TestCase):
             verify.assert_not_called()
             series['warnings'] = []
             verify.return_value = {'attendees': []}
-            with self.assertRaisesRegex(ValueError, 'every learner'):
+            with self.assertRaisesRegex(ValueError, 'every participant invitation'):
                 service['verified_message']('LIVE-ONE')
 
     def test_microsoft_date_mismatch_prevents_any_mail_batch(self):
