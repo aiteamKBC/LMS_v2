@@ -11,10 +11,11 @@ export default function RecordingsHub() {
       <div className="mx-auto max-w-5xl">
         <h1 className="font-heading text-2xl font-extrabold text-foreground-950">Coach & Tutor Recordings</h1>
         <p className="mt-2 text-sm text-foreground-600">Choose the sessions you want to review.</p>
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[
             { title: 'Coach Meetings & Recordings', href: '/curriculum/coaching-recordings', icon: 'ri-user-voice-line', description: 'Review coach meetings, recordings, attendance and existing quality checks.' },
             { title: 'Tutor Session Recordings', href: '/curriculum/recordings', icon: 'ri-presentation-line', description: 'Review lecture recordings and assess teaching with the Teaching Session Feedback Form.' },
+            { title: 'Quality Assurance', href: '/curriculum/quality-demo', icon: 'ri-shield-check-line', description: 'Review quality checks, manage forms and monitor curriculum issues in one workspace.' },
           ].map(card => <Link key={card.href} to={card.href} className="group rounded-2xl border border-background-200 bg-white p-6 shadow-sm transition-colors hover:border-primary-300 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500">
             <span className="inline-flex text-primary-600"><AppIcon className={card.icon} size={30} /></span>
             <h2 className="mt-4 font-heading text-lg font-bold text-foreground-950">{card.title}</h2>

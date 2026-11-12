@@ -95,6 +95,7 @@ const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/revi
 const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
 const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bulk-attendance/page"));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
+const CurriculumQualityDemo = lazyRoute(() => import("../pages/dashboard/page"));
 const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
 const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
@@ -1180,6 +1181,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/quality",
     element: <CurriculumQualityHub />,
+  },
+  {
+    path: "/curriculum/quality-demo",
+    element: <CurriculumQualityDemo />,
   },
   {
     path: "/curriculum/free-courses",

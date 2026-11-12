@@ -11,11 +11,12 @@ vi.mock('@/hooks/useCurriculumData', () => ({ useCurriculumData: () => ({ data: 
 vi.mock('@/hooks/useCurriculumProgrammes', () => ({ useCurriculumProgrammes: () => ({ programmes: [], loading: false, error: '' }) }));
 
 describe('Coach and tutor recordings entry points', () => {
-  it('offers exactly two destinations and keeps their existing recording URLs', () => {
+  it('offers recording and quality destinations with their existing URLs', () => {
     render(<MemoryRouter><RecordingsHub /></MemoryRouter>);
-    expect(screen.getAllByRole('link')).toHaveLength(2);
+    expect(screen.getAllByRole('link')).toHaveLength(3);
     expect(screen.getByRole('link', { name: /Coach Meetings & Recordings/ })).toHaveAttribute('href', '/curriculum/coaching-recordings');
     expect(screen.getByRole('link', { name: /Tutor Session Recordings/ })).toHaveAttribute('href', '/curriculum/recordings');
+    expect(screen.getByRole('link', { name: /Quality Assurance/ })).toHaveAttribute('href', '/curriculum/quality-demo');
     const entry = curriculumNavItems.find(item => item.href === '/curriculum/recordings-hub');
     expect(entry?.label).toBe('Coach & Tutor Recordings');
     expect(entry?.matchPaths).toEqual(expect.arrayContaining(['/curriculum/recordings', '/curriculum/coaching-recordings']));

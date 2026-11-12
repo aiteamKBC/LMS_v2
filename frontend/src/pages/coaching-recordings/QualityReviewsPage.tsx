@@ -14,11 +14,16 @@ const QualityReviewDialog = lazy(() => import('./QualityReviewDialog'));
 const control = 'min-w-0 w-full rounded-lg border border-background-200 bg-white px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
 const button = 'inline-flex items-center justify-center gap-2 rounded-lg border border-primary-200 bg-white px-3 py-2 text-sm font-semibold text-primary-700 disabled:opacity-50';
 
-export default function QualityReviewsPage() {
+export default function QualityReviewsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [params, setParams] = useSearchParams();
   const { filters: location, review: requestedReview, invalidReview } = readQualityLocation(params);
   const { start, end, coachEmail, status, search, timeZone, reviewType = '', pdf = '' } = location;
   const applied = useMemo(() => ({ start, end, coachEmail, status, search, timeZone, reviewType, pdf }), [start, end, coachEmail, status, search, timeZone, reviewType, pdf]);
+  const writeLocation = (filters: typeof applied, review = '') => {
+    const next = writeQualityLocation(filters, review);
+    if (embedded) next.set('view', 'checks');
+    return next;
+  };
   const [filters, setFilters] = useState(applied);
   const [formCards, setFormCards] = useState<QualityFormCard[]>([]), [catalogError, setCatalogError] = useState('');
   useEffect(() => {
@@ -63,16 +68,14 @@ export default function QualityReviewsPage() {
   const applyFilters = (next: typeof applied) => {
     const days = (Date.parse(`${next.end}T12:00:00Z`) - Date.parse(`${next.start}T12:00:00Z`)) / 86400000;
     if (!Number.isFinite(days) || days < 0 || days > 365) { setFilterError('Choose a valid period of up to 366 days, with To on or after From.'); setMoreFilters(true); return; }
-    setFilterError(''); setParams(writeQualityLocation(next));
+    setFilterError(''); setParams(writeLocation(next));
   };
   const apply = (event: React.FormEvent) => { event.preventDefault(); applyFilters(filters); };
   const quick = (patch: Partial<typeof applied>) => applyFilters({ ...filters, ...patch });
-  const reset = () => { const end = todayIso(applied.timeZone); setFilterError(''); setParams(writeQualityLocation({ start: addDays(end, -30), end, timeZone: applied.timeZone, coachEmail: '', search: '', status: '', reviewType: '', pdf: '' })); };
-  return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" workspaceLabel="Curriculum Studio"
-    pageTitle="Quality reviews & evidence" pageSubtitle="Saved portfolio sampling reviews by coach, learner and meeting" navItems={curriculumNavItems}>
-    <main className="mx-auto w-full max-w-[1600px] space-y-5 p-3 sm:p-6">
+  const reset = () => { const end = todayIso(applied.timeZone); setFilterError(''); setParams(writeLocation({ start: addDays(end, -30), end, timeZone: applied.timeZone, coachEmail: '', search: '', status: '', reviewType: '', pdf: '' })); };
+  const content = <main id={embedded ? 'main-content' : undefined} className="mx-auto w-full max-w-[1600px] space-y-5 p-3 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3"><Link className="inline-flex items-center gap-2 text-sm font-semibold text-primary-700" to="/curriculum/coaching-recordings"><ArrowLeft size={16} />Coach meetings calendar</Link><Link className={button} to={`/curriculum/quality/forms${reviewType ? `?type=${reviewType}` : ''}`}>Edit quality forms</Link></div>
-      {invalidReview && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">This saved review link is invalid. <button type="button" className={`${button} ml-2`} onClick={() => setParams(writeQualityLocation(applied))}>Close invalid review link</button></div>}
+      {invalidReview && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">This saved review link is invalid. <button type="button" className={`${button} ml-2`} onClick={() => setParams(writeLocation(applied))}>Close invalid review link</button></div>}
       <header className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-primary-600">Quality workspace</p>
         <h1 className="mt-2 text-2xl font-bold text-foreground-950">Quality Checks</h1><p className="mt-2 text-sm text-foreground-600">Open a saved review to see its observations, screenshots and action plan. Completed reviews include a PDF.</p></div>
         <button className={button} disabled={loading} onClick={refresh}><RefreshCw size={15} />Refresh reviews</button></header>
@@ -105,12 +108,14 @@ export default function QualityReviewsPage() {
         {rows.map(row => <article key={row.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-background-200 bg-white p-4 shadow-sm">
           <div className="min-w-0 flex-1 basis-64"><div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-sm font-bold">{row.learnerName}</h2><span className={`rounded-full px-2 py-1 text-xs font-semibold ${row.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{row.status === 'completed' ? 'Completed' : 'Draft'}</span></div>
             <p className="mt-2 break-words text-sm">{row.title}</p><p className="mt-2 text-xs text-foreground-500">{row.coachName} · {meetingDate(row.startsAt, applied.timeZone)} · {row.formTitle || row.reviewType || suggestQualityType(row.title) || 'Previous form'} · Version {row.version} · {row.actionCount} follow-up actions</p><p className="mt-2 text-xs text-foreground-600">Saved by: {row.reviewerName || 'Not recorded'}</p><p className="mt-2 text-xs font-semibold text-foreground-600">{row.pdfVersion ? `PDF saved · v${row.pdfVersion}` : row.status === 'completed' ? 'Completed · PDF can be prepared' : 'Draft · Continue the review to complete it'}</p></div>
-          <div className="flex flex-wrap items-center gap-2">{(row.pdfVersion || row.status === 'completed') && <QualityPdfActions key={`${row.id}:${row.status === 'completed' ? row.version : row.pdfVersion}`} reviewId={row.id} version={row.status === 'completed' ? row.version : row.pdfVersion!} />}<Link className={button} aria-label={`Open review for ${row.learnerName}`} to={{ search: writeQualityLocation(applied, row.id).toString() }}><ClipboardCheck size={15} />Open review</Link></div>
+          <div className="flex flex-wrap items-center gap-2">{(row.pdfVersion || row.status === 'completed') && <QualityPdfActions key={`${row.id}:${row.status === 'completed' ? row.version : row.pdfVersion}`} reviewId={row.id} version={row.status === 'completed' ? row.version : row.pdfVersion!} />}<Link className={button} aria-label={`Open review for ${row.learnerName}`} to={{ search: writeLocation(applied, row.id).toString() }}><ClipboardCheck size={15} />Open review</Link></div>
         </article>)}
         {next !== null && <button className={button} disabled={loading} onClick={() => setPage({ key: listKey, offset: next })}>Load more reviews</button>}
       </section>
       {selected && <Suspense fallback={<p role="status">Opening saved review…</p>}><QualityReviewDialog key={selected} reviewId={selected} timeZone={applied.timeZone} onDirtyChange={reportDirty} onBusyChange={reportBusy}
-        onClose={() => { dirty.current = false; setParams(writeQualityLocation(applied)); }} onSaved={() => { dirty.current = false; refresh(); }} /></Suspense>}
-    </main>
-  </WorkspaceShell>;
+        onClose={() => { dirty.current = false; setParams(writeLocation(applied)); }} onSaved={() => { dirty.current = false; refresh(); }} /></Suspense>}
+    </main>;
+  if (embedded) return content;
+  return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" workspaceLabel="Curriculum Studio"
+    pageTitle="Quality reviews & evidence" pageSubtitle="Saved portfolio sampling reviews by coach, learner and meeting" navItems={curriculumNavItems}>{content}</WorkspaceShell>;
 }
