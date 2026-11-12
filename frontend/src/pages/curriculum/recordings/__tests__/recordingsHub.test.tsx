@@ -16,9 +16,15 @@ describe('Coach and tutor recordings entry points', () => {
     expect(screen.getAllByRole('link')).toHaveLength(2);
     expect(screen.getByRole('link', { name: /Coach Meetings & Recordings/ })).toHaveAttribute('href', '/curriculum/coaching-recordings');
     expect(screen.getByRole('link', { name: /Tutor Session Recordings/ })).toHaveAttribute('href', '/curriculum/recordings');
-    const entry = curriculumNavItems.find(item => item.href === '/curriculum/recordings-hub');
-    expect(entry?.label).toBe('Coach & Tutor Recordings');
-    expect(entry?.matchPaths).toEqual(expect.arrayContaining(['/curriculum/recordings', '/curriculum/coaching-recordings']));
+  });
+  it('keeps all recording destinations in the existing permissioned sidebar group', () => {
+    const entry = curriculumNavItems.find(item => item.id === 'curriculum-coaching-recordings');
+    expect(entry?.label).toBe('Recordings');
+    expect(entry?.children?.map(({ id, label, href }) => ({ id, label, href }))).toEqual([
+      { id: 'curriculum-recordings-hub', label: 'Recordings hub', href: '/curriculum/recordings-hub' },
+      { id: 'curriculum-tutor-recordings', label: 'Tutor session recordings', href: '/curriculum/recordings' },
+      { id: 'curriculum-coach-meetings', label: 'Coach meetings', href: '/curriculum/coaching-recordings' },
+    ]);
     expect(curriculumNavItems.find(item => item.href === '/curriculum/delivery')?.matchPaths).not.toContain('/curriculum/recordings');
   });
   it('removes the recording shortcuts from Delivery and preserves its scheduling destinations', () => {
