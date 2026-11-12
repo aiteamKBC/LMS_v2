@@ -453,7 +453,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
 
   const openProfile = useCallback((learner: Learner, tab?: string) => {
     const otjhProgress = otjhProgressAsOfToday(learner);
-    navigate('/coach/learner-case-file', {
+    navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
       state: {
         learnerId: learner.id,
         learnerName: learner.name,
