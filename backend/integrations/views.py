@@ -12,7 +12,7 @@ from django.views.decorators.http import require_GET, require_POST
 from .breathe import BreatheApiError, validated_base_url
 from .models import ExternalPersonLink, IntegrationConnection, IntegrationSyncRun, IntegrationTenant, ManagerSignatoryGrant, SchedulingConflict
 from .permissions import integration_access
-from .services import ALLOWED_RESOURCES, api_key_for, client_for, create_sync_run
+from .services import ALLOWED_RESOURCES, api_key_for, client_for, create_sync_run, encrypt_api_key
 
 
 def _body(request):
@@ -89,16 +89,21 @@ def connections(request):
 
 
 @require_POST
-@integration_access(allow_employer=False)
+@integration_access(allow_employer=False, allow_hr_employer=True)
 def create_connection(request):
     body = _body(request)
+    actor = getattr(request, "integration_actor", None)
+    actor_employer_id = actor.subject_id if actor is not None and actor.role == "employer" else None
     external_account_id = str(body.get("external_account_id") or "").strip()
     secret_ref = str(body.get("secret_ref") or "").strip()
-    if not external_account_id or not secret_ref:
-        return JsonResponse({"error": "external_account_id and secret_ref are required."}, status=400)
+    api_key = str(body.get("api_key") or "").strip()
+    if not external_account_id or (not secret_ref and not api_key):
+        return JsonResponse({"error": "external_account_id and api_key (or secret_ref) are required."}, status=400)
     try:
         base_url = validated_base_url(body.get("base_url") or "https://api.sandbox.breathehr.info")
-        api_key_for(type("Reference", (), {"secret_ref": secret_ref})())
+        encrypted_api_key = encrypt_api_key(api_key) if api_key else ""
+        if not api_key:
+            api_key_for(type("Reference", (), {"secret_ref": secret_ref})())
     except BreatheApiError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     tenant_id = None
@@ -107,23 +112,42 @@ def create_connection(request):
             tenant_id = uuid.UUID(str(body.get("tenant_id")))
         except (TypeError, ValueError):
             return JsonResponse({"error": "tenant_id must be a UUID."}, status=400)
-        if not IntegrationTenant.objects.filter(pk=tenant_id, active=True).exists():
+        tenant = IntegrationTenant.objects.filter(pk=tenant_id, active=True).first()
+        if not tenant:
+            return JsonResponse({"error": "Tenant not found."}, status=404)
+        if actor_employer_id is not None and tenant.employer_id != actor_employer_id:
             return JsonResponse({"error": "Tenant not found."}, status=404)
     if tenant_id is None:
         tenant_key = str(body.get("tenant_key") or "").strip()
         display_name = str(body.get("display_name") or tenant_key).strip()
         if not tenant_key or not display_name:
             return JsonResponse({"error": "tenant_id or tenant_key and display_name are required."}, status=400)
-        tenant, _ = IntegrationTenant.objects.get_or_create(
+        tenant, created = IntegrationTenant.objects.get_or_create(
             tenant_key=tenant_key,
-            defaults={"display_name": display_name, "tenant_kind": str(body.get("tenant_kind") or "employer"), "employer_id": body.get("employer_id")},
+            defaults={"display_name": display_name, "tenant_kind": str(body.get("tenant_kind") or "employer"), "employer_id": actor_employer_id or body.get("employer_id")},
         )
+        if actor_employer_id is not None and not created and tenant.employer_id != actor_employer_id:
+            return JsonResponse({"error": "Tenant not found."}, status=404)
         tenant_id = tenant.id
+    existing = IntegrationConnection.objects.filter(
+        provider="breathe", external_account_id=external_account_id,
+    ).first()
+    if existing is not None and existing.tenant_id != tenant_id:
+        return JsonResponse({"error": "This Breathe account is already connected to another company."}, status=409)
+    if existing is not None:
+        existing.secret_ref = secret_ref or "encrypted"
+        existing.secret_ciphertext = encrypted_api_key
+        existing.base_url = base_url.rstrip("/")
+        existing.status = "pending"
+        existing.last_error = ""
+        existing.save(update_fields=("secret_ref", "secret_ciphertext", "base_url", "status", "last_error", "updated_at"))
+        return JsonResponse(_connection_payload(existing))
     connection = IntegrationConnection.objects.create(
         tenant_id=tenant_id,
         provider="breathe",
         external_account_id=external_account_id,
-        secret_ref=secret_ref,
+        secret_ref=secret_ref or "encrypted",
+        secret_ciphertext=encrypted_api_key,
         base_url=base_url.rstrip("/"),
         enabled_features=body.get("enabled_features") if isinstance(body.get("enabled_features"), list) else [],
     )
@@ -152,7 +176,7 @@ def _tenant_visible_to_actor(request, tenant):
 
 
 @require_POST
-@integration_access(allow_employer=False)
+@integration_access(allow_employer=False, allow_hr_employer=True)
 def create_signatory_grant(request, tenant_id):
     try:
         tenant_uuid = uuid.UUID(str(tenant_id))
@@ -178,7 +202,7 @@ def create_signatory_grant(request, tenant_id):
 
 @csrf_exempt
 @require_POST
-@integration_access(allow_employer=True, allow_service=True)
+@integration_access(allow_employer=False, allow_hr_employer=True, allow_service=True)
 def trigger_sync(request, connection_id):
     # The scheduler authenticates with HMAC because it has no CSRF cookie. A
     # browser session still needs the same custom header used by the rest of
@@ -251,7 +275,7 @@ def preview(request, connection_id):
 
 
 @require_POST
-@integration_access(allow_employer=True)
+@integration_access(allow_employer=False, allow_hr_employer=True)
 def validate_connection(request, connection_id):
     connection = _connection(connection_id)
     if not connection:
@@ -275,7 +299,7 @@ def validate_connection(request, connection_id):
 
 
 @require_POST
-@integration_access(allow_employer=False)
+@integration_access(allow_employer=False, allow_hr_employer=True)
 def approve_match(request, connection_id):
     connection = _connection(connection_id)
     if not connection:

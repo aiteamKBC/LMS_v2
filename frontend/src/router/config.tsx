@@ -126,6 +126,7 @@ const EmployerApprenticeRisk = lazyRoute(() => import("@/pages/employer/apprenti
 const EmployerApprentices = lazyRoute(() => import("../pages/employer/apprentices/page"));
 const EmployerCommunityActivity = lazyRoute(() => import("@/pages/employer/community-activity/page"));
 const EmployerDashboard = lazyRoute(() => import("../pages/workspace/employer/page"));
+const B2BEmployerPortalPage = lazyRoute(() => import("../pages/workspace/b2b/page"));
 const EmployerDocumentsToSign = lazyRoute(() => import("../pages/employer/documents/page"));
 const EmployerEmployerClubs = lazyRoute(() => import("@/pages/employer/employer-clubs/page"));
 const EmployerEvents = lazyRoute(() => import("@/pages/employer/events/page"));
@@ -906,6 +907,10 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/employer",
     element: <EmployerDashboard />,
+  },
+  {
+    path: "/workspace/b2b",
+    element: <B2BEmployerPortalPage />,
   },
   {
     path: "/workspace/integrations/breathe",

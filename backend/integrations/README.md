@@ -2,8 +2,10 @@
 
 The integration tables are provisioned by
 `backend/sql/2026-11-11_breathe_integrations.sql`. The SQL creates the
-`integrations` schema and never stores a Breathe API key; `secret_ref` resolves
-to a server-side Breathe environment variable name.
+`integrations` schema. The platform connection keeps using `secret_ref` resolved
+to a server-side Breathe environment variable name. A company connection may
+instead store an encrypted API key in `secret_ciphertext`; the plaintext key is
+never returned to the browser or written to logs.
 
 ## Activation and isolation
 
@@ -21,8 +23,9 @@ off; management sync also refuses to run. No migration is applied automatically
 and this release does not require altering the existing learner database.
 
 Supported secret references are `env:BREATHE_API_KEY_<NAME>` or an opaque
-reference resolved to a `BREATHE_API_KEY_*` environment variable. A Secrets
-Manager fetcher is not implemented. Never put key values in frontend code or Git.
+reference resolved to a `BREATHE_API_KEY_*` environment variable. HR company
+connections can submit their key once from the B2B portal; it is encrypted with
+`CREDENTIAL_ENCRYPTION_KEY`. Never put key values in frontend code or Git.
 Only the official production and sandbox HTTPS origins are accepted;
 pagination stays on that origin and redirects are refused.
 

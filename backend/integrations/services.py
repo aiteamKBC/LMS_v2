@@ -3,9 +3,12 @@ from __future__ import annotations
 import os
 import re
 import uuid
+import base64
+import hashlib
 from datetime import datetime, timezone
 
 from django.db import transaction
+from cryptography.fernet import Fernet, InvalidToken
 
 from .breathe import BreatheApiError, BreatheClient
 from .models import (
@@ -27,12 +30,30 @@ def secret_env_name(secret_ref):
 
 
 def api_key_for(connection):
+    ciphertext = str(getattr(connection, "secret_ciphertext", "") or "")
+    if ciphertext:
+        try:
+            raw = os.environ.get("CREDENTIAL_ENCRYPTION_KEY", "").encode()
+            if not raw:
+                raise BreatheApiError("Breathe credential encryption is not configured.")
+            key = base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
+            return Fernet(key).decrypt(ciphertext.encode()).decode()
+        except (InvalidToken, ValueError, TypeError, UnicodeDecodeError) as exc:
+            raise BreatheApiError("The stored Breathe credential could not be decrypted.") from exc
     if str(connection.secret_ref).startswith("env:"):
         name = str(connection.secret_ref)[4:]
         if not re.fullmatch(r"BREATHE_API_KEY_[A-Z0-9_]+", name):
             raise BreatheApiError("The secret reference must name a Breathe API key.")
         return os.environ.get(name, "")
     return os.environ.get(secret_env_name(connection.secret_ref), "")
+
+
+def encrypt_api_key(value):
+    raw = os.environ.get("CREDENTIAL_ENCRYPTION_KEY", "").encode()
+    if not raw:
+        raise BreatheApiError("Breathe credential encryption is not configured.")
+    key = base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
+    return Fernet(key).encrypt(str(value).encode()).decode()
 
 
 def client_for(connection, *, session=None):
@@ -140,6 +161,9 @@ def process_sync_run(run_id, *, client=None):
                     counts[resource] = _save_training(connection, list(client.list_resource(resource))) if not run.dry_run else sum(1 for _ in client.list_resource(resource))
                 elif resource == "working_patterns":
                     counts[resource] = sum(1 for _ in client.list_resource(resource))
+        if not run.dry_run:
+            from .company_training import apply_rules
+            apply_rules(connection)
         run.status = "completed"
         run.counts = counts
         run.finished_at = datetime.now(timezone.utc)

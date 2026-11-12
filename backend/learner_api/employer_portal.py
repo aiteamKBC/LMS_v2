@@ -486,15 +486,53 @@ def _employer_or_404(employer_id):
         return None, _error(f"Database error: {exc}", 502)
 
 
-def _learner_cards(employer_id):
+def _employer_scope_ids(employer):
+    """Return the employer-owner ids visible in the B2B company view.
+
+    A manager keeps the existing owner scope. An explicitly granted HR account
+    sees learners whose employer contact belongs to one of the same linked
+    organisations. The learner rows and their history stay attached to the
+    original owner; this only broadens the read scope for the company portal.
+    """
+    if str(getattr(employer, "portal_role", "manager") or "manager").strip().lower() != "hr":
+        return [employer.pk]
+    organisation_ids = []
+    for value in (getattr(employer, "employer_group_ids", None) or []):
+        try:
+            organisation_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    if not organisation_ids:
+        return [employer.pk]
+    owner_ids = {employer.pk}
+    try:
+        for organisation_id in organisation_ids:
+            owner_ids.update(
+                Employer.objects.filter(employer_group_ids__contains=organisation_id)
+                .values_list("pk", flat=True)
+            )
+    except Exception:  # noqa: BLE001 - fail closed to the HR account's own scope
+        return [employer.pk]
+    return list(owner_ids)
+
+
+def _learner_in_employer_scope(employer, learner):
+    return learner is not None and learner.employer_id in set(_employer_scope_ids(employer))
+
+
+def _learner_cards(employer_id, employer=None):
     """One card per learner belonging to this employer, across both kinds.
 
     Both learner kinds share one table, so a single query covers them; the row's
     own "Learner_type" decides which `kind` its links use.
     """
     model = SOURCE_MODELS["apprenticeship"]
+    scope_ids = _employer_scope_ids(employer) if employer is not None else [employer_id]
     try:
-        learners = list(model.all_learners.filter(employer_id=employer_id).order_by("username", "id"))
+        learner_query = (model.all_learners.filter(employer_id=scope_ids[0])
+                         if scope_ids == [employer_id]
+                         else model.all_learners.filter(employer_id__in=scope_ids))
+        learners = list(learner_query.order_by("username", "id"))
     except DatabaseError:
         logger.exception("_learner_cards: lookup failed for employer %s", employer_id)
         return []
@@ -618,10 +656,14 @@ def employer_absence_notifications(request, employer_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
 
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+
     try:
         learner_ids = list(
             SOURCE_MODELS["apprenticeship"].all_learners
-            .filter(employer_id=employer_id)
+            .filter(employer_id__in=_employer_scope_ids(employer))
             .values_list("id", flat=True)
         )
         reports = (
@@ -648,7 +690,7 @@ def employer_portal(request, employer_id):
     if err:
         return err
 
-    cards = _learner_cards(employer_id)
+    cards = _learner_cards(employer_id, employer) if _employer_scope_ids(employer) != [employer.pk] else _learner_cards(employer_id)
     return JsonResponse({
         "employer": {
             **to_employer_row(employer),
@@ -724,8 +766,11 @@ def employer_dashboard_metrics(request, employer_id):
             (*HOME_SOURCE_FIELDS, 'learner_type') if section == 'progress' else (
             *HOME_SOURCE_FIELDS, 'learner_type', 'group', 'training_plan', 'learning_plan', 'modules', 'weeks', 'components')
         ))
-        learners = list(SOURCE_MODELS["apprenticeship"].all_learners
-                        .filter(employer_id=employer.pk).only(*fields))
+        scope_ids = _employer_scope_ids(employer)
+        learner_query = (SOURCE_MODELS["apprenticeship"].all_learners.filter(employer_id=employer.pk)
+                         if scope_ids == [employer.pk]
+                         else SOURCE_MODELS["apprenticeship"].all_learners.filter(employer_id__in=scope_ids))
+        learners = list(learner_query.only(*fields))
         learner_ids = [learner.pk for learner in learners]
         # Validate all learner identities with one profile read; the progress
         # values below come from the same compact home projection as Student Home.
@@ -888,7 +933,11 @@ def employer_portal_documents(request, employer_id):
 
     model = SOURCE_MODELS["apprenticeship"]
     try:
-        learners = list(model.all_learners.filter(employer_id=employer.pk).order_by("username", "id"))
+        scope_ids = _employer_scope_ids(employer)
+        learner_query = (model.all_learners.filter(employer_id=employer.pk)
+                         if scope_ids == [employer.pk]
+                         else model.all_learners.filter(employer_id__in=scope_ids))
+        learners = list(learner_query.order_by("username", "id"))
     except DatabaseError:
         logger.exception("employer_portal_documents: lookup failed for employer %s", employer.pk)
         return _error("Could not load documents. Please try again.", 503)
@@ -945,7 +994,7 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
 
     # The authorisation check: this endpoint is reachable per employer, so the
     # learner must be one of theirs.
-    if learner.employer_id != employer.pk:
+    if not _learner_in_employer_scope(employer, learner):
         return _error("That learner does not belong to this employer.", 403)
 
     status = _s(learner.programme_status)
@@ -1006,7 +1055,7 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key, 
         learner = model.all_learners.get(pk=learner_id)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
-    if learner.employer_id != employer.pk:
+    if not _learner_in_employer_scope(employer, learner):
         return _error("That learner does not belong to this employer.", 403)
     from .calendar import _calendar_profile
     profile = _calendar_profile(learner, learner.pk)
@@ -1088,7 +1137,7 @@ def employer_enrolment_review(request, employer_id, kind, learner_id, event_key)
         return _error(f"Database error: {exc}", 502)
     if failure is not None:
         return failure
-    if learner.employer_id != employer.pk:
+    if not _learner_in_employer_scope(employer, learner):
         return _error("That learner does not belong to this employer.", 403)
     # Same filter as _review_signing_rows: a review that wants no employer
     # sign-off (the RPL review) is not the employer's to read.
@@ -1126,7 +1175,7 @@ def employer_portal_learner_plan(request, employer_id, kind, learner_id):
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
-    if learner.employer_id != employer.pk:
+    if not _learner_in_employer_scope(employer, learner):
         return _error("That learner does not belong to this employer.", 403)
 
     from .employer_learning import read_plan
@@ -1240,7 +1289,7 @@ def employer_portal_learner_overview(request, employer_id, kind, learner_id, par
         logger.exception("employer_portal_learner_overview: learner lookup failed")
         return _error("Could not load this learner. Please try again.", 503)
 
-    if learner.employer_id != employer.pk:
+    if not _learner_in_employer_scope(employer, learner):
         return _error("That learner does not belong to this employer.", 403)
 
     if part == "photo":
@@ -1293,7 +1342,7 @@ def _owned_learner(employer_id, kind, learner_id):
     except DatabaseError:
         logger.exception("_owned_learner: learner lookup failed")
         return None, _error("Could not load this learner. Please try again.", 503)
-    if learner.employer_id != employer.pk:
+    if not _learner_in_employer_scope(employer, learner):
         return None, _error("That learner does not belong to this employer.", 403)
     return learner, None
 

@@ -67,6 +67,7 @@ const RULES: ReadonlyArray<readonly [string, readonly Role[]]> = [
   // Workspaces, which do not share one audience.
   ['/workspace/learner', LEARNER_AND_STAFF],
   ['/workspace/employer', EMPLOYER_AND_STAFF],
+  ['/workspace/b2b', EMPLOYER_AND_STAFF],
   ['/workspace/integrations', [...STAFF, 'employer']],
   ['/workspace/hr-system', STAFF],
   ['/workspace/admin', ADMIN],
@@ -174,12 +175,13 @@ export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'a
  * no grant is sent to /access-required rather than into a console it cannot use.
  */
 export function homeRouteFor(
-  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
+  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord' | 'portalRole'>,
 ): string {
   if (account.access === 'record-monitor') return '/old-otjh/monitor';
   if (account.access === 'advanced-admin') return '/workspace/advanced-admin';
   if (account.role === 'learner') return HOME_BY_ROLE.learner;
   if (account.role === 'employer' && account.subjectId) {
+    if (account.portalRole === 'hr') return '/workspace/b2b';
     return `/employers/${account.subjectId}`;
   }
   return account.accessHome || HOME_BY_ROLE[account.role];
@@ -241,7 +243,7 @@ export function shouldChooseWorkspace(
  * server gave for the workspace picked.
  */
 export function postLoginRouteFor(
-  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord' | 'accessWorkspaces'>,
+  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord' | 'accessWorkspaces' | 'portalRole'>,
   _requestedPath?: string | null,
 ): string {
   if (shouldChooseWorkspace(account)) return CHOOSE_WORKSPACE_ROUTE;

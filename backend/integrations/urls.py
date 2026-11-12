@@ -1,8 +1,10 @@
 from django.urls import path
 
-from . import views
+from . import views, company_training
 
 urlpatterns = [
+    path("breathe/connections/<uuid:connection_id>/training", company_training.training),
+    path("breathe/connections/<uuid:connection_id>/training/rules", company_training.save_rule),
     path("breathe/csrf", views.csrf_token, name="breathe-csrf"),
     path("breathe/connections", views.connections, name="breathe-connections"),
     path("breathe/connections/create", views.create_connection, name="breathe-create-connection"),

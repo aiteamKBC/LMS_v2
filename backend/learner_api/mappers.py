@@ -1319,6 +1319,7 @@ def to_employer_row(e):
         # Ids are the link; names travel with them so a row renders without a join.
         "employerGroupIds": [str(i) for i in _as_list(e.employer_group_ids)],
         "employerGroupNames": [_s(n) for n in _as_list(e.employer_group_names)],
+        "portalRole": _s(getattr(e, "portal_role", "manager")) or "manager",
     }
 
 
@@ -1338,6 +1339,10 @@ def write_employer_fields(payload, *, require_create=False, resolve_groups=None)
             raise ValidationError("firstName is required.")
         if not _s(payload.get("surname")):
             raise ValidationError("surname is required.")
+    if "portalRole" in payload:
+        role = _s(payload.get("portalRole")).lower() or "manager"
+        if role not in {"hr", "manager"}:
+            raise ValidationError("portalRole must be 'hr' or 'manager'.")
 
     fields = {}
     for key, attr in EMPLOYER_WRITABLE_FIELDS.items():
@@ -1368,4 +1373,6 @@ def write_employer_fields(payload, *, require_create=False, resolve_groups=None)
             )
         fields["employer_group_ids"] = ids
         fields["employer_group_names"] = [names_by_id[i] for i in ids]
+    if "portalRole" in payload:
+        fields["portal_role"] = _s(payload.get("portalRole")).lower() or "manager"
     return fields

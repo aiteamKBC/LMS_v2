@@ -93,7 +93,7 @@ export function listBreatheConnections(): Promise<{ results: BreatheConnectionSt
   return request<{ results: BreatheConnectionStatus[] }>(BASE);
 }
 
-export function createBreatheConnection(input: { tenantId?: string; tenantKey?: string; displayName?: string; tenantKind?: string; employerId?: number; externalAccountId: string; secretRef: string; baseUrl?: string }): Promise<BreatheConnectionStatus> {
+export function createBreatheConnection(input: { tenantId?: string; tenantKey?: string; displayName?: string; tenantKind?: string; employerId?: number; externalAccountId: string; secretRef?: string; apiKey?: string; baseUrl?: string }): Promise<BreatheConnectionStatus> {
   return request<BreatheConnectionStatus>(`${BASE}/create`, {
     method: 'POST',
     body: JSON.stringify({
@@ -104,6 +104,7 @@ export function createBreatheConnection(input: { tenantId?: string; tenantKey?: 
       employer_id: input.employerId,
       external_account_id: input.externalAccountId,
       secret_ref: input.secretRef,
+      api_key: input.apiKey,
       base_url: input.baseUrl,
     }),
   });
@@ -126,4 +127,17 @@ export function triggerBreatheSync(connectionId: string, resources: string[] = [
     method: 'POST',
     body: JSON.stringify({ resources, idempotency_key: crypto.randomUUID() }),
   });
+}
+
+export interface CompanyTraining {
+  modules: { id: string; name: string; plannedHours: number; ksbs: number }[];
+  departments: { id: string; name: string }[];
+  employees: { id: string; name: string; departmentId: string; department: string; allocations: { moduleId: string; metrics: { progress?: number; hours?: number; ksbs?: number; assignments?: number; activities?: number; grade?: number; lastActivity?: string } }[] }[];
+  rules: { id: string; departmentId: string; moduleIds: string[] }[];
+}
+export function getCompanyTraining(id: string): Promise<CompanyTraining> {
+  return request(`${BASE}/${encodeURIComponent(id)}/training`);
+}
+export function saveCompanyTrainingRule(id: string, departmentId: string, moduleIds: string[]) {
+  return request(`${BASE}/${encodeURIComponent(id)}/training/rules`, { method: 'POST', body: JSON.stringify({ departmentId, moduleIds, confirmed: true }) });
 }

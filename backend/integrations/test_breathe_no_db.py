@@ -13,7 +13,7 @@ from django.urls import resolve
 
 from .breathe import BreatheApiError, BreatheClient
 from .permissions import integration_access
-from .services import api_key_for, process_sync_run
+from .services import api_key_for, encrypt_api_key, process_sync_run
 from .signatories import employer_can_sign_progress_review
 from .views import create_connection, create_signatory_grant, csrf_token
 # CI discovers *_no_db.py; retain the original feature cases there too.
@@ -59,6 +59,12 @@ class BreatheTransportSafetyTests(SimpleTestCase):
 
 
 class SecretReferenceTests(SimpleTestCase):
+    @patch.dict('os.environ', {'CREDENTIAL_ENCRYPTION_KEY': 'company-key'}, clear=False)
+    def test_company_api_key_is_encrypted_and_resolved_without_plaintext_storage(self):
+        ciphertext = encrypt_api_key('company-api-key')
+        self.assertNotIn('company-api-key', ciphertext)
+        self.assertEqual(api_key_for(SimpleNamespace(secret_ref='encrypted', secret_ciphertext=ciphertext)), 'company-api-key')
+
     def test_unrelated_environment_secret_cannot_be_selected(self):
         with self.assertRaises(BreatheApiError):
             api_key_for(SimpleNamespace(secret_ref='env:DJANGO_SECRET_KEY'))
@@ -166,6 +172,7 @@ class SyncHealthTests(SimpleTestCase):
         with patch('integrations.services.IntegrationSyncRun') as runs, \
                 patch('integrations.services.IntegrationConnection') as connections, \
                 patch('integrations.services.transaction.atomic', return_value=nullcontext()), \
+                patch('integrations.company_training.apply_rules'), \
                 patch('integrations.services._save_employees', return_value=1) as save_employees:
             runs.objects.get.return_value = run
             connections.objects.get.return_value = connection

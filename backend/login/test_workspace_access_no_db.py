@@ -77,6 +77,18 @@ class WorkspaceGrantTests(SimpleTestCase):
         self.assertNotIn('accounts.manage', payload['permissions'])
         self.assertNotEqual(payload['permissions'], ['previous_records.view'])
 
+    def test_hr_employer_lands_in_b2b_company_portal(self):
+        employer_account = SimpleNamespace(
+            id=8, subject_type='employer', subject_id=339, role='employer',
+            email='breathe.hr.demo@example.test', display_name='Breathe HR',
+            has_password=True, last_login_at=None,
+        )
+        employer = SimpleNamespace(employer_group_ids=[11], portal_role='hr')
+        payload = account_payload(employer_account, subject=employer)
+        self.assertEqual(payload['portalRole'], 'hr')
+        self.assertEqual(payload['accessHome'], '/workspace/b2b')
+        self.assertIn('b2b.hr.manage', payload['permissions'])
+
 
 @override_settings(OLD_OTJH_ENABLED=True)
 class MonitoringWorkspaceGrantTests(SimpleTestCase):

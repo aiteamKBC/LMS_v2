@@ -155,6 +155,7 @@ export const tutorNavItems: SidebarNavItem[] = [
 export const employerNavItems: SidebarNavItem[] = [
   // Dashboard
   { id: 'employer-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/employer' },
+  { id: 'employer-b2b-portal', label: 'B2B Company Portal', icon: 'ri-building-2-line', href: '/workspace/b2b' },
 
   // My Apprentices
   {
@@ -223,12 +224,25 @@ export const employerNavItems: SidebarNavItem[] = [
   { id: 'employer-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/employer/reports' },
 ];
 
+// B2B COMPANY PORTAL — company-level HR and line-manager experience.
+export const b2bNavItems: SidebarNavItem[] = [
+  { id: 'b2b-overview', label: 'Overview', icon: 'ri-dashboard-line', href: '/workspace/b2b' },
+  { id: 'b2b-people', label: 'People', icon: 'ri-group-line', href: '/workspace/b2b?tab=people' },
+  { id: 'b2b-training', label: 'Training', icon: 'ri-book-open-line', href: '/workspace/b2b?tab=training' },
+  { id: 'b2b-progress', label: 'Progress', icon: 'ri-bar-chart-line', href: '/workspace/b2b?tab=progress' },
+  { id: 'b2b-contracts', label: 'Contracts', icon: 'ri-draft-line', href: '/workspace/b2b?tab=contracts' },
+  { id: 'b2b-marketplace', label: 'Marketplace', icon: 'ri-shopping-bag-line', href: '/workspace/b2b?tab=marketplace' },
+  { id: 'b2b-integration', label: 'Integration', icon: 'ri-links-line', href: '/workspace/b2b?tab=integration' },
+  { id: 'b2b-company', label: 'Company', icon: 'ri-building-line', href: '/workspace/b2b?tab=company' },
+];
+
 // HR INTEGRATIONS WORKSPACE
 export const integrationsNavItems: SidebarNavItem[] = [
   { id: 'integrations-home', label: 'Breathe HR', icon: 'ri-links-line', href: '/workspace/integrations/breathe' },
   { id: 'integrations-matches', label: 'Identity review', icon: 'ri-user-search-line', href: '/workspace/integrations/breathe?view=matches' },
   { id: 'integrations-conflicts', label: 'Scheduling conflicts', icon: 'ri-calendar-close-line', href: '/workspace/integrations/breathe?view=conflicts' },
   { id: 'integrations-runs', label: 'Sync history', icon: 'ri-history-line', href: '/workspace/integrations/breathe?view=runs' },
+  { id: 'integrations-b2b-portal', label: 'B2B Company Portal', icon: 'ri-building-2-line', href: '/workspace/b2b' },
 ];
 
 // ============================================================================
@@ -835,6 +849,7 @@ const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; w
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },
   tutor: { items: tutorNavItems, label: 'Tutor', workspaceLabel: 'Tutor Workspace' },
   employer: { items: employerNavItems, label: 'Employer', workspaceLabel: 'Employer Workspace' },
+  b2b: { items: b2bNavItems, label: 'B2B Portal', workspaceLabel: 'B2B Employer Portal' },
   integrations: { items: integrationsNavItems, label: 'HR Integrations', workspaceLabel: 'Breathe HR Workspace' },
   curriculum: { items: curriculumNavItems, label: 'Curriculum Designer', workspaceLabel: 'Curriculum Studio' },
   engagement: { items: engagementNavItems, label: 'Engagement Manager', workspaceLabel: 'Engagement Command Centre' },

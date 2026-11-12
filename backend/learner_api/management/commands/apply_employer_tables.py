@@ -119,6 +119,7 @@ class Command(BaseCommand):
                         -- link; names are denormalised so a list row needs no join.
                         "Employer_group_ids"   jsonb NOT NULL DEFAULT '[]'::jsonb,
                         "Employer_group_names" jsonb NOT NULL DEFAULT '[]'::jsonb,
+                        "Portal_role"         text NOT NULL DEFAULT 'manager',
                         "Created_at"          timestamptz NOT NULL DEFAULT now(),
                         "Updated_at"          timestamptz NOT NULL DEFAULT now()
                     )
@@ -137,6 +138,7 @@ class Command(BaseCommand):
                 for name, sql_type in (
                     ("Employer_group_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb"),
                     ("Employer_group_names", "jsonb NOT NULL DEFAULT '[]'::jsonb"),
+                    ("Portal_role", "text NOT NULL DEFAULT 'manager'"),
                 ):
                     cur.execute(f'ALTER TABLE {EMPLOYERS} ADD COLUMN IF NOT EXISTS "{name}" {sql_type}')
 

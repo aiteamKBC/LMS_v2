@@ -13,7 +13,7 @@ from login.identity import accesses_for_staff
 from login.permissions import _forbidden, _unauthenticated
 from login.sessions import authenticate_request
 from learner_api.constants import ACCESS_INTEGRATIONS, ACCESS_SUPER_ADMIN
-from learner_api.models import StaffUser
+from learner_api.models import Employer, StaffUser
 
 
 def service_signature_valid(request, *, secret, max_age=300):
@@ -41,14 +41,26 @@ def _staff_has_access(account):
     return ACCESS_SUPER_ADMIN in grants or ACCESS_INTEGRATIONS in grants
 
 
-def integration_access(*, allow_employer=True, allow_service=False):
+def _employer_is_hr(account):
+    """Return whether an employer account has the explicit B2B HR capability."""
+    if getattr(account, "role", None) != "employer":
+        return False
+    try:
+        return Employer.objects.filter(pk=account.subject_id, portal_role="hr").exists()
+    except Exception:  # noqa: BLE001 - an unavailable employer table must fail closed
+        return False
+
+
+def integration_access(*, allow_employer=True, allow_hr_employer=False, allow_service=False):
     def decorator(view):
         @functools.wraps(view)
         def wrapped(request, *args, **kwargs):
             if not getattr(settings, "BREATHE_INTEGRATIONS_ENABLED", False):
                 return JsonResponse({"error": "The persistent Breathe connector is not enabled. The HR System demo remains available.", "code": "breathe_not_enabled"}, status=503)
             account = authenticate_request(request)
-            if account is not None and (_staff_has_access(account) or (allow_employer and account.role == "employer")):
+            if account is not None and (_staff_has_access(account)
+                                        or (allow_employer and account.role == "employer")
+                                        or (allow_hr_employer and _employer_is_hr(account))):
                 request.integration_actor = account
                 return view(request, *args, **kwargs)
             if allow_service and service_signature_valid(request, secret=os.environ.get("BREATHE_TRIGGER_SECRET", "")):

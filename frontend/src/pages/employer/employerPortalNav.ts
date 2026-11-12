@@ -15,6 +15,7 @@ export function employerPortalNav(employerId: string): SidebarNavItem[] {
     { id: 'employer-portal-reviews', label: 'Progress & Gateway reviews', icon: 'ri-calendar-check-line', href: `/employers/${employerId}/reviews` },
     { id: 'employer-portal-feedback', label: 'Feedback', icon: 'ri-chat-1-line', href: `/employers/${employerId}/feedback` },
     { id: 'employer-portal-documents', label: 'Documents', icon: 'ri-draft-line', href: `/employers/${employerId}/documents` },
+    { id: 'employer-b2b-portal', label: 'B2B Company Portal', icon: 'ri-building-2-line', href: '/workspace/b2b' },
   ];
 }
 

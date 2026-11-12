@@ -1818,6 +1818,13 @@ class Employer(models.Model):
     employer_group_ids = SafeJSONField(db_column="Employer_group_ids", default=list, blank=True)
     employer_group_names = SafeJSONField(db_column="Employer_group_names", default=list, blank=True)
 
+    # B2B portal capability. Managers are the safe default; HR is granted
+    # explicitly by the company administrator and receives the management
+    # actions in the company portal.
+    portal_role = models.CharField(
+        db_column="Portal_role", max_length=16, default="manager", blank=False,
+    )
+
     # The employer's saved signature (PNG data URL, as SignaturePad produces).
     # Offered as the default when they sign a document, the same way a learner
     # reuses the signature captured during enrolment.

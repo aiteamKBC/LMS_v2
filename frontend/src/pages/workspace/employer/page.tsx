@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { Link, Navigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { formatHoursMinutes } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
+import { useAuth } from '@/hooks/useAuth';
 
 const employerNav = roleNavMap.employer;
 
@@ -55,8 +57,10 @@ const REVIEWS_TO_SIGN = [
 ];
 
 export default function EmployerDashboard() {
+  const { auth } = useAuth();
   const p = LEARNER_PROFILE;
   const [activeView, setActiveView] = useState<ViewMode>('dashboard');
+  if (auth.account?.portalRole === 'hr') return <Navigate to="/workspace/b2b" replace />;
   const pendingOTJH = OTJH_ENTRIES.filter(e => !e.employerConfirmed).length;
   const pendingEvidence = EVIDENCE_ITEMS.filter(e => e.employerAction !== 'done').length;
   const pendingSignatures = REVIEWS_TO_SIGN.filter(r => r.status === 'Awaiting Employer').length;
@@ -79,6 +83,15 @@ export default function EmployerDashboard() {
             { label: 'Progress', value: `${p.overallProgress}%` },
             { label: 'Actions', value: String(pendingOTJH + pendingEvidence + pendingSignatures), variant: pendingOTJH + pendingEvidence + pendingSignatures > 0 ? 'danger' : 'success' },
           ]}
+          actions={
+            <Link
+              to="/workspace/b2b"
+              className="inline-flex items-center gap-2 rounded-lg bg-primary-700 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-primary-800"
+            >
+              <AppIcon className="ri-building-2-line" />
+              Open B2B Company Portal
+            </Link>
+          }
         />
 
         {/* Action Required Alert */}

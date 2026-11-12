@@ -36,6 +36,13 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 
+it('opens B2B from the sidebar shown on the employer home', () => {
+  render(<MemoryRouter initialEntries={['/employers/7']}><Portal /></MemoryRouter>);
+  const sidebar = within(screen.getByRole('complementary', { name: 'Employer sidebar' }));
+  fireEvent.click(sidebar.getByRole('link', { name: 'B2B Company Portal' }));
+  expect(screen.getByTestId('route')).toHaveTextContent('/workspace/b2b');
+});
+
 function expectSection(label: string, href: string) {
   const sidebar = within(screen.getByRole('complementary', { name: 'Employer sidebar' }));
   const activeLinks = sidebar.getAllByRole('link').filter(link => link.getAttribute('aria-current') === 'page');

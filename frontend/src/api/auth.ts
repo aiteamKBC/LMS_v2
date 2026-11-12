@@ -82,6 +82,8 @@ export interface AuthUser {
   hasLegacyRecord?: boolean;
   /** Employers only — the organisations they belong to. */
   organisationIds?: number[];
+  /** B2B company portal capability, set server-side for employer accounts. */
+  portalRole?: 'hr' | 'manager';
 }
 
 /**

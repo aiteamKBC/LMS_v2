@@ -72,6 +72,7 @@ export interface EmployerRow {
   employerGroupIds: string[];
   /** Their names, denormalised server-side so a row renders without a lookup. */
   employerGroupNames: string[];
+  portalRole: 'hr' | 'manager';
   /**
    * Present on create, where an invitation is always issued. Reports the
    * invitation's fate separately from the employer's creation, which succeeds

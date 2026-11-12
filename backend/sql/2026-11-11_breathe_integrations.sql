@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS integrations.integration_connections (
     provider text NOT NULL DEFAULT 'breathe',
     external_account_id text NOT NULL,
     secret_ref text NOT NULL,
+    secret_ciphertext text NOT NULL DEFAULT '',
     base_url text NOT NULL DEFAULT 'https://api.sandbox.breathehr.info',
     status text NOT NULL DEFAULT 'pending',
     enabled_features jsonb NOT NULL DEFAULT '[]'::jsonb,

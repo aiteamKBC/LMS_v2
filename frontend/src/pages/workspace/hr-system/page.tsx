@@ -153,7 +153,10 @@ export default function HRSystemWorkspace() {
   const visible = DEMO_LEARNERS.filter(learner => (filter === 'all' || learner.status === filter)
     && `${learner.name} ${learner.email}`.toLowerCase().includes(search.trim().toLowerCase()));
   const go = (next: string) => setParams(next === 'overview' ? {} : { view: next });
-  const navItems = VIEWS.map(item => ({ id: `hr-${item.value}`, label: item.label, icon: item.icon, href: `/workspace/hr-system${item.value === 'overview' ? '' : `?view=${item.value}`}`, active: item.value === view }));
+  const navItems = [
+    ...VIEWS.map(item => ({ id: `hr-${item.value}`, label: item.label, icon: item.icon, href: `/workspace/hr-system${item.value === 'overview' ? '' : `?view=${item.value}`}`, active: item.value === view })),
+    { id: 'hr-b2b-portal', label: 'B2B Company Portal', icon: 'ri-building-2-line', href: '/workspace/b2b' },
+  ];
   const closeDetails = useRef(() => setDetails(null)).current;
   const closeDraft = useRef(() => setDraft(null)).current;
   const closeCertificate = useRef(() => setCertificate(false)).current;

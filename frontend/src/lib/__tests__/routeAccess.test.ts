@@ -19,6 +19,12 @@ const as = (role: Role) => ({ role });
  * would be reported ("a learner pasted a curriculum URL").
  */
 describe('mayAccessRoute', () => {
+  it('allows employers into B2B and sends HR there after login', () => {
+    expect(mayAccessRoute('/workspace/b2b', as('employer'))).toBe(true);
+    expect(mayAccessRoute('/workspace/b2b', as('learner'))).toBe(false);
+    expect(postLoginRouteFor({ role: 'employer', subjectId: 340, portalRole: 'hr' })).toBe('/workspace/b2b');
+    expect(postLoginRouteFor({ role: 'employer', subjectId: 340, portalRole: 'manager' })).toBe('/employers/340');
+  });
   it('limits HR System to administrators and explicitly granted integration staff', () => {
     const path = '/workspace/hr-system';
     expect(mayAccessRoute(path, as('admin'))).toBe(true);

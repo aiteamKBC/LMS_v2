@@ -591,6 +591,7 @@ export const ROUTE_PERMISSIONS: RoutePermissionMap[] = [
   { path: '/workspace/coach', allowedRoles: ['coach', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/tutor', allowedRoles: ['tutor', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/employer', allowedRoles: ['employer', 'tenant-admin', 'super-admin'] },
+  { path: '/workspace/b2b', allowedRoles: ['employer', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/engagement', allowedRoles: ['engagement', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/compliance', allowedRoles: ['compliance', 'qa', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/mis', allowedRoles: ['mis', 'tenant-admin', 'super-admin'] },
@@ -654,6 +655,10 @@ export const NAV_PERMISSIONS: NavPermissionMap[] = [
   { navId: 'validation', allowedRoles: ['tutor', 'qa', 'tenant-admin', 'super-admin'] },
   // Employer nav
   { navId: 'apprentices', allowedRoles: ['employer', 'tenant-admin', 'super-admin'] },
+  // These are workspace-switch links. The parent workspace already owns the
+  // route, so keep them visible even when legacy role metadata is incomplete.
+  { navId: 'employer-b2b-portal', allowedRoles: ['*'] },
+  { navId: 'integrations-b2b-portal', allowedRoles: ['*'] },
   { navId: 'signatures', allowedRoles: ['employer', 'compliance', 'tenant-admin', 'super-admin'] },
   // Admin nav
   { navId: 'settings', allowedRoles: ['tenant-admin', 'super-admin'] },

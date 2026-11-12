@@ -52,6 +52,7 @@ interface FormState {
   townCity: string;
   county: string;
   country: string;
+  portalRole: 'hr' | 'manager';
 }
 
 const GENDER_OPTIONS = ['Male', 'Female'];
@@ -86,7 +87,7 @@ const SECTIONS: SectionDef[] = [
 
 const EMPTY: FormState = {
   firstName: '', surname: '', gender: '', email: '', mobile: '',
-  postCode: '', address1: '', address2: '', townCity: '', county: '', country: DEFAULT_COUNTRY,
+  postCode: '', address1: '', address2: '', townCity: '', county: '', country: DEFAULT_COUNTRY, portalRole: 'manager',
 };
 
 /**
@@ -234,6 +235,7 @@ function initialValues(row: EmployerRow): FormState {
     townCity: row.townCity ?? '',
     county: row.county ?? '',
     country: row.country ?? DEFAULT_COUNTRY,
+    portalRole: row.portalRole ?? 'manager',
   };
 }
 
@@ -307,6 +309,7 @@ export function CreateEmployerModal({
         ...form,
         // Ids only — the backend resolves the names and rejects unknown ids.
         employerGroupIds: groups.map((g) => g.id),
+        portalRole: form.portalRole,
       };
       const saved = row
         ? await updateEmployer(row.id, payload)
@@ -448,6 +451,23 @@ export function CreateEmployerModal({
             <div className="divide-y divide-foreground-100">{section.fields.map(renderField)}</div>
           </section>
         ))}
+
+        <section className="rounded-xl border border-primary-200 overflow-hidden">
+          <header className="flex items-center gap-2 px-4 py-2.5 bg-primary-50 border-b border-primary-200/60">
+            <i className="ri-shield-user-line text-primary-500" />
+            <h3 className="text-[12px] font-semibold uppercase tracking-wider text-primary-700">B2B portal access</h3>
+          </header>
+          <div className="grid grid-cols-1 sm:grid-cols-[minmax(160px,240px)_1fr] gap-1 sm:gap-4 px-4 py-3 items-start">
+            <label htmlFor="ce-portalRole" className="text-[12px] font-medium text-foreground-600 sm:py-2">Portal role</label>
+            <div>
+              <select id="ce-portalRole" value={form.portalRole} onChange={(event) => set('portalRole', event.target.value as FormState['portalRole'])} className={`${inputClass} cursor-pointer`}>
+                <option value="manager">Manager / CEO — view only</option>
+                <option value="hr">HR — manage employees, training and Breathe</option>
+              </select>
+              <p className="mt-1.5 text-[11px] text-foreground-500">HR can configure the company Breathe API. Manager / CEO keeps read-only access.</p>
+            </div>
+          </div>
+        </section>
 
         {/* Employer Group — the link to the organisation profiles. */}
         <section className="rounded-xl border-2 border-primary-200 overflow-hidden">

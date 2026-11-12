@@ -35,6 +35,7 @@ class IntegrationConnection(models.Model):
     provider = models.CharField(max_length=64, default="breathe")
     external_account_id = models.CharField(max_length=255)
     secret_ref = models.CharField(max_length=255)
+    secret_ciphertext = models.TextField(blank=True, default="")
     base_url = models.URLField(max_length=500, default="https://api.sandbox.breathehr.info")
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default="pending", db_index=True)
     enabled_features = models.JSONField(default=list)
@@ -243,3 +244,31 @@ class IntegrationAuditLog(models.Model):
     class Meta:
         managed = False
         db_table = _table_name("integrations_test_audit_logs", 'integrations"."integration_audit_logs')
+
+
+class CompanyTrainingRule(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection_id = models.UUIDField(db_index=True)
+    department_id = models.CharField(max_length=255)
+    module_ids = models.JSONField(default=list)
+    confirmed_by = models.BigIntegerField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = _table_name('integrations_test_training_rules', 'integrations"."company_training_rules')
+        constraints = [models.UniqueConstraint(fields=('connection_id', 'department_id'), name='company_training_department_uniq')]
+
+
+class CompanyTrainingAllocation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection_id = models.UUIDField(db_index=True)
+    person_link_id = models.UUIDField(db_index=True)
+    module_id = models.CharField(max_length=128)
+    demo_metrics = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = _table_name('integrations_test_training_allocations', 'integrations"."company_training_allocations')
+        constraints = [models.UniqueConstraint(fields=('person_link_id', 'module_id'), name='company_training_person_module_uniq')]

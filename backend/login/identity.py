@@ -382,6 +382,16 @@ def account_payload(account, *, subject=None):
             payload["hasLegacyRecord"] = enabled() and bool(str(getattr(subject, 'aptem_id', '') or '').strip())
         elif account.subject_type == SUBJECT_EMPLOYER:
             payload["organisationIds"] = list(subject.employer_group_ids or [])
+            portal_role = str(getattr(subject, "portal_role", "manager") or "manager").strip().lower()
+            if portal_role not in {"hr", "manager"}:
+                portal_role = "manager"
+            payload["portalRole"] = portal_role
+            if portal_role == "hr":
+                payload["permissions"] = [*payload["permissions"], "b2b.hr.manage"]
+                # HR accounts land in the company administration portal. The
+                # coarse auth role remains "employer" for authentication and
+                # ownership checks; portalRole selects the B2B experience.
+                payload["accessHome"] = f"/workspace/b2b"
 
     return payload
 
