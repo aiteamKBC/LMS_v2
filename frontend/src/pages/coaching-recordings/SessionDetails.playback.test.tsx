@@ -117,3 +117,32 @@ it('loads English captions through the same authorised endpoint and retries with
   expect(video.querySelector('track')).toHaveAttribute('src', expect.stringContaining('captionRetry=1'));
   expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
 });
+
+
+it.each([
+  { provider: 'Bunny archive', source: null },
+  { provider: 'SharePoint', source: 'microsoft' as const },
+])('preserves $provider playback identity, fresh references and captions across display tabs', async ({ source }) => {
+  vi.mocked(loadCoachingSession).mockResolvedValue({ ...details,
+    media: { ...details.media, recordings: [{ ...details.media.recordings[0], source }] } });
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  try {
+    const view = render(<SessionDetails {...props} section="recordings" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
+    const player = await screen.findByLabelText('Coaching recording player');
+    expect(prepareRecordingPlayback).toHaveBeenCalledWith({ eventKey: details.eventKey,
+      recordingId: 'file', reference: props.reference, occurrence }, expect.any(AbortSignal));
+    expect(player).toHaveAttribute('src', '/video?reference=fresh');
+    const captionSource = player.querySelector('track')!.getAttribute('src');
+    view.rerender(<SessionDetails {...props} section="attendance" />);
+    expect(player).not.toBeVisible();
+    view.rerender(<SessionDetails {...props} section="recordings" />);
+    expect(screen.getByLabelText('Coaching recording player')).toBe(player);
+    expect(player).toBeVisible();
+    expect(player.querySelector('track')).toHaveAttribute('src', captionSource);
+    expect(screen.getByRole('link', { name: 'Download recording 1' }))
+      .toHaveAttribute('href', expect.stringContaining('reference=fresh'));
+    expect(loadCoachingSession).toHaveBeenCalledOnce();
+    expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+  } finally { pause.mockRestore(); }
+});

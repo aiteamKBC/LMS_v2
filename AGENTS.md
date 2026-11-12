@@ -16,16 +16,9 @@ Before editing, give the teammate a short scope note containing:
 
 Keep reminders short. Repeat the relevant restrictions when a follow-up changes scope. Do not turn each message into a long checklist.
 
-### Owner preference: keep matching UI consistent across pages
-
-- From 12 November 2026, when the owner requests a UI adjustment in one place, apply the same adjustment to the other pages and roles that use the same element or equivalent UI pattern. This is standing authorization for the matching UI changes; do not default to fixing only the screenshot's page or ask again solely to include matching pages.
-- Find shared components and equivalent implementations before editing. Prefer a shared fix where appropriate, preserve each page's purpose and permissions, and check the affected pages, responsive layouts, and supported themes.
-- State the affected pages in the scope note and report their validation. An explicit request to change only one page takes precedence.
-- This preference covers consistency of the requested UI change, not unrelated redesigns or new business/data/Teams behavior. Clarify genuinely missing behavior requirements and retain the existing review, deployment, and applicable test requirements.
-
 ### Screenshots and ambiguous "fix this" requests
 
-A screenshot shows a symptom; it does not by itself define the expected behavior. The owner's standing UI-consistency preference above applies when a UI adjustment is requested; unrelated changes still require their own scope.
+A screenshot shows a symptom; it does not define the expected behavior or authorize changes across the application.
 
 1. Inspect the screenshot and relevant code using read-only actions.
 
@@ -87,7 +80,7 @@ While required answers are pending, continue independent read-only investigation
 
 ### Scope expansion
 
-- A request to fix one field authorizes that fix and necessary checks, including matching UI changes under the owner's standing preference above, not a redesign of the whole form or API.
+- A request to fix one field authorizes that fix and necessary checks, not a redesign of the whole form or API.
 
 - Trace shared dependencies before editing. If a solution requires behavior changes in another feature, explain the concrete additional change and obtain scope clarification before making it unless already authorized.
 

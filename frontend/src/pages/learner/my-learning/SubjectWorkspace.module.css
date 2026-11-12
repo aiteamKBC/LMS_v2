@@ -1067,6 +1067,9 @@
 .learningPage .grid .moduleCard .status { font-size: 14px; }
 
 /* The list uses the same readable hierarchy while keeping its compact rows. */
+/* Nested current/previous records must not each fill the whole group's height. */
+.learningPage .list .moduleCard,
+.learningPage .grid > section .moduleCard { height: auto; }
 .learningPage .list .cardButton { height: auto; min-height: 157px; flex-basis: auto; }
 .learningPage .list .cardButton > div:first-child { width: 136px; height: auto; }
 .learningPage .list .cover { height: 100%; min-height: 0; }

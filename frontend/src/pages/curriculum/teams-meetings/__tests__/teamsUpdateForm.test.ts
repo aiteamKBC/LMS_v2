@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type TeamsCalendarForm } from '../createCalendarForm';
-import { emptyTeamsCalendarForm, presenterCoOrganizers, teamsUpdateChanges } from "../createCalendarForm.helpers";
+import { emptyTeamsCalendarForm, presenterCoOrganizers, teamsAddedPeople, teamsUpdateChanges } from "../createCalendarForm.helpers";
 import { savedEmails } from '../useTeamsMeetingsWorkspace';
 
 // The invitation fields opened empty because the calendar's saved lists
@@ -73,6 +73,12 @@ describe('teamsUpdateChanges', () => {
 });
 
 describe('presenter breakout room roles', () => {
+  it('can render new invitees over the role limit while the save still rejects the invalid roles', () => {
+    const form = { ...saved, coOrganizers: Array.from({ length: 11 }, (_, i) => `co${i}@example.invalid`).join('\n') };
+    expect(teamsAddedPeople(form, saved)).toHaveLength(11);
+    expect(() => teamsUpdateChanges(form, saved)).toThrow('up to 10 co-organizers');
+  });
+
   it('keeps explicit co-organizers and adds tutor presenters once, excluding the owner', () => {
     expect(presenterCoOrganizers('Tutor@example.invalid\nowner@example.invalid',
       'co@example.invalid\nTUTOR@example.invalid', 'OWNER@example.invalid'))

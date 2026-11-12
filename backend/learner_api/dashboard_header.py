@@ -159,6 +159,10 @@ def header_modules(modules, source):
     normal = lambda value: str(value or '').strip().lower()
     fields = [('programme_name', source.programme), ('cohort_name', source.cohort), ('group_name', source.group)]
     cleaned = [{**m, **{k: clean_text(m.get(k)) for k, _ in fields}, 'title': clean_text(m['title'])} for m in modules]
+    assigned_ids = getattr(source, '_dashboard_assigned_ids', None)
+    if assigned_ids is not None:
+        assigned = [m for m in cleaned if str(m['id']) in assigned_ids]
+        cleaned = assigned or cleaned
     compatible = [m for m in cleaned if all(not normal(v) or not normal(m.get(k)) or normal(m.get(k)) == normal(v) for k, v in fields)]
     exact = [m for m in compatible if all(not normal(v) or normal(m.get(k)) == normal(v) for k, v in fields)]
     candidates = [m for m in (exact or compatible) if m['title'].strip()] or [m for m in cleaned if m['title'].strip()]
@@ -222,7 +226,8 @@ def header_profile(source, pk, *, identity_only=False):
 
 def dashboard_modules(source, owner, *, include_coach=True, include_week_counts=True):
     """Shared compact assignment/navigation read; no presentation histories."""
-    ids = sorted(set(_effective_plan_ids(source, {})) |
+    source._dashboard_assigned_ids = {str(mid) for mid in _effective_plan_ids(source, {})}
+    ids = sorted(source._dashboard_assigned_ids |
                  set(canonical_learning.curriculum_module_ids_for(owner)))
     if not ids:
         return ids, []

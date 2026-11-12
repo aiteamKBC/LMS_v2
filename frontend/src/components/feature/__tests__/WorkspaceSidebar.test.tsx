@@ -196,7 +196,7 @@ it('gives a workspace borrowing the learner look one working Sign out', () => {
   expect(sidebar.style.width).toBe('240px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
 
-  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse Employer navigation' }));
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse learner navigation' }));
   expect(sidebar.style.width).toBe('64px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
   expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBe('true');
@@ -234,17 +234,6 @@ it('retains enrolment navigation for a non-admin opening the shared directory', 
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'compliance');
   expect(screen.queryByRole('complementary', { name: 'Super Admin sidebar' })).toBeNull();
 });
-
-it.each(['compliance', 'apprentice'])(
-  'keeps Users selected when %s opens an employer from the directory', role => {
-    const { sidebar, rail, panel } = showWorkspace(role, '/employers/8/learner/commercial/42');
-    expect(within(rail).getByRole('link', { name: 'Users' })).toHaveAttribute('aria-current', 'page');
-    fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
-    expect(within(panel).getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/users');
-    expect(within(panel).getByRole('link', { name: 'Users' })).toHaveAttribute('aria-current', 'page');
-    expect(within(panel).queryByRole('link', { name: 'Transfer Progress' })).toBeNull();
-  },
-);
 
 it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;

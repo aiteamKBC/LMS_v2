@@ -383,7 +383,7 @@ export const apprenticeNavItems: SidebarNavItem[] = [
   { id: 'enrolment-progress-transfers', label: 'Transfer Progress', icon: 'ri-arrow-left-right-line', href: '/users/progress-transfers' },
   { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
-  { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', matchPaths: ['/employers'], statusDot: 'blue' },
+  { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
 /**
@@ -394,7 +394,7 @@ export const enrolmentNavItems: SidebarNavItem[] = [
   { id: 'enrolment-progress-transfers', label: 'Transfer Progress', icon: 'ri-arrow-left-right-line', href: '/users/progress-transfers' },
   { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
-  { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', matchPaths: ['/employers'], statusDot: 'blue' },
+  { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
 // ============================================================================
