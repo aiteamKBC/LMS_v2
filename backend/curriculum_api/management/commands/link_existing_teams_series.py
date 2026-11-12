@@ -109,7 +109,7 @@ class Command(BaseCommand):
         if len(modules) != 1:
             raise CommandError('The requested module was not found.')
         module = modules[0]
-        if module.get('deleted_at') or module.get('is_programme_deleted'):
+        if v.programme_deleted_row(module):
             raise CommandError('The requested module is archived.')
         if not module.get('group_id'):
             raise CommandError('Choose a group delivery module, not a standalone content module.')
@@ -217,7 +217,7 @@ class Command(BaseCommand):
         with connection.cursor() as cursor:
             cursor.execute('''SELECT id, settings_json->>'liveSessionLinkOverride'
                 FROM curriculum.components WHERE module_catalogue_id=%s
-                  AND type IN ('live-session','live_session') AND deleted_at IS NULL
+                  AND type IN ('live-session','live_session') AND status NOT IN ('inactive','archived')
                   AND coalesce(settings_json->>'liveSessionLinkOverride','')<>'' ''', [module_id])
             manual_links = _conflicting_manual_overrides(cursor.fetchall(), join_url)
         if manual_links and not options.get('replace_manual_link_overrides'):
@@ -278,7 +278,7 @@ class Command(BaseCommand):
                     raise CommandError('A Teams series was linked concurrently; no changes made.')
                 cursor.execute('''SELECT id, settings_json->>'liveSessionLinkOverride'
                     FROM curriculum.components WHERE module_catalogue_id=%s
-                      AND type IN ('live-session','live_session') AND deleted_at IS NULL
+                      AND type IN ('live-session','live_session') AND status NOT IN ('inactive','archived')
                       AND coalesce(settings_json->>'liveSessionLinkOverride','')<>'' FOR UPDATE''', [module_id])
                 if sorted(_conflicting_manual_overrides(cursor.fetchall(), join_url)) != sorted(manual_links):
                     raise CommandError('Manual Teams links changed during import; no changes made.')
@@ -307,7 +307,7 @@ class Command(BaseCommand):
                                       settings_json->>'liveSessionUrl', live_sessions_link
                     FROM curriculum.components
                     WHERE module_catalogue_id=%s AND type IN ('live-session','live_session')
-                      AND deleted_at IS NULL AND settings_json->>'teamsLiveSessionId'=%s''', [module_id, series_id])
+                      AND status NOT IN ('inactive','archived') AND settings_json->>'teamsLiveSessionId'=%s''', [module_id, series_id])
                 linked_rows = cursor.fetchall()
             linked_ids = [row[0] for row in linked_rows]
             if (saved_count != len(occurrences)

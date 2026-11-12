@@ -2517,23 +2517,17 @@ class CurriculumPersistenceTransactionHarness(CurriculumPersistenceFixtures, Coa
 
 
 class CurriculumPersistenceTests(CurriculumPersistenceHarness):
-    @patch.object(views, 'find_skills_england_standard', return_value={'id': 'st0845-v1-1'})
-    def test_ksb_profile_can_link_and_unlink_its_parent_standard(self, _standard):
+    def test_ksb_framework_changes_are_refused(self):
+        # The curriculum database keeps no KSB frameworks (ksb_profiles was
+        # removed); a programme takes its KSBs from its standard.
         response = self.patch_json(
             '/curriculum_api/curriculum/ksb-frameworks/KSBP-DATA/',
             {'standardSourceId': 'standard:st0845-v1-1'},
         )
-        self.assertEqual(response.status_code, 200, response.content)
-        profile = self.row('ksb_profiles', 'id', 'KSBP-DATA')
-        self.assertEqual(profile['standard_source_id'], 'st0845-v1-1')
-
-        response = self.patch_json(
-            '/curriculum_api/curriculum/ksb-frameworks/KSBP-DATA/',
-            {'standardSourceId': ''},
-        )
-        self.assertEqual(response.status_code, 200, response.content)
-        profile = self.row('ksb_profiles', 'id', 'KSBP-DATA')
-        self.assertEqual(profile['standard_source_id'], '')
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(response.json().get('code'), 'ksb_frameworks_not_available')
+        response = self.post_json('/curriculum_api/curriculum/ksb-frameworks/', {'name': 'New framework'})
+        self.assertEqual(response.status_code, 409, response.content)
 
     def test_tree_save_persists_components_without_a_module_builder_save(self):
         """A wizard-created module's components must land in the normalized tables
@@ -2954,11 +2948,9 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         self.assertEqual(payload['source']['id'], '')
         self.assertEqual(sorted(item['code'] for item in payload['items']), ['K1', 'S1'])
 
-    def test_delete_ksb_framework_removes_profile_row(self):
+    def test_delete_ksb_framework_is_refused(self):
         response = self.client.delete('/curriculum_api/curriculum/ksb-frameworks/KSBP-DATA/')
-        self.assertEqual(response.status_code, 200, response.content)
-        self.assertTrue(response.json()['deleted'])
-        self.assertFalse(views.authoring_fetch_all('ksb_profiles', 'id = %s', ['KSBP-DATA']))
+        self.assertEqual(response.status_code, 409, response.content)
 
     def test_required_count_can_exclude_mapping_only_ksbs(self):
         coverage = build_coverage(
@@ -3904,7 +3896,7 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
     def _record_permanent_delete(self):
         """Run the delete with every query stubbed, returning the tables hit."""
         deletes = []
-        detaches = []
+        unhooks = []
 
         def record(table, where_sql, params):
             deletes.append(table)
@@ -3923,18 +3915,19 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
                 'weekTemplateIds': ['TPL-1'],
             },
         }
-        # The detach reads the module and week rows it is about to orphan, which
-        # this SimpleTestCase has no database for. It has its own DB-backed cover
-        # in tests_content_library; here only the ordering of the deletes matters.
+        # The content check and the unhook read rows this SimpleTestCase has no
+        # database for. They have DB-backed cover in tests_content_library; here
+        # only the ordering of the deletes matters.
         with patch.object(views, 'table_exists', lambda table: True), \
                 patch.object(views, 'delete_rows', record), \
+                patch.object(views, 'refuse_if_programme_owns_content', lambda plan: None), \
                 patch.object(
-                    views, 'detach_programme_content_to_library',
-                    lambda plan, removed: detaches.append(plan),
+                    views, 'unhook_programme_reusables',
+                    lambda plan, removed: unhooks.append(plan),
                 ), \
                 patch.object(views, 'invalidate_curriculum_cache', lambda: None):
             removed = views.permanently_delete_programme_structure(plan)
-        return deletes, detaches, removed
+        return deletes, unhooks, removed
 
     def test_children_are_deleted_before_their_parents(self):
         """Ordering is the whole point, so it is pinned table by table."""
@@ -3957,21 +3950,21 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
         self.assertEqual(deletes[-1], 'programmes')
         self.assertEqual(removed['programmes'], 1)
 
-    def test_authored_content_is_detached_rather_than_deleted(self):
-        """Weeks, components, quizzes and templates outlive their programme.
+    def test_authored_content_is_never_deleted(self):
+        """Weeks, components, quizzes and templates are never deleted by a programme delete.
 
-        They are the reusable output of Curriculum Studio, so a permanent
-        programme delete unhooks them into the library instead of destroying
-        them. Only the delivery scaffolding is actually deleted.
+        Weeks and components stop the delete outright while they exist
+        (refuse_if_programme_owns_content); quizzes and week templates are kept,
+        unhooked. Only the delivery scaffolding is actually deleted.
         """
-        deletes, detaches, _ = self._record_permanent_delete()
+        deletes, unhooks, _ = self._record_permanent_delete()
 
         for table in ('components', 'weeks', 'quizzes', 'week_templates', 'week_template_components'):
             self.assertNotIn(table, deletes, f'{table} must not be deleted by a programme delete')
-        self.assertEqual(len(detaches), 1, 'content must be detached exactly once')
+        self.assertEqual(len(unhooks), 1, 'reusables must be unhooked exactly once')
 
-    def test_the_detach_runs_before_the_parents_are_removed(self):
-        """It reads the module and week titles, so it cannot run afterwards."""
+    def test_the_content_check_and_unhook_run_before_any_delete(self):
+        """A refusal must leave everything in place, so it comes first."""
         order = []
         plan = {
             'candidates': ['PROG-1'],
@@ -3983,13 +3976,35 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
                     lambda table, where_sql, params: order.append(('delete', table)) or [{'id': 'row'}],
                 ), \
                 patch.object(
-                    views, 'detach_programme_content_to_library',
-                    lambda plan, removed: order.append(('detach', None)),
+                    views, 'refuse_if_programme_owns_content',
+                    lambda plan: order.append(('check', None)),
+                ), \
+                patch.object(
+                    views, 'unhook_programme_reusables',
+                    lambda plan, removed: order.append(('unhook', None)),
                 ), \
                 patch.object(views, 'invalidate_curriculum_cache', lambda: None):
             views.permanently_delete_programme_structure(plan)
 
-        self.assertEqual(order[0], ('detach', None))
+        self.assertEqual(order[:2], [('check', None), ('unhook', None)])
+
+    def test_a_refusal_deletes_nothing(self):
+        deletes = []
+        plan = {
+            'candidates': ['PROG-1'],
+            'childIds': {'moduleIds': ['MOD-1'], 'weekIds': ['WEEK-1'], 'componentIds': ['COMP-1']},
+        }
+
+        def refuse(plan):
+            raise views.ProgrammeContentRetained(views.PROGRAMME_CONTENT_RETAINED_MESSAGE)
+
+        with patch.object(views, 'table_exists', lambda table: True), \
+                patch.object(views, 'delete_rows', lambda table, where_sql, params: deletes.append(table) or []), \
+                patch.object(views, 'refuse_if_programme_owns_content', refuse), \
+                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+            with self.assertRaises(views.ProgrammeContentRetained):
+                views.permanently_delete_programme_structure(plan)
+        self.assertEqual(deletes, [])
 
     def test_nothing_is_deleted_without_a_programme_id(self):
         deletes = []

@@ -12,7 +12,25 @@ from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurr
 
 
 def directory_emails(learner_ids):
-    """The same server-owned legacy email bridge used by the learner directory."""
+    """The same server-owned legacy email bridge used by the learner directory.
+
+    On the new database the register's directory is the LMS's own learner list
+    ("Learner".learners, keyed by the Aptem id that KBC records are filed
+    under), so the bridge reads it there through the pooled connection instead
+    of opening a direct connection to the KBC directory.
+    """
+    from .bulk_attendance_kbc_source import new_database_cursor, on_new_database
+
+    if on_new_database():
+        try:
+            with new_database_cursor(read_only=True) as cursor:
+                cursor.execute('''SELECT l.aptem_id::text, l.email FROM "Learner".learners l
+                    WHERE l.aptem_id::text = ANY(%s)''', [list(learner_ids)])
+                rows = cursor.fetchall()
+        except DatabaseError:
+            raise DatabaseError('The attendance identity bridge is unavailable.') from None
+        return _unique_emails(rows)
+
     import psycopg
     from .bulk_attendance_learners import learner_directory_dsn
 
@@ -27,6 +45,11 @@ def directory_emails(learner_ids):
                 WHERE "ID"::text=ANY(%s)''', [list(learner_ids)]).fetchall()
     except psycopg.Error:
         raise DatabaseError('The attendance identity bridge is unavailable.') from None
+    return _unique_emails(rows)
+
+
+def _unique_emails(rows):
+    """{learner id: lower-cased email}; an id with more than one email is left out."""
     by_id = defaultdict(set)
     for learner_id, email in rows:
         if email and str(email).strip():

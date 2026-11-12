@@ -306,12 +306,6 @@ class ProgrammeRecordConcurrencyTests(RecordConcurrencyHarness):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['revision'], self.revision())
 
-    def test_the_child_rename_cascade_is_left_out_of_the_token(self):
-        # Renaming a programme writes programme_name onto every cohort, group
-        # and module under it. Those are copies of this row, not edits to it.
-        before = self.revision()
-        views.propagate_programme_name('PROG-DATA', 'Carried down')
-        self.assertEqual(self.revision(), before)
 
 
 class ModuleDrawerConcurrencyTests(RecordConcurrencyHarness):

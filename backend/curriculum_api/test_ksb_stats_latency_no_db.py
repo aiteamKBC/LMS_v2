@@ -44,28 +44,37 @@ class StatsScopeTests(SimpleTestCase):
         self.addCleanup(db.close)
         db.row_factory = sqlite3.Row
         db.create_function('btrim', 2, lambda value, chars: value.strip(chars) if value is not None else None)
+        # The current shape: status is the archive state, a mapping belongs to
+        # its component (module and week) and takes its code from its standard KSB.
         db.executescript('''
-            create table weeks (module_catalogue_id text, library_state text, isDeleted boolean);
-            create table components (module_catalogue_id text, type text, deleted_at text, library_state text);
-            create table ksb_mappings (module_catalogue_id text, component_id text, ksb_code text,
-                                      weight real, source_type text, source_id text, isProgrammeDeleted boolean);
-            insert into weeks values ('M1','',0),('M2','',0),('M2','',0),('M2','',1);
-            insert into components values ('M1','reading',null,''),('M1','quiz',null,''),
-                ('M2','reading',null,''),('M2','reading',null,''),('M2','workplace_evidence',null,''),
-                ('M2','reading',null,' library ');
-            insert into ksb_mappings values ('M1','C1','K1',4,'standard','S1',0),
-                ('M1','C1','K2',4,'standard','S1',0),('M2','C2','K1',.125,'standard','S1',0),
-                ('M2','C3','K1',.125,'standard','S1',0),('M2','C4','K1',.125,'standard','S1',0),
-                ('M2',' ','K2',5,'standard','S1',0),('M2','C2','K1',90,'standard','S1',1),
-                ('M3','C9','K9',90,'standard','S2',0);
+            create table weeks (module_catalogue_id text, status text);
+            create table components (id text, module_catalogue_id text, week_id text, type text, status text);
+            create table standard_ksbs (id integer, ksb_code text, ksb_description text);
+            create table ksb_mappings (id text, component_id text, standard_ksb_id integer,
+                                      weight real, source_type text, source_id text, status text);
+            insert into weeks values ('M1','active'),('M2','active'),('M2','active'),('M2','inactive');
+            insert into components values ('C1','M1','W1','reading','active'),('C6','M1','W1','quiz','active'),
+                ('C2','M2','W2','reading','active'),('C3','M2','W2','reading','active'),
+                ('C4','M2','W2','workplace_evidence','active'),('C5','M2','W2','reading','active'),
+                ('C7','M2','W2','reading','inactive');
+            insert into standard_ksbs values (1,'K1',''),(2,'K2',''),(9,'K9','');
+            insert into ksb_mappings values ('A1','C1',1,4,'standard','S1','active'),
+                ('A2','C1',2,4,'standard','S1','active'),('A3','C2',1,.125,'standard','S1','active'),
+                ('A4','C3',1,.125,'standard','S1','active'),('A5','C4',1,.125,'standard','S1','active'),
+                ('A6','C5',2,5,'standard','S1','active'),('A7','C2',1,90,'standard','S1','inactive'),
+                ('A8','C9',9,90,'standard','S2','active');
         ''')
         tables = ('weeks', 'components', 'ksb_mappings')
         columns = {table: {row['name'] for row in db.execute(f'pragma table_info({table})')} for table in tables}
         modules = [{'module_catalogue_id': key, 'title': 'Duplicate', 'programme_id': 'P1'} for key in ('M1', 'M2')]
+        mappings = ('select m.*, c.module_catalogue_id, c.week_id, s.ksb_code from ksb_mappings m '
+                    'left join components c on c.id = m.component_id '
+                    'left join standard_ksbs s on s.id = m.standard_ksb_id')
         def full_children(table, ids, **kwargs):
             fields = kwargs.get('columns')
-            return [{k:v for k,v in dict(row).items() if not fields or k in fields}
-                    for row in db.execute(f'select * from {table}') if row['module_catalogue_id'] in ids]
+            source = mappings if table == 'ksb_mappings' else f'select * from {table}'
+            return [{k:v for k,v in dict(row).items() if not fields or k in fields or k == 'status'}
+                    for row in db.execute(source) if row['module_catalogue_id'] in ids]
         with patch.object(views, 'connection', vendor='postgresql'), \
              patch.object(views, 'ensure_module_authoring_tables'), \
              patch.object(views, 'authoring_scope_module_rows', return_value=modules), \
@@ -94,19 +103,19 @@ class StatsScopeTests(SimpleTestCase):
             views.AUTHORING_WEEKS_TABLE: [
                 {'id': 'W1', 'module_catalogue_id': 'M1'},
                 {'id': 'W2', 'module_catalogue_id': 'M2'},
-                {'id': 'W3', 'module_catalogue_id': 'M2', 'isDeleted': True},
+                {'id': 'W3', 'module_catalogue_id': 'M2', 'status': 'inactive'},
             ],
             views.AUTHORING_COMPONENTS_TABLE: [
                 {'id': 'C1', 'module_catalogue_id': 'M1', 'type': 'reading'},
                 {'id': 'C2', 'module_catalogue_id': 'M2', 'type': 'reading'},
-                {'id': 'C3', 'module_catalogue_id': 'M2', 'type': 'reading', 'library_state': ' library '},
+                {'id': 'C3', 'module_catalogue_id': 'M2', 'type': 'reading', 'status': 'inactive'},
                 {'id': 'C4', 'module_catalogue_id': 'M2', 'type': 'workplace-evidence'},
             ],
             views.AUTHORING_KSB_MAPPINGS_TABLE: [
                 {'module_catalogue_id': 'M1', 'component_id': 'C1', 'ksb_code': 'K1', 'weight': 3},
                 {'module_catalogue_id': 'M2', 'component_id': 'C2', 'ksb_code': 'K1', 'weight': 5},
                 {'module_catalogue_id': 'M2', 'component_id': '', 'ksb_code': 'K2', 'weight': 6},
-                {'module_catalogue_id': 'M2', 'component_id': 'C2', 'ksb_code': 'K1', 'weight': 90, 'isProgrammeDeleted': True},
+                {'module_catalogue_id': 'M2', 'component_id': 'C2', 'ksb_code': 'K1', 'weight': 90, 'status': 'inactive'},
             ],
         }
         def fetch(table, ids, **kwargs):

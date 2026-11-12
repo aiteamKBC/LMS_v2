@@ -143,7 +143,7 @@ class ProgrammeModuleCountTests(TestCase):
         """Two programmes, plus a module whose programme has no programmes row.
 
         MOD-A carries every kind of row the filters have to drop: a soft-deleted
-        component, a programme-deleted one, a detached library one and a retired
+        component, a programme-deleted one and a retired
         type, plus mappings that are deleted, blank, padded and repeated.
         """
         self._programme('PROG-1', 'Programme One')
@@ -157,7 +157,6 @@ class ProgrammeModuleCountTests(TestCase):
         self._component('COMP-A3', 'MOD-A', 'WEEK-A2', ctype='live_session')
         self._component('COMP-A-DEL', 'MOD-A', 'WEEK-A2', deleted_at=views.datetime.utcnow())
         self._component('COMP-A-PDEL', 'MOD-A', 'WEEK-A2', is_programme_deleted=True)
-        self._component('COMP-A-LIB', 'MOD-A', 'WEEK-A2', library_state=views.LIBRARY_STATE_DETACHED)
         self._component('COMP-A-RET', 'MOD-A', 'WEEK-A2', ctype='workplace_evidence')
         self._mapping('MAP-A1', 'MOD-A', 'K1')
         self._mapping('MAP-A2', 'MOD-A', 'K1')
@@ -212,7 +211,7 @@ class ProgrammeModuleCountTests(TestCase):
     def test_counts_exclude_the_rows_the_full_read_excludes(self):
         self._seed()
         light = views.authoring_catalogue_summaries(include_content=False)
-        # Three live components: deleted, programme-deleted, library and
+        # Three live components: deleted, programme-deleted and
         # retired rows are not lessons. K1 and S2 once each; blank, deleted
         # and programme-deleted mappings are not codes.
         self.assertEqual(light['MOD-A']['lessonCount'], 3)
@@ -234,10 +233,7 @@ class ProgrammeModuleCountTests(TestCase):
 
     def test_sql_prefilter_keeps_exactly_the_live_component_rows(self):
         self._seed()
-        # A padded library state is one the SQL clause cannot see; the Python
-        # filter behind it still has to drop it.
-        self._component('COMP-A-LIB-PADDED', 'MOD-A', 'WEEK-A2', library_state=' library ')
-        flags = ('deleted_at', 'is_programme_deleted', 'library_state')
+        flags = ('deleted_at', 'is_programme_deleted')
         where_sql, params = views.live_authoring_rows_sql(views.AUTHORING_COMPONENTS_TABLE, flags)
         columns = views.CATALOGUE_SUMMARY_COMPONENT_COLUMNS
         unfiltered = views.active_component_rows(views.authoring_fetch_all(
@@ -251,7 +247,6 @@ class ProgrammeModuleCountTests(TestCase):
             return row['id']
 
         self.assertEqual(sorted(unfiltered, key=key), sorted(prefiltered, key=key))
-        self.assertNotIn('COMP-A-LIB-PADDED', {row['id'] for row in prefiltered})
 
     # Learner assignment counts come from the enrolment database and play no part
     # in counting modules; both sides of the comparison skip them alike.

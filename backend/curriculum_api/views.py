@@ -42,7 +42,7 @@ from login.permissions import require_role, require_access, require_all_access
 from . import archive_state
 from .canonical_read_sql import module_expected_otjh_sql
 from . import curriculum_names
-from . import calendar_holidays, free_course_catalogue, ksb_mapping_placement, schema_compat
+from . import calendar_holidays, free_course_catalogue, ksb_mapping_placement, schema_compat, write_shape
 from . import group_coaches
 from .free_course_catalogue_store import FreeCourseInUse
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
@@ -175,7 +175,6 @@ _TABLE_EXISTS_CACHE = {}
 _AUTHORING_TABLES_READY = False
 _FREE_PROGRAMME_TABLES_READY = False
 _PROGRAMME_CONFIG_DEDUP_READY = False
-_KSB_PROFILE_PROGRAMME_ID_READY = False
 _TRAINING_PLAN_CANONICAL_READY = False
 _LIVE_SESSIONS_TABLE_READY = False
 _LIVE_SESSION_TRACKING_TABLES_READY = False
@@ -1186,9 +1185,6 @@ def rows_as_dicts(cursor):
 
 
 def fetch_all(query, params=None):
-    # Normalised schema: hand-written reads naming a legacy column (deleted_at,
-    # programme_name, ...) go through the legacy-shaped read relation.
-    query = schema_compat.adapt_sql(query)
     with connection.cursor() as cursor:
         cursor.execute(query, params or [])
         return rows_as_dicts(cursor)
@@ -1298,33 +1294,6 @@ def ensure_columns(table, specs):
     _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
 
 
-def ensure_ksb_profile_programme_id_column():
-    global _KSB_PROFILE_PROGRAMME_ID_READY
-    _KSB_PROFILE_PROGRAMME_ID_READY = True
-
-
-def ensure_ksb_profile_identity_columns():
-    ensure_ksb_profile_programme_id_column()
-    try:
-        ensure_columns('ksb_profiles', {
-            'ksb_profile_id': 'varchar(128)',
-            'programme_ids': 'jsonb',
-            # A reusable profile can carry its own KSB definitions while still
-            # inheriting funding, duration and compliance metadata from the
-            # Skills England standard it was derived from.
-            'standard_source_id': 'varchar(128)',
-        })
-        if connection.vendor == 'postgresql':
-            with connection.cursor() as cursor:
-                cursor.execute(f'''
-                    create unique index if not exists curriculum_ksb_profiles_profile_id_idx
-                    on {table_name("ksb_profiles")} ({quote_ident("ksb_profile_id")})
-                    where {quote_ident("ksb_profile_id")} is not null and {quote_ident("ksb_profile_id")} <> ''
-                ''')
-    except Exception as exc:
-        logger.warning('Could not ensure KSB profile identity column: %s', exc)
-
-
 def is_canonical_module_catalogue_id(value):
     return bool(CANONICAL_MODULE_ID_PATTERN.match(clean_str(value)))
 
@@ -1364,16 +1333,12 @@ def link_training_row_to_catalogue(training_id, module_catalogue_id):
 
 
 def ensure_program_config_archive_columns():
-    # standard/owner/created_by/is_active/structure_type were dropped from
-    # curriculum.programmes. They are deliberately absent here: re-adding them
-    # would resurrect the columns empty on the next process start.
-    # is_archived is now the sole archive signal.
+    # ``status`` is the programme's archive record; the old is_archived /
+    # is_active flags are gone from curriculum.programmes and are deliberately
+    # absent here, as re-adding them would resurrect the columns empty.
     #
-    # Schema is migration-owned in production, so the ALTER TABLE path and the
-    # is_archived NULL->false backfill that used to follow it are confined to
-    # test/local provisioning. The backfill matched 0 production rows when it
-    # was removed (verified 2026-08-16); read paths already coalesce a NULL
-    # is_archived to false.
+    # Schema is migration-owned in production, so this ALTER TABLE path is
+    # confined to test/local provisioning.
     if not schema_gate.runtime_bootstrap_allowed():
         return
     try:
@@ -1381,7 +1346,6 @@ def ensure_program_config_archive_columns():
             'level': 'varchar(64)',
             'color': 'varchar(32)',
             'description': 'text',
-            'is_archived': 'boolean',
             'status': 'varchar(32)',
             'ksb_profile_source_id': 'varchar(128)',
             'required_otjh': 'numeric(8, 2)',
@@ -1390,11 +1354,6 @@ def ensure_program_config_archive_columns():
     except Exception as exc:
         logger.warning('Could not inspect programme config archive columns: %s', exc)
         return
-    if has_column('programmes', 'is_archived'):
-        try:
-            update_rows('programmes', 'is_archived is null', [], {'is_archived': False})
-        except Exception:
-            pass
     if has_column('programmes', 'status'):
         try:
             update_rows('programmes', "coalesce(btrim(status), '') = ''", [], {'status': 'active'})
@@ -1407,10 +1366,9 @@ def filtered_payload(table, payload, allow_null_columns=None):
     columns = column_names(table)
     # The chosen tutor / coach is stored as its id (curriculum_names).
     payload, staff_nullable = curriculum_names.store_staff(table, payload, columns)
-    # Normalised schema: legacy keys become what the table stores instead
-    # (status, standard_ksb_id). No-op on the old shape.
-    payload, translated_nullable = schema_compat.translate_write(table, payload, columns)
-    allow_null_columns |= translated_nullable | staff_nullable
+    # Status values, blank keys and a mapping's standard KSB, as the table stores them.
+    payload, shaped_nullable = write_shape.normalise(table, payload, columns)
+    allow_null_columns |= shaped_nullable | staff_nullable
     return {
         key: value
         for key, value in payload.items()
@@ -5933,11 +5891,6 @@ def insert_row(table, payload):
 
 
 def update_rows(table, where_sql, where_params, payload, allow_null_columns=None):
-    if schema_compat.only_derived_copy(table, payload, column_names(table)):
-        # Normalised schema: nothing stored to refresh (see update_authoring_rows).
-        return written_rows(table, fetch_all(f'select * from {table_name(table)} where {where_sql}', where_params))
-    where_sql = schema_compat.write_where(table, where_sql, column_names(table))
-    payload = archive_state.normalise_write(table, payload)
     values = filtered_payload(table, payload, allow_null_columns=allow_null_columns)
     if not values:
         raise ValueError(f'No writable columns found for {table}.')
@@ -5951,7 +5904,6 @@ def update_rows(table, where_sql, where_params, payload, allow_null_columns=None
 
 
 def delete_rows(table, where_sql, where_params):
-    where_sql = schema_compat.write_where(table, where_sql, column_names(table))
     if table == GROUPS_TABLE:
         # A group's coach links reference it (RESTRICT): they go with it.
         group_coaches.release_groups(where_sql, where_params)
@@ -5987,17 +5939,6 @@ def soft_delete_payload(table, *, via_parent='', deleted_by='system', extra=None
         'updated_at': datetime.utcnow(),
         **(extra or {}),
     }
-    if has_column(table, 'is_programme_deleted'):
-        payload['is_programme_deleted'] = True
-    if has_column(table, 'is_archived'):
-        payload['is_archived'] = True
-    if table == 'programmes':
-        if has_column(table, 'status'):
-            payload['status'] = 'archived'
-        if has_column(table, 'is_active'):
-            payload['is_active'] = False
-    if has_column(table, 'status') and table in {'cohorts'}:
-        payload['status'] = 'archived'
     return payload
 
 
@@ -6011,8 +5952,6 @@ def restore_soft_delete_payload(table):
         payload['deleted_by'] = None
     if has_column(table, 'deleted_via_parent'):
         payload['deleted_via_parent'] = None
-    if has_column(table, 'is_programme_deleted'):
-        payload['is_programme_deleted'] = False
     return payload
 
 
@@ -6025,8 +5964,6 @@ def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', dele
         active_checks.append(archive_state.live_sql())
     if has_column(table, 'deleted_at'):
         active_checks.append(f'{quote_ident("deleted_at")} is null')
-    if has_column(table, 'is_programme_deleted'):
-        active_checks.append(f'{quote_ident("is_programme_deleted")} is distinct from true')
     if not active_checks:
         active_checks.append('1 = 1')
     guarded_where = f'({where_sql}) and (' + ' and '.join(active_checks) + ')'
@@ -6057,114 +5994,10 @@ def authoring_soft_delete(table, where_sql, params=None, *, via_parent='', delet
     return soft_delete_rows(table, where_sql, params or [], via_parent=via_parent, deleted_by=deleted_by, extra=extra)
 
 
-# A detached row's parent id. These columns are NOT NULL, so an unattached row
-# carries the empty string rather than NULL - which is also precisely what
-# ``repair_curriculum_parent_links`` already skips, so the orphan sweeper cannot
-# destroy library content.
-LIBRARY_STATE_DETACHED = 'library'
+# The "no parent" value written when a quiz or week template is unhooked from a
+# programme that is being deleted. Empty string, not NULL: those columns are
+# NOT NULL, and repair_curriculum_parent_links already skips ''.
 DETACHED_PARENT_SENTINEL = ''
-
-
-def detach_to_library_payload(
-    table,
-    *,
-    origin_module_id='',
-    origin_module_title='',
-    origin_week_id='',
-    origin_week_label='',
-):
-    """Columns that turn an owned row into an unattached, reusable one.
-
-    A library item is deliberately *not* a deleted item: the soft-delete stamps
-    are cleared, because the row is no longer archived-under-a-parent, it simply
-    has no parent. Origin is denormalised because the whole point is that the
-    parent row is going away and its title would otherwise be unrecoverable.
-
-    Every write is guarded by ``has_column`` in the same style as
-    ``soft_delete_payload``, so an environment that has not yet run migration
-    0053 degrades to a plain detach rather than raising.
-    """
-    payload = {'updated_at': datetime.utcnow()}
-    if has_column(table, 'library_state'):
-        payload['library_state'] = LIBRARY_STATE_DETACHED
-    if has_column(table, 'detached_at'):
-        payload['detached_at'] = datetime.utcnow()
-    if has_column(table, 'origin_module_catalogue_id'):
-        payload['origin_module_catalogue_id'] = clean_str(origin_module_id)
-    if has_column(table, 'origin_module_title'):
-        payload['origin_module_title'] = clean_str(origin_module_title)
-    if has_column(table, 'origin_week_id'):
-        payload['origin_week_id'] = clean_str(origin_week_id)
-    if has_column(table, 'origin_week_label'):
-        payload['origin_week_label'] = clean_str(origin_week_label)
-    # Clear the parent links. Empty string, not NULL: the columns are NOT NULL
-    # and the orphan sweeper's own guards test for ''.
-    if has_column(table, 'module_catalogue_id'):
-        payload['module_catalogue_id'] = DETACHED_PARENT_SENTINEL
-    if has_column(table, 'week_id'):
-        payload['week_id'] = DETACHED_PARENT_SENTINEL
-    # An unattached row is available, not archived.
-    if has_column(table, 'deleted_at'):
-        payload['deleted_at'] = None
-    if has_column(table, 'deleted_by'):
-        payload['deleted_by'] = None
-    if has_column(table, 'deleted_via_parent'):
-        payload['deleted_via_parent'] = None
-    if has_column(table, 'is_programme_deleted'):
-        payload['is_programme_deleted'] = False
-    return payload
-
-
-def detach_rows_to_library(table, where_sql, where_params=None, **origin):
-    """Detach matching rows into the reuse library instead of deleting them."""
-    if not table_exists(table):
-        return []
-    if not has_column(table, 'library_state') and schema_compat.uses_status_lifecycle(table, column_names(table)):
-        # Normalised schema: a week must belong to a module or free course and a
-        # component to a week (NOT NULL foreign keys). Clearing the parent would
-        # be refused by the database half-way through a delete; stop first.
-        raise schema_compat.UnsupportedOnNormalisedSchema(
-            'Permanently deleting this content would detach weeks/components into the reuse library, '
-            'which the current curriculum database does not support. It stays archived (inactive).'
-        )
-    payload = detach_to_library_payload(table, **origin)
-    if not any(column in column_names(table) for column in payload):
-        return []
-    # Already-detached rows keep their original origin stamps: a second detach
-    # would overwrite them with the parent that is being removed now, which is
-    # not where the content actually came from.
-    guarded_where = where_sql
-    if has_column(table, 'library_state'):
-        guarded_where = (
-            f'({where_sql}) and coalesce({quote_ident("library_state")}, %s) <> %s'
-        )
-    params = list(where_params or [])
-    if has_column(table, 'library_state'):
-        params = [*params, '', LIBRARY_STATE_DETACHED]
-    # allow_null_columns is required, not cosmetic: filtered_payload drops None
-    # values, so without it the soft-delete stamps would survive the detach and
-    # a programme-archived component would stay archived forever. The real path
-    # always hits this - a permanent delete is only allowed on an already
-    # archived programme, whose children are all stamped.
-    return update_rows(
-        table, guarded_where, params, payload,
-        allow_null_columns=RESTORE_NULLABLE_COLUMNS,
-    )
-
-
-def is_library_row(row):
-    """True when this week/component is detached and held for reuse."""
-    return clean_str((row or {}).get('library_state')) == LIBRARY_STATE_DETACHED
-
-
-def library_sweep_guard(table, where_sql):
-    """Narrow a destructive sweep so it can never touch detached library rows."""
-    if not has_column(table, 'library_state'):
-        return where_sql
-    return (
-        f"({where_sql}) and coalesce({quote_ident('library_state')}, '') "
-        f"<> '{LIBRARY_STATE_DETACHED}'"
-    )
 
 
 def deleted_sql_condition(table, alias=''):
@@ -6174,8 +6007,6 @@ def deleted_sql_condition(table, alias=''):
         checks.append(archive_state.inactive_sql(alias))
     if has_column(table, 'deleted_at'):
         checks.append(f'{prefix}{quote_ident("deleted_at")} is not null')
-    if has_column(table, 'is_programme_deleted'):
-        checks.append(f'{prefix}{quote_ident("is_programme_deleted")} = true')
     if has_column(table, 'is_archived'):
         checks.append(f'coalesce({prefix}{quote_ident("is_archived")}, false) = true')
     if not checks:
@@ -7057,36 +6888,31 @@ def falsey(value):
 
 
 def programme_deleted_row(row):
+    """Is this row archived? ``status`` on the curriculum tables (see
+    row_has_deleted_at); the camelCase flags are what API payloads carry."""
     return bool(row) and (
         row_has_deleted_at(row)
-        or truthy(row.get('is_programme_deleted'))
         or truthy(row.get('isProgrammeDeleted'))
-        or truthy(row.get('is_deleted'))
         or truthy(row.get('isDeleted'))
     )
 
 
 def curriculum_row_effectively_deleted(row):
-    """Is this curriculum row soft-deleted — directly, or through an ancestor?
+    """Is this curriculum row archived -- directly, or through an ancestor?
 
-    ``deleted_at`` / ``is_programme_deleted`` are the soft-delete source of
-    truth (curriculum_api 0040/0041) and ``is_archived`` is the archive signal
-    that programmes, and legacy cohorts, carry instead. Parent-driven deletion
-    needs no join: the cascade stamps the child row itself and records the
-    ancestor in ``deleted_via_parent``, so a row deleted via its programme reads
-    as deleted here too.
+    ``status`` is the archive record. Parent-driven archiving needs no join: the
+    cascade sets the child row's own status (and history records the ancestor),
+    so a row archived with its programme reads as archived here too.
 
     This is the predicate the parent-link repair uses to decide what it may
-    touch and what it may point at. It never *changes* delete state — restoring
-    is a separate, explicit operation (``restore_soft_delete_payload``).
+    touch and what it may point at. It never *changes* archive state --
+    restoring is a separate, explicit operation (``restore_soft_delete_payload``).
     """
-    return programme_deleted_row(row) or truthy(row.get('is_archived'))
+    return programme_deleted_row(row)
 
 
 def is_operational_training_row(row):
     if programme_deleted_row(row):
-        return False
-    if truthy(row.get('is_archived')):
         return False
 
     meta = row.get('_meta', {})
@@ -7101,23 +6927,10 @@ def is_operational_training_row(row):
     return True
 
 
-def programme_config_explicit_archive_flag(config):
-    if not config:
-        return None
-    for key in ('is_archived', 'is_archive'):
-        if key in config:
-            return truthy(config.get(key))
-    return None
-
-
 def is_archived_program_config(config):
-    # programmes.is_archived is the display source of truth: FALSE means show.
-    explicit_archive = programme_config_explicit_archive_flag(config)
-    if explicit_archive is not None:
-        return explicit_archive
+    """Is this programme archived? ``status`` is its archive record."""
     return bool(config) and (
         row_has_deleted_at(config)
-        or truthy(config.get('deleted_at'))
         or truthy(config.get('archived'))
         or clean_str(config.get('status')).lower() in {'archived', 'inactive'}
     )
@@ -7151,8 +6964,6 @@ def programme_status_from_payload(payload, current=None, default='active'):
 def programme_config_status(config):
     if is_archived_program_config(config):
         return 'archived'
-    if programme_config_explicit_archive_flag(config) is False:
-        return 'active'
     status = normalise_programme_status((config or {}).get('status'), '')
     if status:
         return status
@@ -7362,20 +7173,16 @@ def soft_delete_programme_authoring_structure(identifier, programme=None, config
              where module_catalogue_id in ({scoped_modules_sql})
                 or week_id in ({scoped_weeks_sql})
         '''
+        # A mapping hangs off its component only; the scoped components already
+        # cover the programme's modules and weeks.
         result['ksbMappings'] = len(authoring_soft_delete(
             AUTHORING_KSB_MAPPINGS_TABLE,
             f'''
-            module_catalogue_id in (
-                {scoped_modules_sql}
-            )
-            or week_id in (
-                {scoped_weeks_sql}
-            )
-            or component_id in (
+            component_id in (
                 {scoped_components_sql}
             )
             ''',
-            [*params, *params, *params, *params, *params, *params, *params, *params],
+            [*params, *params, *params, *params],
             via_parent=programme_id,
             deleted_by='programme-delete',
         ))
@@ -7410,10 +7217,6 @@ def restore_rows_via_parent(table, parent_id, bounds=None):
     if not has_column(table, 'deleted_via_parent'):
         return []
     payload = restore_soft_delete_payload(table)
-    if has_column(table, 'is_archived'):
-        payload['is_archived'] = False
-    if has_column(table, 'status') and table in {'cohorts'}:
-        payload['status'] = 'active'
     where_sql = f'{quote_ident("deleted_via_parent")} = %s'
     where_params = [parent_id]
     if bounds is not None and has_column(table, 'deleted_at'):
@@ -7725,138 +7528,52 @@ def programme_permanent_delete_plan(identifier, programme=None, config=None):
         curriculum_in_clause('group_id', child['groupIds']),
         curriculum_in_clause('module_catalogue_id', child['moduleIds']),
     ])
-    plan['origins'] = programme_permanent_delete_origins(child)
     plan['blockers'] = programme_permanent_delete_blockers(child)
     plan['learners'] = parse_int(programme_dependency_counts(identifier, config).get('learners'), 0)
     return plan
 
 
-def programme_permanent_delete_origins(child_ids):
-    """Human-readable labels for the parents that are about to be removed.
-
-    Content detached into the library keeps a denormalised note of where it came
-    from, and this is the only moment that note can be taken: once the module
-    and week rows are gone their titles are unrecoverable.
-    """
-    origins = {'modules': {}, 'weeks': {}}
-    module_ids = child_ids.get('moduleIds') or []
-    week_ids = child_ids.get('weekIds') or []
-    if module_ids and table_exists(AUTHORING_MODULES_TABLE):
-        where_sql, params = curriculum_where_any([
-            curriculum_in_clause('module_catalogue_id', module_ids),
-        ])
-        if where_sql:
-            for row in fetch_all(
-                f'select module_catalogue_id, title from {table_name(AUTHORING_MODULES_TABLE)} where {where_sql}',
-                params,
-            ):
-                origins['modules'][clean_str(row.get('module_catalogue_id'))] = clean_str(row.get('title'))
-    if week_ids and table_exists(AUTHORING_WEEKS_TABLE):
-        where_sql, params = curriculum_where_any([curriculum_in_clause('id', week_ids)])
-        if where_sql:
-            for row in fetch_all(
-                f'select id, week_number, title from {table_name(AUTHORING_WEEKS_TABLE)} where {where_sql}',
-                params,
-            ):
-                origins['weeks'][clean_str(row.get('id'))] = component_week_label(row)
-    return origins
+class ProgrammeContentRetained(Exception):
+    """A programme that still owns weeks or components cannot be deleted permanently."""
 
 
-def detach_programme_content_to_library(plan, removed):
-    """Move authored content out of a dying programme instead of destroying it.
+PROGRAMME_CONTENT_RETAINED_MESSAGE = (
+    'This programme still has weeks and components. Authored content always belongs to its '
+    'module on the current curriculum database, so it cannot be deleted permanently and '
+    'stays archived.'
+)
 
-    Weeks and components are the reusable output of Curriculum Studio and an
-    author may well want them again in a different module, so a permanent
-    programme delete detaches them into the library rather than deleting them.
-    They keep a denormalised note of where they came from, taken from
-    ``plan['origins']`` while the parent rows still exist.
 
-    Quizzes are detached too, by clearing their programme and week. They are
-    already standalone rows carrying learner attempts, and their questions and
-    answers hang off them by ``ON DELETE CASCADE`` - a cascade that from here on
-    simply never fires for a programme delete.
+def refuse_if_programme_owns_content(plan):
+    """Stop a permanent delete, before anything is written, if content would be lost.
+
+    Weeks and components are the reusable output of Curriculum Studio. Every week
+    belongs to a module and every component to a week (NOT NULL, RESTRICT), so
+    they cannot outlive the programme being deleted.
     """
     child = plan.get('childIds') or {}
-    origins = plan.get('origins') or {}
-    module_titles = origins.get('modules') or {}
-    week_labels = origins.get('weeks') or {}
+    for table, ids in ((AUTHORING_WEEKS_TABLE, child.get('weekIds')),
+                       (AUTHORING_COMPONENTS_TABLE, child.get('componentIds'))):
+        where_sql, params = curriculum_where_any([curriculum_in_clause('id', ids or [])])
+        if where_sql and table_exists(table) and fetch_all(
+            f'select 1 from {table_name(table)} where {where_sql} limit 1', params,
+        ):
+            raise ProgrammeContentRetained(PROGRAMME_CONTENT_RETAINED_MESSAGE)
+
+
+def unhook_programme_reusables(plan, removed):
+    """Keep the quizzes and week templates of a dying programme, unhooked from it.
+
+    Quizzes are already standalone rows carrying learner attempts, and their
+    questions and answers hang off them by ``ON DELETE CASCADE`` - a cascade
+    that from here on simply never fires for a programme delete.
+    """
+    child = plan.get('childIds') or {}
     week_ids = child.get('weekIds') or []
-    component_ids = set(child.get('componentIds') or [])
 
     def count(table, rows):
         if rows:
             removed[table] = removed.get(table, 0) + len(rows)
-
-    # Components carry their own week, so detach one week at a time to stamp the
-    # right origin on each. A programme has tens of weeks, not thousands.
-    detached_component_ids = set()
-    if component_ids and table_exists(AUTHORING_COMPONENTS_TABLE):
-        for week_id in week_ids:
-            rows = authoring_fetch_all(
-                AUTHORING_COMPONENTS_TABLE, 'week_id = %s', [week_id],
-            )
-            matching = [row for row in rows if clean_str(row.get('id')) in component_ids]
-            if not matching:
-                continue
-            ids = [clean_str(row.get('id')) for row in matching]
-            # Every component in a week shares its module, so the first matching
-            # row settles it - but read it from a row we are actually detaching.
-            module_id = clean_str(matching[0].get('module_catalogue_id'))
-            placeholders = ', '.join(['%s'] * len(ids))
-            count(AUTHORING_COMPONENTS_TABLE, detach_rows_to_library(
-                AUTHORING_COMPONENTS_TABLE,
-                f'id in ({placeholders})',
-                ids,
-                origin_module_id=module_id,
-                origin_module_title=module_titles.get(module_id, ''),
-                origin_week_id=week_id,
-                origin_week_label=week_labels.get(week_id, ''),
-            ))
-            detached_component_ids.update(ids)
-        # A component attached to the module but to no surviving week still has
-        # to come along, or it would be left pointing at a module that is gone.
-        # Grouped by module so these keep a provenance label too.
-        stragglers = component_ids - detached_component_ids
-        if stragglers:
-            by_module = defaultdict(list)
-            where_sql, params = curriculum_where_any([
-                curriculum_in_clause('id', sorted(stragglers)),
-            ])
-            if where_sql:
-                for row in fetch_all(
-                    f'select id, module_catalogue_id from {table_name(AUTHORING_COMPONENTS_TABLE)} where {where_sql}',
-                    params,
-                ):
-                    by_module[clean_str(row.get('module_catalogue_id'))].append(clean_str(row.get('id')))
-            for module_id, ids in by_module.items():
-                placeholders = ', '.join(['%s'] * len(ids))
-                count(AUTHORING_COMPONENTS_TABLE, detach_rows_to_library(
-                    AUTHORING_COMPONENTS_TABLE,
-                    f'id in ({placeholders})',
-                    ids,
-                    origin_module_id=module_id,
-                    origin_module_title=module_titles.get(module_id, ''),
-                ))
-
-    # Weeks, grouped by the module that is going away.
-    if week_ids and table_exists(AUTHORING_WEEKS_TABLE):
-        weeks_by_module = defaultdict(list)
-        where_sql, params = curriculum_where_any([curriculum_in_clause('id', week_ids)])
-        if where_sql:
-            for row in fetch_all(
-                f'select id, module_catalogue_id from {table_name(AUTHORING_WEEKS_TABLE)} where {where_sql}',
-                params,
-            ):
-                weeks_by_module[clean_str(row.get('module_catalogue_id'))].append(clean_str(row.get('id')))
-        for module_id, ids in weeks_by_module.items():
-            placeholders = ', '.join(['%s'] * len(ids))
-            count(AUTHORING_WEEKS_TABLE, detach_rows_to_library(
-                AUTHORING_WEEKS_TABLE,
-                f'id in ({placeholders})',
-                ids,
-                origin_module_id=module_id,
-                origin_module_title=module_titles.get(module_id, ''),
-            ))
 
     # Quizzes: unhook from the programme and week, keep the quiz.
     if table_exists('quizzes'):
@@ -7886,19 +7603,20 @@ def detach_programme_content_to_library(plan, removed):
 
 
 def permanently_delete_programme_structure(plan):
-    """Delete an archived programme, and detach the content authored under it.
+    """Delete an archived programme that no longer owns authored content.
 
     The order is dictated by the foreign keys migration 0038 added (children
     first, ON DELETE RESTRICT). That ordering is exactly what a hand-written
     ``delete from curriculum.programmes`` cannot supply, which is why Postgres
     answers it with ``cohorts_programme_id_fkey``.
 
-    Authored content is *not* deleted. Weeks, components, quizzes and week
-    templates are detached into the reuse library by
-    ``detach_programme_content_to_library``; the delivery scaffolding around them
-    - the programme, cohorts, groups, modules, live sessions and link rows - is
-    what actually goes. Deleting a live session still takes its occurrences,
-    attendance, artifacts and recording events with it by cascade.
+    Authored content is *not* deleted: a programme that still owns weeks or
+    components is refused whole (``refuse_if_programme_owns_content``). Quizzes
+    and week templates are kept, unhooked from it (``unhook_programme_reusables``);
+    the delivery scaffolding - the programme, cohorts, groups, modules, live
+    sessions and link rows - is what actually goes. Deleting a live session
+    still takes its occurrences, attendance, artifacts and recording events with
+    it by cascade.
 
     The link tables are cleared explicitly first, because a link may point at
     this programme's module from a quiz that belongs to another programme.
@@ -7906,7 +7624,7 @@ def permanently_delete_programme_structure(plan):
     ``ksb_mappings`` is still wiped, and that loses nothing: since 0042 a
     component owns its mappings in its own ``ksb_mappings`` JSONB column and
     that table is a projection of it (``component_ksb_mappings_from_row``
-    prefers the JSONB). Detached components keep their KSBs.
+    prefers the JSONB).
 
     Learner accounts, progress and enrolment rows are never touched. The
     training-plan tables that reference this content are RESTRICT-guarded and
@@ -7922,6 +7640,12 @@ def permanently_delete_programme_structure(plan):
         where_sql, params = curriculum_where_any(clauses)
         if not where_sql or not table_exists(table):
             return
+        # Links that reference these rows with RESTRICT go first, as in
+        # authoring_delete: a cohort's holiday choices, a group's coaches.
+        if table == COHORT_AUTHORING_DETAILS_TABLE:
+            calendar_holidays.release_cohorts(where_sql, params)
+        if table == GROUPS_TABLE:
+            group_coaches.release_groups(where_sql, params)
         rows = delete_rows(table, where_sql, params)
         log_curriculum_storage('hard_delete', table, rows=rows)
         if rows:
@@ -7932,10 +7656,13 @@ def permanently_delete_programme_structure(plan):
     week_clause = curriculum_in_clause('week_id', child.get('weekIds'))
     component_clause = curriculum_in_clause('component_id', child.get('componentIds'))
 
-    # Detach first, while the module and week rows are still here to be read.
-    detach_programme_content_to_library(plan, removed)
+    # Refuse before anything is written, then unhook what is kept.
+    refuse_if_programme_owns_content(plan)
+    unhook_programme_reusables(plan, removed)
 
-    wipe(AUTHORING_KSB_MAPPINGS_TABLE, [module_clause, week_clause, component_clause])
+    # Mappings are placed by component; the plan's componentIds already hold
+    # every component of the programme's modules and weeks.
+    wipe(AUTHORING_KSB_MAPPINGS_TABLE, [component_clause])
     wipe('quiz_component_links', [component_clause])
     wipe('quiz_course_links', [module_clause, week_clause])
     wipe('tutor_module_notifications', [module_clause])
@@ -8026,11 +7753,10 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
         # programme then keeps its card on the list until that entry ages out --
         # which is exactly what makes a discarded run look like it was saved.
         invalidate_curriculum_cache()
-    except schema_compat.UnsupportedOnNormalisedSchema as exc:
-        # Normalised schema: weeks/components cannot be detached into the reuse
-        # library, so a programme that still owns authored content is refused
-        # whole (the transaction rolled back) and stays archived.
-        logger.info('Permanent delete of programme %s refused on the current schema: %s', identifier, exc)
+    except ProgrammeContentRetained as exc:
+        # The programme still owns authored content: refused whole (nothing was
+        # written) and it stays archived.
+        logger.info('Permanent delete of programme %s refused: %s', identifier, exc)
         return json_error(
             str(exc), status=409, reason='programme-content-cannot-detach',
             deleted=False, permanent=False, id=clean_str(identifier),
@@ -8429,39 +8155,6 @@ def ksb_profile_context_ids(profile, key, primary_value=''):
     if not isinstance(values, list):
         values = []
     return unique([clean_str(primary_value), *[clean_str(value) for value in values]])
-
-
-def payload_context_ids(payload, camel_key, snake_key, single_keys=()):
-    values = payload.get(camel_key)
-    if values is None:
-        values = payload.get(snake_key)
-    if not isinstance(values, list):
-        values = []
-    singles = [payload.get(key) for key in single_keys]
-    return unique([*[clean_str(value) for value in values], *[clean_str(value) for value in singles]])
-
-
-def unlink_programmes_from_other_ksb_profiles(active_profile_id, programme_values):
-    targets = {normalise(value) for value in programme_values if normalise(value)}
-    if not targets:
-        return
-    for row in get_ksb_profile_rows():
-        row_id = clean_str(row.get('id'))
-        if row_id == clean_str(active_profile_id):
-            continue
-        current_context = ksb_profile_context_ids(row, 'programme_ids')
-        current_values = unique(current_context)
-        if not any(normalise(value) in targets for value in current_values):
-            continue
-        next_context = [value for value in current_context if normalise(value) not in targets]
-        update_rows('ksb_profiles', 'id = %s', [row_id], {
-            'programme_ids': json.dumps(next_context),
-            'updated_at': datetime.utcnow(),
-        })
-
-
-def cascade_ksb_profile_source_to_programme_modules(programme_values, source_id):
-    return set_programme_modules_ksb_source(programme_values, source_id)
 
 
 def set_programme_modules_ksb_source(programme_values, source_value):
@@ -9018,8 +8711,7 @@ def authoring_modules_as_training_rows(*, ensure_tables=True, module_rows=None, 
             'session_end_time': group.get('session_end_time') or schedule_time_parts(group.get('schedule'))[1],
             'session_ksb_json': '[]',
             'notes': append_notes_meta(module.get('description') or '', meta),
-            'is_archived': clean_str(module.get('status')).lower() == 'archived',
-            'is_programme_deleted': is_programme_deleted,
+            'isProgrammeDeleted': is_programme_deleted,
             TRAINING_MODULE_CATALOGUE_COLUMN: module_id,
             'programme_display_order': None,
             'cohort_display_order': None,
@@ -9036,8 +8728,7 @@ def authoring_modules_as_training_rows(*, ensure_tables=True, module_rows=None, 
 # never ships the week descriptions and content (~4 MB) none of them looks at.
 # Columns a table lacks are dropped by authoring_fetch_all().
 WEEK_INDEX_COLUMNS = [
-    'id', 'module_catalogue_id', 'display_order', 'week_number', 'title',
-    'deleted_at', 'is_programme_deleted', 'is_deleted', 'library_state',
+    'id', 'module_catalogue_id', 'display_order', 'week_number', 'title', 'status',
 ]
 
 
@@ -9081,7 +8772,7 @@ def authoring_modules_as_catalogue_rows(*, module_rows=None, week_rows=None):
             'Notes': module.get('description') or '',
             'session_names_json': json_db_value(session_names),
             'session_ksb_json': '[]',
-            'is_programme_deleted': programme_deleted_row(module),
+            'isProgrammeDeleted': programme_deleted_row(module),
         })
     return rows
 
@@ -10468,7 +10159,7 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
         ksb_total = len(required_ksb_codes)
         profile_source = ksb_profile_source_id(profile) if profile else ''
         config_archived = is_archived_program_config(config)
-        config_active = not (config and 'is_active' in config and falsey(config.get('is_active')))
+        config_active = not config_archived
         archived = (rows and not operational_rows and not config) or (not rows and config_archived)
         # An explicitly archived programme is hidden from the operational list.
         # include_config_only is set when visibility == 'all', which is the
@@ -14192,16 +13883,6 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
         holiday_period_end,
     )
     training_plan_ids = [clean_str(row.get('id')) for row in rows if row.get('id') not in (None, '')]
-    module_names = sorted({
-        clean_str(row.get('module_name'))
-        for row in rows
-        if clean_str(row.get('module_name'))
-    })
-    group_ids = sorted({
-        clean_str(group.get('id'))
-        for group in groups
-        if clean_str(group.get('id'))
-    })
     programme_name = clean_str(cohort.get('programme') or next((row.get('Program') for row in rows if row), ''))
     programme_source_id = canonical_programme_id(meta.get('program_id') or meta.get('programme_id') or cohort.get('programmeId'), programme_name)
     if (not programme_source_id or programme_source_id.lower().startswith('program-')) and rows:
@@ -14213,20 +13894,15 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
         'cohort_id': clean_str(cohort.get('id') or meta.get('cohort_id')),
         'cohort_name': clean_str(cohort.get('name') or next((row.get('Cohort_name') for row in rows if row), '')),
         'programme_id': programme_source_id or clean_str(cohort.get('programmeId')),
-        'programme_name': programme_name,
         'start_date': start_date or None,
         'end_date': end_date or None,
         'duration_months': holiday_period_months,
         'color': cohort.get('color') or meta.get('cohort_color') or '',
         'status': cohort.get('status') or 'planned',
-        'training_plan_ids': json_db_value(training_plan_ids),
-        'group_ids': json_db_value(group_ids or cohort.get('groups') or []),
-        'module_names': json_db_value(module_names or cohort.get('modules') or []),
+        # A cohort's holiday choices are stored in cohort_calendar_holidays
+        # (calendar_holidays.store_cohort_choices).
         'holiday_ids': json_db_value(holiday_info['holidayIds']),
-        'selected_holidays': json_db_value(holiday_info['selectedHolidays']),
-        'holidays_in_range': json_db_value(holiday_info['holidaysInRange']),
         'excluded_holiday_ids': json_db_value(holiday_info['excludedHolidayIds']),
-        'holiday_summary': json_db_value(holiday_info['summary']),
         'notes': next((clean_str(row.get('notes')) for row in rows if clean_str(row.get('notes'))), ''),
         'source_type': 'curriculum_authoring',
         'source_id': training_plan_ids[0] if training_plan_ids else '',
@@ -14385,7 +14061,6 @@ def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
     existing_group = fetch_group_row(group_id) or {}
     group_name = clean_str(group.get('name') or group.get('groupName') or group.get('group_name') or meta.get('group_name') or group_id)
     cohort_id = clean_str(group.get('cohortId') or group.get('cohort_id') or meta.get('cohort_id'))
-    cohort_name = clean_str(group.get('cohort') or group.get('cohortName') or group.get('cohort_name') or first_row.get('Cohort_name'))
     programme_name = clean_str(group.get('programme') or group.get('programmeName') or group.get('programme_name') or first_row.get('Program'))
     programme_id = canonical_programme_id(
         meta.get('program_id') or meta.get('programme_id') or group.get('programmeId') or group.get('programme_id'),
@@ -14396,15 +14071,6 @@ def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
             programme_id = canonical_programme_id(programme_identity(rows[0], program_config_by_id(get_program_config_rows())).get('sourceId'), programme_name)
         except (Exception, AssertionError):
             pass
-    module_ids = unique([
-        row.get('module_catalogue_id')
-        for row in module_rows
-        if row.get('module_catalogue_id')
-    ])
-    module_names = unique([
-        *[row.get('title') for row in module_rows if row.get('title')],
-        *[name for name in (group.get('modules') or []) if name],
-    ])
     source_ids = unique([
         *[row.get('id') for row in rows if row.get('id') not in (None, '')],
         *[row.get('source_id') for row in module_rows if row.get('source_id')],
@@ -14413,18 +14079,13 @@ def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
         'group_id': group_id,
         'group_name': group_name,
         'cohort_id': cohort_id,
-        'cohort_name': cohort_name,
         'programme_id': programme_id or clean_str(group.get('programmeId') or group.get('programme_id')),
-        'programme_name': programme_name,
-        'module_ids': json_db_value(module_ids),
-        'module_names': json_db_value(module_names),
         'coach_name': canonical_group_coaches(group.get('coach') or group.get('coachName') or first_row.get('coach_name') or existing_group.get('coach_name')),
         'session_week_day': clean_str(group.get('weekDays') or group.get('deliveryDays') or group.get('sessionWeekDay') or group.get('session_week_day') or schedule_day_part(group.get('schedule')) or existing_group.get('session_week_day') or schedule_day_part(existing_group.get('schedule'))),
         'session_start_time': clean_str(group.get('startTime') or group.get('start_time') or group.get('sessionStartTime') or group.get('session_start_time') or existing_group.get('session_start_time') or schedule_time_parts(group.get('schedule') or existing_group.get('schedule'))[0]),
         'session_end_time': clean_str(group.get('endTime') or group.get('end_time') or group.get('sessionEndTime') or group.get('session_end_time') or existing_group.get('session_end_time') or schedule_time_parts(group.get('schedule') or existing_group.get('schedule'))[1]),
         'color': clean_str(group.get('color') or existing_group.get('color')),
         'status': clean_str(group.get('status') or existing_group.get('status')) or 'planned',
-        'is_programme_deleted': truthy(group.get('isProgrammeDeleted') or group.get('is_programme_deleted') or existing_group.get('is_programme_deleted')),
         'notes': clean_str(first_row.get('notes') or group.get('notes')),
         'source_type': 'curriculum_authoring',
         'source_id': source_ids[0] if source_ids else '',
@@ -14943,9 +14604,7 @@ def ensure_programme_config_for_authoring(programme_name, programme_id=None, sta
         key_value = existing.get(key_column)
         wanted = {
             'name': name,
-            'is_archived': programme_status_is_archived(programme_status),
             'status': programme_status,
-            'is_active': programme_status_is_active(programme_status),
         }
         # Only when something differs. Every module save calls this, and an
         # unconditional UPDATE held the programme row locked for the rest of the
@@ -14980,11 +14639,9 @@ def ensure_programme_config_for_authoring(programme_name, programme_id=None, sta
         'id': source_id,
         'program_id': source_id,
         'name': name,
-        'is_archived': programme_status_is_archived(programme_status),
         'color': '#6941c6',
         'description': '',
         'status': programme_status,
-        'is_active': programme_status_is_active(programme_status),
         'created_at': now,
         'updated_at': now,
     })
@@ -15100,9 +14757,6 @@ def authoring_component_counts_by_catalogue():
         deleted = deleted_sql_condition(AUTHORING_COMPONENTS_TABLE)
         if deleted != 'false':
             clauses.append(f'not ({deleted})')
-        if has_column(AUTHORING_COMPONENTS_TABLE, 'library_state'):
-            clauses.append(f"coalesce({quote_ident('library_state')}, '') <> %s")
-            params.append(LIBRARY_STATE_DETACHED)
         retired = sorted(RETIRED_COMPONENT_TYPES)
         if retired:
             placeholders = ', '.join(['%s'] * len(retired))
@@ -15229,167 +14883,63 @@ def ensure_module_authoring_tables():
     provision_module_authoring_tables()
 
 
-# Columns that let a week or component be detached from its parent and kept for
-# reuse instead of destroyed. Mirrors migration 0053; kept in sync by hand
-# because these tables are ``managed = False`` and this bootstrap is what the
-# SQLite test runner provisions from.
-LIBRARY_COLUMN_DDL = (
-    ('library_state', "varchar(16) not null default ''"),
-    ('detached_at', 'timestamp with time zone'),
-    ('origin_module_catalogue_id', 'varchar(128)'),
-    # text, not varchar(n): a component or week label is authored prose (a whole
-    # KSB statement, routinely), and a copy that outgrows the column fails the
-    # save outright. See 2026-09-22_widen_curriculum_titles.sql.
-    ('origin_module_title', 'text'),
-    ('origin_week_id', 'varchar(128)'),
-    ('origin_week_label', 'text'),
-    ('copied_from_id', 'varchar(128)'),
-)
-
-
-def provision_library_columns(cursor, table):
-    """Add the library/detach columns to a weeks-or-components table.
-
-    The column cache is dropped afterwards: every detach helper decides what to
-    write through ``has_column``, so a cache entry captured before these columns
-    landed would make the detach silently skip them.
-    """
-    if connection.vendor == 'postgresql':
-        for column, column_type in LIBRARY_COLUMN_DDL:
-            cursor.execute(
-                f'alter table {authoring_table_name(table)} '
-                f'add column if not exists {quote_ident(column)} {column_type}'
-            )
-    else:
-        cursor.execute(f'pragma table_info({quote_ident(table)})')
-        existing = {row[1] for row in cursor.fetchall()}
-        for column, column_type in LIBRARY_COLUMN_DDL:
-            if column in existing:
-                continue
-            cursor.execute(
-                f'alter table {authoring_table_name(table)} '
-                f'add column {quote_ident(column)} {column_type}'
-            )
-    _TABLE_COLUMNS_CACHE.pop(table, None)
-    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
-
-
 def provision_module_authoring_tables():
-    """Create/upgrade the module-authoring schema. NOT for request paths.
+    """Create the module-authoring schema in its current shape. NOT for request paths.
 
     Only reached from the SQLite test runner or an explicit local opt-in
     (CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP). Production provisions the same
     objects through migrations.
+
+    The columns mirror the current curriculum database: ``status`` is the archive
+    record (``active`` / ``inactive``; cohorts also ``planned``), children hold
+    their parents' ids and read names through them, a module names its tutor by
+    ``tutor_id``, a group's coaches live in ``group_coaches``, a cohort's holiday
+    choices in ``cohort_calendar_holidays``, and a KSB mapping belongs to its
+    component and points at ``standard_ksbs``. Foreign keys are left out so the
+    SQLite harness can seed rows in any order; ``standard_ksb_id`` is nullable
+    here because the harness carries no Skills England catalogue to resolve it.
     """
     global _AUTHORING_TABLES_READY
     if _AUTHORING_TABLES_READY:
         return
     json_type = authoring_json_type()
+    postgres = connection.vendor == 'postgresql'
+    serial_key = 'bigserial primary key' if postgres else 'integer primary key autoincrement'
     with connection.cursor() as cursor:
-        if connection.vendor == 'postgresql':
+        if postgres:
             cursor.execute(f'create schema if not exists {quote_ident(CURRICULUM_SCHEMA)}')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_MODULES_TABLE)} (
                 module_catalogue_id varchar(128) primary key,
                 programme_id varchar(255),
-                programme_name varchar(255),
-                is_programme_deleted boolean not null default false,
-                cohort_id varchar(255),
-                cohort_name varchar(255),
-                group_id varchar(255),
-                group_name varchar(255),
-                learner_roster_mode varchar(32) not null default 'inherited',
-                teams_shared_source_module_id varchar(128),
-                ksb_remap_report text,
-                tutor_name varchar(255),
-                tutor_email varchar(320),
                 title text not null,
                 description text,
-                color varchar(32),
-                cover_image_url text,
+                quality_score integer not null default 0,
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp,
                 sessions_number integer not null default 0,
                 start_date date,
                 end_date date,
-                total_otjh numeric(8,2) not null default 0,
-                quality_score integer not null default 0,
-                ksb_profile_source_id varchar(128),
+                cohort_id varchar(255),
+                group_id varchar(255),
+                color varchar(32),
                 session_week_day varchar(255),
                 session_start_time varchar(32),
                 session_end_time varchar(32),
-                weekly_schedule {json_type},
+                ksb_profile_source_id varchar(128),
                 source_type varchar(64),
                 source_id varchar(255),
-                created_at timestamp not null default current_timestamp,
-                updated_at timestamp not null default current_timestamp
+                cover_image_url text,
+                weekly_schedule {json_type},
+                session_holidays {json_type},
+                session_overrides {json_type} not null default '{{}}',
+                learner_roster_mode varchar(32) not null default 'inherited',
+                teams_shared_source_module_id varchar(128),
+                ksb_remap_report text,
+                status varchar(32) not null default 'active',
+                tutor_id varchar(128)
             )
         ''')
-        if connection.vendor == 'postgresql':
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists sessions_number integer not null default 0')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists start_date date')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists end_date date')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists cohort_id varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists cohort_name varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists group_id varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists group_name varchar(255)')
-            cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists learner_roster_mode varchar(32) not null default 'inherited'")
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists teams_shared_source_module_id varchar(128)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_remap_report text')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_profile_source_id varchar(128)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_week_day varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_end_time varchar(32)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists weekly_schedule {json_type}')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_type varchar(64)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_id varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_name varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_email varchar(320)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists is_programme_deleted boolean not null default false')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists cover_image_url text')
-        else:
-            cursor.execute(f'pragma table_info({quote_ident(AUTHORING_MODULES_TABLE)})')
-            columns = {row[1] for row in cursor.fetchall()}
-            if 'sessions_number' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column sessions_number integer not null default 0')
-            if 'start_date' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column start_date date')
-            if 'end_date' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column end_date date')
-            if 'cohort_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column cohort_id varchar(255)')
-            if 'cohort_name' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column cohort_name varchar(255)')
-            if 'group_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column group_id varchar(255)')
-            if 'group_name' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column group_name varchar(255)')
-            if 'learner_roster_mode' not in columns:
-                cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column learner_roster_mode varchar(32) not null default 'inherited'")
-            if 'teams_shared_source_module_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column teams_shared_source_module_id varchar(128)')
-            if 'ksb_remap_report' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_remap_report text')
-            if 'ksb_profile_source_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_profile_source_id varchar(128)')
-            if 'session_week_day' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_week_day varchar(255)')
-            if 'session_start_time' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_start_time varchar(32)')
-            if 'session_end_time' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_end_time varchar(32)')
-            if 'weekly_schedule' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column weekly_schedule {json_type}')
-            if 'source_type' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column source_type varchar(64)')
-            if 'source_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column source_id varchar(255)')
-            if 'tutor_name' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column tutor_name varchar(255)')
-            if 'tutor_email' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column tutor_email varchar(320)')
-            if 'is_programme_deleted' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column is_programme_deleted boolean not null default false')
-            if 'cover_image_url' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column cover_image_url text')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(MODULE_TEAMS_SHARES_TABLE)} (
                 module_catalogue_id varchar(128) primary key,
@@ -15417,27 +14967,14 @@ def provision_module_authoring_tables():
                 summary text,
                 learning_outcomes {json_type},
                 display_order integer not null default 0,
-                is_programme_deleted boolean not null default false,
                 created_at timestamp not null default current_timestamp,
-                updated_at timestamp not null default current_timestamp
+                updated_at timestamp not null default current_timestamp,
+                copied_from_id varchar(128),
+                holiday_note_enabled boolean not null default false,
+                holiday_note text not null default '',
+                status varchar(32) not null default 'active'
             )
         ''')
-        if connection.vendor == 'postgresql':
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists is_programme_deleted boolean not null default false')
-            # The author's holiday hint. Mirrors sql/2026-09-22_week_holiday_note.sql,
-            # where Neon is the source of truth.
-            cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists holiday_note_enabled boolean not null default false")
-            cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists holiday_note text not null default ''")
-        else:
-            cursor.execute(f'pragma table_info({quote_ident(AUTHORING_WEEKS_TABLE)})')
-            columns = {row[1] for row in cursor.fetchall()}
-            if 'is_programme_deleted' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column is_programme_deleted boolean not null default false')
-            if 'holiday_note_enabled' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column holiday_note_enabled boolean not null default false')
-            if 'holiday_note' not in columns:
-                cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column holiday_note text not null default ''")
-        provision_library_columns(cursor, AUTHORING_WEEKS_TABLE)
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (
                 id varchar(128) primary key,
@@ -15449,243 +14986,51 @@ def provision_module_authoring_tables():
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,
                 reflection_required boolean not null default false,
-                "Reflection_Question" text,
                 workplace_evidence_required boolean not null default false,
                 tutor_validation_required boolean not null default false,
-                coach_validation_required boolean not null default true,
                 display_order integer not null default 0,
-                is_programme_deleted boolean not null default false,
                 settings_json {json_type},
-                live_sessions_link text,
                 created_at timestamp not null default current_timestamp,
-                updated_at timestamp not null default current_timestamp
+                updated_at timestamp not null default current_timestamp,
+                live_sessions_link text,
+                copied_from_id varchar(128),
+                "Reflection_Question" text,
+                coach_validation_required boolean not null default true,
+                status varchar(32) not null default 'active'
             )
         ''')
-        if connection.vendor == 'postgresql':
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists reflection_required boolean not null default false
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists "Reflection_Question" text
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists workplace_evidence_required boolean not null default false
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists tutor_validation_required boolean not null default false
-            ''')
-            # Default true: coach validation is on for every component unless an
-            # author deliberately turns it off, so rows that predate the column
-            # come back on rather than silently unvalidated.
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists coach_validation_required boolean not null default true
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists settings_json {json_type}
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists live_sessions_link text
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists is_programme_deleted boolean not null default false
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
-                add column if not exists ksb_mappings {json_type} not null default '[]'::jsonb
-            ''')
-            # NOTE: a live_sessions_link backfill from settings_json used to run
-            # here on every cold start. Removed as a runtime data migration; it
-            # matches 0 rows in production (verified 2026-08-16). Reinstate as an
-            # explicit data migration if the need ever returns.
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} alter column expected_otjh set default 2')
-        else:
-            cursor.execute(f'pragma table_info({quote_ident(AUTHORING_COMPONENTS_TABLE)})')
-            columns = {row[1] for row in cursor.fetchall()}
-            if 'reflection_required' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column reflection_required boolean not null default false')
-            if REFLECTION_QUESTION_COLUMN not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column {quote_ident(REFLECTION_QUESTION_COLUMN)} text')
-            if 'workplace_evidence_required' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column workplace_evidence_required boolean not null default false')
-            if 'tutor_validation_required' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column tutor_validation_required boolean not null default false')
-            if 'coach_validation_required' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column coach_validation_required boolean not null default true')
-            if 'settings_json' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column settings_json {json_type}')
-            if 'live_sessions_link' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column live_sessions_link text')
-            if 'is_programme_deleted' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column is_programme_deleted boolean not null default false')
-            if 'ksb_mappings' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column ksb_mappings {json_type}')
-        provision_library_columns(cursor, AUTHORING_COMPONENTS_TABLE)
+        cursor.execute(f'''
+            create table if not exists {authoring_table_name('standard_ksbs')} (
+                id {serial_key},
+                standard_ref text not null,
+                standard_version text not null default '',
+                standard_title text,
+                status text,
+                date_updated text,
+                ksb_code text not null,
+                ksb_type text not null default '',
+                ksb_description text not null default '',
+                created_at timestamp default current_timestamp,
+                updated_at timestamp default current_timestamp
+            )
+        ''')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (
                 id varchar(128) primary key,
-                module_catalogue_id varchar(128) not null,
-                week_id varchar(128),
-                component_id varchar(128),
+                component_id varchar(128) not null,
                 ksb_id varchar(255),
-                ksb_code varchar(64) not null,
-                ksb_description text,
+                classification varchar(32) not null default 'secondary',
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp,
+                weight numeric(5,2) not null default 0,
                 source_type varchar(32),
                 source_id varchar(255),
-                classification varchar(32) not null default 'secondary',
-                weight numeric(5,2) not null default 0,
-                weight_class varchar(32) not null default 'soft',
-                is_programme_deleted boolean not null default false,
-                created_at timestamp not null default current_timestamp,
-                updated_at timestamp not null default current_timestamp
+                weight_class varchar(32) not null default 'soft'
+                    check (weight_class in ('hard', 'soft', 'possible')),
+                standard_ksb_id bigint,
+                status varchar(32) not null default 'active'
             )
         ''')
-        if connection.vendor == 'postgresql':
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                add column if not exists classification varchar(32) not null default 'secondary'
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                add column if not exists weight numeric(5,2) not null default 0
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                add column if not exists weight_class varchar(32) not null default 'soft'
-            ''')
-            cursor.execute(f'''
-                update {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                   set weight_class = case
-                       when lower(coalesce(weight_class, '')) in ('hard', 'soft', 'possible') then lower(weight_class)
-                       when lower(coalesce(classification, '')) = 'possible' then 'possible'
-                       when lower(coalesce(classification, '')) = 'main' then 'hard'
-                       else 'soft'
-                   end
-                 where weight_class is null or lower(weight_class) not in ('hard', 'soft', 'possible')
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                drop constraint if exists curriculum_ksb_mappings_weight_class_chk
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                add constraint curriculum_ksb_mappings_weight_class_chk
-                check (weight_class in ('hard', 'soft', 'possible'))
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                add column if not exists source_type varchar(32)
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                add column if not exists source_id varchar(255)
-            ''')
-            cursor.execute(f'''
-                alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                add column if not exists is_programme_deleted boolean not null default false
-            ''')
-            try:
-                cursor.execute(f'''
-                    create index if not exists curriculum_ksb_mapping_component_lookup_idx
-                    on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                    (component_id, ksb_code, source_type, source_id)
-                ''')
-                cursor.execute(f'''
-                    create index if not exists curriculum_ksb_mapping_module_idx
-                    on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (module_catalogue_id)
-                ''')
-                cursor.execute(f'''
-                    create index if not exists curriculum_ksb_mapping_week_idx
-                    on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (week_id)
-                ''')
-                cursor.execute(f'''
-                    create index if not exists curriculum_ksb_mapping_component_idx
-                    on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (component_id)
-                ''')
-            except Exception:
-                logger.warning('Could not create component KSB mapping lookup indexes.', exc_info=True)
-            try:
-                cursor.execute(f'''
-                    select component_id, upper(ksb_code), coalesce(source_type, ''), coalesce(source_id, ''), count(*)
-                    from {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                    where component_id is not null and component_id <> ''
-                    group by component_id, upper(ksb_code), coalesce(source_type, ''), coalesce(source_id, '')
-                    having count(*) > 1
-                    limit 1
-                ''')
-                duplicate = cursor.fetchone()
-                if duplicate:
-                    logger.warning(
-                        'Skipping curriculum component KSB unique index because legacy duplicate mappings exist for component %s / KSB %s / source %s:%s.',
-                        duplicate[0], duplicate[1], duplicate[2], duplicate[3],
-                    )
-                else:
-                    cursor.execute(f'''
-                        create unique index if not exists curriculum_ksb_mapping_component_unique_idx
-                        on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                        (component_id, upper(ksb_code), coalesce(source_type, ''), coalesce(source_id, ''))
-                        where component_id is not null and component_id <> ''
-                    ''')
-            except Exception:
-                logger.warning('Could not create component KSB mapping unique index.', exc_info=True)
-            _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{AUTHORING_KSB_MAPPINGS_TABLE}', None)
-        else:
-            cursor.execute(f'pragma table_info({quote_ident(AUTHORING_KSB_MAPPINGS_TABLE)})')
-            columns = {row[1] for row in cursor.fetchall()}
-            if 'classification' not in columns:
-                cursor.execute(f"alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} add column classification varchar(32) not null default 'secondary'")
-            if 'weight' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} add column weight numeric(5,2) not null default 0')
-            if 'weight_class' not in columns:
-                cursor.execute(f"alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} add column weight_class varchar(32) not null default 'soft'")
-            if 'source_type' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} add column source_type varchar(32)')
-            if 'source_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} add column source_id varchar(255)')
-            if 'is_programme_deleted' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} add column is_programme_deleted boolean not null default false')
-            try:
-                cursor.execute(f'''
-                    create index if not exists curriculum_ksb_mapping_component_lookup_idx
-                    on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                    (component_id, ksb_code, source_type, source_id)
-                ''')
-                cursor.execute(f'create index if not exists curriculum_ksb_mapping_module_idx on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (module_catalogue_id)')
-                cursor.execute(f'create index if not exists curriculum_ksb_mapping_week_idx on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (week_id)')
-                cursor.execute(f'create index if not exists curriculum_ksb_mapping_component_idx on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (component_id)')
-            except Exception:
-                logger.warning('Could not create component KSB mapping lookup indexes.', exc_info=True)
-            try:
-                cursor.execute(f'''
-                    select component_id, upper(ksb_code), coalesce(source_type, ''), coalesce(source_id, ''), count(*)
-                    from {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                    where component_id is not null and component_id <> ''
-                    group by component_id, upper(ksb_code), coalesce(source_type, ''), coalesce(source_id, '')
-                    having count(*) > 1
-                    limit 1
-                ''')
-                duplicate = cursor.fetchone()
-                if duplicate:
-                    logger.warning(
-                        'Skipping curriculum component KSB unique index because legacy duplicate mappings exist for component %s / KSB %s / source %s:%s.',
-                        duplicate[0], duplicate[1], duplicate[2], duplicate[3],
-                    )
-                else:
-                    cursor.execute(f'''
-                        create unique index if not exists curriculum_ksb_mapping_component_unique_idx
-                        on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}
-                        (component_id, upper(ksb_code), coalesce(source_type, ''), coalesce(source_id, ''))
-                        where component_id is not null and component_id <> ''
-                    ''')
-            except Exception:
-                logger.warning('Could not create component KSB mapping unique index.', exc_info=True)
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_COMPLETION_TABLE)} (
                 module_catalogue_id varchar(128) primary key,
@@ -15711,7 +15056,8 @@ def provision_module_authoring_tables():
                 employer_benefit text,
                 sequence_purpose text,
                 created_at timestamp not null default current_timestamp,
-                updated_at timestamp not null default current_timestamp
+                updated_at timestamp not null default current_timestamp,
+                {quote_ident(AI_MATERIAL_COLUMN)} {json_type}
             )
         ''')
         cursor.execute(f'''
@@ -15719,167 +15065,102 @@ def provision_module_authoring_tables():
                 cohort_id varchar(128) primary key,
                 cohort_name varchar(500) not null default '',
                 programme_id varchar(255),
-                programme_name varchar(255),
                 start_date date,
                 end_date date,
                 duration_months integer not null default 0,
-                -- end_date is the practical period end. epa_months is the End
-                -- Point Assessment window that follows it, and
-                -- apprenticeship_end_date is where that window lands. Both
-                -- nullable: a cohort with no EPA period recorded has no
-                -- apprenticeship end date, which is not the same as one that
-                -- ends the day the practical period does.
-                epa_months integer,
-                apprenticeship_end_date date,
-                -- apprenticeship_end_override is the authored date a human
-                -- typed; NULL means none, so the calculated date stands.
-                -- apprenticeship_end_date caches whichever of the two applies.
-                apprenticeship_end_override date,
                 color varchar(32),
                 status varchar(32) not null default 'planned',
-                training_plan_ids {json_type},
-                group_ids {json_type},
-                module_names {json_type},
-                holiday_ids {json_type},
-                selected_holidays {json_type},
-                holidays_in_range {json_type},
-                holiday_summary {json_type},
-                -- The holidays a human unticked in the cohort drawer, from the
-                -- holidays_in_range list above. A deny-list, not the selection
-                -- itself: empty means nothing excluded, so a fresh cohort and
-                -- one whose period later grows to include a new holiday both
-                -- default to every holiday applying, same as before this
-                -- column existed.
-                excluded_holiday_ids {json_type},
                 notes text,
                 source_type varchar(64) not null default 'training_plan',
-                source_id varchar(128),
                 created_at timestamp not null default current_timestamp,
-                updated_at timestamp not null default current_timestamp
+                updated_at timestamp not null default current_timestamp,
+                -- end_date is the practical period end. epa_months is the End
+                -- Point Assessment window that follows it, and
+                -- apprenticeship_end_date is where that window lands; the
+                -- override is the authored date a human typed (NULL: none).
+                epa_months integer,
+                apprenticeship_end_date date,
+                apprenticeship_end_override date
             )
         ''')
-        # The apprenticeship columns post-date the cohorts table, so a database
-        # provisioned before them needs them added. Production schema is
-        # migration-owned (0048_cohort_epa_period, then
-        # 0050_cohort_apprenticeship_end_override); this covers test/local
-        # provisioning.
-        if connection.vendor == 'postgresql':
-            cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists epa_months integer')
-            cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists apprenticeship_end_date date')
-            cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists apprenticeship_end_override date')
-            cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists excluded_holiday_ids {json_type}')
-        else:
-            cursor.execute(f'pragma table_info({quote_ident(COHORT_AUTHORING_DETAILS_TABLE)})')
-            cohort_columns = {row[1] for row in cursor.fetchall()}
-            if 'epa_months' not in cohort_columns:
-                cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column epa_months integer')
-            if 'apprenticeship_end_date' not in cohort_columns:
-                cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column apprenticeship_end_date date')
-            if 'apprenticeship_end_override' not in cohort_columns:
-                cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column apprenticeship_end_override date')
-            if 'excluded_holiday_ids' not in cohort_columns:
-                cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column excluded_holiday_ids {json_type}')
+        cursor.execute(f'''
+            create table if not exists {authoring_table_name('cohort_calendar_holidays')} (
+                id {serial_key},
+                cohort_id varchar(128) not null,
+                calendar_holiday_id text not null,
+                is_selected boolean not null default false,
+                is_excluded boolean not null default false
+            )
+        ''')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(GROUPS_TABLE)} (
                 group_id varchar(128) primary key,
                 group_name varchar(500) not null default '',
                 cohort_id varchar(128) not null default '',
-                cohort_name varchar(500) not null default '',
                 programme_id varchar(255) not null default '',
-                programme_name varchar(255) not null default '',
-                is_programme_deleted boolean not null default false,
-                module_ids {json_type},
-                module_names {json_type},
-                coach_name varchar(255),
+                notes text,
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp,
+                color varchar(32),
                 session_week_day varchar(255),
                 session_start_time varchar(32),
                 session_end_time varchar(32),
-                color varchar(32),
-                notes text,
-                created_at timestamp not null default current_timestamp,
-                updated_at timestamp not null default current_timestamp
+                status varchar(32) not null default 'active'
             )
         ''')
-        if connection.vendor == 'postgresql':
-            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists module_ids {json_type}')
-            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists module_names {json_type}')
-            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists session_week_day varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists session_start_time varchar(32)')
-            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists session_end_time varchar(32)')
-            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists color varchar(32)')
-            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists is_programme_deleted boolean not null default false')
-            cursor.execute(f'create index if not exists curriculum_groups_programme_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id)')
-            cursor.execute(f'create index if not exists curriculum_groups_cohort_idx on {authoring_table_name(GROUPS_TABLE)} (cohort_id)')
-            cursor.execute(f'create index if not exists curriculum_groups_programme_cohort_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id, cohort_id)')
-            # NOTE: a historical 'program-prog-%' -> 'PROG-%' rewrite of
-            # cohorts.programme_id used to run here on every cold start. It was
-            # removed: it is a data migration, not schema provisioning, and it
-            # matches 0 rows in production (verified 2026-08-16). Once migration
-            # 0038 adds the programme_id foreign key, such a rewrite could raise
-            # an FK violation and turn a read endpoint into a 500.
-        else:
-            cursor.execute(f'pragma table_info({quote_ident(GROUPS_TABLE)})')
-            group_columns = {row[1] for row in cursor.fetchall()}
-            if 'session_week_day' not in group_columns:
-                cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column session_week_day varchar(255)')
-            if 'session_start_time' not in group_columns:
-                cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column session_start_time varchar(32)')
-            if 'session_end_time' not in group_columns:
-                cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column session_end_time varchar(32)')
-            if 'color' not in group_columns:
-                cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column color varchar(32)')
-            if 'is_programme_deleted' not in group_columns:
-                cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column is_programme_deleted boolean not null default false')
-            cursor.execute(f'create index if not exists curriculum_groups_programme_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id)')
-            cursor.execute(f'create index if not exists curriculum_groups_cohort_idx on {authoring_table_name(GROUPS_TABLE)} (cohort_id)')
-            cursor.execute(f'create index if not exists curriculum_groups_programme_cohort_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id, cohort_id)')
-            # Historical programme_id rewrite removed here too — see the note on
-            # the postgresql branch above.
-    for table in (AUTHORING_MODULES_TABLE, COHORT_AUTHORING_DETAILS_TABLE, GROUPS_TABLE):
-        _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
-    with connection.cursor() as cursor:
-        cursor.execute(f'create index if not exists curriculum_modules_title_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (title)')
-        cursor.execute(f'create index if not exists curriculum_modules_programme_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (programme_id, module_catalogue_id)')
-        cursor.execute(f'create index if not exists curriculum_modules_cohort_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (cohort_id, module_catalogue_id)')
-        cursor.execute(f'create index if not exists curriculum_modules_group_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (group_id, module_catalogue_id)')
-        cursor.execute(f'create index if not exists curriculum_modules_programme_deleted_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (is_programme_deleted)')
-        cursor.execute(f'create index if not exists curriculum_groups_programme_deleted_idx on {authoring_table_name(GROUPS_TABLE)} (is_programme_deleted)')
-        cursor.execute(f'create index if not exists curriculum_weeks_programme_deleted_idx on {authoring_table_name(AUTHORING_WEEKS_TABLE)} (is_programme_deleted)')
-        cursor.execute(f'create index if not exists curriculum_components_programme_deleted_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (is_programme_deleted)')
-        cursor.execute(f'create index if not exists curriculum_ksb_mappings_programme_deleted_idx on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (is_programme_deleted)')
-        cursor.execute(f'create index if not exists curriculum_weeks_module_idx on {authoring_table_name(AUTHORING_WEEKS_TABLE)} (module_catalogue_id)')
-        cursor.execute(f'create index if not exists curriculum_weeks_module_order_idx on {authoring_table_name(AUTHORING_WEEKS_TABLE)} (module_catalogue_id, display_order, id)')
-        cursor.execute(f'create index if not exists curriculum_components_module_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (module_catalogue_id)')
-        cursor.execute(f'create index if not exists curriculum_components_week_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (week_id)')
-        cursor.execute(f'create index if not exists curriculum_components_module_week_order_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (module_catalogue_id, week_id, display_order, id)')
-        cursor.execute(f'create index if not exists curriculum_components_updated_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (updated_at desc)')
-    for table in (
-        AUTHORING_MODULES_TABLE,
-        AUTHORING_WEEKS_TABLE,
-        AUTHORING_COMPONENTS_TABLE,
-        AUTHORING_KSB_MAPPINGS_TABLE,
-        AUTHORING_COMPLETION_TABLE,
-        AUTHORING_ADVANCED_TABLE,
-        COHORT_AUTHORING_DETAILS_TABLE,
-        GROUPS_TABLE,
-    ):
-        ensure_columns(table, {
-            'deleted_at': 'timestamp',
-            'deleted_by': 'varchar(255)',
-            'deleted_via_parent': 'varchar(255)',
-        })
-    ensure_columns(AUTHORING_COMPONENTS_TABLE, {
-        'ksb_mappings': json_type,
-    })
-    # The module's AI Material book. One JSON blob per module, on the row that
-    # is already keyed by module_catalogue_id.
-    ensure_columns(AUTHORING_ADVANCED_TABLE, {
-        AI_MATERIAL_COLUMN: json_type,
-    })
+        for staff_table in ('tutors', 'coaches'):
+            extra = "phone varchar(64) not null default ''," if staff_table == 'tutors' else ''
+            cursor.execute(f'''
+                create table if not exists {authoring_table_name(staff_table)} (
+                    id varchar(128) primary key,
+                    name varchar(255) not null,
+                    email varchar(320) not null default '',
+                    {extra}
+                    created_at timestamp not null default current_timestamp,
+                    updated_at timestamp not null default current_timestamp,
+                    status varchar(32) not null default 'active'
+                )
+            ''')
+        cursor.execute(f'''
+            create table if not exists {authoring_table_name('group_coaches')} (
+                group_id varchar(128) not null,
+                coach_id varchar(128) not null,
+                created_at timestamp not null default current_timestamp,
+                primary key (group_id, coach_id)
+            )
+        ''')
+        for statement in (
+            f'create index if not exists curriculum_groups_programme_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id)',
+            f'create index if not exists curriculum_groups_cohort_idx on {authoring_table_name(GROUPS_TABLE)} (cohort_id)',
+            f'create index if not exists curriculum_groups_programme_cohort_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id, cohort_id)',
+            f'create index if not exists curriculum_modules_title_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (title)',
+            f'create index if not exists curriculum_modules_programme_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (programme_id, module_catalogue_id)',
+            f'create index if not exists curriculum_modules_cohort_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (cohort_id, module_catalogue_id)',
+            f'create index if not exists curriculum_modules_group_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (group_id, module_catalogue_id)',
+            f'create index if not exists curriculum_weeks_module_idx on {authoring_table_name(AUTHORING_WEEKS_TABLE)} (module_catalogue_id)',
+            f'create index if not exists curriculum_weeks_module_order_idx on {authoring_table_name(AUTHORING_WEEKS_TABLE)} (module_catalogue_id, display_order, id)',
+            f'create index if not exists curriculum_components_module_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (module_catalogue_id)',
+            f'create index if not exists curriculum_components_week_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (week_id)',
+            f'create index if not exists curriculum_components_module_week_order_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (module_catalogue_id, week_id, display_order, id)',
+            f'create index if not exists curriculum_components_updated_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (updated_at desc)',
+            f'create index if not exists curriculum_ksb_mapping_component_idx on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (component_id)',
+            # One row per component and standard KSB, archived rows included.
+            f'create unique index if not exists curriculum_ksb_mapping_component_standard_idx '
+            f'on {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (component_id, standard_ksb_id)',
+            f'create index if not exists curriculum_cohort_calendar_holidays_cohort_idx '
+            f'on {authoring_table_name("cohort_calendar_holidays")} (cohort_id)',
+        ):
+            cursor.execute(statement)
     from .course_pricing_schema import provision as provision_course_pricing
     provision_course_pricing(connection)
-    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{AUTHORING_MODULES_TABLE}', None)
-    _TABLE_COLUMNS_CACHE.pop(AUTHORING_MODULES_TABLE, None)
+    for table in (
+        AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE, AUTHORING_COMPONENTS_TABLE,
+        AUTHORING_KSB_MAPPINGS_TABLE, AUTHORING_COMPLETION_TABLE, AUTHORING_ADVANCED_TABLE,
+        COHORT_AUTHORING_DETAILS_TABLE, GROUPS_TABLE, MODULE_TEAMS_SHARES_TABLE,
+        'standard_ksbs', 'cohort_calendar_holidays', 'tutors', 'coaches', 'group_coaches',
+    ):
+        _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
+        _TABLE_COLUMNS_CACHE.pop(table, None)
     _AUTHORING_TABLES_READY = True
 
 
@@ -16116,12 +15397,25 @@ def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensur
     with connection.cursor() as cursor:
         cursor.execute(query, params or [])
         rows = rows_as_dicts(cursor)
-    # Normalised schema: add the legacy keys (soft-delete stamps, copied names,
-    # id lists, KSB code/placement) callers still read. No-op on the old shape.
-    schema_compat.project_rows(
-        table, rows, schema_compat.columns_of(CURRICULUM_SCHEMA, table), requested=columns, excluded=exclude_columns,
-    )
-    # The programme / cohort / group / tutor / coach names, read by id.
+    return complete_authoring_rows(table, rows, columns, exclude_columns)
+
+
+def complete_authoring_rows(table, rows, columns=None, exclude_columns=None):
+    """What a read adds after the fetch, the same for a direct and a prefetched read.
+
+    A KSB mapping's description (its standard's text, left out of the
+    statement), a component's KSB items, then the programme / cohort / group /
+    tutor / coach names, read by id. The archive state is the row's ``status``.
+    """
+    def wanted(key):
+        return bool(rows) and (not columns or key in columns) and key not in (exclude_columns or ())
+
+    if table == AUTHORING_KSB_MAPPINGS_TABLE and wanted('ksb_description'):
+        ksb_mapping_placement.attach_descriptions(rows)
+    if table == AUTHORING_COMPONENTS_TABLE and wanted('ksb_mappings'):
+        # A component's KSBs, in the item shape its readers take
+        # (component_ksb_mappings_from_row).
+        ksb_mapping_placement.attach_component_items(rows)
     return curriculum_names.attach(table, rows, requested=columns, excluded=exclude_columns)
 
 
@@ -16144,7 +15438,7 @@ def derived_programme_name_sql(table):
         return ''
     row = authoring_table_name(table)
     return (f"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(programme_name_source.name) END "
-            f"FROM curriculum.programmes programme_name_source "
+            f"FROM {authoring_table_name('programmes')} programme_name_source "
             f"WHERE programme_name_source.programme_id = {row}.programme_id "
             f"AND btrim(coalesce({row}.programme_id, '')) <> ''), '') AS programme_name")
 
@@ -16182,7 +15476,7 @@ def derived_placement_names_sql(table):
             continue
         derived[output] = (
             f"COALESCE((SELECT CASE WHEN count(*) = 1 THEN min(placement_source.{source_column}) END "
-            f"FROM curriculum.{source} placement_source "
+            f"FROM {authoring_table_name(source)} placement_source "
             f"WHERE placement_source.{key} = {row}.{key} "
             f"AND btrim(coalesce({row}.{key}, '')) <> ''), '') AS {output}")
     return derived
@@ -16192,47 +15486,38 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
     """The statement authoring_fetch_all() runs; shared so a prefetch sends the same SQL."""
     if ensure_tables:
         ensure_module_authoring_tables()
-    # Normalised schema: read through a relation that also exposes the legacy
-    # columns (status-derived delete stamps, joined names, KSB placement), so a
-    # where/order/column list naming one keeps working. None on the old shape
-    # and off PostgreSQL (columns_of reads nothing there).
-    shape = schema_compat.columns_of(CURRICULUM_SCHEMA, table)
-    # Columns project_rows() fills in after the fetch (the standard KSB text on
-    # every mapping), so the statement need not move them.
-    deferred = set(schema_compat.PYTHON_DERIVED_COLUMNS.get(table, ())) - set(shape)
-    relation = schema_compat.read_relation(table, shape, defer=deferred)
-    legacy_columns = set(schema_compat.legacy_read_columns(table, shape)) - deferred if relation else set()
-    available = set(column_names(table)) | legacy_columns
-    # The compatibility relation already resolves missing placement columns.
-    # Other shapes (including legacy physical copies) still need canonical
-    # names. Put these expressions in FROM so WHERE and ORDER BY can use them,
-    # even when the caller does not include the label in its SELECT list.
-    placement_names = {'cohorts': {'programme_name'},
-                       'groups': {'programme_name', 'cohort_name'},
-                       'modules': {'programme_name', 'cohort_name', 'group_name'}}.get(table, set())
-    derived = ({} if relation and placement_names <= legacy_columns else
-               {key: value for key, value in derived_placement_names_sql(table).items()
-                if key not in legacy_columns})
-    if derived:
-        base = relation or authoring_table_name(table)
-        expressions = list(derived.values())
-        if relation:
-            expressions = [value.replace(authoring_table_name(table), quote_ident(table))
-                           for value in expressions]
-        source_columns = [quote_ident(key) for key in sorted(available - set(derived))]
-        projection = ', '.join([*source_columns, *expressions])
-        relation = f'(select {projection} from {base}) as {quote_ident(table)}'
+    available = set(column_names(table))
+    relation = None
+    if table == AUTHORING_KSB_MAPPINGS_TABLE:
+        # A mapping's module and week are its component's, its code its
+        # standard KSB's. The description is attached after the fetch
+        # (complete_authoring_rows): it is the standard's text on every row.
+        relation = ksb_mapping_placement.relation(include_description=False)
+        available |= {*ksb_mapping_placement.PLACEMENT_FIELDS, 'ksb_code'}
+    # Placement names by id -- a stale physical copy is never read. Only the
+    # names the read uses (selected, or named by its WHERE / ORDER BY) are
+    # derived: each is a lookup per row. In FROM, so WHERE and ORDER BY can use
+    # them even when the caller does not select them.
+    names = derived_placement_names_sql(table)
+    stale_copies = set(names) & available
+    available -= set(names)
+    clauses = f'{where_sql} {order_sql}'
+    derived = {
+        key: expression for key, expression in names.items()
+        if (key in columns if columns else key not in (exclude_columns or ()))
+        or re.search(rf'\b{key}\b', clauses)
+    }
+    if derived or stale_copies:
+        source_columns = [quote_ident(key) for key in sorted(available)]
+        projection = ', '.join([*source_columns, *derived.values()])
+        relation = f'(select {projection} from {authoring_table_name(table)}) as {quote_ident(table)}'
         available.update(derived)
     if columns:
         wanted = [column for column in columns if column in available]
-        if relation and deferred & set(columns) and 'standard_ksb_id' in available and 'standard_ksb_id' not in wanted:
-            # A deferred standard KSB text is looked up by this key.
+        if (table == AUTHORING_KSB_MAPPINGS_TABLE and 'ksb_description' in columns
+                and 'standard_ksb_id' in available and 'standard_ksb_id' not in wanted):
+            # The description is looked up by this key.
             wanted.append('standard_ksb_id')
-        if (archive_state.uses_status(table) and 'status' not in wanted
-                and set(columns) & LEGACY_LIFECYCLE_READ_COLUMNS):
-            # Asking for the archive state means asking for status, the column
-            # that holds it on the normalised schema.
-            wanted.append('status')
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
     elif exclude_columns:
         # Everything but the named columns. Safer than an allow-list for a
@@ -16326,12 +15611,9 @@ def prefetch_authoring_reads(calls):
                        len(results), len(pending))
         return
     for (key, (_query, _params, table, columns, exclude_columns)), rows in zip(pending.items(), results):
-        # Same projection authoring_fetch_all() applies, so a prefetched read and
+        # Same completion authoring_fetch_all() applies, so a prefetched read and
         # a direct one hand callers identical rows.
-        schema_compat.project_rows(
-            table, rows, schema_compat.columns_of(CURRICULUM_SCHEMA, table), requested=columns, excluded=exclude_columns,
-        )
-        memo.setdefault(key, curriculum_names.attach(table, rows, requested=columns, excluded=exclude_columns))
+        memo.setdefault(key, complete_authoring_rows(table, rows, columns, exclude_columns))
 
 
 def safe_authoring_module_rows():
@@ -16369,7 +15651,7 @@ def archived_authoring_ids(table, id_column):
     try:
         rows = authoring_fetch_all(
             table,
-            columns=[ident, 'deleted_at', 'is_programme_deleted', 'is_archived'],
+            columns=[ident, 'status'],
         )
     except (Exception, AssertionError) as exc:
         logger.warning('Could not read archived ids for %s: %s', table, exc)
@@ -16379,33 +15661,6 @@ def archived_authoring_ids(table, id_column):
         for row in rows
         if clean_str(row.get(ident)) and curriculum_row_effectively_deleted(row)
     }
-
-
-def refresh_group_module_cache(group_id, module_rows=None):
-    """Rebuild ``groups.module_ids``/``module_names`` from surviving modules.
-
-    A surviving parent's denormalized child arrays list only surviving children
-    — the rule ``repair_curriculum_parent_links`` documents — so the rebuild
-    drops deleted module rows. Without that filter an archived module stayed in
-    the cached list, and because ``build_cohorts_and_groups`` falls back to the
-    stored list when a group has no live module rows, the wizard rendered it as
-    a real attachment.
-    """
-    identifier = clean_str(group_id)
-    if not identifier:
-        return None
-    rows = [
-        row for row in surviving_authoring_module_rows(module_rows)
-        if clean_str(row.get('group_id')) == identifier
-    ]
-    return update_group_fields(identifier, {
-        'module_ids': json_db_value(unique([
-            clean_str(row.get('module_catalogue_id')) for row in rows if row.get('module_catalogue_id')
-        ])),
-        'module_names': json_db_value(unique([
-            clean_str(row.get('title')) for row in rows if row.get('title')
-        ])),
-    })
 
 
 def programme_archived_for_authoring(programme_id):
@@ -16562,15 +15817,8 @@ def free_programme_fetch_all(table, where_sql='', params=None, order_sql='', col
 def free_programme_select_sql(table, where_sql='', order_sql='', columns=None):
     """The SELECT free_programme_fetch_all() runs for these arguments."""
     ensure_free_programme_tables()
-    # Normalised schema: free-course weeks read their title/number/description
-    # from the week and their name/cover from the course (see schema_compat).
-    shape = schema_compat.columns_of(CURRICULUM_SCHEMA, table)
-    relation = schema_compat.read_relation(table, shape)
-    if columns and relation:
-        available = set(shape) | set(schema_compat.legacy_read_columns(table, shape))
-        columns = [column for column in columns if column in available] or None
     selection = ', '.join(quote_ident(column) for column in columns) if columns else '*'
-    query = f'select {selection} from {relation or authoring_table_name(table)}'
+    query = f'select {selection} from {authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
@@ -16614,7 +15862,6 @@ def authoring_delete(table, where_sql='1 = 1', params=None):
     read back inside the same transaction first.
     """
     ensure_module_authoring_tables()
-    where_sql = schema_compat.write_where(table, where_sql, column_names(table))
     if table == COHORT_AUTHORING_DETAILS_TABLE:
         # A cohort's holiday choices reference it (RESTRICT): they go with it.
         calendar_holidays.release_cohorts(where_sql, params)
@@ -16658,10 +15905,9 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     """
     ensure_module_authoring_tables()
     writable = column_names(table)
-    payload = archive_state.normalise_write(table, payload)
     payload, staff_nullable = curriculum_names.store_staff(table, payload, writable)
-    payload, translated_nullable = schema_compat.translate_write(table, payload, writable)
-    nullable = set(SOFT_DELETE_COLUMNS) | set(allow_null_columns or ()) | translated_nullable | staff_nullable
+    payload, shaped_nullable = write_shape.normalise(table, payload, writable)
+    nullable = set(SOFT_DELETE_COLUMNS) | set(allow_null_columns or ()) | shaped_nullable | staff_nullable
     values = {
         key: value
         for key, value in payload.items()
@@ -16722,8 +15968,8 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
         if not payload:
             continue
         # The chosen tutor / coach is stored as its id (curriculum_names).
-        payload, staff_nullable = curriculum_names.store_staff(table, archive_state.normalise_write(table, payload), writable)
-        payload, nullable = schema_compat.translate_write(table, payload, writable)
+        payload, staff_nullable = curriculum_names.store_staff(table, payload, writable)
+        payload, nullable = write_shape.normalise(table, payload, writable)
         translated.append((payload, nullable | staff_nullable))
     payloads = [
         {
@@ -16736,7 +15982,7 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
     payloads = [payload for payload in payloads if payload]
     if table == AUTHORING_KSB_MAPPINGS_TABLE and 'standard_ksb_id' in writable:
         # UNIQUE (component_id, standard_ksb_id): a re-added KSB reuses its row.
-        payloads = schema_compat.reuse_mapping_rows(payloads)
+        payloads = ksb_mapping_placement.reuse_mapping_rows(payloads)
     note_previous_content_modules(table, key_columns=key_columns, payloads=payloads)
     if not payloads:
         return
@@ -16940,14 +16186,8 @@ def update_authoring_rows(table, where_sql, where_params, payload):
     """Update rows in a ``curriculum`` schema authoring table and return them."""
     ensure_module_authoring_tables()
     real_columns = column_names(table)
-    # Normalised schema: refreshing a derived copy (programme_name, ...) is a
-    # no-op, and a WHERE naming a legacy column is matched through the read
-    # relation by primary key. Both no-ops on the legacy shape.
-    if schema_compat.only_derived_copy(table, payload, real_columns):
-        return authoring_fetch_all(table, where_sql, where_params)
     payload, _staff_nullable = curriculum_names.store_staff(table, payload, real_columns)
-    payload, _nullable = schema_compat.translate_write(table, payload, real_columns)
-    where_sql = schema_compat.write_where(table, where_sql, real_columns)
+    payload, _nullable = write_shape.normalise(table, payload, real_columns)
     columns = [column for column in payload if column in real_columns]
     if not columns:
         rows = authoring_fetch_all(table, where_sql, where_params)
@@ -16985,26 +16225,6 @@ def update_authoring_rows(table, where_sql, where_params, payload):
     versioning.record_rows(table, rows)
     note_live_rows(table, rows)
     return rows
-
-
-def json_array_remove(raw_value, target):
-    """Remove ``target`` from a JSON-array column value, returning a JSON string."""
-    values = as_json_value(raw_value, [])
-    if not isinstance(values, list):
-        values = []
-    target = clean_str(target)
-    return json_db_value([value for value in values if clean_str(value) != target])
-
-
-def json_array_add(raw_value, target):
-    """Append ``target`` to a JSON-array column value if absent."""
-    values = as_json_value(raw_value, [])
-    if not isinstance(values, list):
-        values = []
-    target = clean_str(target)
-    if target and target not in {clean_str(value) for value in values}:
-        values = [*values, target]
-    return json_db_value(values)
 
 
 def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
@@ -17048,27 +16268,6 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
     if not allow_writes:
         return
     programme_id = clean_str(programme_id)
-    # The programme's own name, pushed down onto the children that carry a copy
-    # of it. The rename endpoint already does this (propagate_programme_name),
-    # but a child written before that existed -- or by any other path -- keeps the
-    # old name, and a module with no group has no parent to inherit the new one
-    # from further down this pass. A stale copy is not cosmetic: it is read as an
-    # identity wherever a row carries no programme_id, so it made one programme's
-    # cohorts, groups and modules count towards whichever programme now answers
-    # to the old name.
-    # Scoped to the programme being saved: the update below is conditional, so it
-    # is a no-op when nothing drifted, but a whole-estate sweep on every save is
-    # round trips nobody asked for.
-    if programme_id:
-        try:
-            config = next((
-                item for item in get_program_config_rows()
-                if clean_str(programme_config_identity(item)) == programme_id
-            ), None)
-            if config:
-                propagate_programme_name(programme_id, clean_str(config.get('name')))
-        except (Exception, AssertionError):
-            logger.debug('Could not refresh denormalized programme names for %s.', programme_id, exc_info=True)
     try:
         cohorts = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE)
         groups = authoring_fetch_all(GROUPS_TABLE)
@@ -17086,9 +16285,7 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
                 if not programme_id or clean_str(group.get('programme_id')) == programme_id:
                     update_group_fields(group_id, {
                         'cohort_id': '',
-                        'cohort_name': '',
                         'programme_id': '',
-                        'programme_name': '',
                     })
                 continue
             # The cohort row is still there but withdrawn. Leave the group's
@@ -17102,23 +16299,11 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
                 updates['cohort_name'] = clean_str(cohort.get('cohort_name'))
             if clean_str(group.get('programme_id')) != clean_str(cohort.get('programme_id')):
                 updates['programme_id'] = clean_str(cohort.get('programme_id'))
-            if clean_str(group.get('programme_name')) != clean_str(cohort.get('programme_name')):
-                updates['programme_name'] = clean_str(cohort.get('programme_name'))
             if updates:
                 update_group_fields(group_id, updates)
 
         groups = authoring_fetch_all(GROUPS_TABLE)
         group_by_id = {clean_str(row.get('group_id')): row for row in groups if clean_str(row.get('group_id'))}
-        group_ids_by_cohort = defaultdict(list)
-        module_ids_by_group = defaultdict(list)
-        module_names_by_group = defaultdict(list)
-        for group in groups:
-            group_id = clean_str(group.get('group_id'))
-            cohort_id = clean_str(group.get('cohort_id'))
-            if curriculum_row_effectively_deleted(group):
-                continue
-            if group_id and cohort_id and (not programme_id or clean_str(group.get('programme_id')) == programme_id):
-                group_ids_by_cohort[cohort_id].append(group_id)
 
         for module in modules:
             module_id = clean_str(module.get('module_catalogue_id'))
@@ -17129,9 +16314,7 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
             if not group:
                 update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
                     'cohort_id': '',
-                    'cohort_name': '',
                     'group_id': '',
-                    'group_name': '',
                 })
                 continue
             if programme_id and clean_str(group.get('programme_id')) != programme_id:
@@ -17143,62 +16326,21 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
                 continue
             updates = {}
             for column, group_column in (
-                ('group_name', 'group_name'),
                 ('cohort_id', 'cohort_id'),
-                ('cohort_name', 'cohort_name'),
                 ('programme_id', 'programme_id'),
-                ('programme_name', 'programme_name'),
             ):
                 if clean_str(module.get(column)) != clean_str(group.get(group_column)):
                     updates[column] = clean_str(group.get(group_column))
             if updates:
                 update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], updates)
-            module_ids_by_group[group_id].append(module_id)
-            if clean_str(module.get('title')):
-                module_names_by_group[group_id].append(clean_str(module.get('title')))
-
-        # The id/name copies below are stored only where the table still has
-        # the column. The normalised schema derives them (groups have no
-        # module_ids/module_names, cohorts no group_ids), and each "update" was
-        # a read-back of the row: ~40 round trips on every module save.
-        refresh_cohort_copies = has_column(COHORT_AUTHORING_DETAILS_TABLE, 'group_ids')
-        refresh_group_copies = has_column(GROUPS_TABLE, 'module_ids') or has_column(GROUPS_TABLE, 'module_names')
-        for cohort in (cohorts if refresh_cohort_copies else []):
-            cohort_id = clean_str(cohort.get('cohort_id'))
-            if not cohort_id or (programme_id and clean_str(cohort.get('programme_id')) != programme_id):
-                continue
-            if curriculum_row_effectively_deleted(cohort):
-                continue
-            update_cohort_fields(cohort_id, {'group_ids': json_db_value(unique(group_ids_by_cohort.get(cohort_id, [])))})
-        for group in (groups if refresh_group_copies else []):
-            group_id = clean_str(group.get('group_id'))
-            if not group_id or (programme_id and clean_str(group.get('programme_id')) != programme_id):
-                continue
-            if curriculum_row_effectively_deleted(group):
-                continue
-            update_group_fields(group_id, {
-                'module_ids': json_db_value(unique(module_ids_by_group.get(group_id, []))),
-                'module_names': json_db_value(unique(module_names_by_group.get(group_id, []))),
-            })
 
         # Authoring orphans only: these match a child whose parent ROW is
         # physically gone. A soft-deleted week/module/component still has its
         # row, so an archived branch of curriculum is never swept up here and
         # historical learner progress stays joinable to it.
-        #
-        # Detached library content is excluded twice over. Its parent ids are
-        # the empty string, which the coalesce guards below already skip, and
-        # the explicit library_state check makes that protection independent of
-        # the sentinel - a detach that forgot to clear a parent id would
-        # otherwise have its content swept away here.
-        authoring_delete(AUTHORING_WEEKS_TABLE, library_sweep_guard(AUTHORING_WEEKS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")"))
-        authoring_delete(AUTHORING_COMPONENTS_TABLE, library_sweep_guard(AUTHORING_COMPONENTS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")"))
-        authoring_delete(AUTHORING_COMPONENTS_TABLE, library_sweep_guard(AUTHORING_COMPONENTS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")"))
-        if ksb_mapping_placement.stores_placement():
-            # Only where the mapping stores its own placement: otherwise it is
-            # its component's (component_id is a RESTRICT foreign key).
-            authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
-            authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
+        authoring_delete(AUTHORING_WEEKS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
+        authoring_delete(AUTHORING_COMPONENTS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
+        authoring_delete(AUTHORING_COMPONENTS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(component_id, '') <> '' and component_id not in (select id from " + authoring_table_name(AUTHORING_COMPONENTS_TABLE) + ")")
     except (Exception, AssertionError):
         logger.warning('Could not repair curriculum parent links.', exc_info=True)
@@ -17222,9 +16364,7 @@ def unassign_authoring_modules_from_group(group_id, keep_catalogue_ids=None):
             continue
         update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
             'cohort_id': None,
-            'cohort_name': '',
             'group_id': None,
-            'group_name': '',
         })
         removed.append(module_id)
     return removed
@@ -17250,12 +16390,11 @@ def active_component_rows(rows):
         row for row in rows
         if not is_retired_component_type(row.get('type'))
         and not programme_deleted_row(row)
-        and not is_library_row(row)
     ]
 
 
 def active_week_rows(rows):
-    return [row for row in rows if not programme_deleted_row(row) and not is_library_row(row)]
+    return [row for row in rows if not programme_deleted_row(row)]
 
 
 def active_mapping_rows(rows):
@@ -18394,13 +17533,11 @@ def component_context_for_payload(payload):
         authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
             'module_catalogue_id': module_catalogue_id,
             'programme_id': programme_name,
-            'programme_name': programme_name,
             'title': module_title or f'Module {module_catalogue_id}',
             'description': '',
             # modules.status is the lifecycle (active/inactive), not draft/published.
             'status': archive_state.ACTIVE,
             'sessions_number': 0,
-            'total_otjh': 0,
             'quality_score': 0,
             'source_type': 'component_builder',
         })
@@ -18463,7 +17600,7 @@ def component_builder_response(row, module_by_id=None, week_by_id=None, mappings
         'expectedOtjh': float(row.get('expected_otjh') or 0),
         'points': parse_int(row.get('points'), 0),
         'isDeleted': programme_deleted_row(row),
-        'deletedAt': row.get('deleted_at'),
+        'deletedAt': archived_at(row),
         'deletedViaParent': row.get('deleted_via_parent') or '',
         'reflectionRequired': bool_payload(row.get('reflection_required')),
         'reflectionQuestion': component_reflection_question(row, settings),
@@ -18600,12 +17737,10 @@ def _component_builder_rows(catalogue_ids, component_rows=None, mapping_exclude_
 # more. settings_json is reduced to its one status key in the query itself.
 COMPONENT_SUMMARY_COLUMNS = (
     'id', 'module_catalogue_id', 'week_id', 'type', 'title', 'display_order',
-    'expected_otjh', 'deleted_at', 'is_programme_deleted', 'is_deleted',
-    'library_state',
+    'expected_otjh', 'status',
 )
 COMPONENT_SUMMARY_WEEK_COLUMNS = (
-    'id', 'module_catalogue_id', 'week_number', 'title',
-    'deleted_at', 'is_programme_deleted', 'is_deleted', 'library_state',
+    'id', 'module_catalogue_id', 'week_number', 'title', 'status',
 )
 COMPONENT_SUMMARY_MODULE_COLUMNS = ('module_catalogue_id', 'title', 'programme_name')
 
@@ -18655,8 +17790,7 @@ def component_summary_source_rows(catalogue_ids):
     # Every column active_component_rows() and the bucket key read; a column
     # this table does not carry is selected as null, as a row without it reads.
     key_columns = [
-        'module_catalogue_id', 'week_id', 'type', 'library_state',
-        'is_programme_deleted', 'is_deleted', 'expected_otjh',
+        'module_catalogue_id', 'week_id', 'type', 'status', 'expected_otjh',
     ]
     key_select = ', '.join(
         f'{quote_ident(column)} as {quote_ident(column)}' if column in columns else f'null as {quote_ident(column)}'
@@ -18699,46 +17833,23 @@ def component_summary_ksb_codes(catalogue_ids):
     active_component_rows() keeps, codes normalised as coverage_normalise_code
     does. The programme Modules tab counts a module's distinct KSBs from this.
 
-    None where the mapping table cannot be read this way (not Postgres, or a
-    schema whose components still carry their own ``ksb_mappings`` copy, which
-    the full read prefers); the summary then leaves ``ksbCodes`` out and the
-    page falls back to the full component read.
+    None off Postgres or without the standard KSB table; the summary then
+    leaves ``ksbCodes`` out and the page falls back to the full component read.
     """
-    if connection.vendor != 'postgresql' or not catalogue_ids:
+    if connection.vendor != 'postgresql' or not catalogue_ids or not table_exists('standard_ksbs'):
         return None
-    component_columns = column_names(AUTHORING_COMPONENTS_TABLE)
-    mapping_columns = column_names(AUTHORING_KSB_MAPPINGS_TABLE)
-    if 'ksb_mappings' in component_columns or 'component_id' not in mapping_columns:
-        return None
-    join_sql = ''
-    if 'standard_ksb_id' in mapping_columns and table_exists('standard_ksbs'):
-        # Normalised schema: the code lives on the standard KSB (schema_compat).
-        code_sql = 'standard.ksb_code'
-        join_sql = f' join {authoring_table_name("standard_ksbs")} as standard on standard.id = mapping.standard_ksb_id'
-    elif 'ksb_code' in mapping_columns:
-        code_sql = 'mapping.ksb_code'
-    else:
-        return None
+    # A mapping's code is its standard KSB's; both rows are filtered by status.
+    code_sql = 'standard.ksb_code'
+    join_sql = f' join {authoring_table_name("standard_ksbs")} as standard on standard.id = mapping.standard_ksb_id'
     clauses = [
         f'component.module_catalogue_id in ({", ".join(["%s"] * len(catalogue_ids))})',
         archive_state.live_sql('component'),
+        archive_state.live_sql('mapping'),
         f"coalesce({code_sql}, '') <> ''",
     ]
-    if 'status' in mapping_columns:
-        clauses.append(archive_state.live_sql('mapping'))
-    # Legacy soft-delete stamps, read exactly as programme_deleted_row() reads them.
-    if 'deleted_at' in mapping_columns:
-        clauses.append('mapping.deleted_at is null')
-    for flag in ('is_programme_deleted', 'is_deleted'):
-        if flag in mapping_columns:
-            clauses.append(f'coalesce(mapping.{quote_ident(flag)}, false) is not true')
-    # What active_component_rows() reads; a column this table lacks reads as null.
-    key_columns = ['module_catalogue_id', 'week_id', 'type', 'library_state', 'is_programme_deleted', 'is_deleted', 'deleted_at']
-    key_select = ', '.join(
-        f'component.{quote_ident(column)} as {quote_ident(column)}' if column in component_columns
-        else f'null as {quote_ident(column)}'
-        for column in key_columns
-    )
+    # What active_component_rows() reads beyond the archive state the SQL filtered.
+    key_columns = ['module_catalogue_id', 'week_id', 'type']
+    key_select = ', '.join(f'component.{quote_ident(column)} as {quote_ident(column)}' for column in key_columns)
     group_by = ', '.join(str(index) for index in range(1, len(key_columns) + 1))
     rows = fetch_all(
         f'select {key_select}, array_agg(distinct {code_sql}) as {quote_ident("_codes")}'
@@ -18837,14 +17948,11 @@ LIBRARY_ORIGINS = (LIBRARY_ORIGIN_ACTIVE, LIBRARY_ORIGIN_ARCHIVED, LIBRARY_ORIGI
 
 
 def library_component_origin(row):
-    """Which bucket of the reuse library this component sits in.
+    """Which bucket of the reuse search this component sits in.
 
-    ``library`` wins over ``archived``: a detached row has its soft-delete
-    stamps cleared on purpose, so the two are mutually exclusive in practice,
-    but ordering the checks makes that explicit rather than incidental.
+    Every component belongs to a week, so none is ever in the ``library``
+    (detached) bucket; the bucket stays in the API so callers can still ask.
     """
-    if is_library_row(row):
-        return LIBRARY_ORIGIN_LIBRARY
     if programme_deleted_row(row):
         return LIBRARY_ORIGIN_ARCHIVED
     return LIBRARY_ORIGIN_ACTIVE
@@ -18858,10 +17966,7 @@ LIBRARY_LIST_COLUMNS = (
     'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'display_order',
     'expected_otjh', 'points', 'reflection_required', 'workplace_evidence_required',
     'tutor_validation_required', 'coach_validation_required',
-    'updated_at', 'deleted_at', 'is_programme_deleted',
-    'library_state', 'detached_at', 'copied_from_id',
-    'origin_module_catalogue_id', 'origin_module_title',
-    'origin_week_id', 'origin_week_label',
+    'updated_at', 'status', 'copied_from_id',
 )
 LIBRARY_PAGE_SIZE_DEFAULT = 50
 LIBRARY_PAGE_SIZE_MAX = 200
@@ -18871,8 +17976,8 @@ def library_component_where(*, search='', types=None, origins=None, ids=None):
     """The SQL predicate for a library search. Everything filters in the database.
 
     Origin is expressed in SQL rather than in Python so that the LIMIT applies
-    to the rows the caller actually asked for. ``library_state`` and the
-    soft-delete columns are what separate the three buckets.
+    to the rows the caller actually asked for. The archive state separates
+    active from archived; the detached ``library`` bucket is always empty.
     """
     clauses = []
     params = []
@@ -18904,20 +18009,12 @@ def library_component_where(*, search='', types=None, origins=None, ids=None):
     wanted_origins = {clean_str(value).lower() for value in (origins or []) if clean_str(value)}
     wanted_origins = wanted_origins & set(LIBRARY_ORIGINS) or set(LIBRARY_ORIGINS)
     if wanted_origins != set(LIBRARY_ORIGINS):
-        # Only the 'library' bucket needs library_state. Active-vs-archived is
-        # decided by the soft-delete columns alone, so this must NOT be gated on
-        # that column: before migration 0053 it made the whole filter a no-op and
-        # unticking a bucket appeared to do nothing at all.
-        if has_column(AUTHORING_COMPONENTS_TABLE, 'library_state'):
-            detached = f"coalesce({quote_ident('library_state')}, '') = '{LIBRARY_STATE_DETACHED}'"
-        else:
-            # No column means nothing can be detached yet.
-            detached = 'false'
+        # Nothing is ever detached, so the 'library' bucket matches no row.
         archived = deleted_sql_condition(AUTHORING_COMPONENTS_TABLE)
         origin_sql = {
-            LIBRARY_ORIGIN_LIBRARY: f'({detached})',
-            LIBRARY_ORIGIN_ARCHIVED: f'(not ({detached}) and ({archived}))',
-            LIBRARY_ORIGIN_ACTIVE: f'(not ({detached}) and not ({archived}))',
+            LIBRARY_ORIGIN_LIBRARY: '(1 = 0)',
+            LIBRARY_ORIGIN_ARCHIVED: f'({archived})',
+            LIBRARY_ORIGIN_ACTIVE: f'(not ({archived}))',
         }
         # No placeholders here on purpose: every fragment is built from module
         # constants, so there is nothing to bind and nothing to get out of order
@@ -19009,13 +18106,11 @@ def library_component_rows(*, search='', types=None, programme_ids=None, origins
     for row in component_rows:
         module = module_by_id.get(str(row.get('module_catalogue_id')), {})
         week = week_by_id.get(str(row.get('week_id')), {})
-        # Once the parents are gone the denormalised origin stamps are the only
-        # source. Note this cannot be written as ``payload['week'] or fallback``:
-        # component_week_label({}) returns a plausible-looking "Week 1" for a
-        # missing week, which would quietly mislabel every detached component.
-        module_title = clean_str(module.get('title')) if module else clean_str(row.get('origin_module_title'))
-        week_label = component_week_label(week) if week else clean_str(row.get('origin_week_label'))
-        module_id = clean_str(row.get('module_catalogue_id')) or clean_str(row.get('origin_module_catalogue_id'))
+        # Not ``component_week_label(week)`` for a missing week: it returns a
+        # plausible-looking "Week 1" for {}, which would mislabel the component.
+        module_title = clean_str(module.get('title')) if module else ''
+        week_label = component_week_label(week) if week else ''
+        module_id = clean_str(row.get('module_catalogue_id'))
         if wanted_programmes and clean_str(module.get('programme_id')) not in wanted_programmes:
             continue
         payload = component_builder_response(row, module_by_id, week_by_id, mappings_by_component)
@@ -19027,9 +18122,9 @@ def library_component_rows(*, search='', types=None, programme_ids=None, origins
             'componentType': frontend_component_type(row.get('type')),
             'originModuleCatalogueId': module_id,
             'originModuleTitle': module_title,
-            'originWeekId': clean_str(row.get('week_id')) or clean_str(row.get('origin_week_id')),
+            'originWeekId': clean_str(row.get('week_id')),
             'originWeekLabel': week_label,
-            'detachedAt': row.get('detached_at'),
+            'detachedAt': None,
             'copiedFromId': clean_str(row.get('copied_from_id')),
             'module': module_title,
             'week': week_label,
@@ -21334,7 +20429,7 @@ def persist_group_module_session_dates(module_rows, group_row):
 
 # Columns that move when the row is rewritten to the values it already held.
 # Including them would turn every no-op save into a conflict for everyone else.
-STRUCTURE_REVISION_VOLATILE_COLUMNS = ('created_at', 'updated_at', 'detached_at')
+STRUCTURE_REVISION_VOLATILE_COLUMNS = ('created_at', 'updated_at')
 
 # The tables one structure save replaces, with the filter that decides which of
 # their rows the module currently owns and the column each is ordered by. Read
@@ -21406,7 +20501,7 @@ def module_structure_revision(module_catalogue_id, *, source_rows=None):
             rows = keep(rows)
         # Only what the table stores is fingerprinted. On the normalised schema
         # authoring_fetch_all adds derived keys (programme_name, tutor_name,
-        # deleted_at, library_state ...) that the editor GET's source rows do
+        # deleted_at ...) that the editor GET's source rows do
         # not carry, so the fresh read and the GET hashed different material
         # and every full save was refused as a conflict. Derived keys follow
         # from stored ones, so dropping them loses no change.
@@ -22030,12 +21125,11 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False,
         bounds = module_archive_event_bounds(module)
         week_rows = [
             row for row in stored_week_rows
-            if not is_library_row(row) and row_in_module_archive(row, markers, bounds)
+            if row_in_module_archive(row, markers, bounds)
         ]
         component_rows = [
             row for row in stored_component_rows
             if not is_retired_component_type(row.get('type'))
-            and not is_library_row(row)
             and row_in_module_archive(row, markers, bounds)
         ]
         mapping_source_rows = [
@@ -22705,45 +21799,16 @@ def get_authoring_structure_payloads(
     return payloads
 
 
-# Column names callers use to ask "is this row archived?". On the lifecycle
-# tables the answer is ``status``.
-LEGACY_LIFECYCLE_READ_COLUMNS = frozenset({
-    'deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted', 'is_deleted', 'is_archived',
-})
+def live_authoring_rows_sql(table):
+    """``(where_sql, params)`` keeping the rows the Python active_*_rows() filters keep.
 
-
-def live_authoring_rows_sql(table, flag_columns):
-    """A where clause that drops rows the Python active_*_rows() filters drop.
-
-    Only ever a subset of what those filters drop, never more: ``deleted_at`` is
-    a timestamp and ``is_programme_deleted`` a boolean, so ``is null`` and
-    ``is not true`` are exactly row_has_deleted_at() and truthy(), and
-    ``library_state <> 'library'`` misses only padded spellings that
-    is_library_row() would still catch. Callers keep running the Python filter
-    on what comes back, which is what makes the two agree row for row. Columns
-    the table does not have are left out, as authoring_fetch_all() leaves them
-    out of its select list.
+    The archive state is ``status``, so this is exactly row_has_deleted_at()
+    in SQL. Callers keep running the Python filter on what comes back (it also
+    drops retired component types), which is what makes the two agree row for row.
     """
-    clauses = []
-    params = []
-    if archive_state.uses_status(table) and set(flag_columns) & LEGACY_LIFECYCLE_READ_COLUMNS:
-        # Normalised schema: status is the archive flag the old columns stood for.
-        clauses.append(archive_state.live_sql())
-    for column in flag_columns:
-        if not has_column(table, column):
-            continue
-        name = quote_ident(column)
-        if column == 'deleted_at':
-            # sqlite (tests) has no timestamp type, so an empty string can be
-            # stored there; row_has_deleted_at() reads it as not deleted.
-            clauses.append(f'{name} is null' if connection.vendor == 'postgresql' else f"({name} is null or {name} = '')")
-        elif column == 'library_state':
-            clauses.append(f'({name} is null or {name} <> %s)')
-            params.append(LIBRARY_STATE_DETACHED)
-        else:
-            clauses.append(f'({name} is null or {name} = %s)')
-            params.append(False)
-    return ' and '.join(clauses), params
+    if not archive_state.uses_status(table):
+        return '', []
+    return archive_state.live_sql(), []
 
 
 def authoring_module_content_counts():
@@ -22756,11 +21821,10 @@ def authoring_module_content_counts():
     mappings. A few hundred grouped rows cross the network instead of ~90k.
     """
     lesson_counts = Counter()
-    component_flags = ('deleted_at', 'is_programme_deleted', 'library_state')
-    where_sql, params = live_authoring_rows_sql(AUTHORING_COMPONENTS_TABLE, component_flags)
+    where_sql, params = live_authoring_rows_sql(AUTHORING_COMPONENTS_TABLE)
     group_columns = [
         quote_ident(column)
-        for column in ('module_catalogue_id', 'type', 'library_state')
+        for column in ('module_catalogue_id', 'type')
         if has_column(AUTHORING_COMPONENTS_TABLE, column)
     ]
     query = (
@@ -22770,14 +21834,12 @@ def authoring_module_content_counts():
         + f' group by {", ".join(group_columns)}'
     )
     for row in fetch_all(query, params):
-        if is_retired_component_type(row.get('type')) or is_library_row(row):
+        if is_retired_component_type(row.get('type')):
             continue
         lesson_counts[str(row.get('module_catalogue_id'))] += parse_int(row.get('row_count'), 0)
 
     ksb_codes = defaultdict(set)
-    where_sql, params = live_authoring_rows_sql(
-        AUTHORING_KSB_MAPPINGS_TABLE, ('deleted_at', 'is_programme_deleted', 'is_deleted'),
-    )
+    where_sql, params = live_authoring_rows_sql(AUTHORING_KSB_MAPPINGS_TABLE)
     query = (
         f'select {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")} '
         f'from {ksb_mapping_placement.relation()}'
@@ -22791,16 +21853,15 @@ def authoring_module_content_counts():
     return dict(lesson_counts), {catalogue_id: len(codes) for catalogue_id, codes in ksb_codes.items()}
 
 
-# Every component column authoring_catalogue_summaries() reads, plus the three
-# the active-row filters need (deleted_at, is_programme_deleted, library_state).
+# Every component column authoring_catalogue_summaries() reads, plus the
+# archive state the active-row filters need (status).
 # settings_json and ksb_mappings are excluded on purpose - see the call site.
 CATALOGUE_SUMMARY_COMPONENT_COLUMNS = (
     'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'description',
     'expected_otjh', 'points', 'display_order',
     'reflection_required', REFLECTION_QUESTION_COLUMN,
     'workplace_evidence_required', 'tutor_validation_required',
-    'coach_validation_required',
-    'deleted_at', 'is_programme_deleted', 'library_state',
+    'coach_validation_required', 'status',
 )
 
 
@@ -22837,23 +21898,21 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
             # - the summary sets 'ksbMappings': [] outright. With select * this one
             # call dominated every non-compact overview request.
             #
-            # Soft-deleted and detached rows are dropped by the query as well as by
+            # Soft-deleted rows are dropped by the query as well as by
             # active_component_rows(): they are about a third of the table and were
             # crossing the network only to be thrown away here.
-            where_sql, params = live_authoring_rows_sql(
-                AUTHORING_COMPONENTS_TABLE, ('deleted_at', 'is_programme_deleted', 'library_state'),
-            )
+            where_sql, params = live_authoring_rows_sql(AUTHORING_COMPONENTS_TABLE)
             component_rows = active_component_rows(authoring_fetch_all(
                 AUTHORING_COMPONENTS_TABLE, where_sql, params,
                 columns=(
                     ('id', 'module_catalogue_id', 'week_id', 'type', 'title', 'expected_otjh',
-                     'deleted_at', 'is_programme_deleted', 'library_state')
+                     'status')
                     if list_only else CATALOGUE_SUMMARY_COMPONENT_COLUMNS
                 ),
             ))
             mapping_rows = active_mapping_rows(authoring_fetch_all(
                 AUTHORING_KSB_MAPPINGS_TABLE,
-                **({'columns': ('module_catalogue_id', 'ksb_code', 'deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')} if list_only else {}),
+                **({'columns': ('module_catalogue_id', 'ksb_code', 'status')} if list_only else {}),
             ))
         else:
             component_rows, mapping_rows = [], []
@@ -23469,7 +22528,6 @@ def module_authoring_row_is_archived(row):
     row = row or {}
     return (
         clean_str(row.get('status')).lower() == 'archived'
-        or truthy(row.get('is_archived'))
         or curriculum_row_effectively_deleted(row)
     )
 
@@ -23477,20 +22535,18 @@ def module_authoring_row_is_archived(row):
 def is_archived_module_summary(module):
     """Is this module out of the active lists?
 
-    The three status fields are the delivery side of the answer. The soft-delete
-    stamp is the authoring side, and it has to be read here too: archiving a
-    module sets `deleted_at` and leaves `status` alone, and
-    `authoring_catalogue_summaries` reads the module rows without a soft-delete
-    filter (the weeks, components and mappings beside it are filtered). Without
-    this an archived module went on being counted for its programme's card while
-    the programme's own page — which reads the surviving rows — showed none:
-    "3 modules" on the card, "No modules yet" one click later.
+    The status fields are the delivery side of the answer; the row's own archive
+    state (programme_deleted_row) is the authoring side, and it has to be read
+    here too: `authoring_catalogue_summaries` reads the module rows without an
+    archive filter (the weeks, components and mappings beside it are filtered).
+    Without this an archived module went on being counted for its programme's
+    card while the programme's own page -- which reads the surviving rows --
+    showed none: "3 modules" on the card, "No modules yet" one click later.
     """
     return (
         clean_str((module or {}).get('status')).lower() == 'archived'
         or clean_str((module or {}).get('authoringStatus')).lower() == 'archived'
         or clean_str((module or {}).get('deliveryStatus')).lower() == 'archived'
-        or truthy((module or {}).get('is_archived'))
         or truthy((module or {}).get('isArchived'))
         or programme_deleted_row(module)
     )
@@ -23966,7 +23022,14 @@ def authoring_row_differs(payload, stored_row):
 
 
 def authoring_row_is_active(row):
-    return not row_has_deleted_at(row) and not truthy(row.get('is_programme_deleted'))
+    return not row_has_deleted_at(row)
+
+
+def archived_at(row):
+    """When this row was archived: history's stamp where annotated, else its last update."""
+    if not row_has_deleted_at(row):
+        return None
+    return row.get('deleted_at') or row.get('updated_at') or row.get('created_at')
 
 
 def authoring_mapping_owner(row):
@@ -24363,14 +23426,11 @@ def save_module_authoring_structure(
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
             'module_catalogue_id': module_catalogue_id,
             'programme_id': programme_id,
-            'programme_name': programme_name,
-            # Normalised schema: one status. A module under an archived programme
-            # stays archived; any other save leaves it live.
+            # One status. A module under an archived programme stays archived;
+            # any other save leaves it live.
             'status': archive_state.INACTIVE if is_programme_deleted else archive_state.ACTIVE,
             'cohort_id': cohort_id,
-            'cohort_name': cohort_name,
             'group_id': group_id,
-            'group_name': group_name,
             'learner_roster_mode': learner_roster_mode,
             'teams_shared_source_module_id': teams_shared_source_module_id or None,
             'ksb_remap_report': json.dumps(ksb_remap_report or {}),
@@ -24467,8 +23527,6 @@ def save_module_authoring_structure(
                 'holiday_note_enabled': bool_payload(week.get('holidayNoteEnabled') or week.get('holiday_note_enabled')),
                 'holiday_note': clean_str(week.get('holidayNote') or week.get('holiday_note')),
                 'display_order': week_index,
-                # Attached to this module, so never a detached library item.
-                'library_state': '',
                 'status': archive_state.ACTIVE,
             })
             for mapping in week.get('ksbMappings') or []:
@@ -24546,10 +23604,6 @@ def save_module_authoring_structure(
                         or component_settings.get('liveSessionLinkOverride')
                     ),
                     'copied_from_id': clean_str(component.get('copiedFromId') or component.get('copied_from_id')) or None,
-                    # A saved component is attached to this module by definition,
-                    # so it is never a library item - and if it was copied out of
-                    # the library, the copy must not inherit that state.
-                    'library_state': '',
                     'status': archive_state.ACTIVE,
                 })
                 mapping_payloads.extend(component_mapping_payloads)
@@ -26660,8 +25714,6 @@ def curriculum_programme_detail(request, identifier):
             'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or programme.get('ksbProfileSourceId') or ''),
             'required_otjh': payload_required_otjh(payload, programme),
             'status': programme_status,
-            'is_active': programme_status_is_active(programme_status),
-            'is_archived': programme_status_is_archived(programme_status),
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
         })
@@ -26701,8 +25753,6 @@ def curriculum_programme_detail(request, identifier):
                 'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else config.get('ksb_profile_source_id')),
                 'required_otjh': payload_required_otjh(payload, config),
                 'status': programme_status,
-                'is_active': programme_status_is_active(programme_status),
-                'is_archived': programme_status_is_archived(programme_status),
                 'updated_at': datetime.utcnow(),
             }
             if curriculum_name_only_patch(payload):
@@ -26719,11 +25769,6 @@ def curriculum_programme_detail(request, identifier):
                     updates.get('ksb_profile_source_id') or '',
                 )
 
-            # Propagate the new programme name to the denormalized programme_name
-            # carried on child cohorts/groups/modules, keeping the canonical
-            # programme_id (and every relationship) unchanged.
-            if name and name != clean_str(config.get('name')):
-                propagate_programme_name(clean_str(config.get('program_id') or key_value), name)
             # Learner records carry the name too; renamed through their profile's
             # programme id, never moved. See placement_rename.
             from .placement_rename import propagate_programme_name_to_learners
@@ -26751,52 +25796,6 @@ def curriculum_programme_detail(request, identifier):
         'revision': saved_revision,
         'programme': first_programme_response(identifier, name) or {'id': identifier},
     })
-
-
-def propagate_programme_name(programme_id, programme_name):
-    """Update denormalized ``programme_name`` on child normalized rows.
-
-    The canonical ``programme_id`` foreign key on each child is never touched;
-    only the display name is refreshed so a programme rename stays consistent.
-    """
-    programme_id = clean_str(programme_id)
-    programme_name = clean_str(programme_name)
-    if not programme_id or not programme_name:
-        return
-    # Nobody edited these cohorts, groups and modules. One person renamed one
-    # programme and the system carried the new name down; recording it as their
-    # edit to each child would say they opened forty modules and retyped a field.
-    # The person stays on the record as what caused it, which is the true and
-    # useful half of the attribution.
-    with versioning.audit_context(
-        actor_type=versioning.ACTOR_SYSTEM,
-        source='recalculation',
-        # Named outright. "Edited" would be true but useless here: the question
-        # a reader brings to this row is why a module they never opened changed,
-        # and "Recalculated ... triggered by ..." answers it in the row itself.
-        # A declared action only ever replaces a plain `updated`, so it cannot
-        # talk over a create, an archive or a restore.
-        action='recalculated',
-        metadata={'recalculated_from': 'programme_rename', 'reason_code': 'programme_name_propagation'},
-    ):
-        _propagate_programme_name_rows(programme_id, programme_name)
-
-
-def _propagate_programme_name_rows(programme_id, programme_name):
-    for table in (COHORT_AUTHORING_DETAILS_TABLE, GROUPS_TABLE, AUTHORING_MODULES_TABLE):
-        try:
-            # Only the rows that actually disagree. This runs on every curriculum
-            # save (repair_curriculum_parent_links), and writing `updated_at`
-            # across every child row of a programme that had not been renamed
-            # would reorder its module catalogue on each save for no reason.
-            update_authoring_rows(
-                table,
-                'programme_id = %s and coalesce(programme_name, \'\') <> %s',
-                [programme_id, programme_name],
-                {'programme_name': programme_name, 'updated_at': datetime.utcnow()},
-            )
-        except (Exception, AssertionError):
-            logger.debug('Could not propagate programme name to %s for %s.', table, programme_id, exc_info=True)
 
 
 @csrf_exempt
@@ -26841,8 +25840,6 @@ def curriculum_programme_collection(request):
             'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_config.get('ksb_profile_source_id')),
             'required_otjh': payload_required_otjh(payload, existing_config),
             'status': programme_status,
-            'is_active': programme_status_is_active(programme_status),
-            'is_archived': programme_status_is_archived(programme_status),
             'updated_at': datetime.utcnow(),
         }
         try:
@@ -26872,8 +25869,6 @@ def curriculum_programme_collection(request):
         'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or ''),
         'required_otjh': payload_required_otjh(payload),
         'status': programme_status,
-        'is_active': programme_status_is_active(programme_status),
-        'is_archived': programme_status_is_archived(programme_status),
         'created_at': datetime.utcnow(),
         'updated_at': datetime.utcnow(),
     }
@@ -26907,8 +25902,6 @@ def upsert_programme_for_tree(payload):
         'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or (config or {}).get('ksb_profile_source_id') or ''),
         'required_otjh': payload_required_otjh(payload, config),
         'status': programme_status,
-        'is_active': programme_status_is_active(programme_status),
-        'is_archived': programme_status_is_archived(programme_status),
         'updated_at': datetime.utcnow(),
     }
     if config:
@@ -26916,7 +25909,6 @@ def upsert_programme_for_tree(payload):
         key_value = config.get(key_column)
         update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])
         source_id = programme_config_id(config) or clean_str(key_value)
-        propagate_programme_name(source_id, name)
         from .placement_rename import propagate_programme_name_to_learners
         propagate_programme_name_to_learners(source_id, clean_str(config.get('name')), name)
         return {
@@ -27023,7 +26015,6 @@ def save_tree_cohort(cohort, programme_id, programme_name, preserve_missing_grou
         holiday_rows,
         {
             'programme_id': programme_id,
-            'programme_name': programme_name,
             'duration_months': parse_int(duration_months, existing.get('duration_months') or 0),
             'source_type': 'module_authoring',
             'source_id': cohort_id,
@@ -27062,14 +26053,9 @@ def save_tree_group(group, cohort_row):
         'color': group.get('color') or existing.get('color') or '',
         'status': group.get('status') or existing.get('status') or 'planned',
     }
-    previous_cohort_id = clean_str(existing.get('cohort_id'))
     row = persist_group_authoring_detail(group_payload, [], safe_authoring_module_rows(), {'source_type': 'module_authoring', 'source_id': group_id})
     if not row:
         raise ValueError(f'Could not save group "{name}".')
-    if previous_cohort_id and previous_cohort_id != cohort['cohortId']:
-        previous_cohort = fetch_cohort_row(previous_cohort_id) or {}
-        update_cohort_fields(previous_cohort_id, {'group_ids': json_array_remove(previous_cohort.get('group_ids'), group_id)})
-    update_cohort_fields(cohort['cohortId'], {'group_ids': json_array_add(cohort_row.get('group_ids'), group_id)})
     notify_staff_assignment_change()
     return curriculum_group_from_authoring_detail(serialize_group_authoring_detail(row))
 
@@ -27199,11 +26185,6 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
         saved_catalogue_ids.add(catalogue_id)
         saved_modules.append(saved)
     removed = [] if preserve_missing else unassign_authoring_modules_from_group(group.get('id'), saved_catalogue_ids)
-    group_module_rows = [
-        row for row in surviving_authoring_module_rows()
-        if clean_str(row.get('group_id')) == clean_str(group.get('id'))
-    ]
-    refresh_group_module_cache(group.get('id'), group_module_rows)
     notify_staff_assignment_change()
     return saved_modules, removed
 
@@ -27274,9 +26255,7 @@ def curriculum_programme_tree_save(request):
                     continue
                 update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
                     'cohort_id': None,
-                    'cohort_name': '',
                     'group_id': None,
-                    'group_name': '',
                 })
                 removed_module_ids.append(module_id)
 
@@ -28209,7 +27188,7 @@ def soft_deleted_structure_ids(candidates):
         placeholders = ', '.join(['%s'] * len(wanted))
         rows = authoring_fetch_all(
             table, f'id in ({placeholders})', list(wanted),
-            columns=['id', 'deleted_at', 'is_programme_deleted'],
+            columns=['id', 'status'],
         )
         found.update(clean_str(row.get('id')) for row in rows if not authoring_row_is_active(row))
     return found
@@ -29626,7 +28605,7 @@ COMPONENT_HEAVY_COLUMNS = ('settings_json',)
 # JSON/text fields made the shared scan exceed the request statement timeout.
 COMPONENT_KSB_SCOPE_COLUMNS = (
     'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'expected_otjh',
-    'points', 'display_order', 'is_programme_deleted', 'deleted_at', 'library_state',
+    'points', 'display_order', 'status',
 )
 
 
@@ -29859,7 +28838,7 @@ def authoring_scope_data(scope='', identifier='', *, stats_only=False, mapped_co
     # Summary stats use child rows to rank duplicate module deliveries, then
     # weights/source identities only. Preserve all filter flags, without titles,
     # descriptions, schedules or other drill-down metadata.
-    deletion_fields = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')
+    deletion_fields = ('status',)
     counts = None
     if stats_only and connection.vendor == 'postgresql':
         from .ksb_stats_reads import grouped_scope_rows
@@ -29889,12 +28868,12 @@ def authoring_scope_data(scope='', identifier='', *, stats_only=False, mapped_co
     else:
         week_rows = active_week_rows(authoring_child_rows_for_modules(
             AUTHORING_WEEKS_TABLE, module_ids,
-            **({'columns': ('module_catalogue_id', 'library_state', *deletion_fields)} if stats_only else {}),
+            **({'columns': ('module_catalogue_id', *deletion_fields)} if stats_only else {}),
         ))
         component_rows = active_component_rows(authoring_child_rows_for_modules(
             AUTHORING_COMPONENTS_TABLE, module_ids,
             # Full coverage also excludes component bodies and other large JSON.
-            columns=(('module_catalogue_id', 'type', 'is_programme_deleted', 'deleted_at', 'library_state')
+            columns=(('module_catalogue_id', 'type', 'status')
                      if stats_only else COMPONENT_KSB_SCOPE_COLUMNS),
         ))
         mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(
@@ -33731,14 +32710,9 @@ def _update_module_cover(request, identifier, payload):
     image = stored_module_cover_image(identifier, image)
     try:
         with connection.cursor() as cursor:
-            # Only a live module takes a cover: the legacy stamps, or status on
-            # the normalised schema (an UPDATE target is never adapted).
-            if schema_compat.uses_status_lifecycle(AUTHORING_MODULES_TABLE, column_names(AUTHORING_MODULES_TABLE)):
-                live_sql = schema_compat.active_condition()
-            else:
-                live_sql = "status NOT IN ('inactive','archived')"
+            # Only a live (not archived) module takes a cover.
             cursor.execute(f'''UPDATE curriculum.modules SET cover_image_url=%s,updated_at=CURRENT_TIMESTAMP
-                              WHERE module_catalogue_id=%s AND {live_sql}
+                              WHERE module_catalogue_id=%s AND {archive_state.live_sql()}
                               RETURNING module_catalogue_id''', [image, identifier])
             updated_row = cursor.fetchone()
             if not updated_row:
@@ -33966,15 +32940,6 @@ def curriculum_module_detail(request, identifier):
                     AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id],
                     {'title': structure_payload['title'], 'updated_at': datetime.utcnow()},
                 )
-                group_id = clean_str(existing_authoring.get('group_id'))
-                if group_id:
-                    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])
-                    update_group_fields(group_id, {
-                        'module_names': json_db_value(unique([
-                            clean_str(row.get('title')) for row in surviving_authoring_module_rows(module_rows)
-                            if row.get('title')
-                        ])),
-                    })
                 invalidate_curriculum_cache()
                 result = get_authoring_structure_payload(module_catalogue_id)
                 result['qualityChecklist'] = module_authoring_quality_check(result)[0]
@@ -34018,192 +32983,38 @@ def curriculum_ksb_frameworks(request):
     return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbFrameworks')
 
 
-def _ksb_profiles_removed():
-    """The normalised curriculum schema (PostgreSQL, curriculum tables present)
-    without curriculum.ksb_profiles -- removed there; its rows were all inactive."""
-    return (
-        connection.vendor == 'postgresql'
-        and bool(schema_compat.columns_of(CURRICULUM_SCHEMA, AUTHORING_MODULES_TABLE))
-        and not schema_compat.columns_of(CURRICULUM_SCHEMA, 'ksb_profiles')
-    )
-
-
 @csrf_exempt
 def curriculum_ksb_framework_collection(request):
     if request.method == 'GET':
         return curriculum_ksb_frameworks(request)
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
-    if _ksb_profiles_removed():
-        return json_error('KSB frameworks cannot be created: the current curriculum database keeps no KSB frameworks. '
-                          'A programme takes its KSBs from its apprenticeship standard.',
-                          status=409, code='ksb_frameworks_not_available')
-    payload = json_body(request)
-    if payload is None:
-        return json_error('Invalid JSON body.')
-    missing = require_fields(payload, ['name'])
-    if missing:
-        return json_error('Missing required fields.', fields=missing)
-    ensure_ksb_profile_identity_columns()
-    name = clean_str(payload.get('name'))
-    duplicate = next((row for row in get_ksb_profile_rows() if normalise(row.get('name')) == normalise(name)), None)
-    if duplicate:
-        return json_error('KSB framework already exists.', status=409)
-    programme_id = canonical_programme_id(payload.get('programmeId') or payload.get('programme_id'), payload.get('programmeName') or payload.get('programme'))
-    existing_profile_ids = [row.get('ksb_profile_id') for row in get_ksb_profile_rows()]
-    ksb_profile_id = unique_ksb_profile_id(payload.get('ksbProfileId') or payload.get('ksb_profile_id') or programme_id, existing_profile_ids)
-    standard_source_id = clean_str(payload.get('standardSourceId') or payload.get('standard_source_id')).replace('standard:', '', 1)
-    if standard_source_id and not find_skills_england_standard(standard_source_id):
-        return json_error('Skills England standard not found.', fields=['standardSourceId'], status=400)
-    row = insert_row('ksb_profiles', {
-        'id': ksb_profile_id,
-        'name': name,
-        'ksb_profile_id': ksb_profile_id,
-        'standard_source_id': standard_source_id,
-        'programme_ids': json.dumps(unique([
-            programme_id,
-            payload.get('programmeName'),
-            payload.get('programme'),
-            *payload_context_ids(payload, 'programmeIds', 'programme_ids', ('programmeId', 'programme_id')),
-        ])),
-        'description': payload.get('description') or '',
-        'knowledge_codes': json.dumps(payload.get('knowledgeCodes') or []),
-        'skill_codes': json.dumps(payload.get('skillCodes') or []),
-        'behaviour_codes': json.dumps(payload.get('behaviourCodes') or []),
-        'ksb_items': json.dumps(payload.get('ksbItems') or []),
-        'is_active': True,
-        'created_by': payload.get('createdBy') or '',
-        'created_at': datetime.utcnow(),
-        'updated_at': datetime.utcnow(),
-    })
-    invalidate_curriculum_cache()
-    return JsonResponse({'created': True, 'framework': row}, status=201)
+    # The curriculum database keeps no KSB frameworks (curriculum.ksb_profiles
+    # was removed); a programme takes its KSBs from its apprenticeship standard.
+    return json_error('KSB frameworks cannot be created: the current curriculum database keeps no KSB frameworks. '
+                      'A programme takes its KSBs from its apprenticeship standard.',
+                      status=409, code='ksb_frameworks_not_available')
 
 
 @csrf_exempt
 def curriculum_ksb_framework_detail(request, identifier):
     if request.method not in {'GET', 'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
-    if _ksb_profiles_removed():
-        # Normalised schema: curriculum.ksb_profiles was removed (its rows were
-        # all inactive). Reads find nothing, as an empty table would; a change
-        # is refused plainly instead of failing on the missing table.
-        if request.method != 'GET':
-            return json_error('KSB frameworks cannot be changed: the current curriculum database keeps no KSB frameworks. '
-                              'A programme takes its KSBs from its apprenticeship standard.',
-                              status=409, code='ksb_frameworks_not_available')
-        return json_error('KSB framework not found.', status=404)
-    ensure_ksb_profile_identity_columns()
-    ident = clean_str(identifier).replace('ksb-', '', 1)
-    rows = fetch_all(
-        f'''
-        select *
-        from {table_name("ksb_profiles")}
-        where cast(id as text) = %s or ksb_profile_id = %s
-        ''',
-        [ident, clean_str(identifier)],
-    )
-    if not rows:
-        rows = [
-            row for row in get_ksb_profile_rows()
-            if clean_str(identifier) in ksb_profile_context_ids(row, 'programme_ids')
-            or ident in ksb_profile_context_ids(row, 'programme_ids')
-            or slugify(identifier) in {slugify(value) for value in ksb_profile_context_ids(row, 'programme_ids')}
-        ][:1]
-    if not rows:
-        return json_error('KSB framework not found.', status=404)
-    profile_id = clean_str(rows[0].get('id'))
-    framework_source_id = ksb_profile_source_id(rows[0])
-    if request.method == 'GET':
-        payload = get_cached_payload(request)
-        framework_id = framework_source_id
-        framework = next((item for item in payload.get('ksbFrameworks', []) if item.get('id') == framework_id), None)
-        ksb_set = next((item for item in payload.get('ksbSets', []) if item.get('frameworkId') == framework_id), None)
-        if not framework:
-            return json_error('KSB framework not found.', status=404)
-        return JsonResponse({**framework, 'definitions': (ksb_set or {}).get('ksbs', [])})
-    if request.method == 'DELETE':
-        delete_rows('ksb_profiles', 'id = %s', [profile_id])
-        invalidate_curriculum_cache()
-        return JsonResponse({'deleted': True, 'id': identifier})
-    payload = json_body(request)
-    if payload is None:
-        return json_error('Invalid JSON body.')
-    standard_source_sent = 'standardSourceId' in payload or 'standard_source_id' in payload
-    standard_source_id = clean_str(
-        payload.get('standardSourceId') if 'standardSourceId' in payload else payload.get('standard_source_id')
-    ).replace('standard:', '', 1)
-    if standard_source_sent and standard_source_id and not find_skills_england_standard(standard_source_id):
-        return json_error('Skills England standard not found.', fields=['standardSourceId'], status=400)
-    should_sync_programme_links = any(key in payload for key in ('programmeIds', 'programme_ids', 'programmeId', 'programme_id', 'programmeName', 'programme'))
-    linked_programme_values = []
-    if should_sync_programme_links:
-        next_programme_id = canonical_programme_id(
-            payload.get('programmeId') or payload.get('programme_id'),
-            payload.get('programmeName') or payload.get('programme'),
-        )
-        next_programme_values = payload_context_ids(payload, 'programmeIds', 'programme_ids', ('programmeId', 'programme_id'))
-        affected_programme_values = unique([
-            next_programme_id,
-            payload.get('programmeName'),
-            payload.get('programme'),
-            *next_programme_values,
-        ])
-        unlink_programmes_from_other_ksb_profiles(profile_id, affected_programme_values)
-        linked_programme_values = unique([
-            next_programme_id,
-            payload.get('programmeName'),
-            payload.get('programme'),
-            *next_programme_values,
-        ])
-    updates = {
-        'name': payload.get('name'),
-        'ksb_profile_id': unique_ksb_profile_id(payload.get('ksbProfileId') or payload.get('ksb_profile_id'), [row.get('ksb_profile_id') for row in get_ksb_profile_rows() if clean_str(row.get('id')) != profile_id]) if any(key in payload for key in ('ksbProfileId', 'ksb_profile_id')) else None,
-        'standard_source_id': standard_source_id if standard_source_sent else None,
-        'programme_ids': json.dumps(unique([
-            canonical_programme_id(payload.get('programmeId') or payload.get('programme_id'), payload.get('programmeName') or payload.get('programme')),
-            payload.get('programmeName'),
-            payload.get('programme'),
-            *payload_context_ids(payload, 'programmeIds', 'programme_ids', ('programmeId', 'programme_id')),
-        ])) if any(key in payload for key in ('programmeIds', 'programme_ids', 'programmeId', 'programme_id', 'programmeName', 'programme')) else None,
-        'description': payload.get('description'),
-        'knowledge_codes': json.dumps(payload.get('knowledgeCodes')) if 'knowledgeCodes' in payload else None,
-        'skill_codes': json.dumps(payload.get('skillCodes')) if 'skillCodes' in payload else None,
-        'behaviour_codes': json.dumps(payload.get('behaviourCodes')) if 'behaviourCodes' in payload else None,
-        'ksb_items': json.dumps(payload.get('ksbItems')) if 'ksbItems' in payload else None,
-        'is_active': payload.get('isActive'),
-        'updated_at': datetime.utcnow(),
-    }
-    if updates.get('ksb_profile_id'):
-        updates['id'] = updates['ksb_profile_id']
-    update_rows('ksb_profiles', 'id = %s', [profile_id], updates)
-    if should_sync_programme_links and linked_programme_values:
-        cascade_ksb_profile_source_to_programme_modules(linked_programme_values, framework_source_id)
-    invalidate_curriculum_cache()
-    return JsonResponse({'updated': True, 'id': identifier})
+    # No KSB frameworks are stored (see curriculum_ksb_framework_collection):
+    # a read finds nothing and a change is refused plainly.
+    if request.method != 'GET':
+        return json_error('KSB frameworks cannot be changed: the current curriculum database keeps no KSB frameworks. '
+                          'A programme takes its KSBs from its apprenticeship standard.',
+                          status=409, code='ksb_frameworks_not_available')
+    return json_error('KSB framework not found.', status=404)
 
 
 @gzip_page
 @require_GET
 def curriculum_ksb_set_definitions(request, identifier):
-    # A single profile's definitions, independently of curriculum coverage.
-    # Keep archived assigned sources readable when visibility=all is requested.
-    if _ksb_profiles_removed():
-        return json_error('KSB profile not found.', status=404)  # normalised schema: no profile table
-    rows = fetch_all(
-        f'select * from {table_name("ksb_profiles")} where cast(id as text) = %s or ksb_profile_id = %s',
-        [identifier, identifier],
-    )
-    if not rows:
-        # Older rows can have a generated public id rather than a stored one.
-        rows = [row for row in get_ksb_profile_rows() if ksb_profile_source_id(row) == identifier]
-    profile = next((row for row in rows if ksb_profile_source_id(row) == identifier or clean_str(row.get('id')) == identifier), None)
-    if profile is None or (curriculum_visibility(request) != 'all' and not profile.get('is_active')):
-        return json_error('KSB profile not found.', status=404)
-    result = build_ksb_data([profile], [], [])[1][0]
-    fields = {'id', 'code', 'rawCode', 'fullCode', 'parentCode', 'parentId', 'displayOrder', 'title', 'description', 'type'}
-    result['ksbs'] = [{key: value for key, value in entry.items() if key in fields} for entry in result['ksbs']]
-    return JsonResponse(result)
+    # A KSB set was one stored KSB profile; none are stored any more
+    # (curriculum.ksb_profiles was removed), so every set id is unknown.
+    return json_error('KSB profile not found.', status=404)
 
 
 @gzip_page
@@ -34397,7 +33208,6 @@ def create_curriculum_cohort(payload):
         updates = {
             'cohort_name': name,
             'programme_id': programme_id or None,
-            'programme_name': programme or None,
             'start_date': payload.get('startDate') or None,
             'end_date': end_date or None,
             'duration_months': parse_int(duration_months, duplicate.get('durationMonths') or 0),
@@ -34577,9 +33387,7 @@ def curriculum_cohort_detail(request, identifier):
         # group from the module drawer, never left on an archived cohort.
         update_authoring_rows(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id], {
             'cohort_id': None,
-            'cohort_name': '',
             'group_id': None,
-            'group_name': '',
         })
         authoring_soft_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], deleted_by='cohort-delete')
         log_curriculum_decision(
@@ -34784,9 +33592,7 @@ def create_curriculum_group(payload):
         updates = {
             'group_name': group_name,
             'cohort_id': cohort_id,
-            'cohort_name': cohort_name,
             'programme_id': programme_id,
-            'programme_name': programme,
             'coach_name': canonical_group_coaches(payload.get('coach')) if 'coach' in payload else clean_str(duplicate.get('coach')),
             'session_week_day': requested_week_day if any(key in payload for key in ('weekDays', 'deliveryDays', 'sessionWeekDay', 'session_week_day')) else clean_str(duplicate.get('weekDays') or duplicate.get('session_week_day')),
             'session_start_time': requested_start_time if any(key in payload for key in ('startTime', 'start_time', 'sessionStartTime', 'session_start_time')) else clean_str(duplicate.get('startTime') or duplicate.get('session_start_time')),
@@ -34800,7 +33606,6 @@ def create_curriculum_group(payload):
             reason='live-namesake-in-same-cohort' if existing_id != clean_str(group_id) else 'same-id',
         )
         update_group_fields(existing_id, updates)
-        update_cohort_fields(cohort_id, {'group_ids': json_array_add(cohort_row.get('group_ids'), existing_id)})
         module_assignment_ids = [
             clean_str(row.get('module_catalogue_id'))
             for row in safe_authoring_module_rows()
@@ -34871,9 +33676,6 @@ def create_curriculum_group(payload):
         # which is the branch that used to silently swallow the create.
         reason='archived-namesake-ignored' if archived_group_ids else '',
     )
-    # Link the group to its cohort by extending the cohort's group_ids array,
-    # without touching any other cohort column.
-    update_cohort_fields(cohort_id, {'group_ids': json_array_add(cohort_row.get('group_ids'), group_id)})
     notify_staff_assignment_change()
     invalidate_curriculum_cache()
     return JsonResponse({'created': True, 'group': curriculum_group_from_authoring_detail({
@@ -35046,9 +33848,6 @@ def curriculum_group_detail(request, identifier):
             return permanent_group_delete_response(group_row)
 
         cohort_id = clean_str(group_row.get('cohort_id'))
-        if cohort_id:
-            cohort_row = fetch_cohort_row(cohort_id) or {}
-            update_cohort_fields(cohort_id, {'group_ids': json_array_remove(cohort_row.get('group_ids'), group_id)})
         unassign_authoring_modules_from_group(group_id)
         authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [group_id], deleted_by='group-delete')
         log_curriculum_decision(
@@ -35184,18 +33983,10 @@ def curriculum_group_detail(request, identifier):
             )
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
         if next_cohort_id and next_cohort_id != previous_cohort_id:
-            if previous_cohort_id:
-                previous_cohort = fetch_cohort_row(previous_cohort_id) or {}
-                update_cohort_fields(previous_cohort_id, {'group_ids': json_array_remove(previous_cohort.get('group_ids'), group_id)})
-            next_cohort = fetch_cohort_row(next_cohort_id) or {}
-            update_cohort_fields(next_cohort_id, {'group_ids': json_array_add(next_cohort.get('group_ids'), group_id)})
             for module in authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id]):
                 update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module.get('module_catalogue_id')], {
                     'cohort_id': next_cohort_id,
-                    'cohort_name': clean_str(updated_group.get('cohort_name')),
                     'programme_id': clean_str(updated_group.get('programme_id')),
-                    'programme_name': clean_str(updated_group.get('programme_name')),
-                    'group_name': clean_str(updated_group.get('group_name')),
                 })
         if not curriculum_name_only_patch(payload):
             repair_curriculum_parent_links(clean_str(updated_group.get('programme_id')))
@@ -35481,8 +34272,6 @@ def curriculum_cohort_restore(request, identifier):
 
     with transaction.atomic():
         payload = restore_soft_delete_payload(COHORT_AUTHORING_DETAILS_TABLE)
-        if has_column(COHORT_AUTHORING_DETAILS_TABLE, 'is_archived'):
-            payload['is_archived'] = False
         if has_column(COHORT_AUTHORING_DETAILS_TABLE, 'status'):
             # Back to whatever the dates say it is now, not to a blanket
             # 'active': a cohort archived before it started is still planned.
@@ -35538,23 +34327,10 @@ def curriculum_group_restore(request, identifier):
 
     with transaction.atomic():
         payload = restore_soft_delete_payload(GROUPS_TABLE)
-        if has_column(GROUPS_TABLE, 'is_archived'):
-            payload['is_archived'] = False
-        if has_column(GROUPS_TABLE, 'status') and clean_str(group_row.get('status')).lower() == 'archived':
-            # Only a legacy row carries this: archiving a group stamps
-            # deleted_at and leaves status alone. Left as 'archived' the row
-            # would come back and immediately read as archived again.
-            payload['status'] = 'active'
         update_rows(
             GROUPS_TABLE, 'group_id = %s', [group_id], payload,
             allow_null_columns=RESTORE_NULLABLE_COLUMNS,
         )
-        # The archive took this id out of the cohort's ``group_ids``; put it
-        # back so the stored child list and the rows agree again.
-        if cohort_row:
-            update_cohort_fields(cohort_id, {
-                'group_ids': json_array_add(cohort_row.get('group_ids'), group_id),
-            })
     invalidate_curriculum_cache()
     log_curriculum_decision('group.restore', outcome='restored', entity_id=group_id, parent_id=cohort_id)
     return JsonResponse({
@@ -35608,7 +34384,6 @@ def permanent_cohort_delete_response(cohort_row):
             # through one of its groups.
             update_authoring_rows(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id], {
                 'cohort_id': None,
-                'cohort_name': '',
             })
             # Its holiday choices reference it with RESTRICT on the normalised
             # schema: they go with it (authoring_delete does the same).
@@ -35666,11 +34441,6 @@ def permanent_group_delete_response(group_row):
     try:
         with transaction.atomic():
             unassign_authoring_modules_from_group(group_id)
-            cohort_row = fetch_cohort_row(cohort_id) if cohort_id else None
-            if cohort_row:
-                update_cohort_fields(cohort_id, {
-                    'group_ids': json_array_remove(cohort_row.get('group_ids'), group_id),
-                })
             removed = {'groups': len(delete_rows(GROUPS_TABLE, 'group_id = %s', [group_id]))}
     except (IntegrityError, DatabaseError) as exc:
         logger.warning('Permanent delete of group %s was refused: %s', group_id, exc)
@@ -36571,9 +35341,6 @@ def curriculum_group_modules(request, identifier):
                 if request.method == 'PATCH'
                 else []
             )
-            # Refresh only the group's derived module_ids/module_names from
-            # curriculum.modules. Coach/tutor/dates/status stay untouched.
-            refresh_group_module_cache(group_row.get('group_id'))
             repair_curriculum_parent_links(clean_str(group.get('programmeId') or group.get('programme_id')))
             invalidate_curriculum_cache()
             return JsonResponse({
@@ -37526,11 +36293,15 @@ def curriculum_tutor_workspace(request):
             # total_otjh column is being removed (see drop_module_total_otjh.sql).
             with connection.cursor() as cursor:
                 cursor.execute(
-                    f'SELECT m.module_catalogue_id,m.title,m.description,m.programme_name,'
-                    f'm.cohort_name,m.group_name,m.color,m.sessions_number,'
+                    f'SELECT m.module_catalogue_id,m.title,m.description,'
+                    f"coalesce(p.name,'') AS programme_name,coalesce(c.cohort_name,'') AS cohort_name,"
+                    f"coalesce(g.group_name,'') AS group_name,m.color,m.sessions_number,"
                     f'm.start_date,m.end_date,m.session_week_day,m.session_start_time,m.session_end_time,'
                     f'{module_expected_otjh_sql("m")} AS total_otjh'
                     f' FROM {authoring_table_name(AUTHORING_MODULES_TABLE)} m'
+                    f' LEFT JOIN {authoring_table_name("programmes")} p ON p.programme_id = m.programme_id'
+                    f' LEFT JOIN {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} c ON c.cohort_id = m.cohort_id'
+                    f' LEFT JOIN {authoring_table_name(GROUPS_TABLE)} g ON g.group_id = m.group_id'
                     f' WHERE m.module_catalogue_id IN ({placeholders})'
                     f' ORDER BY m.start_date,m.title',
                     module_ids,
@@ -37596,7 +36367,6 @@ _SCHEMA_READY_FLAGS = (
     '_AUTHORING_TABLES_READY',
     '_FREE_PROGRAMME_TABLES_READY',
     '_PROGRAMME_CONFIG_DEDUP_READY',
-    '_KSB_PROFILE_PROGRAMME_ID_READY',
     '_TRAINING_PLAN_CANONICAL_READY',
     '_LIVE_SESSIONS_TABLE_READY',
     '_LIVE_SESSION_TRACKING_TABLES_READY',

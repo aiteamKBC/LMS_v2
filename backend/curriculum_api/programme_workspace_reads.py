@@ -33,7 +33,7 @@ def programme_structure_child_rows(module_ids, *, component_text=True):
     def read(table, order, columns=None):
         # These SQL filters exclude only rows the existing active_* predicates
         # already reject. Keep those Python predicates in the builders as well.
-        live, params = views.live_authoring_rows_sql(table, ('deleted_at', 'is_programme_deleted'))
+        live, params = views.live_authoring_rows_sql(table)
         where = f'({scope}) and ({live})' if live else scope
         return compact_authoring_rows(table, where, [*ids, *params], order, columns=columns, reuse_unchanged=True)
 

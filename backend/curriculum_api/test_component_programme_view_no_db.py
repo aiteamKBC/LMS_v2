@@ -219,10 +219,6 @@ class ComponentSummaryKsbCodesTests(SimpleTestCase):
         codes, _ = self._codes(rows, {'id', 'component_id', 'standard_ksb_id', 'status'})
         self.assertEqual(dict(codes), {})
 
-    def test_unreadable_mapping_shape_answers_none(self):
-        codes, _ = self._codes([], {'id', 'ksb_id'})
-        self.assertIsNone(codes)
-
     def test_summary_buckets_carry_their_codes_and_an_empty_list_when_unmapped(self):
         source = [
             {'module_catalogue_id': 'MOD-1', 'week_id': 'W1', '_count': 2, '_published': 1, 'expected_otjh': 0.5,

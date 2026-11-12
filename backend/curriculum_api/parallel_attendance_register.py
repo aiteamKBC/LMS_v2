@@ -1,7 +1,7 @@
 """Save unambiguous alternative-group attendance in the learner register."""
 from collections import defaultdict
 
-from django.db import router, transaction
+from django.db import connections, router, transaction
 from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
@@ -33,9 +33,17 @@ def saved_parallel_links(register_rows, *, database=None):
     ).exclude(attendance_basis='staff', attendance_status='absent').values('learner_profile_id', 'occurrence_id', 'module_catalogue_id',
              'parallel_source_occurrence_id', 'parallel_source_module_id'))
     module_ids = {row['parallel_source_module_id'] for row in linked}
-    names = dict(ModuleAuthoringModule.objects.using(database).filter(
-        module_catalogue_id__in=module_ids, deleted_at__isnull=True,
-    ).values_list('module_catalogue_id', 'group_name'))
+    # A module names its group by group_id; the name is the group's own.
+    group_by_module = dict(ModuleAuthoringModule.objects.using(database).filter(
+        module_catalogue_id__in=module_ids,
+    ).exclude(status='inactive').exclude(group_id__isnull=True).values_list('module_catalogue_id', 'group_id'))
+    group_names = {}
+    if group_by_module:
+        with connections[database].cursor() as cursor:
+            cursor.execute('SELECT group_id, group_name FROM curriculum.groups WHERE group_id = ANY(%s)',
+                           [sorted(set(group_by_module.values()))])
+            group_names = dict(cursor.fetchall())
+    names = {module_id: group_names.get(group_id) for module_id, group_id in group_by_module.items()}
     dates = dict(LiveSessionOccurrence.objects.using(database).filter(
         id__in={row['occurrence_id'] for row in linked}).values_list('id', 'scheduled_start'))
     originals, guests = {}, {}

@@ -1,11 +1,11 @@
 import { fetchAssignedLearners, fetchLearnerStatusCounts } from '@/api/assignedLearners';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { CurriculumProgramme, CurriculumKsbSourceDefinitions } from '@/lib/curriculumApi';
-import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries, fetchCurriculumKsbSourceDefinitions } from '@/lib/curriculumApi';
+import type { CurriculumProgramme } from '@/lib/curriculumApi';
+import { fetchCurriculumKsbSets, fetchCurriculumKsbSetSummaries } from '@/lib/curriculumApi';
 
 /**
  * A programme with no usable KSB source is unfinished work, not a programme with
@@ -99,27 +99,17 @@ const createCurriculumProgramme = vi.fn(async () => ({
   created: true,
   programme: { id: 'PROG-NEW', sourceId: 'PROG-NEW', name: 'Fresh Programme', ksbProfileSourceId: '' },
 }));
-// Creating the placeholder makes it visible to the next fetch, the way the
-// backend does — the page then applies the profile it has just made.
-const createCurriculumKsbFramework = vi.fn(async () => {
-  ksbSets = [realProfile, sharedEmptyProfile];
-  return { created: true, framework: { id: 'KSBP-EMPTY', name: 'Empty KSB profile' } };
-});
-const updateCurriculumKsbFramework = vi.fn(async () => ({ updated: true, id: 'KSBP-EMPTY' }));
 const updateCurriculumProgramme = vi.fn(async () => ({ updated: true }));
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   createCurriculumProgramme: (...args: unknown[]) => createCurriculumProgramme(...(args as [])),
-  createCurriculumKsbFramework: (...args: unknown[]) => createCurriculumKsbFramework(...(args as [])),
-  updateCurriculumKsbFramework: (...args: unknown[]) => updateCurriculumKsbFramework(...(args as [])),
   updateCurriculumProgramme: (...args: unknown[]) => updateCurriculumProgramme(...(args as [])),
   fetchCurriculumKsbSets: vi.fn(async () => ksbSets),
   fetchCurriculumKsbSetSummaries: vi.fn(async () => ksbSets.map(value => {
     const { ksbs, ...metadata } = value as typeof realProfile;
     return { ...metadata, ksbCount: ksbs.length, knowledgeCount: ksbs.length, skillCount: 0, behaviourCount: 0 };
   })),
-  fetchCurriculumKsbSourceDefinitions: vi.fn(async (id: string) => ksbSets.find(value => (value as typeof realProfile).frameworkId === id)),
   fetchCurriculumProgrammeKsbStats: vi.fn(async () => ({})),
   fetchCurriculumStandards: vi.fn(async () => [linkedStandard]),
   fetchCurriculumModules: vi.fn(async () => []),
@@ -149,12 +139,9 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     listedProgrammes = [withSource, withoutSource];
     ksbSets = [realProfile];
     createCurriculumProgramme.mockClear();
-    createCurriculumKsbFramework.mockClear();
-    updateCurriculumKsbFramework.mockClear();
     updateCurriculumProgramme.mockClear();
     vi.mocked(fetchCurriculumKsbSets).mockClear();
     vi.mocked(fetchCurriculumKsbSetSummaries).mockClear();
-    vi.mocked(fetchCurriculumKsbSourceDefinitions).mockClear();
   });
 
   it('shows automatically loaded programme status counts while names wait for an explicit open', async () => {
@@ -172,37 +159,11 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(fetchAssignedLearners).toHaveBeenCalledWith(expect.objectContaining({ scope: 'programme', id: 'PROG-MAPPED' }), 'active', '', 1, expect.any(AbortSignal));
   });
 
-  it('loads source summaries on mount and definitions only when that source is opened', async () => {
+  it('loads source summaries on mount, never the full KSB library', async () => {
     await renderProgrammes();
-    const button = await screen.findByRole('button', { name: 'View KSBs for Project Control Professional' });
+    await screen.findByRole('button', { name: 'View KSBs for Project Control Professional' });
     expect(fetchCurriculumKsbSetSummaries).toHaveBeenCalledTimes(1);
     expect(fetchCurriculumKsbSets).not.toHaveBeenCalled();
-    expect(fetchCurriculumKsbSourceDefinitions).not.toHaveBeenCalled();
-    await userEvent.click(button);
-    await waitFor(() => expect(fetchCurriculumKsbSourceDefinitions).toHaveBeenCalledWith('KSB-1'));
-    expect(await screen.findByRole('button', { name: 'Close KSB profile' })).toBeInTheDocument();
-  });
-
-  it('shows definition failures and retries without displaying an empty profile', async () => {
-    vi.mocked(fetchCurriculumKsbSourceDefinitions).mockRejectedValueOnce(new Error('Definitions unavailable'));
-    await renderProgrammes();
-    await userEvent.click(await screen.findByRole('button', { name: 'View KSBs for Project Control Professional' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Definitions unavailable');
-    expect(screen.queryByText('No KSBs in this profile')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(fetchCurriculumKsbSourceDefinitions).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
-  });
-
-  it('does not reopen a source review when its delayed response arrives after closing', async () => {
-    let resolve: (value: CurriculumKsbSourceDefinitions) => void = () => {};
-    vi.mocked(fetchCurriculumKsbSourceDefinitions).mockReturnValueOnce(new Promise(done => { resolve = done; }));
-    await renderProgrammes();
-    await userEvent.click(await screen.findByRole('button', { name: 'View KSBs for Project Control Professional' }));
-    expect(await screen.findByText('Loading KSB definitions...')).toHaveAttribute('role', 'status');
-    await userEvent.click(screen.getByRole('button', { name: 'Close KSB profile' }));
-    await act(async () => { resolve(realProfile as unknown as CurriculumKsbSourceDefinitions); });
-    expect(screen.queryByRole('button', { name: 'Close KSB profile' })).not.toBeInTheDocument();
   });
 
   it('says so for the page, and offers only a real source', async () => {
@@ -219,7 +180,6 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     // parked from here.
     expect(screen.queryByRole('button', { name: /Assign empty profile/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Author a KSB profile' })).not.toBeInTheDocument();
-    expect(createCurriculumKsbFramework).not.toHaveBeenCalled();
   });
 
   it('still offers a real source instead of the placeholder', async () => {
@@ -279,7 +239,6 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
 
     await waitFor(() => expect(createCurriculumProgramme).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Apply KSB Source')).toBeInTheDocument();
-    expect(createCurriculumKsbFramework).not.toHaveBeenCalled();
   });
 
   it('opens Delivery directly after the new programme has a KSB source', async () => {

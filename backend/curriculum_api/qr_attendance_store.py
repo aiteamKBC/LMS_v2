@@ -11,39 +11,27 @@ def rows(sql, params=()):
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def _normalised(table):
-    """True on the normalised schema: ``status`` is the archive record and the
-    copied names / child lists are gone (see schema_compat)."""
-    from . import schema_compat
-    return schema_compat.uses_status_lifecycle(table, schema_compat.columns_of('curriculum', table))
+def _live(alias):
+    """SQL: the ``alias`` row is not archived (true when the join found none).
 
-
-def _live(alias, table):
-    """SQL: the ``alias`` row of ``table`` is not archived (true when the join found none)."""
-    if _normalised(table):
-        return f"coalesce(lower({alias}.status) not in ('inactive', 'archived'), true)"
-    return f'({alias}.deleted_at IS NULL AND NOT coalesce({alias}.is_programme_deleted, false))'
+    ``status`` is the archive record; 'archived' is read as withdrawn too, so a
+    value written by an older process is never shown as live.
+    """
+    return f"coalesce(lower({alias}.status) not in ('inactive', 'archived'), true)"
 
 
 def students(email):
-    from . import schema_compat
-    if 'programme_id' in schema_compat.columns_of('enrolment', 'Created_users'):
-        # Normalised schema: the enrolment row keeps placement ids, not names.
-        # The names are only context()'s fallback for a profile without ids.
-        return [SimpleNamespace(**row) for row in rows('''
-            SELECT u.id, u.id AS pk, coalesce(p.name, '') AS programme,
-                   coalesce(g.group_name, '') AS "group", coalesce(c.cohort_name, '') AS cohort,
-                   u."Learning_plan" AS learning_plan, u."Training_plan" AS training_plan
-            FROM enrolment."Created_users" u
-            LEFT JOIN curriculum.programmes p ON p.programme_id = u.programme_id
-            LEFT JOIN curriculum.groups g ON g.group_id = u.group_id
-            LEFT JOIN curriculum.cohorts c ON c.cohort_id = u.cohort_id
-            WHERE lower(trim(u."Email")) = %s LIMIT 2
-        ''', [email])]
+    # The enrolment row keeps placement ids; names come from the curriculum.
+    # They are only context()'s fallback for a profile without ids.
     return [SimpleNamespace(**row) for row in rows('''
-        SELECT id, id AS pk, "Programme" AS programme, "Group" AS "group", "Cohort" AS cohort,
-               "Learning_plan" AS learning_plan, "Training_plan" AS training_plan
-        FROM enrolment."Created_users" WHERE lower(trim("Email")) = %s LIMIT 2
+        SELECT u.id, u.id AS pk, coalesce(p.name, '') AS programme,
+               coalesce(g.group_name, '') AS "group", coalesce(c.cohort_name, '') AS cohort,
+               u."Learning_plan" AS learning_plan, u."Training_plan" AS training_plan
+        FROM enrolment."Created_users" u
+        LEFT JOIN curriculum.programmes p ON p.programme_id = u.programme_id
+        LEFT JOIN curriculum.groups g ON g.group_id = u.group_id
+        LEFT JOIN curriculum.cohorts c ON c.cohort_id = u.cohort_id
+        WHERE lower(trim(u."Email")) = %s LIMIT 2
     ''', [email])]
 
 
@@ -53,22 +41,14 @@ def placements(enrolment_id):
 
 
 def programmes():
-    live = _live('p', 'programmes') if _normalised('programmes') else 'p.deleted_at IS NULL'
     return rows(f'''SELECT p.programme_id AS id, p.name FROM curriculum.programmes p
-                   WHERE {live}''')
+                   WHERE {_live('p')}''')
 
 
 def modules():
     # Explicit placement IDs are the association. Names never grant access.
     # Joining both cohort paths lets the policy detect inconsistent ancestry.
-    if _normalised('modules'):
-        deleted = (f"NOT ({_live('m', 'modules')} AND {_live('g', 'groups')} "
-                   f"AND {_live('c', 'cohorts')} AND {_live('gc', 'cohorts')})")
-    else:
-        deleted = '''(m.deleted_at IS NOT NULL OR m.is_programme_deleted
-                OR g.deleted_at IS NOT NULL OR coalesce(g.is_programme_deleted, false)
-                OR c.deleted_at IS NOT NULL OR coalesce(c.is_programme_deleted, false)
-                OR gc.deleted_at IS NOT NULL OR coalesce(gc.is_programme_deleted, false))'''
+    deleted = f"NOT ({_live('m')} AND {_live('g')} AND {_live('c')} AND {_live('gc')})"
     return rows(f'''
         SELECT m.module_catalogue_id AS id, m.title, m.programme_id, m.start_date, m.end_date,
                g.group_id, coalesce(c.cohort_id, gc.cohort_id) AS cohort_id,
@@ -89,24 +69,17 @@ def modules():
 
 
 def groups():
-    if _normalised('groups'):
-        # groups.module_ids was dropped: the preset is the group's live modules,
-        # in curriculum_names' order (title, then id).
-        return rows(f'''SELECT g.group_id AS id, g.programme_id, g.cohort_id, g.group_name,
-                              coalesce((SELECT json_agg(m.module_catalogue_id ORDER BY m.title, m.module_catalogue_id)
-                                        FROM curriculum.modules m
-                                        WHERE m.group_id = g.group_id AND {_live('m', 'modules')}), '[]'::json) AS module_ids
-                       FROM curriculum.groups g WHERE {_live('g', 'groups')}''')
-    return rows('''SELECT group_id AS id, programme_id, cohort_id, group_name, module_ids
-                  FROM curriculum.groups WHERE deleted_at IS NULL AND NOT is_programme_deleted''')
+    # A group's preset is its live modules, in curriculum_names' order (title, then id).
+    return rows(f'''SELECT g.group_id AS id, g.programme_id, g.cohort_id, g.group_name,
+                          coalesce((SELECT json_agg(m.module_catalogue_id ORDER BY m.title, m.module_catalogue_id)
+                                    FROM curriculum.modules m
+                                    WHERE m.group_id = g.group_id AND {_live('m')}), '[]'::json) AS module_ids
+                   FROM curriculum.groups g WHERE {_live('g')}''')
 
 
 def cohorts():
-    if _normalised('cohorts'):
-        return rows(f'''SELECT c.cohort_id AS id, c.programme_id, c.cohort_name
-                       FROM curriculum.cohorts c WHERE {_live('c', 'cohorts')}''')
-    return rows('''SELECT cohort_id AS id, programme_id, cohort_name
-                  FROM curriculum.cohorts WHERE deleted_at IS NULL AND NOT is_programme_deleted''')
+    return rows(f'''SELECT c.cohort_id AS id, c.programme_id, c.cohort_name
+                   FROM curriculum.cohorts c WHERE {_live('c')}''')
 
 
 def occurrences(module_ids):
@@ -148,10 +121,7 @@ def lecture_components(module_ids):
                         AND w.module_catalogue_id=c.module_catalogue_id
                    WHERE c.module_catalogue_id IN ({placeholders})
                      AND c.type IN ('live_session', 'live-session')
-                     AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted, false)
-                     AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted, false)
-                     AND coalesce(c.library_state, '') <> 'library'
-                     AND coalesce(w.library_state, '') <> 'library'
+                     AND {_live('c')} AND {_live('w')}
                    ORDER BY c.id''', list(module_ids))
 
 

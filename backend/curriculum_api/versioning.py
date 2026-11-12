@@ -79,8 +79,7 @@ ENTITY_TYPES = {config['entity_type'] for config in VERSIONED_TABLES.values()}
 #
 # It also keeps the snapshot to the content that matters. `created_at` and
 # `updated_at` move on every save and would defeat the only-real-changes rule;
-# `library_state`, `is_programme_deleted` and the `origin_*` columns are
-# bookkeeping, not material.
+# `is_programme_deleted` is bookkeeping, not material.
 #
 # Columns are named, never taken wholesale, which is also the allowlist that
 # keeps credentials out of history: nothing here reaches a password, a token, a

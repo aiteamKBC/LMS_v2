@@ -96,6 +96,36 @@ class BulkRecordedOutcomeTests(SimpleTestCase):
         self.watch.assert_not_called()
 
 
+class DirectoryEmailBridgeTests(SimpleTestCase):
+    def linked_cursor(self, rows):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = rows
+        context = MagicMock()
+        context.__enter__.return_value = cursor
+        return cursor, context
+
+    def test_new_database_reads_lms_learners_and_never_connects_to_kbc(self):
+        cursor, context = self.linked_cursor([('301', 'A@Example.test'), ('302', 'b@example.test'),
+                                              ('302', 'c@example.test')])
+        with patch('curriculum_api.bulk_attendance_kbc_source.on_new_database', return_value=True), \
+             patch('curriculum_api.bulk_attendance_kbc_source.new_database_cursor', return_value=context) as linked, \
+             patch('curriculum_api.bulk_attendance_learners.learner_directory_dsn') as direct, \
+             patch('psycopg.connect') as connect:
+            self.assertEqual(recorded.directory_emails({'301', '302'}), {'301': 'a@example.test'})
+        linked.assert_called_once_with(read_only=True)
+        self.assertIn('"Learner".learners', cursor.execute.call_args[0][0])
+        direct.assert_not_called()
+        connect.assert_not_called()
+
+    def test_new_database_failure_is_reported_without_details(self):
+        cursor, context = self.linked_cursor([])
+        cursor.execute.side_effect = DatabaseError('host=secret')
+        with patch('curriculum_api.bulk_attendance_kbc_source.on_new_database', return_value=True), \
+             patch('curriculum_api.bulk_attendance_kbc_source.new_database_cursor', return_value=context):
+            with self.assertRaisesMessage(DatabaseError, 'The attendance identity bridge is unavailable.'):
+                recorded.directory_emails({'301'})
+
+
 class RecordedSourceIdentityTests(SimpleTestCase):
     def test_legacy_email_bridge_uses_one_server_matched_enrolment_identity(self):
         source = SimpleNamespace(id=17, aptem_id='old-id', learner_type='commercial', email='Legacy@Example.test')
