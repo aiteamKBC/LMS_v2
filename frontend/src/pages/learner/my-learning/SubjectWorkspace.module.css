@@ -216,6 +216,7 @@
 }
 
 .coverLarge { height: 180px; }
+.cover .courseCoverImage { object-fit: contain; background: #f8f6fb; }
 .coverFallback { background: linear-gradient(120deg, var(--learner-soft, #f6f8fb), var(--learner-accent-soft, #f0eaf8)); }
 .coverOrbit {
   position: absolute;
@@ -971,7 +972,7 @@
 .learningPage .asidePanel h2 svg { color: var(--learner-purple, #673ab7); }
 .learningPage .asideTextButton { display: inline-flex; align-items: center; gap: 3px; color: var(--learner-purple, #673ab7); font-size: 10px; font-weight: 650; }
 .learningPage .continueSubject { gap: 9px; margin-top: 10px; padding-top: 10px; }
-.learningPage .continueSubject img { width: 56px; height: 60px; flex: 0 0 auto; object-fit: cover; border-radius: 6px; }
+.learningPage .continueSubject img { width: 56px; height: 60px; flex: 0 0 auto; object-fit: contain; border-radius: 6px; background: #f8f6fb; }
 .learningPage .continueSubject img.defaultCoverImage { object-fit: contain; background: #faf8fc; }
 .learningPage .continueSubject > div { min-width: 0; flex: 1; }
 .learningPage .continueSubject b { flex: 0 0 auto; font-size: 11px; color: #22256f; }

@@ -77,7 +77,7 @@ export function Cover({ title, url, large = false, fallbackUrl }: { title: strin
   useEffect(() => setFailed(false), [url]);
   const imageUrl = url && !failed ? url : fallbackUrl;
   return <div className={`${styles.cover} ${large ? styles.coverLarge : ''}`}>
-    {imageUrl ? <img src={imageUrl} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className={`h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-500 motion-safe:group-hover:scale-105 ${imageUrl === fallbackUrl ? styles.defaultCoverImage : ''}`} /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
+    {imageUrl ? <img src={imageUrl} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className={`${styles.courseCoverImage} h-full w-full object-contain motion-safe:transition-[filter] motion-safe:duration-500 motion-safe:group-hover:brightness-[1.03] ${imageUrl === fallbackUrl ? styles.defaultCoverImage : ''}`} /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
       <div aria-hidden="true" className={styles.coverOrbit} />
       <span className={`${styles.coverSymbol} relative flex items-center justify-center rounded-2xl border border-white/90 bg-white/85 text-primary-600 shadow-sm ${large ? 'h-16 w-16' : 'h-11 w-11'}`}><BookOpen className={large ? 'h-8 w-8' : 'h-5 w-5'} strokeWidth={1.7} aria-hidden="true" /></span>
     </div>}
