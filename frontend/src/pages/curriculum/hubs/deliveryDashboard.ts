@@ -112,9 +112,11 @@ export function deliveryWeek(sessions: readonly DeliveryLiveSession[], now: Date
     return { date: iso, day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][index],
       number: date.getUTCDate(), count: dated.filter(session => session.date === iso).length };
   });
-  const next = dated.filter(session => normalise(session.status) !== 'completed' && (session.instant !== undefined
-    ? session.instant >= now.getTime() : session.date >= business.date
-  )).sort((a, b) => a.date.localeCompare(b.date) || (a.instant !== undefined && b.instant !== undefined
+  // This API's completed label is derived from the saved source date, not a
+  // persisted completion event. A converted future instant remains upcoming.
+  const next = dated.filter(session => session.instant !== undefined
+    ? session.instant >= now.getTime() : normalise(session.status) !== 'completed' && session.date >= business.date
+  ).sort((a, b) => a.date.localeCompare(b.date) || (a.instant !== undefined && b.instant !== undefined
     ? a.instant - b.instant : (clockMinutes(a.startTime) ?? 1440) - (clockMinutes(b.startTime) ?? 1440)))[0];
   return { days, count: days.reduce((sum, day) => sum + day.count, 0), total: live.length,
     undated: live.filter(session => !calendarDate(session.date)).length,
@@ -160,7 +162,8 @@ export function deliveryStaffing(
   end.setUTCDate(end.getUTCDate() + 13);
   const endDate = end.toISOString().slice(0, 10);
   const upcoming = new Set(deliveryLiveSessions(sessions).map(businessSession)
-    .filter(session => !session.timeIssue && calendarDate(session.date) && session.date >= today && session.date <= endDate && normalise(session.status) !== 'completed')
+    .filter(session => !session.timeIssue && calendarDate(session.date) && session.date >= today && session.date <= endDate
+      && (session.instant !== undefined || normalise(session.status) !== 'completed'))
     .map(session => session.moduleCatalogueId || session.moduleId));
   const missing = (value?: string) => ['', 'unassigned', 'not assigned', 'tbc'].includes(normalise(value));
   return {

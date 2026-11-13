@@ -30,6 +30,7 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
             for i,day in [(1,'2030-09-04'),(2,'2030-09-11')]]
         self.holidays=[]
         self.reads=[]
+        self.source_authoring_reader = views.get_authoring_module_rows
         patches={
             'authoring_fetch_all':self.fetch, 'get_holiday_rows':lambda:copy.deepcopy(self.holidays),
             'get_holiday_rows_safe':lambda:copy.deepcopy(self.holidays), 'ensure_module_authoring_tables':lambda:None,
@@ -59,6 +60,8 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
             elif 'group_id' in where_sql: rows=[r for r in rows if r.get('group_id') in params]
             elif 'cohort_id' in where_sql: rows=[r for r in rows if r.get('cohort_id') in params]
         if table==views.AUTHORING_COMPONENTS_TABLE and where_sql: rows=[r for r in rows if r['type']=='live_session']
+        if table == views.AUTHORING_MODULES_TABLE and order_sql == 'programme_id, title':
+            rows.sort(key=lambda row: (row.get('programme_id') or '', row.get('title') or ''))
         self.reads.append((table,len(rows)))
         if kwargs.get('columns'):
             rows=[{key:value for key,value in row.items() if key in kwargs['columns']} for row in rows]
@@ -127,6 +130,26 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         self.components = []
         _, payload = self.production_reader_parity()
         self.assertEqual(payload['results'], [])
+
+    def test_focused_endpoint_keeps_main_programme_and_title_order_for_multiple_modules(self):
+        self.modules = [module('MOD-Z', 'G2', 'C2'), module('MOD-B'), module('MOD-A')]
+        self.modules[0].update(programme_id='P2', programme_name='Other programme', title='First title')
+        self.modules[1]['title'] = 'Zulu title'
+        self.modules[2]['title'] = 'Alpha title'
+        self.groups[1].update(programme_id='P2', programme_name='Other programme')
+        self.cohorts[1].update(programme_id='P2', programme_name='Other programme')
+        self.weeks = [dict(id='W-'+row['module_catalogue_id'], module_catalogue_id=row['module_catalogue_id'],
+            week_number=1, display_order=0) for row in self.modules]
+        self.components = [dict(id='L-'+row['module_catalogue_id'], module_catalogue_id=row['module_catalogue_id'],
+            week_id='W-'+row['module_catalogue_id'], type='live_session', display_order=0,
+            settings_json={'sessionDate':'2030-09-04', 'sessionTime':'09:30', 'durationMinutes':90,
+                'extraTeamsMeetingUrl':'https://example.invalid/meeting'}) for row in self.modules]
+        with patch.object(views, 'get_authoring_module_rows', self.source_authoring_reader):
+            _, payload = self.production_reader_parity()
+            self.modules.reverse()
+            _, rebuilt = self.production_reader_parity()
+        self.assertEqual([row['moduleCatalogueId'] for row in payload['results']], ['MOD-A', 'MOD-B', 'MOD-Z'])
+        self.assertEqual(rebuilt['results'], payload['results'])
     def test_allocations_dates_clocks_and_empty_modules_match_main(self):
         original,small,calendar=self.compare(); self.assertEqual(len(calendar),2)
         self.assertNotIn('ARCH',[m['id'] for m in small['modules']]); self.assertNotIn('UNALLOCATED',[m['id'] for m in small['modules']])
