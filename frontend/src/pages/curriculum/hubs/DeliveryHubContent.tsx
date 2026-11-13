@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import type { DeliveryOverview } from './useDeliveryData';
 import { catalogueModuleActive, useCatalogueActivity } from '../module-builder/useCatalogueActivity';
@@ -11,6 +12,11 @@ type Props = Pick<DeliveryWorkspaceProps, 'description' | 'cards' | 'attentionIt
 
 /** Mounted only on Delivery; reuse existing read-only sources without starting the Teams workspace. */
 export default function DeliveryHubContent({ overview, ...props }: Props) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const { auth } = useAuth();
   const scope = JSON.stringify([auth?.account?.id, auth?.account?.role, auth?.account?.access, auth?.tenant?.id]);
   const sessions = useDeliverySessions(scope);
@@ -26,11 +32,12 @@ export default function DeliveryHubContent({ overview, ...props }: Props) {
   const activeIds = new Set(modules.filter(module => catalogueModuleActive(activity.data?.[module.moduleCatalogueId || module.id], activity.today))
     .map(module => module.moduleCatalogueId || module.id));
   const activeGroups = deliveryActiveGroupIds(groups, overview?.modules ?? [], activeIds);
-  const staffing = deliveryStaffing(modules, groups, sessions.sessions, activeIds, activity.today, activeGroups);
+  const staffing = deliveryStaffing(modules, groups, sessions.sessions, activeIds, activity.today, activeGroups, now);
   const staffingKnown = !props.unavailable && (!modules.length || Boolean(activity.data && (!sessions.error || sessions.sessions.length)));
   return <DeliveryWorkspace {...props}
     // To restore the previous title card, change this one value to "classic".
     heroVariant="glass"
+    now={now}
     onRetrySessions={sessions.reload}
     onRetryActivity={activity.reload}
     staffing={{ needsTutor: staffingKnown ? staffing.needsTutor : null, needsCoach: props.unavailable || !activity.data ? null : staffing.needsCoach,

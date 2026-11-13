@@ -156,14 +156,14 @@ export function deliveryStaffing(
   modules: readonly { id: string; moduleCatalogueId?: string; tutor?: string; isFreeCourse?: boolean }[],
   groups: readonly { id?: string; status?: string; coach?: string }[],
   sessions: readonly DeliveryLiveSession[], activeModuleIds: ReadonlySet<string>, today: string,
-  activeGroupIds?: ReadonlySet<string>,
+  activeGroupIds: ReadonlySet<string> | undefined, now: Date,
 ) {
   const end = calendarDate(today)!;
   end.setUTCDate(end.getUTCDate() + 13);
   const endDate = end.toISOString().slice(0, 10);
   const upcoming = new Set(deliveryLiveSessions(sessions).map(businessSession)
     .filter(session => !session.timeIssue && calendarDate(session.date) && session.date >= today && session.date <= endDate
-      && (session.instant !== undefined || normalise(session.status) !== 'completed'))
+      && (session.instant !== undefined ? session.instant >= now.getTime() : normalise(session.status) !== 'completed'))
     .map(session => session.moduleCatalogueId || session.moduleId));
   const missing = (value?: string) => ['', 'unassigned', 'not assigned', 'tbc'].includes(normalise(value));
   return {
