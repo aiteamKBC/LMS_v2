@@ -3,16 +3,16 @@ import { CirclePlay, X } from 'lucide-react';
 import styles from './EnrolmentTutorial.module.css';
 
 const HINT_KEY = 'enrolment-help-hint-hidden';
-const hintHidden = () => { try { return sessionStorage.getItem(HINT_KEY) === '1'; } catch { return false; } };
+const hintHidden = (key: string) => { try { return sessionStorage.getItem(key) === '1'; } catch { return false; } };
 
 /** Floating bottom-right entry point to the current page's video guide.
  *  `rounded-full` opts out of the dashboard theme's square button corners. */
-export function EnrolmentHelpLauncher({ title, onOpen }: { title: string; onOpen: () => void }) {
+export function EnrolmentHelpLauncher({ title, onOpen, hintStorageKey = HINT_KEY }: { title: string; onOpen: () => void; hintStorageKey?: string }) {
   // Hiding the message lasts for this browser tab; the button itself always stays.
-  const [hidden, setHidden] = useState(hintHidden);
+  const [hidden, setHidden] = useState(() => hintHidden(hintStorageKey));
   const hide = () => {
     setHidden(true);
-    try { sessionStorage.setItem(HINT_KEY, '1'); } catch { /* storage unavailable: hidden until reload */ }
+    try { sessionStorage.setItem(hintStorageKey, '1'); } catch { /* storage unavailable: hidden until reload */ }
   };
   return <div className={styles.launcher}>
     {!hidden && <div className={styles.hint}>

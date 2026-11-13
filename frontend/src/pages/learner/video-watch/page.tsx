@@ -37,7 +37,7 @@ import {
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
 import { SavedReflection } from '@/components/feature/SavedReflection';
-import { formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow.helpers';
+import { formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow.helpers';
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -342,9 +342,17 @@ export default function ComponentViewPage() {
   const completed = !!component && isComponentComplete(component, completedIds);
   const recordingAttempt = isAssignment || !completed || repeating;
   const nextActivity = useMemo(() => nextActivityRoute(detail, componentId, kind, id), [detail, componentId, kind, id]);
-  const completedTime = record?.activityKey === timerStorageKey
+  const hasFixedLiveCredit = isLiveSession && detail?.componentProgress?.some(
+    entry => entry.componentId === componentId && entry.timeTrackingSource === 'completed_live_session' && entry.passed !== false,
+  );
+  const completedTime = hasFixedLiveCredit && component
+    ? completionTimeFor(component, detail)
+    : record?.activityKey === timerStorageKey
     ? formatRecordedClock(record.timeTaken)
     : component ? completionTimeFor(component, detail) : null;
+  const liveSessionRetakeLocked = isLiveSession && (
+    component?.attendanceCompleted === true || (parseClockSeconds(completedTime) ?? 0) >= 150 * 60
+  );
   const noun = componentNoun(component?.type);
   const contentOpenable = component ? isOpenableComponent(component) || (isAssignment && !!component.componentId) : false;
   const savedAssignment = useSavedAssignmentAccess(kind, id, componentId, isAssignment && !contentOpenable && canUseComponent);
@@ -1115,7 +1123,7 @@ export default function ComponentViewPage() {
                     {nextActivity && <button type="button" onClick={() => navigate(nextActivity.href)} className="rounded-lg bg-emerald-700 px-3 py-2 text-left text-xs font-semibold text-white hover:bg-emerald-800">
                       Next activity: {nextActivity.label}
                     </button>}
-                    {!repeating && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
+                    {!repeating && !liveSessionRetakeLocked && <button type="button" onClick={() => setRetakeOpen(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
                   </div>
                 </div>
               )}

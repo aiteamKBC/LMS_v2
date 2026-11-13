@@ -13,6 +13,7 @@ import { UNCERTAIN_MESSAGE, waitForSavedCreate, type CreateProgress, type Create
 import { type UpdateProgress } from './updateProgress';
 import { syncTeamsCalendarState } from './calendarState';
 import { compareTeamsAttendees, type AttendeeComparison } from './attendeeComparison';
+import { refreshTeamsPeople, readTeamsPeopleState, type TeamsPeopleSyncInfo } from './meetingPeopleSync';
 import { type CalendarActionTarget } from './CalendarActionDialog';
 import { calendarAction, type ActionResult, type ActionReview } from './calendarActions';
 import { leftoverSlotLabel } from './leftoverSlots';
@@ -28,6 +29,7 @@ import {
   type CurriculumSession,
   type CurriculumTeamsMeetingSummary,
   readImportedMeetingEditor,
+  clearCurriculumGetCache,
   type ImportedMeetingEditor,
 } from '@/lib/curriculumApi';
 import {
@@ -77,7 +79,7 @@ import {
   resolveModuleContext,
 } from '../shared/entities/model';
 import { type GroupDeliveryPattern, type TeamsCalendarForm } from './createCalendarForm';
-import { buildTeamsCalendarInput, DEFAULT_DURATION_MINUTES, emptyTeamsCalendarForm, minuteKey, minutesBetween, naiveLocalFromUtc, sessionNaiveLocal, teamsCalendarOccurrences, teamsUpdateChanges } from './createCalendarForm.helpers';
+import { buildTeamsCalendarInput, DEFAULT_DURATION_MINUTES, emptyTeamsCalendarForm, minuteKey, minutesBetween, naiveLocalFromUtc, sessionNaiveLocal, teamsAddedPeople, teamsCalendarOccurrences, teamsUpdateChanges } from './createCalendarForm.helpers';
 import { useDrawerState } from '../shared/entities/useDrawerState';
 
 
@@ -770,6 +772,12 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   }, [additionalMeetings, liveComponents, plannedSessions, selected]);
   const [originalRead, setOriginalRead] = useState<{ id: string; loading: boolean; data?: ImportedMeetingEditor; error?: string }>({ id: '', loading: false });
   const [originalRevision, setOriginalRevision] = useState(0);
+  const [peopleRefreshing, setPeopleRefreshing] = useState(false);
+  const [peopleSyncInfo, setPeopleSyncInfo] = useState<TeamsPeopleSyncInfo | null>(null);
+  const savedPeopleRevision = useRef('');
+  const discardOnOriginalRead = useRef(false);
+  const invitationDirty = useRef(updateDrawer.dirty);
+  invitationDirty.current = updateDrawer.dirty;
   const reloadOriginalCalendar = () => {
     setOriginalRead(value => ({ ...value, loading: true }));
     setOriginalRevision(value => value + 1);
@@ -779,7 +787,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     void showCurriculumConfirm({ title: 'Reload the saved meeting?',
       text: 'Refreshing reads the latest meeting and discards your unsaved invitation changes.',
       icon: 'warning', confirmButtonText: 'Reload meeting',
-      onConfirm: () => { updateDrawer.openWith(emptyTeamsCalendarForm()); reloadOriginalCalendar(); } });
+      onConfirm: () => { discardOnOriginalRead.current = true; reloadOriginalCalendar(); } });
   };
   const updateExistingTeamsMeeting = (id: string, input: Parameters<typeof updateTeamsMeetingSchedule>[1], options?: Parameters<typeof updateTeamsMeetingSchedule>[2]) => updateTeamsMeetingSchedule(id, {
     ...input, ...(originalRead.id === id && originalRead.data?.sourceToken ? { originalSourceToken: originalRead.data.sourceToken } : {}),
@@ -1170,6 +1178,17 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     };
   };
 
+  const originalInvitationForm = (data: ImportedMeetingEditor, row: MeetingRow): TeamsCalendarForm => {
+    const roles = new Set([...(data.presenters || []), ...(data.coOrganizers || [])].map(value => value.toLowerCase()));
+    const saved = invitationForm(row);
+    return { ...saved, organizerEmail: data.organizer || row.summary?.organizerEmail || '',
+      attendees: (data.attendees || []).filter(value => !roles.has(value.toLowerCase())).join('\n'),
+      presenters: (data.presenters || []).join('\n'), coOrganizers: (data.coOrganizers || []).join('\n'),
+      recording: data.options ? data.options.recordAutomatically ? data.options.allowTranscription ? 'record-transcribe' : 'record' : 'none' : saved.recording,
+      lobbyBypass: data.options?.lobbyBypassSettings?.scope === 'organizationExcludingGuests' ? 'organization-excluding-guests' : data.options?.lobbyBypassSettings?.scope || saved.lobbyBypass,
+      spokenLanguage: data.options?.meetingSpokenLanguageTag || saved.spokenLanguage };
+  };
+
   /** Fill the dialog's invitation fields from the calendar, as their untouched starting point. */
   const seedInvitations = (row: MeetingRow) => {
     if (!row.summary) return;
@@ -1193,13 +1212,50 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   /** Who the open invitation fields add to this calendar, compared with what it holds. */
   const addedInvitees = (row: MeetingRow) => {
     const update = invitationEdits(row);
-    return update ? teamsUpdateChanges(update.form, update.baseline).addedPeople : [];
+    return update ? teamsAddedPeople(update.form, update.baseline) : [];
   };
 
   /** After a save, what was sent is the new starting point: nothing is left "unsaved". */
   const settleInvitations = (form: TeamsCalendarForm) => {
     updateBaseline.current = form;
     updateDrawer.openWith(form);
+  };
+
+  const refreshPeopleFromTeams = () => {
+    if (!selected?.summary || peopleRefreshing || updateDrawer.saving || busy) return;
+    const row = selected;
+    const liveId = row.summary!.liveSessionId;
+    const read = async () => {
+      setPeopleRefreshing(true);
+      setBusy(`${row.catalogueId}:people-refresh`);
+      updateDrawer.setError(null);
+      try {
+        const values = await refreshTeamsPeople(liveId);
+        if (selectedLiveId.current !== liveId) return;
+        let verifiedOriginal: ImportedMeetingEditor | undefined;
+        if (externalCalendar?.originalSeriesId === liveId) {
+          verifiedOriginal = await readImportedMeetingEditor(liveId, { standard: true });
+          if (selectedLiveId.current !== liveId) return;
+          setOriginalRead({ id: liveId, loading: false, data: verifiedOriginal });
+          if (verifiedOriginal.status !== 'editable' || verifiedOriginal.rolesEditable !== true) {
+            throw new Error(verifiedOriginal.message || 'The original meeting roles could not be verified. Retry Sync.');
+          }
+        }
+        await loadTeamsState();
+        await loadDetail(liveId);
+        if (selectedLiveId.current !== liveId) return;
+        settleInvitations(verifiedOriginal ? originalInvitationForm(verifiedOriginal, row) : { ...invitationForm(row), ...values });
+        setPeopleSyncInfo({ status: 'synced', checkedAt: new Date().toISOString(), message: 'People and roles are synced with Teams.' });
+        setComparison(null);
+        notifyChanged(row.catalogueId);
+      } catch (error) {
+        if (selectedLiveId.current === liveId) updateDrawer.setError(error instanceof Error ? error.message : 'People and settings could not be refreshed from Teams. Retry.');
+      } finally { setPeopleRefreshing(false); setBusy(''); }
+    };
+    if (!updateDrawer.dirty) { void read(); return; }
+    void showCurriculumConfirm({ title: 'Reload the saved meeting?',
+      text: 'Sync reads the latest people and roles from Teams and replaces your unsaved edits only after a successful read. Session dates stay unchanged.',
+      icon: 'warning', confirmButtonText: 'Reload meeting', onConfirm: read });
   };
 
   /**
@@ -1336,8 +1392,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     // Only what the author changed in the invitation fields is sent: an
     // untouched field keeps what the calendar has saved.
     const update = invitationEdits(row);
-    const changes = update ? teamsUpdateChanges(update.form, update.baseline) : { fields: {}, addedPeople: [] };
     try {
+      const changes = update ? teamsUpdateChanges(update.form, update.baseline) : { fields: {}, addedPeople: [] };
       // Do not send `row.sessions` here: booked rows intentionally retain the
       // old Teams occurrence dates. The server-side planner is authoritative
       // after a group day/time edit and is fetched again immediately before the
@@ -1707,21 +1763,21 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const savePeople = async (row: MeetingRow, update: { form: TeamsCalendarForm; baseline: TeamsCalendarForm }, { invite = false }: { invite?: boolean } = {}) => {
     const summary = row.summary;
     if (!summary) return;
-    const changes = teamsUpdateChanges(update.form, update.baseline);
-    if (!Object.keys(changes.fields).length) {
-      updateDrawer.setError('Nothing has changed yet. Add or remove someone, or change a setting, then save.');
-      return;
-    }
-    if (!emailList(update.form.attendees).length) {
-      updateDrawer.setError('Name at least one attendee.');
-      return;
-    }
-    const held = heldSchedule(row);
-    if (!held) {
-      updateDrawer.setError('The meeting dates for this series have not loaded, so saving now could shorten it. Reload the page and try again.');
-      return;
-    }
     try {
+      const changes = teamsUpdateChanges(update.form, update.baseline);
+      if (!Object.keys(changes.fields).length) {
+        updateDrawer.setError('Nothing has changed yet. Add or remove someone, or change a setting, then save.');
+        return;
+      }
+      if (!emailList(update.form.attendees).length) {
+        updateDrawer.setError('Name at least one attendee.');
+        return;
+      }
+      const held = heldSchedule(row);
+      if (!held) {
+        updateDrawer.setError('The meeting dates for this series have not loaded, so saving now could shorten it. Reload the page and try again.');
+        return;
+      }
       const inviting = invite && changes.addedPeople.length > 0;
       const result = await updateExistingTeamsMeeting(summary.liveSessionId, { ...held, ...changes.fields,
         sendLmsEmails: inviting, ...(inviting ? {} : { invitationsOnly: true }) }, {
@@ -2062,23 +2118,43 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const detailSeries = detail?.series;
   const originalId = externalCalendar?.originalSeriesId || '';
   const originalCalendar = originalId && originalRead.id === originalId ? originalRead : undefined;
+  useEffect(() => { setPeopleSyncInfo(null); }, [selected?.summary?.liveSessionId]);
   const originalCalendarBlocked = Boolean(originalId && (!originalCalendar || originalCalendar.loading || originalCalendar.data?.status !== 'editable'));
   const originalRolesBlocked = Boolean(originalCalendar?.data?.status === 'editable' && originalCalendar.data.rolesEditable !== true);
   useEffect(() => {
+    const id = selected?.summary?.liveSessionId;
+    if (!id || !teamsLoaded || calendarLinksLoading) return;
+    let active = true;
+    void readTeamsPeopleState(id).then(async result => {
+      if (!active || selectedLiveId.current !== id) return;
+      setPeopleSyncInfo(result.syncInfo);
+      const revision = `${id}:${result.syncInfo.checkedAt || ''}`;
+      if (!result.syncInfo.checkedAt || result.syncInfo.status !== 'synced' || invitationDirty.current
+        || peopleRefreshing || savedPeopleRevision.current === revision) return;
+      if (originalId) { savedPeopleRevision.current = revision; reloadOriginalCalendar(); return; }
+      clearCurriculumGetCache();
+      await Promise.all([loadTeamsState(), loadDetail(id)]);
+      if (!active || selectedLiveId.current !== id || invitationDirty.current) return;
+      savedPeopleRevision.current = revision;
+      settleInvitations({ ...peopleFormsRef.current.update, ...result.form });
+    }).catch(() => {
+      if (active) setPeopleSyncInfo({ status: 'failed', checkedAt: null, message: 'The saved role sync status could not be read. Retry Sync.' });
+    });
+    return () => { active = false; };
+    // The existing minute hand reads local saved results, never Microsoft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.summary?.liveSessionId, teamsLoaded, calendarLinksLoading, now]);
+  useEffect(() => {
     if (!originalId) return;
     let active = true;
+    const discardEdits = discardOnOriginalRead.current;
+    discardOnOriginalRead.current = false;
     setOriginalRead({ id: originalId, loading: true });
     void readImportedMeetingEditor(originalId, { standard: true }).then(data => {
       if (!active || selectedLiveId.current !== originalId) return;
       setOriginalRead({ id: originalId, loading: false, data });
-      if (data.status !== 'editable' || data.rolesEditable !== true || updateDrawer.dirty) return;
-      const roles = new Set([...(data.presenters || []), ...(data.coOrganizers || [])].map(value => value.toLowerCase()));
-      const form = { ...emptyTeamsCalendarForm(), organizerEmail: data.organizer || selected?.summary?.organizerEmail || '',
-        attendees: (data.attendees || []).filter(value => !roles.has(value.toLowerCase())).join('\n'),
-        presenters: (data.presenters || []).join('\n'), coOrganizers: (data.coOrganizers || []).join('\n'),
-        recording: data.options ? data.options.recordAutomatically ? data.options.allowTranscription ? 'record-transcribe' : 'record' : 'none' : invitationForm(selected!).recording,
-        lobbyBypass: data.options?.lobbyBypassSettings?.scope === 'organizationExcludingGuests' ? 'organization-excluding-guests' : data.options?.lobbyBypassSettings?.scope || invitationForm(selected!).lobbyBypass,
-        spokenLanguage: data.options?.meetingSpokenLanguageTag || invitationForm(selected!).spokenLanguage };
+      if (data.status !== 'editable' || data.rolesEditable !== true || (invitationDirty.current && !discardEdits)) return;
+      const form = originalInvitationForm(data, selected!);
       updateBaseline.current = form;
       invitationsFor.current = originalId;
       updateDrawer.openWith(form);
@@ -2214,7 +2290,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
     selectedScopeRows, chooseMeetingScope, refreshMeetingScopes,
     externalCalendar, calendarLinksLoading, calendarLinksError,
-    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar,
+    originalCalendar, originalCalendarBlocked, originalRolesBlocked, refreshOriginalCalendar, refreshPeopleFromTeams, peopleRefreshing, peopleSyncInfo,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };
 }

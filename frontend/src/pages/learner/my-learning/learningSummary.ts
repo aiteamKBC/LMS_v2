@@ -2,10 +2,11 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LegacyProgressReference, StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
 import { completedComponentIds, isComponentComplete, quizAttemptsFor, type JourneyComponent } from '@/utils/learnerJourney';
 import type { DeliveryWeek } from '@/lib/deliveryWeek';
+import { latestActivityAt, savedProgressAt } from './learningActivityTime';
 
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string; delivery_week?: DeliveryWeek };
-export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null; readingCompleted?: boolean; pairedQuiz?: SubjectEntry };
-export type SubjectCardSummary = { activityCount: number; completedActivityCount: number; progress: number; status: 'Completed' | 'In progress' | 'Upcoming'; nextTitle?: string | null; finalTestPassed: boolean };
+export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null; readingCompleted?: boolean; pairedQuiz?: SubjectEntry; lastActivityAt?: string | null };
+export type SubjectCardSummary = { activityCount: number; completedActivityCount: number; progress: number; status: 'Completed' | 'In progress' | 'Upcoming'; nextTitle?: string | null; finalTestPassed: boolean; lastActivityAt?: string | null };
 export type Subject = { card?: SubjectCardSummary; id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[]; aggregateProgress?: number; transferredProgress?: number; transferPending?: boolean; demoProgress?: boolean; legacyProgressReference?: LegacyProgressReference };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
@@ -63,7 +64,7 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
   for (const item of data?.activities || []) {
     const key = `legacy:${item.group_id}`;
     const subject = subjects.get(key) || { id: key, title: item.group_name || 'Unnamed subject', source: 'legacy' as const, activities: [] };
-    if (!subject.activities.some((entry) => entry.id === item.activity_id)) subject.activities.push({ id: item.activity_id, title: item.activity, category: item.category, completed: item.completed, position: item.position || 0, schedule: item.month ? item : scheduleForDate(item.date), legacy: item });
+    if (!subject.activities.some((entry) => entry.id === item.activity_id)) subject.activities.push({ id: item.activity_id, title: item.activity, category: item.category, completed: item.completed, position: item.position || 0, schedule: item.month ? item : scheduleForDate(item.date), legacy: item, lastActivityAt: item.last_activity_at });
     subjects.set(key, subject);
   }
   const importedCourses = metadata?.imported_courses || {};
@@ -77,6 +78,12 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     .map(([ref]) => ref));
   const replacedTitles = new Set<string>();
   const completed = completedComponentIds(real);
+  const activityTimes = new Map<string, string | undefined>();
+  for (const record of [...(real?.videoProgress || []), ...(real?.componentProgress || [])]) {
+    if (record.componentId) activityTimes.set(record.componentId, latestActivityAt([
+      activityTimes.get(record.componentId), savedProgressAt(record),
+    ]));
+  }
   for (const subject of currentSubjects) {
     const key = `current:${subject.id}`;
     if (replaced.has(key)) {
@@ -116,6 +123,8 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     if (!subject.activities.some((entry) => entry.id === id)) subject.activities.push({
       id, title: component.title, category: component.type || 'activity', completed: isComplete, bestScorePercent, position: index,
       schedule: nativeActivitySchedule(dates[id], component.sessionDate), week: item.week || undefined, native: component,
+      lastActivityAt: latestActivityAt([activityTimes.get(id),
+        ...(component.quizAttempts || []).flatMap(attempt => [attempt.startedAt, attempt.submittedAt])]),
     });
     subjects.set(key, subject);
   }

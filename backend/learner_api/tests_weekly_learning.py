@@ -187,22 +187,30 @@ class ReadOnlyIdentityTests(SimpleTestCase):
 
 
 class WeeklyLearningEndpointTests(SimpleTestCase):
-    def call(self, view, account, *, method='get', error=None, missing=False):
+    def call(self, view, account, *, kind='commercial', method='get', error=None, missing=False):
         model = MagicMock()
         model.DoesNotExist = type('Missing', (Exception,), {})
         source = SimpleNamespace(pk=201, id=201, _weekly_training_plan=[], _weekly_learning_plan=[])
         model.all_learners.get.side_effect = model.DoesNotExist() if missing else None
         model.all_learners.get.return_value = source
-        request = getattr(RequestFactory(), method)('/learner_api/weekly-learning/commercial/201/')
+        request = getattr(RequestFactory(), method)(f'/learner_api/weekly-learning/{kind}/201/')
         request.login_account = account
         payload = {'modules': [], 'weeks': [], 'selectedWeek': None}
         with patch('login.permissions.authenticate_request', return_value=account), \
-             patch.dict(learner_detail.SOURCE_MODELS, {'commercial': model}), \
+             patch.dict(learner_detail.SOURCE_MODELS, {kind: model}), \
              patch.object(dashboard_weekly, 'assignment_projection', side_effect=lambda query: model.all_learners), \
              patch.object(dashboard_weekly, 'read_dashboard_weekly', return_value=payload, side_effect=error) as weekly, \
              patch.object(learner_detail, 'build_learner_detail', return_value=payload, side_effect=error) as detail:
-            response = view(request, kind='commercial', pk=201)
+            response = view(request, kind=kind, pk=201)
         return response, weekly, detail
+
+    def test_weekly_endpoint_route_is_shared_by_both_learner_kinds(self):
+        account = SimpleNamespace(role='learner', subject_id=201)
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                response, built, _ = self.call(dashboard_weekly.dashboard_weekly, account, kind=kind)
+                self.assertEqual(response.status_code, 200)
+                built.assert_called_once()
 
     def test_access_matches_learner_detail_for_every_caller(self):
         accounts = {

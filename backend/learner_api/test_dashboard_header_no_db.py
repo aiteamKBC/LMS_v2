@@ -10,6 +10,25 @@ from . import dashboard_header as header
 
 
 class DashboardHeaderTests(SimpleTestCase):
+    def test_effective_teaching_assignment_wins_over_overlapping_historical_membership(self):
+        source = SimpleNamespace(programme='P', cohort='C', group='G')
+        historic = {'id': 'OLD', 'title': 'Historical course', 'start_date': date(2026, 9, 1),
+                    'end_date': date(2027, 2, 1), 'sessions_number': 20, 'week_count': 20}
+        current = {**historic, 'id': 'CURRENT', 'title': 'Assigned course', 'start_date': date(2026, 9, 30)}
+        connection = MagicMock()
+        with patch.object(header, 'connections', {'enrolment': connection}), \
+             patch.object(header, '_effective_plan_ids', return_value=['CURRENT']), \
+             patch.object(header.canonical_learning, 'curriculum_module_ids_for', return_value=['OLD']), \
+             patch.object(header, 'rows', return_value=[historic, current]):
+            ids, modules = header.dashboard_modules(source, {'id': 17})
+        self.assertEqual(set(ids), {'OLD', 'CURRENT'})
+        candidates = header.weekly_header_candidates(modules, source)
+        self.assertEqual([row['id'] for row in candidates], ['CURRENT'])
+        self.assertEqual(header.selected_header_modules(candidates, '2026-11-12')[1][0]['id'], 'CURRENT')
+        # Imported-only learners retain their established fallback candidates.
+        source._dashboard_assigned_ids = set()
+        self.assertEqual({row['id'] for row in header.weekly_header_candidates(modules, source)}, {'OLD', 'CURRENT'})
+
     def test_source_projection_keeps_plan_fallback_and_assignment_values_without_snapshots(self):
         model = MagicMock()
         query = model.all_learners.only.return_value

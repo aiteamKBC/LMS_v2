@@ -1,0 +1,25 @@
+.field { position: relative; min-width: 0; }
+.icon { position: absolute; inset: 0 auto 0 14px; z-index: 1; display: flex; align-items: center; pointer-events: none; color: oklch(.52 .035 305); }
+.trigger { height: 42px; min-width: 0; border-radius: 10px; }
+.trigger > span { font-size: 13px; font-weight: 500; }
+.menu { font-family: 'Recordings Roboto', Roboto, system-ui, sans-serif; border-radius: 10px; box-shadow: 0 8px 24px -6px rgb(35 20 55 / 16%); }
+.menu:where(:not(:global([data-theme='dark']) *)) {
+  --primary-50: .965 .018 305;
+  --primary-100: .94 .025 305;
+  --primary-600: .44 .145 305;
+  --primary-800: .36 .12 305;
+  border-color: oklch(.88 .025 305);
+  background: #fff;
+}
+.menu [role='option'] { min-height: 40px; border-radius: 6px; }
+.menu [role='option'] > span > span { font-size: 13px; font-weight: 500; }
+.menu [role='option']:disabled { opacity: .5; }
+.menu input { font-size: 13px; }
+
+@layer recordings-ui {
+  .field .trigger { height: 42px !important; border-radius: 10px !important; }
+  .field .trigger.withIcon { padding-left: 42px !important; }
+  .field .trigger:where(:not(:global([data-theme='dark']) *)) { background: #fff !important; border-color: oklch(.86 .025 305) !important; box-shadow: none !important; }
+  .field .trigger:hover:where(:not(:global([data-theme='dark']) *)) { border-color: oklch(.65 .09 305) !important; }
+  .field .trigger[aria-expanded='true']:where(:not(:global([data-theme='dark']) *)) { border-color: oklch(.5 .14 305) !important; box-shadow: none !important; }
+}

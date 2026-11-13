@@ -12,6 +12,32 @@ from .weekly_calendar import normalise_projected_calendar
 
 
 class WeeklyJsonNullTests(SimpleTestCase):
+    def test_initial_module_prefers_effective_plan_but_history_stays_selectable(self):
+        from datetime import datetime, timezone
+        from coach_api.weekly_learning import read_weekly_learning
+        modules = [{**self.module, 'id': 'OLD', 'title': 'Historical course', 'start_date': date(2026, 9, 1)},
+                   {**self.module, 'id': 'CURRENT', 'title': 'Assigned course'}]
+        authored = [{'id': f'{row["id"]}-W{i}', 'module_catalogue_id': row['id'], 'week_number': i,
+                     'title': f'Week {i}', 'holiday_note_enabled': False} for row in modules for i in (1, 2)]
+        source = SimpleNamespace(pk=101, email='synthetic@example.test', _canonical_profile={'id': 248})
+        profile = MagicMock()
+        profile.progress_entries.filter.return_value.filter.return_value.values.return_value = []
+        for requested, expected in ((None, 'CURRENT'), ('OLD', 'OLD')):
+            with self.subTest(requested=requested), \
+                 patch('coach_api.weekly_learning.datetime', wraps=datetime) as clock, \
+                 patch('coach_api.weekly_learning.connections'), \
+                 patch('coach_api.weekly_learning.read_weekly_live_evidence', return_value=([], [])), \
+                 patch('learner_api.learning_plan._effective_plan_ids', return_value=['CURRENT']), \
+                 patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=['OLD']), \
+                 patch('learner_api.canonical_learning.weekly_hour_records', return_value=[]), \
+                 patch('learner_api.training_plan_dashboard.rows', side_effect=[modules, authored, [], [], []]), \
+                 patch('learner_api.weekly_calendar.cohort_holidays', return_value={}):
+                clock.now.return_value = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+                result = read_weekly_learning(SimpleNamespace(source=source, profile=profile), module_id=requested)
+            self.assertEqual({week['moduleId'] for week in result['weeks']}, {'CURRENT', 'OLD'})
+            selected = next(week for week in result['weeks'] if week['id'] == result['selectedWeek']['weekId'])
+            self.assertEqual(selected['moduleId'], expected)
+
     module = {
         'id': 'MOD-20260911110642658914', 'title': 'Synthetic module',
         'start_date': date(2026, 10, 1), 'end_date': date(2026, 11, 30),

@@ -22,6 +22,15 @@ def lecture(**over):
 
 
 class WeeklyLiveAttendanceTests(SimpleTestCase):
+    def test_saved_completion_without_occurrence_does_not_break_weekly_plan(self):
+        credit = {'moduleId': 'M1', 'componentId': 'C1', 'hours': 2.5,
+                  'timeTrackingSource': 'completed_live_session'}
+        with patch('learner_api.attendance_lectures.lecture_register', return_value=[lecture()]), \
+             patch('learner_api.live_session_progress.read_live_credits', return_value=[credit]):
+            _, credits = read_weekly_live_evidence(SimpleNamespace(pk=7), {'id': 70}, ['M1'], ['M1'])
+        self.assertEqual(credits, [{**credit, 'sessionDate': None}])
+        self.assertFalse(credit_in_week(credits[0], WEEK))
+
     def test_manual_only_session_hours_keep_their_week_without_provider_attendance(self):
         credit = {'moduleId': 'M1', 'componentId': 'C1', 'occurrenceId': '', 'hours': 2.5,
                   'sessionDate': '2026-10-14', 'timeTrackingSource': 'manual_attendance'}
@@ -42,7 +51,7 @@ class WeeklyLiveAttendanceTests(SimpleTestCase):
                    return_value=[lecture(), lecture(module_catalogue_id='OTHER')]) as register, \
              patch('learner_api.live_session_progress.read_live_credits', return_value=[credit]) as read:
             rows, credits = read_weekly_live_evidence(source, {'id': 70}, ['M1'], ['M1'])
-        register.assert_called_once_with(source, module_ids=['M1'], learner_profile_id=70)
+        register.assert_called_once_with(source, module_ids=['M1'], learner_profile_id=70, credit_projection=True)
         read.assert_called_once_with(source, module_ids=['M1'], register=rows)
         self.assertEqual(len(rows), 1)
         self.assertEqual(credits[0]['sessionDate'], '2026-10-14')

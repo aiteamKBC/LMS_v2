@@ -1,0 +1,1000 @@
+@import './recordings-font.css';
+
+@layer workspace-breadcrumbs-ui {
+  :global(.workspace-content):has(.page) :global(.workspace-breadcrumbs) :global(.workspace-breadcrumb-home),
+  :global(.workspace-content):has(.page) :global(.workspace-breadcrumbs) :global(.kbc-workspace-back) {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+}
+
+/* Scoped layer overrides legacy shell rules only on matched elements.
+   Readdy has no dark reference: dark surfaces use the existing theme palette. */
+@layer recordings-ui {
+  /* All selectors stay under this page. Unmatched workflows retain their styles. */
+  .page .calendarLayout:global(.fixed) {
+    z-index: 70 !important;
+  }
+  /* Shared sizing and theme tokens keep all calendar controls aligned. */
+  .page .calendarToolbar {
+    --calendar-accent: oklch(var(--primary-700));
+    --calendar-muted: oklch(var(--foreground-500));
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: flex-end !important;
+    gap: 16px !important;
+    padding: 16px 20px !important;
+    border: 1px solid oklch(var(--background-200)) !important;
+    border-radius: 16px !important;
+    background: oklch(var(--background-50)) !important;
+  }
+  .page .calendarField {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .page .calendarFieldLabel {
+    color: var(--calendar-muted) !important;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+  }
+  .page .calendarToolbar :is(button, select) {
+    min-width: 0 !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    margin: 0 !important;
+    padding: 0 12px !important;
+    border: 1px solid oklch(var(--background-300)) !important;
+    border-radius: 10px !important;
+    background: oklch(var(--background-50)) !important;
+    color: oklch(var(--foreground-700)) !important;
+    font-family: inherit !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    line-height: 20px !important;
+    box-shadow: none !important;
+  }
+  .page .calendarToolbar button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 150ms, color 150ms;
+  }
+  .page .calendarToolbar :is(button, select):focus-visible {
+    outline: 2px solid oklch(var(--primary-400)) !important;
+    outline-offset: 2px;
+  }
+  .page .calendarToolbar button:hover {
+    background: oklch(var(--primary-500) / .08) !important;
+    color: var(--calendar-accent) !important;
+  }
+  .page .calendarViews {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid oklch(var(--background-200));
+    border-radius: 11px;
+    background: oklch(var(--background-100));
+  }
+  .page .calendarViews button {
+    height: 32px !important;
+    min-height: 32px !important;
+    padding: 0 12px !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+  }
+  .page .calendarViews button[aria-pressed='true'] {
+    background: oklch(var(--primary-600)) !important;
+    color: white !important;
+  }
+  .page .periodNavigation {
+    display: inline-flex;
+    align-items: center;
+    height: 40px;
+    border: 1px solid oklch(var(--background-300));
+    border-radius: 10px;
+    background: oklch(var(--background-50));
+  }
+  .page .periodNavigation button {
+    flex: 0 0 34px;
+    width: 34px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+  }
+  .page .periodNavigation button:nth-child(2) {
+    flex: 1 0 56px;
+    width: auto !important;
+    color: var(--calendar-accent) !important;
+  }
+  .page .calendarDateField { flex: 1 1 220px; }
+  .page .calendarToolbar .rangeLabel {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+    margin: 0 !important;
+    color: oklch(var(--foreground-900)) !important;
+    font-family: inherit !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    line-height: 22px !important;
+    overflow-wrap: anywhere;
+  }
+  .page .calendarZoneField { flex: 0 1 220px; }
+  .page .timeZone, .page .calendarViewSelect {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .page .calendarToolbar :is(.timeZone, .calendarViewSelect) select {
+    appearance: none;
+    width: 100%;
+    max-width: 100%;
+    padding-right: 32px !important;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  .page .calendarToolbar .timeZone select { padding-left: 36px !important; }
+  .page :is(.timeZone, .calendarViewSelect) > svg {
+    position: absolute;
+    right: 12px;
+    flex-shrink: 0;
+    color: var(--calendar-muted);
+    pointer-events: none;
+  }
+  .page .timeZone > svg:first-child { right: auto; left: 12px; }
+  .page .calendarToolbar .expandCalendar {
+    flex: 0 0 40px;
+    width: 40px !important;
+    padding: 0 !important;
+  }
+  .page .calendarViewSelect { display: none; }
+  .page .calendarStatusSelect { width: 100%; max-width: 100%; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarToolbar {
+    border-color: oklch(.91 .015 305) !important;
+    background: oklch(1 0 0 / .8) !important;
+  }
+  :global([data-theme='dark']) .page .calendarToolbar {
+    --calendar-accent: #d4b8f2;
+    --calendar-muted: var(--theme-text-muted);
+    border-color: var(--theme-border) !important;
+    background: var(--theme-surface) !important;
+  }
+  @media (max-width: 639px) {
+    .page .calendarToolbar {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px 12px !important;
+      padding: 16px !important;
+    }
+    .page .calendarDateField { grid-column: 1 / -1; order: -1; }
+    .page .calendarToolbar .rangeLabel { min-height: 24px; }
+    .page .calendarViews { display: none !important; }
+    .page .calendarViewSelect { display: flex; }
+    .page .calendarZoneField { grid-column: 1 / -1; grid-row: 3; padding-right: 52px; }
+    .page .calendarFilterField { grid-column: 1 / -1; }
+    .page .calendarToolbar .expandCalendar { grid-column: 2; grid-row: 3; justify-self: end; }
+  }
+  :global([data-theme='dark']) .page .breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 12px;
+  }
+  :global([data-theme='dark']) .page .heroHeading nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) {
+    --recording-surface: oklch(0.998 0.002 305 / 0.62);
+    --recording-line: oklch(0.895 0.021 305);
+    --recording-control-line: oklch(0.84 0.028 305);
+    --recording-purple: oklch(0.402 0.145 305);
+    background: oklch(0.968 0.005 305) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 20px !important;
+    overflow: hidden !important;
+    padding: 20px 24px !important;
+    border: 1px solid oklch(0.235 0.089 305) !important;
+    border-radius: 26px !important;
+    background: radial-gradient(circle at 95% 5%, oklch(0.968 0.005 305 / 0.1) 0 140px, transparent 143px),
+    radial-gradient(circle at 65% 110%, oklch(0.795 0.145 85 / 0.1) 0 130px, transparent 134px),
+    linear-gradient(135deg, oklch(0.345 0.131 305), oklch(0.288 0.111 305), oklch(0.182 0.07 305)) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero h1 {
+    font-family: inherit !important;
+    color: oklch(0.968 0.005 305) !important;
+    font-size: 32px !important;
+    font-weight: 600 !important;
+    line-height: 1.25 !important;
+    letter-spacing: -0.01em !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero > div:first-child > p {
+    max-width: 560px !important;
+    margin-top: 8px !important;
+    color: oklch(0.968 0.005 305 / 0.8) !important;
+    font-size: 13.5px !important;
+    line-height: 1.65 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child {
+    display: grid !important;
+    align-items: stretch !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span {
+    display: grid !important;
+    grid-template-columns: 36px minmax(0, 1fr) !important;
+    column-gap: 12px !important;
+    row-gap: 4px !important;
+    min-width: 0 !important;
+    padding: 12px 16px !important;
+    border: 1px solid oklch(0.968 0.005 305 / 0.15) !important;
+    border-radius: 20px !important;
+    background: oklch(0.968 0.005 305 / 0.09) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > i {
+    display: flex !important;
+    grid-row: span 2 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 10px !important;
+    background: oklch(0.968 0.005 305 / 0.15) !important;
+    color: oklch(0.968 0.005 305) !important;
+    font-size: 18px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > span:first-of-type {
+    color: oklch(0.968 0.005 305) !important;
+    font-size: 21px !important;
+    font-weight: 600 !important;
+    line-height: 1 !important;
+    font-variant-numeric: tabular-nums !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > span:last-child {
+    color: oklch(0.968 0.005 305 / 0.7) !important;
+    font-size: 11.5px !important;
+    line-height: 1.4 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] {
+    flex-wrap: wrap !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > * {
+    border-radius: 12px !important;
+    font-size: 13px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > [aria-current='page'] {
+    background: var(--recording-purple) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings view'] {
+    width: fit-content !important;
+    padding: 4px !important;
+    gap: 2px !important;
+    border: 1px solid var(--recording-control-line) !important;
+    border-radius: 12px !important;
+    background: oklch(0.94 0.014 305) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings view'] > button {
+    min-height: 32px !important;
+    padding: 6px 10px !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings view'] > button[aria-pressed='true'] {
+    background: var(--recording-purple) !important;
+    color: oklch(0.968 0.005 305) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child,
+.page:where(:not(:global([data-theme='dark']) *)) .filters {
+    border-color: var(--recording-line) !important;
+    border-radius: 16px !important;
+    background: var(--recording-surface) !important;
+    box-shadow: none !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search input[type='text'], .page:where(:not(:global([data-theme='dark']) *)) .search select, .page:where(:not(:global([data-theme='dark']) *)) .filters select:not([aria-label='Search date scope']) {
+    max-width: 100% !important;
+    min-height: 36px !important;
+    border-color: var(--recording-control-line) !important;
+    border-radius: 12px !important;
+    background-color: var(--recording-surface) !important;
+    color: oklch(0.15 0.015 52) !important;
+    font-size: 13px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .filters details > summary {
+    color: var(--recording-purple) !important;
+    font-size: 12px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .filters details label {
+    color: oklch(0.415 0.018 60) !important;
+    font-size: 10.5px !important;
+    font-weight: 600 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly lecture calendar'] {
+    border-color: var(--recording-line) !important;
+    border-radius: 16px !important;
+    background: var(--recording-surface) !important;
+    box-shadow: none !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Hourly lecture calendar'] button {
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    font-size: 11px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] {
+    border-color: var(--recording-line) !important;
+    border-radius: 16px !important;
+    background: var(--recording-surface) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] h2 {
+    font-size: 14px !important;
+    font-weight: 600 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .recordingCard {
+    padding: 12px !important;
+    border-color: var(--recording-control-line) !important;
+    border-radius: 12px !important;
+    background: var(--recording-surface) !important;
+    box-shadow: none !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .recordingCard > div:first-child p:first-child {
+    font-family: inherit !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .recordingCard :is(button, a) {
+    font-size: 11.5px !important;
+  }
+  @media (max-width: 639px) {
+    .page:where(:not(:global([data-theme='dark']) *)) .hero {
+      padding: 16px !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .hero h1 {
+      font-size: 28px !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .search label {
+      min-width: 0 !important;
+      max-width: 100% !important;
+    }
+  }
+  /* Tutor calendar and its existing detail surfaces, matched to the reference. */
+  .page:where(:not(:global([data-theme='dark']) *)) {
+    padding: 24px 28px 40px !important;
+    background: radial-gradient(ellipse at 0 0, oklch(.87 .035 305 / .2), transparent 48%),
+    radial-gradient(ellipse at 100% 0, oklch(.89 .065 85 / .2), transparent 42%),
+    radial-gradient(ellipse at 95% 100%, oklch(.85 .04 200 / .16), transparent 35%),
+    oklch(.968 .005 305) !important;
+    font-family: 'Roboto', system-ui, sans-serif !important;
+    color: oklch(.15 .015 52) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero {
+    gap: 16px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .breadcrumb {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 8px !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+    color: oklch(.968 .005 305 / .7) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .breadcrumb a {
+    color: inherit !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .breadcrumb a:hover {
+    text-decoration: underline !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .breadcrumb [aria-current] {
+    color: oklch(.968 .005 305) !important;
+    font-weight: 600 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroHeading {
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+    gap: 24px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroHeading > div {
+    min-width: 0 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .heroHeading p {
+    max-width: 560px !important;
+    margin-top: 8px !important;
+    font-size: 13.5px !important;
+    line-height: 1.65 !important;
+    color: oklch(.968 .005 305 / .8) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] {
+    flex-shrink: 0 !important;
+    padding-top: 4px !important;
+    justify-content: flex-end !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > a {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    min-height: 36px !important;
+    padding: 6px 12px !important;
+    border: 1px solid oklch(.968 .005 305 / .3) !important;
+    border-radius: 16px !important;
+    background: oklch(.968 .005 305 / .1) !important;
+    color: oklch(.968 .005 305) !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] > a:hover {
+    background: oklch(.968 .005 305 / .2) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings view'] {
+    margin-top: 16px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings view'] > button {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search {
+    margin-top: 16px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child {
+    padding: 12px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search input[type='text'] {
+    padding-top: 7px !important;
+    padding-bottom: 7px !important;
+    border-radius: 999px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search select {
+    padding-top: 7px !important;
+    padding-bottom: 7px !important;
+    font-size: 12px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search > label {
+    font-size: 11px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .filters {
+    padding: 10px 12px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .filters [aria-label='Lecture status'] {
+    gap: 6px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .filters [aria-label='Lecture status'] button {
+    min-height: 30px !important;
+    padding: 5px 10px !important;
+    font-size: 11.5px !important;
+    border-color: var(--recording-line) !important;
+    border-radius: 999px !important;
+    box-shadow: none !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .filters [aria-label='Lecture status'] button[aria-pressed='true'] {
+    background: var(--recording-purple) !important;
+    color: white !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .filters [aria-label='Lecture status'] > span {
+    font-size: 10.5px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarLayout {
+    gap: 16px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings calendar'] {
+    overflow: hidden !important;
+    border: 1px solid var(--recording-line) !important;
+    border-radius: 16px !important;
+    background: var(--recording-surface) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings calendar'] > div:last-child {
+    margin: 0 !important;
+    padding: 12px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings calendar'] > div:last-child > p[role='status'] {
+    margin: 0 0 10px !important;
+    font-size: 11px !important;
+  }
+  .compactTime, .weekDay, .weekDate {
+    display: none;
+  }
+  /* Multi-day mode reuses the same dated events and handlers as the hourly grid.
+   Only CSS placement changes; saved times, overlaps and day view stay intact. */
+  .page .weekCalendar {
+    height: auto !important;
+    min-height: 370px !important;
+    flex: none !important;
+  }
+  .page .weekCalendar > div {
+    min-width: 980px !important;
+  }
+  .page .weekCalendar > div > div:first-child {
+    border-bottom: 0 !important;
+  }
+  .page .weekCalendar > div > div:first-child > div:first-child,
+.page .weekCalendar > div > div:last-child > div:first-child {
+    display: none !important;
+  }
+  .page .weekCalendar > div > div:first-child > div:not(:first-child) {
+    display: flex !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 6px !important;
+    padding: 8px 10px !important;
+    border-color: var(--recording-control-line) !important;
+    border-bottom: 1px solid var(--recording-control-line) !important;
+    border-radius: 0 0 12px 12px !important;
+    font-size: 10px !important;
+    color: oklch(.415 .018 60) !important;
+  }
+  .page .weekCalendar > div > div:first-child > div[data-selected] {
+    background: oklch(.94 .04 305) !important;
+  }
+  .page .weekCalendar .weekDay {
+    display: inline !important;
+    text-transform: uppercase !important;
+    letter-spacing: .06em !important;
+  }
+  .page .weekCalendar .weekDate {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 20px !important;
+    height: 20px !important;
+    border-radius: 50% !important;
+    background: oklch(.94 .014 305) !important;
+  }
+  .page .weekCalendar [data-selected] .weekDate {
+    background: var(--recording-purple) !important;
+    color: white !important;
+  }
+  .page .weekCalendar .fullDate,
+.page .weekCalendar button > span:nth-child(n+3) {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    clip-path: inset(50%) !important;
+  }
+  .page .weekCalendar > div > div:last-child {
+    height: auto !important;
+    min-height: 328px !important;
+    align-items: stretch !important;
+  }
+  .page .weekCalendar [aria-label^='Lectures on '] {
+    min-width: 0 !important;
+    padding: 6px !important;
+    border-color: var(--recording-control-line) !important;
+  }
+  .page .weekCalendar [aria-label^='Lectures on '] > div {
+    display: none !important;
+  }
+  .page .weekCalendar [aria-label^='Lectures on ']:not(:has(button))::after {
+    content: 'No sessions';
+    display: block;
+    padding: 12px 2px;
+    text-align: center;
+    font-size: 11px;
+    color: oklch(.515 .022 60);
+  }
+  .page .weekCalendar [aria-label^='Lectures on '] > button {
+    --event-tone: oklch(.61 .016 60);
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    display: flex !important;
+    width: 100% !important;
+    height: 34px !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin: 0 0 6px !important;
+    padding: 6px 9px !important;
+    border: 1px solid var(--recording-control-line) !important;
+    border-left: 3px solid var(--event-tone) !important;
+    border-radius: 999px !important;
+    background: oklch(.88 .018 305) !important;
+    color: oklch(.2 .015 52) !important;
+    font-size: 11.5px !important;
+  }
+  .page .weekCalendar button[data-recording-status='ready'] {
+    --event-tone: #10b981;
+    background: #ecfdf5 !important;
+  }
+  .page .weekCalendar button:is([data-recording-status='missing'], [data-recording-status='archiveFailed']) {
+    --event-tone: #f43f5e;
+    background: #fff1f2 !important;
+  }
+  .page .weekCalendar button:is([data-recording-status='pending'], [data-recording-status='review']) {
+    --event-tone: #d6a42b;
+    background: #fffbeb !important;
+  }
+  .page .weekCalendar button[data-recording-status='inProgress'] {
+    --event-tone: var(--recording-purple);
+    background: oklch(.94 .04 305) !important;
+  }
+  .page .weekCalendar button[aria-pressed='true'] {
+    outline: 2px solid var(--recording-purple) !important;
+    outline-offset: 1px !important;
+  }
+  .page .weekCalendar button:hover {
+    filter: brightness(.975) !important;
+  }
+  .page .weekCalendar .compactTime {
+    display: inline !important;
+    flex-shrink: 0 !important;
+    font-size: 10.5px !important;
+    font-weight: 600 !important;
+    font-variant-numeric: tabular-nums !important;
+  }
+  .page .weekCalendar button > span:nth-child(2) {
+    min-width: 0 !important;
+    flex: 1 !important;
+    font-weight: 500 !important;
+  }
+  .page .weekCalendar button::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--event-tone);
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .recordingCard :is(button,a) {
+    box-shadow: none !important;
+    border-radius: 10px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .legend li:first-child > span {
+    background: #10b981 !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .legend li:last-child > span {
+    background: oklch(.61 .016 60) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] summary {
+    gap: 12px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] summary > span:first-child > span:first-child {
+    font-size: 12.5px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] summary > span:first-child > span:last-child {
+    font-size: 11px !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] details > div {
+    border-color: var(--recording-line) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] details button {
+    border-radius: 10px !important;
+    background: oklch(.94 .014 305 / .6) !important;
+  }
+  .page :is(button, a, select, input, summary):focus-visible {
+    outline: 2px solid var(--recording-purple, #65338d) !important;
+    outline-offset: 3px !important;
+  }
+  @media (max-width: 1279px) {
+    .page:where(:not(:global([data-theme='dark']) *)) .heroHeading {
+      flex-direction: column !important;
+      gap: 12px !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recording libraries'] {
+      justify-content: flex-start !important;
+    }
+  }
+  @media (max-width: 639px) {
+    .page:where(:not(:global([data-theme='dark']) *)) {
+      padding: 16px 12px 28px !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .hero h1 {
+      font-size: 26px !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .breadcrumb {
+      font-size: 10.5px !important;
+      gap: 5px !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child {
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span {
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: flex-start !important;
+      gap: 8px !important;
+      padding: 10px !important;
+      border-radius: 14px !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > span:last-child {
+      font-size: 10.5px !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child > div:first-child > div:last-child > label {
+      flex: 1 !important;
+    }
+    .page:where(:not(:global([data-theme='dark']) *)) [aria-label='All LMS modules'] details button {
+      flex-wrap: wrap !important;
+    }
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) [aria-label='Recordings view'] button[aria-pressed=false] {
+    background: transparent !important;
+    color: oklch(.3 .018 60) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search :is(input,select) {
+    font-family: inherit !important;
+    font-weight: 400 !important;
+    box-shadow: none !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .search :is(input,select)::placeholder {
+    color: oklch(.515 .022 60) !important;
+  }
+  .page:where(:not(:global([data-theme='dark']) *)) .filters :is(button,select) {
+    font-family: inherit !important;
+    font-weight: 400 !important;
+    box-shadow: none !important;
+  }
+  :global([data-theme='dark']) .page .hero {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 16px !important;
+    padding: 20px 24px !important;
+    border: 1px solid var(--theme-border) !important;
+    border-radius: 26px !important;
+    background: var(--theme-surface) !important;
+  }
+  :global([data-theme='dark']) .page .heroHeading {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: space-between !important;
+    gap: 16px !important;
+  }
+  :global([data-theme='dark']) .page .heroHeading h1 {
+    font-size: 32px !important;
+    line-height: 1.25 !important;
+  }
+  :global([data-theme='dark']) .page .heroHeading p {
+    max-width: 560px !important;
+    margin-top: 8px !important;
+    font-size: 13.5px !important;
+    line-height: 1.65 !important;
+    color: var(--theme-text-muted) !important;
+  }
+  :global([data-theme='dark']) .page [aria-label='Recording libraries'] {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+    margin: 0 !important;
+  }
+  :global([data-theme='dark']) .page [aria-label='Recording libraries'] a {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 8px 12px !important;
+    border: 1px solid var(--theme-border) !important;
+    border-radius: 16px !important;
+    background: var(--theme-bg) !important;
+    font-size: 12px !important;
+    color: var(--theme-text-primary) !important;
+  }
+  :global([data-theme='dark']) .page .hero > div:last-child {
+    display: grid !important;
+    grid-template-columns: repeat(3,minmax(0,1fr)) !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+  :global([data-theme='dark']) .page .hero > div:last-child > span {
+    display: grid !important;
+    grid-template-columns: 36px minmax(0,1fr) !important;
+    align-items: center !important;
+    column-gap: 12px !important;
+    row-gap: 4px !important;
+    padding: 12px 16px !important;
+    border: 1px solid var(--theme-border) !important;
+    border-radius: 20px !important;
+    background: var(--theme-bg) !important;
+  }
+  :global([data-theme='dark']) .page .hero > div:last-child > span > i {
+    display: flex !important;
+    grid-row: span 2 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 10px !important;
+    background: var(--theme-surface) !important;
+    color: var(--theme-text-primary) !important;
+  }
+  :global([data-theme='dark']) .page .hero > div:last-child > span > span:first-of-type {
+    font-size: 21px !important;
+    font-weight: 600 !important;
+    line-height: 1 !important;
+    color: var(--theme-text-primary) !important;
+  }
+  :global([data-theme='dark']) .page .hero > div:last-child > span > span:last-child {
+    font-size: 11.5px !important;
+    line-height: 1.4 !important;
+    color: var(--theme-text-muted) !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar {
+    background: var(--theme-surface) !important;
+    border-color: var(--theme-border) !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar > div > div:first-child {
+    background: var(--theme-surface) !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar > div > div:first-child > div:not(:first-child) {
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text-muted) !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar > div > div:first-child > div[data-selected] {
+    background: color-mix(in oklch,var(--theme-surface) 75%,#65338d) !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar .weekDate {
+    background: var(--theme-bg) !important;
+    color: var(--theme-text-primary) !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar [data-selected] .weekDate {
+    background: #65338d !important;
+    color: white !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar [aria-label^='Lectures on '] {
+    border-color: var(--theme-border) !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar button[data-recording-status] {
+    border-color: var(--theme-border) !important;
+    border-left-color: var(--event-tone) !important;
+    background: color-mix(in oklch,var(--theme-surface) 90%,var(--event-tone)) !important;
+    color: var(--theme-text-primary) !important;
+  }
+  :global([data-theme='dark']) .page .weekCalendar [aria-label^='Lectures on ']:not(:has(button))::after {
+    color: var(--theme-text-muted) !important;
+  }
+  @media(max-width:639px) {
+    :global([data-theme='dark']) .page .hero {
+      padding: 16px !important;
+    }
+    :global([data-theme='dark']) .page .heroHeading h1 {
+      font-size: 26px !important;
+    }
+    :global([data-theme='dark']) .page .hero > div:last-child > span {
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: flex-start !important;
+      gap: 8px !important;
+      padding: 10px !important;
+    }
+  }
+}
+
+
+/* Match the reference font and keep operational filters in its disclosure. */
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) { font-family: 'Recordings Roboto', Roboto, system-ui, sans-serif !important; color: oklch(.15 .015 52) !important; line-height: 1.55 !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) :is(h1,h2,h3,h4,p,span,label,input,select,button,a,summary,strong,dt,dd,td,th) { font-family: inherit !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .hero > div:last-child > span > i { border-radius: 50% !important; }
+  .page .filters[hidden] { display: none !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .search > div:first-child { padding: 12px !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .moreFilters { display: inline-flex !important; align-items: center !important; gap: 6px !important; min-height: 34px !important; padding: 6px 12px !important; border: 1px solid var(--recording-control-line) !important; border-radius: 999px !important; background: var(--recording-surface) !important; color: oklch(.3 .015 52) !important; font-size: 12px !important; box-shadow: none !important; white-space: nowrap !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .moreFilters[aria-expanded='true'] { background: oklch(.94 .014 305) !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .resultCount { color: oklch(.515 .022 60) !important; font-size: 11.5px !important; white-space: nowrap !important; }
+  @media(max-width:639px) { .page .search .moreFilters { min-height: 40px !important; } }
+}
+
+@layer recordings-ui {
+  .page .calendarContent { display: flex !important; flex-direction: column !important; }
+  .page:where(:not(:global([data-theme='dark']) *)) .calendarContent > p[role='status'] { order: 1 !important; margin: 12px -12px -12px !important; padding: 12px !important; border-top: 1px solid var(--recording-line) !important; color: oklch(.515 .022 60) !important; }
+}
+
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) { padding: 28px 24px !important; }
+  @media(max-width:639px) { .page:where(:not(:global([data-theme='dark']) *)) { padding: 20px 16px !important; } }
+}
+
+@layer recordings-ui {
+  .page:where(:not(:global([data-theme='dark']) *)) { font-size: 16px !important; }
+}
+
+@layer recordings-ui {
+  .page .search .searchRow { display: grid !important; grid-template-columns: minmax(220px, 1fr) minmax(0, auto); align-items: center; gap: 12px; }
+  .page .search .searchControls { display: grid; grid-template-columns: minmax(170px, 240px) minmax(170px, 190px) auto auto; align-items: center; gap: 10px; min-width: 0; }
+  .page .search input[type='text'] { height: 42px !important; border-radius: 12px !important; }
+  .page .search .moreFilters { display: inline-flex; align-items: center; gap: 6px; min-height: 42px !important; padding: 6px 12px; border: 1px solid var(--recording-control-line, var(--theme-border)); border-radius: 12px !important; justify-content: center; white-space: nowrap; font-size: 12px; }
+  .page .search .moreFilters[aria-expanded='true'] { border-color: var(--recording-purple, oklch(.44 .145 305)) !important; color: var(--recording-purple, oklch(.44 .145 305)) !important; }
+  .page .filters { padding: 16px !important; }
+  .page .inactiveFilter { min-height: 24px; }
+  .page .inactiveFilter input { width: 15px; height: 15px; accent-color: var(--recording-purple, oklch(.44 .145 305)); }
+  .page .filterGrid { display: grid; grid-template-columns: minmax(140px, .7fr) repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 12px; }
+  .filterField { display: grid; min-width: 0; gap: 6px; }
+  .filterField > span { font-size: 12px; font-weight: 500; color: var(--theme-text-secondary, oklch(.43 .03 305)); }
+  .page .clearFilters { min-height: 42px; padding: 0 10px; border-radius: 10px; font-size: 12px !important; color: var(--recording-purple, oklch(.44 .145 305)) !important; white-space: nowrap; }
+  .page .clearFilters:hover { background: oklch(.94 .025 305 / .5); }
+  @media (max-width: 1279px) {
+    .page .search .searchRow { grid-template-columns: minmax(0, 1fr); }
+    .page .search .searchControls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; }
+    .page .filterGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .page .clearFilters { justify-self: start; }
+  }
+  @media (max-width: 639px) {
+    .page .search .searchControls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .page .search .resultCount { text-align: end; }
+    .page .filterGrid { grid-template-columns: minmax(0, 1fr); }
+    .page .filters [aria-label='Lecture status'] > span { flex-basis: 100%; margin-top: 4px; }
+  }
+}
+
+@layer recordings-ui {
+  .page [aria-label='All LMS modules'] {
+    --module-divider: oklch(.87 .012 305 / .6);
+    --module-highlight: oklch(.95 .018 305 / .55);
+    box-shadow: none !important;
+  }
+  .page .moduleList {
+    border-block: 1px solid var(--module-divider);
+  }
+  .page .moduleRow {
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  .page .moduleRow + .moduleRow {
+    border-top: 1px solid var(--module-divider) !important;
+  }
+  .page .moduleSummary {
+    min-height: 72px;
+    padding: 14px 12px;
+    list-style: none;
+    border-radius: 6px;
+    box-shadow: none !important;
+  }
+  .page .moduleSummary::-webkit-details-marker { display: none; }
+  .page .moduleSummary:hover,
+  .page .moduleRow[open] > .moduleSummary {
+    background: var(--module-highlight) !important;
+  }
+  .page .moduleSummary:focus-visible {
+    outline-offset: -3px !important;
+  }
+  .page .moduleChevron {
+    flex-shrink: 0;
+    color: oklch(var(--foreground-500));
+  }
+  .page .moduleRow[open] .moduleChevron { transform: rotate(90deg); }
+  .page .moduleRow > div {
+    margin-inline: 12px;
+    padding-inline: 0;
+    border-color: var(--module-divider) !important;
+  }
+  .page .moduleRow button { box-shadow: none !important; }
+  :global([data-theme='dark']) .page [aria-label='All LMS modules'] {
+    --module-divider: color-mix(in srgb, var(--theme-border) 70%, transparent);
+    --module-highlight: color-mix(in srgb, var(--theme-primary, #65338d) 12%, transparent);
+  }
+  @media (max-width: 639px) {
+    .page .moduleSummary { position: relative; padding: 14px 32px 14px 8px; }
+    .page .moduleSummary > span:first-child { flex-basis: 100% !important; }
+    .page .moduleChevron { position: absolute; right: 8px; top: 18px; }
+    .page .moduleRow > div { margin-inline: 8px; }
+  }
+}
+
+@layer recordings-ui {
+  .page [aria-label='Choose lecture date'] { width: 280px !important; }
+}
