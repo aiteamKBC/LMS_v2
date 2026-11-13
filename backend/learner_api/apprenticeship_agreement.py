@@ -39,6 +39,7 @@ from enrolment_api.auth import employer_signing_party_error, enrolment_login_req
 from .learning_plan import _saved_modules, learner_group_module_ids, learner_programme_modules
 from .learner_progression import advance_learner
 from .mappers import _s
+from .planned_learning import learner_type, planned_modules
 from .models import ApprenticeshipAgreement, EnrolmentUser
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ def _plan_modules(learner):
         module_ids = [_s(m.get("moduleId")) for m in saved]
     else:
         module_ids = learner_group_module_ids(learner)
-    return [catalogue[i] for i in module_ids if i in catalogue]
+    return planned_modules([catalogue[i] for i in module_ids if i in catalogue], learner_type(learner))
 
 
 def _to_date(value):

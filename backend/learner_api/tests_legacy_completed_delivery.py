@@ -279,6 +279,8 @@ class CompletedDeliverySnapshotTests(SimpleTestCase):
                 'ksb': {'status': 'empty', 'completed': 0, 'total': 0},
                 'nativeComponents': detail['components'],
                 'historicalComponents': 0, 'retainedComponents': 0,
+                'mainActivities': {'nativeComponents': detail['components'],
+                                   'historicalComponents': 0, 'retainedComponents': 0},
                 'modules': [{'id': 'current:' + LEGACY, 'completed': 0, 'total': 1}]}
         with patch.object(snapshots, "read_live_inputs", return_value=live), \
              patch.object(snapshots, "coach_otjh_target_to_date", return_value=10), \

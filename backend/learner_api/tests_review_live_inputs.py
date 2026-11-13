@@ -25,7 +25,8 @@ class ReviewLiveInputsTests(SimpleTestCase):
             ('identity', inputs.canonical_learning, self.owner),
             ('metrics', inputs.canonical_learning, {201: self.metrics}),
             ('modules', inputs, {'modules': self.modules, 'nativeComponents': [],
-                                'historicalComponents': 140, 'retainedComponents': 0}),
+                                'historicalComponents': 140, 'retainedComponents': 0,
+                                'requiredActivities': [{'completed': True, 'dueDate': '2026-11-04'}]}),
         ]:
             attribute = {'identity': 'require_profile', 'metrics': 'metrics_bulk',
                          'modules': 'dashboard_activity_facts'}[name]
@@ -47,10 +48,11 @@ class ReviewLiveInputsTests(SimpleTestCase):
         self.assertEqual(result['otjh'], self.metrics['otjh'])
         self.assertEqual(result['ksb'], self.metrics['ksb'])
         self.assertEqual(result['modules'], self.modules)
+        self.assertEqual(result['requiredActivities'], [{'completed': True, 'dueDate': '2026-11-04'}])
         self.assertEqual(vars(self.profile), before)
         self.identity_read.assert_called_once_with(201)
         self.metrics_read.assert_called_once_with([201], learner_workspace=True, as_of=self.now)
-        self.modules_read.assert_called_once_with(self.source, self.profile, as_of=self.now)
+        self.modules_read.assert_called_once_with(self.source, self.profile, as_of=self.now, include_required=True)
         self.plan_read.assert_not_called()
 
     def test_caller_perspective_is_restored_on_success_and_failure(self):

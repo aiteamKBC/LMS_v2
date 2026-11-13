@@ -751,6 +751,76 @@ body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-signout:foc
   font-weight: 700;
 }
 
+/* Recordings has a compact purple disclosure menu in Curriculum. Keep these
+   rules on this group so other navigation retains its existing treatment. */
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] {
+  margin-inline: -8px;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] > button {
+  min-height: 44px;
+  padding-inline: 10px;
+  gap: 10px;
+  border-radius: 12px;
+  background: transparent !important;
+  color: rgb(255 255 255 / 0.72) !important;
+  box-shadow: none;
+  font-weight: 600;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] > button:is(:hover, :focus-visible) {
+  background: rgb(255 255 255 / 0.08) !important;
+  color: #ffffff !important;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu {
+  margin-left: 10px;
+  padding-left: 8px;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu-track {
+  width: 1px;
+  bottom: 4px;
+  background: rgb(255 255 255 / 0.16);
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu-track-fill,
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu-item::before {
+  display: none;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu-item > a {
+  min-height: 34px;
+  padding-inline: 6px !important;
+  gap: 6px !important;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu-item > a > span:last-child:empty {
+  display: none;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu-item > a > .flex-1 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu-item > a:is(:hover, :focus-visible) {
+  background: rgb(255 255 255 / 0.06) !important;
+}
+
+body .dashboard-theme[data-workspace-role="curriculum"] .kbc-learner-sidebar-panel:not([data-collapsed]) [data-nav-group="curriculum-coaching-recordings"] .kbc-learner-submenu-item > a[aria-current="page"] {
+  border-color: #9165b5;
+  background: rgb(255 255 255 / 0.15) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 0 0 1px rgb(174 126 214 / 0.24);
+  font-weight: 700;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .kbc-learner-submenu,
   .kbc-learner-submenu[data-open="true"] {

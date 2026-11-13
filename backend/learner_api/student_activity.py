@@ -1,4 +1,5 @@
 """Learner-scoped view over the historical Last_audit activity mirror."""
+from curriculum_api.learning_storage import read_sql
 
 import json
 import re
@@ -721,12 +722,12 @@ def _builder_subject_metadata(cursor, refs):
     native = [ref[8:] for ref in refs if ref.startswith('current:')]
     if not native:
         return {}, {}
-    cursor.execute('''
+    cursor.execute(read_sql('''
         SELECT m.module_catalogue_id,m.title,m.cover_image_url
         FROM curriculum.modules m
         WHERE (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
           AND m.module_catalogue_id=ANY(%s)
-    ''', [native])
+    ''', cursor.db), [native])
     covers, links = {}, {}
     for module_id, title, cover in cursor.fetchall():
         row = {'id': module_id, 'title': clean_text(title), 'cover': _builder_cover_url(cover)}
@@ -772,12 +773,12 @@ def _effective_current_subjects(cursor, learner_id):
     module_ids = _effective_plan_ids(learner, {})
     if not module_ids:
         return []
-    cursor.execute('''
+    cursor.execute(read_sql('''
         SELECT module_catalogue_id,title
         FROM curriculum.modules
         WHERE module_catalogue_id=ANY(%s)
           AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
-    ''', [module_ids])
+    ''', cursor.db), [module_ids])
     titles = {module_id: title for module_id, title in cursor.fetchall()}
     return [
         {'id': module_id, 'title': titles[module_id]}

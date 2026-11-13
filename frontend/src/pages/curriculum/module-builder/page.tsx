@@ -190,7 +190,8 @@ import { appendWeekTemplateCopies } from './weekTemplateImport';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
-import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbImportSource, type KsbProfileEntry } from './ksbExcel';
+import { buildKsbMappingPrompt, ksbImportNotice, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbImportSource, type KsbProfileEntry } from './ksbExcel';
+import { reviewKsbImport } from './ksbImportReview';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
@@ -764,7 +765,7 @@ function ModuleBuilderContent() {
   const [aiMaterialOpen, setAiMaterialOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
-  const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string; downloadableModule?: ModuleCatalogueItem } | null>(null);
+  const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string; icon?: 'success' | 'warning'; downloadableModule?: ModuleCatalogueItem } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
@@ -924,6 +925,7 @@ function ModuleBuilderContent() {
   const autoSaveArmedRef = useRef(false);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
+  const ksbImportBusyRef = useRef(false);
   const moduleTemplateImportInputRef = useRef<HTMLInputElement>(null);
   // Both revalidate rather than skipCache. The request still goes to the network
   // every time, and every curriculum write calls invalidate_curriculum_cache() on
@@ -2760,7 +2762,9 @@ function ModuleBuilderContent() {
   // Read a filled KSB sheet back onto the components and stage the change as an
   // unsaved edit — the person reviews it and saves like any other authoring change.
   const importKsbSheet = useCallback(async (file: File) => {
-    if (!workingModule) return;
+    if (!workingModule || ksbImportBusyRef.current) return;
+    ksbImportBusyRef.current = true;
+    const snapshot = JSON.stringify(workingModule);
     setActionMessage(null);
     setNoticeAlert(null);
     try {
@@ -2780,15 +2784,22 @@ function ModuleBuilderContent() {
           allowedCodes: workspaceKsbProfileEntries.map(entry => entry.code),
         }
         : undefined;
-      const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule, source);
+      const { module: nextModule, summary, cancelled } = await importModuleKsbWorkbook(file, workingModule, source, {
+        review: reviewKsbImport,
+        isCurrent: () => JSON.stringify(workingModuleRef.current) === snapshot,
+      });
+      if (cancelled) return;
       if (!summary.rowsWithKsbs) {
         setActionMessage('No KSBs were found in the uploaded sheet. Fill the KSBs column before re-uploading.');
         return;
       }
-      updateWorkingModule(() => nextModule);
-      setNoticeAlert({ title: 'KSB sheet imported', message: describeKsbImport(summary), downloadableModule: nextModule });
+      if (summary.componentsUpdated) updateWorkingModule(() => nextModule);
+      const notice = ksbImportNotice(summary);
+      setNoticeAlert({ title: notice.title, message: notice.text, icon: notice.icon, downloadableModule: nextModule });
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to read the uploaded KSB sheet.');
+    } finally {
+      ksbImportBusyRef.current = false;
     }
   }, [updateWorkingModule, workingModule, workingModuleScopeLock?.ksbSourceId, workspaceKsbProfileEntries, workspaceKsbProfileValue]);
 
@@ -3558,7 +3569,7 @@ function ModuleBuilderContent() {
     showCurriculumAlert({
       title: noticeAlert.title,
       text: noticeAlert.message,
-      icon: 'success',
+      icon: noticeAlert.icon || 'success',
       confirmButtonText: 'OK',
       denyButtonText: noticeAlert.downloadableModule ? 'Download valid file' : undefined,
       onDeny: noticeAlert.downloadableModule

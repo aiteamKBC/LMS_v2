@@ -41,10 +41,10 @@
 .shell.directoryShell { background: radial-gradient(1120px 720px at 6% -12%,#e9def366,transparent 62%),radial-gradient(920px 640px at 97% 0%,#f2e5c566,transparent 58%),#f5f3f7 !important; }
 .shell.directoryShell .content .main { padding: 1.25rem .25rem 1.5rem; }
 .shell.directoryShell .content :global(.kbc-workspace-topbar[data-enrolment-header]) { height: 3.5rem; margin: .875rem .25rem .5rem; padding: .375rem 1rem; gap: .75rem; border: 1px solid #e9e1ef; border-radius: 1rem; background: #fffc !important; box-shadow: none; color: #302b28; }
-.directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > div:first-of-type) { display: none; order: 3; margin-left: auto; }
+.directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > div:first-of-type) { display: none; order: 1; margin-left: 0; }
 .directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > a), .directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > div:empty) { display: none; }
-.shell.directoryShell :global(.kbc-workspace-switcher) { order: 1; margin-left: 0; }
-.shell.directoryShell :global(.kbc-workspace-switcher > [role="menu"]) { left: 0; right: auto; width: min(18rem,calc(100vw - 2rem)); max-height: calc(100dvh - 6rem); overflow-y: auto; }
+.shell.directoryShell :global(.kbc-workspace-switcher) { order: 4; margin-left: auto; }
+.shell.directoryShell :global(.kbc-workspace-switcher > [role="menu"]) { left: auto; right: 0; width: min(18rem,calc(100vw - 2rem)); max-height: calc(100dvh - 6rem); overflow-y: auto; }
 .shell.directoryShell .content :global(.kbc-workspace-switcher-button) { height: 2.5rem; padding: .25rem .75rem; border: 1px solid #e6deee !important; border-radius: .875rem; background: #f7f4fb !important; box-shadow: none !important; }
 .shell.directoryShell .content :global(.kbc-workspace-switcher-button *) { color: #4e3b5c !important; }
 .directoryShell :global(.kbc-workspace-label) { display: grid; gap: .0625rem; text-align: left; line-height: 1.15; }
@@ -52,7 +52,7 @@
 .directoryShell :global(.kbc-enrolment-search) { order: 2; display: flex; align-items: center; justify-content: flex-start; gap: .625rem; width: min(26.25rem,40vw); height: 2.5rem; padding: 0 .875rem; border: 1px solid #e0d5ec; border-radius: .875rem; background: #f4f1f8; color: #8b8179; font-size: .875rem; text-align: left; }
 .directoryShell :global(.kbc-enrolment-search > svg) { color: #c4bacd; }
 .directoryShell :global(.kbc-header-extras) { order: 3; }
-.directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > div:last-child) { order: 4; margin-left: auto; border: 0; padding: 0; }
+.directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > div:last-child) { order: 5; margin-left: 0; border: 0; padding: 0; }
 .directoryShell :global(.kbc-workspace-topbar .kbc-navigation-menu) { min-height: 2rem; padding: .25rem .5rem; border: 0; background: transparent; color: #7e7469; }
 .directoryShell :global(.kbc-navigation-menu > span) { display: none; }
 .directoryShell :global(.kbc-topbar-profile > span:first-child) { width: 2rem; height: 2rem; background: #f1e6ff; box-shadow: none; color: #5d2e88; }
@@ -348,7 +348,6 @@
   .brand { padding: .625rem .75rem; gap: .5rem; }
   .brandText span { font-size: .5rem; }
   .directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > div:first-of-type) { display: flex; }
-  .directoryShell :global(.kbc-workspace-topbar[data-enrolment-header] > div:last-child) { margin-left: 0; }
   .shell .content .main { padding: 1rem; }
   .hero { min-height: 16rem; padding: 1.5rem; }
   .heroDescription { max-width: 28rem; }
@@ -357,6 +356,7 @@
   .shell.directoryShell .content .main { padding: .75rem; }
   .shell.directoryShell .content :global(.kbc-workspace-topbar[data-enrolment-header]) { padding-inline: .5rem; gap: .375rem; }
   .directoryShell :global(.kbc-workspace-switcher-button > span:nth-child(2)) { display: inline; }
+  .shell.directoryShell :global(.kbc-workspace-switcher > [role="menu"]) { max-width: calc(100vw - 6rem); }
   .directoryShell :global(.kbc-enrolment-search) { width: 2.5rem; flex-shrink: 0; padding: .5rem; justify-content: center; }
   .directoryShell :global(.kbc-enrolment-search > span), .shell.directoryShell :global(.kbc-topbar-user-name) { display: none; }
   .shell .content .main { padding: .75rem; }

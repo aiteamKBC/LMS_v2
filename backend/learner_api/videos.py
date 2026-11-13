@@ -9,6 +9,7 @@ The record mirrors the quiz-attempt shape (learner_api.quizzes) so the unified
 progress log stays consistent; there is no grading — a video is either watched
 and reflected on, or not.
 """
+from curriculum_api.learning_storage import read_sql
 import json
 
 from django.db import DatabaseError, IntegrityError, connections
@@ -58,7 +59,7 @@ def _video_title(component_id):
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT type, title FROM curriculum.components WHERE id = %s",
+                read_sql("SELECT type, title FROM curriculum.components WHERE id = %s", cur.db),
                 [component_id],
             )
             row = cur.fetchone()

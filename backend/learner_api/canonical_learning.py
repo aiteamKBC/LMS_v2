@@ -511,17 +511,22 @@ def input_activity_date(entry):
 
 
 def rows_for(owner, records=None):
+    records = list(records if records is not None else entries_for(owner))
+    recovered_titles = {}
+    if any(record.get('component_type') == 'old_lms_recovered' for record in records):
+        from .recovered_activity_content import titles
+        recovered_titles = titles(owner, records)
     result = []
     # Untimed completions belong in the activity log for review. They still
     # contribute no allocations/hours to metrics or the monthly charts.
-    for entry in (part for record in (records if records is not None else entries_for(owner))
+    for entry in (part for record in records
                   for part in ([record] if record.get('completion_only') else allocations(record))):
         source = source_payload_metadata(entry.get('source_payload'))
         at = local_instant(entry.get('reporting_started_at') or entry.get('reporting_ended_at'))
         ref = f"canonical:{entry['id']}"
         if entry.get('segment_id') is not None:
             ref += f":segment:{entry['segment_id']}"
-        item = row(ref, at, entry.get('component_title'),
+        item = row(ref, at, recovered_titles.get(str(entry['id'])) or entry.get('component_title'),
                    (entry.get('component_type') or entry.get('kind') or 'Learning').replace('_', ' ').title(),
                    hours=number(entry.get('actual_seconds')) / 3600,
                    planned=entry.get('expected_otjh') if entry.get('expected_otjh') is not None else source.get('planned_hours'),
@@ -665,6 +670,11 @@ def material_parts(item, owner, record=None):
                        if str(r['id']) == str(item.get('progress_id'))), None)
     if record is None:
         return []
+    if record.get('component_type') == 'old_lms_recovered':
+        from .recovered_activity_content import material_parts as recovered_parts
+        restored = recovered_parts(item, owner, record)
+        if restored:
+            return restored
     catalogue = query('''SELECT a.source_activity_id,a.source_activity_title,a.source_activity_type,
         a.source_section_title,a.source_position AS position,a.curriculum_component_ref,
         c.source_course_ref,c.source_course_title,c.curriculum_module_ref,

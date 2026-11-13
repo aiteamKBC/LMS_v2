@@ -27,12 +27,16 @@ describe('Meeting deep links', () => {
   it('writes a stable meeting ID and tab, and Back/Forward restore them without more calendar or PDF requests', async () => {
     mount(); fireEvent.click(await screen.findByRole('button', { name: /^View Synthetic linked MCM/ }));
     const drawer = within(screen.getByRole('dialog', { name: 'Meeting details' }));
+    fireEvent.click(drawer.getByRole('tab', { name: 'Transcript' }));
     fireEvent.click(await drawer.findByRole('button', { name: 'AI analysis' }));
     await drawer.findByText(/no saved AI report is linked/);
     expect(screen.getByTestId('url')).toHaveTextContent(`meeting=${id}`); expect(screen.getByTestId('url')).toHaveTextContent('tab=analysis');
     expect(screen.getByTestId('url').textContent).not.toContain('renewed-reference');
     fireEvent.click(screen.getByRole('button', { name: 'Browser Back' }));
     await waitFor(() => expect(drawer.getByRole('button', { name: 'AI analysis' })).toHaveAttribute('aria-expanded', 'false'));
+    expect(drawer.getByRole('tab', { name: 'Transcript', selected: true })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Browser Back' }));
+    expect(drawer.getByRole('tab', { name: 'Overview', selected: true })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Browser Back' }));
     expect(screen.queryByRole('dialog', { name: 'Meeting details' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Browser Forward' }));
@@ -45,8 +49,8 @@ describe('Meeting deep links', () => {
     const drawer = within(await screen.findByRole('dialog', { name: 'Meeting details' }));
     expect(await drawer.findByText(/no saved AI report is linked/)).toBeInTheDocument();
     expect(loadLinkedCoachingMeeting).toHaveBeenCalledWith(id, '2026-10-20', 'UTC', expect.any(AbortSignal), false);
-    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveValue('week');
-    expect(screen.getByRole('button', { name: 'All meetings' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('combobox', { name: 'Calendar period' })).toHaveTextContent('Week');
+    expect(screen.getByRole('combobox', { name: 'Meeting status' })).toHaveTextContent('All meetings');
     expect(loadCoachingCalendar).toHaveBeenCalledOnce(); expect(loadCoachingSession).toHaveBeenCalledOnce(); expect(loadSavedCoachingEvidence).toHaveBeenCalledOnce();
   });
   it('keeps an unavailable link explicit and closes it without changing the saved filters', async () => {

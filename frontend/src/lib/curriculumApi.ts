@@ -70,6 +70,8 @@ export function isRetryableError(error: unknown): boolean {
 
 interface CurriculumRequestInit {
   method?: string;
+  /** Opt in to session CSRF for protected writes, retaining curriculum cache/error handling. */
+  csrf?: boolean;
   credentials?: RequestCredentials;
   headers?: Record<string, string>;
   body?: string;
@@ -3174,12 +3176,13 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
   // `revalidate` is destructured out with the other non-fetch options: it is a
   // client-cache directive only and must not reach the backend, or it would
   // force the same rebuild `skipCache` does.
-  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, abandonSignal: _abandonSignal, onDispatch: _onDispatch, ...fetchInit } = init || {};
+  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, abandonSignal: _abandonSignal, onDispatch: _onDispatch, csrf, ...fetchInit } = init || {};
   const signal = callerSignal && timeoutController
     ? anySignal([callerSignal, timeoutController.signal])
     : callerSignal || timeoutController?.signal;
   try {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const request = csrf ? coachFetch : fetch;
+  const response = await request(`${API_BASE_URL}${path}`, {
     ...fetchInit,
     ...(init?.skipCache ? { cache: 'no-store' as const } : {}),
     signal,
@@ -4898,6 +4901,8 @@ export function previewModuleSessionPlan(input: { startDate?: string; numberOfSe
 
 /** The slot a tutor is being asked about. Matches the module's own schedule fields. */
 export interface CurriculumTutorAvailabilityInput {
+  /** The destination group supplies delivery days and times when moving a course. */
+  groupId?: string;
   startDate?: string;
   sessionsNumber?: number | string;
   weeklySchedule?: CurriculumWeeklySession[];
@@ -4984,13 +4989,19 @@ export interface FreeCourseConversionDestination {
   programmeId: string;
   cohortId: string;
   groupId: string;
+  tutor: string;
+  /** Continue after the user has been shown the tutor's scheduling conflict. */
+  allowTutorConflict?: boolean;
 }
 
 export function convertFreeCourseToModule(id: string, destination: FreeCourseConversionDestination) {
-  return postJson<FreeCourseConversionDestination & {
+  // Conversion is CSRF protected, unlike the older authoring write endpoints.
+  return fetchJson<FreeCourseConversionDestination & {
     converted: boolean; moduleCatalogueId: string;
     programmeName: string; cohortName: string; groupName: string;
-  }>(`/curriculum/modules/${encodeURIComponent(id)}/convert-free-course/`, destination);
+  }>(`/curriculum/modules/${encodeURIComponent(id)}/convert-free-course/`, {
+    method: 'POST', body: JSON.stringify(destination), csrf: true,
+  });
 }
 
 /**

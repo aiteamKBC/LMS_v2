@@ -392,6 +392,7 @@ def learner_table_row(item):
     }
     # Both identities are consumed by the case-file navigation and its tabs.
     row.update(_pick(item, ("learnerType", "enrolmentId")))
+    row.update(_pick(item, ('activityPlan', 'activityPlanState', 'activityPlanCalculatedAt', 'completedRecords')))
     return row
 
 

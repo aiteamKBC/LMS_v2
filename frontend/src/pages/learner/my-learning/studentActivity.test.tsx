@@ -384,13 +384,13 @@ describe('subjects shared with Module Builder', () => {
   });
 
 
-  it('opens a native module directly in its activity player without month or week clicks', async () => {
+  it('opens a native module directly in its activity player without an intermediate activity list', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
     const real = { modules: ['Native module'], components: [
       { componentId: 'COMP-1', moduleId: 'MOD-1', module: 'Native module', week: 'Week 1',
         component: 'Native reading', type: 'reading', contentHtml: '<p>Read this lesson.</p>' },
     ] } as LearnerDetail;
-    function Location() { return <output data-testid="path">{useLocation().pathname}</output>; }
+    function Location() { const location = useLocation(); return <output data-testid="path">{location.pathname}{location.search}</output>; }
     render(<><Location /><StudentActivityPanel real={real} data={null} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} /></>);
     fireEvent.click(await screen.findByRole('button', { name: /Native module/ }));
     expect(screen.getByTestId('path')).toHaveTextContent('/learner/component/commercial/132/COMP-1');

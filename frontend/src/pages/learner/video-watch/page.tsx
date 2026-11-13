@@ -36,6 +36,7 @@ import {
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { ActivityKsbMappings } from '@/components/feature/ActivityKsbMappings';
 import { SavedReflection } from '@/components/feature/SavedReflection';
 import { formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow.helpers';
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
@@ -923,6 +924,7 @@ export default function ComponentViewPage() {
                 <button type="button" className="mt-2 font-semibold underline" onClick={() => setRetakeOpen(true)}>Change time option</button>
               </div>}
               {isVideo && activityHeading}
+              <ActivityKsbMappings mappings={component.ksbMappings} learnerKsbs={learnerKsbs} />
               {!isAssignment && !recordedEvent && (
                 <ComponentContent key={timerStorageKey} component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
                     ? `/learner_api/session-results/${kind}/${id}/${encodeURIComponent(component.teamsLiveSessionId)}/sessions/${component.teamsSessionNumber}/join/`
