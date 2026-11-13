@@ -738,6 +738,12 @@ def read_module(source, kind, owner, subject_id):
     with connections['enrolment'].cursor() as cur:
         modules=module_rows(cur,scope_ids,rich_id=mid) if scope_ids else {}
         sessions=plan_sessions(cur,str(source.email or '').strip().casefold(),scope_ids) if scope_ids else []
+        # Module Overview: only for the native module this learner was just
+        # authorised to open (subject_id is in their plan; mid is its id).
+        overview=None
+        if subject_id.startswith('current:') and mid in scope_ids:
+            from curriculum_api.module_overview import read_learner_overview
+            overview=read_learner_overview(cur,mid,(modules.get(mid) or {}).get('tutor_name'))
     visible_refs = {subject_id, *(f'current:{value}' for value in scope_ids), *(f'legacy:{value}' for value in course_refs)}
     clean_metadata={k:{ref:value for ref,value in metadata[k].items() if ref in visible_refs}
         for k in ('covers','builder_subjects','imported_courses','replacement_courses','previous_learning_groups')}
@@ -794,7 +800,7 @@ def read_module(source, kind, owner, subject_id):
     # native_done caches sets while calculating transferred progress. They are
     # request-local lookup indexes, not part of the learner detail JSON contract.
     detail.pop('_completion', None)
-    return dict(subjectId=subject_id,detail=detail,activity=activity,metadata=clean_metadata,
+    return dict(subjectId=subject_id,detail=detail,activity=activity,metadata=clean_metadata,overview=overview,
         schedule=dict(modules=list(modules.values()),moduleLinks=clean_metadata['builder_subjects'],generatedAt=datetime.now(timezone.utc).isoformat()),sessions=sessions)
 
 

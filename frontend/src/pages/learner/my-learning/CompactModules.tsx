@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { ModuleOverviewPage } from './ModuleOverviewPage';
+import { hasModuleOverview } from './moduleOverviewModel';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { readMyLearningUpcoming, useMyLearningSearch, useMyLearningModule, type MyLearningCatalogue } from '@/api/myLearning';
 import { fetchLearnerCertificateTemplate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
@@ -35,7 +37,11 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
   const requestedWeek = params.get('week');
   const resume = params.get('resume') === '1';
   const selected = requested || (requestedActivity ? `activity:${requestedActivity}` : null);
-  const module = useMyLearningModule(kind, id, selected);
+  // The Module Overview is the card's landing page. It reads the same module
+  // response (and transport cache entry) the learning experience reads, so
+  // Start/Continue learning opens without a second fetch.
+  const overviewId = view === 'catalogue' && !selected && !resume ? params.get('overview') : null;
+  const module = useMyLearningModule(kind, id, selected || overviewId);
   const [search, setSearch] = useState('');
   const activitySearch = useMyLearningSearch(kind,id,search,!selected && view === 'catalogue');
   const [upcomingState, setUpcomingState] = useState<{ catalogue: MyLearningCatalogue; links: UpcomingLearningLink[] } | null>(null);
@@ -91,8 +97,18 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
     (catalogue?.modules || []).map(card => [card.id, card.planModule?.start_date])));
   const open = (subject: Subject, continuing = false) => {
     const next = new URLSearchParams(location.search);
-    next.delete('activity'); next.delete('module'); next.delete('week'); next.delete('resume'); next.set('subject', subject.id);
+    next.delete('activity'); next.delete('module'); next.delete('week'); next.delete('resume'); next.delete('overview'); next.set('subject', subject.id);
     if (continuing) next.set('week', 'current');
+    navigate({ pathname: location.pathname, search: next.toString() });
+  };
+  const showOverview = (subject: Subject) => {
+    const next = new URLSearchParams(location.search);
+    next.delete('activity'); next.delete('module'); next.delete('week'); next.delete('resume'); next.delete('subject'); next.set('overview', subject.id);
+    navigate({ pathname: location.pathname, search: next.toString() });
+  };
+  const closeOverview = () => {
+    const next = new URLSearchParams(location.search);
+    next.delete('overview');
     navigate({ pathname: location.pathname, search: next.toString() });
   };
   useEffect(() => {
@@ -134,6 +150,14 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
   }
   if (!catalogue && !error) return <SubjectCardsSkeleton />;
   if (!catalogue) return <LearningReadError message={error} onRetry={refresh} />;
+  if (overviewId) {
+    const subject = subjects.find(item => item.id === overviewId);
+    if (!subject) return <div role="alert" className={styles.empty}><p>This module is not available in your learning plan.</p><button type="button" onClick={closeOverview}>Show your modules</button></div>;
+    // Old LMS, imported and replacement courses keep opening directly.
+    if (!hasModuleOverview(subject)) return <Navigate to={{ pathname: location.pathname, search: (() => { const next = new URLSearchParams(location.search); next.delete('overview'); next.set('subject', subject.id); return next.toString(); })() }} replace />;
+    return <ModuleOverviewPage subject={subject} card={catalogue.modules.find(card => card.id === subject.id)} module={module.data} loading={module.loading}
+      error={module.data ? '' : module.error} onRetry={module.refresh} onStart={() => open(subject)} onBack={closeOverview} />;
+  }
   return <section aria-label="Your subjects" aria-busy={loading} className={`${styles.workspace} space-y-5`}>
     {showReadOnlyNotice && <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
       <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
@@ -160,7 +184,7 @@ export function CompactModules({ kind, id, catalogue: incomingCatalogue, loading
         const card = catalogue.modules.find(item => item.id === subject.id)!;
         return <SubjectCard key={subject.id} subject={subject} cover={card.cover || undefined}
           teachingActive={moduleTeachingActive(catalogue.moduleActivity?.[subject.id], learningToday())}
-          tone={subjectTones.get(subject.id)} onOpen={() => open(subject)} template={certificate.template}
+          tone={subjectTones.get(subject.id)} onOpen={() => (hasModuleOverview(subject) ? showOverview(subject) : open(subject))} template={certificate.template}
           csrfToken={certificate.csrfToken} kind={kind} learnerId={id} planModule={schedule.modules.find(item => item.id === subject.moduleId)}
           moduleProgress={card.actualHours == null ? undefined : { hours: { actual: card.actualHours } }} />;
       }} />

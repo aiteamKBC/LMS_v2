@@ -96,6 +96,18 @@
   },
   "module": {
     "subjectId": "current:M1",
+    "overview": {
+      "summary": "",
+      "description": "",
+      "targetAudience": [],
+      "prerequisites": [],
+      "requirements": [],
+      "instructor": {
+        "name": "Example tutor",
+        "bio": "",
+        "photoUrl": ""
+      }
+    },
     "detail": {
       "modules": [
         "Example module"
@@ -195,6 +207,7 @@
   },
   "legacyModule": {
     "subjectId": "legacy:50",
+    "overview": null,
     "detail": {
       "modules": [],
       "components": [],

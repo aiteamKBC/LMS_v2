@@ -93,7 +93,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, false, isInitialized && tab !== 'modules');
   const catalogue = useMyLearningCatalogue(kind as LearnerKind | undefined, id, isInitialized && tab === 'modules' && mode === 'courses');
   const subjectOpen = view === 'catalogue' && mode === 'courses' && tab === 'modules'
-    && !!(courseParams.get('subject') || courseParams.get('module') || courseParams.get('activity'));
+    && !!(courseParams.get('subject') || courseParams.get('module') || courseParams.get('activity') || courseParams.get('overview'));
   useEffect(() => {
     if (pendingSectionFocus.current !== tab) return;
     const active = document.activeElement;

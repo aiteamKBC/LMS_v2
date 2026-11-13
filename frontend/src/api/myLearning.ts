@@ -23,9 +23,23 @@ export type MyLearningCatalogue = {
   otjh: { actual: number | null; planned: number | null };
   upcoming: UpcomingLearningLink[]; hasMoreUpcoming: boolean;
 };
+/** Authored Module Overview text plus the resolved instructor (server-side). Empty values mean "not authored". */
+export type ModuleOverviewContent = {
+  summary: string; description: string;
+  targetAudience: string[]; prerequisites: string[]; requirements: string[];
+  /** schemaVersion 2; absent from older servers, empty for version 1 records. */
+  highlights?: string[];
+  descriptionSections?: { id: string; heading: string; body: string; bullets: string[] }[];
+  /** Custom sidebar cards; absent from records saved before they existed. */
+  sidebarSections?: { id: string; heading: string; body: string; bullets: string[] }[];
+  /** Always the module's own tutor; null when no tutor is assigned. */
+  instructor: { name: string; bio: string; photoUrl: string } | null;
+};
 export type MyLearningModule = {
   subjectId: string; detail: LearnerDetail; activity: StudentActivityResponse | null;
   metadata: CoverMetadata; schedule: LearningSchedule; sessions: PlanSession[];
+  /** Present for native (New LMS) modules only; null for legacy subjects. */
+  overview?: ModuleOverviewContent | null;
 };
 const cataloguePath = (kind: LearnerKind, id: string) => `/learner_api/my-learning/${kind}/${encodeURIComponent(id)}/`;
 const modulePath = (kind: LearnerKind, id: string, subject: string) => `${cataloguePath(kind, id)}modules/${encodeURIComponent(subject)}/`;

@@ -216,6 +216,8 @@ import { useOffScheduleRuns } from './useOffScheduleRuns';
 import { offScheduleRunLabel } from '../teams-meetings/offScheduleRuns';
 import { OffScheduleRunDetails } from '../teams-meetings/OffScheduleRunDetails';
 import { KsbRemapNotice } from './KsbRemapNotice';
+import { ModuleOverviewModal } from './ModuleOverviewModal';
+import { copyOverviewAfterDuplicate, fetchModuleOverviewStatus } from './moduleOverviewApi';
 import { reviewDateLabel } from '../teams-meetings/calendarTime';
 import { linkedRecordingsOf, moveComponentToWeek, relinkCopiedComponents, withLinkedRecordings, withRecordingLink, type RecordingLinkContext } from '../shared/entities/liveSessionRecordingLink';
 
@@ -761,6 +763,18 @@ function ModuleBuilderContent() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [sessionResultsOpen, setSessionResultsOpen] = useState(false);
   const [aiMaterialOpen, setAiMaterialOpen] = useState(false);
+  // Learner-facing Module Overview: which cards already have one (so an
+  // explicit Duplicate knows whether to copy it) and which card's editor is
+  // open. Additive: a failed status read only means no overview is copied.
+  const [overviewModuleIds, setOverviewModuleIds] = useState<Set<string>>(() => new Set());
+  const [overviewModule, setOverviewModule] = useState<ModuleBuilderListItem | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchModuleOverviewStatus(controller.signal)
+      .then(status => { if (!controller.signal.aborted) setOverviewModuleIds(new Set(status.moduleIds)); })
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string; downloadableModule?: ModuleCatalogueItem } | null>(null);
@@ -2843,9 +2857,19 @@ function ModuleBuilderContent() {
       const ksbMessage = report && report.unmatched?.length
         ? ` ${report.matchedCount} KSBs matched; ${report.unmatched.length} need review in the saved remap report.`
         : '';
+      // The learner-facing overview is descriptive content, so an explicit
+      // duplicate carries it -- by the source id this flow duplicated from,
+      // never by title. The server drops tutor-specific details when the copy
+      // has a different tutor, and never overwrites an existing overview.
+      const overviewCopy = await copyOverviewAfterDuplicate({
+        sourceId: module.catalogueId, duplicateId: duplicate.catalogueId,
+        sourceHasOverview: overviewModuleIds.has(module.catalogueId),
+      });
+      if (overviewCopy.copied) setOverviewModuleIds(current => new Set(current).add(duplicate.catalogueId));
+      const overviewMessage = overviewCopy.message;
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners or Teams meeting links. Assign learners and create new meetings on the new module when it is ready.${ksbMessage}`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name} with no learners or Teams meeting links. Assign learners and create new meetings on the new module when it is ready.${ksbMessage}${overviewMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
@@ -4300,8 +4324,23 @@ function ModuleBuilderContent() {
                     onDuplicate={() => void confirmDuplicateModule(module)}
                     onMove={() => setMovingFreeCourse(module)}
                     onDelete={() => confirmDeleteModule(module)}
+                    overviewAction={module.isFreeCourse || !module.catalogueId ? undefined : {
+                      label: 'Manage Module Overview',
+                      onClick: () => setOverviewModule(module),
+                    }}
                   />
                 ))}
+                {overviewModule && <ModuleOverviewModal
+                  moduleCatalogueId={overviewModule.catalogueId}
+                  moduleTitle={overviewModule.title}
+                  module={overviewModule}
+                  onClose={() => setOverviewModule(null)}
+                  onSaved={hasOverview => setOverviewModuleIds(current => {
+                    const next = new Set(current);
+                    if (hasOverview) next.add(overviewModule.catalogueId); else next.delete(overviewModule.catalogueId);
+                    return next;
+                  })}
+                />}
               </div>
             ) : catalogueModules.length > 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
@@ -8559,8 +8598,11 @@ function ModuleCatalogueCard({
   onDuplicate,
   onMove,
   onDelete,
+  overviewAction,
 }: {
   module: ModuleBuilderListItem;
+  /** Learner-facing Module Overview editor; absent for free courses. */
+  overviewAction?: { label: string; onClick: () => void };
   source: ModuleCatalogueActivity['source'];
   active: boolean;
   teamsSummary?: CurriculumTeamsMeetingSummary;
@@ -8661,6 +8703,7 @@ function ModuleCatalogueCard({
           </button>
           <span className="mx-0.5 hidden h-6 w-px shrink-0 bg-background-200 xl:block" aria-hidden="true"></span>
           <ModuleCardActionButton label={module.isFreeCourse ? 'Edit course' : 'Edit module'} icon="ri-edit-line" onClick={onSettings} />
+          {overviewAction && <ModuleCardActionButton label={overviewAction.label} icon="ri-file-info-line" onClick={overviewAction.onClick} />}
           <ModuleCardActionButton label={module.isFreeCourse ? 'Duplicate free course' : 'Duplicate module'} icon="ri-file-copy-line" onClick={onDuplicate} />
           {module.isFreeCourse && <ModuleCardActionButton label="Move to module" icon="ri-arrow-right-line" onClick={onMove} />}
           <ModuleCardActionButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />

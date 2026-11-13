@@ -1,0 +1,342 @@
+/* Module Overview: the module's course landing page in My Learning, and the
+   Module Builder's live preview of it (same component, same styles).
+   Uses the learner theme tokens (--learner-purple, --kbc-*) so light/dark
+   themes and the KBC palette carry over unchanged. Layout breakpoints are
+   container queries, so the narrower editor preview reflows exactly like a
+   narrow learner screen. */
+.page {
+  --overview-accent: var(--learner-purple, #5b21b6);
+  --overview-surface: var(--kbc-surface, #fff);
+  --overview-border: var(--kbc-border, #e4e0ee);
+  --overview-text: var(--kbc-text, #1d1733);
+  --overview-muted: var(--kbc-muted, #5f6577);
+  --overview-band: color-mix(in srgb, var(--overview-accent) 8%, var(--overview-surface));
+  --overview-soft: color-mix(in srgb, var(--overview-accent) 6%, var(--overview-surface));
+  --overview-serif: Georgia, 'Times New Roman', Times, serif;
+  container: overview / inline-size;
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  color: var(--overview-text);
+}
+
+/* Breadcrumb ---------------------------------------------------------------- */
+.breadcrumb ol { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--overview-muted); }
+.breadcrumb li { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.breadcrumb li + li::before { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-top: 1.5px solid currentColor; transform: rotate(45deg); opacity: .7; }
+.breadcrumb button { min-height: 32px; color: var(--overview-text); font-weight: 600; }
+.breadcrumb button:hover { color: var(--overview-accent); text-decoration: underline; }
+.breadcrumb [aria-current] { color: var(--overview-text); overflow-wrap: anywhere; }
+
+/* Layout: lilac band behind the hero, card + sidebar on the right ---------- */
+.layout {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  column-gap: clamp(24px, 3vw, 44px);
+  row-gap: 22px;
+  min-width: 0;
+}
+.band {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  border-radius: 20px;
+  background: var(--overview-band);
+}
+.hero {
+  grid-column: 1;
+  grid-row: 1;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  min-width: 0;
+  padding: clamp(24px, 3vw, 40px) 0 clamp(24px, 3vw, 40px) clamp(20px, 3vw, 40px);
+}
+.side {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-self: start;
+  min-width: 0;
+  padding: clamp(20px, 2.4vw, 32px) clamp(16px, 2vw, 24px) 0 0;
+}
+.content { grid-column: 1; grid-row: 2; display: grid; gap: 14px; min-width: 0; align-content: start; }
+.sideCards { display: grid; gap: 20px; min-width: 0; }
+
+/* Hero ------------------------------------------------------------------------ */
+.eyebrow { color: var(--overview-accent); font-size: 13px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; overflow-wrap: anywhere; }
+.title {
+  margin: 0;
+  font-family: var(--overview-serif);
+  font-size: clamp(30px, 3.5vw, 46px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -.012em;
+  color: var(--overview-text);
+  overflow-wrap: anywhere;
+}
+/* Programmatic focus target (tabIndex -1) when the overview opens: no ring. */
+.title:focus, .title:focus-visible { outline: none; }
+.summary { max-width: 64ch; color: var(--overview-muted); font-size: 15.5px; line-height: 1.6; overflow-wrap: anywhere; }
+
+.instructor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 28px;
+  margin-top: 6px;
+  max-width: 640px;
+}
+.instructor[data-photo] { grid-template-columns: 112px minmax(0, 1fr); }
+.photo {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center 20%;
+  background: var(--overview-surface);
+  border: 4px solid var(--overview-surface);
+  box-shadow: 0 8px 22px rgb(60 30 110 / .14);
+}
+.instructorText { display: grid; gap: 2px; min-width: 0; }
+.instructor[data-photo] .instructorText { min-height: 80px; align-content: center; padding-left: 28px; border-left: 1px solid color-mix(in srgb, var(--overview-text) 18%, transparent); }
+.instructorLabel { color: var(--overview-muted); font-size: 15px; font-weight: 600; }
+.instructorName { font-family: var(--overview-serif); font-size: clamp(22px, 2.2vw, 28px); font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.bio { display: grid; gap: 8px; margin-top: 6px; color: var(--overview-muted); font-size: 14px; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
+.bio[data-collapsed] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.instructor .more { justify-self: start; margin-top: 2px; }
+
+/* Cover / progress / CTA card ---------------------------------------------- */
+.heroCard {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--overview-border);
+  border-radius: 14px;
+  background: var(--overview-surface);
+  box-shadow: 0 12px 30px rgb(60 30 110 / .08);
+}
+.coverFrame { aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; background: var(--overview-soft); }
+.coverFrame > div { height: 100%; }
+.progress { display: grid; gap: 8px; }
+.progressLabel { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--overview-text); }
+.progressLabel strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+.progressTrack { height: 8px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--overview-text) 10%, var(--overview-surface)); }
+.progressTrack span { display: block; height: 100%; border-radius: inherit; background: var(--overview-accent); }
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 18px;
+  border-radius: 8px;
+  background: var(--overview-accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  transition: background-color .15s ease, transform .15s ease;
+}
+.cta:hover { background: color-mix(in srgb, var(--overview-accent) 85%, #000); }
+.cta:active { transform: translateY(1px); }
+.cta[aria-disabled='true'] { cursor: default; }
+.cta:focus-visible, .breadcrumb button:focus-visible, .more:focus-visible, .weekToggle:focus-visible, .tab:focus-visible, .tabPanel:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--overview-accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+
+/* Tabs ------------------------------------------------------------------------ */
+.tabsPanel {
+  min-width: 0;
+  padding: 6px clamp(16px, 2.4vw, 28px) clamp(18px, 2.4vw, 28px);
+  border: 1px solid var(--overview-border);
+  border-radius: 14px;
+  background: var(--overview-surface);
+  box-shadow: 0 4px 16px rgb(60 30 110 / .04);
+}
+.tabList { display: flex; gap: clamp(14px, 3vw, 34px); overflow-x: auto; border-bottom: 1px solid var(--overview-border); scrollbar-width: none; }
+.tab {
+  position: relative;
+  flex-shrink: 0;
+  min-height: 48px;
+  padding: 12px 10px;
+  color: var(--overview-text);
+  font-size: 15px;
+  font-weight: 500;
+}
+.tab[aria-selected='true'] { color: var(--overview-accent); font-weight: 700; }
+.tab[aria-selected='true']::after { content: ''; position: absolute; inset: auto 0 -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--overview-accent); }
+.tab[aria-disabled='true'] { color: color-mix(in srgb, var(--overview-text) 42%, transparent); cursor: not-allowed; }
+.tab:not([aria-disabled='true']):not([aria-selected='true']):hover { color: var(--overview-accent); }
+.tabPanel { padding-top: 22px; min-width: 0; }
+
+/* Description tab ------------------------------------------------------------ */
+.description { display: grid; gap: 22px; max-width: 72ch; min-width: 0; }
+.block { display: grid; gap: 8px; min-width: 0; }
+.blockTitle { margin: 0; font-family: var(--overview-serif); font-size: clamp(20px, 1.9vw, 23px); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.paragraph { font-size: 15px; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
+.bullets { display: grid; gap: 6px; margin: 0; padding-left: 22px; font-size: 14.5px; line-height: 1.55; list-style: disc; overflow-wrap: anywhere; }
+.bullets li::marker { color: var(--overview-accent); }
+.checks { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.checks li { display: flex; gap: 10px; font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.checks svg { flex-shrink: 0; margin-top: 3px; color: var(--overview-accent); stroke-width: 2.6; }
+.more { margin-top: 6px; justify-self: start; color: var(--overview-accent); font-size: 13px; font-weight: 650; }
+.more:hover { text-decoration: underline; }
+.emptyNote { font-size: 14px; color: var(--overview-muted); }
+
+
+/* Curriculum tab ------------------------------------------------------------- */
+.curriculum, .grades { display: grid; gap: 14px; min-width: 0; }
+.curriculumSummary { font-size: 13px; color: var(--overview-muted); }
+.weeks { display: grid; gap: 10px; }
+.week { min-width: 0; }
+.weekHeading { margin: 0; }
+.weekToggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 16px;
+  border: 1px solid var(--overview-border);
+  border-radius: 10px;
+  background: var(--overview-surface);
+  color: var(--overview-text);
+  text-align: left;
+}
+.weekToggle:hover { border-color: color-mix(in srgb, var(--overview-accent) 30%, var(--overview-border)); }
+.week[data-open] .weekToggle { border-color: color-mix(in srgb, var(--overview-accent) 25%, var(--overview-border)); }
+.weekTitle { flex: 1; min-width: 0; font-size: 16px; font-weight: 650; overflow-wrap: anywhere; }
+.weekToggle small { flex-shrink: 0; font-size: 12.5px; color: var(--overview-muted); }
+.weekChevron { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: color-mix(in srgb, var(--overview-text) 9%, var(--overview-surface)); transition: transform .15s ease; }
+.week[data-open] .weekChevron { transform: rotate(180deg); }
+
+/* Read-only activity rows, after the old KBC LMS curriculum list. */
+.activityRows { display: grid; gap: 4px; margin: 8px 0 4px; padding: 0; list-style: none; }
+.activityRow {
+  display: grid;
+  grid-template-columns: 22px 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--overview-accent) 5%, color-mix(in srgb, var(--overview-text) 4%, var(--overview-surface)));
+  cursor: default;
+}
+.activityNumber { color: var(--overview-muted); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; }
+.activityIcon { flex-shrink: 0; }
+.activityIcon[data-tone='green'] { color: #3fa34d; }
+.activityIcon[data-tone='orange'] { color: #f08c00; }
+.activityIcon[data-tone='red'] { color: #e03131; }
+.activityIcon[data-tone='purple'] { color: var(--overview-accent); }
+.activityTitle { min-width: 0; font-size: 14px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+.activityEnd { display: inline-flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; }
+.activityMeta { min-width: 92px; color: var(--overview-muted); font-size: 13.5px; text-align: right; white-space: nowrap; }
+.statusLocked, .statusDone { display: inline-flex; align-items: center; }
+.statusLocked { color: color-mix(in srgb, var(--overview-text) 62%, transparent); }
+.statusDone { color: var(--learner-success, #2f9e44); }
+
+/* Loading skeletons: same footprint as the loaded content. */
+.skeleton {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--overview-accent) 7%, var(--overview-surface)) 25%, color-mix(in srgb, var(--overview-accent) 13%, var(--overview-surface)) 50%, color-mix(in srgb, var(--overview-accent) 7%, var(--overview-surface)) 75%);
+  background-size: 200% 100%;
+  animation: overviewShimmer 1.4s ease-in-out infinite;
+}
+.skeletonGroup { display: grid; gap: 12px; max-width: 64ch; }
+.skeletonHeading { height: 20px; margin-top: 8px; }
+.skeletonRow { height: 52px; border-radius: 10px; }
+.skeletonTabs { display: flex; gap: 28px; padding: 18px 0 16px; margin-bottom: 22px; border-bottom: 1px solid var(--overview-border); }
+.skeletonTabs .skeleton { height: 14px; }
+@keyframes overviewShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Grade tab ------------------------------------------------------------------ */
+.gradeTable { width: 100%; border-collapse: collapse; font-size: 14px; }
+.gradeTable th, .gradeTable td { padding: 11px 10px; border-bottom: 1px solid var(--overview-border); text-align: left; vertical-align: top; }
+.gradeTable thead th { font-size: 12px; font-weight: 650; color: var(--overview-muted); text-transform: uppercase; letter-spacing: .04em; }
+.gradeTable tbody th { font-weight: 600; overflow-wrap: anywhere; }
+.gradeTable tbody th small { display: block; margin-top: 2px; font-size: 12px; font-weight: 500; color: var(--overview-muted); }
+.gradeTable td { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gradeStatus { display: inline-flex; padding: 3px 9px; border-radius: 999px; background: color-mix(in srgb, var(--overview-text) 7%, var(--overview-surface)); font-size: 12px; font-weight: 600; }
+.gradeStatus[data-state='passed'] { background: var(--learner-success-soft, #e7f6ef); color: var(--learner-success, #167853); }
+.gradeStatus[data-state='attempted'] { background: var(--overview-band); color: var(--overview-accent); }
+
+/* Sidebar -------------------------------------------------------------------- */
+.sideCard {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--overview-border);
+  border-radius: 14px;
+  background: var(--overview-surface);
+  box-shadow: 0 4px 16px rgb(60 30 110 / .04);
+}
+.sideTitle { margin: 0; padding-bottom: 10px; border-bottom: 1px solid var(--overview-border); font-family: var(--overview-serif); font-size: 20px; font-weight: 700; line-height: 1.25; }
+.details { display: grid; gap: 4px; margin: 0; }
+.details > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.details dt { display: inline-flex; align-items: center; gap: 12px; min-width: 0; font-size: 14px; color: var(--overview-text); }
+.details dt svg { flex-shrink: 0; color: var(--overview-muted); }
+.details dd { margin: 0; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.requirement { display: grid; gap: 8px; }
+.requirement + .requirement { padding-top: 12px; border-top: 1px solid var(--overview-border); }
+.requirement h4 { margin: 0; color: var(--overview-accent); font-size: 14px; font-weight: 700; }
+.requirement .bullets { font-size: 13.5px; }
+.sideText { font-size: 13.5px; line-height: 1.55; color: var(--overview-text); white-space: pre-line; overflow-wrap: anywhere; }
+.sideCard .bullets { font-size: 13.5px; }
+.audience { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.audience li { display: flex; gap: 10px; font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.audience svg { flex-shrink: 0; margin-top: 2px; color: var(--overview-accent); }
+
+/* Narrow: one column. Hero, then the start card, tabs, then the sidebar. ---- */
+@container overview (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .side { display: contents; }
+  .band { grid-column: 1; grid-row: 1; }
+  .hero { grid-column: 1; grid-row: 1; padding: 24px clamp(18px, 4cqi, 32px); }
+  .heroCard { grid-column: 1; grid-row: 2; }
+  .content { grid-column: 1; grid-row: 3; }
+  .sideCards { grid-column: 1; grid-row: 4; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-items: start; }
+  .heroCard { grid-template-columns: minmax(0, 220px) minmax(0, 1fr); align-items: center; }
+  .heroCard .coverFrame { grid-row: span 2; }
+}
+
+@container overview (max-width: 560px) {
+  .heroCard { grid-template-columns: minmax(0, 1fr); }
+  .heroCard .coverFrame { grid-row: auto; }
+  .instructor { gap: 18px; }
+  .instructor[data-photo] { grid-template-columns: 96px minmax(0, 1fr); }
+  .photo { width: 96px; height: 96px; }
+  .instructor[data-photo] .instructorText { padding-left: 18px; }
+  .gradeTable thead th:nth-child(2), .gradeTable td:nth-child(2) { display: none; }
+  .tabList { gap: 2px; justify-content: space-between; }
+  .tab { padding: 12px 6px; font-size: 14px; }
+  .activityRow { grid-template-columns: 18px 18px minmax(0, 1fr); padding: 10px 12px; }
+  .activityEnd { grid-column: 3; justify-content: flex-start; }
+  .activityMeta { min-width: 0; text-align: left; }
+}
+
+@container overview (max-width: 320px) {
+  .instructor[data-photo] { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+  .instructor[data-photo] .instructorText { padding-left: 0; border-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cta, .weekChevron { transition: none; }
+  .skeleton { animation: none; }
+}

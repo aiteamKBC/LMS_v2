@@ -118,7 +118,7 @@ SNAPSHOT_COLUMNS = {
         'status', 'tutor_name', 'tutor_email', 'coach_name', 'sessions_number', 'weeks_number',
         'start_date', 'end_date', 'session_week_day', 'session_start_time', 'session_end_time',
         'weekly_schedule', 'session_holidays', 'session_overrides', 'ksb_profile_source_id',
-        'color', 'cover_image_url', 'deleted_at', 'deleted_by',
+        'color', 'cover_image_url', 'module_overview', 'deleted_at', 'deleted_by',
     ),
     'week': (
         'id', 'module_catalogue_id', 'week_number', 'title', 'summary', 'learning_outcomes',
@@ -193,7 +193,7 @@ PARENT_COLUMNS = {
 # string from one write path and as a parsed value from the other.
 JSON_SNAPSHOT_COLUMNS = {
     'settings_json', 'ksb_mappings', 'learning_outcomes',
-    'weekly_schedule', 'session_holidays', 'session_overrides',
+    'weekly_schedule', 'session_holidays', 'session_overrides', 'module_overview',
     'attendees', 'presenters', 'co_organizers',
     'group_ids', 'module_ids', 'module_names', 'holiday_ids', 'excluded_holiday_ids',
 }

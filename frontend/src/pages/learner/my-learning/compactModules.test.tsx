@@ -237,12 +237,12 @@ describe('compact My Learning route', () => {
   it('loads only the opened module and reuses its cache on revisits', async () => {
     route();
     fireEvent.click(await screen.findByRole('button', { name: /New LMS.*One.*Open subject/ }));
-    await screen.findByRole('button', { name: 'All subjects' });
+    await screen.findByRole('button', { name: 'My modules' });
     expect(urls().filter(url => url.includes('/modules/'))).toEqual(['/learner_api/my-learning/commercial/7/modules/current%3AM1/']);
     expect(urls().some(url => /learner-detail|student-activity|subject-covers|metrics|training-plan-dashboard/.test(url))).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
+    fireEvent.click(screen.getByRole('button', { name: 'My modules' }));
     fireEvent.click(await screen.findByRole('button', { name: /New LMS.*One.*Open subject/ }));
-    await screen.findByRole('button', { name: 'All subjects' });
+    await screen.findByRole('button', { name: 'My modules' });
     expect(urls().filter(url => url.includes('/modules/'))).toHaveLength(1);
   });
 

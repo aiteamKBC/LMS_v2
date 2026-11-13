@@ -8747,7 +8747,9 @@ def is_actual_delivery_row(row, program_configs_by_id):
 # catalogue summary, which select it themselves. Every reader below asks for the
 # same projection, so a request reads curriculum.modules once through the read
 # scope instead of shipping the report on each pass.
-MODULE_INDEX_EXCLUDED_COLUMNS = ('ksb_remap_report',)
+# module_overview: learner-facing authored text, read only by the overview
+# endpoints and the learner module read -- never by the catalogue index.
+MODULE_INDEX_EXCLUDED_COLUMNS = ('ksb_remap_report', 'module_overview')
 
 
 def module_index_rows(*, ensure_tables=True):

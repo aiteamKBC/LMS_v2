@@ -4,7 +4,7 @@ from coach_api import migrated_template_views
 
 from system_audit import activity as system_activity
 
-from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from . import activity, learner_assignments, module_overview, programme_audit, quality, review_schedule, review_types, reviews, views
 from .archive_index import curriculum_archive_index
 from .record_snapshots import curriculum_record_snapshot
 from .free_course_conversion import convert_free_course
@@ -199,6 +199,11 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/convert-free-course/', convert_free_course, name='curriculum-convert-free-course'),
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
+    # Learner-facing Module Overview (curriculum.modules.module_overview).
+    path('curriculum/module-overviews/', module_overview.overview_status, name='curriculum-module-overviews'),
+    path('curriculum/module-overviews/csrf/', module_overview.overview_csrf, name='curriculum-module-overviews-csrf'),
+    path('curriculum/modules/<str:module_catalogue_id>/overview/', module_overview.module_overview_detail, name='curriculum-module-overview'),
+    path('curriculum/modules/<str:module_catalogue_id>/overview/copy/', module_overview.module_overview_copy, name='curriculum-module-overview-copy'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', teams_staff_required(views.curriculum_module_teams_meeting_restore), name='curriculum-module-teams-meeting-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-links/', teams_staff_required(views.curriculum_module_teams_links_replace), name='curriculum-module-teams-links-replace'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-existing-series/', teams_staff_required(existing_series), name='curriculum-module-teams-existing-series'),
