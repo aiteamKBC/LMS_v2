@@ -54,6 +54,21 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('Delivery dashboard using existing curriculum reads', () => {
+  it('refreshes staffing when a session starts without requesting a data reload', () => {
+    vi.setSystemTime(new Date('2026-11-13T10:59:30Z'));
+    const reloadSessions = vi.fn(); const reloadActivity = vi.fn();
+    Object.assign(sessionRead, { reload: reloadSessions, sessions: [
+      { id: 'soon', type: 'Live Session', date: '2026-11-13', startTime: '11:00', moduleCatalogueId: 'm2' },
+    ] });
+    Object.assign(moduleRead, { reload: reloadActivity });
+    renderDelivery();
+    expect(screen.getByLabelText('Need tutor count')).toHaveTextContent(/^1$/);
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.getByLabelText('Need tutor count')).toHaveTextContent(/^0$/);
+    expect(reloadSessions).not.toHaveBeenCalled();
+    expect(reloadActivity).not.toHaveBeenCalled();
+  });
+
   it('keeps an upcoming overnight session visible when its source-date status says completed', () => {
     vi.setSystemTime(new Date('2026-11-14T01:00:00Z'));
     moduleRead.today = '2026-11-14';

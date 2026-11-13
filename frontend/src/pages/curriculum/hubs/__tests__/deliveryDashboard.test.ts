@@ -7,7 +7,7 @@ describe('Delivery weekly display of saved live-session dates', () => {
     const modules = [{ id: 'allocation', moduleCatalogueId: 'active', groupId: 'b' }];
     const active = new Set(['active', 'also-active']);
     expect([...deliveryActiveGroupIds(groups, modules, active)]).toEqual(['a', 'b']);
-    expect(deliveryStaffing([], groups.map(group => ({ ...group, coach: '' })), [], active, '2026-11-13', new Set(['a', 'b'])).needsCoach).toBe(2);
+    expect(deliveryStaffing([], groups.map(group => ({ ...group, coach: '' })), [], active, '2026-11-13', new Set(['a', 'b']), new Date('2026-11-13T10:00:00Z')).needsCoach).toBe(2);
   });
   it('uses the UK business day near midnight instead of the developer or viewer time zone', () => {
     const now = new Date('2026-11-01T23:30:00Z');
@@ -75,7 +75,7 @@ describe('Delivery weekly display of saved live-session dates', () => {
       { id: 's2', type: 'Live Session', date: '2026-11-27', moduleCatalogueId: 'unused-draft' },
       { id: 's3', type: 'Live Session', date: '2026-11-20', moduleCatalogueId: 'unused-draft', status: 'cancelled' },
     ];
-    expect(deliveryStaffing(modules, groups, sessions, new Set(['active', 'free', 'staffed']), '2026-11-13')).toEqual({ needsTutor: 2, needsCoach: 1 });
+    expect(deliveryStaffing(modules, groups, sessions, new Set(['active', 'free', 'staffed']), '2026-11-13', undefined, new Date('2026-11-13T10:00:00Z'))).toEqual({ needsTutor: 2, needsCoach: 1 });
   });
 
   it.each([
@@ -116,8 +116,15 @@ describe('Delivery weekly display of saved live-session dates', () => {
     const session = { id: 'overnight', type: 'Live Session', moduleId: 'needs-tutor', date: '2026-11-13',
       startTime: '23:30', timeZone: 'America/New_York', status: 'completed' };
     const modules = [{ id: 'needs-tutor', tutor: '' }];
-    expect(deliveryStaffing(modules, [], [session], new Set(), '2026-11-14').needsTutor).toBe(1);
-    expect(deliveryStaffing(modules, [], [session], new Set(), '2026-11-15').needsTutor).toBe(0);
+    expect(deliveryStaffing(modules, [], [session], new Set(), '2026-11-14', undefined, new Date('2026-11-14T01:00:00Z')).needsTutor).toBe(1);
+    expect(deliveryStaffing(modules, [], [session], new Set(), '2026-11-15', undefined, new Date('2026-11-15T01:00:00Z')).needsTutor).toBe(0);
+  });
+
+  it('excludes an already-started session from non-active staffing while preserving active module needs', () => {
+    const modules = [{ id: 'past-only', tutor: '' }, { id: 'active', tutor: '' }];
+    const sessions = [{ id: 'past', type: 'Live Session', date: '2026-11-13', startTime: '09:00', moduleId: 'past-only' }];
+    expect(deliveryStaffing(modules, [], sessions, new Set(['active']), '2026-11-13', undefined,
+      new Date('2026-11-13T15:00:00Z')).needsTutor).toBe(1);
   });
 
   it('does not infer a future instant for completed date-only or cancelled sessions', () => {
@@ -126,7 +133,7 @@ describe('Delivery weekly display of saved live-session dates', () => {
       { id: 'cancelled', type: 'Live Session', date: '2026-11-15', startTime: '09:00', status: 'cancelled', moduleId: 'module' },
     ];
     expect(deliveryWeek(sessions, new Date('2026-11-14T01:00:00Z')).next).toBeUndefined();
-    expect(deliveryStaffing([{ id: 'module', tutor: '' }], [], sessions, new Set(), '2026-11-14').needsTutor).toBe(0);
+    expect(deliveryStaffing([{ id: 'module', tutor: '' }], [], sessions, new Set(), '2026-11-14', undefined, new Date('2026-11-14T01:00:00Z')).needsTutor).toBe(0);
   });
 
   it('buckets sessions into the UK day and week at both sides of midnight', () => {
@@ -145,7 +152,7 @@ describe('Delivery weekly display of saved live-session dates', () => {
       { id: 'east', type: 'Live Session', moduleId: 'edge', date: '2026-11-27', startTime: '00:30', timeZone: 'Africa/Cairo' },
       { id: 'west', type: 'Live Session', moduleId: 'outside', date: '2026-11-26', startTime: '23:30', timeZone: 'America/New_York' },
     ];
-    expect(deliveryStaffing(modules, [], sessions, new Set(), '2026-11-13').needsTutor).toBe(1);
+    expect(deliveryStaffing(modules, [], sessions, new Set(), '2026-11-13', undefined, new Date('2026-11-13T10:00:00Z')).needsTutor).toBe(1);
   });
 
   it.each([
