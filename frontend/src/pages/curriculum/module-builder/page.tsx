@@ -4088,8 +4088,8 @@ function ModuleBuilderContent() {
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className={catalogueStyles.page}>
         <div className={catalogueStyles.backdrop} aria-hidden="true">
-          <img src="/assets/patterns/kbc-ibis-wreath.png" alt="" className={catalogueStyles.ibis} />
-          <img src="/assets/patterns/kbc-horse-growth.png" alt="" className={catalogueStyles.horse} />
+          <img src="/assets/patterns/kbc-ibis-wreath.webp" alt="" className={catalogueStyles.ibis} decoding="async" />
+          <img src="/assets/patterns/kbc-horse-growth.webp" alt="" className={catalogueStyles.horse} decoding="async" />
         </div>
         <div className={catalogueStyles.summary}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -8637,14 +8637,7 @@ function ModuleCatalogueCard({
   return (
     <article
       className={`${catalogueStyles.card} ${hasContent ? '' : catalogueStyles.emptyCard}`}
-      onPointerMove={event => {
-        const card = event.currentTarget;
-        const rect = card.getBoundingClientRect();
-        card.style.setProperty('--catalogue-x', `${event.clientX - rect.left}px`);
-        card.style.setProperty('--catalogue-y', `${event.clientY - rect.top}px`);
-      }}
     >
-      <div className={catalogueStyles.spotlight} aria-hidden="true" />
       <header className={`${catalogueStyles.cardHeading} ${module.coverImage ? catalogueStyles.coverHeader : ''}`}>
         <div className={catalogueStyles.cardMain}>
         <div className={catalogueStyles.cardHeader}>
@@ -8705,7 +8698,7 @@ function ModuleCatalogueCard({
             <AppIcon name={module.coverImage ? 'ri-image-edit-line' : 'ri-image-add-line'} size={17} />
           </button>
           {module.coverImage && <div className={catalogueStyles.coverFrame}>
-            <img src={module.coverImage} alt={`Cover for ${module.title}`} className={catalogueStyles.cover} loading="lazy" />
+            <img src={module.coverImage} alt={`Cover for ${module.title}`} className={catalogueStyles.cover} loading="lazy" decoding="async" />
           </div>}
         </div>
       </header>

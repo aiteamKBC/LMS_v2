@@ -32,8 +32,6 @@
 .moduleList { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 
 .card {
-  --catalogue-x: 50%;
-  --catalogue-y: 50%;
   position: relative;
   min-width: 0;
   overflow: hidden;
@@ -46,8 +44,6 @@
 }
 .card:hover, .card:focus-within { border-color: #9964dc; box-shadow: 0 0 0 1px #a372e966, 0 0 7px -4px #a372e94d; }
 .emptyCard { border-color: #e8cc9e; }
-.spotlight { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(320px circle at var(--catalogue-x) var(--catalogue-y), #c4a7ef08, transparent 72%); transition: opacity 170ms ease; }
-.card:hover .spotlight, .card:focus-within .spotlight { opacity: 1; }
 .cardHeading { position: relative; padding: 10px 16px 8px; }
 .coverHeader { display: grid; grid-template-columns: minmax(0, 1fr) clamp(240px, 30cqw, 435px); align-items: center; gap: 14px; padding: 0 0 0 16px; }
 .coverHeader .cardMain { padding: 10px 0 8px; }
@@ -176,5 +172,5 @@
   .backdrop img { width: 72vw; opacity: .05; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .card, .spotlight, .page button, .page a { transition: none; }
+  .card, .page button, .page a { transition: none; }
 }
