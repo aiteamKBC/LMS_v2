@@ -62,7 +62,8 @@ import {
 import { MEDIA_SOURCE_TYPES, componentLooksUnedited, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 // Round-trip this week's components to Excel for ChatGPT KSB mapping. xlsx is
 // dynamically imported inside the helpers, so it stays off this page's bundle.
-import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
+import { buildKsbMappingPrompt, ksbImportNotice, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
+import { reviewKsbImport } from '@/pages/curriculum/module-builder/ksbImportReview';
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
 import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
@@ -608,6 +609,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
 
   const savedSnapshot = useRef(JSON.stringify(initial));
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
+  const ksbImportBusyRef = useRef(false);
 
   // Points are never hand-edited — they always mirror the Engagement points
   // rule for the component's type (e.g. a live session's points come from the
@@ -811,16 +813,26 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
   };
 
   const importKsbSheet = async (file: File) => {
+    if (ksbImportBusyRef.current) return;
+    ksbImportBusyRef.current = true;
+    const snapshot = JSON.stringify(template);
     try {
-      const { components, summary } = await importWeekKsbWorkbook(file, template.components);
+      const { components, summary, cancelled } = await importWeekKsbWorkbook(file, template.components, undefined, {
+        review: reviewKsbImport,
+        weekTitle: template.title,
+        isCurrent: () => JSON.stringify(templateRef.current) === snapshot,
+      });
+      if (cancelled) return;
       if (!summary.rowsWithKsbs) {
         showCurriculumAlert({ title: 'No KSBs found', text: 'Fill the KSBs column in the sheet before re-uploading.', icon: 'warning' });
         return;
       }
-      update(prev => ({ ...prev, components }));
-      showCurriculumAlert({ title: 'KSB sheet imported', text: describeKsbImport(summary), icon: 'success' });
+      if (summary.componentsUpdated) update(prev => ({ ...prev, components }));
+      showCurriculumAlert(ksbImportNotice(summary));
     } catch (err) {
       showCurriculumAlert({ title: 'Import failed', text: err instanceof Error ? err.message : undefined, icon: 'error' });
+    } finally {
+      ksbImportBusyRef.current = false;
     }
   };
 

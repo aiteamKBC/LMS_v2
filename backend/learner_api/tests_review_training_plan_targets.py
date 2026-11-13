@@ -265,6 +265,7 @@ class ReviewConsumerTests(SimpleTestCase):
         live = {'owner': {'id': 42}, 'otjh': {'actual': 0, 'planned': 5},
                 'ksb': {'status': 'empty', 'completed': 0, 'total': 0},
                 'nativeComponents': detail['components'], 'historicalComponents': 0,
+                'requiredActivities': [{'completed': False, 'dueDate': '2026-09-01'}],
                 'mainActivities': {'nativeComponents': detail['components'],
                                    'historicalComponents': 0, 'retainedComponents': 0},
                 'retainedComponents': 0, 'modules': [{'completed': 0, 'total': 1}]}

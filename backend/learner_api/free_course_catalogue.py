@@ -1,5 +1,6 @@
 """Read the standalone catalogue while retaining the normal module identity."""
 from django.db import connection
+from curriculum_api.learning_storage import enabled
 
 
 def builder_free_courses(module_ids=None, *, include_content=True):
@@ -13,7 +14,15 @@ def builder_free_courses(module_ids=None, *, include_content=True):
         if not module_ids:
             return []
     content_columns = 'f.description, f.cover_image_url' if include_content else "'', ''"
-    query = f"""SELECT f.id, f.module_catalogue_id, f.course_name, {content_columns},
+    native = enabled(connection)
+    reference = 'content_ref' if native else 'module_catalogue_id'
+    query = f"""SELECT f.id, f.content_ref, f.course_name, {content_columns},
+        f.week_count, f.component_count, f.total_otjh
+        FROM curriculum.free_courses f
+        WHERE f.storage_version=2 AND f.managed_by_builder=true
+          AND f.converted_at IS NULL AND f.deleted_at IS NULL
+          AND NOT coalesce((f.authoring_data->>'is_programme_deleted')::boolean, false)
+    """ if native else f"""SELECT f.id, f.module_catalogue_id, f.course_name, {content_columns},
         f.week_count, f.component_count, m.total_otjh
         FROM curriculum.free_courses f
         JOIN curriculum.modules m ON m.module_catalogue_id = f.module_catalogue_id
@@ -23,7 +32,7 @@ def builder_free_courses(module_ids=None, *, include_content=True):
     """
     params = []
     if module_ids is not None:
-        query += ' AND f.module_catalogue_id = ANY(%s)'
+        query += f' AND f.{reference} = ANY(%s)'
         params.append(module_ids)
     query += ' ORDER BY f.display_order, f.course_name, f.id'
     with connection.cursor() as cursor:

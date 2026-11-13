@@ -77,15 +77,16 @@ def read_live_credits(source, *, components=None, module_ids=None, register=None
         if not module_ids:
             return []
         from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+        from curriculum_api.learning_storage import read_sql
         with connections['enrolment'].cursor() as cur:
-            cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.title,
+            cur.execute(read_sql(f'''SELECT c.id,c.module_catalogue_id,c.title,
                 c.settings_json->>'teamsOccurrenceId',c.settings_json->>'teamsLiveSessionId',
                 c.settings_json->>'teamsSessionNumber',c.settings_json->>'sessionDate'
                 FROM curriculum.components c JOIN curriculum.weeks w ON w.id=c.week_id
                 AND w.module_catalogue_id=c.module_catalogue_id
                 WHERE c.module_catalogue_id=ANY(%s) AND lower(replace(btrim(c.type),'-','_'))='live_session'
                 AND {visible_child_sql('c')} AND {visible_week_sql('w')}
-                ORDER BY c.id''', [module_ids])
+                ORDER BY c.id''', cur.db), [module_ids])
             components = [dict(zip(('componentId', 'moduleId', 'title', 'teamsOccurrenceId',
                                     'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDate'), row),
                                type='live_session') for row in cur.fetchall()]

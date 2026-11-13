@@ -8,9 +8,17 @@ from django.test import RequestFactory
 from . import views as v
 from .tests import CurriculumPersistenceHarness
 from . import tests_standalone_courses as standalone
+from .tests_free_course_native_storage import prepare_native_authoring_fixture
+from . import free_course_native_schema, learning_storage
 
 
 class CoursePricingTests(CurriculumPersistenceHarness):
+    def setUp(self):
+        super().setUp()
+        prepare_native_authoring_fixture()
+        free_course_native_schema.detach(connection)
+        self.addCleanup(learning_storage.reset)
+
     def create(self, **pricing):
         payload = {**standalone.StandaloneCourseTests.payload(self), **pricing}
         request = RequestFactory().post('/', json.dumps({
@@ -92,8 +100,9 @@ class CoursePricingTests(CurriculumPersistenceHarness):
 
     def test_database_rejects_inconsistent_sale_metadata(self):
         self.create()
-        table = v.authoring_table_name(v.AUTHORING_MODULES_TABLE)
+        # Prices are owned by the free-course table after the native cutover.
+        table = 'curriculum.free_courses'
         for update in ('is_for_sale = true', 'price = 1', "currency = 'USD'"):
             with self.subTest(update=update), self.assertRaises(IntegrityError), transaction.atomic():
                 with connection.cursor() as cursor:
-                    cursor.execute(f"UPDATE {table} SET {update} WHERE module_catalogue_id = %s", ['MOD-FREE'])
+                    cursor.execute(f"UPDATE {table} SET {update} WHERE content_ref = %s", ['MOD-FREE'])

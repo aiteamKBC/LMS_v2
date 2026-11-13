@@ -428,8 +428,8 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   if (!displayed && (error || imageError)) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error || imageError}</p><button onClick={error ? onRetry : retryMetadata} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
   if (!displayed) return <SubjectCardsSkeleton />;
   if (requestedActivity && !activityTarget) return <div role="alert" className={styles.empty}><p>{activityMatches.length > 1 ? 'This evidence matches more than one learning activity. Choose the correct module to review it.' : 'This evidence activity is not available in My Learning.'}</p><button onClick={() => select()}>View modules</button></div>;
-  // Catalogue links open the existing player directly. Imported-only courses
-  // and weeks awaiting content keep their material browser available.
+  // Open subject launches the current week's player directly. Imported-only
+  // courses and weeks awaiting content keep their material browser available.
   const openingActivity = !requestedActivity && active && !active.replacementCourseRef && view === 'catalogue' && (!selectedWeek || activeWeek)
     ? subjectOpeningActivity(active, activeWeek) : undefined;
   const openingHref = openingActivity ? nativeHref(openingActivity, kind, learnerId) : null;

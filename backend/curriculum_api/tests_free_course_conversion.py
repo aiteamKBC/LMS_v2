@@ -142,6 +142,38 @@ class FreeCourseConversionTests(CurriculumPersistenceTransactionHarness):
         self.assertEqual(json.loads(response.content)['code'], 'missing_delivery_day')
         self.assertEqual(v.authoring_module_exists(self.module_id), before)
 
+    def test_confirmed_tutor_clash_allows_conversion_without_changing_other_content(self):
+        v.update_authoring_rows(v.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [self.module_id], {
+            'start_date': '2026-09-02', 'sessions_number': 2, 'session_week_day': 'Wednesday',
+            'session_start_time': '10:00', 'session_end_time': '12:00',
+        })
+        before = v.module_structure_source_rows(self.module_id)
+        other = v.authoring_module_exists('MOD-DATA-1')
+        payload = {**self.target, 'tutor': 'tutor-uuid-10'}
+        preview = v.curriculum_preview_tutor_availability(RequestFactory().post('/', json.dumps({
+            'moduleCatalogueId': self.module_id, 'groupId': self.target['groupId'],
+            'cohortId': self.target['cohortId'], 'tutor': 'Tutor One',
+        }), content_type='application/json'))
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertFalse(json.loads(preview.content)['available'])
+        self.assertEqual(self.convert(payload).status_code, 409)
+        response = self.convert({**payload, 'allowTutorConflict': True})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(v.authoring_module_exists(self.module_id)['tutor_name'], 'Tutor One')
+        after = v.module_structure_source_rows(self.module_id)
+        for table, rows in before.items():
+            if table != v.AUTHORING_MODULES_TABLE:
+                self.assertEqual(after[table], rows, table)
+        self.assertEqual(v.authoring_module_exists('MOD-DATA-1'), other)
+        self.assertFalse(json.loads(self.convert({**payload, 'allowTutorConflict': True}).content)['converted'])
+
+    def test_tutor_conflict_override_does_not_bypass_directory_or_role_checks(self):
+        before = v.authoring_module_exists(self.module_id)
+        self.assertEqual(self.convert({**self.target, 'tutor': 'tutor-uuid-13', 'allowTutorConflict': True}).status_code, 400)
+        self.auth.return_value = SimpleNamespace(role='learner', pk=101)
+        self.assertEqual(self.convert({**self.target, 'allowTutorConflict': True}).status_code, 403)
+        self.assertEqual(v.authoring_module_exists(self.module_id), before)
+
     def test_existing_commercial_and_apprenticeship_history_and_assignments_stay_unchanged(self):
         original = []
         for index, kind in enumerate(('commercial', 'apprenticeship')):

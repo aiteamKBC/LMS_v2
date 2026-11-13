@@ -1,4 +1,5 @@
 """Topic identity and sequential submissions within one curriculum component."""
+from curriculum_api.learning_storage import read_sql
 import json
 import re
 
@@ -74,7 +75,7 @@ def topics_from_settings(settings):
 
 
 def component_settings(cur, component_id):
-    cur.execute('SELECT settings_json FROM curriculum.components WHERE id = %s AND type = %s', [component_id, 'assignment'])
+    cur.execute(read_sql('SELECT settings_json FROM curriculum.components WHERE id = %s AND type = %s', cur.db), [component_id, 'assignment'])
     row = cur.fetchone()
     settings = row[0] if row else {}
     if isinstance(settings, str):

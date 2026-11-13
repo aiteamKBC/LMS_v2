@@ -101,12 +101,14 @@ describe('ReflectionWindow KSB tab', () => {
     expect(screen.getByText('Selected KSBs explained and rated (any K, S or B)').closest('p')).toHaveClass('text-emerald-700');
   });
 
-  it('shows only the authored KSBs when the component has a mapping', () => {
+  it('preselects only the authored KSBs without inventing an explanation or confidence rating', () => {
     renderWindow([{ code: 'S2', description: 'Campaign planning', weight: 40, classification: 'primary' }]);
 
     expect(screen.queryByText('Select the programme KSBs this activity developed')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('checkbox', { name: /S2\s*Campaign planning/ }));
+    expect(screen.getByRole('checkbox', { name: /S2\s*Campaign planning/ })).toBeChecked();
     expect(screen.getByPlaceholderText(/Why is S2 relevant/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Why is S2 relevant/)).toHaveValue('');
+    expect(screen.getAllByText('Not rated')).toHaveLength(2);
     expect(screen.queryByPlaceholderText(/Why is K1 relevant/)).not.toBeInTheDocument();
     expect(screen.getByText('40% weight')).toBeInTheDocument();
   });
@@ -117,7 +119,11 @@ describe('ReflectionWindow KSB tab', () => {
       { code: 'S2', description: 'Campaign planning', weight: 30, classification: 'primary' },
       { code: 'B1', description: 'Professional behaviour', weight: 10, classification: 'primary' },
     ]);
-    fireEvent.click(screen.getByRole('checkbox', { name: /K1\s*Marketing principles/ }));
+    // Authored K/S/B codes now start selected; the learner can narrow them.
+    fireEvent.click(screen.getByRole('tab', { name: /S\s*1\/1/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /S2/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /B\s*1\/1/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /B1/ }));
     fireEvent.change(screen.getByPlaceholderText(/Why is K1 relevant/), { target: { value: 'The reading developed my knowledge.' } });
     for (const slider of screen.getAllByRole('slider')) fireEvent.change(slider, { target: { value: '4' } });
     expect(screen.queryByPlaceholderText(/Why is S2 relevant/)).not.toBeInTheDocument();

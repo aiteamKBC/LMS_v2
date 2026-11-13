@@ -40,6 +40,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from audit_api.last_audit_ledger_views import _connection as _audit_connection
+from curriculum_api.learning_storage import read_sql
 from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
@@ -62,7 +63,7 @@ def _rows(sql, params):
     # owned by curriculum_api and migrated on `default`. Not an oversight — see
     # the note in apprenticeship_agreement._group_dates.
     with projection_operation('assignment_query'), connection.cursor() as cursor:
-        cursor.execute(sql, params)
+        cursor.execute(read_sql(sql), params)
         columns = [c[0] for c in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -687,7 +688,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
             # Free courses ride the same mirror: the enrolment source holds them
             # on Created_users."Free_courses", and the coach/learner side reads
             # the relational learner_free_courses table (no hours/KSBs).
-            replace_free_courses(profile, getattr(source, "free_courses", None) or [])
+            replace_free_courses(profile, getattr(source, "free_courses", None) or [], plan=plan)
         EnrolmentUser.all_learners.filter(pk=source.pk).update(
             modules=modules_csv,
             weeks=weeks_csv,

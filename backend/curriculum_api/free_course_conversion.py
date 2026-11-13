@@ -100,16 +100,18 @@ def convert_free_course(request, module_catalogue_id):
             if day_error is not None:
                 return day_error
             conflicts = v.tutor_schedule_conflicts_created(before, schedule)
-            if conflicts:
+            if conflicts and not v.tutor_conflict_override_requested(payload):
                 return v.tutor_conflict_error(schedule, conflicts)
             # Only lineage, course kind and selected tutor change. Keep source_id for legacy
             # adoption provenance. Never re-save weeks, hours, progress, plans,
             # submissions, KSBs or Teams settings as a side effect of placement.
-            v.update_authoring_rows(v.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s',
-                                    [module_catalogue_id], {**placement,
-                                        'tutor_name': tutor_name, 'tutor_email': tutor_email,
-                                        'source_type': 'module_authoring',
-                                        'learner_roster_mode': 'inherited', 'updated_at': timezone.now()})
+            fields = {**placement, 'tutor_name': tutor_name, 'tutor_email': tutor_email,
+                      'source_type': 'module_authoring', 'learner_roster_mode': 'inherited',
+                      'updated_at': timezone.now()}
+            from .learning_storage import convert_to_module
+            if not convert_to_module(module_catalogue_id, fields):
+                v.update_authoring_rows(v.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s',
+                                        [module_catalogue_id], fields)
             v.update_group_fields(placement['group_id'], {
                 'module_ids': v.json_db_value(v.unique([
                     *v.parse_json_value(group.get('module_ids'), []), module_catalogue_id])),

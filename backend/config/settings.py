@@ -439,6 +439,7 @@ MIDDLEWARE = [
     # A successful write to a learner's /learner_api/.../<kind>/<pk>/ paths
     # invalidates their cached dashboard/My Learning reads (learner_api/response_cache.py).
     'learner_api.response_cache.LearnerReadCacheMiddleware',
+    'coach_api.activity_plan_events.ActivityPlanInvalidationMiddleware',
     # Rejects anonymous callers on the API prefixes before any view runs. Must
     # sit after LoginSessionMiddleware so the session is already resolved, and
     # before anything that would act on the request. Answers only "is there a

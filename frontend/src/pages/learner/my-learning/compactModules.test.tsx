@@ -33,9 +33,14 @@ const makeModule = (subject = 'current:M1', id = '7') => ({ subjectId: subject,
   schedule: { modules: [], moduleLinks: {}, generatedAt: '' }, sessions: [] });
 const urls = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
 const reply = (data: unknown) => new Response(JSON.stringify(data));
+function ActivityDestination() {
+  const location = useLocation();
+  return <output data-testid="activity-destination">{location.pathname}{location.search}</output>;
+}
 function route(path = '/learner/my-learning/commercial/7') {
   return render(<StrictMode><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/learner/my-learning/:kind/:id" element={<MyLearningPage />} />
+    <Route path="/learner/:type/:kind/:id/:activityId" element={<ActivityDestination />} />
   </Routes></MemoryRouter></StrictMode>);
 }
 beforeEach(() => {
@@ -207,15 +212,19 @@ describe('compact My Learning route', () => {
     if (variant !== 'current-only') expect(screen.getByRole('heading', { name: 'Old' })).toBeVisible();
   });
 
-  it('decodes the production-generated shared JSON contracts and launches the selected reading', async () => {
+  it.each(['commercial', 'apprenticeship'] as const)('opens the subject directly in its player from the shared JSON contract (%s)', async kind => {
     vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
       ? reply({ template: null, csrfToken: '' }) : String(input).includes('/modules/')
         ? reply(contractFixture.module) : reply(contractFixture.catalogue));
-    route();
+    route(`/learner/my-learning/${kind}/7`);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Teaching status' }), { target: { value: 'all' } });
     fireEvent.click(await screen.findByRole('button', { name: /New LMS.*Example module.*Open subject/ }));
     await waitFor(() => expect(urls().filter(url => url.includes('/modules/'))).toHaveLength(1));
     expect(urls().find(url => url.includes('/modules/'))).toContain('current%3AM1');
+    expect(await screen.findByTestId('activity-destination')).toHaveTextContent(`/learner/quiz/${kind}/7/1?week=Week%201`);
+    expect(screen.queryByRole('button', { name: 'All subjects' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open activity' })).not.toBeInTheDocument();
+    expect(urls().some(url => url.includes('/learner-detail/'))).toBe(false);
   });
 
   it.each(['commercial', 'apprenticeship'] as const)('defaults to active cards and opens an older subject through All (%s)', async kind => {

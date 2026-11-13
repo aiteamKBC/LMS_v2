@@ -26,6 +26,7 @@ class FreeCourseAssignmentReadTests(SimpleTestCase):
         self.enterContext(patch('login.permissions._auth_gate_enabled', return_value=True))
         self.legacy = self.enterContext(patch.object(view, '_scoped_rows', return_value=({}, [], [])))
         self.enterContext(patch.object(view, 'LearnerFreeCourseProgress'))
+        self.enterContext(patch.object(view, 'progress_owner', return_value=7))
 
     def read(self, kind='commercial', pk=7):
         request = RequestFactory().get(f'/learner_api/free-courses/{kind}/{pk}/')

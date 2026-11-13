@@ -25,6 +25,11 @@ describe('learner data transport', () => {
     '/learner_api/dashboard/commercial/125/training/',
     '/learner_api/dashboard/apprenticeship/125/monthly/',
     '/learner_api/calendar/commercial/125/first-session/',
+    '/learner_api/learner-detail/commercial/125/?content=summary',
+    '/learner_api/learner-detail/commercial/125/?content=quiz',
+    '/learner_api/learner-detail/commercial/125/?content=reading&component_id=C1',
+    '/learner_api/learner-detail/commercial/125/',
+    '/learner_api/calendar/commercial/125/first-session/?content=activity',
   ])('keeps the existing deadline for %s', async url => {
     vi.useFakeTimers();
     vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
@@ -33,6 +38,35 @@ describe('learner data transport', () => {
     await failed;
     expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
+
+  it.each(['commercial', 'apprenticeship'] as const)(
+    'loads an activity after a slow connection checkout and bounds/retries a stuck activity (%s)', async kind => {
+      vi.useFakeTimers();
+      const network = pending<Response>();
+      const activity = { id: '125', components: [{ componentId: 'C1', type: 'reading', contentHtml: '<p>Lesson</p>' }] };
+      vi.mocked(fetch).mockReturnValueOnce(network.promise);
+      const request = fetchLearnerDetail(kind, '125', { componentId: 'C1' });
+      // Handle the rejection too so the pre-fix failure is the early abort.
+      const settled = request.then(value => value, error => error);
+      await vi.advanceTimersByTimeAsync(85_000);
+      expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+      network.resolve(reply(activity));
+      await expect(settled).resolves.toEqual(activity);
+
+      vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+      const stuck = expect(fetchLearnerDetail(kind, '125', { componentId: 'C2' }))
+        .rejects.toMatchObject({ code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(120_000);
+      await stuck;
+      expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
+
+      const recovered = { id: '125', components: [{ componentId: 'C2', type: 'reading', contentHtml: '<p>Recovered lesson</p>' }] };
+      vi.mocked(fetch).mockResolvedValueOnce(reply(recovered));
+      await expect(fetchLearnerDetail(kind, '125', { componentId: 'C2' })).resolves.toEqual(recovered);
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it.each(['commercial/125/', 'apprenticeship/125/', 'commercial/125/modules/current%3AM1/', 'commercial/125/upcoming/'])(
     'lets My Learning %s finish after connection checkout and still bounds a stuck request', async path => {

@@ -105,14 +105,14 @@ def read_verified_rows(table, where, params, order, columns):
             cursor.execute(
                 "select encode(sha256(convert_to(coalesce("
                 f"string_agg({fingerprint}, '' order by {order}), ''), 'UTF8')), 'hex') "
-                f'from {views.authoring_table_name(table)} where {where}', params,
+                f'from {views.learning_read_table(table)} where {where}', params,
             )
             current_digest = cursor.fetchone()[0]
         if current_digest == expected:
             return [{k: v for k, v in row.items() if k != _FINGERPRINT} for row in cached]
         with views.connection.cursor() as cursor:
             cursor.execute(
-                f'select id, {fingerprint_field} from {views.authoring_table_name(table)} '
+                f'select id, {fingerprint_field} from {views.learning_read_table(table)} '
                 f'where {where} order by {order}', params,
             )
             current = views.rows_as_dicts(cursor)

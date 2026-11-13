@@ -17,6 +17,7 @@ adapted to plain CSRF-exempt JSON views keyed on kind+id.
     GET  /learner_api/evidence/<kind>/<pk>/<file_id>/download/
     DELETE /learner_api/evidence/<kind>/<pk>/<file_id>/   (own file, pre-submission)
 """
+from curriculum_api.learning_storage import read_sql
 import json
 import logging
 from pathlib import Path
@@ -182,7 +183,7 @@ def _evidence_lineage(kind, learner_id, section_ref):
         return lineage
     try:
         with _conn().cursor() as cur:
-            cur.execute("select id from curriculum.components where id = %s limit 1", [section_ref])
+            cur.execute(read_sql("select id from curriculum.components where id = %s limit 1", cur.db), [section_ref])
             if cur.fetchone():
                 lineage["component_ref"] = section_ref
             learner_ids = _learner_profile_ids_for_source(cur, learner_id)

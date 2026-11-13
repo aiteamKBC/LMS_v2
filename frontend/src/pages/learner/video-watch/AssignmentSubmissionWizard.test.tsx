@@ -60,27 +60,42 @@ function confirmLearning() {
   for (const name of learningDeclarations) fireEvent.click(screen.getByRole('checkbox', { name }));
 }
 
-it('returns to assignment hours for correction before any completion request', async () => {
-  render(<AssignmentSubmissionWizard {...props} initialMonth="2026-10" />);
+it.each(['commercial', 'apprenticeship'] as const)('submits %s assignment hours directly without time confirmation', async kind => {
+  render(<AssignmentSubmissionWizard {...props} kind={kind} initialMonth="2026-10" />);
   await enterTopicTime();
+  fireEvent.change(screen.getByLabelText('Hours 1'), { target: { value: '8' } });
   confirmLearning();
   fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
-  expect(await screen.findByRole('alertdialog')).toHaveTextContent('3 hours and 30 minutes');
-  expect(props.onSubmitProgress).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
-  expect(await screen.findByLabelText('Hours 1')).toHaveValue(3.5);
-  expect(screen.getByLabelText('Topic 1')).toHaveValue('Research');
-  fireEvent.change(screen.getByLabelText('Hours 1'), { target: { value: '4.9' } });
-  fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  await screen.findByText('Submission preview');
+  expect(props.onSubmitProgress).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ timeTakenSeconds: 28800, timeEntrySource: 'input' }));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0]).toMatchObject({
+    actualTimeHours: '8', plannedOtjh: '2',
+    monthlyAssignment: { timeEntries: [{ topic: 'Research', hours: '8', date: '2026-10-15' }] },
+  });
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+});
+
+it('submits saved manual assignment time without a detailed time table or confirmation', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
+    status: 'draft', actualTimeHours: '8.5', assignmentTimeSource: 'input',
+    monthlyAssignment: {
+      ...emptyMonthlyAssignment([], '2026-10'), step: 7, timeEntries: undefined,
+      plannedReviewed: true, newKnowledge: true, newSkills: true, sharingConsent: true,
+    },
+  } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+  render(<AssignmentSubmissionWizard {...props} timeSeconds={30600} timeSource="input" />);
+  await screen.findByRole('button', { name: 'Run quality checks' });
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
-  expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
-  await waitFor(() => expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ timeTakenSeconds: 17640, timeEntrySource: 'input' })));
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  await screen.findByText('Submission preview');
+  expect(props.onSubmitProgress).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ timeTakenSeconds: 30600, timeEntrySource: 'input' }));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0].actualTimeHours).toBe('8.5');
 });
 describe('monthly assignment drafts', () => {
   it('keeps a partially accepted topic locked and shows the question it answered', async () => {
@@ -325,7 +340,7 @@ describe('monthly assignment drafts', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
     expect(props.onSubmitProgress).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     await screen.findByText('Submission preview');
     expect(props.onSubmitProgress).toHaveBeenCalledOnce();
     expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ timeTakenSeconds: 12600, timeEntrySource: 'input' }));
@@ -346,7 +361,7 @@ describe('monthly assignment drafts', () => {
     vi.mocked(checkMonthlyAssignment).mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
     expect(props.onSubmitProgress).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     await screen.findByText(/Complete the outstanding checks/);
     expect(props.onSubmitProgress).not.toHaveBeenCalled();
     expect(screen.queryByText('Submission preview')).not.toBeInTheDocument();

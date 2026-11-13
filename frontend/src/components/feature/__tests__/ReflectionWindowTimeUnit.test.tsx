@@ -36,14 +36,14 @@ it.each(['commercial', 'apprenticeship'] as const)('lets a %s learner review 49 
   openOtjh();
   await waitFor(() => expect(screen.getByLabelText('Actual time spent (hours)')).toHaveValue(49));
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('49 hours and 0 minutes');
   expect(mocks.save.mock.calls.some(([payload]) => payload.submissionMode === 'submit')).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Edit time' }));
   await waitFor(() => expect(screen.getByLabelText('Actual time spent (hours)')).toHaveValue(49));
   fireEvent.change(screen.getByLabelText('Actual time spent (hours)'), { target: { value: '4.9' } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(await screen.findByRole('alertdialog')).toHaveTextContent('4 hours and 54 minutes');
   expect(onSubmit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Confirm time' }));
@@ -100,7 +100,7 @@ it.each([
   expect(screen.getByLabelText('Selected activity time')).not.toHaveAttribute('readonly');
   expect(screen.queryByLabelText('Actual time spent (hours)')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  const submit = screen.getByRole('button', { name: 'Submit for tutor review' });
+  const submit = screen.getByRole('button', { name: 'Submit' });
   await waitFor(() => expect(submit).toBeEnabled());
   fireEvent.click(submit);
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -127,7 +127,7 @@ it.each([['00:05:00', 300], ['02:30:00', 9000]])('saves corrected time %s from t
   expect(screen.getByLabelText('Selected activity time')).toHaveValue('00:10:00');
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value: clock } });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit for tutor review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   expect(onSubmit).not.toHaveBeenCalled();
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm time' }));
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -149,7 +149,7 @@ it.each(['00:90:00', '-1:00:00', '', 'not a time'])('does not allow submission w
   fireEvent.change(screen.getByLabelText('Selected activity time'), { target: { value } });
   expect(screen.getByLabelText('Selected activity time')).toHaveAttribute('aria-invalid', 'true');
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  expect(screen.getByRole('button', { name: 'Submit for tutor review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Submit' })).toBeDisabled();
 });
 
 

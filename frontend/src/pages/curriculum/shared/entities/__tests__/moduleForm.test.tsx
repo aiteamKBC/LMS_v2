@@ -185,6 +185,8 @@ describe('ModuleFormDrawer', () => {
     } });
     expect(screen.getByRole('heading', { name: 'Free course' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /programme|cohort|tutor/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /start date|end date/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Planned finish')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Assign later|Group A/i })).not.toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: /Course name/i }), 'Independent study');
     await userEvent.click(screen.getByRole('button', { name: 'Create free course' }));
@@ -1069,7 +1071,7 @@ describe('ModuleFormDrawer', () => {
     expect(screen.getByPlaceholderText('e.g. Data Modelling')).toHaveValue('Data Modelling');
   });
 
-  it('shows a tutor double-booking refusal verbatim', async () => {
+  it('offers a retry with the busy tutor when an edit discovers a clash on save', async () => {
     // A real CurriculumApiError: `tutorConflictMessage` only unwraps that shape,
     // which is what keeps a generic 409 from being shown as a booking clash.
     const conflict = new CurriculumApiError(
@@ -1089,9 +1091,13 @@ describe('ModuleFormDrawer', () => {
 
     const name = screen.getByPlaceholderText('e.g. Data Modelling');
     await userEvent.type(name, ' edited');
+    await userEvent.type(screen.getByPlaceholderText('Optional delivery notes'), 'Updated notes');
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
 
-    expect(await screen.findByText('Tutor One is already teaching "Data Foundations" on Wednesday at 10:00.')).toBeInTheDocument();
+    expect(await screen.findByText(/You can keep this tutor for/)).toBeInTheDocument();
+    expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1].allowTutorConflict).not.toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Book anyway' }));
+    await waitFor(() => expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1]).toMatchObject({ allowTutorConflict: true }));
   });
 });
 
@@ -1179,7 +1185,7 @@ describe('ModuleFormDrawer tutor availability', () => {
     expect(screen.getByText(/2 of this module's 3 sessions/)).toBeInTheDocument();
   });
 
-  it('does not send a save it already knows will be refused', async () => {
+  it('warns about a busy tutor and allows creating the delivery with that tutor', async () => {
     renderPlacedDrawer();
     await waitFor(() => expect(previewTutorAvailabilityRosterMock).toHaveBeenCalled());
 
@@ -1187,8 +1193,25 @@ describe('ModuleFormDrawer tutor availability', () => {
     await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
-    expect(await screen.findByText(/Tutor One is already teaching in this slot\./)).toBeInTheDocument();
-    expect(createGroupModuleMock).not.toHaveBeenCalled();
+    expect(screen.getByText(/You can keep this tutor and save anyway/)).toBeInTheDocument();
+    await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledWith('GROUP-1', expect.objectContaining({
+      tutor: 'Tutor One', allowTutorConflict: true,
+    })));
+  });
+
+  it('allows editing with a known clash and does not override after choosing a free tutor', async () => {
+    renderDrawer({ module: { id: 'MOD-1', name: 'Data Foundations', groupId: 'GROUP-1', tutor: 'Tutor One',
+      startDate: '2026-09-02' }, tutorNames: ['Tutor One', 'Tutor Two'] });
+    expect(await screen.findByText(/You can keep this tutor and save anyway/)).toBeInTheDocument();
+    await userEvent.type(screen.getByPlaceholderText('Optional delivery notes'), 'Updated notes');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1]).toMatchObject({
+      tutor: 'Tutor One', allowTutorConflict: true,
+    }));
+    await choose('Tutor', 'Tutor Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1]).toMatchObject({ tutor: 'Tutor Two' }));
+    expect(updateCurriculumModuleMock.mock.calls.at(-1)?.[1].allowTutorConflict).not.toBe(true);
   });
 
   it('offers the tutors the slot is free for as the fix', async () => {
@@ -1200,6 +1223,27 @@ describe('ModuleFormDrawer tutor availability', () => {
 
     expect(screen.getByRole('combobox', { name: /tutor/i })).toHaveTextContent('Tutor Two');
     expect(screen.queryByText(/is already teaching in this slot/)).not.toBeInTheDocument();
+  });
+
+  it('warns about a later group clash and retries only that delivery', async () => {
+    const twoGroups = [...groups, { ...groups[0], id: 'GROUP-2', name: 'Group B' }];
+    createGroupModuleMock.mockResolvedValueOnce({ created: [{ moduleCatalogueId: 'MOD-A' }] } as never)
+      .mockRejectedValueOnce(new CurriculumApiError('Conflict', 409, '/groups/GROUP-2/modules/', {
+        error: 'Tutor One is already teaching.', tutor: 'Tutor One', tutorConflicts: BUSY_ROSTER.results[0].conflicts,
+      }));
+    renderDrawer({ groups: twoGroups, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1' } });
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Multi group');
+    await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
+    await choose('Tutor', 'Tutor One');
+    expect(await screen.findByText(/You can keep this tutor and save anyway/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+    expect(await screen.findByText(/You can keep this tutor for Group B/)).toBeInTheDocument();
+    expect(createGroupModuleMock.mock.calls[1][1].allowTutorConflict).not.toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Book anyway' }));
+    await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(3));
+    expect(createGroupModuleMock.mock.calls.filter(([id]) => id === 'GROUP-1')).toHaveLength(1);
+    expect(createGroupModuleMock).toHaveBeenLastCalledWith('GROUP-2', expect.objectContaining({ allowTutorConflict: true }));
   });
 
   it('marks the busy names in the picker, without blocking the choice', async () => {

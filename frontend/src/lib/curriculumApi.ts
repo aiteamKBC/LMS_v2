@@ -4901,6 +4901,8 @@ export function previewModuleSessionPlan(input: { startDate?: string; numberOfSe
 
 /** The slot a tutor is being asked about. Matches the module's own schedule fields. */
 export interface CurriculumTutorAvailabilityInput {
+  /** The destination group supplies delivery days and times when moving a course. */
+  groupId?: string;
   startDate?: string;
   sessionsNumber?: number | string;
   weeklySchedule?: CurriculumWeeklySession[];
@@ -4988,6 +4990,8 @@ export interface FreeCourseConversionDestination {
   cohortId: string;
   groupId: string;
   tutor: string;
+  /** Continue after the user has been shown the tutor's scheduling conflict. */
+  allowTutorConflict?: boolean;
 }
 
 export function convertFreeCourseToModule(id: string, destination: FreeCourseConversionDestination) {

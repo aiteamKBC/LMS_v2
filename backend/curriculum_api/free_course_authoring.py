@@ -1,7 +1,8 @@
 """Course-scoped editing through the same versioned writer as Module Builder.
 
-The free-course tables retain catalogue identity; their module/week/component
-links identify the existing authoring records. Never rewrite the free library.
+The free-course tables own catalogue identity and content. Public authoring IDs
+remain opaque API references after the native cutover, not links to ordinary
+module/week/component rows. Never rewrite the free library.
 """
 import copy
 import json

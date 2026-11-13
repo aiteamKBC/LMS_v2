@@ -2,12 +2,13 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { convertFreeCourseToModule, fetchCurriculumDeliveryScope, fetchCurriculumTutors, type CurriculumProgramme } from '@/lib/curriculumApi';
+import { CurriculumApiError, convertFreeCourseToModule, fetchCurriculumDeliveryScope, fetchCurriculumTutors, previewTutorAvailabilityRoster, type CurriculumProgramme } from '@/lib/curriculumApi';
 import { FreeCourseMoveDrawer } from '../FreeCourseMoveDrawer';
 
 vi.mock('@/lib/curriculumApi', async original => ({
   ...(await original<typeof import('@/lib/curriculumApi')>()),
   fetchCurriculumDeliveryScope: vi.fn(), fetchCurriculumTutors: vi.fn(), convertFreeCourseToModule: vi.fn(),
+  previewTutorAvailabilityRoster: vi.fn(),
 }));
 
 const programmes: CurriculumProgramme[] = [{ id: 'P1', name: 'Programme one' }, { id: 'P2', name: 'Programme two' }].map(item => ({
@@ -45,6 +46,9 @@ async function destination(user: ReturnType<typeof userEvent.setup>, withTutor =
 
 describe('Move a free course into a module', () => {
   beforeEach(() => {
+    vi.mocked(previewTutorAvailabilityRoster).mockReset().mockResolvedValue({
+      results: [], sessionDates: [], bookable: false, startTime: '', endTime: '', availableCount: 0, busyCount: 0,
+    });
     vi.mocked(fetchCurriculumDeliveryScope).mockReset().mockResolvedValue(scope);
     vi.mocked(fetchCurriculumTutors).mockReset().mockResolvedValue([
       { id: 'T1', name: 'Tutor one', email: 'tutor-one@example.invalid', status: 'active' },
@@ -112,6 +116,57 @@ describe('Move a free course into a module', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(close).toHaveBeenCalledOnce();
     expect(convertFreeCourseToModule).not.toHaveBeenCalled();
+  });
+  const busyTutor = { tutor: 'Tutor one', available: false, message: 'Tutor one is already teaching.', conflicts: [{
+    moduleCatalogueId: 'MOD-OTHER', moduleName: 'Other subject', programme: 'Other programme', cohort: 'Other cohort',
+    group: 'Other group', startTime: '10:00', endTime: '12:00', dates: ['2026-09-02'],
+  }] };
+  it('warns while choosing a busy tutor and still permits the move', async () => {
+    vi.mocked(previewTutorAvailabilityRoster).mockResolvedValue({
+      results: [busyTutor], sessionDates: ['2026-09-02'], bookable: true, startTime: '10:00', endTime: '12:00',
+      availableCount: 0, busyCount: 1,
+    });
+    const user = userEvent.setup(); renderDrawer(); await destination(user);
+    expect(await screen.findByText(/You can keep this tutor and save anyway/)).toBeVisible();
+    expect(previewTutorAvailabilityRoster).toHaveBeenCalledWith({ moduleCatalogueId: 'FREE-1', groupId: 'G1', cohortId: 'C1' });
+    expect(screen.getByText('Other subject')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Move to module' }));
+    await waitFor(() => expect(convertFreeCourseToModule).toHaveBeenCalledWith('FREE-1', {
+      programmeId: 'P1', cohortId: 'C1', groupId: 'G1', tutor: 'T1', allowTutorConflict: true,
+    }));
+  });
+  it('offers continuing after a new conflict is returned without repeating a successful move', async () => {
+    vi.mocked(convertFreeCourseToModule).mockRejectedValueOnce(new CurriculumApiError('Conflict', 409, '/convert/', {
+      error: busyTutor.message, tutor: busyTutor.tutor, tutorConflicts: busyTutor.conflicts,
+    }));
+    const user = userEvent.setup(); renderDrawer(); await destination(user);
+    await user.click(screen.getByRole('button', { name: 'Move to module' }));
+    expect(await screen.findByText(/Select Move to module again/)).toBeVisible();
+    expect(moved).not.toHaveBeenCalled();
+    expect(convertFreeCourseToModule).toHaveBeenCalledExactlyOnceWith('FREE-1', {
+      programmeId: 'P1', cohortId: 'C1', groupId: 'G1', tutor: 'T1',
+    });
+    await user.click(screen.getByRole('button', { name: 'Move to module' }));
+    await waitFor(() => expect(moved).toHaveBeenCalledOnce());
+    expect(convertFreeCourseToModule).toHaveBeenLastCalledWith('FREE-1', {
+      programmeId: 'P1', cohortId: 'C1', groupId: 'G1', tutor: 'T1', allowTutorConflict: true,
+    });
+  });
+  it('does not carry a conflict override to another destination', async () => {
+    vi.mocked(convertFreeCourseToModule).mockRejectedValueOnce(new CurriculumApiError('Conflict', 409, '/convert/', {
+      error: busyTutor.message, tutor: busyTutor.tutor, tutorConflicts: busyTutor.conflicts,
+    }));
+    const user = userEvent.setup(); renderDrawer(); await destination(user);
+    await user.click(screen.getByRole('button', { name: 'Move to module' }));
+    expect(await screen.findByText(/Select Move to module again/)).toBeVisible();
+    await choose(user, 'Destination programme', 'Programme two');
+    await choose(user, 'Destination cohort', 'Cohort two');
+    await choose(user, 'Destination group', 'Group two');
+    expect(screen.queryByText(/Select Move to module again/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Move to module' }));
+    await waitFor(() => expect(convertFreeCourseToModule).toHaveBeenLastCalledWith('FREE-1', {
+      programmeId: 'P2', cohortId: 'C2', groupId: 'G2', tutor: 'T1',
+    }));
   });
   it('loads only active tutor choices and supports keyboard selection', async () => {
     const user = userEvent.setup(); renderDrawer(); await destination(user, false);

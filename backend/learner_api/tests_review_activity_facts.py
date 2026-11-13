@@ -141,7 +141,11 @@ class ReviewActivityFactsTests(SimpleTestCase):
                 self.assertEqual(snapshot['coachProgrammeTarget'], {
                     'formulaVersion': 'scheduled_main_activities_v1',
                     'expected': 1, 'planned': 3, 'expectedPercent': 33.33,
-                    'variancePercent': -16.66, 'varianceDirection': 'below'})
+                    'variancePercent': -33.33, 'varianceDirection': 'below'})
+                self.assertEqual(snapshot['coachProgrammeProgress'], {
+                    'actual': 0, 'expected': 1, 'planned': 3, 'actualPercent': 0.0,
+                    'expectedPercent': 33.33, 'variancePercent': -33.33,
+                    'varianceDirection': 'below'})
                 self.assertEqual(snapshot['offTheJobHours']['actual'], 9)
                 self.assertEqual(snapshot['offTheJobHours']['expected'], 6)
                 self.assertEqual(snapshot['offTheJobHours']['planned'], 12)
@@ -198,8 +202,9 @@ class ReviewActivityFactsTests(SimpleTestCase):
         result = self.coach_snapshot()
         self.assertEqual(result['programmeProgress']['actualPercent'], 50)
         self.assertEqual(result['coachProgrammeTarget']['expectedPercent'], 0)
-        self.assertEqual(result['coachProgrammeTarget']['variancePercent'], 50)
+        self.assertEqual(result['coachProgrammeTarget']['variancePercent'], 100)
         self.assertEqual(result['coachProgrammeTarget']['varianceDirection'], 'above')
+        self.assertEqual(result['coachProgrammeProgress']['actualPercent'], 100)
 
     def test_approved_completed_delivery_uses_the_same_due_rule_for_main_target(self):
         self.detail['components'] = [component('main'), component('extra', type='video')]
@@ -222,8 +227,10 @@ class ReviewActivityFactsTests(SimpleTestCase):
              patch.object(facts.canonical_learning, 'entries_for', return_value=records), \
              patch.object(facts, 'learning_projection', return_value=self.learning) as read, \
              patch.object(facts, 'retain_quiz_progress') as retain:
-            facts.dashboard_activity_facts(source, profile, as_of=now)
+            facts.dashboard_activity_facts(source, profile, as_of=now, include_required=True)
         self.assertEqual(read.call_args.args, (source, owner, records[:1]))
+        self.assertTrue(read.call_args.kwargs['required_activities'])
+        self.assertTrue(read.call_args.kwargs['include_activity_dates'])
         progress = read.call_args.kwargs['progress']
         self.assertEqual([len(bucket) for bucket in progress], [1, 1, 2])
         self.assertTrue(all(r['componentId'].endswith('-before') for bucket in progress for r in bucket))
@@ -236,3 +243,24 @@ class ReviewActivityFactsTests(SimpleTestCase):
                 facts.dashboard_activity_facts(SimpleNamespace(pk=201),
                     SimpleNamespace(pk=101, enrolment_id=201), as_of=datetime.now(timezone.utc))
         read.assert_not_called()
+
+    def test_optional_record_count_reuses_cutoff_records_and_excludes_hours_only_entries(self):
+        now = datetime(2026, 11, 5, tzinfo=timezone.utc)
+        owner = {'id': 101, 'enrolment_id': 201}
+        profile = SimpleNamespace(pk=101, enrolment_id=201, progress_entries=MagicMock())
+        profile.progress_entries.using.return_value.filter.return_value.exclude.return_value.values.return_value = []
+        records = [
+            {'kind': 'component', 'completed': True, 'submitted_at': '2026-11-04'},
+            {'kind': 'component', 'completed': True, 'submitted_at': '2026-11-04'},
+            {'kind': 'component', 'completed': False, 'submitted_at': '2026-11-04'},
+            {'kind': 'migrated_review', 'completed': True, 'submitted_at': '2026-11-04'},
+            {'kind': 'component', 'hours_only': True, 'completed': True, 'submitted_at': '2026-11-04'},
+            {'kind': 'component', 'completed': True, 'submitted_at': '2026-11-06'},
+        ]
+        with patch.object(facts.canonical_learning, 'require_profile', return_value=owner), \
+             patch.object(facts.canonical_learning, 'entries_for', return_value=records) as entries, \
+             patch.object(facts, 'learning_projection', return_value=self.learning), \
+             patch.object(facts, 'retain_quiz_progress'):
+            result = facts.dashboard_activity_facts(SimpleNamespace(pk=201), profile, as_of=now, include_record_counts=True)
+        self.assertEqual(result['completedRecords'], 2)
+        entries.assert_called_once_with(owner, training_summary=True)

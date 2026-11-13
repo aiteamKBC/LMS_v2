@@ -1372,6 +1372,7 @@ function ReviewInstanceContent({
               <ReviewProgressPanel
                 snapshot={definition.progressSnapshot}
                 useCoachProgrammeTarget
+                requireRequiredActivities={!isSignatureStage && ['not-scheduled', 'scheduled', 'in-progress'].includes(definition.instance.status)}
                 ragHistory={definition.ragHistory}
                 showCalculateAction={showMigratedCoachActions ? true : undefined}
                 canCalculate={!isViewingAsCoach && !isSignatureStage && (definition.source !== 'aptem'

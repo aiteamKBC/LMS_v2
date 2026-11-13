@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.learning_storage import read_sql
 
 from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
@@ -45,17 +46,17 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
     from .training_plan_dashboard import rows, plan_module, is_educational_live_session_week
     from .student_activity import _builder_cover_url
     from .subject_origins import imported_course_links
-    cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
+    cur.execute(read_sql('''SELECT m.module_catalogue_id AS id,m.title,m.cover_image_url,
         m.start_date,m.end_date,m.tutor_name,m.programme_id,m.programme_name,
         m.cohort_name,m.group_name,m.total_otjh,m.sessions_number,m.source_type,m.source_id,
         m.session_week_day,m.session_start_time,m.session_end_time,m.cohort_id,
         to_jsonb(m)->'session_overrides' AS session_overrides
         FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
           AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
-        ORDER BY m.title''',[ids])
+        ORDER BY m.title''', cur.db),[ids])
     found = rows(cur)
     modules = {r['id']:plan_module({**r,'weeks_number':None}) for r in found}
-    cur.execute(f'''WITH live_counts AS (
+    cur.execute(read_sql(f'''WITH live_counts AS (
         SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
         FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
@@ -67,7 +68,7 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
           ON live_counts.module_catalogue_id=w.module_catalogue_id AND live_counts.week_id=w.id
         WHERE w.module_catalogue_id=ANY(%s)
           AND {visible_week_sql('w')}
-        ORDER BY w.display_order,w.week_number,w.id''',[ids,ids])
+        ORDER BY w.display_order,w.week_number,w.id''', cur.db),[ids,ids])
     weeks = rows(cur)
     for week in weeks:
         module = modules.get(week['module_catalogue_id'])
@@ -463,9 +464,9 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             covers = resolved['covers']
             builder = {f'current:{mid}': {'id':mid, 'title':modules[mid]['title']} for mid in resolved['module_titles']}
         elif purpose == 'search':
-            cur.execute('''SELECT m.module_catalogue_id,m.title FROM curriculum.modules m
+            cur.execute(read_sql('''SELECT m.module_catalogue_id,m.title FROM curriculum.modules m
                 WHERE (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')
-                  AND m.module_catalogue_id=ANY(%s)''',[ids])
+                  AND m.module_catalogue_id=ANY(%s)''', connections['enrolment']),[ids])
             from .subject_content import clean_text
             covers, builder = {}, {f'current:{mid}':{'id':mid,'title':clean_text(title)} for mid,title in cur.fetchall()}
         else:
@@ -492,12 +493,12 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             if c.get('componentId') and c.get('moduleId') in settings_modules))
         if settings_ids and purpose != 'search':
             with projection_stage('replacement_settings'):
-                cur.execute('''SELECT id,jsonb_build_object('legacySettings',
+                cur.execute(read_sql('''SELECT id,jsonb_build_object('legacySettings',
                     CASE WHEN jsonb_typeof(settings_json->'legacySettings')='object' THEN
                         jsonb_build_object('sourceLessonId',settings_json->'legacySettings'->'sourceLessonId',
                                            'sourceMaterialKey',settings_json->'legacySettings'->'sourceMaterialKey')
                     ELSE settings_json->'legacySettings' END)
-                    FROM curriculum.components WHERE module_catalogue_id=ANY(%s) AND id=ANY(%s)''',
+                    FROM curriculum.components WHERE module_catalogue_id=ANY(%s) AND id=ANY(%s)''', connections['enrolment']),
                     [settings_modules, settings_ids])
                 settings = dict(cur.fetchall())
         with projection_stage('activity_dates'):
@@ -702,10 +703,10 @@ def read_module(source, kind, owner, subject_id):
                 candidate_ids = [ident for ident, placement in continuation_dates.items()
                                  if teaching_date(placement) > cutoff['afterDate']]
                 if candidate_ids:
-                    cur.execute(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
+                    cur.execute(read_sql(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
                         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
                         WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
-                          AND {visible_child_sql('c')} AND {visible_week_sql('w')}''', [scope_ids,candidate_ids])
+                          AND {visible_child_sql('c')} AND {visible_week_sql('w')}''', connections['enrolment']), [scope_ids,candidate_ids])
                     continuation_weeks = [row[0] for row in cur.fetchall()]
     selected = copy(source)
     native_scope_ids = scope_ids if subject_id.startswith('current:') or continuation_weeks else []

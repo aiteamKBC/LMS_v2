@@ -19,6 +19,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from curriculum_api.learning_storage import read_sql
 
 from .identity import learner_profile_for_source
 from .retake_timing import attempt_order, selected_attempt
@@ -333,7 +334,7 @@ def component_reference_exists(component_id):
         try:
             with connections[alias].cursor() as cursor:
                 cursor.execute(
-                    "select 1 from curriculum.components where id = %s limit 1",
+                    read_sql("select 1 from curriculum.components where id = %s limit 1", connections[alias]),
                     [component_id],
                 )
                 reachable = True
@@ -397,7 +398,7 @@ def component_reference_state(component_id):
     for alias in ("default", "enrolment"):
         try:
             with connections[alias].cursor() as cursor:
-                cursor.execute(_COMPONENT_LINEAGE_DELETED_SQL, [component_id])
+                cursor.execute(read_sql(_COMPONENT_LINEAGE_DELETED_SQL, connections[alias]), [component_id])
                 row = cursor.fetchone()
         except DatabaseError as exc:
             last_error = exc
@@ -427,7 +428,7 @@ def _component_learning_context(component_id):
         try:
             with connections[alias].cursor() as cursor:
                 cursor.execute(
-                    """
+                    read_sql("""
                     select
                         c.id,
                         c.title,
@@ -451,7 +452,7 @@ def _component_learning_context(component_id):
                     left join curriculum.programmes p on p.programme_id = m.programme_id
                     where c.id = %s
                     limit 1
-                    """,
+                    """, connections[alias]),
                     [component_id],
                 )
                 row = cursor.fetchone()
@@ -690,25 +691,9 @@ def replace_training_plan(learner, plan):
     ], batch_size=1000)
 
 
-def replace_free_courses(learner, free_courses):
-    """Rebuild the learner's free-course mirror from the enrolment-side list.
-
-    The mirror of replace_training_plan for free courses: delete this learner's
-    rows and re-insert from the assignment records
-    ([{freeCourseId, courseName, ...}]) stored on the enrolment source. No hours
-    or KSBs — a free course is a flat assignment.
-    """
-    LearnerFreeCourse.objects.filter(learner=learner).delete()
-    LearnerFreeCourse.objects.bulk_create([
-        LearnerFreeCourse(
-            learner=learner,
-            position=position,
-            free_course_ref=_s(course.get("freeCourseId")) or None,
-            free_course_title=_s(course.get("courseName")),
-        )
-        for position, course in enumerate(free_courses or [], 1)
-        if isinstance(course, dict) and _s(course.get("freeCourseId"))
-    ])
+def replace_free_courses(learner, free_courses, *, plan=None):
+    from .free_course_records import replace_assignments
+    replace_assignments(learner, free_courses, plan=plan)
 
 
 def hydrate_training_plan(plan, *, strict=False):
@@ -738,7 +723,7 @@ def hydrate_training_plan(plan, *, strict=False):
         # owns learner records when the two connections are split in production.
         with connections["default"].cursor() as cursor:
             cursor.execute(
-                """
+                read_sql("""
                 SELECT m.module_catalogue_id, m.title,
                        m.start_date, m.end_date, m.sessions_number,
                        m.session_week_day, m.cohort_id,
@@ -752,7 +737,7 @@ def hydrate_training_plan(plan, *, strict=False):
                 WHERE m.module_catalogue_id = ANY(%s) OR m.title = ANY(%s)
                 ORDER BY m.module_catalogue_id, w.display_order, w.week_number,
                          c.display_order, c.id
-                """,
+                """, cursor.db),
                 [module_ids, module_titles],
             )
             rows = cursor.fetchall()
@@ -936,9 +921,9 @@ def refresh_saved_session_dates(plan):
     if not ids:
         return plan
     with connections['default'].cursor() as cursor:
-        cursor.execute('''SELECT to_jsonb(m) FROM curriculum.modules m
+        cursor.execute(read_sql('''SELECT to_jsonb(m) FROM curriculum.modules m
             WHERE module_catalogue_id = ANY(%s) AND deleted_at IS NULL
-              AND COALESCE(to_jsonb(m)->'session_overrides', '{}'::jsonb) <> '{}'::jsonb''', [ids])
+              AND COALESCE(to_jsonb(m)->'session_overrides', '{}'::jsonb) <> '{}'::jsonb''', cursor.db), [ids])
         modules = {str(row[0]['module_catalogue_id']): row[0] for row in cursor.fetchall()}
     if not modules:
         return plan
@@ -1348,6 +1333,8 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
 
             transaction.on_commit(_award_engagement_points, using="enrolment")
 
+        from .free_course_records import record_completion
+        record_completion(learner, progress)
         return progress
 
 
@@ -1533,7 +1520,7 @@ def _resolve_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
+                    read_sql("SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
                     "FROM curriculum.programmes "
                     "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
                     "   OR lower(btrim(COALESCE(programme_id, ''))) = lower(%s) "
@@ -1547,7 +1534,7 @@ def _resolve_programme_id(programme="", training_plan=None):
                     "    CASE WHEN programme_id IN ("
                     "        SELECT module.programme_id FROM curriculum.modules module "
                     "        WHERE module.module_catalogue_id = ANY(%s)"
-                    "    ) THEN 0 ELSE 1 END, updated_at DESC NULLS LAST LIMIT 1",
+                    "    ) THEN 0 ELSE 1 END, updated_at DESC NULLS LAST LIMIT 1", cursor.db),
                     [programme, programme, programme, programme, programme, module_ids],
                 )
                 row = cursor.fetchone()
@@ -1561,9 +1548,9 @@ def _resolve_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT DISTINCT programme_id FROM curriculum.modules "
+                    read_sql("SELECT DISTINCT programme_id FROM curriculum.modules "
                     "WHERE module_catalogue_id = ANY(%s) AND programme_id IS NOT NULL AND programme_id <> '' "
-                    "ORDER BY programme_id LIMIT 2",
+                    "ORDER BY programme_id LIMIT 2", cursor.db),
                     [module_ids],
                 )
                 rows = cursor.fetchall()
@@ -1598,9 +1585,9 @@ def _resolve_linkable_programme_id(programme="", training_plan=None):
         try:
             with connections["enrolment"].cursor() as cursor:
                 cursor.execute(
-                    "SELECT DISTINCT programme_id FROM curriculum.modules "
+                    read_sql("SELECT DISTINCT programme_id FROM curriculum.modules "
                     "WHERE module_catalogue_id = ANY(%s) "
-                    "  AND programme_id IS NOT NULL AND programme_id <> ''",
+                    "  AND programme_id IS NOT NULL AND programme_id <> ''", cursor.db),
                     [module_ids],
                 )
                 rows = cursor.fetchall()
@@ -1782,7 +1769,7 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
         # caller's transaction, only this query.
         with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
             cursor.execute(
-                "SELECT DISTINCT ON (upper(mapping.ksb_code)) "
+                read_sql("SELECT DISTINCT ON (upper(mapping.ksb_code)) "
                 "       upper(mapping.ksb_code) AS code, "
                 "       COALESCE(NULLIF(mapping.ksb_description, ''), '') AS description "
                 "FROM curriculum.ksb_mappings mapping "
@@ -1804,7 +1791,7 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
                 "             ELSE 3 "
                 "         END, "
                 "         mapping.weight DESC, "
-                "         mapping.ksb_description",
+                "         mapping.ksb_description", cursor.db),
                 [module_ids, programme_id, programme, programme_id, programme, programme],
             )
             rows = cursor.fetchall()
@@ -1849,7 +1836,7 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
             if not module_ids:
                 return ""
             cursor.execute(
-                "SELECT COALESCE(NULLIF(module.ksb_profile_source_id, ''), '') "
+                read_sql("SELECT COALESCE(NULLIF(module.ksb_profile_source_id, ''), '') "
                 "FROM curriculum.modules module "
                 "WHERE module.module_catalogue_id = ANY(%s) "
                 "  AND module.ksb_profile_source_id IS NOT NULL "
@@ -1860,7 +1847,7 @@ def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=
                 "     OR module.programme_name = %s "
                 "     OR %s LIKE module.programme_name || ' %%'"
                 "  ) "
-                "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1",
+                "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1", cursor.db),
                 [module_ids, programme_id, programme, programme_id, programme, programme],
             )
             row = cursor.fetchone()
@@ -2240,7 +2227,7 @@ def sync_active_user(source):
                 replace_training_plan(learner, training_plan)
                 # Free courses carry no hours/KSBs, so they mirror straight from
                 # the enrolment source with no catalogue hydration.
-                replace_free_courses(learner, getattr(source, "free_courses", None) or [])
+                replace_free_courses(learner, getattr(source, "free_courses", None) or [], plan=training_plan)
                 refresh_learner_ksb_snapshot(learner, source, training_plan=training_plan)
         return learner if status.lower() == ACTIVE_STATUS else None
     except DatabaseError as exc:

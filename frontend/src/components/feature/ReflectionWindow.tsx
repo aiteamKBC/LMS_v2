@@ -165,7 +165,9 @@ function ReflectionWindowForm({
       : '';
   const [tab, setTab] = useState<TabId>('learning');
   const [reflection, setReflection] = useState('');
-  const [selectedKsbs, setSelectedKsbs] = useState<string[]>([]);
+  // Start new reflections with the curriculum mapping selected. Restoring a
+  // saved draft below remains authoritative, including an empty selection.
+  const [selectedKsbs, setSelectedKsbs] = useState<string[]>(() => autoKsbs?.map(item => item.code) ?? []);
   const [ksbExplanations, setKsbExplanations] = useState<Record<string, string>>({});
   const [confidenceBefore, setConfidenceBefore] = useState<Record<string, number>>({});
   const [confidenceAfter, setConfidenceAfter] = useState<Record<string, number>>({});
@@ -888,7 +890,9 @@ function ReflectionWindowForm({
             <h2 className="text-sm font-semibold text-foreground-900">KSB confidence check</h2>
             <p className="mt-1 text-xs text-foreground-500">
               {selectionRequired
-                ? `Select at least one relevant ${hasAuthoredKsbs ? 'mapped' : 'programme'} KSB this ${noun} developed. You do not need to select from every K, S and B category. Explain and rate only the KSBs you select.`
+                ? hasAuthoredKsbs
+                  ? `Mapped KSBs are selected automatically for a new reflection. Keep at least one relevant KSB this ${noun} developed, then explain and rate your selection.`
+                  : `Select at least one relevant programme KSB this ${noun} developed. You do not need to select from every K, S and B category. Explain and rate only the KSBs you select.`
                 : `Explain each mapped KSB, then rate your confidence before and after this ${noun}.`}
             </p>
 
@@ -1324,7 +1328,7 @@ function ReflectionWindowForm({
           {submissionLocked ? (
             <>Marking status: <strong className="text-emerald-700">Accepted</strong> — this submission is read-only.</>
           ) : (
-            <>Status on submit: <strong>Submitted for tutor review</strong> — KSBs &amp; OTJH stay pending until validated.</>
+            <>Status on submit: <strong>Submitted for coach review</strong> — KSBs &amp; OTJH stay pending until validated.</>
           )}
         </p>
         <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
@@ -1353,7 +1357,7 @@ function ReflectionWindowForm({
                 >
                   {submitting || reflectionSaving
                     ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving...</>
-                    : <><AppIcon className="ri-edit-line" /> Submit for tutor review</>}
+                    : <><AppIcon className="ri-edit-line" /> Submit</>}
                 </button>
               ) : (
                 <button

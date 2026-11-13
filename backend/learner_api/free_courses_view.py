@@ -47,6 +47,7 @@ from .learner_detail import (
 )
 from .mappers import _normalize_free_courses, _s
 from .models import LearnerFreeCourseProgress
+from .free_course_records import progress_owner
 from .free_course_catalogue import builder_free_courses
 from .learning_plan import _effective_plan_ids, request_preset_cache
 from .quizzes import _fetch_quiz, _grade_question
@@ -193,7 +194,7 @@ def free_courses(request, kind, pk):
     try:
         completed_refs = set(
             LearnerFreeCourseProgress.objects
-            .filter(learner_id=source.pk)
+            .filter(learner_id=progress_owner(source))
             .values_list("component_ref", flat=True)
         )
     except DatabaseError:
@@ -298,7 +299,7 @@ def complete_free_course_activity(request, kind, pk):
 
     try:
         LearnerFreeCourseProgress.objects.get_or_create(
-            learner_id=source.pk,
+            learner_id=progress_owner(source),
             component_ref=component_id,
             defaults={"free_course_ref": free_course_ref, "completed_at": timezone.now()},
         )
@@ -401,7 +402,7 @@ def submit_free_course_quiz(request, kind, pk, component_id):
     if passed:
         try:
             LearnerFreeCourseProgress.objects.get_or_create(
-                learner_id=source.pk,
+                learner_id=progress_owner(source),
                 component_ref=component_id,
                 defaults={"free_course_ref": free_course_ref, "completed_at": timezone.now()},
             )

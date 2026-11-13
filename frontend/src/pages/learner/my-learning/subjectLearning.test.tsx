@@ -422,7 +422,8 @@ describe('map and My Learning navigation', () => {
     ['reading', { contentHtml: '<p>Current lesson</p>' }, '/learner/component/commercial/132/CURRENT'],
     ['video', { videoUrl: 'https://example.org/lesson.mp4' }, '/learner/video/commercial/132/CURRENT'],
     ['quiz', { isQuiz: true, quizMeta: { quizId: 25, questions: 2, duration: null, timeUnit: null } }, '/learner/quiz/commercial/132/25'],
-  ])('opens the current %s player from the catalogue and Back returns to the catalogue', async (type, content, path) => {
+    ['live_session', { sessionDate: '2026-09-13' }, '/learner/component/commercial/132/CURRENT'],
+  ])('opens the current %s player directly from Open subject and Back returns to the catalogue', async (type, content, path) => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-13T12:00:00Z'));
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {}, activity_dates: {
@@ -440,6 +441,7 @@ describe('map and My Learning navigation', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Open subject/ }));
     expect(await screen.findByText('Activity player')).toBeVisible();
     expect(screen.getByTestId('location')).toHaveTextContent(`${path}?week=Week%202`);
+    expect(screen.queryByRole('link', { name: 'Open activity' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Browser Back' }));
     expect(await screen.findByRole('button', { name: /Open subject/ })).toBeVisible();
     expect(screen.getByTestId('location')).not.toHaveTextContent('subject=');
