@@ -21,6 +21,7 @@ export interface DeliveryWorkspaceProps {
   modulesLoading: boolean;
   modulesError: string | null;
   sessions: DeliveryLiveSession[];
+  undatedSessionCount?: number;
   sessionsLoading: boolean;
   sessionsError: string | null;
   loading: boolean;
@@ -42,7 +43,7 @@ function ChartSkeleton() { return <div className={styles.chartSkeleton} aria-hid
 
 export default function DeliveryWorkspace({
   description, cards, attentionItems, cohorts, activeCohortGroups, activeGroups, totalGroups,
-  activeModules, totalModules, modulesLoading, modulesError, sessions, sessionsLoading, sessionsError,
+  activeModules, totalModules, modulesLoading, modulesError, sessions, undatedSessionCount, sessionsLoading, sessionsError,
   loading, unavailable, error, onRetry, onRetrySessions, onRetryActivity, heroVariant = 'glass', staffing, now: previewNow,
 }: DeliveryWorkspaceProps) {
   const [weekOffset, setWeekOffset] = useState(0);
@@ -61,6 +62,7 @@ export default function DeliveryWorkspace({
     return () => window.clearInterval(timer);
   }, [previewNow]);
   const week = deliveryWeek(sessions, previewNow ?? clock, weekOffset);
+  const undated = undatedSessionCount ?? week.undated;
   const activeCohorts = cohortSegments(cohorts)[0].value;
   const sessionsUnavailable = Boolean(sessionsError && !sessions.length);
   const nextLabel = week.next ? `${deliveryDateLabel(week.next.date, true)} · ${deliverySessionTime(week.next.startTime)} UK` : '';
@@ -131,8 +133,8 @@ export default function DeliveryWorkspace({
             <WeeklySessionChart week={week} />
             <p className={styles.nextSession}>{week.next ? <><span>Next live</span> <strong title={week.next.title}>{nextLabel}</strong></> : 'No upcoming live sessions scheduled.'}</p>
             {!week.count && <span className={styles.srOnly}>No live sessions in the selected week.</span>}
-            {week.undated > 0 && <p className={styles.activityWarning}>{number.format(week.undated)} live sessions without a valid date</p>}
           </>}
+          {!sessionsLoading && undated > 0 && <p className={styles.activityWarning}>{number.format(undated)} live sessions without a valid date</p>}
           <div className={styles.statFooter}><Link to="/curriculum/session-calendar">View session calendar <AppIcon className="ri-arrow-right-line" size={13} /></Link><span>UK time</span></div>
         </article>
       </section>

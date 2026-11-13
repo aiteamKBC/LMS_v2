@@ -15,13 +15,14 @@ const deferred = () => {
   const promise = new Promise<{ sessions: DeliveryLiveSession[] }>(done => { resolve = done; });
   return { promise, resolve };
 };
-beforeEach(() => { read.mockReset().mockResolvedValue({ sessions }); });
+beforeEach(() => { read.mockReset().mockResolvedValue({ sessions, undatedSessionCount: 2 }); });
 afterEach(cleanup);
 
 describe('Delivery small-read lifecycle', () => {
   it('reads the dedicated live-date endpoint immediately, without another read for chart rerenders', async () => {
     const hook = renderHook(() => useDeliverySessions('account-a'));
     await waitFor(() => expect(hook.result.current.sessions).toEqual(sessions));
+    expect(hook.result.current.undatedSessionCount).toBe(2);
     hook.rerender();
     expect(read).toHaveBeenCalledTimes(1);
     expect(read).toHaveBeenCalledWith('/curriculum/delivery-dashboard/sessions/', {
@@ -45,6 +46,7 @@ describe('Delivery small-read lifecycle', () => {
     act(() => refresh.callback());
     await waitFor(() => expect(hook.result.current.error).toBe('Calendar unavailable'));
     expect(hook.result.current.sessions).toEqual(sessions);
+    expect(hook.result.current.undatedSessionCount).toBe(2);
     expect(hook.result.current.loading).toBe(false);
     act(() => hook.result.current.reload());
     await waitFor(() => expect(hook.result.current.error).toBe(null));
@@ -58,6 +60,7 @@ describe('Delivery small-read lifecycle', () => {
     hook.rerender({ scope: 'account-b' });
     expect(oldSignal.aborted).toBe(true);
     expect(hook.result.current.sessions).toEqual([]);
+    expect(hook.result.current.undatedSessionCount).toBeUndefined();
     await act(async () => { old.resolve({ sessions }); });
     expect(hook.result.current.sessions).toEqual([]);
     const currentSessions = [{ ...sessions[0], id: 'account-b-session' }];
@@ -72,5 +75,19 @@ describe('Delivery small-read lifecycle', () => {
     const hook = renderHook(() => useDeliverySessions('account-a'));
     await waitFor(() => expect(hook.result.current.error).toBe('Calendar unavailable'));
     expect(hook.result.current.loading).toBe(false);
+    expect(hook.result.current.undatedSessionCount).toBeUndefined();
+  });
+
+  it('refreshes the undated count on the existing read and accepts an older payload', async () => {
+    const hook = renderHook(() => useDeliverySessions('account-a'));
+    await waitFor(() => expect(hook.result.current.undatedSessionCount).toBe(2));
+    read.mockResolvedValueOnce({ sessions, undatedSessionCount: 0 });
+    act(() => hook.result.current.reload());
+    await waitFor(() => expect(hook.result.current.undatedSessionCount).toBe(0));
+    read.mockResolvedValueOnce({ sessions });
+    act(() => hook.result.current.reload());
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(hook.result.current.undatedSessionCount).toBeUndefined());
+    expect(hook.result.current.sessions).toEqual(sessions);
   });
 });

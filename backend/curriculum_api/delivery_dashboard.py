@@ -54,7 +54,7 @@ def build_overview():
         }
 
 
-def build_calendar_sessions():
+def build_calendar_snapshot():
     with views.curriculum_read_scope():
         modules, groups, cohorts = read_inputs(schedule=True)
         modules = [row for row in modules if not views.programme_deleted_row(row)]
@@ -70,26 +70,49 @@ def build_calendar_sessions():
             modules_by_catalogue={views.clean_str(row.get('module_catalogue_id')): row for row in modules},
             groups_by_id={views.clean_str(row.get('group_id')): row for row in groups},
             holidays_by_cohort=selected_holidays, week_rows=weeks, component_rows=components)
-        return views.build_sessions_from_authoring_modules(modules, selected_holidays,
+        sessions = views.build_sessions_from_authoring_modules(modules, selected_holidays,
             groups_by_id={row['id']: {'session_start_time': row.get('startTime'),
                                       'session_end_time': row.get('endTime')} for row in group_rows},
             session_links=links)
+        # Count resolved live links before the calendar's existing dated-only
+        # filter. Reuse the same module scope and date parser, never invent dates
+        # or add incomplete sessions to calendar/Teams collections.
+        undated = sum(
+            1 for row in modules
+            if views.clean_str(row.get('module_catalogue_id'))
+            and views.clean_str(row.get('status')).lower() != 'archived'
+            for link in (links.get(views.clean_str(row.get('module_catalogue_id'))) or [])
+            if not views.parse_date(link.get('date'))
+        )
+        return {'sessions': sessions, 'undatedSessionCount': undated}
 
 
-def slim_sessions(rows):
+def build_calendar_sessions():
+    return build_calendar_snapshot()['sessions']
+
+
+def slim_sessions(rows, *, undated_count=None):
     fields = ('id', 'type', 'date', 'startTime', 'title', 'status', 'moduleCatalogueId', 'moduleId')
-    return {'sessions': [{key: row.get(key) for key in fields} for row in rows]}
+    payload = {'sessions': [{key: row.get(key) for key in fields} for row in rows]}
+    if undated_count is not None:
+        payload['undatedSessionCount'] = undated_count
+    return payload
 
 
 def build_sessions():
-    return slim_sessions(build_calendar_sessions())
+    snapshot = build_calendar_snapshot()
+    return slim_sessions(snapshot['sessions'], undated_count=snapshot['undatedSessionCount'])
+
+
+def cached_calendar_snapshot(request):
+    # The chart and calendar share the expensive read, including its per-key
+    # build lock and write-epoch invalidation. A navigation never rebuilds both.
+    return views.cached_curriculum_value('delivery-calendar:v3', build_calendar_snapshot,
+        force=views.request_bypasses_curriculum_cache(request), ttl=30)
 
 
 def cached_calendar_sessions(request):
-    # The chart and calendar share the expensive read, including its per-key
-    # build lock and write-epoch invalidation. A navigation never rebuilds both.
-    return views.cached_curriculum_value('delivery-calendar:v2', build_calendar_sessions,
-        force=views.request_bypasses_curriculum_cache(request), ttl=30)
+    return cached_calendar_snapshot(request)['sessions']
 
 
 def calendar_sessions(request):
@@ -119,7 +142,7 @@ def overview(request):
 @require_access('curriculum')
 def sessions(request):
     try:
-        rows = cached_calendar_sessions(request)
+        snapshot = cached_calendar_snapshot(request)
     except DatabaseError:
         return JsonResponse({'error': 'Delivery data could not be loaded. Please try again.'}, status=503)
-    return JsonResponse(slim_sessions(rows))
+    return JsonResponse(slim_sessions(snapshot['sessions'], undated_count=snapshot['undatedSessionCount']))

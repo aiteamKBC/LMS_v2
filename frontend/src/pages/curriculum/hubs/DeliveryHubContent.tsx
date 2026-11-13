@@ -41,6 +41,7 @@ export default function DeliveryHubContent({ overview, ...props }: Props) {
     activeModules={activeModules} totalModules={modules.length}
     modulesLoading={Boolean((modules.length || groups.length) && activity.loading && !activity.data)} modulesError={modules.length || groups.length ? activity.error : null}
     sessions={sessions.sessions} sessionsLoading={sessions.loading} sessionsError={sessions.error}
+    undatedSessionCount={sessions.undatedSessionCount}
     cards={props.cards.map(card => card.href === '/curriculum/session-calendar'
       ? { ...card, meta: sessions.loading ? 'Loading' : sessions.error && !live.length ? 'Unavailable' : `${live.length} sessions` } : card)}
   />;

@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { CurriculumDeliveryHub, CurriculumLibraryHub, CurriculumQualityHub } from '../page';
 
 const state = vi.hoisted(() => ({ data: null as Record<string, unknown> | null, loading: false, error: null as string | null }));
-const sessionRead = vi.hoisted(() => ({ sessions: [] as Array<Record<string, unknown>>, loading: false, error: null as string | null }));
+const sessionRead = vi.hoisted(() => ({ sessions: [] as Array<Record<string, unknown>>, undatedSessionCount: undefined as number | undefined, loading: false, error: null as string | null }));
 const moduleRead = vi.hoisted(() => ({ data: null as Record<string, unknown> | null, loading: false, error: '', today: '2026-11-13' }));
 const readers = vi.hoisted(() => ({ sessions: vi.fn(), modules: vi.fn(), programmes: vi.fn(), overview: vi.fn(), curriculum: vi.fn() }));
 
@@ -38,7 +38,7 @@ beforeEach(() => {
     // The compact overview omits sessions. The dashboard must use the actual calendar read.
     sessions: [],
   } });
-  Object.assign(sessionRead, { loading: false, error: null, sessions: [
+  Object.assign(sessionRead, { loading: false, error: null, undatedSessionCount: undefined, sessions: [
     { id: 's1', type: 'Live Session', date: '2026-11-09', startTime: '09:00', status: 'completed' },
     { id: 's2', type: 'Live Session', date: '2026-11-10', startTime: '09:00' },
     { id: 's3', type: 'Live Session', date: '2026-11-12', startTime: '09:00' },
@@ -148,6 +148,37 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('5');
     expect(screen.getByText('5 sessions')).toBeVisible();
     expect(screen.getByRole('img', { name: /13 Nov 2026: 2;/ })).toBeVisible();
+  });
+
+  it('shows the server undated count without adding it to scheduled totals or week bars', () => {
+    sessionRead.undatedSessionCount = 2;
+    renderDelivery();
+    expect(screen.getByText('2 live sessions without a valid date')).toBeVisible();
+    expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('5');
+    expect(screen.getByText('5 sessions')).toBeVisible();
+    expect(screen.getByRole('img', { name: /13 Nov 2026: 2;/ })).toBeVisible();
+    fireEvent.change(screen.getByLabelText('Session week'), { target: { value: '1' } });
+    expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^0next week$/);
+    expect(screen.getByText('2 live sessions without a valid date')).toBeVisible();
+  });
+
+  it('keeps the undated warning when there are no scheduled rows and a background refresh fails', () => {
+    sessionRead.sessions = [];
+    sessionRead.undatedSessionCount = 3;
+    sessionRead.error = 'Example refresh failure';
+    renderDelivery();
+    expect(screen.getByRole('alert')).toHaveTextContent('Example refresh failure');
+    expect(screen.getByText('3 live sessions without a valid date')).toBeVisible();
+  });
+
+  it('shows undated records even when the scheduled calendar is empty', () => {
+    sessionRead.sessions = [];
+    sessionRead.undatedSessionCount = 2;
+    renderDelivery();
+    expect(screen.getByText('2 live sessions without a valid date')).toBeVisible();
+    expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent(/^0this week$/);
+    expect(screen.getByText('0 sessions')).toBeVisible();
+    expect(screen.getByRole('img', { name: /^Live sessions by day: 9 Nov 2026: 0;/ })).toBeVisible();
   });
 
   it('keeps navigation while loading without presenting zero counts or assignment success', () => {

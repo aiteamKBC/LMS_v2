@@ -59,6 +59,9 @@ class DashboardReadTests(unittest.TestCase):
             connection=SimpleNamespace(vendor='sqlite'), has_column=lambda *args: True,
             curriculum_read_scope=nullcontext, authoring_fetch_all=self.fetch,
             clean_str=lambda value: str(value or '').strip(),
+            # The mocked link reader has already resolved dates. The projection
+            # parity suite exercises real validation, including invalid dates.
+            parse_date=lambda value: value or None,
             serialize_group_authoring_detail=lambda row: row,
             serialize_cohort_authoring_detail=lambda row, holidays: row,
             # Existing relationship builder supplies resolved clocks and membership.
@@ -121,6 +124,7 @@ class DashboardReadTests(unittest.TestCase):
         result = json.loads(self.request('sessions').content)
         self.assertEqual(result['sessions'][0]['date'], self.generated[0]['date'])
         self.assertEqual(result['sessions'][0]['startTime'], '09:30')
+        self.assertEqual(result['undatedSessionCount'], 0)
         self.assertNotIn('privateContent', result['sessions'][0])
         self.views.build_sessions_from_authoring_modules.assert_called_once()
         args, kwargs = self.views.build_sessions_from_authoring_modules.call_args
@@ -157,7 +161,7 @@ class DashboardReadTests(unittest.TestCase):
         self.views.cached_curriculum_value = Mock(side_effect=lambda key, factory, **kwargs: factory())
         self.request(); self.request('sessions')
         calls = self.views.cached_curriculum_value.call_args_list
-        self.assertEqual([call.args[0] for call in calls], ['delivery-dashboard:v1:overview', 'delivery-calendar:v2'])
+        self.assertEqual([call.args[0] for call in calls], ['delivery-dashboard:v1:overview', 'delivery-calendar:v3'])
         self.assertTrue(all(call.kwargs == {'force': False, 'ttl': 30} for call in calls))
 
     def test_chart_and_calendar_share_one_build_and_keep_the_existing_collection_contract(self):
@@ -167,8 +171,11 @@ class DashboardReadTests(unittest.TestCase):
                 cache[key] = factory()
             return cache[key]
         self.views.cached_curriculum_value = cached
+        self.views.authoring_session_links_by_catalogue.return_value = {'M1': [{'date': '2026-11-17'}, {'date': ''}]}
         chart = json.loads(self.request('sessions').content)
         calendar = json.loads(self.request('calendar_sessions').content)
+        self.assertEqual(chart['undatedSessionCount'], 1)
+        self.assertEqual(set(calendar), {'schema', 'count', 'results'})
         self.assertEqual(calendar['schema'], 'curriculum')
         self.assertEqual(calendar['count'], len(chart['sessions']))
         self.assertEqual(chart['sessions'], self.n['slim_sessions'](calendar['results'])['sessions'])

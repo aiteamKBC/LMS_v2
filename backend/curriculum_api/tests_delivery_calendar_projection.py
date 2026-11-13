@@ -130,19 +130,74 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         _, _, calendar = self.compare()
         self.assertIn('UNALLOCATED', [row['moduleCatalogueId'] for row in calendar])
 
+    def test_dashboard_counts_undated_live_components_without_changing_calendar_rows(self):
+        before_calendar = delivery_dashboard.build_calendar_sessions()
+        for identifier, day in [('blank', ''), ('invalid', '2030-02-30')]:
+            self.components.append(dict(id=identifier, module_catalogue_id='M1', week_id='W1',
+                display_order=1, type='live_session', settings_json={'sessionDate': day,
+                    'extraTeamsMeetingUrl': 'https://example.invalid/additional'}))
+        before_components = copy.deepcopy(self.components)
+        self.reads.clear()
+        dashboard = delivery_dashboard.build_sessions()
+        self.assertEqual(dashboard['undatedSessionCount'], 2)
+        self.assertEqual(len(self.reads), 5)
+        self.assertEqual(len(dashboard['sessions']), len(before_calendar))
+        self.assertEqual(delivery_dashboard.build_calendar_sessions(), before_calendar)
+        self.assertEqual(self.components, before_components)
+        self.compare()
+
+    def test_primary_live_date_resolved_by_the_plan_is_not_reported_as_missing(self):
+        self.components[0]['settings_json'] = {'sessionDate': ''}
+        dashboard = delivery_dashboard.build_sessions()
+        self.assertEqual(dashboard['undatedSessionCount'], 0)
+        self.assertEqual(len(dashboard['sessions']), 2)
+        self.compare()
+
+    def test_all_undated_components_remain_counted_with_an_empty_calendar(self):
+        for component in self.components:
+            settings = json.loads(component['settings_json'])
+            settings['sessionDate'] = ''
+            component['settings_json'] = settings
+        payload = delivery_dashboard.build_sessions()
+        self.assertEqual(payload, {'sessions': [], 'undatedSessionCount': 2})
+        self.compare()
+
+    def test_undated_warning_uses_the_existing_archived_deleted_and_detached_scope(self):
+        self.weeks.extend([
+            dict(id='WA', module_catalogue_id='ARCH', week_number=1, display_order=0),
+            dict(id='WD', module_catalogue_id='M1', week_number=3, display_order=3,
+                 library_state=views.LIBRARY_STATE_DETACHED),
+        ])
+        for identifier, mid, week, extra in [
+            ('missing', 'M1', 'W1', {}),
+            ('archived', 'ARCH', 'WA', {}),
+            ('detached', 'M1', 'WD', {}),
+            ('deleted', 'M1', 'W1', {'deleted_at': '2030-09-01'}),
+        ]:
+            self.components.append(dict(id=identifier, module_catalogue_id=mid, week_id=week,
+                display_order=2, type='live_session', settings_json={'sessionDate': '',
+                    'extraTeamsMeetingUrl': 'https://example.invalid/additional'}, **extra))
+        self.assertEqual(delivery_dashboard.build_sessions()['undatedSessionCount'], 1)
+        self.compare()
+
     @override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}})
     def test_chart_and_calendar_cache_invalidate_together_after_a_curriculum_write(self):
         from django.test import RequestFactory
         request = RequestFactory().get('/curriculum/sessions/')
         generation = [1001]
-        key = 'delivery-calendar:v2'
+        key = 'delivery-calendar:v3'
         views._CURRICULUM_CACHE.pop(key, None)
         self.addCleanup(views._CURRICULUM_CACHE.pop, key, None)
         with patch.object(views, 'shared_curriculum_epoch', side_effect=lambda: generation[0]), \
-             patch.object(delivery_dashboard, 'build_calendar_sessions', side_effect=[[{'id': 'one'}], [{'id': 'two'}]]) as builder:
+             patch.object(delivery_dashboard, 'build_calendar_snapshot', side_effect=[
+                 {'sessions': [{'id': 'one'}], 'undatedSessionCount': 2},
+                 {'sessions': [{'id': 'two'}], 'undatedSessionCount': 0},
+             ]) as builder:
             first = delivery_dashboard.cached_calendar_sessions(request)
             self.assertEqual(delivery_dashboard.cached_calendar_sessions(request), first)
+            self.assertEqual(delivery_dashboard.cached_calendar_snapshot(request)['undatedSessionCount'], 2)
             builder.assert_called_once()
             generation[0] += 1
             self.assertEqual(delivery_dashboard.cached_calendar_sessions(request), [{'id': 'two'}])
+            self.assertEqual(delivery_dashboard.cached_calendar_snapshot(request)['undatedSessionCount'], 0)
             self.assertEqual(builder.call_count, 2)
