@@ -6,6 +6,7 @@ Run through a verified isolated test runner, never the application database.
 """
 import copy
 import json
+from contextlib import ExitStack
 from unittest.mock import patch
 from django.test import SimpleTestCase, override_settings
 from . import views, delivery_dashboard, learner_assignment_counts_sql
@@ -76,6 +77,56 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         fields=('id','type','date','startTime','timeZone','title','status','moduleCatalogueId','moduleId')
         self.assertEqual(calendar,[{key:s.get(key) for key in fields} for s in original_calendar['sessions']])
         return original,small,calendar
+
+    def production_reader_parity(self):
+        """Use the actual main row reader, not an invented legacy training input.
+
+        get_training_rows() currently projects the normalized authoring tables.
+        The older prefer_authoring_module_sessions() compatibility contract can
+        accept unmatched training rows, but that is not an independent source
+        read by the live endpoint. Keep this boundary covered before adding a
+        legacy fallback that would change main's data source or read cost.
+        """
+        with ExitStack() as sources:
+            sources.enter_context(patch.object(views, 'table_exists', return_value=False))
+            for name in ('get_ksb_profile_rows', 'get_program_config_rows', 'get_tutor_rows',
+                         'get_coach_rows', 'get_tutor_module_rows'):
+                sources.enter_context(patch.object(views, name, return_value=[]))
+            rows = views.get_curriculum_rows(compact=False)
+        original = views.build_curriculum_payload_from_rows(rows, compact=False)
+        from django.test import RequestFactory
+        request = RequestFactory().get('/curriculum/sessions/')
+        endpoint = views.curriculum_sessions
+        while hasattr(endpoint, '__wrapped__'):
+            endpoint = endpoint.__wrapped__
+        self.reads.clear()
+        with patch.object(views, 'cached_curriculum_value', side_effect=lambda key, build, **kw: build()), \
+             patch.object(views, 'get_cached_payload', side_effect=AssertionError('Full overview must not be loaded')):
+            response = endpoint(request)
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual(payload['results'], original['sessions'])
+        self.assertEqual(payload['count'], len(original['sessions']))
+        self.assertEqual(len(self.reads), 5)
+        return rows, payload
+
+    def test_live_source_reader_preserves_training_plan_origin_sessions_without_an_extra_legacy_read(self):
+        self.modules[0].update(module_catalogue_id='MOD-LEGACY-1', source_type='training_plan', source_id='legacy-delivery-1')
+        for row in [*self.weeks, *self.components]:
+            row['module_catalogue_id'] = 'MOD-LEGACY-1'
+        before = copy.deepcopy((self.modules, self.weeks, self.components))
+        rows, payload = self.production_reader_parity()
+        self.assertEqual({row['id'] for row in rows['training']}, {'MOD-LEGACY-1', 'M2', 'ARCH'})
+        self.assertEqual({row['moduleCatalogueId'] for row in payload['results']}, {'MOD-LEGACY-1'})
+        self.assertEqual({row['trainingPlanId'] for row in payload['results']}, {'legacy-delivery-1'})
+        self.assertEqual(len(payload['results']), 2)
+        self.assertEqual((self.modules, self.weeks, self.components), before)
+
+    def test_live_source_reader_does_not_regenerate_training_plan_sessions_without_authored_components(self):
+        self.modules[0].update(source_type='training_plan', source_id='legacy-delivery-1', sessions_number=14)
+        self.components = []
+        _, payload = self.production_reader_parity()
+        self.assertEqual(payload['results'], [])
     def test_allocations_dates_clocks_and_empty_modules_match_main(self):
         original,small,calendar=self.compare(); self.assertEqual(len(calendar),2)
         self.assertNotIn('ARCH',[m['id'] for m in small['modules']]); self.assertNotIn('UNALLOCATED',[m['id'] for m in small['modules']])
