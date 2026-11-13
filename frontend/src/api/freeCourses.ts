@@ -7,9 +7,9 @@ import type { LearnerKind } from './learnerDetail';
 // Learner-facing free-courses API client.
 //
 // Reads the free courses assigned to a learner from the learner-gated endpoint
-// /learner_api/free-courses/<kind>/<pk>/. Free courses carry no hours, KSBs or
-// progress by design, so this shape deliberately has none of those fields — it
-// is the authored week/activity tree and nothing more.
+// /learner_api/free-courses/<kind>/<pk>/. Builder courses carry a moduleId and
+// open the normal learning workspace; only legacy courses use the tree and
+// isolated completion endpoints in this client.
 // ============================================================================
 
 /** One openable activity inside a free-course week. */
@@ -52,6 +52,11 @@ export interface FreeCourse {
   description: string;
   coverImageUrl: string;
   weeks: FreeCourseWeek[];
+  /** Normal plan identity: use the module workspace for progress and hours. */
+  moduleId?: string;
+  weekCount?: number;
+  activityCount?: number;
+  hours?: number;
 }
 
 const BASE = '/learner_api/free-courses';
@@ -63,7 +68,7 @@ const freeCoursesResource = createCachedResource<FreeCourse[]>('learner-free-cou
 
 /** The free courses assigned to this learner, each with its week/activity tree. */
 export function fetchLearnerFreeCourses(kind: LearnerKind, id: string, force = false): Promise<FreeCourse[]> {
-  return freeCoursesResource.read(`${kind}:${id}`, { force });
+  return freeCoursesResource.read(`${kind}:${id}`, { force, revalidate: true });
 }
 
 /** Render a revisit immediately, without a loading-frame flash. */
