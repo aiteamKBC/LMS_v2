@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
+from curriculum_api.learning_storage import read_sql
+
 
 class QuizPlacementTests(unittest.TestCase):
     def setUp(self):
@@ -14,8 +16,10 @@ class QuizPlacementTests(unittest.TestCase):
         self.addCleanup(guard.stop)
         self.cursor = MagicMock()
         connection = MagicMock()
+        connection.vendor = 'sqlite'
+        self.cursor.db = connection
         connection.cursor.return_value.__enter__.return_value = self.cursor
-        self.scope = {'connections': {'enrolment': connection}, 'DatabaseError': RuntimeError,
+        self.scope = {'connections': {'enrolment': connection}, 'DatabaseError': RuntimeError, 'read_sql': read_sql,
                       'logger': MagicMock(), '_s': lambda value: '' if value is None else str(value),
                       '_MODULE_ASSESSMENTS_WEEK_LABEL': 'Module assessments'}
         path = Path(__file__).with_name('learner_detail.py')

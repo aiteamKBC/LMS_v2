@@ -161,7 +161,8 @@ class MonthlyProjectionTests(SimpleTestCase):
 
     def test_navigation_sql_aggregates_without_returning_sessions(self):
         cursor = MagicMock()
-        with patch.object(monthly.schedule, 'rows', return_value=[]):
+        with patch.object(monthly.schedule, 'rows', return_value=[]), \
+             patch.object(monthly.schedule, 'connections', {'enrolment': SimpleNamespace(vendor='sqlite')}):
             monthly.schedule._plan_session_rows(cursor, 'synthetic@example.invalid', ['M1'], navigation_only=True, rail_only=True)
         sql, params = cursor.execute.call_args.args
         self.assertIn('min(coalesce(scheduled_start,start_datetime)) AS first_start', sql)
