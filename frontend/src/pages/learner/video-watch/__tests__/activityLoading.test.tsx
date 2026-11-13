@@ -9,6 +9,9 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main>,
 }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
+vi.mock('@/hooks/useWebPointPlan', () => ({
+  useWebPointPlan: () => ({ data: null, loading: false, refresh: vi.fn() }),
+}));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({
   useLearnerWorkspaceAccess: () => ({ canProgress: true, showReadOnlyNotice: false }),
 }));
@@ -61,11 +64,13 @@ describe('activity content loading', () => {
     vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {})).mockResolvedValueOnce(reply());
     mount();
     await act(() => vi.advanceTimersByTimeAsync(120_000));
-    expect(screen.getByText(/Loading is taking longer/)).toBeVisible();
+    // The viewer shows an actionable, sanitised error rather than raw
+    // transport diagnostics; the signal proves the deadline still fired.
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load this learning activity');
     expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Try again' })); });
     expect(screen.getByText('The selected lesson is available.')).toBeVisible();
-    expect(screen.queryByText(/Loading is taking longer/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

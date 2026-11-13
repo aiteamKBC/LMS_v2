@@ -1,10 +1,14 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import Page from './page';
 import { getLmsIntroduction, getLmsIntroductionTimes, LmsIntroductionError, requestLmsIntroduction, slotLabel, type LmsIntroductionState } from '@/api/lmsIntroduction';
 vi.mock('@/api/lmsIntroduction', async original => ({ ...await original<typeof import('@/api/lmsIntroduction')>(), getLmsIntroduction: vi.fn(), getLmsIntroductionTimes: vi.fn(), requestLmsIntroduction: vi.fn() }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-01T09:00:00Z'));
+});
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
 
 const base: LmsIntroductionState = { learnerName: 'Example Learner', caseOwner: 'Example Coach', durationMinutes: 30, times: ['09:00', '09:30', '10:30'], request: null };
 const booked = { date: '2026-11-09', time: '10:30', note: 'Mornings', status: 'scheduled' as const, inviteSent: true, meetingLink: 'https://teams.example/join' };

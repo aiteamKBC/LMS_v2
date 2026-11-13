@@ -526,9 +526,15 @@ it.each(['commercial', 'apprenticeship'] as const)('saves a changed %s MCM link 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
   expect(vi.mocked(checkMonthlyAssignment).mock.calls.at(-1)?.[0]).toMatchObject({ monthlyAssignment: { meetingKey: newMeeting.eventKey } });
   fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
-  const confirm = await screen.findByRole('button', { name: 'Confirm time' });
-  fireEvent.click(confirm);
-  await waitFor(() => expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({ assignmentTopicId: '2', assignmentAnswer: 'Keep my assignment answer' })));
+  await waitFor(() => expect(props.onSubmitProgress).toHaveBeenCalledWith(expect.objectContaining({
+    assignmentTopicId: '2', assignmentAnswer: 'Keep my assignment answer',
+    timeTakenSeconds: 12600, timeEntrySource: 'input',
+  })));
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0]).toMatchObject({
+    // The wizard saves the draft; the completion callback owns the atomic
+    // declaration and final submission rather than a second reflection POST.
+    actualTimeHours: '3.5', submissionMode: 'draft', otjhConfirmed: false, signedDeclaration: false,
+  });
   expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0].monthlyAssignment.meetingKey).toBe(newMeeting.eventKey);
 });
 

@@ -39,7 +39,7 @@ describe('signed-in learner identity', () => {
 
   it('ignores another tab overwriting the remembered learner', () => {
     rememberSignedInLearner('learner', 499, 'commercial');
-    const { result, rerender } = renderHook(useMyLearner);
+    const { result, rerender } = renderHook(useMyLearner, { wrapper });
     localStorage.setItem('my_learner', JSON.stringify({ kind: 'commercial', id: '125' }));
     rerender();
     expect(result.current).toEqual(ownLearner);
@@ -56,7 +56,7 @@ describe('signed-in learner identity', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Storage blocked'); });
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage blocked'); });
     rememberSignedInLearner('learner', 499, 'commercial');
-    expect(renderHook(useMyLearner).result.current).toEqual(ownLearner);
+    expect(renderHook(useMyLearner, { wrapper }).result.current).toEqual(ownLearner);
   });
 
   it('updates the identity when a different learner signs in', () => {
