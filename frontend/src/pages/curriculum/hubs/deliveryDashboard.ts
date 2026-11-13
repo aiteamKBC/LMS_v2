@@ -1,10 +1,12 @@
 import { SYSTEM_TIME_ZONE } from '@/lib/format';
+import { localClockToUtcIso } from '@/lib/timeZones';
 
 export interface DeliveryLiveSession {
   id: string;
   type: string;
   date: string;
   startTime?: string;
+  timeZone?: string;
   title?: string;
   status?: string;
   moduleCatalogueId?: string;
@@ -27,11 +29,13 @@ export function deliveryDateLabel(value: string, weekday = false) {
   }).format(date) : 'Date unavailable';
 }
 
+const businessClockFormatter = new Intl.DateTimeFormat('en-GB', {
+  timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
 export function deliveryBusinessClock(now: Date) {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now);
+  const parts = businessClockFormatter.formatToParts(now);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(value => value.type === type)?.value ?? '';
   return { date: `${part('year')}-${part('month')}-${part('day')}`, time: `${part('hour')}:${part('minute')}` };
 }
@@ -51,6 +55,37 @@ export function deliverySessionTime(value: string | undefined) {
   return minutes === null ? 'Time not set' : `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
+type BusinessClock = Pick<DeliveryLiveSession, 'date' | 'startTime' | 'timeZone'> & { instant?: number; timeIssue?: boolean };
+// Reuse conversions across chart/week changes, staffing and minute ticks. Weak
+// keys release old responses; the signature also guards in-place field updates.
+const businessClocks = new WeakMap<DeliveryLiveSession, { signature: string; clock: BusinessClock }>();
+
+function businessSession(session: DeliveryLiveSession) {
+  const signature = JSON.stringify([session.date, session.startTime, session.timeZone]);
+  const cached = businessClocks.get(session);
+  if (cached?.signature === signature) return { ...session, ...cached.clock };
+  const zone = String(session.timeZone || SYSTEM_TIME_ZONE).trim() || SYSTEM_TIME_ZONE;
+  let clock: BusinessClock = { date: session.date, startTime: session.startTime, timeZone: zone };
+  if (calendarDate(session.date)) {
+    if (clockMinutes(session.startTime) !== null) {
+      try {
+        const instant = Date.parse(localClockToUtcIso(`${session.date}T${deliverySessionTime(session.startTime)}`, zone));
+        const business = deliveryBusinessClock(new Date(instant));
+        clock = { date: business.date, startTime: business.time, timeZone: SYSTEM_TIME_ZONE, instant };
+      } catch {
+        // Bad/ambiguous zones and DST gaps cannot be labelled as UK instants.
+        // Keep the saved row intact and surface a visible scheduling warning.
+        clock = { ...clock, startTime: undefined, timeIssue: true };
+      }
+    } else {
+      const ukDayKnown = [SYSTEM_TIME_ZONE, 'GMT Standard Time'].includes(zone);
+      clock = { ...clock, startTime: undefined, timeIssue: Boolean(String(session.startTime ?? '').trim()) || !ukDayKnown };
+    }
+  }
+  businessClocks.set(session, { signature, clock });
+  return { ...session, ...clock };
+}
+
 export function deliveryLiveSessions(sessions: readonly DeliveryLiveSession[]) {
   const seen = new Set<string>();
   return sessions.filter(session => {
@@ -68,21 +103,22 @@ export function deliveryWeek(sessions: readonly DeliveryLiveSession[], now: Date
   const business = deliveryBusinessClock(now);
   const first = calendarDate(business.date)!;
   first.setUTCDate(first.getUTCDate() - (first.getUTCDay() + 6) % 7 + offset * 7);
-  const live = deliveryLiveSessions(sessions);
+  const live = deliveryLiveSessions(sessions).map(businessSession);
+  const dated = live.filter(session => calendarDate(session.date) && !session.timeIssue);
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(first);
     date.setUTCDate(first.getUTCDate() + index);
     const iso = date.toISOString().slice(0, 10);
     return { date: iso, day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][index],
-      number: date.getUTCDate(), count: live.filter(session => session.date === iso).length };
+      number: date.getUTCDate(), count: dated.filter(session => session.date === iso).length };
   });
-  const currentMinute = clockMinutes(business.time)!;
-  const dated = live.filter(session => calendarDate(session.date));
-  const next = dated.filter(session => normalise(session.status) !== 'completed' && (
-    session.date > business.date || session.date === business.date && (clockMinutes(session.startTime) ?? 1440) >= currentMinute
-  )).sort((a, b) => a.date.localeCompare(b.date) || (clockMinutes(a.startTime) ?? 1440) - (clockMinutes(b.startTime) ?? 1440))[0];
+  const next = dated.filter(session => normalise(session.status) !== 'completed' && (session.instant !== undefined
+    ? session.instant >= now.getTime() : session.date >= business.date
+  )).sort((a, b) => a.date.localeCompare(b.date) || (a.instant !== undefined && b.instant !== undefined
+    ? a.instant - b.instant : (clockMinutes(a.startTime) ?? 1440) - (clockMinutes(b.startTime) ?? 1440)))[0];
   return { days, count: days.reduce((sum, day) => sum + day.count, 0), total: live.length,
-    undated: live.length - dated.length, next, today: business.date };
+    undated: live.filter(session => !calendarDate(session.date)).length,
+    invalidTimes: live.filter(session => session.timeIssue).length, next, today: business.date };
 }
 
 export function cohortSegments(cohorts: readonly { status?: string }[]) {
@@ -123,8 +159,8 @@ export function deliveryStaffing(
   const end = calendarDate(today)!;
   end.setUTCDate(end.getUTCDate() + 13);
   const endDate = end.toISOString().slice(0, 10);
-  const upcoming = new Set(deliveryLiveSessions(sessions)
-    .filter(session => calendarDate(session.date) && session.date >= today && session.date <= endDate && normalise(session.status) !== 'completed')
+  const upcoming = new Set(deliveryLiveSessions(sessions).map(businessSession)
+    .filter(session => !session.timeIssue && calendarDate(session.date) && session.date >= today && session.date <= endDate && normalise(session.status) !== 'completed')
     .map(session => session.moduleCatalogueId || session.moduleId));
   const missing = (value?: string) => ['', 'unassigned', 'not assigned', 'tbc'].includes(normalise(value));
   return {

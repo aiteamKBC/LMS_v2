@@ -77,4 +77,59 @@ describe('Delivery weekly display of saved live-session dates', () => {
     ];
     expect(deliveryStaffing(modules, groups, sessions, new Set(['active', 'free', 'staffed']), '2026-11-13')).toEqual({ needsTutor: 2, needsCoach: 1 });
   });
+
+  it.each([
+    ['2026-07-06', 'Africa/Cairo', '09:00'],
+    ['2026-10-28', 'Egypt Standard Time', '08:00'],
+    ['2026-10-30', 'Africa/Cairo', '09:00'],
+  ])('renders the saved source clock in UK time using event-date rules on %s', (date, timeZone, expectedTime) => {
+    const session = Object.freeze({ id: 'foreign', type: 'Live Session', date, startTime: '11:00', timeZone });
+    const week = deliveryWeek([session], new Date(`${date}T00:00:00Z`));
+    expect(week.next).toMatchObject({ id: 'foreign', date, startTime: expectedTime });
+    expect(session.startTime).toBe('11:00');
+    expect(session.timeZone).toBe(timeZone);
+  });
+
+  it('orders upcoming sessions by their instant across source dates and excludes starts already passed', () => {
+    const sessions = [
+      { id: 'passed', type: 'Live Session', date: '2026-11-14', startTime: '00:30', timeZone: 'Asia/Dubai' },
+      { id: 'next', type: 'Live Session', date: '2026-11-14', startTime: '00:30', timeZone: 'Africa/Cairo' },
+      { id: 'later', type: 'Live Session', date: '2026-11-13', startTime: '23:30', timeZone: 'America/New_York' },
+    ];
+    const week = deliveryWeek(sessions, new Date('2026-11-13T21:00:00Z'));
+    expect(week.next).toMatchObject({ id: 'next', date: '2026-11-13', startTime: '22:30' });
+    expect(deliveryWeek(sessions, new Date('2026-11-13T23:00:00Z')).next)
+      .toMatchObject({ id: 'later', date: '2026-11-14', startTime: '04:30' });
+  });
+
+  it('buckets sessions into the UK day and week at both sides of midnight', () => {
+    const sessions = [
+      { id: 'east', type: 'Live Session', date: '2026-11-16', startTime: '00:30', timeZone: 'Africa/Cairo' },
+      { id: 'west', type: 'Live Session', date: '2026-11-15', startTime: '23:30', timeZone: 'America/New_York' },
+    ];
+    const now = new Date('2026-11-13T10:00:00Z');
+    expect(deliveryWeek(sessions, now).days[6]).toMatchObject({ date: '2026-11-15', count: 1 });
+    expect(deliveryWeek(sessions, now, 1).days[0]).toMatchObject({ date: '2026-11-16', count: 1 });
+  });
+
+  it('uses UK dates for the existing soon-teaching staffing window', () => {
+    const modules = [{ id: 'edge', tutor: '' }, { id: 'outside', tutor: '' }];
+    const sessions = [
+      { id: 'east', type: 'Live Session', moduleId: 'edge', date: '2026-11-27', startTime: '00:30', timeZone: 'Africa/Cairo' },
+      { id: 'west', type: 'Live Session', moduleId: 'outside', date: '2026-11-26', startTime: '23:30', timeZone: 'America/New_York' },
+    ];
+    expect(deliveryStaffing(modules, [], sessions, new Set(), '2026-11-13').needsTutor).toBe(1);
+  });
+
+  it.each([
+    ['2026-11-13', '09:00', 'Unknown/Zone'],
+    ['2026-03-29', '01:30', 'Europe/London'],
+    ['2026-10-25', '01:30', 'Europe/London'],
+  ])('flags an unresolvable source clock without inventing a UK instant: %s %s %s', (date, startTime, timeZone) => {
+    const week = deliveryWeek([{ id: 'check', type: 'Live Session', date, startTime, timeZone }], new Date(`${date}T00:00:00Z`));
+    expect(week.next).toBeUndefined();
+    expect(week.count).toBe(0);
+    expect(week.undated).toBe(0);
+    expect(week.invalidTimes).toBe(1);
+  });
 });

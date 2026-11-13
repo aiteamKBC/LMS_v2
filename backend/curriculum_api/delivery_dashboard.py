@@ -92,7 +92,7 @@ def build_calendar_sessions():
 
 
 def slim_sessions(rows, *, undated_count=None):
-    fields = ('id', 'type', 'date', 'startTime', 'title', 'status', 'moduleCatalogueId', 'moduleId')
+    fields = ('id', 'type', 'date', 'startTime', 'timeZone', 'title', 'status', 'moduleCatalogueId', 'moduleId')
     payload = {'sessions': [{key: row.get(key) for key in fields} for row in rows]}
     if undated_count is not None:
         payload['undatedSessionCount'] = undated_count

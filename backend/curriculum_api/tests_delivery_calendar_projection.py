@@ -73,7 +73,7 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         self.assertEqual(sorted((c['id'],c['status']) for c in small['cohorts']),sorted((c['id'],c['status']) for c in original['cohorts']))
         self.assertEqual(sorted((g['id'],g['cohortId'],sorted(g['moduleIds'])) for g in small['groups']),sorted((g['id'],g['cohortId'],sorted(g['moduleIds'])) for g in original['groups']))
         self.assertEqual(delivery_dashboard.build_calendar_sessions(),original_calendar['sessions'])
-        fields=('id','type','date','startTime','title','status','moduleCatalogueId','moduleId')
+        fields=('id','type','date','startTime','timeZone','title','status','moduleCatalogueId','moduleId')
         self.assertEqual(calendar,[{key:s.get(key) for key in fields} for s in original_calendar['sessions']])
         return original,small,calendar
     def test_allocations_dates_clocks_and_empty_modules_match_main(self):
@@ -95,6 +95,20 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
     def test_booked_clock_does_not_move_with_the_group_clock(self):
         self.groups[0]['session_start_time']='13:00'; self.groups[0]['session_end_time']='14:30'
         _,_,calendar=self.compare(); self.assertTrue(all(s['startTime']=='09:30' for s in calendar))
+
+    def test_dashboard_preserves_confirmed_session_timezone_and_wall_clock(self):
+        settings=json.loads(self.components[0]['settings_json'])
+        settings.update(sessionDate='2030-09-06',sessionTime='00:30',sessionTimeZone='Africa/Cairo')
+        self.components[0]['settings_json']=settings
+        before=copy.deepcopy(self.components)
+        self.reads.clear()
+        sessions=delivery_dashboard.build_sessions()['sessions']
+        self.assertEqual(len(self.reads),5)
+        self.assertEqual(sessions[0]['date'],'2030-09-06')
+        self.assertEqual(sessions[0]['startTime'],'00:30')
+        self.assertEqual(sessions[0]['timeZone'],'Africa/Cairo')
+        self.assertEqual(self.components,before)
+        self.compare()
     def test_soft_deleted_modules_are_not_counted_or_scheduled(self):
         self.modules[0]['deleted_at']='2030-09-01'
         _,small,calendar=self.compare(); self.assertNotIn('M1',[m['id'] for m in small['modules']]); self.assertEqual(calendar,[])

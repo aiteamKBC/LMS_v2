@@ -54,6 +54,23 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('Delivery dashboard using existing curriculum reads', () => {
+  it('shows the UK date and clock in both next-session labels and the weekly chart', () => {
+    sessionRead.sessions = [{ id: 'cairo', type: 'Live Session', date: '2026-11-16', startTime: '00:30', timeZone: 'Africa/Cairo' }];
+    renderDelivery();
+    expect(screen.getAllByText(/15 Nov · 22:30 UK/)).toHaveLength(2);
+    expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('1');
+    expect(screen.getByRole('img', { name: /Live sessions by day:.*15 Nov 2026: 1/ })).toBeVisible();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Session week' }), { target: { value: '1' } });
+    expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('0');
+  });
+
+  it('makes an invalid source time zone visible instead of labelling its clock as UK time', () => {
+    sessionRead.sessions = [{ id: 'check', type: 'Live Session', date: '2026-11-13', startTime: '11:00', timeZone: 'Unknown/Zone' }];
+    renderDelivery();
+    expect(screen.getByText('1 live sessions need their time or time zone checked')).toBeVisible();
+    expect(screen.queryByText(/13 Nov · 11:00 UK/)).not.toBeInTheDocument();
+  });
+
   it('skips the full overview/programmes and starts live dates and activity while the small summary is loading', () => {
     state.data = null; state.loading = true;
     const view = renderDelivery();

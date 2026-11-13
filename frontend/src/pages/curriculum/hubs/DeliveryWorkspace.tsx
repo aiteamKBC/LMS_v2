@@ -135,6 +135,7 @@ export default function DeliveryWorkspace({
             {!week.count && <span className={styles.srOnly}>No live sessions in the selected week.</span>}
           </>}
           {!sessionsLoading && undated > 0 && <p className={styles.activityWarning}>{number.format(undated)} live sessions without a valid date</p>}
+          {!sessionsLoading && week.invalidTimes > 0 && <p className={styles.activityWarning}>{number.format(week.invalidTimes)} live sessions need their time or time zone checked</p>}
           <div className={styles.statFooter}><Link to="/curriculum/session-calendar">View session calendar <AppIcon className="ri-arrow-right-line" size={13} /></Link><span>UK time</span></div>
         </article>
       </section>
