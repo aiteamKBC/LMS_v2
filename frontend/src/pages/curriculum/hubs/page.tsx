@@ -6,8 +6,10 @@ import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import type { CurriculumProgramme } from '@/lib/curriculumApi';
+import type { ReactNode } from 'react';
 import { curriculumNavItems } from '@/mocks/navigation';
 import DeliveryHubContent from './DeliveryHubContent';
+import { useDeliveryOverview } from './useDeliveryData';
 
 type HubKind = 'library' | 'delivery' | 'quality';
 type HubCard = {
@@ -97,7 +99,27 @@ function NotBuiltPanel() {
 function CurriculumHub({ kind }: { kind: HubKind }) {
   // Delivery has no programme-list consumer. Do not mount that reader (or its
   // refresh subscriptions) merely to render the shared shell.
-  return kind === 'delivery' ? <CurriculumHubView kind={kind} programmes={[]} /> : <ReferenceHub kind={kind} />;
+  return kind === 'delivery' ? <DeliveryHub /> : <ReferenceHub kind={kind} />;
+}
+
+function HubShell({ kind, children }: { kind: HubKind; children: ReactNode }) {
+  const copy = HUB_COPY[kind];
+  return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
+    workspaceLabel="Curriculum Studio" pageTitle={copy.title} pageSubtitle={copy.description}
+    userName="Rachel Myers" userRole="Curriculum Designer">{children}</WorkspaceShell>;
+}
+
+function DeliveryHub() {
+  const { data, loading, error, reload } = useDeliveryOverview();
+  const modules = data?.modules ?? []; const cohorts = data?.cohorts ?? []; const groups = data?.groups ?? [];
+  return <HubShell kind="delivery"><DeliveryHubContent overview={data} loading={loading} error={error}
+    unavailable={!data && !loading && Boolean(error)} onRetry={reload} description={HUB_COPY.delivery.description}
+    cards={hubCards('delivery', { modules: modules.length, cohorts: cohorts.length, groups: groups.length, sessions: 0, draftModules: 0, mappingGaps: 0 })}
+    attentionItems={[
+      { label: 'Groups without a coach', value: groups.filter(group => isMissingAssignment(group.coach)).length, href: '/curriculum/groups', icon: 'ri-user-search-line' },
+      { label: 'Modules without a tutor', value: modules.filter(module => isMissingAssignment(module.tutor)).length, href: '/curriculum/module-builder', icon: 'ri-user-settings-line' },
+      { label: 'Planned or inactive cohorts', value: cohorts.filter(cohort => normalise(cohort.status) !== 'active').length, href: '/curriculum/cohorts', icon: 'ri-calendar-todo-line' },
+    ]} /></HubShell>;
 }
 
 function ReferenceHub({ kind }: { kind: 'library' | 'quality' }) {
@@ -107,7 +129,7 @@ function ReferenceHub({ kind }: { kind: 'library' | 'quality' }) {
 }
 
 function CurriculumHubView({ kind, programmes, programmesLoading = false, programmesError = null }: {
-  kind: HubKind; programmes: CurriculumProgramme[]; programmesLoading?: boolean; programmesError?: string | null;
+  kind: 'library' | 'quality'; programmes: CurriculumProgramme[]; programmesLoading?: boolean; programmesError?: string | null;
 }) {
   const { data, loading: dataLoading, error: dataError } = useCurriculumData({ compact: true });
   const loading = dataLoading || programmesLoading;
@@ -146,31 +168,8 @@ function CurriculumHubView({ kind, programmes, programmesLoading = false, progra
   });
 
   return (
-    <WorkspaceShell
-      role="curriculum"
-      roleLabel="Curriculum Designer"
-      navItems={curriculumNavItems}
-      workspaceLabel="Curriculum Studio"
-      pageTitle={copy.title}
-      pageSubtitle={copy.description}
-      userName="Rachel Myers"
-      userRole="Curriculum Designer"
-    >
-      {kind === 'delivery' ? (
-        <DeliveryHubContent
-          description={copy.description}
-          cards={cards}
-          overview={data}
-          loading={loading}
-          unavailable={!data && !loading && Boolean(dataError)}
-          error={error}
-          attentionItems={[
-            { label: 'Groups without a coach', value: unassignedCoaches.length, href: '/curriculum/groups', icon: 'ri-user-search-line' },
-            { label: 'Modules without a tutor', value: unassignedTutors.length, href: '/curriculum/module-builder', icon: 'ri-user-settings-line' },
-            { label: 'Planned or inactive cohorts', value: Math.max(0, cohorts.length - activeCohorts.length), href: '/curriculum/cohorts', icon: 'ri-calendar-todo-line' },
-          ]}
-        />
-      ) : <main className={`min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 ${kind === 'library' ? 'curriculum-library-page' : ''}`}>
+    <HubShell kind={kind}>
+      <main className={`min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 ${kind === 'library' ? 'curriculum-library-page' : ''}`}>
         <div className="mx-auto max-w-[1560px] space-y-4">
           <WorkspaceHeroBanner
             className={kind === 'library' ? 'curriculum-library-hero' : undefined}
@@ -229,8 +228,8 @@ function CurriculumHubView({ kind, programmes, programmesLoading = false, progra
 
           {kind === 'quality' && <NotBuiltPanel />}
         </div>
-      </main>}
-    </WorkspaceShell>
+      </main>
+    </HubShell>
   );
 }
 

@@ -1,67 +1,75 @@
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+﻿import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchCurriculumSessions, type CurriculumSession } from '@/lib/curriculumApi';
+import { fetchCurriculumJson } from '@/lib/curriculumApi';
 import { useDeliverySessions } from '../useDeliverySessions';
+import { useDeliveryRead } from '../useDeliveryData';
+import type { DeliveryLiveSession } from '../deliveryDashboard';
 
-const refresh = vi.hoisted(() => ({ callback: () => {}, enabled: false }));
-vi.mock('@/lib/curriculumApi', () => ({ fetchCurriculumSessions: vi.fn() }));
-vi.mock('@/hooks/useRefreshOnReturn', () => ({ useLiveRefresh: (callback: () => void, options: { enabled: boolean }) => {
-  refresh.callback = callback; refresh.enabled = options.enabled;
-} }));
-const fetchSessions = vi.mocked(fetchCurriculumSessions);
-const sessions = [{ id: 's1', type: 'Live Session', date: '2026-11-13' }] as CurriculumSession[];
+const refresh = vi.hoisted(() => ({ callback: () => {} }));
+vi.mock('@/lib/curriculumApi', () => ({ fetchCurriculumJson: vi.fn() }));
+vi.mock('@/hooks/useRefreshOnReturn', () => ({ useLiveRefresh: (callback: () => void) => { refresh.callback = callback; } }));
+const read = vi.mocked(fetchCurriculumJson);
+const sessions: DeliveryLiveSession[] = [{ id: 's1', type: 'Live Session', date: '2026-11-13' }];
 const deferred = () => {
-  let resolve!: (value: CurriculumSession[]) => void;
-  const promise = new Promise<CurriculumSession[]>(done => { resolve = done; });
+  let resolve!: (value: { sessions: DeliveryLiveSession[] }) => void;
+  const promise = new Promise<{ sessions: DeliveryLiveSession[] }>(done => { resolve = done; });
   return { promise, resolve };
 };
-beforeEach(() => { fetchSessions.mockReset().mockResolvedValue(sessions); });
+beforeEach(() => { read.mockReset().mockResolvedValue({ sessions }); });
 afterEach(cleanup);
 
-describe('Delivery calendar request lifecycle', () => {
-  it('waits for the overview, reads once, and does not reload for chart rerenders', async () => {
-    const hook = renderHook(({ enabled }) => useDeliverySessions(enabled, 'account-a'), { initialProps: { enabled: false } });
-    expect(fetchSessions).not.toHaveBeenCalled();
-    expect(hook.result.current.loading).toBe(true);
-    expect(refresh.enabled).toBe(false);
-    hook.rerender({ enabled: true });
+describe('Delivery small-read lifecycle', () => {
+  it('reads the dedicated live-date endpoint immediately, without another read for chart rerenders', async () => {
+    const hook = renderHook(() => useDeliverySessions('account-a'));
     await waitFor(() => expect(hook.result.current.sessions).toEqual(sessions));
-    hook.rerender({ enabled: true });
-    expect(fetchSessions).toHaveBeenCalledTimes(1);
-    expect(fetchSessions).toHaveBeenCalledWith(expect.any(AbortSignal), { revalidate: false });
+    hook.rerender();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith('/curriculum/delivery-dashboard/sessions/', {
+      signal: expect.any(AbortSignal), revalidate: true, timeoutMs: 30_000,
+    });
   });
 
-  it('preserves known dates on a background failure without forcing a server rebuild', async () => {
-    const hook = renderHook(() => useDeliverySessions(true, 'account-a'));
+  it('does not make live dates wait for a slow summary', async () => {
+    read.mockImplementation(path => path.endsWith('/sessions/') ? Promise.resolve({ sessions }) : new Promise(() => {}));
+    const summary = renderHook(() => useDeliveryRead('/curriculum/delivery-dashboard/', 'account-a'));
+    const dates = renderHook(() => useDeliverySessions('account-a'));
+    await waitFor(() => expect(dates.result.current.sessions).toEqual(sessions));
+    expect(summary.result.current.loading).toBe(true);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps known dates visible on a background failure and allows retry', async () => {
+    const hook = renderHook(() => useDeliverySessions('account-a'));
     await waitFor(() => expect(hook.result.current.loading).toBe(false));
-    fetchSessions.mockRejectedValueOnce(new Error('Calendar unavailable'));
+    read.mockRejectedValueOnce(new Error('Calendar unavailable'));
     act(() => refresh.callback());
     await waitFor(() => expect(hook.result.current.error).toBe('Calendar unavailable'));
     expect(hook.result.current.sessions).toEqual(sessions);
-    expect(fetchSessions).toHaveBeenLastCalledWith(expect.any(AbortSignal), { revalidate: true });
+    expect(hook.result.current.loading).toBe(false);
+    act(() => hook.result.current.reload());
+    await waitFor(() => expect(hook.result.current.error).toBe(null));
   });
 
-  it('ignores late results from the previous account or after unmount', async () => {
+  it('ignores late results from a previous account or after unmount', async () => {
     const old = deferred(); const current = deferred();
-    fetchSessions.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
-    const hook = renderHook(({ scope }) => useDeliverySessions(true, scope), { initialProps: { scope: 'account-a' } });
-    const oldSignal = fetchSessions.mock.calls[0][0]!;
+    read.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+    const hook = renderHook(({ scope }) => useDeliverySessions(scope), { initialProps: { scope: 'account-a' } });
+    const oldSignal = read.mock.calls[0][1]!.signal!;
     hook.rerender({ scope: 'account-b' });
     expect(oldSignal.aborted).toBe(true);
     expect(hook.result.current.sessions).toEqual([]);
-    await act(async () => { old.resolve(sessions); });
+    await act(async () => { old.resolve({ sessions }); });
     expect(hook.result.current.sessions).toEqual([]);
     const currentSessions = [{ ...sessions[0], id: 'account-b-session' }];
-    await act(async () => { current.resolve(currentSessions); });
+    await act(async () => { current.resolve({ sessions: currentSessions }); });
     expect(hook.result.current.sessions).toEqual(currentSessions);
-    const signal = fetchSessions.mock.calls[1][0]!;
-    hook.unmount();
-    expect(signal.aborted).toBe(true);
+    const signal = read.mock.calls[1][1]!.signal!;
+    hook.unmount(); expect(signal.aborted).toBe(true);
   });
 
-  it('reports an initial failure rather than inventing empty calendar success', async () => {
-    fetchSessions.mockRejectedValueOnce(new Error('Calendar unavailable'));
-    const hook = renderHook(() => useDeliverySessions(true, 'account-a'));
+  it('reports an initial failure rather than inventing zero sessions', async () => {
+    read.mockRejectedValueOnce(new Error('Calendar unavailable'));
+    const hook = renderHook(() => useDeliverySessions('account-a'));
     await waitFor(() => expect(hook.result.current.error).toBe('Calendar unavailable'));
     expect(hook.result.current.loading).toBe(false);
   });

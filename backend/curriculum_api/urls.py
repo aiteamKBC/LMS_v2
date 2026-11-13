@@ -54,9 +54,12 @@ from .teaching_quality import teaching_review
 from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
+from . import delivery_dashboard
 
 
 urlpatterns = [
+    path('curriculum/delivery-dashboard/', delivery_dashboard.overview, name='curriculum-delivery-dashboard'),
+    path('curriculum/delivery-dashboard/sessions/', delivery_dashboard.sessions, name='curriculum-delivery-dashboard-sessions'),
     path('curriculum/modules/<str:module_id>/weeks/<str:week_id>/web-points/', week_points, name='web-week-points'),
     path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
     path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),

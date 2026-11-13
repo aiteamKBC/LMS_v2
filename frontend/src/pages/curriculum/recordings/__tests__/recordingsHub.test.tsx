@@ -11,6 +11,7 @@ vi.mock('@/hooks/useCurriculumData', () => ({ useCurriculumData: () => ({ data: 
 vi.mock('@/hooks/useCurriculumProgrammes', () => ({ useCurriculumProgrammes: () => ({ programmes: [], loading: false, error: '' }) }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: -1, role: 'staff', access: 'curriculum' }, tenant: null } }) }));
 vi.mock('../../hubs/useDeliverySessions', () => ({ useDeliverySessions: () => ({ sessions: [], loading: false, error: null }) }));
+vi.mock('../../hubs/useDeliveryData', () => ({ useDeliveryOverview: () => ({ data: null, loading: false, error: null }) }));
 
 describe('Coach and tutor recordings entry points', () => {
   it('offers exactly two destinations and keeps their existing recording URLs', () => {

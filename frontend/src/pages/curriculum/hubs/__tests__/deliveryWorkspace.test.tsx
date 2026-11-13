@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
@@ -7,10 +7,13 @@ import { CurriculumDeliveryHub, CurriculumLibraryHub, CurriculumQualityHub } fro
 const state = vi.hoisted(() => ({ data: null as Record<string, unknown> | null, loading: false, error: null as string | null }));
 const sessionRead = vi.hoisted(() => ({ sessions: [] as Array<Record<string, unknown>>, loading: false, error: null as string | null }));
 const moduleRead = vi.hoisted(() => ({ data: null as Record<string, unknown> | null, loading: false, error: '', today: '2026-11-13' }));
-const readers = vi.hoisted(() => ({ sessions: vi.fn(), modules: vi.fn(), programmes: vi.fn() }));
+const readers = vi.hoisted(() => ({ sessions: vi.fn(), modules: vi.fn(), programmes: vi.fn(), overview: vi.fn(), curriculum: vi.fn() }));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
-vi.mock('@/hooks/useCurriculumData', () => ({ useCurriculumData: () => state }));
+vi.mock('@/hooks/useCurriculumData', () => ({ useCurriculumData: readers.curriculum }));
+vi.mock('../useDeliveryData', async importOriginal => ({
+  ...await importOriginal<typeof import('../useDeliveryData')>(), useDeliveryOverview: readers.overview,
+}));
 vi.mock('@/hooks/useCurriculumProgrammes', () => ({ useCurriculumProgrammes: readers.programmes }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: -1, role: 'staff', access: 'curriculum' }, tenant: null } }) }));
 vi.mock('../useDeliverySessions', () => ({ useDeliverySessions: readers.sessions }));
@@ -26,9 +29,11 @@ beforeEach(() => {
   readers.sessions.mockReset().mockImplementation(() => sessionRead);
   readers.modules.mockReset().mockImplementation(() => moduleRead);
   readers.programmes.mockReset().mockReturnValue({ programmes: [], loading: false, error: null });
+  readers.overview.mockReset().mockImplementation(() => state);
+  readers.curriculum.mockReset().mockImplementation(() => state);
   Object.assign(state, { loading: false, error: null, data: {
     cohorts: [{ id: 'c1', status: 'active' }, { id: 'c2', status: 'planned' }],
-    groups: [{ id: 'g1', status: 'active', cohortId: 'c1', coach: 'Example coach' }, { id: 'g2', status: 'active', cohortId: 'c1', coach: 'TBC' }, { id: 'g3', status: 'planned', cohortId: 'c2', coach: '' }],
+    groups: [{ id: 'g1', status: 'planned', moduleIds: ['m1'], cohortId: 'c1', coach: 'Example coach' }, { id: 'g2', status: 'planned', moduleIds: ['m1'], cohortId: 'c1', coach: 'TBC' }, { id: 'g3', status: 'active', moduleIds: ['m2'], cohortId: 'c2', coach: '' }],
     modules: [{ id: 'm1', tutor: 'Example tutor', status: 'draft' }, { id: 'm2', tutor: 'unassigned', status: 'published' }, { id: 'm3', tutor: 'Example tutor' }, { id: 'm4', tutor: 'Example tutor' }],
     // The compact overview omits sessions. The dashboard must use the actual calendar read.
     sessions: [],
@@ -49,21 +54,41 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('Delivery dashboard using existing curriculum reads', () => {
-  it('skips unused programme data and stages the calendar read until the overview settles', () => {
+  it('skips the full overview/programmes and starts live dates and activity while the small summary is loading', () => {
     state.data = null; state.loading = true;
     const view = renderDelivery();
     expect(readers.programmes).not.toHaveBeenCalled();
-    expect(readers.sessions).toHaveBeenLastCalledWith(false, expect.any(String));
+    expect(readers.curriculum).not.toHaveBeenCalled();
+    expect(readers.sessions).toHaveBeenLastCalledWith(expect.any(String));
+    expect(readers.modules).toHaveBeenLastCalledWith('delivery-dashboard', expect.any(String), { revalidateOnMount: true });
     state.loading = false; state.error = 'Overview unavailable';
     view.rerender(<MemoryRouter><CurriculumDeliveryHub /></MemoryRouter>);
     // Calendar data can still be shown independently after a failed overview.
-    expect(readers.sessions).toHaveBeenLastCalledWith(true, expect.any(String));
+    expect(readers.sessions).toHaveBeenLastCalledWith(expect.any(String));
+  });
+
+  it('gives delayed reads visible feedback and retry actions without hiding loaded charts', () => {
+    const retry = vi.fn(); const retrySessions = vi.fn();
+    Object.assign(state, { reload: retry }); Object.assign(sessionRead, { loading: true, reload: retrySessions });
+    const view = renderDelivery();
+    expect(screen.getByLabelText('Active groups count')).toHaveTextContent(/^2$/);
+    expect(screen.getByLabelText('Need coach count')).toHaveTextContent(/^1$/);
+    act(() => vi.advanceTimersByTime(5_001));
+    expect(screen.getByText(/Live session dates are taking longer than usual/)).toBeVisible();
+    expect(screen.getByLabelText('Active cohorts count')).toHaveTextContent(/^1$/);
+    Object.assign(sessionRead, { loading: false, error: 'Example session read failed' });
+    state.error = 'Example overview read failed';
+    view.rerender(<MemoryRouter><CurriculumDeliveryHub /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry live sessions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(retrySessions).toHaveBeenCalledOnce(); expect(retry).toHaveBeenCalledOnce();
   });
 
   it('uses the existing module activity rule and dedicated live-session dates rather than compact overview zeros', () => {
     renderDelivery();
     expect(screen.getByLabelText('Active cohorts count')).toHaveTextContent(/^1$/);
     expect(screen.getByLabelText('Active groups count')).toHaveTextContent(/^2$/);
+    // Editable group statuses say the opposite: teaching module dates decide activity.
     // A currently teaching draft is active; a future published module is not.
     expect(screen.getByLabelText('Active modules count')).toHaveTextContent(/^1$/);
     expect(screen.getByLabelText('Scheduled live sessions count')).toHaveTextContent('5');
@@ -158,7 +183,7 @@ describe('Delivery dashboard using existing curriculum reads', () => {
     moduleRead.data = null; moduleRead.error = 'Module activity could not be verified.';
     renderDelivery();
     expect(screen.getByLabelText('Active modules count')).toHaveTextContent('Unavailable');
-    expect(screen.getByLabelText('Active groups count')).toHaveTextContent(/^2$/);
+    expect(screen.getByLabelText('Active groups count')).toHaveTextContent('Unavailable');
     expect(screen.getByRole('status')).toHaveTextContent('Module activity could not be verified.');
   });
 

@@ -14,7 +14,7 @@ export interface DeliveryWorkspaceProps {
   attentionItems: AttentionItem[];
   cohorts: Array<{ status?: string }>;
   activeCohortGroups: number;
-  activeGroups: number;
+  activeGroups: number | null;
   totalGroups: number;
   activeModules: number | null;
   totalModules: number;
@@ -26,8 +26,11 @@ export interface DeliveryWorkspaceProps {
   loading: boolean;
   unavailable: boolean;
   error: string | null;
+  onRetry?: () => void;
+  onRetrySessions?: () => void;
+  onRetryActivity?: () => void;
   heroVariant?: 'glass' | 'campus' | 'classic';
-  staffing?: { needsTutor: number | null; needsCoach: number | null; loading: boolean };
+  staffing?: { needsTutor: number | null; needsCoach: number | null; loading: boolean; tutorLoading?: boolean; coachLoading?: boolean };
   /** Deterministic local preview/test clock; production follows the LMS business time zone. */
   now?: Date;
 }
@@ -40,10 +43,18 @@ function ChartSkeleton() { return <div className={styles.chartSkeleton} aria-hid
 export default function DeliveryWorkspace({
   description, cards, attentionItems, cohorts, activeCohortGroups, activeGroups, totalGroups,
   activeModules, totalModules, modulesLoading, modulesError, sessions, sessionsLoading, sessionsError,
-  loading, unavailable, error, heroVariant = 'glass', staffing, now: previewNow,
+  loading, unavailable, error, onRetry, onRetrySessions, onRetryActivity, heroVariant = 'glass', staffing, now: previewNow,
 }: DeliveryWorkspaceProps) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [clock, setClock] = useState(() => new Date());
+  const [slow, setSlow] = useState(false);
+  const pending = loading || sessionsLoading || modulesLoading;
+  useEffect(() => {
+    setSlow(false);
+    if (!pending) return;
+    const timer = window.setTimeout(() => setSlow(true), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [pending]);
   useEffect(() => {
     if (previewNow) return;
     const timer = window.setInterval(() => setClock(new Date()), 60_000);
@@ -74,8 +85,9 @@ export default function DeliveryWorkspace({
         <Link className={styles.primaryAction} to="/curriculum/cohorts"><AppIcon className="ri-group-line" size={17} /> Open Cohorts<AppIcon className="ri-arrow-right-line" size={16} /></Link>
       </section>
 
-      {error && <div className={styles.error} role="alert"><AppIcon className="ri-error-warning-line" size={19} /><span>Some live curriculum counts could not be loaded: {error}</span></div>}
-      {sessionsError && <div className={styles.error} role="alert"><AppIcon className="ri-error-warning-line" size={19} /><span>Live session dates could not be refreshed: {sessionsError}</span></div>}
+      {error && <div className={styles.error} role="alert"><AppIcon className="ri-error-warning-line" size={19} /><span>Some live curriculum counts could not be loaded: {error}</span>{onRetry && <button type="button" onClick={onRetry}>Try again</button>}</div>}
+      {sessionsError && <div className={styles.error} role="alert"><AppIcon className="ri-error-warning-line" size={19} /><span>Live session dates could not be refreshed: {sessionsError}</span>{onRetrySessions && <button type="button" onClick={onRetrySessions}>Retry live sessions</button>}</div>}
+      {slow && pending && <p className={styles.loadingFeedback} role="status">{loading ? 'Delivery figures' : modulesLoading ? 'Module activity' : 'Live session dates'} are taking longer than usual. Available figures stay visible while this finishes.</p>}
 
       <section className={styles.stats} aria-label="Delivery numbers" aria-busy={loading || sessionsLoading || modulesLoading}>
         {loading && <span className={styles.srOnly} role="status">Loading delivery figures.</span>}
@@ -92,15 +104,16 @@ export default function DeliveryWorkspace({
           {loading ? <ChartSkeleton /> : unavailable ? <p className={styles.statNote}>Figures could not be loaded.</p> : (
             <ActivityChart activeGroups={activeGroups} totalGroups={totalGroups} activeModules={activeModules} totalModules={totalModules} modulesLoading={modulesLoading} modulesError={modulesError} />
           )}
+          {modulesError && onRetryActivity && <button type="button" className={styles.retryActivity} onClick={onRetryActivity}>Retry activity</button>}
           {staffing && <div className={styles.staffingSummary} role="group" aria-label="Staffing to complete">
             <p>Staffing to complete</p>
             <div>{[
-              { label: 'Need tutor', count: staffing.needsTutor, href: '/curriculum/module-builder', title: 'Active modules or modules with live sessions in the next 14 days, without an assigned tutor.' },
-              { label: 'Need coach', count: staffing.needsCoach, href: '/curriculum/groups', title: 'Active groups without an assigned coach.' },
+              { label: 'Need tutor', count: staffing.needsTutor, loading: staffing.tutorLoading ?? staffing.loading, href: '/curriculum/module-builder', title: 'Active modules or modules with live sessions in the next 14 days, without an assigned tutor.' },
+              { label: 'Need coach', count: staffing.needsCoach, loading: staffing.coachLoading ?? staffing.loading, href: '/curriculum/groups', title: 'Active groups without an assigned coach.' },
             ].map(item => <Link key={item.label} to={item.href} title={item.title}
-              aria-label={`${item.label}: ${staffing.loading ? 'Loading' : item.count === null ? 'Unavailable' : number.format(item.count)}`}
-              data-clear={item.count === 0 && !staffing.loading || undefined}>
-              <span>{item.label}</span><strong aria-label={`${item.label} count`}>{staffing.loading ? '…' : item.count === null ? 'Unavailable' : number.format(item.count)}</strong>
+              aria-label={`${item.label}: ${item.loading ? 'Loading' : item.count === null ? 'Unavailable' : number.format(item.count)}`}
+              data-clear={item.count === 0 && !item.loading || undefined}>
+              <span>{item.label}</span><strong aria-label={`${item.label} count`}>{item.loading ? '…' : item.count === null ? 'Unavailable' : number.format(item.count)}</strong>
             </Link>)}</div>
           </div>}
           <div className={styles.statFooter}><Link to="/curriculum/module-builder">Review modules <AppIcon className="ri-arrow-right-line" size={13} /></Link></div>

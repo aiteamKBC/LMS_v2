@@ -96,11 +96,29 @@ export function cohortSegments(cohorts: readonly { status?: string }[]) {
   return other ? [...segments, { key: 'other', label: 'Other', color: '#cfc3de', value: other }] : segments;
 }
 
+/** A group's activity follows its assigned catalogue modules, never its editable status. */
+export function deliveryActiveGroupIds(
+  groups: readonly { id: string; moduleIds?: string[] }[],
+  modules: readonly { id: string; moduleCatalogueId?: string; groupId?: string }[],
+  activeModuleIds: ReadonlySet<string>,
+) {
+  const assigned = new Map<string, Set<string>>();
+  for (const module of modules) {
+    if (!module.groupId) continue;
+    const ids = assigned.get(module.groupId) ?? new Set<string>();
+    ids.add(module.moduleCatalogueId || module.id);
+    assigned.set(module.groupId, ids);
+  }
+  return new Set(groups.filter(group => [...(group.moduleIds ?? []), ...(assigned.get(group.id) ?? [])]
+    .some(id => activeModuleIds.has(id))).map(group => group.id));
+}
+
 /** Staffing is a display-only view of the current assignments, never a saved readiness rule. */
 export function deliveryStaffing(
   modules: readonly { id: string; moduleCatalogueId?: string; tutor?: string; isFreeCourse?: boolean }[],
-  groups: readonly { status?: string; coach?: string }[],
+  groups: readonly { id?: string; status?: string; coach?: string }[],
   sessions: readonly DeliveryLiveSession[], activeModuleIds: ReadonlySet<string>, today: string,
+  activeGroupIds?: ReadonlySet<string>,
 ) {
   const end = calendarDate(today)!;
   end.setUTCDate(end.getUTCDate() + 13);
@@ -112,6 +130,6 @@ export function deliveryStaffing(
   return {
     needsTutor: modules.filter(module => !module.isFreeCourse && missing(module.tutor)
       && (activeModuleIds.has(module.moduleCatalogueId || module.id) || upcoming.has(module.moduleCatalogueId || module.id))).length,
-    needsCoach: groups.filter(group => normalise(group.status) === 'active' && missing(group.coach)).length,
+    needsCoach: groups.filter(group => (activeGroupIds ? activeGroupIds.has(group.id ?? '') : normalise(group.status) === 'active') && missing(group.coach)).length,
   };
 }

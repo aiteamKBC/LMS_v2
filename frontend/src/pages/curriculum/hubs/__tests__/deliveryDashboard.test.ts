@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { deliveryBusinessClock, deliverySessionTime, deliveryStaffing, deliveryWeek } from '../deliveryDashboard';
+import { deliveryActiveGroupIds, deliveryBusinessClock, deliverySessionTime, deliveryStaffing, deliveryWeek } from '../deliveryDashboard';
 
 describe('Delivery weekly display of saved live-session dates', () => {
+  it('counts distinct groups with active assigned modules, using both canonical group relationships', () => {
+    const groups = [{ id: 'a', moduleIds: ['active', 'also-active'] }, { id: 'b' }, { id: 'c', moduleIds: ['future'] }, { id: 'empty' }];
+    const modules = [{ id: 'allocation', moduleCatalogueId: 'active', groupId: 'b' }];
+    const active = new Set(['active', 'also-active']);
+    expect([...deliveryActiveGroupIds(groups, modules, active)]).toEqual(['a', 'b']);
+    expect(deliveryStaffing([], groups.map(group => ({ ...group, coach: '' })), [], active, '2026-11-13', new Set(['a', 'b'])).needsCoach).toBe(2);
+  });
   it('uses the UK business day near midnight instead of the developer or viewer time zone', () => {
     const now = new Date('2026-11-01T23:30:00Z');
     expect(deliveryBusinessClock(now)).toEqual({ date: '2026-11-01', time: '23:30' });

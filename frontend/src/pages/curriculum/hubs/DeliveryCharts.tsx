@@ -38,21 +38,21 @@ export function CohortChart({ cohorts }: { cohorts: Array<{ status?: string }> }
 }
 
 export function ActivityChart({ activeGroups, totalGroups, activeModules, totalModules, modulesLoading, modulesError }: {
-  activeGroups: number; totalGroups: number; activeModules: number | null; totalModules: number;
+  activeGroups: number | null; totalGroups: number; activeModules: number | null; totalModules: number;
   modulesLoading: boolean; modulesError: string | null;
 }) {
   const id = useId().replace(/:/g, '');
   const metrics = [
-    { label: 'Active groups', count: activeGroups, total: totalGroups, color: '#168f9e', end: '#65d4db' },
-    { label: 'Active modules', count: activeModules, total: totalModules, color: '#7440bc', end: '#b684ee' },
+    { label: 'Active groups', count: activeGroups, total: totalGroups, color: '#168f9e', end: '#65d4db', definition: 'Groups with at least one active assigned module. The group status label does not decide teaching activity.' },
+    { label: 'Active modules', count: activeModules, total: totalModules, color: '#7440bc', end: '#b684ee', definition: 'Uses the Module Builder rule: the module has started and its last tracked live session has not passed.' },
   ];
   return <div className={styles.activityChart}>
     {metrics.map((metric, index) => {
-      const pending = index === 1 && modulesLoading;
+      const pending = modulesLoading;
       const unavailable = metric.count === null && !pending;
       const proportion = metric.total > 0 && metric.count !== null ? Math.min(1, metric.count / metric.total) : 0;
       return <div className={styles.activityMetric} key={metric.label}>
-        <div className={styles.activityMetricHeading}><span>{metric.label}</span>
+        <div className={styles.activityMetricHeading}><span title={metric.definition}>{metric.label}</span>
           <strong aria-label={`${metric.label} count`} style={{ color: metric.color }}>{pending ? 'Loading' : unavailable ? 'Unavailable' : number.format(metric.count!)}</strong>
         </div>
         {pending ? <div className={styles.metricSkeleton} role="status">Checking module activity…</div> : unavailable ? (
