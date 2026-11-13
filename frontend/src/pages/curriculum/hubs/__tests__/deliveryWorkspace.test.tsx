@@ -45,7 +45,7 @@ beforeEach(() => {
     { id: 's4', type: 'Live Session', date: '2026-11-13', startTime: '11:00' },
     { id: 's5', type: 'Live Session', date: '2026-11-13', startTime: '15:00' },
   ] });
-  Object.assign(moduleRead, { loading: false, error: '', data: {
+  Object.assign(moduleRead, { loading: false, error: '', today: '2026-11-13', data: {
     m1: { source: 'new_lms', startDate: '2026-10-01', lastLiveDate: '2026-12-01' },
     m2: { source: 'new_lms', startDate: '2026-12-01', lastLiveDate: '2027-01-01' },
     m3: { source: 'new_lms', startDate: '2026-09-01', lastLiveDate: '2026-11-01' },
@@ -54,6 +54,16 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('Delivery dashboard using existing curriculum reads', () => {
+  it('keeps an upcoming overnight session visible when its source-date status says completed', () => {
+    vi.setSystemTime(new Date('2026-11-14T01:00:00Z'));
+    moduleRead.today = '2026-11-14';
+    sessionRead.sessions = [{ id: 'overnight', type: 'Live Session', date: '2026-11-13', startTime: '23:30',
+      timeZone: 'America/New_York', status: 'completed', moduleCatalogueId: 'm2' }];
+    renderDelivery();
+    expect(screen.getAllByText(/14 Nov · 04:30 UK/)).toHaveLength(2);
+    expect(screen.getByLabelText('Need tutor count')).toHaveTextContent(/^1$/);
+  });
+
   it('shows the UK date and clock in both next-session labels and the weekly chart', () => {
     sessionRead.sessions = [{ id: 'cairo', type: 'Live Session', date: '2026-11-16', startTime: '00:30', timeZone: 'Africa/Cairo' }];
     renderDelivery();

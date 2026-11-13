@@ -16,7 +16,8 @@ MODULE_FIELDS = ('module_catalogue_id', 'title', 'programme_id', 'programme_name
 def read_inputs(*, schedule=False):
     # No learner counts, KSBs, programme statistics, authoring trees or schema repair.
     modules = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, ensure_tables=False,
-        **({'exclude_columns': [*views.MODULE_INDEX_EXCLUDED_COLUMNS, 'description', 'cover_image', 'cover_image_url']}
+        **({'order_sql': 'programme_id, title',
+            'exclude_columns': [*views.MODULE_INDEX_EXCLUDED_COLUMNS, 'description', 'cover_image', 'cover_image_url']}
            if schedule else {'columns': MODULE_FIELDS}))
     groups = views.authoring_fetch_all(views.GROUPS_TABLE, order_sql=views.GROUP_ROWS_ORDER, ensure_tables=False)
     cohorts = views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE, order_sql=views.COHORT_ROWS_ORDER, ensure_tables=False)

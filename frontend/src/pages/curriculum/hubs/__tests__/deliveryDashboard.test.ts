@@ -102,6 +102,33 @@ describe('Delivery weekly display of saved live-session dates', () => {
       .toMatchObject({ id: 'later', date: '2026-11-14', startTime: '04:30' });
   });
 
+  it('uses the real start when the API completed label was derived from yesterday in the source zone', () => {
+    const session = Object.freeze({ id: 'overnight', type: 'Live Session', date: '2026-11-13',
+      startTime: '23:30', timeZone: 'America/New_York', status: 'completed' });
+    expect(deliveryWeek([session], new Date('2026-11-14T01:00:00Z')).next)
+      .toMatchObject({ id: 'overnight', date: '2026-11-14', startTime: '04:30' });
+    expect(deliveryWeek([session], new Date('2026-11-14T05:00:00Z')).next).toBeUndefined();
+    expect(session.status).toBe('completed');
+    expect(session.date).toBe('2026-11-13');
+  });
+
+  it('retains staffing for an upcoming UK day despite the source-date completed label', () => {
+    const session = { id: 'overnight', type: 'Live Session', moduleId: 'needs-tutor', date: '2026-11-13',
+      startTime: '23:30', timeZone: 'America/New_York', status: 'completed' };
+    const modules = [{ id: 'needs-tutor', tutor: '' }];
+    expect(deliveryStaffing(modules, [], [session], new Set(), '2026-11-14').needsTutor).toBe(1);
+    expect(deliveryStaffing(modules, [], [session], new Set(), '2026-11-15').needsTutor).toBe(0);
+  });
+
+  it('does not infer a future instant for completed date-only or cancelled sessions', () => {
+    const sessions = [
+      { id: 'date-only', type: 'Live Session', date: '2026-11-15', status: 'completed', moduleId: 'module' },
+      { id: 'cancelled', type: 'Live Session', date: '2026-11-15', startTime: '09:00', status: 'cancelled', moduleId: 'module' },
+    ];
+    expect(deliveryWeek(sessions, new Date('2026-11-14T01:00:00Z')).next).toBeUndefined();
+    expect(deliveryStaffing([{ id: 'module', tutor: '' }], [], sessions, new Set(), '2026-11-14').needsTutor).toBe(0);
+  });
+
   it('buckets sessions into the UK day and week at both sides of midnight', () => {
     const sessions = [
       { id: 'east', type: 'Live Session', date: '2026-11-16', startTime: '00:30', timeZone: 'Africa/Cairo' },
