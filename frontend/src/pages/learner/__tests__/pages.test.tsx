@@ -15,8 +15,14 @@ import { rememberLearner } from '@/hooks/useMyLearner';
 import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { invalidateLearnerReads } from '@/api/learnerRead';
+import { dashboardOverviewFixture } from '@/test/dashboardOverviewFixture';
+import { dashboardMonthlyFixture } from '@/test/dashboardMonthlyFixture';
+import type { LearnerMetrics } from '@/api/learnerMetrics';
 
 const viewer = vi.hoisted(() => ({ kind: 'commercial', role: 'learner' }));
+// Animation rendering is outside the page/data contract and needs a real
+// canvas. Keep the page and data hooks real without booting lottie in jsdom.
+vi.mock('lottie-react', () => ({ default: () => null, Lottie: () => null }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({
   isInitialized: true, isAdmin: false, hasPermission: () => true, canSeeNavItem: () => true,
   auth: { isAuthenticated: true, account: { id: 1, role: viewer.role, subjectType: 'learner', subjectId: 125, learnerType: viewer.kind },
@@ -60,6 +66,14 @@ function dashboardFixture(url: string, value: unknown) {
 }
 
 function tabFixture(section: string, overrides: Record<string, unknown> = {}) {
+  if (section === 'overview') {
+    const metrics = (overrides.metrics ?? payload('/metrics/')) as LearnerMetrics;
+    return { ...dashboardOverviewFixture(), metrics: { ksb: metrics.ksb,
+      otjh: { actual: metrics.otjh.actual, targetToDate: metrics.otjh.targetToDate ?? null } },
+      attendance: overrides.attendance ?? { sessions: 0, present: 0, attendanceRate: null },
+      reviews: { completed: 0, total: 0, percent: null }, modules: [], programme: [],
+      hours: { months: [], planned: null, end: '' }, programmeStartDate: null, programmeEndDate: null };
+  }
   return { schedule: payload('/training-plan-dashboard/'), week: payload('/overview-week/'),
     learning: { activity: null, detail: detail(), metadata: payload('/subject-covers/') },
     monthlyLog: payload('/monthly-logs/'), moduleProgress: [], metrics: payload('/metrics/'),
@@ -73,10 +87,25 @@ function tabResponse(url: string, value: unknown, field: string) {
 
 function payload(url: string): unknown {
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
-  if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
+  if (url.includes('/dashboard/') && url.includes('/monthly/plan/')) {
+    const month = new URL(url, 'http://localhost').searchParams.get('month') || '2026-09';
+    return { ...dashboardMonthlyFixture(month), summary: { requiredHours: '0 hrs', achievedHours: '0 hrs',
+      difference: '0 hrs', differenceTone: null, differenceDirection: 'equal', ksbs: [] }, activitiesHref: null };
+  }
+  if (url.includes('/my-learning/')) {
+    if (url.includes('/modules/')) return { subjectId: 'current:M1', detail: detail(), activity: null,
+      metadata: { covers: {} }, schedule: { modules: [] }, sessions: [] };
+    return { learner: { id: '125', kind: viewer.kind, name: 'Test learner', programme: 'Leadership', cohort: '', group: '' },
+      summary: { current: { subjects: 0, total: 0, completed: 0, percent: 0 },
+        previous: { subjects: 0, total: 0, completed: 0, percent: 0 }, subjectCount: 0 },
+      modules: [], otjh: { actual: null, planned: null }, upcoming: [], hasMoreUpcoming: false };
+  }
+  if (url.includes('/support/tickets/')) return { tickets: [], csrfToken: 'csrf', nextOffset: null };
+  if (url.includes('/review-sessions/')) return { events: [], learner: { kind: viewer.kind, id: 125 } };
+  if (url.includes('/meeting-attendance/')) return { sessions: [], today: '2026-09-12', timeZone: 'Europe/London', csrfToken: 'csrf' };
   if (url.includes('/profile-photo/')) return null;
   if (isDashboardHeader(url)) return dashboardFixture(url, headerFixture());
-  const section = url.match(/\/dashboard\/[^/]+\/[^/]+\/(monthly|training|overview)\/$/)?.[1];
+  const section = url.split('?')[0].match(/\/dashboard\/[^/]+\/[^/]+\/(monthly|training|overview)\/$/)?.[1];
   if (section) return tabFixture(section);
   if (url.includes('/overview-week/')) return { weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0, otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 },
     metrics: { migrated: false, programme: { completed: 0, total: 0, percent: null, status: 'empty' },
@@ -150,7 +179,7 @@ beforeEach(() => {
   vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} unobserve() {} });
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('every learner page', () => {
   it.each(Object.keys(modules).sort().flatMap(file => (['commercial', 'apprenticeship'] as const).map(kind => ({ file, kind }))))('$kind $file renders with empty server data and survives a service failure', async ({ file, kind }) => {
@@ -204,6 +233,9 @@ describe('learner loading and recovery', () => {
   it('uses the learner start date and SSOT planned end date in the learner programme header', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
+      if (url.endsWith('/overview/')) return new Response(JSON.stringify({ ...tabFixture('overview'),
+        hours: { months: [{ key: '2026-01', target: 3, submitted: 0, completed: 1.5 },
+          { key: '2026-09', target: 20, submitted: 0, completed: 2 }], planned: 23, end: '2027-01' } }));
       if ((url.includes('/learner-summary/') || isDashboardHeader(url))) return new Response(JSON.stringify(dashboardFixture(url, {
         ...detail(), learnerStartDate: '2026-01-10', learnerEndDate: '2027-10-17', programmeStartDate: '2026-02-01', programmeEndDate: '2027-01-31',
         learningAccess: { blocked: false, startDate: '2026-02-01' },
@@ -233,6 +265,7 @@ describe('learner loading and recovery', () => {
     expect(hero.getByText('17 October 2027')).toBeVisible();
     expect(hero.queryByText('31 January 2027')).not.toBeInTheDocument();
     expect(hero.queryByText('2 February 2026')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
     const chart = within(await screen.findByRole('region', { name: 'Off-the-job hours by month' }));
     expect(await chart.findByRole('button', {
       name: 'January 2026: target 3 hours, submitted 0 hours, completed 1.5 hours',
@@ -251,11 +284,11 @@ describe('learner loading and recovery', () => {
         <button onClick={() => navigate(-1)}>Browser Back</button>
         <Router.Link to="/learner/quizzes/commercial/125">Quiz deep link</Router.Link></>;
     }
-    render(<MemoryRouter initialEntries={['/learner/modules/commercial/125?subject=current%3AM1']}><ToastProvider>
+    render(<MemoryRouter initialEntries={['/learner/my-learning/commercial/125?view=current']}><ToastProvider>
       <Page /><NavigationControls />
     </ToastProvider></MemoryRouter>);
     fireEvent.click(screen.getByRole('button', { name: 'Assignments' }));
-    expect(screen.getByTestId('learning-location')).toHaveTextContent('subject=current%3AM1&tab=assignments');
+    expect(screen.getByTestId('learning-location')).toHaveTextContent('view=current&tab=assignments');
     fireEvent.click(screen.getByRole('button', { name: 'Quizzes' }));
     expect(await screen.findByText('No quizzes linked yet')).toBeVisible();
     expect(screen.getByTestId('learning-location')).toHaveTextContent('tab=quizzes');
@@ -406,9 +439,9 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
 
-    const programme = within(await screen.findByRole('link', { name: 'Open Programme Progress' }));
-    await waitFor(() => expect(programme.getByText('Current').nextElementSibling).toHaveTextContent('11.73%'));
-    expect(programme.getByText('36 / 307', { selector: 'p' })).toBeVisible();
+    // Programme progress is now shown by module in the Overview chart; its
+    // former aggregate card must not be restored by this metrics test.
+    expect(screen.queryByRole('link', { name: 'Open Programme Progress' })).not.toBeInTheDocument();
 
     const otjh = within(screen.getByRole('link', { name: 'Open OTJ Hours' }));
     await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('72.70 h'));
@@ -531,6 +564,8 @@ describe('learner loading and recovery', () => {
   });
 
   it('shows an assigned programme and plan before cohort start with study open', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-12T12:00:00Z'));
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return new Response(JSON.stringify(dashboardFixture(url, (url.includes('/learner-summary/') || isDashboardHeader(url))
@@ -555,6 +590,8 @@ describe('learner loading and recovery', () => {
   });
 
   it('opens learning using the cohort date even when the individual date and saved status are still in the future', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-12T12:00:00Z'));
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return new Response(JSON.stringify(dashboardFixture(url, (url.includes('/learner-summary/') || isDashboardHeader(url))
@@ -567,7 +604,10 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
     await waitFor(()=>expect(screen.getByRole('button', { name: 'Continue learning' })).toBeEnabled());
-    expect(screen.getByText('10 September 2026')).toBeVisible();
+    // The header shows recorded learner dates. Cohort access still permits
+    // study, without presenting its date as a recorded learner start date.
+    expect(screen.queryByText('10 September 2026')).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText('Learner programme')).getByText('Start date').nextElementSibling).toHaveTextContent('--');
     expect(screen.queryByText('1 October 2026')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Monthly Plan' }));
     expect(await screen.findByRole('region', { name: 'Monthly study plan' })).toBeVisible();
