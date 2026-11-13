@@ -5,6 +5,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import require_access
 
 from . import views
+from .calendar_read_rows import live_rows
 
 FLAGS = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted', 'library_state')
 MODULE_FIELDS = ('module_catalogue_id', 'title', 'programme_id', 'programme_name', 'cohort_id',
@@ -53,7 +54,7 @@ def build_overview():
         }
 
 
-def build_sessions():
+def build_calendar_sessions():
     with views.curriculum_read_scope():
         modules, groups, cohorts = read_inputs(schedule=True)
         modules = [row for row in modules if not views.programme_deleted_row(row)]
@@ -61,25 +62,42 @@ def build_sessions():
         cohort_rows, group_rows = relationships(modules, groups, cohorts, holidays)
         ids = list(dict.fromkeys(views.clean_str(row.get('module_catalogue_id')) for row in modules
                                  if views.clean_str(row.get('module_catalogue_id'))))
-        if ids:
-            # These exact reads are memoized in the scope and reused by the
-            # builder below. Surface transport/schema failures before its legacy
-            # best-effort fallback can present an empty successful calendar.
-            slots = ','.join(['%s'] * len(ids))
-            views.authoring_fetch_all(views.AUTHORING_WEEKS_TABLE,
-                f'module_catalogue_id in ({slots})', ids, 'module_catalogue_id, display_order, week_number, id')
-            views.authoring_fetch_all(views.AUTHORING_COMPONENTS_TABLE,
-                f'module_catalogue_id in ({slots}) and {views.LIVE_SESSION_TYPE_SQL}', ids,
-                'module_catalogue_id, week_id, display_order, id')
-        # Same batched authored-live-session builder as /curriculum/sessions/.
-        # It reads only live component settings and resolves dates/holidays/clocks
-        # through the existing planner, not a second timetable implementation.
-        sessions = views.build_sessions_from_authoring_modules(modules,
-            views.cohort_selected_holidays_by_id(cohort_rows, holidays),
+        # Pass read failures through to the caller, before the legacy builder's
+        # best-effort fallback could turn an unavailable database into zeroes.
+        weeks, components = live_rows(ids)
+        selected_holidays = views.cohort_selected_holidays_by_id(cohort_rows, holidays)
+        links = views.authoring_session_links_by_catalogue(ids,
+            modules_by_catalogue={views.clean_str(row.get('module_catalogue_id')): row for row in modules},
+            groups_by_id={views.clean_str(row.get('group_id')): row for row in groups},
+            holidays_by_cohort=selected_holidays, week_rows=weeks, component_rows=components)
+        return views.build_sessions_from_authoring_modules(modules, selected_holidays,
             groups_by_id={row['id']: {'session_start_time': row.get('startTime'),
-                                      'session_end_time': row.get('endTime')} for row in group_rows})
-        fields = ('id', 'type', 'date', 'startTime', 'title', 'status', 'moduleCatalogueId', 'moduleId')
-        return {'sessions': [{key: row.get(key) for key in fields} for row in sessions]}
+                                      'session_end_time': row.get('endTime')} for row in group_rows},
+            session_links=links)
+
+
+def slim_sessions(rows):
+    fields = ('id', 'type', 'date', 'startTime', 'title', 'status', 'moduleCatalogueId', 'moduleId')
+    return {'sessions': [{key: row.get(key) for key in fields} for row in rows]}
+
+
+def build_sessions():
+    return slim_sessions(build_calendar_sessions())
+
+
+def cached_calendar_sessions(request):
+    # The chart and calendar share the expensive read, including its per-key
+    # build lock and write-epoch invalidation. A navigation never rebuilds both.
+    return views.cached_curriculum_value('delivery-calendar:v2', build_calendar_sessions,
+        force=views.request_bypasses_curriculum_cache(request), ttl=30)
+
+
+def calendar_sessions(request):
+    try:
+        rows = cached_calendar_sessions(request)
+    except DatabaseError:
+        return JsonResponse({'error': 'The session calendar could not be loaded. Please try again.'}, status=503)
+    return views.curriculum_results_response(rows)
 
 
 def response_for(request, section, build):
@@ -100,4 +118,8 @@ def overview(request):
 @require_GET
 @require_access('curriculum')
 def sessions(request):
-    return response_for(request, 'sessions', build_sessions)
+    try:
+        rows = cached_calendar_sessions(request)
+    except DatabaseError:
+        return JsonResponse({'error': 'Delivery data could not be loaded. Please try again.'}, status=503)
+    return JsonResponse(slim_sessions(rows))

@@ -11087,6 +11087,7 @@ def delivery_slots_by_catalogue(
 
 def authoring_session_links_by_catalogue(
     module_catalogue_ids, *, modules_by_catalogue=None, groups_by_id=None, holidays_by_cohort=None,
+    week_rows=None, component_rows=None,
 ):
     """Every authored live session of each module, in course-structure order.
 
@@ -11125,7 +11126,7 @@ def authoring_session_links_by_catalogue(
         return {}
     try:
         placeholders = ','.join(['%s'] * len(module_catalogue_ids))
-        week_rows = active_week_rows(authoring_fetch_all(
+        week_rows = active_week_rows(week_rows if week_rows is not None else authoring_fetch_all(
             AUTHORING_WEEKS_TABLE,
             f'module_catalogue_id in ({placeholders})',
             module_catalogue_ids,
@@ -11134,7 +11135,7 @@ def authoring_session_links_by_catalogue(
         # Full rows, because `settings_json` is where a component's own date
         # lives -- affordable only because the type filter runs in SQL and
         # leaves roughly one row per week instead of the whole 24 MB column.
-        component_rows = active_component_rows(authoring_fetch_all(
+        component_rows = active_component_rows(component_rows if component_rows is not None else authoring_fetch_all(
             AUTHORING_COMPONENTS_TABLE,
             f'module_catalogue_id in ({placeholders}) and {LIVE_SESSION_TYPE_SQL}',
             module_catalogue_ids,
@@ -11692,7 +11693,7 @@ def cohort_holiday_period_end(cohort):
     return format_date(calculate_cohort_end_date(start_date, months))
 
 
-def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None, groups_by_id=None):
+def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None, groups_by_id=None, *, session_links=None):
     """The live sessions each authored module delivers, from its own structure.
 
     **One live-session component is one session.** The course structure decides
@@ -11728,7 +11729,7 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
     # `module_delivery_row` takes a group that delivers on no day at its word --
     # so every primary would come back undated. The planner reads the real
     # group rows instead.
-    live_sessions_by_catalogue = authoring_session_links_by_catalogue(
+    live_sessions_by_catalogue = session_links if session_links is not None else authoring_session_links_by_catalogue(
         [clean_str(module.get('module_catalogue_id')) for module in modules],
         modules_by_catalogue={clean_str(module.get('module_catalogue_id')): module for module in modules},
         holidays_by_cohort=holidays_by_cohort,
@@ -35638,6 +35639,13 @@ def curriculum_sessions(request):
             session for session in payload['sessions']
             if requested in (clean_str(session.get('moduleCatalogueId')), clean_str(session.get('moduleId')))
         ])
+    if curriculum_visibility(request) == 'operational':
+        # Training rows are projected from these same normalized authoring
+        # modules, so prefer_authoring_module_sessions discards their generated
+        # copies. Read the surviving authored sessions without building learner
+        # counts, programme/KSB statistics and every module's content first.
+        from .delivery_dashboard import calendar_sessions
+        return calendar_sessions(request)
     return curriculum_collection_response(get_cached_payload(request), 'sessions')
 
 

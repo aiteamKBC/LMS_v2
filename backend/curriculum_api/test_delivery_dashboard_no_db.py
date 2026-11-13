@@ -55,6 +55,8 @@ class DashboardReadTests(unittest.TestCase):
             AUTHORING_MODULES_TABLE='modules', GROUPS_TABLE='groups', COHORT_AUTHORING_DETAILS_TABLE='cohorts',
             AUTHORING_WEEKS_TABLE='weeks', AUTHORING_COMPONENTS_TABLE='components', LIVE_SESSION_TYPE_SQL="type = 'live_session'",
             MODULE_INDEX_EXCLUDED_COLUMNS=('ksb_remap_report',), GROUP_ROWS_ORDER='group_name', COHORT_ROWS_ORDER='cohort_name',
+            WEEK_INDEX_COLUMNS=['id', 'module_catalogue_id', 'title', 'display_order', 'week_number'],
+            connection=SimpleNamespace(vendor='sqlite'), has_column=lambda *args: True,
             curriculum_read_scope=nullcontext, authoring_fetch_all=self.fetch,
             clean_str=lambda value: str(value or '').strip(),
             serialize_group_authoring_detail=lambda row: row,
@@ -72,12 +74,16 @@ class DashboardReadTests(unittest.TestCase):
             get_holiday_rows=lambda: self.holidays,
             cohort_selected_holidays_by_id=Mock(return_value={'C1': self.holidays}),
             build_sessions_from_authoring_modules=Mock(return_value=self.generated),
+            authoring_session_links_by_catalogue=Mock(return_value={'M1': [{'date': '2026-11-17'}]}),
+            curriculum_results_response=lambda rows: JsonResponse({'schema': 'curriculum', 'count': len(rows), 'results': rows}),
             request_bypasses_curriculum_cache=lambda request: False,
             cached_curriculum_value=lambda key, factory, **kwargs: factory(),
         )
         class ReadError(Exception): pass
         self.ReadError = ReadError
-        self.n = dict(views=self.views, JsonResponse=JsonResponse, DatabaseError=ReadError,
+        projection = dict(views=self.views)
+        functions(root / 'calendar_read_rows.py', projection, assignments=True)
+        self.n = dict(views=self.views, live_rows=projection['live_rows'], JsonResponse=JsonResponse, DatabaseError=ReadError,
                       require_GET=require_GET, require_access=auth['require_access'])
         functions(root / 'delivery_dashboard.py', self.n, assignments=True)
 
@@ -151,8 +157,30 @@ class DashboardReadTests(unittest.TestCase):
         self.views.cached_curriculum_value = Mock(side_effect=lambda key, factory, **kwargs: factory())
         self.request(); self.request('sessions')
         calls = self.views.cached_curriculum_value.call_args_list
-        self.assertEqual([call.args[0] for call in calls], ['delivery-dashboard:v1:overview', 'delivery-dashboard:v1:sessions'])
+        self.assertEqual([call.args[0] for call in calls], ['delivery-dashboard:v1:overview', 'delivery-calendar:v2'])
         self.assertTrue(all(call.kwargs == {'force': False, 'ttl': 30} for call in calls))
+
+    def test_chart_and_calendar_share_one_build_and_keep_the_existing_collection_contract(self):
+        cache = {}
+        def cached(key, factory, **kwargs):
+            if key not in cache:
+                cache[key] = factory()
+            return cache[key]
+        self.views.cached_curriculum_value = cached
+        chart = json.loads(self.request('sessions').content)
+        calendar = json.loads(self.request('calendar_sessions').content)
+        self.assertEqual(calendar['schema'], 'curriculum')
+        self.assertEqual(calendar['count'], len(chart['sessions']))
+        self.assertEqual(chart['sessions'], self.n['slim_sessions'](calendar['results'])['sessions'])
+        self.views.build_sessions_from_authoring_modules.assert_called_once()
+        self.assertEqual(len(self.reads), 5)
+        self.assertTrue(all(not options['ensure_tables'] for _, options in self.reads))
+
+    def test_calendar_read_failure_is_retryable_and_does_not_become_an_empty_success(self):
+        self.views.cached_curriculum_value = Mock(side_effect=self.ReadError('synthetic failure'))
+        response = self.request('calendar_sessions')
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('error', json.loads(response.content))
 
 
 if __name__ == '__main__':
