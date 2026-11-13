@@ -6,6 +6,11 @@ import { qualityReviews, qualityForms, type QualitySummary } from '@/api/coachin
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/api/coachingQualityReviews', async () => ({ ...await vi.importActual<typeof import('@/api/coachingQualityReviews')>('@/api/coachingQualityReviews'), qualityReviews: vi.fn(), qualityForms: vi.fn() }));
 vi.mock('./QualityReviewDialog', () => ({ default: ({ reviewId, onDirtyChange, onClose }: { reviewId: string; onDirtyChange: (dirty: boolean) => void; onClose: () => void }) => <div role="dialog">Saved form {reviewId}<button onClick={() => onDirtyChange(true)}>Edit saved form</button><button onClick={onClose}>Close saved form</button></div> }));
+const selectOption = (name: string | RegExp, label: string) => {
+  fireEvent.click(screen.getByRole('combobox', { name }));
+  fireEvent.click(screen.getByRole('option', { name: label }));
+};
+
 const uuid = (id: string) => `00000000-0000-4000-8000-${id.padStart(12, '0')}`;
 const row = (id: string): QualitySummary => ({ id: uuid(id), coachEmail: 'coach@example.invalid', coachName: 'Synthetic Coach', learnerId: id, learnerName: `Learner ${id}`, startsAt: '2026-10-20T09:00:00Z',
   status: 'completed', version: 2, updatedAt: '2026-10-20T12:00:00Z', title: 'Synthetic MCM', actionCount: 1, reviewerName: 'Quality Reviewer' });
@@ -21,7 +26,7 @@ describe('Saved quality reviews dashboard', () => {
     expect(vi.mocked(qualityReviews).mock.calls[0][0]).toMatchObject({ status: 'completed' });
     fireEvent.change(screen.getByRole('searchbox', { name: 'Learner or meeting' }), { target: { value: 'Learner' } });
     fireEvent.click(screen.getByRole('button', { name: 'More filters' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Review status' }), { target: { value: 'draft' } });
+    selectOption('Review status', 'Drafts');
     expect(qualityReviews).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
     await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
@@ -40,7 +45,7 @@ describe('Saved quality reviews dashboard', () => {
   });
   it('applies one-click type, completion and PDF filters and restores them in the URL', async () => {
     open(); await screen.findByText('Learner 1');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Quality form filter' }), { target: { value: 'PR' } });
+    selectOption('Quality form filter', 'PR · Previous form');
     await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByRole('button', { name: 'With PDF' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'With PDF' }));
@@ -57,7 +62,7 @@ describe('Saved quality reviews dashboard', () => {
   it('restores type and PDF filters on refresh and resets the search without loading PDF bytes', async () => {
     open('/?type=MCM&pdf=available&status=all&q=Somebody'); await screen.findByText('Learner 1');
     expect(vi.mocked(qualityReviews).mock.calls[0][0]).toMatchObject({ reviewType: 'MCM', pdf: 'available', status: '', search: 'Somebody' });
-    expect(screen.getByRole('combobox', { name: 'Quality form filter' })).toHaveValue('MCM');
+    expect(screen.getByRole('combobox', { name: 'Quality form filter' })).toHaveTextContent('MCM · Previous form');
     fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
     await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
     expect(vi.mocked(qualityReviews).mock.lastCall?.[0]).toMatchObject({ reviewType: '', pdf: '', coachEmail: '', search: '', status: '' });
@@ -66,7 +71,7 @@ describe('Saved quality reviews dashboard', () => {
     open(); await screen.findByText('Learner 1');
     fireEvent.change(screen.getByRole('searchbox', { name: 'Learner or meeting' }), { target: { value: 'Typed learner' } });
     expect(qualityReviews).toHaveBeenCalledOnce();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Quality form filter' }), { target: { value: 'MCM' } });
+    selectOption('Quality form filter', 'MCM · Previous form');
     await waitFor(() => expect(qualityReviews).toHaveBeenCalledTimes(2));
     expect(vi.mocked(qualityReviews).mock.lastCall?.[0]).toMatchObject({ search: 'Typed learner', reviewType: 'MCM' });
   });
@@ -91,7 +96,7 @@ describe('Saved quality reviews dashboard', () => {
     await screen.findByText('Learner 1');
     expect(qualityReviews).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'More filters' }));
-    expect(screen.getByRole('combobox', { name: 'Time zone' })).toHaveValue('America/New_York');
+    expect(screen.getByRole('combobox', { name: 'Time zone' })).toHaveTextContent('America/New_York');
     expect(vi.mocked(qualityReviews).mock.calls[0][0]).toMatchObject({ start: '2026-10-01', end: '2026-10-24', status: 'draft' });
     fireEvent.click(screen.getByRole('button', { name: 'Close saved form' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -129,7 +134,7 @@ describe('Saved quality reviews dashboard', () => {
     open(); await screen.findByText('Learner 1');
     fireEvent.click(screen.getByRole('button', { name: 'Load more reviews' })); await screen.findByText('Learner 2');
     fireEvent.click(screen.getByRole('button', { name: 'More filters' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Review status' }), { target: { value: 'draft' } });
+    selectOption('Review status', 'Drafts');
     fireEvent.click(screen.getByRole('button', { name: 'Apply filters' })); await screen.findByText('Learner 3');
     fireEvent.click(screen.getByRole('button', { name: 'History back' })); await screen.findByText('Learner 1');
     expect(screen.queryByText('Learner 3')).not.toBeInTheDocument();

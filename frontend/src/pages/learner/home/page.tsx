@@ -144,8 +144,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
       </section>
       <blockquote className={styles.quote}><p>“A brighter future<br/>belongs to those who keep learning.”</p><cite>KENT BUSINESS COLLEGE</cite></blockquote>
       <LearningShield link={link}>
-        <ContinueLearning kind={kind} learnerId={id} enabled={loadCards} week={week.data} linkIdentity={preview}
-          loading={week.loading} error={week.error} onRetry={week.refresh}/>
+        <ContinueLearning kind={kind} learnerId={id} enabled={loadCards} linkIdentity={preview}/>
       </LearningShield>
       <ProgressCard data={week.data?.homeProgress} loading={week.loading} error={week.error} refresh={week.refresh} dashboardHref={dashboardHref} link={link}/>
       <div className={styles.kent} aria-hidden="true"><span>Kent</span><p>Always a step ahead</p></div>

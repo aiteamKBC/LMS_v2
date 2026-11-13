@@ -1,6 +1,8 @@
-import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import type { CoachCalendarEvent } from '../../shared/calendarEvents';
+import { reviewAttendanceLinks } from '../../shared/reviewAttendanceLinks';
 import styles from '../monthlyCoaching.module.css';
 
 interface MeetingAction {
@@ -10,13 +12,30 @@ interface MeetingAction {
 }
 
 /** Portal keeps row actions outside the horizontally scrolling table. */
-export function MeetingActionsMenu({ learner, actions }: { learner: string; actions: MeetingAction[] }) {
+export function MeetingActionsMenu({ learner, actions, event }: { learner: string; actions: MeetingAction[]; event?: CoachCalendarEvent }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const initialFocus = useRef<'first' | 'last'>('first');
   const menuId = useId();
+  const [nativeRescheduleAllowed, setNativeRescheduleAllowed] = useState<boolean | null>(null);
+  const nativeAttendanceKey = event?.reviewSource !== 'aptem' && !event?.aptemReviewId && event?.status === 'in-progress'
+    && ['mcr', 'progress-review'].includes(event.source || '') && event.reviewInstanceId
+    ? event.eventKey : '';
+
+  useEffect(() => {
+    setNativeRescheduleAllowed(null);
+    if (!nativeAttendanceKey) return;
+    const controller = new AbortController();
+    reviewAttendanceLinks(nativeAttendanceKey, undefined, controller.signal)
+      .then(context => { if (!controller.signal.aborted) setNativeRescheduleAllowed(context.canReschedule === true); })
+      .catch(() => { if (!controller.signal.aborted) setNativeRescheduleAllowed(false); });
+    return () => controller.abort();
+  }, [nativeAttendanceKey]);
+
+  const visibleActions = nativeAttendanceKey && nativeRescheduleAllowed !== true
+    ? actions.filter(action => action.label !== 'Reschedule') : actions;
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -68,7 +87,7 @@ export function MeetingActionsMenu({ learner, actions }: { learner: string; acti
     if (next !== null) { event.preventDefault(); items[next]?.focus(); }
   };
 
-  if (!actions.length) return null;
+  if (!visibleActions.length) return null;
   return (
     <>
       <button ref={triggerRef} type="button" aria-label={'More actions for ' + learner} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined}
@@ -85,7 +104,7 @@ export function MeetingActionsMenu({ learner, actions }: { learner: string; acti
       </button>
       {open ? createPortal(
         <div ref={menuRef} id={menuId} role="menu" aria-label={'Actions for ' + learner} className={styles.menu} style={position} onKeyDown={onMenuKey} onClick={(event) => event.stopPropagation()}>
-          {actions.map(action => <button key={action.label} type="button" role="menuitem" onClick={() => { closeAndFocus(); action.onSelect(); }}><AppIcon className={action.icon} />{action.label}</button>)}
+          {visibleActions.map(action => <button key={action.label} type="button" role="menuitem" onClick={() => { closeAndFocus(); action.onSelect(); }}><AppIcon className={action.icon} />{action.label}</button>)}
         </div>,
         document.body,
       ) : null}

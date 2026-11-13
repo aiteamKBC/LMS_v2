@@ -20,6 +20,27 @@ beforeEach(() => {
   vi.mocked(prepareRecordingPlayback).mockResolvedValue({ url: '/video?reference=fresh', reference: 'fresh' });
 });
 
+it('pauses a hidden player and preserves its prepared source and attendance when changing tabs', async () => {
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  try {
+    const view = render(<SessionDetails {...props} section="recordings" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
+    const player = await screen.findByLabelText('Coaching recording player');
+    expect(player).toBeVisible();
+    expect(screen.getByText(/Attendance remains pending/)).not.toBeVisible();
+    view.rerender(<SessionDetails {...props} section="attendance" />);
+    expect(pause).toHaveBeenCalledOnce();
+    expect(player).not.toBeVisible();
+    expect(screen.getByText(/Attendance remains pending/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Play recording 1' })).not.toBeInTheDocument();
+    view.rerender(<SessionDetails {...props} section="recordings" />);
+    expect(screen.getByLabelText('Coaching recording player')).toBe(player);
+    expect(player).toBeVisible();
+    expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+    expect(loadCoachingSession).toHaveBeenCalledOnce();
+  } finally { pause.mockRestore(); }
+});
+
 it('prepares the chosen occurrence before mounting an autoplaying video', async () => {
   let finish!: (value: { url: string; reference: string }) => void;
   vi.mocked(prepareRecordingPlayback).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
@@ -32,6 +53,23 @@ it('prepares the chosen occurrence before mounting an autoplaying video', async 
   expect(screen.getByLabelText('Coaching recording player')).toHaveAttribute('autoplay');
   expect(screen.getByLabelText('Coaching recording player')).toHaveAttribute('src', '/video?reference=fresh');
   expect(screen.getByRole('link', { name: 'Download recording 1' })).toHaveAttribute('href', expect.stringContaining('reference=fresh'));
+});
+
+it('does not autoplay a recording that finishes preparing after its tab was hidden', async () => {
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  let finish!: (value: { url: string; reference: string }) => void;
+  vi.mocked(prepareRecordingPlayback).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  try {
+    const view = render(<SessionDetails {...props} section="recordings" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
+    view.rerender(<SessionDetails {...props} section="attendance" />);
+    await act(async () => finish({ url: '/video?reference=fresh', reference: 'fresh' }));
+    const player = screen.getByLabelText('Coaching recording player');
+    expect(player).not.toBeVisible();
+    expect(player).not.toHaveAttribute('autoplay');
+    expect(pause).toHaveBeenCalledOnce();
+    expect(screen.getByText(/Attendance remains pending/)).toBeVisible();
+  } finally { pause.mockRestore(); }
 });
 
 it('recreates the same video and renews preparation on retry after a media failure', async () => {
@@ -63,4 +101,48 @@ it('cancels playback preparation when the drawer closes', async () => {
   const signal = vi.mocked(prepareRecordingPlayback).mock.calls[0][1];
   view.unmount();
   expect(signal.aborted).toBe(true);
+});
+
+it('loads English captions through the same authorised endpoint and retries without restarting video', async () => {
+  render(<SessionDetails {...props} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
+  const video = await screen.findByLabelText('Coaching recording player');
+  const track = video.querySelector('track')!;
+  expect(track).toHaveAttribute('srclang', 'en');
+  expect(track).toHaveAttribute('src', '/video?reference=fresh&format=captions&captionRetry=0');
+  fireEvent.error(track);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry captions' }));
+  expect(screen.getByLabelText('Coaching recording player')).toBe(video);
+  expect(video.querySelector('track')).toHaveAttribute('src', expect.stringContaining('captionRetry=1'));
+  expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+});
+
+
+it.each([
+  { provider: 'Bunny archive', source: null },
+  { provider: 'SharePoint', source: 'microsoft' as const },
+])('preserves $provider playback identity, fresh references and captions across display tabs', async ({ source }) => {
+  vi.mocked(loadCoachingSession).mockResolvedValue({ ...details,
+    media: { ...details.media, recordings: [{ ...details.media.recordings[0], source }] } });
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  try {
+    const view = render(<SessionDetails {...props} section="recordings" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
+    const player = await screen.findByLabelText('Coaching recording player');
+    expect(prepareRecordingPlayback).toHaveBeenCalledWith({ eventKey: details.eventKey,
+      recordingId: 'file', reference: props.reference, occurrence }, expect.any(AbortSignal));
+    expect(player).toHaveAttribute('src', '/video?reference=fresh');
+    const captionSource = player.querySelector('track')!.getAttribute('src');
+    view.rerender(<SessionDetails {...props} section="attendance" />);
+    expect(player).not.toBeVisible();
+    view.rerender(<SessionDetails {...props} section="recordings" />);
+    expect(screen.getByLabelText('Coaching recording player')).toBe(player);
+    expect(player).toBeVisible();
+    expect(player.querySelector('track')).toHaveAttribute('src', captionSource);
+    expect(screen.getByRole('link', { name: 'Download recording 1' }))
+      .toHaveAttribute('href', expect.stringContaining('reference=fresh'));
+    expect(loadCoachingSession).toHaveBeenCalledOnce();
+    expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+  } finally { pause.mockRestore(); }
 });

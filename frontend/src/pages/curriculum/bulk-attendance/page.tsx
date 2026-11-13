@@ -65,11 +65,10 @@ import AddAttendanceDayDialog, {
 } from "./components/AddAttendanceDayDialog";
 import ArchiveView from "./components/ArchiveView";
 import { isArchivedStatus } from "./learnerStatus";
+import { attendanceOutcome, attendanceStatusLabel, isAttendancePresent } from "@/utils/bulkAttendanceOutcome";
 
 function statusLabel(status: AttendanceStatus): string {
-  if (status === "present") return "Present";
-  if (status === "absent") return "Absent";
-  return "Unmarked";
+  return attendanceStatusLabel(status);
 }
 
 function normalizeText(value: string | undefined): string {
@@ -542,7 +541,7 @@ export default function AttendancePage() {
         const nextStatuses: Record<string, AttendanceStatus> = {};
         records.forEach((record) => {
           const learnerId = learnerIdByKbcId.get(record.learnerId);
-          if (learnerId) nextStatuses[learnerId] = record.effectiveAttendance ?? record.attendance;
+          if (learnerId) nextStatuses[learnerId] = attendanceOutcome(record);
         });
         replaceSavedStatusesForDate(sessionDate, nextStatuses);
       })
@@ -755,12 +754,11 @@ export default function AttendancePage() {
       // attendance row is not a lecture record, so it must not appear as one
       // of the learner's last four database sessions.
       const recent = databaseRecords.slice(-4).map((record) => {
-        const saved: AttendanceStatus = record.attendance ?? "unmarked";
         return {
           id: `${record.source}:${record.recordKey}`,
           name: `${record.lectureName || record.moduleName || "Lecture title not recorded"} (${record.source === "live" ? "Live register" : "KBC"})`,
           sessionDate: record.sessionDate,
-          status: pendingEdits[`${record.source}:${record.recordKey}`]?.attendance ?? record.effectiveAttendance ?? saved,
+          status: pendingEdits[`${record.source}:${record.recordKey}`]?.attendance ?? attendanceOutcome(record),
           editable: record.effectiveAttendance ? undefined : {
             source: record.source,
             recordKey: record.recordKey,
@@ -818,7 +816,7 @@ export default function AttendancePage() {
   };
 
   const handlePdfExport = () => {
-    const present = visibleRows.filter((row) => getStatus(row.learner.id, date) === "present").length;
+    const present = visibleRows.filter((row) => isAttendancePresent(getStatus(row.learner.id, date))).length;
     const absent = visibleRows.filter((row) => getStatus(row.learner.id, date) === "absent").length;
     const marked = present + absent;
     const scopeName = selectedLecture?.name
@@ -923,7 +921,9 @@ export default function AttendancePage() {
       source: record.source,
       occurrenceId: record.occurrenceId,
       effectiveAttendance: record.effectiveAttendance,
+      attendanceBasis: record.attendanceBasis,
       recoveryOccurrenceId: record.recoveryOccurrenceId,
+      recoveryGroup: record.recoveryGroup,
       makeupForOccurrenceId: record.makeupForOccurrenceId,
       makeupForDate: record.makeupForDate,
       countsAsSession: record.countsAsSession,

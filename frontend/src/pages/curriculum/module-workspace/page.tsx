@@ -1,4 +1,5 @@
 import { LearnerPreview } from '../module-builder/LearnerPreview';
+import { Notice } from '@/components/ui/Notice';
 import { componentSessionTitle } from '../shared/sessionDisplayTitle';
 import { ModuleSessions } from './ModuleSessions';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -934,11 +935,9 @@ export default function ModuleWorkspacePage() {
                         holiday falls on, so the author can go and look. */}
                     <ScheduleStat icon="ri-sun-line" tone="amber" label="On a holiday" value={plan.skippedHolidays.length} />
                   </div>
-                  {plan.warnings?.map(warning => (
-                    <p key={warning} className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800">
-                      {warning}
-                    </p>
-                  ))}
+                  {Boolean(plan.warnings?.length) && <Notice tone="attention" title="Schedule notes" className="mb-3">
+                    <ul className="list-disc space-y-1 pl-5">{plan.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
+                  </Notice>}
 
                   {/* The same month-grouped timeline as the Teams Meetings
                       page: one row per session on its own date, a holiday
@@ -1263,20 +1262,15 @@ function ScheduleGap({ authored, undated, builderUrl }: {
     ? 'A module delivers the live sessions its Course structure holds, and this one holds none — so it has no session dates, and there is nothing for a Teams calendar to be created from.'
     : 'A live session with no date cannot be placed on the calendar or sent to Teams, and nothing here will choose a date for it.';
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3.5">
-      <p className="flex items-center gap-2 text-[13px] font-heading font-bold text-amber-900">
-        <AppIcon className="ri-error-warning-line text-base text-amber-600"></AppIcon>
-        {headline}
-      </p>
-      <p className="mt-1 text-[12px] leading-relaxed text-amber-900">{detail}</p>
-      <Link
+    <Notice tone={authored ? 'attention' : 'info'} title={headline} actions={<Link
         to={builderUrl}
-        className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-amber-700"
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[13px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100"
       >
         <AppIcon className="ri-layout-masonry-line text-sm"></AppIcon>
         {authored ? 'Date them in the Module Builder' : 'Add live sessions in the Module Builder'}
-      </Link>
-    </div>
+      </Link>}>
+      {detail}
+    </Notice>
   );
 }
 
@@ -1292,34 +1286,27 @@ function ScheduleDriftNotice({ drifted, teamsUrl }: {
   teamsUrl: string;
 }) {
   return (
-    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3.5">
-      <p className="flex items-center gap-2 text-[13px] font-heading font-bold text-amber-900">
-        <AppIcon className="ri-calendar-schedule-line text-base text-amber-600"></AppIcon>
-        {drifted.length === 1
+    <Notice tone="attention" className="mb-4" title={drifted.length === 1
           ? 'One session is still on the date Teams has it booked for'
           : `${drifted.length} sessions are still on the dates Teams has them booked for`}
-      </p>
-      <p className="mt-1 text-[12px] leading-relaxed text-amber-900">
-        Live sessions follow their week: change the module’s start date or move a week and the dates move with it.
-        {drifted.length === 1 ? ' This one was' : ' These were'} left where {drifted.length === 1 ? 'it is' : 'they are'},
-        because real attendees were invited to the booked date and only Microsoft can move a meeting.
-      </p>
-      <ul className="mt-2 space-y-0.5 text-[12px] text-amber-900">
+      detailsLabel="Compare booked and planned dates"
+      details={<ul className="space-y-2">
         {drifted.map(session => (
           <li key={session.componentId} className="tabular-nums">
             {formatDateLabel(session.storedDate)} — its week now runs {session.weekDates.map(formatDateLabel).join(' and ')}
-            {liveSessionDriftCause(session) && <span className="block text-amber-800/90">{liveSessionDriftCause(session)?.sentence}</span>}
+            {liveSessionDriftCause(session) && <span className="block text-foreground-600">{liveSessionDriftCause(session)?.sentence}</span>}
           </li>
         ))}
-      </ul>
-      <Link
+      </ul>}
+      actions={<Link
         to={teamsUrl}
-        className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-amber-700"
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[13px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100"
       >
         <AppIcon className="ri-team-line text-sm"></AppIcon>
-        Move {drifted.length === 1 ? 'it' : 'them'} on the Teams Meetings page
-      </Link>
-    </div>
+        Review dates on the Teams Meetings page
+      </Link>}>
+      The course plan and booked meeting dates differ. Attendees still have their existing invitations. Review the dates before changing the schedule.
+    </Notice>
   );
 }
 

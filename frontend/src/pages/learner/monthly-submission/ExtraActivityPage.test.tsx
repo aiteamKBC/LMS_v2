@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { ExtraActivityForm } from './ExtraActivityPage';
+import ExtraActivityPage, { ExtraActivityForm } from './ExtraActivityPage';
+import { useResolvedLearner } from '@/hooks/useMyLearner';
+import { fetchEvidence } from '@/api/evidence';
+import type { EvidenceRecord, UploadEvidenceResult } from '@/api/evidence';
+vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: vi.fn() }));
+const mockUpload = vi.hoisted(() => ({ status: 'approved' }));
 import { useAuth } from '@/hooks/useAuth';
 vi.mock('@/hooks/useAuth', () => ({ useAuth: vi.fn() }));
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
@@ -13,15 +18,161 @@ vi.mock('@/api/extraActivities', () => ({ useExtraActivities: () => ({ activitie
 vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn() }));
 vi.mock('@/api/monthlyAssignment', async original => ({ ...await original<typeof import('@/api/monthlyAssignment')>(), checkMonthlyAssignment: vi.fn() }));
 vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn().mockResolvedValue([]) }));
-vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: ({ readOnly }: { readOnly: boolean }) => <button disabled={readOnly}>Evidence upload</button> }));
+vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: ({ readOnly, componentId, onUploadCompleted, onUploaded }: {
+  readOnly: boolean; componentId: string; onUploadCompleted?: (file: UploadEvidenceResult) => void; onUploaded?: (files: EvidenceRecord[]) => void;
+}) => <><button disabled={readOnly} onClick={() => onUploadCompleted?.({ id: 'new-evidence', status: mockUpload.status, scanResult: '', filename: 'Synthetic evidence.pdf', sectionRef: componentId })}>Evidence upload</button>
+  <button disabled={readOnly} onClick={() => onUploaded?.([])}>Complete evidence scan</button></> }));
 vi.mock('@/hooks/useLearnerDetailParam', () => ({ useLearnerDetailParam: () => ({ real: { name: 'Example learner', programme: 'Example programme' } }) }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }) }));
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 beforeEach(() => {
+  vi.mocked(useResolvedLearner).mockReturnValue({ kind: 'commercial', id: '101' } as ReturnType<typeof useResolvedLearner>);
+  vi.mocked(fetchEvidence).mockReset().mockResolvedValue([]);
+  vi.mocked(loadLearningReflectionSubmission).mockReset();
+  mockUpload.status = 'approved';
   vi.mocked(useAuth).mockReturnValue({ auth: { account: null }, isInitialized: true } as ReturnType<typeof useAuth>);
   vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'submitted_for_tutor_review' });
   vi.mocked(checkMonthlyAssignment).mockResolvedValue(['title', 'answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours'].map(key => ({ key, label: key, passed: true })));
+});
+
+function CurrentRoute() { const location = useLocation(); return <output data-testid="route">{location.pathname}{location.search}</output>; }
+
+it.each(['commercial', 'apprenticeship'] as const)('reopens the same saved %s activity after refreshing its URL', async kind => {
+  vi.mocked(useResolvedLearner).mockReturnValue({ kind, id: '101' } as ReturnType<typeof useResolvedLearner>);
+  const records = new Map<string, StoredLearningReflectionSubmission>();
+  vi.mocked(saveLearningReflectionSubmission).mockImplementation(async payload => {
+    records.set(payload.activityId, { ...payload, status: 'draft' } as unknown as StoredLearningReflectionSubmission);
+    return { id: 'record', status: 'draft' };
+  });
+  vi.mocked(loadLearningReflectionSubmission).mockImplementation(async input => records.get(input.activityId) || null);
+  const view = render(<MemoryRouter initialEntries={['/learner/extra-activities?keep=yes']}><ExtraActivityPage /><CurrentRoute /></MemoryRouter>);
+  expect(screen.getByRole('link', { name: 'View saved activities and continue a draft' })).toHaveAttribute('href', '#saved-extra-activities');
+  expect(screen.getByRole('region', { name: 'Saved activities' })).toHaveAttribute('id', 'saved-extra-activities');
+  fireEvent.change(screen.getByLabelText('Activity title'), { target: { value: 'Keep this workshop' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent('activity='));
+  const route = screen.getByTestId('route').textContent!;
+  expect(route).toContain('keep=yes');
+  expect(new URL(route, 'https://synthetic.invalid').searchParams.get('activity')).toBe([...records.keys()][0]);
+  expect(loadLearningReflectionSubmission).not.toHaveBeenCalled();
+  view.unmount();
+  render(<MemoryRouter initialEntries={[route]}><ExtraActivityPage /></MemoryRouter>);
+  expect(await screen.findByDisplayValue('Keep this workshop')).toBeVisible();
+  expect(records.size).toBe(1);
+});
+
+it('keeps newer edits while the first saved activity is added to its URL, and starts another only on request', async () => {
+  let finish!: (value: { id: string; status: string }) => void;
+  vi.mocked(saveLearningReflectionSubmission).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+    .mockResolvedValue({ id: 'record', status: 'draft' });
+  render(<MemoryRouter><ExtraActivityPage /><CurrentRoute /></MemoryRouter>);
+  fireEvent.change(screen.getByLabelText('Activity title'), { target: { value: 'Earlier edit' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  fireEvent.change(screen.getByLabelText('Activity title'), { target: { value: 'Newer edit' } });
+  await act(async () => { finish({ id: 'record', status: 'draft' }); });
+  expect(screen.getByLabelText('Activity title')).toHaveValue('Newer edit');
+  expect(loadLearningReflectionSubmission).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  const firstId = vi.mocked(saveLearningReflectionSubmission).mock.calls[0][0].activityId;
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls[1][0]).toMatchObject({ activityId: firstId, activityTitle: 'Newer edit' });
+  fireEvent.click(screen.getByRole('button', { name: 'New activity' }));
+  expect(screen.getByLabelText('Activity title')).toHaveValue('');
+  fireEvent.change(screen.getByLabelText('Activity title'), { target: { value: 'Another activity' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)![0].activityId).not.toBe(firstId);
+});
+
+it('attaches only a new upload after approval and respects an explicit removal', async () => {
+  const activityId = 'extra:00000000-0000-4000-8000-000000000001';
+  const monthly = { ...emptyMonthlyAssignment([], '2026-10'), timeEntries: [{ topic: 'Research', hours: '2', date: '2026-10-14' }] };
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Saved activity', status: 'draft', monthlyAssignment: monthly } as StoredLearningReflectionSubmission);
+  vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'draft' });
+  const old = { id: 'old-evidence', sectionRef: activityId, status: 'approved', filename: 'Previously removed.pdf' } as EvidenceRecord;
+  vi.mocked(fetchEvidence).mockResolvedValue([old]);
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="101" savedId={activityId} /></MemoryRouter>);
+  await screen.findByDisplayValue('Saved activity');
+  fireEvent.click(screen.getByRole('button', { name: '2. Evidence & cross-referencing' }));
+  expect(await screen.findByRole('button', { name: 'Attach Previously removed.pdf' })).toBeVisible();
+  mockUpload.status = 'pending';
+  const uploaded = { ...old, id: 'new-evidence', filename: 'Synthetic evidence.pdf', status: 'pending' };
+  vi.mocked(fetchEvidence).mockResolvedValue([old, uploaded]);
+  fireEvent.click(screen.getByRole('button', { name: 'Evidence upload' }));
+  await screen.findByText(/It will be attached after the upload checks finish/);
+  expect(screen.queryByText('Uploaded evidence attached to this activity.')).not.toBeInTheDocument();
+  vi.mocked(fetchEvidence).mockResolvedValue([old, { ...uploaded, status: 'approved' }]);
+  fireEvent.click(screen.getByRole('button', { name: 'Complete evidence scan' }));
+  await screen.findByText('Uploaded evidence attached to this activity.');
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
+    actualTimeHours: '2', evidenceFiles: ['Synthetic evidence.pdf'],
+    monthlyAssignment: expect.objectContaining({ evidence: [{ id: 'new-evidence', name: 'Synthetic evidence.pdf', points: '' }], timeEntries: monthly.timeEntries }),
+  }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove from submission' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Complete evidence scan' }));
+  await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({ evidenceFiles: [] }));
+});
+
+it('keeps a deleted extra-activity topic removed when switching steps, and retains the activity answers', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Written activity', status: 'draft',
+    whatYouLearned: 'Keep my learning', monthlyAssignment: { ...emptyMonthlyAssignment([], '2026-10'),
+      timeEntries: [{ topic: 'Accidental topic', hours: '2', date: '2026-10-14' }] },
+  } as StoredLearningReflectionSubmission);
+  vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'draft' });
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="101" savedId="extra:00000000-0000-4000-8000-000000000001" /></MemoryRouter>);
+  await screen.findByDisplayValue('Written activity');
+  fireEvent.click(screen.getByRole('button', { name: '3. KSBs & hours claimed' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove topic 1' }));
+  fireEvent.click(screen.getByRole('button', { name: '1. Activity answer' }));
+  expect(screen.getByDisplayValue('Keep my learning')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: '3. KSBs & hours claimed' }));
+  expect(screen.queryByLabelText('Topic 1')).not.toBeInTheDocument();
+  expect(screen.getByText('Total learning time: 0 hours')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
+    activityTitle: 'Written activity', whatYouLearned: 'Keep my learning', actualTimeHours: '0',
+    monthlyAssignment: expect.objectContaining({ timeEntries: [] }),
+  }));
+});
+
+it('asks before replacing statements and keeps written answers, claims and hours when generation returns blanks', async () => {
+  const monthly = { ...emptyMonthlyAssignment([], '2026-10'),
+    understood: 'Written understanding', gainedSkills: 'Written skills',
+    timeEntries: [{ topic: 'Research', hours: '2', date: '2026-10-14' }],
+    claims: [{ code: 'K1', description: 'Synthetic knowledge', explanation: 'Written explanation', evidenceIds: [] }],
+  };
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ activityTitle: 'Written activity', status: 'draft',
+    assignmentAnswer: 'learning '.repeat(120), whatYouLearned: 'Written knowledge', monthlyAssignment: monthly,
+  } as unknown as StoredLearningReflectionSubmission);
+  vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'record', status: 'draft' });
+  const request = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ whatYouLearned: '', understood: ' ', gainedSkills: '' }) });
+  vi.stubGlobal('fetch', request);
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  render(<MemoryRouter><ExtraActivityForm kind="commercial" learnerId="101" savedId="extra:00000000-0000-4000-8000-000000000001" /></MemoryRouter>);
+  await screen.findByDisplayValue('Written activity');
+  fireEvent.click(screen.getByRole('button', { name: 'Generate learning statements' }));
+  expect(confirm).toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalled();
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Generate learning statements' }));
+  await screen.findByText(/Your existing answers have been kept/);
+  expect(screen.getByDisplayValue('Written knowledge')).toBeVisible();
+  expect(screen.getByDisplayValue('Written understanding')).toBeVisible();
+  expect(screen.getByDisplayValue('Written skills')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved');
+  expect(saveLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
+    activityTitle: 'Written activity', assignmentAnswer: 'learning '.repeat(120), whatYouLearned: 'Written knowledge', actualTimeHours: '2',
+    monthlyAssignment: expect.objectContaining(monthly),
+  }));
 });
 
 it('shows coach provenance and prevents learner edits even if the review status changes', async () => {

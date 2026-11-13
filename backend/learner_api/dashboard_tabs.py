@@ -14,11 +14,12 @@ from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view
 from .projection_performance import measure_projection
 from .monthly_log_sources import number
+from .hour_review_status import review_hour_totals
 
 log = logging.getLogger(__name__)
 
 
-def monthly_hours(owner, records, targets, *, signed_months=(), current_month=None):
+def monthly_hours(owner, records, targets, *, signed_months=(), current_month=None, attendance=()):
     """The monthly-log chart's rules without documents, signatures or locks.
 
     Allocations retain reporting month and seconds, including split entries.
@@ -40,12 +41,23 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
     for month in {*targets, *signed_months}:
         if month <= current:
             months[month]
+    attendance_hours = 0
+    for entry in attendance:
+        month = entry.get('reporting_month')
+        if entry.get('accepted') is True and month and month <= current:
+            value = number(entry.get('actual_hours'))
+            months[month]['actual_hours'] += value
+            attendance_hours += value
+    review = review_hour_totals(records, canonical.allocations)
     totals = canonical.metrics_from_records(records, targets)['otjh']
     return {'learner': {'planned_end_date': owner.get('end_date')},
-            'months': [{'month': month, **value, 'training_plan_target': targets.get(month)}
+            'months': [{'month': month, **value,
+                       **review.get(month, {'submitted_hours': 0.0, 'verification_hours': 0.0}),
+                       'training_plan_target': targets.get(month)}
                        for month, value in sorted(months.items())],
             'training_plan_totals': {
-                'accepted_hours': totals.get('completed_actual', totals.get('actual')),
+                'accepted_hours': (totals.get('completed_actual', totals.get('actual')) + attendance_hours
+                                   if totals.get('completed_actual', totals.get('actual')) is not None else None),
                 'planned_hours': totals['planned']}}
 
 

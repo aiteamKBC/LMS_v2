@@ -6,6 +6,7 @@ export type MonthlyHours = {
   target: number | null;
   submitted: number | null;
   completed: number | null;
+  verification?: number;
 };
 
 export type MonthlyHoursSource = Pick<TrainingPlanDashboard, 'months' | 'actual' | 'actualAvailable'> &
@@ -63,6 +64,7 @@ export function monthlyHours(data: MonthlyHoursSource, programmeStartMonth = '',
     // completed exactly once: Monthly Logs first, then the canonical monthly
     // projection. Never add the weekly projection to the same canonical row.
     const submitted = monthlyLog ? monthlyLog.submitted : recordedAvailable ? (current?.submitted ?? 0) : null;
+    const verification = monthlyLog?.verification ?? 0;
     const completed = monthlyLog ? monthlyLog.completed : recordedAvailable
       ? current?.includesHistorical ? current.actual
         : canonicalRows.length ? canonicalActual : (current?.actual ?? 0)
@@ -72,6 +74,7 @@ export function monthlyHours(data: MonthlyHoursSource, programmeStartMonth = '',
       label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
       target: monthlyTargetHours(monthlyLog?.target, planned),
       submitted,
+      ...(verification > 0 ? { verification } : {}),
       completed,
     };
   });

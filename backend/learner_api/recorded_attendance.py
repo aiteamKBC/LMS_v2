@@ -21,7 +21,7 @@ def saved_delivery_mode(learner_id):
 
 def apply_recorded_attendance(rows, source, *, mode=None, kind=None, watched=None, now=None):
     now = now or timezone.now()
-    candidates = [row for row in rows if row.get('source') == 'microsoft-teams'
+    candidates = [row for row in rows if row.get('source') in {'microsoft-teams', 'kbc-attendance'}
                   and attendance_outcome(row, now)[0] not in {'present', 'upcoming', 'in_progress'}
                   and not any(str(row.get(key) or '').strip().lower() in INVALID
                               for key in ('status', 'session_status', 'occurrence_status', 'attendance_status'))]
@@ -30,12 +30,15 @@ def apply_recorded_attendance(rows, source, *, mode=None, kind=None, watched=Non
     if (mode if mode is not None else saved_delivery_mode(source.id)) != 'lazy':
         return rows
     def evidence_id(row):
+        # Legacy KBC rows have no verified recording occurrence association.
+        if row.get('source') != 'microsoft-teams':
+            return None
         return str(row.get('attendance_source_occurrence_id') or row.get('occurrence_id') or row['session_id'])
-    ids = {evidence_id(row) for row in candidates}
+    ids = {evidence_id(row) for row in candidates if evidence_id(row)}
     if watched is None:
         from curriculum_api.recording_views import fully_watched_occurrences
         kind = kind or ('commercial' if getattr(source, 'learner_type', '') == 'commercial' else 'apprenticeship')
-        watched = fully_watched_occurrences(kind, source.id, ids)
+        watched = fully_watched_occurrences(kind, source.id, ids) if ids else set()
     candidate_keys = {id(row) for row in candidates}
     result = []
     for row in rows:

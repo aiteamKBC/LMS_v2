@@ -491,7 +491,8 @@ def _live_register_rows(source, *, occurrence_ids=None):
             register_query.values(
                 'occurrence_id', 'live_session_id', 'module_catalogue_id',
                 'attendance_status', 'attended_seconds', 'attendance_report_id',
-                'updated_at',
+                'attendance_basis', 'attendance_source_occurrence_id',
+                'qr_attendance_id', 'qr_confirmed_at', 'updated_at',
             )
         )
         if not register_rows:
@@ -557,6 +558,12 @@ def _live_register_rows(source, *, occurrence_ids=None):
             'catchup_completed': False,
             'attended_seconds': max(int(row.get('attended_seconds') or 0), 0),
             'attendance_report_id': str(row.get('attendance_report_id') or '').strip(),
+            'attendance_basis': str(row.get('attendance_basis') or '').strip(),
+            'attendance_source_occurrence_id': str(
+                row.get('attendance_source_occurrence_id') or row['occurrence_id']
+            ),
+            'qr_attendance_id': row.get('qr_attendance_id'),
+            'qr_confirmed_at': row.get('qr_confirmed_at'),
             'updated_at': row.get('updated_at'),
             'source': 'live-register',
         })

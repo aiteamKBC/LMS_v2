@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useToast } from "@/hooks/useToast";
+import { EnrolmentWorkspaceShell as WorkspaceShell } from './presentation/EnrolmentWorkspaceShell';
+import design from './presentation/EnrolmentWorkspace.module.css';
+import styles from './presentation/EnrolmentDetails.module.css';
+import motion from './presentation/EnrolmentMotion.module.css';
+import { EnrolmentBreadcrumbs } from './presentation/EnrolmentBreadcrumbs';
+import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser, deleteEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard } from '@/api/commercialUsers';
@@ -105,16 +109,12 @@ function downloadCsv(filename: string, headers: string[], rows: (string | number
   URL.revokeObjectURL(url);
 }
 
-function initials(name: string) {
-  return name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-}
-
 /** A labelled fact in the learner summary. */
 function MetaItem({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
-    <div className="min-w-0">
-      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
-      <p className="flex items-start gap-2 text-[14px] font-medium text-foreground-800">
+    <div className={styles.heroFact}>
+      <p className={styles.factLabel}>{label}</p>
+      <p className={styles.factValue}>
         <i className={`${icon} mt-0.5 shrink-0 text-primary-600`} aria-hidden="true" />
         <span className="min-w-0 break-words">{value}</span>
       </p>
@@ -147,35 +147,32 @@ function LearnerHeader({
   actions: ReactNode;
 }) {
   return (
-    <section aria-label="Learner overview" className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
-      <div className="p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-4">
-            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary-100 text-lg font-bold text-primary-700 ring-1 ring-inset ring-primary-200">
-              {initials(name) || <i className="ri-user-3-line text-xl" aria-hidden="true" />}
-            </span>
-            <div className="min-w-0">
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-foreground-400">Enrolment</p>
-              <h2 className="break-words text-2xl font-heading font-bold leading-tight tracking-tight text-foreground-900">{name}</h2>
-              {reference && <p className="mt-1 break-all text-[12px] text-foreground-500">{reference}</p>}
-            </div>
+    <section aria-label="Learner overview" className={`${design.learnerOverview} ${styles.hero}`}>
+      <div className={styles.heroBody}>
+        <EnrolmentBreadcrumbs current={name} people />
+        <div className={styles.heroIdentity}>
+          <span className={styles.avatar} aria-hidden="true">{name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase()}</span>
+          <div className="min-w-0">
+            <p className={styles.eyebrow}>Enrolment details</p>
+            <h1>{name}</h1>
+            {reference && <p className={styles.reference}>{reference}</p>}
           </div>
-          <div className="flex flex-wrap items-center gap-2">{actions}</div>
         </div>
-        <div className="mt-5 grid grid-cols-1 gap-5 border-t border-foreground-100 pt-5 sm:grid-cols-2 lg:grid-cols-4">
-          {ownerSlot}
-          <MetaItem icon="ri-book-open-line" label="Programme" value={programme || '—'} />
-          <MetaItem icon="ri-team-line" label="Cohort" value={cohort || '—'} />
-          <MetaItem icon="ri-briefcase-line" label="Employer" value={employer || '—'} />
-        </div>
+        <div className={styles.heroActions}>{actions}</div>
       </div>
-      <div className="flex flex-wrap items-end justify-between gap-4 border-t border-foreground-100 bg-background-100/60 px-5 py-4 sm:px-6">
-        <div className="flex flex-wrap items-start gap-x-6 gap-y-4">
+      <div className={styles.heroFacts}>
+        {ownerSlot}
+        <MetaItem icon="ri-book-open-line" label="Programme" value={programme || '—'} />
+        <MetaItem icon="ri-team-line" label="Cohort" value={cohort || '—'} />
+        <MetaItem icon="ri-briefcase-line" label="Employer" value={employer || '—'} />
+      </div>
+      <div className={styles.heroFooter}>
+        <div className={styles.enrolmentControls}>
           {status}
           {dates}
         </div>
         {onboardingStatus && (
-          <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-[12px] font-medium text-primary-700">
+          <span className={styles.onboarding}>
             <i className="ri-road-map-line shrink-0" aria-hidden="true" />
             <span>Onboarding: {onboardingStatus}</span>
           </span>
@@ -287,8 +284,8 @@ function HeroCoach({ learnerId, fallbackOwner }: { learnerId: string; fallbackOw
     : Boolean(savedName);
 
   return (
-    <div className="min-w-0">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Owner</p>
+    <div className={styles.heroFact}>
+      <p className={styles.factLabel}>Owner</p>
       <div className="flex items-center gap-2 min-w-0">
         <select
           value={val}
@@ -1304,7 +1301,7 @@ export default function BoardPage() {
 
   if (!board) {
     return (
-      <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle="" userName="Enrolment Officer" userRole="Enrolment Officer">
+      <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle="" userName="Enrolment Officer" userRole="Enrolment Officer" directoryLayout>
         <div className="p-6 max-w-6xl mx-auto">
           {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading profile…</div>}
           {!loading && error && (
@@ -1348,20 +1345,20 @@ function Card({
   children: ReactNode;
 }) {
   return (
-    <section aria-label={title} className={`min-w-0 rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm ${className}`}>
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-100 px-4 py-3 sm:px-5">
-        <h3 className="flex min-w-0 items-center gap-2.5 text-[14px] font-heading font-semibold text-foreground-900">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
+    <section aria-label={title} className={`${styles.card} ${className}`}>
+      <header className={styles.cardHeader}>
+        <h3 className={styles.cardTitle}>
+          <span className={styles.cardIcon}>
             <Icon size={16} aria-hidden="true" />
           </span>
           <span className="truncate">{title}</span>
           {count !== undefined && (
-            <span className="rounded-full bg-background-200 px-2 py-0.5 text-[11px] font-semibold text-foreground-600">{count}</span>
+            <span className={styles.count}>{count}</span>
           )}
         </h3>
-        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        {actions && <div className={styles.cardActions}>{actions}</div>}
       </header>
-      <div className="p-4 sm:p-5">{children}</div>
+      <div className={styles.cardBody}>{children}</div>
     </section>
   );
 }
@@ -1373,11 +1370,8 @@ function CardButton({ icon: Icon, label, onClick, disabled, danger }: { icon: Lu
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] font-medium transition-smooth cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
-        danger
-          ? 'border-red-200 text-red-700 hover:bg-red-50'
-          : 'border-foreground-200 text-foreground-700 hover:border-primary-300 hover:text-primary-700'
-      }`}
+      data-danger={danger || undefined}
+      className={styles.cardButton}
     >
       <Icon size={14} aria-hidden="true" />{label}
     </button>
@@ -1387,9 +1381,9 @@ function CardButton({ icon: Icon, label, onClick, disabled, danger }: { icon: Lu
 /** Label/value pairs. A blank value reads as a dash rather than vanishing. */
 function Facts({ items }: { items: { label: string; value: ReactNode; wide?: boolean }[] }) {
   return (
-    <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+    <dl className={styles.facts}>
       {items.map((f) => (
-        <div key={f.label} className={`min-w-0 ${f.wide ? 'sm:col-span-2' : ''}`}>
+        <div key={f.label} className={f.wide ? styles.wideFact : undefined}>
           <dt className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">{f.label}</dt>
           <dd className="mt-1 break-words text-[13px] text-foreground-800">
             {f.value === null || f.value === undefined || f.value === '' ? <span className="text-foreground-300">—</span> : f.value}
@@ -1411,7 +1405,7 @@ function BoardTabs({ tabs, active, onChange }: { tabs: { id: TabId; label: strin
     refs.current[next]?.focus();
   };
   return (
-    <div role="tablist" aria-label="Learner sections" className="flex gap-1 overflow-x-auto rounded-2xl border border-foreground-200/60 bg-background-100 p-1.5">
+    <div role="tablist" aria-label="Learner sections" className={styles.tabs}>
       {tabs.map((t, i) => {
         const selected = t.id === active;
         return (
@@ -1597,6 +1591,7 @@ function BoardView({
   };
 
   const signature = board.contact.signatureUrl || board.contact.savedSignature;
+  const active = (board.programme.status || '').trim().toLowerCase() === 'active';
   const withdrawn = (board.programme.status || '').trim().toLowerCase() === 'withdrawn';
   // Older imports' data: shown only for the learners who have some.
   const fs = board.functionalSkills;
@@ -1606,9 +1601,9 @@ function BoardView({
     || board.subProgrammes.length > 0 || board.managedJobs.length > 0 || hasFunctionalSkills || board.milestones.length > 0;
 
   return (
-    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle={board.user.name} userName="Enrolment Officer" userRole="Enrolment Officer">
-      <div className="mx-auto max-w-6xl space-y-4 p-3 sm:p-6">
-        <div className="animate-fade-in-up">
+    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle={board.user.name} userName="Enrolment Officer" userRole="Enrolment Officer" hideBreadcrumbs showBackButton={false} directoryLayout>
+      <div className={`${design.profile} ${styles.page} ${motion.page}`}>
+        <div className={motion.cardEnter}>
           <LearnerHeader
             name={board.user.name}
             reference={board.user.reference}
@@ -1616,7 +1611,7 @@ function BoardView({
             programme={board.programme.name}
             employer={board.user.employer}
             cohort={board.programme.cohort}
-            onboardingStatus={board.programme.onboardingStatus}
+            onboardingStatus={active ? '' : board.programme.onboardingStatus}
             dates={
               <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
                 <LearnerHeaderDates learnerId={userId} startDate={board.programme.learnerStartDate} endDate={board.programme.learnerEndDate} />
@@ -1653,10 +1648,10 @@ function BoardView({
 
         <BoardTabs tabs={tabs} active={tab} onChange={selectTab} />
 
-        <div role="tabpanel" id={`board-panel-${tab}`} aria-labelledby={`board-tab-${tab}`} className="space-y-4">
+        <div role="tabpanel" id={`board-panel-${tab}`} aria-labelledby={`board-tab-${tab}`} className={`${styles.panel} ${motion.sectionEnter}`}>
           {tab === 'overview' && (
             <>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className={styles.overviewGrid}>
                 <Card
                   title="Contact details"
                   icon={Contact}
@@ -1753,13 +1748,13 @@ function BoardView({
                 </Card>
               )}
 
-              <Card title="Danger zone" icon={AlertTriangle} className="border-red-200/70">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="text-[13px] text-foreground-600">
+              <Card title="Danger zone" icon={AlertTriangle} className={styles.dangerCard}>
+                <div className={styles.dangerContent}>
+                  <div className={styles.dangerCopy}>
                     <p><span className="font-semibold text-foreground-800">Withdraw</span> sets the programme status to Withdrawn; it can be set back from the status picker.</p>
                     <p className="mt-1"><span className="font-semibold text-foreground-800">Delete</span> permanently removes the enrolment record, login and learner profile.</p>
                   </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
+                  <div className={styles.dangerActions}>
                     <CardButton icon={UserX} label={withdrawn ? 'Withdrawn' : cancelling ? 'Withdrawing…' : 'Withdraw from programme'} onClick={cancelUser} disabled={withdrawn || cancelling} danger />
                     <CardButton icon={Trash2} label={deleting ? 'Deleting…' : 'Delete user account'} onClick={deleteUser} disabled={deleting} danger />
                   </div>

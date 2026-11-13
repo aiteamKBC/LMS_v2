@@ -3,7 +3,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
   fetchEvidence, uploadEvidence, getEvidenceDownloadUrl, deleteEvidence,
-  type EvidenceRecord, type EvidenceTrainingPlanDetails,
+  type EvidenceRecord, type EvidenceTrainingPlanDetails, type UploadEvidenceResult,
 } from '@/api/evidence';
 
 /* ═══════════════════════════════════════════════════════
@@ -47,7 +47,7 @@ function formatSize(bytes: number): string {
 }
 
 export function AssignmentEvidence({
-  kind, learnerId, componentId, trainingPlanDetails, onUploaded, onFileSelected, inputId, showPanel = true, readOnly = false,
+  kind, learnerId, componentId, trainingPlanDetails, onUploaded, onUploadCompleted, onFileSelected, onRemoved, inputId, showPanel = true, readOnly = false,
 }: {
   kind: LearnerKind;
   learnerId: string;
@@ -55,8 +55,12 @@ export function AssignmentEvidence({
   trainingPlanDetails: EvidenceTrainingPlanDetails;
   /** Fired after a successful upload so callers can re-check completion criteria. */
   onUploaded?: (files: EvidenceRecord[]) => void;
+  /** Identifies this upload so a caller can attach it once its scan is approved. */
+  onUploadCompleted?: (file: UploadEvidenceResult) => void;
   /** Fired immediately after the learner chooses a file, so external triggers can swap their label. */
   onFileSelected?: (fileName: string) => void;
+  /** Remove references from the current draft only after deletion succeeds. */
+  onRemoved?: (fileId: string) => void;
   /** Lets a button elsewhere on the same page open this uploader directly. */
   inputId?: string;
   /** Keep only the file input mounted when the page supplies its own trigger. */
@@ -76,6 +80,8 @@ export function AssignmentEvidence({
   // mount effect in a loop.
   const onUploadedRef = useRef(onUploaded);
   useEffect(() => { onUploadedRef.current = onUploaded; }, [onUploaded]);
+  const onUploadCompletedRef = useRef(onUploadCompleted);
+  useEffect(() => { onUploadCompletedRef.current = onUploadCompleted; }, [onUploadCompleted]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -115,7 +121,8 @@ export function AssignmentEvidence({
     }
     setUploading(true);
     try {
-      await uploadEvidence(kind, learnerId, file, componentId, trainingPlanDetails);
+      const uploaded = await uploadEvidence(kind, learnerId, file, componentId, trainingPlanDetails);
+      onUploadCompletedRef.current?.(uploaded);
       load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed.');
@@ -132,6 +139,7 @@ export function AssignmentEvidence({
     setDeletingId(fileId);
     try {
       await deleteEvidence(kind, learnerId, fileId);
+      onRemoved?.(fileId);
       setConfirmingId(null);
       // Re-read rather than splicing locally: `load` is what tells the page the
       // approved count moved, which is what re-locks the Finish button.
@@ -198,7 +206,7 @@ export function AssignmentEvidence({
           {files.map((f) => {
             const meta = STATUS_META[f.status] || STATUS_META.pending;
             return (
-              <li key={f.id} className="flex items-center gap-2.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+              <li key={f.id} className="flex flex-wrap items-center gap-2.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
                 <span className="w-8 h-8 rounded-lg bg-white border border-background-200 flex items-center justify-center shrink-0">
                   <AppIcon className="ri-file-line text-foreground-500 text-sm" />
                 </span>
@@ -232,9 +240,13 @@ export function AssignmentEvidence({
                 {/* Remove, so a learner can correct a wrong file: deleting the
                     one that is here leaves the uploader ready for the right
                     one, which is the whole reupload path. */}
-                {!readOnly && (confirmingId === f.id ? (
+                {!readOnly && f.canDelete === false && (
+                  <span className="basis-full pl-[42px] text-[11px] text-foreground-500" title="Files used in submitted attempts are retained. To replace evidence in your draft, upload a new version and update Attached evidence.">Removal unavailable — submitted files are retained</span>
+                )}
+                {!readOnly && f.canDelete !== false && (confirmingId === f.id ? (
                   <span className="shrink-0 inline-flex items-center gap-1.5">
                     <button
+                      type="button"
                       onClick={() => handleDelete(f.id)}
                       disabled={deletingId === f.id}
                       className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-semibold text-white transition-colors enabled:cursor-pointer enabled:hover:bg-red-700 disabled:opacity-60"
@@ -242,6 +254,7 @@ export function AssignmentEvidence({
                       {deletingId === f.id ? 'Removing…' : 'Remove'}
                     </button>
                     <button
+                      type="button"
                       onClick={() => setConfirmingId(null)}
                       disabled={deletingId === f.id}
                       className="rounded-md border border-background-300 px-2 py-1 text-[11px] font-semibold text-foreground-600 transition-colors enabled:cursor-pointer enabled:hover:bg-background-100 disabled:opacity-60"
@@ -251,6 +264,7 @@ export function AssignmentEvidence({
                   </span>
                 ) : (
                   <button
+                    type="button"
                     onClick={() => { setError(null); setConfirmingId(f.id); }}
                     className="shrink-0 text-foreground-400 hover:text-red-600 transition-colors cursor-pointer"
                     title="Remove this file"

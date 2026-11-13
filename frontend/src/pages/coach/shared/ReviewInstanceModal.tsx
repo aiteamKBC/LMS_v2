@@ -337,6 +337,24 @@ function ReviewInstanceContent({
   const [reopenNote, setReopenNote] = useState('');
   const signatureSaveInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const attendanceBookingRefresh = useRef(0);
+  const onAttendanceLinkChange = useCallback(() => {
+    const reviewId = definition?.instance.id;
+    if (!reviewId) return;
+    const revision = ++attendanceBookingRefresh.current;
+    // Keep the coach's unsaved answers while the server recalculates booking eligibility.
+    setDefinition(current => current?.instance.id === reviewId && current.booking
+      ? { ...current, booking: { ...current.booking, canReschedule: false } } : current);
+    void fetchReviewInstanceForm(reviewId).then(updated => {
+      if (!reviewActive.current || revision !== attendanceBookingRefresh.current) return;
+      setDefinition(current => current?.instance.id === reviewId
+        ? { ...current, booking: updated.booking } : current);
+    }).catch(() => {
+      if (reviewActive.current && revision === attendanceBookingRefresh.current) {
+        setError('Attendance was saved, but booking eligibility could not refresh. Reload this review.');
+      }
+    });
+  }, [definition?.instance.id]);
   const joinMeeting = useImportedMeetingJoin({
     contextKey: `${coachIdentity.email}:${isViewingAsCoach}:${instanceId}`, readOnly: isViewingAsCoach,
     onError: setError,
@@ -850,7 +868,7 @@ function ReviewInstanceContent({
   /** Calculating is an explicit action and never happens on load, reload or
    *  reopen -- the snapshot below is whatever the backend already stored. */
   const calculateProgress = async () => {
-    if (!definition || calculating || isViewingAsCoach) return;
+    if (!definition || calculating || isSignatureStage) return;
     const migratedVersion = definition.answerVersion || definition.progressVersion;
     if (definition.source === 'aptem' && (progressRequestRef.current || !definition.migratedForm
       || !definition.canCalculateProgress || !migratedVersion
@@ -1113,6 +1131,7 @@ function ReviewInstanceContent({
                 checkBlocked={hasUnsavedMigratedAnswers || busy || templateSyncConflict}
                 onCheckComplete={onMigratedCheckComplete}
                 onCheckingChange={setCheckingSession}
+                onAttendanceLinkChange={onAttendanceLinkChange}
               />
             ) : null}
             {!definition.migratedForm && definition.source !== 'aptem' && definition.calendarMeeting ? (
@@ -1134,7 +1153,7 @@ function ReviewInstanceContent({
             ) : null}
             {hasImportedBooking && (definition.booking?.canBook || definition.booking?.canReschedule) && !bookingReadOnly ? (
               <section aria-label={definition.booking.canReschedule ? 'Reschedule migrated review meeting' : 'Book migrated review meeting'} className="rounded-xl border border-primary-200 bg-white p-4">
-                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(initialReviewBookingDate(definition, definition.template.reviewTypeCode === 'aptem_mcm' || definition.template.name.toLowerCase().includes('monthly coaching'))); setBookingTime(definition.booking?.scheduledTime || ''); setBookingDuration(initialReviewBookingDuration(definition)); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
+                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(initialReviewBookingDate(definition)); setBookingTime(definition.booking?.scheduledTime || ''); setBookingDuration(initialReviewBookingDuration(definition)); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{definition.booking.canReschedule ? 'Reschedule' : 'Book Meeting'}</button> : (
                   <div className="flex flex-wrap items-end gap-3">
                     <label className="text-xs font-semibold">Date<input aria-label="Meeting date" type="date" required value={bookingDate} onChange={(event) => { setBookingDate(event.target.value); setBookingTime(''); }} className="mt-1 block rounded-lg border px-3 py-2" /></label>
                     <label className="text-xs font-semibold">Time · UK time (Europe/London)<select aria-label="Meeting time" required value={bookingTime} disabled={bookingAvailabilityLoading || Boolean(bookingAvailabilityError) || !bookingTimes.length} onChange={(event) => setBookingTime(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2">
@@ -1375,7 +1394,7 @@ function ReviewInstanceContent({
                 requireRequiredActivities={!isSignatureStage && ['not-scheduled', 'scheduled', 'in-progress'].includes(definition.instance.status)}
                 ragHistory={definition.ragHistory}
                 showCalculateAction={showMigratedCoachActions ? true : undefined}
-                canCalculate={!isViewingAsCoach && !isSignatureStage && (definition.source !== 'aptem'
+                canCalculate={!isSignatureStage && (definition.source !== 'aptem'
                   || Boolean(definition.migratedForm && definition.canCalculateProgress
                     && (definition.answerVersion || definition.progressVersion)))}
                 calculating={calculating}

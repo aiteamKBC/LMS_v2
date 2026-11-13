@@ -216,7 +216,7 @@ export function AssignmentSubmissionForm({
     },
   );
   lockedRef.current = locked;
-  const evidenceNames = [...new Set([...evidenceFiles.map(file => file.filename), ...(monthly.uploadedPresentation ? [monthly.uploadedPresentation.name] : [])])];
+  const evidenceNames = [...new Set([...monthly.evidence.filter(item => !item.url).map(item => item.name), ...(monthly.uploadedPresentation ? [monthly.uploadedPresentation.name] : [])])];
   const cleanQuestionHtml = useMemo(
     () => {
       // Older briefs can contain rich text in the plain-text API field.
@@ -626,7 +626,14 @@ export function AssignmentSubmissionForm({
             {historicalReadOnly && step === 7 ? <p className="text-sm text-slate-600">This historical submission keeps its original assessment status. New-form completeness checks do not apply.</p> : <MonthlyAssignmentSteps question={questionHtml || questionText || ''} activityId={componentId} step={step} data={monthly} onChange={changeMonthly} answers={answers} onAnswer={setAnswer}
               kind={kind} learnerId={learnerId} title={title} plannedOtjh={plannedOtjh} mappings={ksbMappings}
               evidenceFiles={evidenceFiles} timeControl={timeControl} disabled={readOnly || submittingRef.current} historical={historicalReadOnly}
-              evidenceUploader={historicalReadOnly ? <button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setPreviewOpen(true)}>View original files and assessment reports in Preview</button> : <AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly} />}
+              evidenceUploader={historicalReadOnly ? <button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setPreviewOpen(true)}>View original files and assessment reports in Preview</button> : <AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly}
+                onRemoved={fileId => changeMonthly(current => ({ ...current,
+                  evidence: current.evidence.filter(item => item.id !== fileId),
+                  claims: current.claims.map(claim => ({ ...claim, evidenceIds: claim.evidenceIds.filter(id => id !== fileId) })),
+                  ...(current.uploadedPresentation?.id === fileId ? {
+                    uploadedPresentation: undefined, presentationReviewed: false, presentationToken: '',
+                  } : {}),
+                }))} />}
               payload={() => payload('draft')} checks={checks} checking={checking} onCheck={runChecks} onSave={saveDraft}
               revisingRejected={status === 'rejected' || (status === 'draft' && submissionAttempts.at(-1)?.status === 'rejected')}
               onNavigateToCheck={(nextStep, target) => { setQualityTarget(target); setStep(nextStep); }}

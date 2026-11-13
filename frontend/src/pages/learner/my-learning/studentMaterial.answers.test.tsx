@@ -181,7 +181,7 @@ describe('previous quiz answers in the main quiz', () => {
   it('retries a failed review without creating an attempt', async () => {
     vi.mocked(subjectRequest).mockRejectedValueOnce(new Error('Could not load the saved quiz.'));
     render(<StudentMaterial kind="commercial" learnerId="123" groupId={50} activityId={60} completed readOnly reviewQuiz />);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the saved quiz.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load this learning activity');
     vi.mocked(subjectRequest).mockResolvedValueOnce(material());
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await screen.findByRole('region', { name: 'Activity quiz' });

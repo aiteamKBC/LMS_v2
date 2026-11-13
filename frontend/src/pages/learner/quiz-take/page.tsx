@@ -29,6 +29,7 @@ import { ActivityPlanDetails } from '@/pages/learner/video-watch/ActivityPlanDet
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
 import { ActivityKsbMappings } from '@/components/feature/ActivityKsbMappings';
+import { SavedReflection } from '@/components/feature/SavedReflection';
 import { formatClock } from "@/components/feature/ReflectionWindow.helpers";
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -593,11 +594,14 @@ export default function QuizTakePage() {
               result={result}
               kind={kind as 'commercial' | 'apprenticeship'}
               learnerId={id || ''}
-              onBack={() => navigate(-1)}
               onRetake={startQuiz}
             />
             </>
           )
+        )}
+        {!loading && !detailLoading && !loadError && !detailError && quiz && canUseComponent && kind && id
+          && (phase === 'intro' || phase === 'results') && (latestAttempt || result) && (
+          <SavedReflection learnerKind={kind as LearnerKind} learnerId={id} activityType="quiz" activityId={`quiz-${quiz.id}`} />
         )}
         </div>
 
@@ -1119,12 +1123,11 @@ function MatchingInputRich({ question, value, onChange }: {
 /* ═══════════════════════════════════════════════════════
    RESULTS
    ═══════════════════════════════════════════════════════ */
-function ResultsScreen({ quiz, result, kind, learnerId, onBack, onRetake }: {
+function ResultsScreen({ quiz, result, kind, learnerId, onRetake }: {
   quiz: Quiz;
   result: QuizAttemptResult;
   kind: 'commercial' | 'apprenticeship';
   learnerId: string;
-  onBack: () => void;
   onRetake: () => void;
 }) {
   const { attempt } = result;
@@ -1145,12 +1148,6 @@ function ResultsScreen({ quiz, result, kind, learnerId, onBack, onRetake }: {
         </div>
 
         <div className="flex flex-col justify-center gap-3 sm:flex-row">
-          <button
-            onClick={onBack}
-            className="px-6 py-2.5 rounded-xl text-sm font-semibold border border-foreground-200 bg-background-50 text-foreground-700 hover:bg-background-100 transition-colors cursor-pointer"
-          >
-            Back to Training Plan
-          </button>
           <button
             onClick={onRetake}
             disabled={Boolean(quiz.unavailableReason)}

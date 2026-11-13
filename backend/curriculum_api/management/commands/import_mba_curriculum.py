@@ -550,6 +550,8 @@ class Command(BaseCommand):
                     views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], module_payload)
                     views.authoring_bulk_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], week_payloads)
                     views.authoring_bulk_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], component_payloads)
+                    # Retire cached curriculum payloads and learner content rows.
+                    views.invalidate_curriculum_cache()
                 self.stdout.write(
                     f'  {module_payload["title"][:52]:<52} '
                     f'{len(week_payloads):>3} weeks {len(component_payloads):>5} components'
@@ -652,6 +654,9 @@ class Command(BaseCommand):
                 f'[{elapsed / 60:.1f} min]'
             )
 
+        if stats['repointed']:
+            # The re-pointed settings were written row by row above.
+            views.invalidate_curriculum_cache()
         self.stdout.write(self.style.SUCCESS(
             f'Files: {stats["downloaded"]} downloaded ({stats["bytes"] / 1024 / 1024 / 1024:.2f} GiB), '
             f'{stats["existing"]} already present, {stats["skipped"]} skipped, '

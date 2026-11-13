@@ -16,7 +16,7 @@ export default function SavedMeetingEvidence({ evidence, eventKey, reference, ca
   // was categorised as Other. Category is a display hint, never an access gate.
   const hasAnalysis = category == null || category === 'MCM' || category === 'PR' || Boolean(data?.analyses.length);
   const [localActive, setLocalActive] = useState<'transcript' | 'analysis' | null>(null);
-  const active = activeTab === undefined ? localActive : activeTab === 'recordings' ? null : activeTab;
+  const active = activeTab === undefined ? localActive : activeTab === 'transcript' || activeTab === 'analysis' ? activeTab : null;
   const setActive = (kind: 'transcript' | 'analysis' | null) => { setLocalActive(kind); onTabChange?.(kind ?? 'recordings'); };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

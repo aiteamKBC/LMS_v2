@@ -1252,6 +1252,8 @@ def save_progress_record(learner, record, activity=None, *, monthly_assignment=F
                     WHERE id=%s AND learner_id=%s''', [json.dumps({'retakeTimeChoice': selected,
                         **({'retakePreviousSeconds': record['retakePreviousSeconds']} if 'countedSeconds' in record else {}),
                         **({'retakeTimeReason': record['retakeTimeReason'].strip()} if record.get('retakeTimeReason') else {})}), progress.pk, learner.pk])
+            from .progress_cache import bump_learners
+            bump_learners([learner.pk])
         LearnerProgressKsb.objects.bulk_create(
             [
                 LearnerProgressKsb(
@@ -2163,6 +2165,17 @@ def sync_active_user(source):
     }
     try:
         with transaction.atomic(using="enrolment"):
+            from .aptem_learner_sync import aptem_id
+
+            # The canonical reader verifies this against Created_users. A new
+            # imported profile without it is unusable even with a valid plan.
+            # An absent source ID must preserve a legacy profile-only ID.
+            source_aptem_id = _s(getattr(source, "aptem_id", None))
+            if source_aptem_id:
+                normalised_aptem_id = aptem_id(source_aptem_id)
+                if normalised_aptem_id is None:
+                    raise DatabaseError("The enrolment Aptem identity needs review.")
+                defaults["aptem_id"] = int(normalised_aptem_id)
             # Preserve legacy profile-only assignments, but copy an explicit
             # assignment (including an unassignment) on activation and rebuild.
             defaults.update(source_coach(source) or {})
@@ -2233,3 +2246,41 @@ def sync_active_user(source):
     except DatabaseError as exc:
         logger.warning("Could not sync learner %s: %s", source.id, exc)
         return None
+
+
+def ensure_active_learner_profile(source):
+    """Provision missing Active identities on writes, never on workspace reads.
+
+    Imported/already-Active enrolments bypass the status-transition hook. Lock
+    their source row so retries cannot create two profiles; leave an existing
+    profile and all its plan/progress children alone. Identity conflicts fail
+    closed and roll back any attempted creation.
+    """
+    from django.db.models.functions import Lower, Trim
+    from old_otjh.service import ServiceError
+    from .canonical_learning import require_profile
+
+    with transaction.atomic(using="enrolment"):
+        source = EnrolmentUser.all_learners.select_for_update().get(pk=source.pk)
+        if _s(source.programme_status).casefold() != ACTIVE_STATUS:
+            return None
+        profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first()
+        if profile is None:
+            email = _s(source.email).casefold()
+            if not email or (EnrolmentUser.all_learners
+                    .annotate(_identity_email=Lower(Trim("email")))
+                    .filter(_identity_email=email).exclude(pk=source.pk).exists()):
+                raise DatabaseError("The enrolment email identity needs review.")
+            legacy = learner_profile_for_source(source, heal=False)
+            source_aptem = _s(getattr(source, "aptem_id", None)).lstrip("0")
+            legacy_aptem = _s(getattr(legacy, "aptem_id", None)).lstrip("0")
+            if legacy_aptem and source_aptem and legacy_aptem != source_aptem:
+                raise DatabaseError("The consolidated learner identity needs review.")
+            profile = sync_active_user(source)
+            if profile is None:
+                raise DatabaseError("Could not create the consolidated learner record.")
+        try:
+            require_profile(source.pk)
+        except ServiceError as exc:
+            raise DatabaseError("The consolidated learner identity needs review.") from exc
+        return profile

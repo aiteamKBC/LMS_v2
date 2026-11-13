@@ -1283,7 +1283,8 @@ def read_ksb_point_counts(learner_id):
     records (progress_records_with_completion), so no evidence hydration is
     needed to reproduce its KSB counts here.
     """
-    return query('''WITH links AS (
+    from .progress_cache import value
+    sql = '''WITH links AS (
         SELECT DISTINCT ON (k.ksb_code,p.id) k.ksb_code AS code,p.id,
             k.ksb_description AS description,k.position,p.accepted,
             (p.activity_status='completed' AND p.accepted IS TRUE) AS achieved
@@ -1295,7 +1296,9 @@ def read_ksb_point_counts(learner_id):
     ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
         count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,
         count(*) FILTER (WHERE accepted IS TRUE) AS "pointsAchieved"
-        FROM links GROUP BY code ORDER BY min(id),code''', [learner_id])
+        FROM links GROUP BY code ORDER BY min(id),code'''
+    alias = repository._query_alias.get() or repository.DB
+    return value(sql, [alias], learner_id, lambda: query(sql, [learner_id]))
 
 
 def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):

@@ -69,39 +69,50 @@ def started_booking(record, status):
                 and not record.review_completed_at and not record.manager_signed_at)
 
 
-def learner_attended(record):
-    """Known positive evidence blocks rescheduling, including Coach identity links.
+def learner_attended(record, *, overlay=None):
+    """Ten minutes of learner attendance blocks rescheduling, including identity links.
 
     No reports is pending, not absence; either permits this specific Coach action.
     A failed evidence read is not the same as an absent report and fails closed.
     """
     from . import views as v
-    from .review_attendance_links import saved_links, project_attendance
+    from .review_attendance_links import LinkConflict, saved_links, project_attendance, scoped_snapshot
+    from .bound_actual_session import BoundSessionConflict
+    from .review_attendance_policy import attended_seconds, qualifies
     snapshot = v.stored_coach_meeting_snapshot(record)
     if snapshot.get('partial') or not (snapshot.get('storage') or {}).get('stored'):
         raise v.LearnerCalendarConflict('Attendance could not be checked. Retry before rescheduling.')
     attendance = snapshot.get('attendance') or {}
     # Retain the saved roster too: an email edit must not erase known attendance.
-    candidates = [attendance, project_attendance(record, attendance, saved_links(record))]
+    links = saved_links(record)
+    candidates = [attendance, project_attendance(record, attendance, links)]
+    if overlay is not None and links:
+        # Imported links are saved against the selected call, which can have
+        # fewer reports than the unscoped stored snapshot.
+        try:
+            selected = scoped_snapshot(record, overlay)
+        except (LinkConflict, BoundSessionConflict):
+            raise v.LearnerCalendarConflict('Attendance could not be checked. Retry before rescheduling.') from None
+        candidates.append(project_attendance(record, selected['attendance'], links))
     for value in candidates:
         if any(row.get('expected') and row.get('role') == 'learner'
-               and (row.get('attended') or row.get('totalAttendanceSeconds', 0) > 0)
+               and qualifies(row.get('totalAttendanceSeconds') or 0)
                for row in value.get('tracker') or []):
             return True
     expected = [row for row in v.coach_meeting_expected_attendees(record)
                 if row.get('role') == 'learner']
     records = [row for report in snapshot.get('attendanceReports') or []
                for row in report.get('records') or []]
-    return any(v.coach_attendance_record_confirms_expected(row, person)
-               and (row.get('attended') or row.get('totalAttendanceSeconds', 0) > 0)
-               for row in records for person in expected)
+    return any(qualifies(attended_seconds([
+        row for row in records if v.coach_attendance_record_confirms_expected(row, person)
+    ])) for person in expected)
 
 
-def require_started_reschedule(record, status):
+def require_started_reschedule(record, status, *, overlay=None):
     from .views import LearnerCalendarConflict
     if not started_booking(record, status):
         raise LearnerCalendarConflict('Only an existing editable Review meeting can be rescheduled.')
-    if learner_attended(record):
+    if learner_attended(record, overlay=overlay):
         raise LearnerCalendarConflict('The learner attended this meeting. It cannot be rescheduled.')
 
 

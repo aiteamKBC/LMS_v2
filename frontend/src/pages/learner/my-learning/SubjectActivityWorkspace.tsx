@@ -61,9 +61,18 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
   const mounted = new Set([...visited, ...(activity ? [activity.id] : [])]);
   // Completion comes from the unified catalogue, including historical quiz
   // results. Do not fabricate native quiz attempts to paint a completion tick.
+  const nativeEntryIds = new Map<string, string | null>();
+  combined.activities.forEach(entry => {
+    if (!entry.native?.componentId) return;
+    const key = JSON.stringify([entry.native.moduleId, entry.native.weekId, entry.native.componentId]);
+    nativeEntryIds.set(key, nativeEntryIds.has(key) ? null : entry.id);
+  });
   const component = (entry: SubjectEntry): JourneyComponent => ({
     componentId: entry.id, title: entry.title, type: entry.category, expectedOtjh: subjectActivityHours(entry),
     pointNumber: entry.native?.pointNumber, moduleId: entry.native?.moduleId, weekId: entry.native?.weekId,
+    linkedSessionComponentId: entry.native?.linkedSessionComponentId
+      ? nativeEntryIds.get(JSON.stringify([entry.native.moduleId, entry.native.weekId, entry.native.linkedSessionComponentId])) ?? undefined
+      : undefined,
   });
   const weekTitle = (item: LearningWeek) => item.title.toLocaleLowerCase().startsWith(item.label.toLocaleLowerCase())
     ? item.title : `${item.label} · ${item.title}`;
@@ -107,7 +116,10 @@ export function SubjectActivityWorkspace({ subject, weeks: rawWeeks, requestedWe
       {!weeks.length && <p className="rounded-xl border bg-white p-5 text-sm text-foreground-500">Activities will appear here when they are added to this subject.</p>}
     </div>
     {/* Use the catalogue's dates, rather than fetching a second plan by title. */}
-    <ActivitySidebar moduleTitle={subject.title} weekTitle={sidebarWeek ? weekTitle(sidebarWeek) : ''}
+    <ActivitySidebar scrollWithinViewport moduleTitle={subject.title} weekTitle={sidebarWeek ? weekTitle(sidebarWeek) : ''}
+      webPointKind={kind} webPointLearnerId={learnerId}
+      pointIdentityFor={item => entries.get(item.componentId || '')?.native?.componentId}
+      attendanceLearner={{ kind, id: learnerId }}
       weekDateLabel={weekDateLabel(sidebarWeek)} dateLabelFor={(_, index) => weekDateLabel(weeks[index])}
       weekComponents={(sidebarWeek?.activities || []).map(component)} weeks={sidebarWeeks}
       completedIds={new Set(combined.activities.filter(entry => entry.completed).map(entry => entry.id))}

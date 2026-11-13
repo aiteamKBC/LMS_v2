@@ -23,8 +23,8 @@ class DashboardMonthlyHoursTests(SimpleTestCase):
             result = dashboard_tabs.monthly_hours({'end_date': '2027-01-01'}, records,
                                                    {'2026-09': 5, '2026-10': 6, '2026-11': 9})
         self.assertEqual(result['months'], [
-            {'month': '2026-09', 'actual_hours': 1, 'not_accepted_hours': 0, 'training_plan_target': 5},
-            {'month': '2026-10', 'actual_hours': 0, 'not_accepted_hours': .5, 'training_plan_target': 6}])
+            {'month': '2026-09', 'actual_hours': 1, 'not_accepted_hours': 0, 'submitted_hours': 0, 'verification_hours': 0, 'training_plan_target': 5},
+            {'month': '2026-10', 'actual_hours': 0, 'not_accepted_hours': .5, 'submitted_hours': 0, 'verification_hours': .5, 'training_plan_target': 6}])
         self.assertEqual(result['training_plan_totals'], {'accepted_hours': 1.25, 'planned_hours': 20})
 
     def test_missing_and_zero_seconds_are_not_invented(self):
@@ -43,7 +43,17 @@ class DashboardMonthlyHoursTests(SimpleTestCase):
                  'otjh': {'actual': 0, 'planned': 0}}):
             result = dashboard_tabs.monthly_hours({}, [], {}, signed_months=['2026-09', '2026-11'])
         self.assertEqual(result['months'], [{'month': '2026-09', 'actual_hours': 0,
-                                            'not_accepted_hours': 0, 'training_plan_target': None}])
+                                            'not_accepted_hours': 0, 'submitted_hours': 0, 'verification_hours': 0, 'training_plan_target': None}])
+
+    def test_saved_attendance_supplement_matches_monthly_logs_without_importing_again(self):
+        records = [{'accepted': True, 'reporting_month': '2026-10', 'actual_seconds': 9000}]
+        supplement = [{'accepted': True, 'reporting_month': '2026-10', 'actual_hours': 2.5}]
+        with patch.object(dashboard_tabs.canonical, 'metrics_from_records', return_value={
+                'otjh': {'actual': 2.5, 'planned': 10}}):
+            result = dashboard_tabs.monthly_hours({}, records, {'2026-10': 10},
+                current_month='2026-10', attendance=supplement)
+        self.assertEqual(result['months'][0]['actual_hours'], 5)
+        self.assertEqual(result['training_plan_totals']['accepted_hours'], 5)
 
     def test_numeric_aggregation_matches_authoritative_month_state(self):
         from . import monthly_logs

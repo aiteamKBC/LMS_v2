@@ -415,9 +415,9 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     setScheduleModalEvent(event);
   };
 
-  const schedulableReviews = selectedMonthEvents.filter(event => isImportedPersonalSupportPlan(event)
+  const schedulableReviews = selectedMonthEvents.filter(event => event.status !== 'in-progress' && (isImportedPersonalSupportPlan(event)
     ? Boolean(reviewActionMatrix(event).schedule)
-    : event.reviewSource !== 'aptem' && !event.aptemReviewId && Boolean(reviewActionMatrix(event).schedule));
+    : event.reviewSource !== 'aptem' && !event.aptemReviewId && Boolean(reviewActionMatrix(event).schedule)));
 
   const openSchedulePicker = () => {
     const preferred = schedulableReviews.find(needsScheduling) || schedulableReviews[0];
@@ -613,7 +613,7 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
                     <td><span className={styles.status} data-status={review.status}><AppIcon className={statusIcon} />{statusLabel(review.status)}</span><ReviewAttendanceBadge event={review} />{isAtRiskProgressReview(review) || isDueSoonEvent(review) ? <div className={styles.alerts}>{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}</td>
                     <td onClick={(clickEvent) => clickEvent.stopPropagation()}><div className={styles.actions}>
                       {actions.viewForm ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className={cn(styles.control, styles.primary, styles.formButton)}>View form</button> : null}
-                      <MeetingActionsMenu learner={review.learner || 'Unknown learner'} actions={[
+                      <MeetingActionsMenu learner={review.learner || 'Unknown learner'} event={review} actions={[
                         { label: 'View details', icon: 'ri-eye-line', onSelect: () => openDetails(review) },
                         ...(!otherReviews && actions.presentation && reviewHasLearnerReference(review) ? [{ label: hasSlides ? 'View slides' : 'Create slides', icon: hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line', onSelect: () => handleCreateSlides(review) }] : []),
                         ...(actions.schedule ? [{ label: actions.schedule, icon: 'ri-calendar-line', onSelect: () => openScheduleModal(review) }] : []),

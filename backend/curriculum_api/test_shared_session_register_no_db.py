@@ -23,7 +23,10 @@ class SharedRegisterTests(unittest.TestCase):
         ns = functions('session_results_policy.py', {'instant'}, {'datetime': datetime, 'timezone': timezone})
         self.project = functions('shared_session_register.py', {'project_shared_attendance'},
                                  {'defaultdict': defaultdict, 'instant': ns['instant']})['project_shared_attendance']
-        self.upsert = functions('live_session_register.py', {'register_params', 'upsert_live_session_register'},
+        self.upsert = functions('live_session_register.py', {
+                                    '_basis', 'load_qr_evidence', 'merge_qr_evidence',
+                                    'register_params', 'upsert_live_session_register',
+                                },
                                 {'REGISTER_TABLE': 'register'})['upsert_live_session_register']
         self.db = sqlite3.connect(':memory:')
         self.addCleanup(self.db.close)
@@ -32,7 +35,9 @@ class SharedRegisterTests(unittest.TestCase):
             learner_profile_id integer, learner_email text, learner_name text,
             attendance_status text, recovery_status text, attended_seconds integer,
             attendance_report_id text, first_join_at text, last_leave_at text,
-            calculated_at text, updated_at text,
+            calculated_at text, attendance_basis text, teams_attendance_status text,
+            attendance_source_occurrence_id text, qr_attendance_id integer,
+            qr_confirmed_at text, parallel_source_occurrence_id text, updated_at text,
             UNIQUE(occurrence_id,learner_profile_id,module_catalogue_id))''')
 
     def session(self, **changes):
@@ -51,14 +56,34 @@ class SharedRegisterTests(unittest.TestCase):
     def save(self, rows):
         db = self.db
         class Cursor:
+            def execute(self, sql, params):
+                self.rows = []
+            def fetchall(self):
+                return self.rows
             def executemany(self, sql, params):
                 # SQLite spells a named PostgreSQL constraint as its columns.
                 # Keep the same three-column uniqueness enforced by this fixture.
                 sql = sql.replace('ON CONFLICT ON CONSTRAINT curriculum_live_learner_attendance_uniq',
                                   'ON CONFLICT (occurrence_id, learner_profile_id, module_catalogue_id)')
+                sql = sql.replace('register AS current_register', 'register')
+                sql = sql.replace('current_register.', 'register.')
                 db.executemany(sql.replace('%s', '?'), [tuple(
                     value.isoformat() if isinstance(value, datetime) else value for value in row) for row in params])
         return self.upsert(Cursor(), rows)
+
+    def test_late_teams_absence_does_not_override_parallel_presence(self):
+        self.save(self.project_rows('SOURCE'))
+        self.db.execute("UPDATE register SET attendance_status='present', attendance_basis='parallel', parallel_source_occurrence_id='B' WHERE module_catalogue_id='SOURCE'")
+        self.save(self.project_rows('SOURCE', session=self.session(rawStatus='absent', seconds=0)))
+        result = self.db.execute("SELECT attendance_status, attendance_basis, teams_attendance_status, parallel_source_occurrence_id FROM register WHERE module_catalogue_id='SOURCE'").fetchone()
+        self.assertEqual(tuple(result), ('present', 'parallel', 'absent', 'B'))
+
+    def test_staff_absence_still_overrides_parallel_presence(self):
+        self.save(self.project_rows('SOURCE'))
+        self.db.execute("UPDATE register SET attendance_status='present', attendance_basis='parallel', parallel_source_occurrence_id='B' WHERE module_catalogue_id='SOURCE'")
+        self.save(self.project_rows('SOURCE', corrections={('O', 7): 'absent'}))
+        result = self.db.execute("SELECT attendance_status, attendance_basis FROM register WHERE module_catalogue_id='SOURCE'").fetchone()
+        self.assertEqual(tuple(result), ('absent', 'staff'))
 
     def test_same_learner_and_meeting_have_independent_module_records(self):
         self.save(self.project_rows('SOURCE'))

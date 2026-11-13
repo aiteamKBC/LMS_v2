@@ -204,6 +204,8 @@
 .qr-module-menu [role='option'][aria-selected='true'] { background: #f7f3fd; color: #6724b8; }
 .qr-module-menu [role='option'] > span > span:last-child:not(:first-child) { color: #625977; }
 .qr-module-suggestions { margin-top: 12px; color: var(--qr-ink); }
+.qr-other-groups > summary { cursor: pointer; min-height: 44px; padding: 12px; border: 1px solid var(--qr-border); border-radius: 11px; }
+.qr-other-groups > summary:focus-visible { outline: 2px solid var(--qr-purple); outline-offset: 2px; }
 .qr-module-suggestion-list { display: grid; gap: 8px; max-height: 192px; margin-top: 8px; padding: 3px; overflow-y: auto; scrollbar-width: thin; }
 .qr-module-suggestion {
   display: flex;

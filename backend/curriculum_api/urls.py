@@ -12,6 +12,7 @@ from . import free_course_authoring
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from .module_uploads import module_uploaded_files
+from .web_week_points import week_points
 from . import learner_directory
 from . import learner_directory_details
 from .teams_attendee_compare import teams_meeting_attendee_comparison
@@ -27,6 +28,7 @@ from .teams_create_guard import teams_create_status, teams_meeting_collection
 from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
 from .teams_calendar_state import sync_calendar_state
+from .teams_people_refresh import teams_people_refresh
 from .teams_directory import search_teams_directory
 from .bulk_attendance_learners import bulk_attendance_learners
 from .bulk_attendance_kbc_history import (
@@ -49,11 +51,14 @@ from . import recordings_library, session_results, tutor_notifications, recordin
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 from .home_summary import curriculum_home_summary
+from .teaching_quality import teaching_review
+from .recordings_transcript_pdf import lecture_transcript
 from .module_hours import module_target
 from .catalogue_activity import catalogue_activity
 
 
 urlpatterns = [
+    path('curriculum/modules/<str:module_id>/weeks/<str:week_id>/web-points/', week_points, name='web-week-points'),
     path('curriculum/modules/catalogue-activity/', catalogue_activity, name='module-catalogue-activity'),
     path('curriculum/modules/<str:module_id>/hours-target/', module_target, name='module-hours-target'),
     path('curriculum/learner-directory/counts/', learner_directory.counts),
@@ -86,6 +91,8 @@ urlpatterns = [
     path('curriculum/modules/tutor-email/', tutor_notifications.modules_tutor_email, name='curriculum-modules-tutor-email'),
     # Every saved recording across modules, for the Recordings page. Read only.
     path('curriculum/session-recordings/calendar-matches/', recordings_calendar.calendar_matches),
+    path('curriculum/session-recordings/quality/', teaching_review, name='teaching-quality-review'),
+    path('curriculum/session-recordings/transcript.pdf', lecture_transcript, name='lecture-transcript-pdf'),
     path('curriculum/session-recordings/external-recordings/', recordings_external.external_recordings),
     path('curriculum/session-recordings/', recordings_library.recordings_library, name='curriculum-session-recordings'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
@@ -243,6 +250,7 @@ urlpatterns = [
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/forward-email/', forward_schedule_email, name='curriculum-teams-forward-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
+    path('curriculum/teams-meetings/<str:live_session_id>/refresh-people/', teams_people_refresh, name='curriculum-teams-people-refresh'),
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),
     path('curriculum/teams-meetings/<str:live_session_id>/permission-check/', teams_meeting_permission_check, name='curriculum-teams-permission-check'),

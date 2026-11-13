@@ -39,6 +39,27 @@ beforeEach(() => {
   mocks.kbcSave.mockResolvedValue([]);
 });
 
+it('counts completed recordings and excludes waiting without presenting either as make-up attendance', async () => {
+  mocks.read.mockResolvedValue({
+    occurrences: [
+      { id: 'occ-1', date: '2026-10-06', sessionNumber: 1, moduleCatalogueId: 'MC1', moduleTitle: 'Module A' },
+      { id: 'occ-2', date: '2026-10-13', sessionNumber: 2, moduleCatalogueId: 'MC1', moduleTitle: 'Module A' },
+    ],
+    records: [
+      { recordKey: 'live:1', learnerId: '301', occurrenceId: 'occ-1', moduleCatalogueId: 'MC1',
+        attendance: 'absent', effectiveAttendance: 'present', attendanceBasis: 'recorded' },
+      { recordKey: 'live:2', learnerId: '301', occurrenceId: 'occ-2', moduleCatalogueId: 'MC1',
+        attendance: 'absent', effectiveAttendance: 'awaiting_recording', attendanceBasis: 'awaiting_recording' },
+    ],
+  });
+  render(<MonthlyGrid rows={[row]} lectures={[]} moduleCatalogueId='MC1' date='2026-10-17'
+    active loading={false} onSaved={vi.fn()} />);
+  expect(await screen.findByRole('button', { name: /Alex Example 2026-10-06 .* recorded/ })).toHaveClass('bg-pink-100');
+  expect(screen.getByRole('button', { name: /Alex Example 2026-10-13 .* awaiting_recording/ })).toHaveClass('bg-pink-100');
+  expect(screen.getByText('100%')).toBeVisible();
+  expect(screen.queryByRole('img', { name: /present through make-up/ })).not.toBeInTheDocument();
+});
+
 it("shows the original lecture as attended after a parallel-group make-up without a second day", async () => {
   mocks.read.mockResolvedValue({
     occurrences: [

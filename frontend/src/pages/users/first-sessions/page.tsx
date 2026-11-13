@@ -11,8 +11,14 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AdminPage, DataPanel, StatusBadge } from '@/pages/admin/_shared/AdminPage';
+import { DataPanel } from '@/pages/admin/_shared/AdminPage';
+import { EnrolmentPage as AdminPage } from '../presentation/EnrolmentPage';
+import styles from './sessions.module.css';
+import motion from '../presentation/EnrolmentMotion.module.css';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { SelectMenu } from '@/components/feature/SelectField';
+import { DatePickerField } from '@/components/feature/DatePickerField';
+import design from '../presentation/EnrolmentWorkspace.module.css';
 import { formatSystemTimestamp } from '@/lib/format';
 import {
   FILTER_KEYS,
@@ -38,6 +44,8 @@ const STATE_LABELS: Record<string, { label: string; tone: Tone }> = {
   'needs-reconciliation': { label: 'Needs reconciliation', tone: 'warn' },
 };
 
+const HIDDEN_STATUS_FILTERS = new Set(['requested', 'in-progress', 'awaiting-signature', 'completed', 'cancelled']);
+
 function stateBadge(state: string) {
   return STATE_LABELS[state] ?? { label: state.replace(/-/g, ' ') || 'Unknown', tone: 'neutral' as Tone };
 }
@@ -55,9 +63,9 @@ function formatBookedAt(value: string | null): string {
   return formatSystemTimestamp(value, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) || '—';
 }
 
-const fieldClass = 'px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full';
-const labelClass = 'flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wider text-foreground-400';
-const th = 'text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider whitespace-nowrap';
+function learnerInitials(booking: FirstSessionBooking): string {
+  return (booking.learnerName.trim() || booking.learnerEmail).split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?';
+}
 
 export default function FirstSessionBookingsPage() {
   const [params, setParams] = useSearchParams();
@@ -81,12 +89,16 @@ export default function FirstSessionBookingsPage() {
     () => Object.fromEntries(FILTER_KEYS.map(key => [key, params.get(key) || ''])) as unknown as FirstSessionBookingFilters,
     [params],
   );
-  const filtering = FILTER_KEYS.some(key => filters[key]);
-  const shown = useMemo(() => filterFirstSessionBookings(bookings, filters), [bookings, filters]);
+  const selectedState = params.get('state') || '';
+  const filtering = FILTER_KEYS.some(key => filters[key]) || Boolean(selectedState);
+  const filtered = useMemo(() => filterFirstSessionBookings(bookings, filters), [bookings, filters]);
+  const shown = useMemo(() => filtered.filter(booking => !selectedState || booking.state === selectedState), [filtered, selectedState]);
+  const states = useMemo(() => [...new Set(['scheduled', ...bookings.map(booking => booking.state), ...(selectedState ? [selectedState] : [])])]
+    .filter(state => !HIDDEN_STATUS_FILTERS.has(state)), [bookings, selectedState]);
   const owners = useMemo(() => caseOwnerOptions(bookings), [bookings]);
   const programmes = useMemo(() => programmeOptions(bookings), [bookings]);
 
-  const setFilter = useCallback((key: keyof FirstSessionBookingFilters, value: string) => {
+  const setFilter = useCallback((key: keyof FirstSessionBookingFilters | 'state', value: string) => {
     setParams(current => {
       const next = new URLSearchParams(current);
       if (value) next.set(key, value); else next.delete(key);
@@ -97,6 +109,7 @@ export default function FirstSessionBookingsPage() {
   const clearFilters = () => setParams(current => {
     const next = new URLSearchParams(current);
     FILTER_KEYS.forEach(key => next.delete(key));
+    next.delete('state');
     return next;
   }, { replace: true });
 
@@ -106,64 +119,72 @@ export default function FirstSessionBookingsPage() {
       title="First sessions"
       subtitle="Learners who have booked their first learning session"
       icon="ri-calendar-check-line"
-      heroTitle="First learning sessions"
+      heroTitle="First sessions"
+      heroClassName={styles.hero}
+      directoryLayout
       heroBlurb="Every first-session booking — when the learner booked it, when the session is, and its Teams link. Cancelled and past bookings are included."
-      stats={[
-        { label: 'Bookings', value: loading ? '—' : bookings.length },
-        { label: 'Shown', value: loading ? '—' : shown.length },
-      ]}
+      heroMetadata={<p className={styles.summary}>
+        {loading ? 'Loading first sessions…' : error ? 'Session summary unavailable' : <>
+          <span className={styles.summaryBadge}><span aria-hidden="true" />{bookings.filter(booking => booking.state === 'scheduled').length} scheduled</span>
+          <span>{bookings.length} bookings · {bookings.filter(booking => booking.state === 'requested').length} awaiting approval · {bookings.filter(booking => booking.state === 'completed').length} completed</span>
+        </>}
+      </p>}
     >
+      <p className={styles.infoStrip}><AppIcon name="ri-eye-line" size={16} aria-hidden="true" />Booking and Teams sync statuses are shown as recorded. A booking does not confirm that all attendees have accepted.</p>
       <form
         aria-label="Filter first-session bookings"
         onSubmit={event => event.preventDefault()}
-        className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-3 md:p-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1.4fr)_auto] xl:items-end"
+        className={`${styles.filters} ${motion.sectionEnter}`}
       >
-        <label className={labelClass}>
-          Case owner
-          <select value={filters.caseOwner} onChange={event => setFilter('caseOwner', event.target.value)} className={`${fieldClass} cursor-pointer`}>
-            <option value="">All case owners</option>
-            {owners.map(owner => <option key={owner.value} value={owner.value}>{owner.label}</option>)}
-          </select>
-        </label>
-        <label className={labelClass}>
-          Programme
-          <select value={filters.programme} onChange={event => setFilter('programme', event.target.value)} className={`${fieldClass} cursor-pointer`}>
-            <option value="">All programmes</option>
-            {programmes.map(programme => <option key={programme} value={programme}>{programme}</option>)}
-          </select>
-        </label>
-        <fieldset className="grid grid-cols-2 gap-2 min-w-0">
+        <div className={styles.filterFields}>
+        <div className={styles.selectFilter}>
+          <label htmlFor="first-sessions-case-owner">Case owner</label>
+          <SelectMenu id="first-sessions-case-owner" ariaLabel="Case owner" value={filters.caseOwner} onChange={value => setFilter('caseOwner', value)}
+            options={[{ value: '', label: 'All case owners' }, ...owners]} size="sm" searchPlaceholder="Search case owners…"
+            triggerClassName={styles.selectTrigger} menuClassName={`${design.shellFont} ${design.filterSelectMenu}`} />
+        </div>
+        <div className={styles.selectFilter}>
+          <label htmlFor="first-sessions-programme">Programme</label>
+          <SelectMenu id="first-sessions-programme" ariaLabel="Programme" value={filters.programme} onChange={value => setFilter('programme', value)}
+            options={[{ value: '', label: 'All programmes' }, ...programmes.map(programme => ({ value: programme, label: programme }))]} size="sm" searchPlaceholder="Search programmes…"
+            triggerClassName={styles.selectTrigger} menuClassName={`${design.shellFont} ${design.filterSelectMenu}`} />
+        </div>
+        <fieldset>
           <legend className="sr-only">Session date</legend>
-          <label className={labelClass}>
-            Session from
-            <input type="date" value={filters.sessionFrom} max={filters.sessionTo || undefined} onChange={event => setFilter('sessionFrom', event.target.value)} className={fieldClass} />
-          </label>
-          <label className={labelClass}>
-            Session to
-            <input type="date" value={filters.sessionTo} min={filters.sessionFrom || undefined} onChange={event => setFilter('sessionTo', event.target.value)} className={fieldClass} />
-          </label>
+          <DatePickerField label="Session from" value={filters.sessionFrom} max={filters.sessionTo || undefined} onChange={value => setFilter('sessionFrom', value)}
+            className={styles.dateFilter} panelClassName={`${design.shellFont} ${styles.datePanel}`} />
+          <DatePickerField label="Session to" value={filters.sessionTo} min={filters.sessionFrom || undefined} onChange={value => setFilter('sessionTo', value)}
+            className={styles.dateFilter} panelClassName={`${design.shellFont} ${styles.datePanel}`} />
         </fieldset>
-        <fieldset className="grid grid-cols-2 gap-2 min-w-0">
+        <fieldset>
           <legend className="sr-only">Booked-on date</legend>
-          <label className={labelClass}>
-            Booked from
-            <input type="date" value={filters.bookedFrom} max={filters.bookedTo || undefined} onChange={event => setFilter('bookedFrom', event.target.value)} className={fieldClass} />
-          </label>
-          <label className={labelClass}>
-            Booked to
-            <input type="date" value={filters.bookedTo} min={filters.bookedFrom || undefined} onChange={event => setFilter('bookedTo', event.target.value)} className={fieldClass} />
-          </label>
+          <DatePickerField label="Booked from" value={filters.bookedFrom} max={filters.bookedTo || undefined} onChange={value => setFilter('bookedFrom', value)}
+            className={styles.dateFilter} panelClassName={`${design.shellFont} ${styles.datePanel}`} />
+          <DatePickerField label="Booked to" value={filters.bookedTo} min={filters.bookedFrom || undefined} onChange={value => setFilter('bookedTo', value)}
+            className={styles.dateFilter} panelClassName={`${design.shellFont} ${styles.datePanel}`} />
         </fieldset>
+        </div>
+        <div className={styles.filterFooter}>
+        <p aria-live="polite">{loading ? 'Loading first sessions…' : error ? 'First sessions could not be loaded.' : <>Showing <strong>{shown.length}</strong> of <strong>{bookings.length}</strong> sessions</>}</p>
         <button
           type="button"
           onClick={clearFilters}
           disabled={!filtering}
-          className="px-4 py-2 rounded-xl border border-foreground-200/60 text-[13px] font-semibold text-foreground-700 hover:bg-primary-50/60 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-200"
+          className={styles.clearFilters}
         >
+          <AppIcon name="ri-close-line" size={14} aria-hidden="true" />
           Clear filters
         </button>
+        </div>
       </form>
 
+      <div className={styles.statusFilters} role="group" aria-label="Filter by session status">
+        {['', ...states].map(state => <button key={state} type="button" aria-pressed={selectedState === state} onClick={() => setFilter('state', state)}>
+          {state ? stateBadge(state).label : 'All'}{' '}<span>{loading || error ? '—' : state ? filtered.filter(booking => booking.state === state).length : filtered.length}</span>
+        </button>)}
+      </div>
+
+      <div className={`${styles.results} ${motion.sectionEnter}`}>
       <DataPanel
         loading={loading}
         error={error}
@@ -172,27 +193,29 @@ export default function FirstSessionBookingsPage() {
         emptyIcon="ri-calendar-line"
         onRetry={() => setVersion(value => value + 1)}
       >
-        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+        <div className={styles.sessionTable}>
+            <table role="table">
               <caption className="sr-only">First-session bookings</caption>
-              <thead>
-                <tr className="border-b border-foreground-400/50">
-                  <th scope="col" className={th}>Learner</th>
-                  <th scope="col" className={th}>Programme</th>
-                  <th scope="col" className={th}>Case owner</th>
-                  <th scope="col" className={th}>Booked on</th>
-                  <th scope="col" className={th}>Session</th>
-                  <th scope="col" className={th}>Status</th>
-                  <th scope="col" className={th}>Meeting</th>
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th scope="col">Learner</th>
+                  <th scope="col">Programme</th>
+                  <th scope="col">Case owner</th>
+                  <th scope="col">Booked on</th>
+                  <th scope="col">Session date</th>
+                  <th scope="col">Session time</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Meeting</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup" className={motion.staggerRows}>
                 {shown.map(booking => {
                   const badge = stateBadge(booking.state);
                   return (
-                    <tr key={booking.id} className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth align-top">
-                      <td className="px-4 py-2.5">
+                    <tr role="row" key={booking.id}>
+                      <td role="cell" data-label="Learner">
+                        <span className={styles.avatar} data-color={booking.id % 3} aria-hidden="true">{learnerInitials(booking)}</span>
+                        <div className={styles.learnerCopy}>
                         {booking.learnerId !== null ? (
                           <Link
                             to={`/users/${booking.learnerId}${booking.source === 'commercial' ? '?source=commercial' : ''}`}
@@ -204,25 +227,26 @@ export default function FirstSessionBookingsPage() {
                           <span className="font-medium text-foreground-800">{booking.learnerName || booking.learnerEmail || 'Unknown learner'}</span>
                         )}
                         {booking.learnerEmail && <div className="text-[11px] text-foreground-500">{booking.learnerEmail}</div>}
+                        </div>
                       </td>
-                      <td className="px-4 py-2.5 text-foreground-700">{booking.programme || '—'}</td>
-                      <td className="px-4 py-2.5 text-foreground-700">
+                      <td role="cell" data-label="Programme">{booking.programme || '—'}</td>
+                      <td role="cell" data-label="Case owner">
                         {booking.caseOwner.name || booking.caseOwner.email || '—'}
                       </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap text-foreground-700">{formatBookedAt(booking.bookedAt)}</td>
-                      <td className="px-4 py-2.5 whitespace-nowrap text-foreground-700">
+                      <td role="cell" data-label="Booked on">{formatBookedAt(booking.bookedAt)}</td>
+                      <td role="cell" data-label="Session date">
                         <span>{formatDay(booking.sessionDate)}</span>
-                        {booking.sessionTime && <div className="text-[11px] text-foreground-500">{booking.sessionTime} UK time{booking.durationMinutes ? ` · ${booking.durationMinutes} min` : ''}</div>}
                       </td>
-                      <td className="px-4 py-2.5"><StatusBadge status={badge.label} tone={badge.tone} /></td>
-                      <td className="px-4 py-2.5 whitespace-nowrap">
+                      <td role="cell" data-label="Session time">{booking.sessionTime ? `${booking.sessionTime} UK time${booking.durationMinutes ? ` · ${booking.durationMinutes} min` : ''}` : '—'}</td>
+                      <td role="cell" data-label="Status"><span className={styles.status} data-tone={badge.tone}><span aria-hidden="true" />{badge.label}</span></td>
+                      <td role="cell" data-label="Meeting">
                         {booking.meetingLink ? (
                           <a
                             href={booking.meetingLink}
                             target="_blank"
                             rel="noopener noreferrer"
                             aria-label={`Open Teams meeting for ${booking.learnerName || booking.learnerEmail || 'learner'}`}
-                            className="inline-flex items-center gap-1 font-semibold text-primary-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-200 rounded"
+                            className={styles.joinLink}
                           >
                             <AppIcon name="ri-vidicon-line" aria-hidden="true" />
                             Join link
@@ -236,9 +260,9 @@ export default function FirstSessionBookingsPage() {
                 })}
               </tbody>
             </table>
-          </div>
         </div>
       </DataPanel>
+      </div>
     </AdminPage>
   );
 }

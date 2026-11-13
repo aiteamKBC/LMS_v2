@@ -15,6 +15,7 @@ import { readExtraActivities } from '../extra-activities/api';
 import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { CoachPresentationDownload } from './CoachPresentationDownload';
 import { KsbReviewPanel, type KsbReview } from './KsbReviewPanel';
+import { SavedReflection } from '@/components/feature/SavedReflection';
 
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -402,6 +403,9 @@ export default function CoachMarkingReviewPage() {
               </section>
 
               <AssignmentAttemptHistory attempts={selected.submissionAttempts || []} />
+              {!personal && ['session', 'recording', 'video'].includes(selected.activityType) && <SavedReflection
+                timeOnly learnerKind={selected.learnerKind} learnerId={selected.learnerId}
+                activityType={selected.activityType} activityId={selected.activityId} />}
               {selected.activityType === 'assignment' && <CoachPresentationDownload
                 key={`${coach.email}:${personal}:${selected.id}:${selected.version ?? selected.submittedAt ?? ''}`}
                 scope={personal ? 'personal' : 'official'} submissionId={selected.id}

@@ -215,6 +215,12 @@ def rule_for(path):
     # retain their session/role gates. The view owns CSRF and programme checks.
     if path == '/curriculum_api/qr-attendance/':
         return None
+    # Breathe sync triggers may be called by a scheduler without a browser
+    # session. The integration view performs its own session-or-HMAC check and
+    # then applies tenant connection scope, so the prefix gate must leave the
+    # request available to that view.
+    if path.startswith(('/integrations_api/', '/login_api/hr-integrations/')):
+        return None
     # Email approval authenticates with an expiring, single-use signed request.
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':
@@ -249,6 +255,11 @@ def rule_for(path):
     # Fetched by Microsoft's Office Online servers, which carry no session. The
     # view authenticates on a signed, 15-minute token naming one upload.
     if path.startswith('/curriculum_api/office-preview/'):
+        return None
+    # The MCP server for AI connectors carries no session cookie. Its views
+    # authenticate a bearer token (or, for the OAuth consent step, check the
+    # session themselves), and all of them are 404 while MCP_ENABLED is off.
+    if path.startswith(('/mcp/', '/oauth/', '/.well-known/oauth-')):
         return None
     from old_otjh.gate import is_transition_path
     if is_transition_path(path):

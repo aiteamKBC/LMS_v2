@@ -665,3 +665,86 @@ monthly-coaching and long-text/image samples were rendered and visually checked.
 Frontend checks and Teams baseline/expanded checks are NOT REQUIRED for these
 backend PDF changes; no Teams trigger or imported Teams contract changed. Live
 Teams and shared-database writes were NOT RUN.
+
+### Coach and tutor recordings entry point (8 November 2026)
+
+Git branch: `feature/coach-tutor-recordings-hub`.
+
+The curriculum sidebar now opens `/curriculum/recordings-hub`, with separate
+coach and tutor cards. The two recording shortcuts were removed from Delivery.
+Existing `/curriculum/coaching-recordings`, `/coach/recordings` and
+`/curriculum/recordings` links retain their destinations. No access grants or
+meeting, attendance, recording-discovery or playback contracts were changed.
+
+The tutor action uses the existing `FORM_TEACHING` definition from
+`coach_api/quality_feedback_defaults.json`, whose source metadata names
+`Teaching Session Feedback Form.docx`. Its criteria include session planning,
+subject expertise, learner engagement, adaptive teaching and assessment.
+The verified quality database contained no published override for this form.
+New observations load the existing default or a later published override;
+saved observations retain their frozen definition and answers.
+
+`GET/POST /curriculum_api/curriculum/session-recordings/quality/` verifies the
+module, series and saved occurrence together. The tutor comes from the module,
+never a browser-supplied name/email. One review belongs to that lecture/tutor,
+with `scope=teaching`, `reviewType=FORM_TEACHING` and `learner=null`.
+It shares the versioned quality store, screenshots, evidence files and saved
+PDFs. Existing coaching lists exclude teaching observations. The existing
+curriculum-access and CSRF checks remain in force.
+
+Schema version 4 was applied twice on isolated PostgreSQL branch
+`test/coach-tutor-recordings-20261108` (`br-purple-meadow-awqasikp`) to verify
+idempotence. Synthetic temporary-table probes accepted the whole-class teaching
+review and rejected learnerless coaching and a different teaching form. No
+synthetic observations were inserted into the real review table.
+
+After this validation, the same checked-in v4 migration was applied in one
+transaction to the configured quality target: project
+`fragrant-mountain-14750513`, branch `br-dry-sun-awo6g12b`, database `neondb`.
+It makes the learner columns nullable and adds the validated
+`quality_review_subject` constraint. Before/after counts and an aggregate digest
+confirmed existing review IDs, versions and payloads were unchanged. No learner
+or Microsoft data was rewritten. The test branch retains the pre-change review
+data and uses a five-minute compute suspension timeout; local `.env` was not
+changed. Reapplying through the established command is supported:
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend/manage.py apply_coaching_quality_schema --schema-version 4 --expected-project fragrant-mountain-14750513 --expected-branch br-dry-sun-awo6g12b --apply
+```
+
+Deployment remains subject to review and merge into main. For rollback before
+any teaching observations are saved, the previous app revision remains usable.
+After teaching observations exist, retain the coaching-scope filtering and
+teaching read support when rolling back UI changes; do not remove observations,
+revisions, evidence or PDFs, or restore NOT NULL on populated teaching records.
+
+Validation commands from the repository root:
+
+```powershell
+npm --prefix frontend run test -- src/pages/curriculum/recordings src/pages/coaching-recordings src/api/coachingQualityReviews.test.ts src/api/coachingRecordings.test.ts src/api/__tests__/sessionResultsRecordingUrl.test.ts src/router/__tests__/navigation.test.tsx src/mocks/navigation.test.ts --maxWorkers=2 --reporter=dot
+# PASS: 407 tests / 38 files. React act warnings remained visible.
+.\backend\.venv\Scripts\python.exe backend/manage.py test curriculum_api.test_teaching_quality coach_api.test_quality_reviews coach_api.test_quality_form_builder coach_api.test_quality_review_types coach_api.test_quality_feedback_library coach_api.test_quality_pdf_layout --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 95 tests. SQLite-only settings, in-memory fixtures, blocked sockets.
+.\backend\.venv\Scripts\python.exe backend/manage.py test coach_api.test_recordings_api coach_api.test_recordings_calendar_media coach_api.test_recordings_links coach_api.test_recordings_saved_evidence coach_api.test_recordings_evidence_api --settings=config.settings_coaching_recordings_test --noinput
+# PASS: 179 tests with provider doubles.
+npm --prefix frontend run type-check
+# PASS, exit 0.
+npm --prefix frontend run lint
+# PASS, exit 0. The final card-only adjustment also passed focused ESLint.
+npm --prefix frontend run build
+# PASS, exit 0; dependency eval, chunk-size and plugin-timing warnings remain.
+```
+
+Headless Chromium exercised the real built routes, both hub destinations,
+desktop/mobile layout, the teaching-only form, draft save and reopen. Every
+network request was intercepted; no backend server or live external service was
+used. Teams baseline and expanded Teams checks: NOT REQUIRED, because no listed
+Teams file or its imported function/type/API response was changed. Live Teams:
+NOT RUN; no live test environment/lecture was specified. Mocked retrieval and
+playback tests do not establish live Microsoft availability.
+
+After the final card markup adjustment, its two focused Vitest cases passed,
+and Chromium rechecked the final build at 1440px and 390px, including visible
+SVG icons, vertical card layout and no overlapping/overflowing card text.
+`git diff --check` passed. Changes remain local on the requested Git branch;
+no PR, merge or application deployment was performed in this task.

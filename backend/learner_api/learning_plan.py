@@ -662,7 +662,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
     not turn a successful staff edit into an error. A lagging mirror is
     recoverable -- ``manage.py sync_learning_plans`` rebuilds it from the plan.
     """
-    from .active_users import replace_free_courses, replace_training_plan
+    from .active_users import ensure_active_learner_profile, replace_free_courses, replace_training_plan
     from .mappers import get_training_plan
     from .models import LearnerProfile
 
@@ -683,7 +683,11 @@ def sync_learning_plan_mirror(source, *, strict=False):
         # plan_modules/weeks/components child rows. Both have to be written, or
         # the plan is stored and the learner is still shown an empty page.
         profile = mirrors.first()
-        if profile is not None:
+        if profile is None and _s(getattr(source, "programme_status", "")).casefold() == "active":
+            # Imported Active rows never pass through the activation hook.
+            # This is a plan write, so provision the missing owner explicitly.
+            ensure_active_learner_profile(source)
+        elif profile is not None:
             replace_training_plan(profile, plan)
             # Free courses ride the same mirror: the enrolment source holds them
             # on Created_users."Free_courses", and the coach/learner side reads

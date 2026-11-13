@@ -131,10 +131,15 @@ def prepare_topic_save(cur, payload):
 
 
 def inherit_coaching_booking(payload, rows):
-    """Reuse this component's owned MCM without modifying submitted topics."""
+    """Default to this component's owned MCM; preserve an explicit selection."""
     from .monthly_assignment import coaching_meeting_booked, month_bounds
     monthly = payload.get('monthlyAssignment')
     if not isinstance(monthly, dict) or not month_bounds(monthly.get('month'))[0]:
+        return
+    # Inheritance is a default for a new topic, not a lock on its meeting.
+    # The normal submission checks still verify the selected MCM's ownership
+    # and booking state, including when a learner changes a saved selection.
+    if monthly.get('meetingKey'):
         return
     for identity, _status, content in rows:
         if not identity or identity == payload.get('assignmentTopicId'):

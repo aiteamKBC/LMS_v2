@@ -78,11 +78,17 @@ export function WeekHolidayNotice({
   return (
     <div
       data-testid="week-holiday-notice"
-      className={`relative border-t border-amber-200 bg-amber-50/70 ${compact ? 'px-2.5 py-1.5' : 'px-3 py-2'}`}
+      className={`relative border-t border-background-200 bg-background-50 ${compact ? 'px-3 py-2' : 'px-4 py-3'}`}
     >
-      <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-amber-400"></span>
-      <p className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-semibold text-amber-900 ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
-        <AppIcon className="ri-calendar-close-line shrink-0 text-sm text-amber-600"></AppIcon>
+      <details className="group">
+        <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded text-[13px] leading-5 text-foreground-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 [&::-webkit-details-marker]:hidden">
+          <AppIcon className="ri-calendar-event-line shrink-0 text-base text-primary-600" />
+          <span className="min-w-0 flex-1"><span className="block font-semibold">{holidays.map(holiday => cleanText(holiday.label) || 'Holiday').join(', ') || 'Holiday'}</span><span className="text-[12px] text-foreground-500">Holiday in week plan</span></span>
+          <span className="text-[12px] text-primary-700">Details</span>
+          <AppIcon className="ri-arrow-down-s-line shrink-0 transition-transform group-open:rotate-180" />
+        </summary>
+      <div className="mt-2 space-y-1 border-t border-background-200 pt-2 text-[13px] leading-6">
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-semibold text-foreground-700">
         <span>Heads up: this week falls on a holiday</span>
         {!shownAbove && slotDate && (
           <span className="font-medium text-foreground-500">
@@ -93,7 +99,7 @@ export function WeekHolidayNotice({
       {holidays.map((holiday, index) => (
         <p
           key={`${holiday.id || holiday.label}-${holiday.startDate}-${index}`}
-          className={`mt-0.5 leading-snug text-amber-900 ${compact ? 'text-[10px]' : 'text-[11px]'}`}
+          className="mt-0.5 text-[13px] leading-6 text-foreground-700"
         >
           <span className="font-bold">{cleanText(holiday.label) || 'Holiday'}</span>
           {' '}
@@ -103,8 +109,8 @@ export function WeekHolidayNotice({
           <span className={`rounded-full border px-1.5 py-px align-middle font-bold ${
             holiday.source === 'gov.uk'
               ? 'border-sky-200 bg-sky-50 text-sky-700'
-              : 'border-amber-300 bg-amber-100 text-amber-800'
-          } ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+              : 'border-background-300 bg-background-100 text-foreground-600'
+          } text-[11px]`}>
             {holiday.source === 'gov.uk' ? 'GOV.UK' : 'Manual'}
           </span>
           {' · '}
@@ -114,6 +120,8 @@ export function WeekHolidayNotice({
           {cleanText(holiday.notes) && ` · ${cleanText(holiday.notes)}`}
         </p>
       ))}
+      </div>
+      </details>
       {note && <WeekHolidayNoteControl note={note} compact={compact} />}
     </div>
   );
@@ -148,7 +156,7 @@ function WeekHolidayNoteControl({ note, compact }: { note: WeekHolidayNoteEditor
   const written = Boolean(message.trim());
   // Text with the switch off is a draft, and a draft is not a hint anybody has.
   const published = written && note.enabled;
-  const textSize = compact ? 'text-[10px]' : 'text-[11px]';
+  const textSize = compact ? 'text-[12px]' : 'text-[13px]';
 
   if (!open) {
     return (
@@ -162,7 +170,7 @@ function WeekHolidayNoteControl({ note, compact }: { note: WeekHolidayNoteEditor
             }`}>
               {published ? 'Shown to learners' : 'Hidden from learners'}
             </span>
-            <span className="min-w-0 flex-1 truncate font-medium text-amber-900" title={message}>{message}</span>
+            <span className="min-w-0 flex-1 break-words font-medium text-foreground-700">{message}</span>
           </>
         ) : (
           <span className="font-medium text-foreground-500">No note for learners</span>
@@ -170,7 +178,7 @@ function WeekHolidayNoteControl({ note, compact }: { note: WeekHolidayNoteEditor
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="rounded-md border border-amber-300 bg-white px-1.5 py-px font-bold text-amber-800 transition-smooth hover:bg-amber-100"
+          className="min-h-8 rounded-md border border-primary-200 bg-background-50 px-2 py-1 font-semibold text-primary-700 transition-smooth hover:bg-primary-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
         >
           {written ? 'Edit note for learners' : 'Add note for learners'}
         </button>
@@ -179,8 +187,8 @@ function WeekHolidayNoteControl({ note, compact }: { note: WeekHolidayNoteEditor
   }
 
   return (
-    <div className={`mt-1.5 rounded-lg border border-amber-300 bg-white p-2 ${textSize}`} data-testid="week-holiday-note-editor">
-      <label className="block font-bold text-amber-900" htmlFor={fieldId}>Note for learners in this week</label>
+    <div className={`mt-2 rounded-lg border border-background-300 bg-background-50 p-3 ${textSize}`} data-testid="week-holiday-note-editor">
+      <label className="block font-semibold text-foreground-800" htmlFor={fieldId}>Note for learners in this week</label>
       <textarea
         id={fieldId}
         value={message}
@@ -193,7 +201,7 @@ function WeekHolidayNoteControl({ note, compact }: { note: WeekHolidayNoteEditor
           enabled: note.enabled && Boolean(event.target.value.trim()),
           message: event.target.value,
         })}
-        className={`mt-1 w-full rounded-md border border-background-300 px-2 py-1.5 text-foreground-800 outline-none focus:border-amber-400 ${textSize}`}
+        className="mt-1 w-full rounded-md border border-background-300 px-3 py-2 text-sm leading-6 text-foreground-800 outline-none focus:border-primary-400"
       />
       <label className={`mt-1.5 flex items-start gap-1.5 font-semibold ${written ? 'text-foreground-700' : 'text-foreground-400'}`}>
         <input
@@ -212,7 +220,7 @@ function WeekHolidayNoteControl({ note, compact }: { note: WeekHolidayNoteEditor
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="rounded-md border border-amber-300 bg-amber-50 px-2 py-px font-bold text-amber-800 transition-smooth hover:bg-amber-100"
+          className="min-h-9 rounded-md border border-primary-200 bg-primary-50 px-3 py-1.5 font-semibold text-primary-700 transition-smooth hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
         >
           Done
         </button>
@@ -341,9 +349,7 @@ export function CompactSchedulePreview({
                 return (
                   <div
                     key={`${entry.kind}-${index}`}
-                    className={`overflow-hidden rounded-lg border text-[12px] ${
-                      entry.holidayNote ? 'border-amber-200 bg-amber-50/40' : 'border-background-200 bg-background-0'
-                    }`}
+                    className="overflow-hidden rounded-lg border border-background-200 bg-background-0 text-[13px]"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                       <span className="flex flex-wrap items-center gap-2">
@@ -375,8 +381,8 @@ export function CompactSchedulePreview({
                     {/* The whole of what a holiday does to a session: says so.
                         The date, the session and everything below it stand. */}
                     {entry.holidayNote && (
-                      <div className="flex items-center gap-1.5 border-t border-amber-200 bg-amber-50/70 px-3 py-1.5 text-[11px] font-semibold text-amber-900">
-                        <AppIcon className="ri-error-warning-line shrink-0 text-sm text-amber-600"></AppIcon>
+                      <div className="flex items-start gap-2 border-t border-background-200 bg-background-100 px-3 py-2 text-[13px] leading-6 text-foreground-700">
+                        <AppIcon className="ri-calendar-event-line mt-1 shrink-0 text-base text-primary-600"></AppIcon>
                         <span>Heads up: this session falls on a holiday ({entry.holidayNote}). It runs as planned.</span>
                       </div>
                     )}

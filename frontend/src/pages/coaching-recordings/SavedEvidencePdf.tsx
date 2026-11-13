@@ -7,6 +7,16 @@ export default function SavedEvidencePdf({ eventKey, reference, kind, analysisId
   eventKey: string; reference?: string; kind: 'transcript' | 'analysis'; analysisId?: string;
   onPreviewChange?: (open: boolean) => void;
 }) {
+  return <EvidencePdfActions kind={kind} filename={`coaching-${kind}.pdf`} onPreviewChange={onPreviewChange}
+    previewFilename={kind === 'transcript' ? 'Coaching session - full transcript.pdf' : 'Coaching session - saved AI report.pdf'}
+    loadPdf={signal => loadCoachingPdf(eventKey, kind, reference, analysisId, signal)} />;
+}
+
+export function EvidencePdfActions({ kind, filename, previewFilename, loadPdf, onPreviewChange }: {
+  kind: 'transcript' | 'analysis'; filename: string; loadPdf: (signal: AbortSignal) => Promise<Blob>;
+  previewFilename?: string;
+  onPreviewChange?: (open: boolean) => void;
+}) {
   const [url, setUrl] = useState('');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -26,7 +36,7 @@ export default function SavedEvidencePdf({ eventKey, reference, kind, analysisId
     const controller = new AbortController(); request.current = controller;
     setBusy(true); setError('');
     try {
-      const blob = await loadCoachingPdf(eventKey, kind, reference, analysisId, controller.signal);
+      const blob = await loadPdf(controller.signal);
       if (controller.signal.aborted) return '';
       const value = URL.createObjectURL(blob);
       objectUrl.current = value; setUrl(value);
@@ -47,7 +57,7 @@ export default function SavedEvidencePdf({ eventKey, reference, kind, analysisId
     const value = await prepare();
     if (!value) return;
     const anchor = document.createElement('a');
-    anchor.href = value; anchor.download = `coaching-${kind}.pdf`;
+    anchor.href = value; anchor.download = filename;
     document.body.append(anchor); anchor.click(); anchor.remove();
   };
   const button = 'inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-3 py-2 text-xs font-semibold text-primary-700 disabled:opacity-50';
@@ -59,7 +69,7 @@ export default function SavedEvidencePdf({ eventKey, reference, kind, analysisId
     </div>
     {busy && !open && <p role="status" className="mt-2 text-xs text-foreground-600">Preparing PDF…</p>}
     {error && !open && <p role="alert" className="mt-2 text-xs text-amber-900">{error} Use Preview PDF or Download PDF to retry.</p>}
-    {(open || url) && <EvidencePdfDialog open={open} url={url} kind={kind} busy={busy} error={error} onRetry={() => void prepare()}
+    {(open || url) && <EvidencePdfDialog open={open} url={url} kind={kind} filename={previewFilename ?? filename} busy={busy} error={error} onRetry={() => void prepare()}
       onClose={() => { setOpen(false); callback.current?.(false); }} onDownload={() => void download()} />}
   </div>;
 }

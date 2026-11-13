@@ -163,6 +163,8 @@ def adopt_learners(snapshot):
                         actual_basis=%s, source_payload=%s::jsonb WHERE id=%s AND learner_id=%s''',
                         [ledger['source_system'], ledger['activity_status'], ledger['accepted'], ledger['actual_seconds'],
                          ledger['actual_basis'], json.dumps(ledger['source_payload']), entry.pk, profiles[0].pk])
+                from learner_api.progress_cache import bump_learners
+                bump_learners([profiles[0].pk], using=alias)
                 imported += 1
             old = learner.free_courses if isinstance(learner.free_courses, list) else []
             selected = [item for item in old if isinstance(item, dict) and item.get('freeCourseId') in mapping]

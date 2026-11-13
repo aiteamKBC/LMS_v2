@@ -101,8 +101,11 @@ class ParallelAttendanceTests(SimpleTestCase):
                 self.assertEqual(self.project(rows=[row]), [row])
 
     def test_saved_register_presence_counts_and_absence_overrides_teams(self):
-        saved = {**self.evidence, 'source': 'live-register', 'attendance_report_id': ''}
-        self.assertEqual(self.project(evidence=[], records=[saved])[0]['effective_attendance'], 1)
+        saved = {**self.evidence, 'source': 'live-register', 'attendance_report_id': '',
+                 'attendance_basis': 'qr', 'qr_attendance_id': 9}
+        recovered = self.project(evidence=[], records=[saved])[0]
+        self.assertEqual(recovered['effective_attendance'], 1)
+        self.assertEqual(recovered['recovery_occurrence_id'], 'g2-session-1')
         saved['attendance_status'] = 'absent'
         self.assertEqual(self.project(records=[saved]), [self.row])
 
@@ -164,6 +167,28 @@ class ParallelAttendanceTests(SimpleTestCase):
 
 
 class CompletedDeliveryMatchingTests(SimpleTestCase):
+    def test_equivalent_delivery_finds_future_occurrence_without_claiming_attendance(self):
+        from . import alternative_recovery as recovery
+        now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+        own = SimpleNamespace(module_catalogue_id='M1', title='Business', group_id='G1', programme_id='P1', cohort_id='C1', is_programme_deleted=False)
+        other = SimpleNamespace(module_catalogue_id='M2', title='Business copy', group_id='G2', programme_id='P1', cohort_id='C1', group_name='Group 2', cohort_name='Cohort', is_programme_deleted=False)
+        first = SimpleNamespace(id='S1', module_catalogue_id='M1', module_title='Business', status='active')
+        second = SimpleNamespace(id='S2', module_catalogue_id='M2', module_title='Business', status='active')
+        original = SimpleNamespace(id='O1', live_session_id='S1', session_number=1, status='active')
+        target = SimpleNamespace(id='O2', live_session_id='S2', session_number=1, status='active', scheduled_start=now + timedelta(days=1), scheduled_end=now + timedelta(days=1, hours=1))
+        candidates, modules, sessions, occurrences = (MagicMock() for _ in range(4))
+        candidates.order_by.return_value = [target]
+        modules.filter.return_value.order_by.return_value = [own]
+        modules.filter.return_value.exclude.return_value = [own, other]
+        sessions.filter.side_effect = [[first], [first, second]]
+        occurrences.filter.side_effect = [[original], candidates]
+        with patch.object(recovery.LiveSessionOccurrence.objects, 'using', return_value=occurrences), \
+             patch.object(recovery.LiveSession.objects, 'using', return_value=sessions), \
+             patch.object(recovery.ModuleAuthoringModule.objects, 'using', return_value=modules):
+            result = recovery.equivalent_alternatives_by_occurrence(['O1'], at=now)
+        self.assertEqual([(row['id'], row['moduleCatalogueId'], row['groupId']) for row in result['O1']], [('O2', 'M2', 'G2')])
+        candidates.filter.assert_not_called()
+
     def test_matches_completed_same_number_within_programme_and_cohort(self):
         from . import alternative_recovery as recovery
         now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)

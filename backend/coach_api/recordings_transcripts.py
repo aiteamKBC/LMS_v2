@@ -25,6 +25,52 @@ MAX_BYTES = 2 * 1024 * 1024
 log = logging.getLogger(__name__)
 
 
+def recording_captions(record, job, recording):
+    """Read existing Microsoft VTT for this verified recording, without generating text."""
+    from curriculum_api.caption_tracks import webvtt
+    from curriculum_api.session_transcripts import parse_vtt_cues
+    from .recordings_calendar import _instant
+    anchor = artifact_metadata(recording)
+    begin, finish = _instant(anchor.get('createdDateTime')), _instant(anchor.get('endDateTime'))
+    if not begin or not finish or finish <= begin:
+        return None
+    base = job.result.get('base', '')
+    if not base:
+        return None
+    from .views import microsoft_graph_request, get_graph_settings
+
+    def load():
+        def get(method, path):
+            if method != 'GET' or not path.startswith(base + '/transcripts'):
+                raise ValueError('Invalid transcript operation.')
+            return microsoft_graph_request(method, path)
+        parts = occurrence_parts(collection(get, base + '/transcripts', get_graph_settings()['base_url']),
+                                 session_window(record), anchors=[anchor])
+        if len(parts) > 20:
+            raise ValueError('Too many transcript parts.')
+        cues, total = [], 0
+        for part in parts:
+            start, end = _instant(part.get('createdDateTime')), _instant(part.get('endDateTime'))
+            if not start or not end or start >= finish or end <= begin:
+                continue
+            if any(anchor.get(field) and part.get(field) and anchor[field] != part[field]
+                   for field in ('callId', 'contentCorrelationId')):
+                continue
+            text = recent_read('transcript-part', [get_graph_settings(), base, part['id'],
+                part.get('createdDateTime'), part.get('endDateTime')],
+                lambda part=part: _content(base, part['id']), timeout=600)
+            total += len(text.encode('utf-8'))
+            if total > 8 * MAX_BYTES:
+                raise ValueError('Caption transcript exceeds the limit.')
+            offset, duration = (start - begin).total_seconds(), (finish - begin).total_seconds()
+            for cue in parse_vtt_cues(text):
+                cues.append({**cue, 'start': cue['start'] + offset, 'end': min(duration, cue['end'] + offset)})
+        return webvtt(cues)
+
+    return recent_read('recording-captions-v1', [get_graph_settings(), base, anchor, _context(record, job)],
+                       load, timeout=600, cache_if=lambda value: value is not None)
+
+
 def local_transcript(record):
     window = session_window(record)
     database = router.db_for_read(CoachCalendarEvent) or 'default'

@@ -1,12 +1,15 @@
 import { DELIVERY_STATUS, PLAN_EDITABLE_STATUSES, isLearnerRow, combinedType, fillBlanks, mergeDirectoryRows, differs, rowTypes, matches, type DirectoryRow } from './page.helpers';
 import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
-import { useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useId, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
+import { Building2, Columns2, ListFilter, MoreVertical, ShieldUser, Upload } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { EnrolmentWorkspaceShell as WorkspaceShell } from './presentation/EnrolmentWorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
-import { useAuth } from "@/hooks/useAuth";
+import { SelectMenu } from '@/components/feature/SelectField';
+import { FloatingMenu } from '@/components/ui/FloatingMenu';
+import { EnrolmentHero as AdminPageHeader } from './presentation/EnrolmentPage';
+import design from './presentation/EnrolmentWorkspace.module.css';
+import { useAuth } from '@/hooks/useAuth';
 import { useListQueryState } from '@/hooks/useListQueryState';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
@@ -73,41 +76,26 @@ function initials(name: string) {
 }
 
 function MultiSelect({ label, placeholder, options, selected, onChange, disabled = false }: { label: string; placeholder: string; options: string[]; selected: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
-  // A filter that becomes disabled while its list is open would otherwise leave
-  // the panel hanging over the card with nothing behind it.
-  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
+  const id = useId();
   const toggle = (opt: string) => onChange(selected.includes(opt) ? selected.filter((s) => s !== opt) : [...selected, opt]);
   return (
     <div>
-      <label className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
-      <div className="relative" ref={ref}>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => setOpen((o) => !o)}
-          className={`${inputClass} text-left flex items-center justify-between ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
-        >
+      <label htmlFor={id} className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
+      {/* Portalled so the filter card's rounded clipping never cuts the list off. */}
+      <FloatingMenu triggerId={id} disabled={disabled} align="start" matchWidth maxHeight={224} panelLabel={`${label} options`}
+        triggerClassName={`${inputClass} ${design.filterSelectTrigger} text-left flex items-center justify-between ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+        panelClassName={`${design.shellFont} ${design.filterMultiMenu}`}
+        trigger={<>
           <span className={selected.length ? 'text-foreground-900 truncate' : 'text-foreground-300'}>{selected.length ? selected.join(', ') : placeholder}</span>
           <AppIcon className="ri-arrow-down-s-line text-foreground-400 shrink-0" />
-        </button>
-        {open && !disabled && (
-          <div className="absolute z-20 mt-1 w-full bg-background-50 border border-foreground-200 rounded-lg shadow-lg max-h-56 overflow-y-auto py-1">
-            {options.length === 0 && <p className="px-3 py-1.5 text-[12px] text-foreground-300">No options</p>}
-            {options.map((opt) => (
-              <label key={opt} className="flex items-center gap-2 px-3 py-1.5 text-[12px] text-foreground-700 hover:bg-background-100 cursor-pointer">
-                <input type="checkbox" checked={selected.includes(opt)} onChange={() => toggle(opt)} className="accent-primary-500" />{opt}
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
+        </>}>
+        {options.length === 0 && <p className="px-3 py-1.5 text-[12px] text-foreground-300">No options</p>}
+        {options.map((opt) => (
+          <label key={opt} className="flex items-center gap-2 px-3 py-1.5 text-[12px] text-foreground-700 hover:bg-background-100 cursor-pointer">
+            <input type="checkbox" checked={selected.includes(opt)} onChange={() => toggle(opt)} className="accent-primary-500" />{opt}
+          </label>
+        ))}
+      </FloatingMenu>
     </div>
   );
 }
@@ -122,19 +110,25 @@ function TextFilter({ label, value, onChange, placeholder }: { label: string; va
 }
 
 function SelectFilter({ label, value, options, onChange, disabled = false }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; disabled?: boolean }) {
+  const id = useId();
   return (
     <div>
-      <label className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
-      <select className={`${inputClass} ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`} disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      <label htmlFor={id} className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
+      <SelectMenu id={id} ariaLabel={label} value={value} options={options} onChange={onChange} disabled={disabled}
+        disabledHint={disabled ? options[0]?.label : undefined} size="sm" searchPlaceholder={`Search ${label.toLowerCase()}…`}
+        triggerClassName={design.filterSelectTrigger} menuClassName={`${design.shellFont} ${design.filterSelectMenu}`} />
     </div>
   );
 }
 
-function UserMetricCard({ icon, label, value, detail, onClick, active = false }: { icon: string; label: string; value: ReactNode; detail: string; onClick?: () => void; active?: boolean }) {
-  const surface = `card-premium flex min-h-[88px] items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-3.5 py-3 text-left transition ${active ? 'ring-2 ring-primary-300' : 'hover:bg-primary-100/60'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
-  const content = <WorkspaceMetricContent label={label} value={value} note={detail} icon={icon} />;
+function UserMetricCard({ icon, label, value, detail, onClick, active = false }: { icon: ReactNode; label: string; value: ReactNode; detail: string; onClick?: () => void; active?: boolean }) {
+  const surface = design.metricCard;
+  const content = <div className={design.metricBody}>
+    <span className={design.metricIcon} aria-hidden="true">{typeof icon === 'string' ? <AppIcon name={icon} size={18} /> : icon}</span>
+    <p className={design.metricLabel}>{label}</p>
+    <strong className={design.metricValue}>{value}</strong>
+    <p className={design.metricNote}>{detail}</p>
+  </div>;
 
   return onClick ? <button type="button" onClick={onClick} aria-pressed={active} className={surface}>{content}</button> : <div className={surface}>{content}</div>;
 }
@@ -145,16 +139,16 @@ function ActiveProgrammeCard({ active, total, onClick, selected = false }: { act
   const content = (
     <>
       <div className="min-w-0">
-        <p className="text-[13px] font-semibold text-foreground-800">Active on programme</p>
-        <p className="mt-3 text-[28px] font-semibold leading-none tracking-tight text-foreground-950">{active}</p>
-        <p className="mt-1 text-[12px] text-foreground-500">{percentage}% of learners</p>
+        <p className={design.metricLabel}>Active on programme</p>
+        <p className={`${design.metricValue} mt-2`}>{active}</p>
+        <p className={`${design.metricNote} mt-1`}>{percentage}% of learners</p>
       </div>
       <div className="flex shrink-0 items-center">
         <div
-          className="flex h-16 w-16 items-center justify-center rounded-full"
-          style={{ background: `conic-gradient(#35b98a ${percentage}%, var(--enrolment-ring-track, #ebeaf1) 0)` }}
+          className="flex h-14 w-14 items-center justify-center rounded-full"
+          style={{ background: `conic-gradient(var(--enrolment-primary, #5d2e88) ${percentage}%, var(--enrolment-ring-track, #ebeaf1) 0)` }}
         >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-[16px] font-semibold text-foreground-700">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[13px] font-semibold text-foreground-700">
             {percentage}%
           </div>
         </div>
@@ -162,7 +156,7 @@ function ActiveProgrammeCard({ active, total, onClick, selected = false }: { act
     </>
   );
 
-  const surface = `flex min-h-[112px] items-center justify-between gap-3 rounded-xl border border-primary-200/40 bg-primary-50/60 p-4 text-left transition ${selected ? 'ring-2 ring-primary-300' : 'hover:bg-primary-100/60'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
+  const surface = `${design.metricCard} ${design.programmeMetric}`;
   return onClick ? <button type="button" onClick={onClick} aria-pressed={selected} className={surface}>{content}</button> : <div className={surface}>{content}</div>;
 }
 
@@ -191,10 +185,10 @@ export default function UsersListPage() {
     attendanceMode: String(query.attendanceMode) as UsersFilter['attendanceMode'],
   }), [query.attendanceMode, query.caseOwner, query.cohort, query.email, query.groups, query.name, query.programme, query.programmeStatus, query.reference, query.statuses, query.type]);
   const [draft, setDraft] = useState<UsersFilter>(applied);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const quickSearch = String(query.search);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const page = Number(query.page);
-  const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -202,11 +196,6 @@ export default function UsersListPage() {
   const [createTutorOpen, setCreateTutorOpen] = useState(false);
   const [createEmployerOpen, setCreateEmployerOpen] = useState(false);
   const [createOrgOpen, setCreateOrgOpen] = useState(false);
-  const createRef = useRef<HTMLDivElement>(null);
-  const createBtnRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  // Viewport coords for the portalled Create menu, measured from the button.
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
   // Saved attendance modes keyed by learner id; a learner with no entry is on
@@ -315,34 +304,6 @@ export default function UsersListPage() {
       .catch(() => { if (!cancelled) setCascadeGroups([]); });
     return () => { cancelled = true; };
   }, [draft.programme, draft.cohort]);
-
-  // The menu lives in a portal, so an outside-click test has to exempt it too.
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (createRef.current?.contains(t) || menuRef.current?.contains(t)) return;
-      setCreateOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
-
-  // Anchor the portalled menu under the button, and keep it there while the
-  // page scrolls or resizes (fixed positioning doesn't follow the anchor).
-  useEffect(() => {
-    if (!createOpen) { setMenuPos(null); return; }
-    const place = () => {
-      const r = createBtnRef.current?.getBoundingClientRect();
-      if (r) setMenuPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
-    };
-    place();
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
-    };
-  }, [createOpen]);
 
   // The curriculum list is the source of truth, but rows created before a
   // programme was renamed (or imported from elsewhere) can carry a name that
@@ -498,80 +459,62 @@ export default function UsersListPage() {
   };
 
   return (
-    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners, administrators and employers">
-      <div className="admin-console-page enrolment-users-page min-w-0 space-y-4 p-3 md:space-y-5 md:p-6">
+    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners, administrators and employers" hideBreadcrumbs showBackButton={false} directoryLayout>
+      <div className={`${design.page} ${design.users} admin-console-page enrolment-users-page min-w-0`}>
         <AdminPageHeader
           title="User Management"
+          breadcrumbLabel="Users"
           description="Manage learners, administrators and employers across all programmes."
           icon="ri-group-line"
           eyebrow={isAdmin ? 'Administration' : 'Enrolment'}
+          metadata={<p className={design.directorySummary}><span>{rows.length} users</span>{typeOptions.length} user types · {programmeOptions.length} programmes · {caseOwnerOptions.length} case owners</p>}
           actions={
             <div className="flex flex-wrap items-start gap-2">
-              <button type="button" className={btnSecondary} onClick={() => navigate('/users/wizard-builder')}>
-                <AppIcon className="ri-magic-line" />Edit apprenticeship wizard
-              </button>
-              <button type="button" className={btnSecondary} onClick={() => navigate('/users/eligibility-builder')}>
-                <AppIcon className="ri-task-line" />Edit eligibility form
-              </button>
-              <DownloadLearnerTemplateButton />
-              <button type="button" className={btnSecondary} onClick={() => setImportModalOpen(true)}>
+              <button type="button" className={design.heroSecondary} onClick={() => setImportModalOpen(true)}>
                 <AppIcon className="ri-upload-2-line" />Upload learners
               </button>
-              {/* Admin-only: the attendance mode endpoint rejects writes from any other role. */}
-              {isAdmin && (
-                <button type="button" className={btnSecondary} onClick={() => setBulkOpen(true)} disabled={loading}>
-                  <AppIcon className="ri-checkbox-multiple-line" />Bulk actions
-                </button>
-              )}
-            <div ref={createRef} className="relative">
-              <button
-                type="button"
-                ref={createBtnRef}
-                onClick={() => setCreateOpen((o) => !o)}
-                className={btnPrimary}
-              >
-                <AppIcon className="ri-add-line" />Create user<AppIcon className="ri-arrow-down-s-line" />
-              </button>
-              {createOpen && menuPos && createPortal(
-                <div
-                  ref={menuRef}
-                  style={{ top: menuPos.top, right: menuPos.right }}
-                  className="fixed z-[200] w-56 rounded-xl border border-foreground-200 bg-background-50 py-1.5 shadow-xl"
-                >
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><AppIcon className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><AppIcon className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateTutorOpen(true); }}><AppIcon className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><AppIcon className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><AppIcon className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
-                </div>,
-                document.body,
-              )}
+            <div className="relative">
+              <FloatingMenu trigger={<><AppIcon className="ri-user-add-line" />Create user</>} triggerClassName={design.heroPrimary}
+                panelLabel="Create" panelClassName={`${design.shellFont} ${design.createMenu}`}>{close => {
+                  const pick = (open: (value: boolean) => void) => () => { close({ restoreFocus: false }); open(true); };
+                  return <>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateModalOpen)}><AppIcon className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateAdminOpen)}><AppIcon className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateTutorOpen)}><AppIcon className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateEmployerOpen)}><AppIcon className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
+                    <button type="button" className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={pick(setCreateOrgOpen)}><AppIcon className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
+                  </>;
+                }}</FloatingMenu>
+            </div>
+            <div className={design.heroTools}>
+              <FloatingMenu label="Directory tools" trigger={<AppIcon name="ri-settings-3-line" aria-hidden="true" />} triggerClassName={design.heroToolsTrigger}
+                panelLabel="Directory tool actions" panelClassName={`${design.shellFont} ${design.heroToolsMenu}`}>{close => <>
+                <button type="button" className={btnSecondary} onClick={() => navigate('/users/wizard-builder')}><AppIcon name="ri-magic-line" />Edit apprenticeship wizard</button>
+                <button type="button" className={btnSecondary} onClick={() => navigate('/users/eligibility-builder')}><AppIcon name="ri-task-line" />Edit eligibility form</button>
+                <DownloadLearnerTemplateButton />
+                {/* The attendance mode endpoint rejects writes from other roles. */}
+                {isAdmin && <button type="button" className={btnSecondary} onClick={() => { close({ restoreFocus: false }); setBulkOpen(true); }} disabled={loading}><AppIcon name="ri-checkbox-multiple-line" />Bulk actions</button>}
+              </>}</FloatingMenu>
             </div>
             </div>
           }
         />
 
-        <div aria-label="User totals" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1600px]:grid-cols-5">
+        <div aria-label="User totals" className={design.metrics}>
           <UserMetricCard icon="ri-group-line" label="Total users" value={rows.length} detail="Across all roles" active={summaryFilter === 'all'} onClick={() => selectSummary('all')} />
           <UserMetricCard icon="ri-graduation-cap-line" label="Learners" value={learners} detail={`${rows.length ? Math.round((learners / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'learners'} onClick={() => selectSummary('learners')} />
-          <UserMetricCard icon="ri-user-line" label="Admins" value={admins} detail={`${rows.length ? Math.round((admins / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'admins'} onClick={() => selectSummary('admins')} />
-          <UserMetricCard icon="ri-briefcase-line" label="Employers" value={employerCount} detail={`${rows.length ? Math.round((employerCount / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'employers'} onClick={() => selectSummary('employers')} />
+          <UserMetricCard icon={<ShieldUser size={18} />} label="Admins" value={admins} detail={`${rows.length ? Math.round((admins / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'admins'} onClick={() => selectSummary('admins')} />
+          <UserMetricCard icon={<Building2 size={18} />} label="Employers" value={employerCount} detail={`${rows.length ? Math.round((employerCount / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'employers'} onClick={() => selectSummary('employers')} />
           <ActiveProgrammeCard active={active} total={rows.length} selected={summaryFilter === 'active'} onClick={() => selectSummary('active')} />
         </div>
 
         {/* Filter card */}
-        <div className="overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-5">
-            <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><AppIcon className="ri-filter-3-line" /></span>
-              <div>
-                <h2 className="text-[14px] font-semibold text-foreground-900">Filter users</h2>
-                <p className="mt-0.5 text-[11px] text-foreground-400">Use filters to refine the user list.</p>
-              </div>
-            </div>
-            <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><AppIcon className="ri-star-line" />Save view</button>
+        <div className={design.filterPanel}>
+          <div className={design.filterBar}>
+            <button type="button" className={design.filterToggle} aria-expanded={filtersOpen} aria-controls="users-filter-fields" onClick={() => setFiltersOpen(value => !value)}><ListFilter size={16} aria-hidden="true" />Filters</button>
+            <p>Showing {filtered.length} of {rows.length} users</p>
           </div>
-          <div className="border-t border-foreground-100 p-4 md:p-5">
+          <div id="users-filter-fields" hidden={!filtersOpen} className="border-t border-foreground-100 p-4 md:p-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <TextFilter label="Name" placeholder="Search by name..." value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
             {/* Programme -> cohort -> group, same gate as the Cohort filter: a
@@ -592,8 +535,8 @@ export default function UsersListPage() {
             />
             <TextFilter label="Email" placeholder="Enter email" value={draft.email ?? ''} onChange={(v) => set({ email: v })} />
             <MultiSelect label="Status" placeholder="Select statuses" options={STATUS_OPTIONS} selected={draft.statuses ?? []} onChange={(v) => set({ statuses: v })} />
-            <SelectFilter label="Type" value={draft.type ?? 'all'} onChange={(v) => set({ type: v as UsersFilter['type'] })} options={[{ value: 'all', label: '--All--' }, ...typeOptions.map((t) => ({ value: t, label: t }))]} />
-            <SelectFilter label="Programme" value={draft.programme ?? ''} onChange={(v) => set({ programme: v })} options={[{ value: '', label: '--All--' }, ...programmeOptions.map((p) => ({ value: p, label: p }))]} />
+            <SelectFilter label="Type" value={draft.type ?? 'all'} onChange={(v) => set({ type: v as UsersFilter['type'] })} options={[{ value: 'all', label: 'All types' }, ...typeOptions.map((t) => ({ value: t, label: t }))]} />
+            <SelectFilter label="Programme" value={draft.programme ?? ''} onChange={(v) => set({ programme: v })} options={[{ value: '', label: 'All programmes' }, ...programmeOptions.map((p) => ({ value: p, label: p }))]} />
             {/* Single-select on purpose: the group lookup takes one programme and
                 one cohort, so this is what narrows the Group list below. */}
             <SelectFilter
@@ -602,14 +545,14 @@ export default function UsersListPage() {
               onChange={(v) => set({ cohort: v })}
               disabled={!draft.programme}
               options={draft.programme
-                ? [{ value: '', label: '--All--' }, ...cohortOptions.map((c) => ({ value: c, label: c }))]
+                ? [{ value: '', label: 'All cohorts' }, ...cohortOptions.map((c) => ({ value: c, label: c }))]
                 : [{ value: '', label: 'Select a programme first' }]}
             />
-            <SelectFilter label="Programme status" value={draft.programmeStatus ?? ''} onChange={(v) => set({ programmeStatus: v })} options={[{ value: '', label: '--All--' }, ...PROGRAMME_STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} />
+            <SelectFilter label="Programme status" value={draft.programmeStatus ?? ''} onChange={(v) => set({ programmeStatus: v })} options={[{ value: '', label: 'All programme statuses' }, ...PROGRAMME_STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} />
             <TextFilter label="NI number" value={draft.niNumber ?? ''} onChange={(v) => set({ niNumber: v })} />
-            <SelectFilter label="Case owner" value={draft.caseOwner ?? 'any'} onChange={(v) => set({ caseOwner: v })} options={[{ value: 'any', label: 'Any' }, ...caseOwnerOptions.map((c) => ({ value: c, label: c }))]} />
+            <SelectFilter label="Case owner" value={draft.caseOwner ?? 'any'} onChange={(v) => set({ caseOwner: v })} options={[{ value: 'any', label: 'All case owners' }, ...caseOwnerOptions.map((c) => ({ value: c, label: c }))]} />
             <TextFilter label="Reference number" value={draft.referenceNumber ?? ''} onChange={(v) => set({ referenceNumber: v })} />
-            <SelectFilter label="Attendance mode" value={draft.attendanceMode ?? ''} onChange={(v) => set({ attendanceMode: v as UsersFilter['attendanceMode'] })} options={[{ value: '', label: '--All--' }, { value: 'live', label: 'Live Sessions' }, { value: 'lazy', label: 'Recorded' }]} />
+            <SelectFilter label="Attendance mode" value={draft.attendanceMode ?? ''} onChange={(v) => set({ attendanceMode: v as UsersFilter['attendanceMode'] })} options={[{ value: '', label: 'All attendance modes' }, { value: 'live', label: 'Live Sessions' }, { value: 'lazy', label: 'Recorded' }]} />
           </div>
           <div className="mt-5 flex items-center justify-end gap-4 lg:col-span-4">
             <button type="button" className="text-[12px] font-medium text-foreground-600 transition hover:text-primary-700" onClick={reset}>Clear all</button>
@@ -619,15 +562,15 @@ export default function UsersListPage() {
         </div>
 
         {/* Results table */}
-        <div className="admin-cool-table overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-5">
+        <div className={`${design.userTable} ${design.dataPanel} admin-cool-table`}>
+          <div className={`${design.directoryToolbar} flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-5`}>
             <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><AppIcon className="ri-group-line" /></span>
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><AppIcon name="ri-user-line" aria-hidden="true" /></span>
               <div className="flex items-center gap-2">
                 <h2 className="text-[15px] font-semibold text-foreground-900">Users ({filtered.length})</h2>
               </div>
             </div>
-            <div role="search" aria-label="User directory" className="relative order-last w-full sm:order-none sm:ml-auto sm:w-80">
+            <div role="search" aria-label="User directory" className="relative order-last w-full sm:order-none sm:ml-auto sm:w-[17rem]">
               <label htmlFor="users-search" className="sr-only">Search users</label>
               <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
               <input
@@ -652,26 +595,26 @@ export default function UsersListPage() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><AppIcon className="ri-layout-column-line" />Columns</button>
-              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700"><AppIcon className="ri-download-line" />Export<AppIcon className="ri-arrow-down-s-line" /></button>
+              <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><Columns2 size={14} aria-hidden="true" />Columns</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700"><Upload size={14} aria-hidden="true" />Export</button>
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table id="users-directory-table" className="w-full text-[13px]">
-              <thead>
-                <tr className="border-b border-foreground-200/70 bg-background-100/50">
-                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Cohort', 'Subscription status', 'Learning plan', 'Programme status', 'Attendance mode', 'Actions'].map((h) => (
+            <table id="users-directory-table" role="table" className="w-full text-[13px]">
+              <thead role="rowgroup">
+                <tr role="row" className="border-b border-foreground-200/70 bg-background-100/50">
+                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Cohort', 'Case owner', 'Subscription status', 'Learning plan', 'Programme status', 'Attendance mode', 'Actions'].map((h) => (
                     <th key={h} className="text-left py-3 px-3 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {/* Skeleton rows, not a spinner in a merged cell: the table keeps
                     its column widths and height, so the header stops jumping when
                     the first page of users lands. */}
-                {loading && <TableBodySkeleton rows={6} columns={11} />}
+                {loading && <TableBodySkeleton rows={6} columns={12} />}
                 {!loading && error && (
-                  <tr><td colSpan={11} className="py-10 text-center text-[13px]">
+                  <tr><td colSpan={12} className="py-10 text-center text-[13px]">
                     <p className="text-red-600 mb-2"><AppIcon className="ri-error-warning-line mr-1.5" />{error}</p>
                     <button className={btnSecondary} onClick={load}><AppIcon className="ri-refresh-line" />Retry</button>
                   </td></tr>
@@ -690,48 +633,54 @@ export default function UsersListPage() {
                       ? () => navigate(`/employers/${row.id}`, { state: { employerReturnTo: `${location.pathname}${location.search}${location.hash}` } })
                       : null;
                   return (
-                  <tr key={`${row.source ?? 'apprenticeship'}-${row.id}`} className={`border-b border-foreground-100 hover:bg-primary-50/30 transition-smooth ${i % 2 === 1 ? 'bg-background-100/20' : ''}`}>
-                    <td className="py-2.5 px-3">
+                  <tr role="row" key={`${row.source ?? 'apprenticeship'}-${row.id}`} className={`border-b border-foreground-100 hover:bg-primary-50/30 transition-smooth ${i % 2 === 1 ? 'bg-background-100/20' : ''}`}>
+                    <td role="cell" data-label="User" className="py-2.5 px-3">
                       {openInPlace ? (
                         <button onClick={openInPlace} className="flex items-center gap-2.5 cursor-pointer group text-left">
                           <span className="w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold shrink-0 bg-secondary-100 text-secondary-700">{initials(row.name)}</span>
-                          <span className="text-secondary-700 group-hover:underline font-medium">{row.name}</span>
+                          <span className={design.userIdentity}><span className={design.userName}>{row.name}</span><span className={design.userType}>{row.type}</span></span>
                         </button>
                       ) : (
                         <button onClick={() => openUser(row)} className="flex items-center gap-2.5 cursor-pointer group text-left">
                           <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold shrink-0 ${isLearner ? 'bg-primary-100 text-primary-700' : 'bg-secondary-100 text-secondary-700'}`}>{initials(row.name)}</span>
-                          <span className="text-primary-600 group-hover:text-primary-700 group-hover:underline font-medium">{row.name}</span>
+                          <span className={design.userIdentity}><span className={design.userName}>{row.name}</span><span className={design.userType}>{row.type}</span></span>
                         </button>
                       )}
                     </td>
-                    <td className="py-2.5 px-3">
+                    <td role="cell" data-label="Type" className="sr-only">
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${isLearner ? 'bg-primary-50 text-primary-700 border-primary-200/50' : 'bg-secondary-50 text-secondary-700 border-secondary-200/50'}`}>{row.type}</span>
                     </td>
-                    <td className="py-2.5 px-3 text-foreground-600 max-w-[220px] break-words">{row.email}</td>
-                    <td className="py-2.5 px-3 text-foreground-600">{row.group}</td>
+                    <td role="cell" data-label="Email" className="py-2.5 px-3 text-foreground-600 max-w-[220px] break-words"><span className={design.userEmail} title={row.email}>{row.email}</span>{row.reference && <span className={design.userReference}>{row.reference}</span>}</td>
+                    <td role="cell" data-label="Group" className="py-2.5 px-3 text-foreground-600">{row.group}</td>
                     {/* Learners only: staff, admins and employers have no
                         programme, so a dash is more honest than an empty cell. */}
-                    <td className="py-2.5 px-3 text-foreground-600 max-w-[180px] break-words">
+                    <td role="cell" data-label="Programme" className="py-2.5 px-3 text-foreground-600 max-w-[180px] break-words">
                       {isLearner && row.programme
                         ? row.programme
                         : <span className="text-foreground-300">—</span>}
                     </td>
                     {/* Learners only, same as Programme: the cohort hangs off
                         the programme, so a row without one has no cohort. */}
-                    <td className="py-2.5 px-3 text-foreground-600 whitespace-nowrap">
+                    <td role="cell" data-label="Cohort" className="py-2.5 px-3 text-foreground-600 whitespace-nowrap">
                       {isLearner && row.cohort
                         ? row.cohort
                         : <span className="text-foreground-300">—</span>}
                     </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap">
-                      <span className="text-foreground-700">{row.subscriptionStatus}</span>
-                      {row.subscriptionStatus ? (row.subscriptionVerified ? <AppIcon className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <AppIcon className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
+                    <td role="cell" data-label="Case owner" className="py-2.5 px-3 text-foreground-600">{isLearner ? row.caseOwner || '—' : '—'}</td>
+                    <td role="cell" data-label="Subscription status" className="py-2.5 px-3 whitespace-nowrap">
+                      <span className={design.subscription} data-verified={row.subscriptionVerified}>
+                        {row.subscriptionStatus && <span className={design.rowDot} role="img" aria-label={row.subscriptionVerified ? 'Verified' : 'Unverified'} />}
+                        {row.subscriptionStatus}
+                      </span>
                     </td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span className="flex flex-wrap items-center justify-center gap-2">
+                    <td role="cell" data-label="Learning plan" className="py-2.5 px-3 text-center">
+                      <FloatingMenu label={`More actions for ${row.name}`} panelLabel={`Actions for ${row.name}`}
+                        trigger={<MoreVertical size={16} aria-hidden="true" />} triggerClassName={design.rowMoreTrigger}
+                        panelClassName={`${design.shellFont} ${design.rowMoreMenu}`}>{close => <>
+                        <button type="button" className={btnSecondary} onClick={() => { close({ restoreFocus: false }); (openInPlace ?? (() => openUser(row)))(); }}><AppIcon name="ri-user-line" aria-hidden="true" />Open record</button>
                         {isLearner && PLAN_EDITABLE_STATUSES.includes(row.programmeStatus || '') ? (
                           <button
-                            onClick={() => setPlanFor(row)}
+                            onClick={() => { close({ restoreFocus: false }); setPlanFor(row); }}
                             title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
                             className="inline-flex max-w-full items-center gap-1 rounded-lg border border-foreground-200 px-2 py-1 text-[11px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
@@ -743,7 +692,7 @@ export default function UsersListPage() {
                           // same modal read-only rather than routing to the
                           // learner's record, which is not their plan.
                           <button
-                            onClick={() => setPlanFor(row)}
+                            onClick={() => { close({ restoreFocus: false }); setPlanFor(row); }}
                             title={`View ${row.name}'s learning plan`}
                             className="text-primary-600 hover:underline cursor-pointer"
                           >
@@ -757,7 +706,7 @@ export default function UsersListPage() {
                         {isLearner && row.hasLearningPlan
                           && SHIFT_STATUSES.includes(row.programmeStatus || '') && (
                           <button
-                            onClick={() => setShiftFor(row)}
+                            onClick={() => { close({ restoreFocus: false }); setShiftFor(row); }}
                             title={`Shift ${row.name} from one module to another`}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
@@ -784,29 +733,29 @@ export default function UsersListPage() {
                         {!row.hasSignedIn && isLearner && (
                           <CopyInvitationLinkButton subjectId={Number(row.id)} name={row.name} onIssued={refreshInPlace} />
                         )}
-                      </span>
+                      </>}</FloatingMenu>
                     </td>
-                    <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
-                    <td className="py-2.5 px-3 whitespace-nowrap">
+                    <td role="cell" data-label="Programme status" className="py-2.5 px-3">{isLearner && row.programmeStatus ? <span className={design.programmeStatus} data-status={row.programmeStatus} title={`Programme status: ${row.programmeStatus}`}><span className={design.rowDot} aria-hidden="true" /><span className="sr-only"><StatusBadge status={row.programmeStatus} /></span></span> : null}</td>
+                    <td role="cell" data-label="Attendance mode" className="py-2.5 px-3 whitespace-nowrap">
                       {!isLearner || attendanceModes === 'failed'
                         ? <span className="text-foreground-300">—</span>
                         : attendanceModes === null
                           ? <span className="text-foreground-300">…</span>
                           : rowAttendanceMode(attendanceModes, row) === 'lazy'
-                            ? <span className="rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[11px] font-semibold text-primary-700">Recorded</span>
-                            : <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Live Sessions</span>}
+                            ? <span className={design.attendance} data-mode="recorded"><span className={design.rowDot} aria-hidden="true" />Recorded</span>
+                            : <span className={design.attendance} data-mode="live"><span className={design.rowDot} aria-hidden="true" />Live Sessions</span>}
                     </td>
-                    <td className="py-2.5 px-3 text-center">
+                    <td role="cell" data-label="Actions" className="py-2.5 px-3 text-center">
                       {openInPlace ? (
                         <span className="flex items-center justify-center gap-2">
                           <button
                             onClick={openInPlace}
                             title={isEmployer ? `Open ${row.name}'s employer page` : `Edit ${row.name}'s details`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                            className={`${isEmployer ? design.viewAction : ''} inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap`}
                           >
                             {isEmployer
-                              ? <><AppIcon className="ri-external-link-line text-[13px]" />View</>
-                              : <><AppIcon className="ri-edit-line text-[13px]" />Edit</>}
+                              ? 'View'
+                              : <><AppIcon name="ri-pencil-line" aria-hidden="true" /><span className="sr-only">Edit</span></>}
                           </button>
                           {/* An employer's own details are still editable — the
                               primary action is now their page, so this is a
@@ -817,7 +766,7 @@ export default function UsersListPage() {
                               title={`Edit ${row.name}'s details`}
                               className="text-[12px] text-foreground-400 hover:text-primary-600 hover:underline cursor-pointer whitespace-nowrap"
                             >
-                              Edit
+                              <AppIcon name="ri-pencil-line" aria-hidden="true" /><span className="sr-only">Edit</span>
                             </button>
                           )}
                         </span>
@@ -826,9 +775,9 @@ export default function UsersListPage() {
                           <button
                             onClick={() => openLearnerPage(row)}
                             title={`Open ${row.name}'s learner page`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                            className={`${design.viewAction} inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap`}
                           >
-                            <AppIcon className="ri-external-link-line text-[13px]" />View
+                            View
                           </button>
                           {/* The columns of this table — group, programme and
                               both statuses — are fields on the learner record,
@@ -840,7 +789,7 @@ export default function UsersListPage() {
                             title={`Edit ${row.name}'s details, placement and status`}
                             className="text-[12px] text-foreground-400 hover:text-primary-600 hover:underline cursor-pointer whitespace-nowrap"
                           >
-                            Edit
+                            <AppIcon name="ri-pencil-line" aria-hidden="true" /><span className="sr-only">Edit</span>
                           </button>
                         </span>
                       ) : null}
@@ -848,7 +797,7 @@ export default function UsersListPage() {
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={11} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : applied.attendanceMode && attendanceModes === 'failed' ? 'Attendance modes could not be loaded, so the attendance mode filter cannot be applied.' : applied.attendanceMode && attendanceModes === null ? 'Loading attendance modes…' : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={12} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : applied.attendanceMode && attendanceModes === 'failed' ? 'Attendance modes could not be loaded, so the attendance mode filter cannot be applied.' : applied.attendanceMode && attendanceModes === null ? 'Loading attendance modes…' : 'No users match your filters.'}</td></tr>}
               </tbody>
             </table>
           </div>

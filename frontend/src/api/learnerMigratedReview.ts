@@ -1,6 +1,17 @@
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from './learnerCalendar';
 import type { LearnerKind } from './learnerDetail';
 
+/**
+ * Who may open a learner's imported review read-only from the learner
+ * workspace. Coaches sign in as `staff`, so this is the client half of the
+ * server gate in coach_api.learner_review_prepare.preview_learner_review --
+ * which additionally confines a coach to their own caseload. Never rely on
+ * this check alone for access.
+ */
+export function canPreviewLearnerMigratedReview(role?: string | null): boolean {
+  return role === 'admin' || role === 'staff';
+}
+
 /** Only unfinished MCM and Progress Reviews may be initialized on open. */
 export function needsLearnerMigratedForm(event: LearnerCalendarEvent | null): boolean {
   if (!event || event.migratedForm || !event.eventKey.startsWith('imported-review:')) return false;

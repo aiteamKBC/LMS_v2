@@ -206,10 +206,14 @@ def bulk_attendance_delete_attendance(request):
             source_id = row['occurrence_id']
             if owners.get(row['live_session_id']) != row['module_catalogue_id']:
                 source_id = f"{row['occurrence_id']}:{row['module_catalogue_id']}"
-            CoachAttendanceSourceAdjustment.objects.using(database).filter(
+            actor = str(getattr(getattr(request, 'login_account', None), 'email', '') or '').strip()
+            CoachAttendanceSourceAdjustment.objects.using(database).update_or_create(
                 learner_id=row['learner_profile_id'], source='microsoft-teams', source_id=source_id,
-            ).update(is_deleted=True, status='')
+                defaults={'is_deleted': True, 'status': '', 'owner_email': actor, 'updated_by': actor},
+            )
             LiveSessionLearnerAttendance.objects.using(database).filter(id=row_id).delete()
+            from .parallel_attendance_register import reconcile_parallel_attendance
+            reconcile_parallel_attendance([row['occurrence_id']], database=database)
     else:
         return JsonResponse({'error': 'The attendance record source is invalid.'}, status=400)
     return JsonResponse({'deleted': record_key})
@@ -465,7 +469,24 @@ def read_kbc_recent_attendance(dsn, limit=RECENT_LECTURE_LIMIT):
             return recent
 
 
+def _recorded_outcomes(records):
+    from .bulk_attendance_recorded import apply_recorded_outcomes
+    return apply_recorded_outcomes(records)
+
+
 def _with_warnings(payload, warning):
+    from django.db import DatabaseError
+    try:
+        if 'records' in payload:
+            payload = {**payload, 'records': _recorded_outcomes(payload['records'])}
+        elif 'recent' in payload:
+            records = _recorded_outcomes([record for rows in payload['recent'].values() for record in rows])
+            recent = {key: [] for key in payload['recent']}
+            for record in records:
+                recent[record['learnerId']].append(record)
+            payload = {**payload, 'recent': recent}
+    except DatabaseError:
+        return JsonResponse({'error': 'Recording attendance could not be read. Please try again.'}, status=503)
     response = JsonResponse({**payload, 'warnings': [warning] if warning else []})
     response['Cache-Control'] = 'private, no-store'
     return response

@@ -101,10 +101,10 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             "status": "completed", "module_title": "Module A", "repeat_pattern": "weekly",
         }]))
         occurrences = SimpleNamespace(objects=Query([
-            {"id": "occ-1", "live_session_id": "series-1", "scheduled_start": datetime(2026, 10, 17, 9, tzinfo=timezone.utc), "session_number": 1, "status": "scheduled"},
-            {"id": "occ-2", "live_session_id": "series-1", "scheduled_start": datetime(2026, 10, 17, 11, tzinfo=timezone.utc), "session_number": 2, "status": "scheduled"},
-            {"id": "cancelled", "live_session_id": "series-1", "scheduled_start": datetime(2026, 10, 18, tzinfo=timezone.utc), "session_number": 3, "status": "cancelled"},
-            {"id": "next-month", "live_session_id": "series-1", "scheduled_start": datetime(2026, 11, 1, tzinfo=timezone.utc), "session_number": 4, "status": "scheduled"},
+            {"id": "occ-1", "live_session_id": "series-1", "scheduled_start": datetime(2026, 10, 17, 9, tzinfo=timezone.utc), "scheduled_end": datetime(2026, 10, 17, 10, tzinfo=timezone.utc), "session_number": 1, "status": "scheduled"},
+            {"id": "occ-2", "live_session_id": "series-1", "scheduled_start": datetime(2026, 10, 17, 11, tzinfo=timezone.utc), "scheduled_end": datetime(2026, 10, 17, 12, tzinfo=timezone.utc), "session_number": 2, "status": "scheduled"},
+            {"id": "cancelled", "live_session_id": "series-1", "scheduled_start": datetime(2026, 10, 18, tzinfo=timezone.utc), "scheduled_end": None, "session_number": 3, "status": "cancelled"},
+            {"id": "next-month", "live_session_id": "series-1", "scheduled_start": datetime(2026, 11, 1, tzinfo=timezone.utc), "scheduled_end": None, "session_number": 4, "status": "scheduled"},
         ]))
         register = SimpleNamespace(objects=Query([
             {"id": 1, "occurrence_id": "occ-1", "module_catalogue_id": "module-1", "learner_profile_id": 11, "attendance_status": "present"},
@@ -138,7 +138,8 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             "DatabaseError": RuntimeError,
             "_local_date": lambda value: value.date(),
             "_aptem_ids_by_profile": lambda _ids: {11: "301"},
-            "parallel_recovery_links": lambda _rows, **_kwargs: ({}, {}),
+            "saved_parallel_links": lambda _rows, **_kwargs: ({}, {}),
+            "apply_recorded_outcomes": lambda records: records,
         }
         load_members({"bulk_attendance_live_month_records"}, scope)
         result = scope["bulk_attendance_live_month_records"](
@@ -151,16 +152,17 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             [("occ-1", "present"), ("occ-2", "absent")],
         )
 
-        scope["parallel_recovery_links"] = lambda _rows, **_kwargs: (
-            {(11, "occ-2"): {"effectiveAttendance": "present", "recoveryOccurrenceId": "occ-1"}},
-            {(11, "occ-1"): {"countsAsSession": False, "makeupForDate": "2026-10-17"}},
+        scope["saved_parallel_links"] = lambda _rows, **_kwargs: (
+            {(11, "occ-2", "module-1"): {"recoveryOccurrenceId": "other-group", "recoveryGroup": "Group B"}},
+            {(11, "occ-1", "module-1"): {"countsAsSession": False, "makeupForDate": "2026-10-17"}},
         )
         projected = scope["bulk_attendance_live_month_records"](
             SimpleNamespace(GET={"month": "2026-10", "module_catalogue_id": "module-1"})
         )
         self.assertEqual(projected.payload["records"][0]["countsAsSession"], False)
-        self.assertEqual(projected.payload["records"][1]["effectiveAttendance"], "present")
-        scope["parallel_recovery_links"] = lambda _rows, **_kwargs: ({}, {})
+        self.assertEqual(projected.payload["records"][1]["attendance"], "absent")
+        self.assertEqual(projected.payload["records"][1]["recoveryGroup"], "Group B")
+        scope["saved_parallel_links"] = lambda _rows, **_kwargs: ({}, {})
 
         group_result = scope["bulk_attendance_live_month_records"](
             SimpleNamespace(GET={"month": "2026-10", "group_id": "group-1"})
@@ -185,7 +187,7 @@ class LiveAttendanceDayRecordsTests(unittest.TestCase):
             "status": "week-meeting", "module_title": "Master class", "repeat_pattern": "none",
         }]))
         scope["LiveSessionOccurrence"] = SimpleNamespace(objects=Query(occurrences.objects.rows + [
-            {"id": "occ-one-off", "live_session_id": "one-off", "scheduled_start": datetime(2026, 10, 2, 9, tzinfo=timezone.utc), "session_number": 1, "status": "scheduled"},
+            {"id": "occ-one-off", "live_session_id": "one-off", "scheduled_start": datetime(2026, 10, 2, 9, tzinfo=timezone.utc), "scheduled_end": None, "session_number": 1, "status": "scheduled"},
         ]))
         pattern_result = scope["bulk_attendance_live_month_records"](
             SimpleNamespace(GET={"month": "2026-10", "module_catalogue_id": "module-1"})

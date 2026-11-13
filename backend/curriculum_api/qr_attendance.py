@@ -3,7 +3,7 @@ import hashlib
 import ipaddress
 import json
 import os
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from datetime import timezone as utc
 from urllib.parse import urlsplit
 
@@ -194,7 +194,7 @@ def lecture_title(occurrence, components, module_ids):
     return f"Session {occurrence['session_number']}"
 
 
-def lecture_options(module_id, catalog, eligible, *, now=None):
+def lecture_options(module_id, catalog, eligible, *, now=None, loaded_occurrences=None, loaded_components=None):
     if module_id not in eligible:
         raise AttendanceError('Choose a module in your programme.', 'invalid_module')
     module = eligible[module_id]
@@ -202,8 +202,11 @@ def lecture_options(module_id, catalog, eligible, *, now=None):
     today = business_day(now)
     result = {}
     sources = shared_sources(module_id, catalog)
-    components = store.lecture_components(sources)
-    for row in store.occurrences(sources):
+    components = store.lecture_components(sources) if loaded_components is None else [
+        item for item in loaded_components if item['module_catalogue_id'] in sources]
+    occurrences = store.occurrences(sources) if loaded_occurrences is None else [
+        item for item in loaded_occurrences if item['source_module_id'] in sources]
+    for row in occurrences:
         if any(clean(row[key]).lower() in INVALID for key in ('status', 'series_status')):
             continue
         start, end = aware(row['scheduled_start']), aware(row['scheduled_end'])
@@ -249,9 +252,11 @@ def best_lectures(options, eligible, placement):
         if not row['dueToday']:
             continue
         normal = normal_placement(eligible[row['moduleId']], placement)
-        rank = (0 if normal else 1) if row['current'] else 2 if row['dueToday'] and normal else None
-        if rank is not None:
-            ranked.append((rank, row))
+        # An assigned delivery in another group can still be the only lecture
+        # today, before or after it runs. Prefer the learner's own placement,
+        # but never discard an otherwise eligible same-day alternative.
+        rank = (0 if normal else 1) if row['current'] else (2 if normal else 3)
+        ranked.append((rank, row))
     best = min((rank for rank, _ in ranked), default=None)
     return [row for rank, row in ranked if rank == best]
 
@@ -296,13 +301,54 @@ def automatic_selection(student, placement, catalog, eligible):
             'selection': {'moduleId': module_id, 'occurrenceId': occurrence_id}}
 
 
+def other_group_lectures(placement, catalog, eligible, *, now=None):
+    """Suggest eligible deliveries from known other groups, never guess placement."""
+    from learner_api.alternative_recovery import _module_key
+
+    if not placement['group_id']:
+        return []
+    now = now or timezone.now()
+    today = business_day(now)
+    zone = timezone.get_default_timezone()
+    start = timezone.make_aware(datetime.combine(today, time.min), zone)
+    end = timezone.make_aware(datetime.combine(today + timedelta(days=1), time.min), zone)
+    candidates, source_ids = [], set()
+    for module_id, module in eligible.items():
+        if not module.get('group_id') or module['group_id'] == placement['group_id']:
+            continue
+        try:
+            sources = shared_sources(module_id, catalog)
+        except AttendanceError:
+            continue
+        candidates.append(module_id)
+        source_ids.update(sources)
+    if not source_ids:
+        return []
+    occurrences = store.occurrences_between(sorted(source_ids), start, end)
+    if not occurrences:
+        return []
+    components = store.lecture_components(sorted(source_ids))
+    result = [row for module_id in candidates
+              for row in lecture_options(module_id, catalog, eligible, now=now,
+                                         loaded_occurrences=occurrences, loaded_components=components)
+              if row['dueToday']]
+    matches_by_key = {}
+    for module_id, module in eligible.items():
+        key = _module_key(module.get('title'))
+        if key:
+            matches_by_key.setdefault(key, []).append(module_id)
+    for row in result:
+        row['matchingModuleIds'] = sorted(matches_by_key.get(_module_key(eligible[row['moduleId']].get('title')), []))
+    return sorted(result, key=lambda row: (row['startsAt'], row['moduleId'], row['id']))
+
+
 def lookup(email):
     student, _, placement, catalog, eligible = context(email)
     selection = automatic_selection(student, placement, catalog, eligible)
     return {'modules': [{'id': key, 'title': row['title'], 'group': row.get('group_name') or '',
                          'cohort': row.get('cohort_name') or ''}
                         for key, row in sorted(eligible.items(), key=lambda pair: (pair[1]['title'], pair[0]))],
-            **selection}
+            **selection, 'otherGroupLectures': other_group_lectures(placement, catalog, eligible)}
 
 
 def public_url():

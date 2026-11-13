@@ -111,6 +111,7 @@ const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/en
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
 const CurriculumRecordings = lazyRoute(() => import("../pages/curriculum/recordings/page"));
+const CurriculumRecordingsHub = lazyRoute(() => import("../pages/curriculum/recordings/RecordingsHub"));
 const CoachingRecordings = lazyRoute(() => import("../pages/coaching-recordings/page"));
 const CurriculumProgrammes = lazyRoute(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazyRoute(() => import("../pages/curriculum/published/page"));
@@ -152,6 +153,8 @@ const LearnerFeedbackPage = lazyRoute(() => import("../pages/learner/feedback/pa
 const LearnerFeedbackFormPage = lazyRoute(() => import("../pages/learner/feedback/form/page"));
 const FinanceReportsPage = lazyRoute(() => import("../pages/finance/reports/page"));
 const FinanceWorkspace = lazyRoute(() => import("../pages/workspace/finance/page"));
+const BreatheIntegrationWorkspace = lazyRoute(() => import("../pages/workspace/integrations/breathe/page"));
+const HRSystemWorkspace = lazyRoute(() => import("../pages/workspace/hr-system/page"));
 const FlashCardsPage = lazyRoute(() => import("../pages/engagement/flash-cards/page"));
 const ForgotPasswordPage = lazyRoute(() => import("../pages/forgot-password/page"));
 const LoginPage = lazyRoute(() => import("../pages/login/page"));
@@ -311,6 +314,7 @@ const TutorSessionsPage = lazyRoute(() => import("../pages/tutor/sessions/page")
 const UserGuidePage = lazyRoute(() => import("../pages/user-guide/page"));
 const UsersListPage = lazyRoute(() => import("../pages/users/page"));
 const FirstSessionBookingsPage = lazyRoute(() => import("../pages/users/first-sessions/page"));
+const EnrolmentCoursesPage = lazyRoute(() => import("../pages/users/my-courses/page"));
 const VideoWatchPage = lazyRoute(() => import("../pages/learner/video-watch/page"));
 const VoucherClaimsPage = lazyRoute(() => import("../pages/engagement/voucher-claims/page"));
 const WeekDetailPage = lazyRoute(() => import("../pages/learner/week-detail/page"));
@@ -903,6 +907,14 @@ const routes: RouteObject[] = [
     path: "/workspace/employer",
     element: <EmployerDashboard />,
   },
+  {
+    path: "/workspace/integrations/breathe",
+    element: <BreatheIntegrationWorkspace />,
+  },
+  {
+    path: "/workspace/hr-system",
+    element: <HRSystemWorkspace />,
+  },
   
   {
     path: "/workspace/mis",
@@ -1086,6 +1098,10 @@ const routes: RouteObject[] = [
   {
     path: "/users/first-sessions",
     element: <FirstSessionBookingsPage />,
+  },
+  {
+    path: "/users/my-courses",
+    element: <EnrolmentCoursesPage />,
   },
   {
     path: "/curriculum/coach-directory",
@@ -1280,7 +1296,11 @@ const routes: RouteObject[] = [
     element: <CurriculumTeamsMeetings />,
   },
   {
-    // Every saved live-session recording, by module, group and week. Read only.
+    path: "/curriculum/recordings-hub",
+    element: <CurriculumRecordingsHub />,
+  },
+  {
+    // Existing lecture links continue to open the same recording library.
     path: "/curriculum/recordings",
     element: <CurriculumRecordings />,
   },

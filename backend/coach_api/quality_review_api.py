@@ -218,6 +218,8 @@ def review_detail(request,review_id):
     if not saved:
         return _response({'error':'Review not found.','code':'not_found'},404)
     if request.method=='PUT':
+        if saved.get('scope') == 'teaching':
+            raise InvalidReview('Open this teaching review from its lecture to save changes.')
         value = body(request)
         if str(value.get('learnerId',''))!=saved['learner']['id']:
             raise InvalidReview('The learner for a saved review cannot be changed.')

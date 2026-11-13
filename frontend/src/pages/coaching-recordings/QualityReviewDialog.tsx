@@ -7,15 +7,18 @@ import { AssignmentPdfPreview } from '@/pages/learner/monthly-submission/Assignm
 import { meetingDate } from './model';
 import QualityModal from './QualityModal';
 import QualityQuestions from './QualityQuestions';
+import RecordingSelect from './RecordingSelect';
 import { blankQualityForm, qualityCompletionIssue } from './qualityFormModel';
 import QualityFormCards from './QualityFormCards';
 import QualityEvidenceFiles from './QualityEvidenceFiles';
 import { suggestQualityType } from './qualityReviewType';
 import { createQualityMeetingReference } from './qualityMeetingReference';
+import { teachingQualityContext, saveTeachingQualityReview, type TeachingLectureScope } from '@/pages/curriculum/recordings/teachingQuality';
 
 const input = 'w-full min-w-0 rounded-lg border border-background-200 bg-white px-3 py-2 text-sm text-foreground-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500';
 const button = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 py-2 text-xs font-semibold text-primary-700 disabled:opacity-50';
-export default function QualityReviewDialog({ eventKey = '', reference, meetingId, meetingStartsAt, meetingEndsAt, initialLearnerId = '', initialReviewType, reviewId, timeZone = 'Europe/London', onClose, onSaved, onDirtyChange, onBusyChange }: {
+export default function QualityReviewDialog({ teachingLecture, eventKey = '', reference, meetingId, meetingStartsAt, meetingEndsAt, initialLearnerId = '', initialReviewType, reviewId, timeZone = 'Europe/London', onClose, onSaved, onDirtyChange, onBusyChange }: {
+  teachingLecture?: TeachingLectureScope;
   eventKey?: string; reference?: string; meetingId?: string; meetingStartsAt?: string; meetingEndsAt?: string; initialLearnerId?: string; initialReviewType?: QualityReviewType | ''; reviewId?: string; timeZone?: string; onClose: () => void; onSaved?: (review: QualityReview) => void; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
 }) {
   const [context, setContext] = useState<QualityContext | null>(null), [template, setTemplate] = useState<QualityTemplate | null>(null);
@@ -23,7 +26,7 @@ export default function QualityReviewDialog({ eventKey = '', reference, meetingI
   const [learner, setLearner] = useState(initialLearnerId), [section, setSection] = useState(''), [baseline, setBaseline] = useState('');
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [conflict, setConflict] = useState(false);
   const [reload, setReload] = useState(0), [pdfOpen, setPdfOpen] = useState(false), [pdfUrl, setPdfUrl] = useState(''), [pdfError, setPdfError] = useState('');
-  const [requestedType, setRequestedType] = useState<QualityReviewType>(), [formType, setFormType] = useState<QualityReviewType | ''>('');
+  const [requestedType, setRequestedType] = useState<QualityReviewType | undefined>(teachingLecture ? 'FORM_TEACHING' : undefined), [formType, setFormType] = useState<QualityReviewType | ''>('');
   const [evidenceFiles, setEvidenceFiles] = useState<QualityEvidenceFile[]>([]);
   const [choosingForm, setChoosingForm] = useState(true);
   const currentReview = useRef(review); currentReview.current = review;
@@ -41,18 +44,20 @@ export default function QualityReviewDialog({ eventKey = '', reference, meetingI
       const kind = chosen || requestedType || saved?.reviewType || (saved ? suggestQualityType(saved.meeting.title) : '') || '';
       const changedType = saved && kind !== (saved.reviewType || suggestQualityType(saved.meeting.title));
       const next = saved && !changedType ? saved.form : blankQualityForm(structure, meetingDate(saved?.meeting.startsAt || data?.snapshot.meeting.startsAt || new Date().toISOString(), timeZone));
+      if (teachingLecture && !saved) next.header.programme = data?.snapshot.lecture?.programme || '';
       setFormType(kind);
       setChoosingForm(!kind);
       setEvidenceFiles(saved?.evidenceFiles ?? []);
       setTemplate(structure); setReview(saved); setForm(next); setBaseline(JSON.stringify(next)); setSection(structure.sections[0]?.id ?? '');
       if (data) setContext(data);
     };
-    void (reviewId ? qualityReview(reviewId, controller.signal, requestedType).then(value => accept(value.review, value.template, undefined, value.reviewType))
+    void (teachingLecture ? teachingQualityContext(teachingLecture, controller.signal).then(value => accept(value.review, value.template, value, 'FORM_TEACHING'))
+      : reviewId ? qualityReview(reviewId, controller.signal, requestedType).then(value => accept(value.review, value.template, undefined, value.reviewType))
       : withReference(token => qualityContext(eventKey, token, learner, controller.signal, requestedType), controller.signal).then(value => accept(requestedType ? value.review : null, value.template, value)))
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'The form could not be loaded.'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [eventKey, withReference, learner, reviewId, reload, timeZone, requestedType, initialReviewType]);
+  }, [eventKey, withReference, learner, reviewId, reload, timeZone, requestedType, initialReviewType, teachingLecture]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
@@ -61,16 +66,18 @@ export default function QualityReviewDialog({ eventKey = '', reference, meetingI
   const close = () => { if (!busy && (!dirty || window.confirm('Discard the unsaved changes to this review?'))) onClose(); };
   const update = (next: QualityForm) => { setForm(next); setError(''); };
   const save = async (status: 'draft' | 'completed') => {
-    if (!form || !template || !formType || busy || !(review?.learner.id || learner)) return;
+    if (!form || !template || !formType || busy || (!teachingLecture && !(review?.learner?.id || learner))) return;
     const issue = status === 'completed' ? qualityCompletionIssue(template, form) : '';
     if (issue) { setError(issue); return; }
-    const payload = { templateVersion: template.version ?? 1, reviewType: formType, learnerId: review?.learner.id || learner, expectedVersion: review?.version ?? 0, status, form };
+    const common = { templateVersion: template.version ?? 1, expectedVersion: review?.version ?? 0, status, form };
+    const payload = { ...common, reviewType: formType, learnerId: review?.learner?.id || learner };
     const body = JSON.stringify(payload);
     if (requestKey.current.body !== body) requestKey.current = { body, id: crypto.randomUUID() };
     setBusy(true); setError(''); setConflict(false);
     try {
       const savePayload = { ...payload, requestId: requestKey.current.id };
-      const saved = await withReference(token => saveQualityReview(savePayload, review?.id, eventKey, token));
+      const saved = teachingLecture ? await saveTeachingQualityReview(teachingLecture, { ...common, requestId: requestKey.current.id })
+        : await withReference(token => saveQualityReview(savePayload, review?.id, eventKey, token));
       setReview(saved); setFormType(saved.reviewType || formType); setForm(saved.form); setBaseline(JSON.stringify(saved.form)); onSaved?.(saved);
       currentReview.current = saved;
       setEvidenceFiles(saved.evidenceFiles ?? []);
@@ -82,7 +89,7 @@ export default function QualityReviewDialog({ eventKey = '', reference, meetingI
     finally { setBusy(false); }
   };
   const attachEvidence = async (file: File, key: string) => {
-    if (!form || !formType || !(review?.learner.id || learner)) { setError('Choose a learner and form before attaching evidence.'); return false; }
+    if (!form || !formType || (!teachingLecture && !(review?.learner?.id || learner))) { setError('Choose a learner and form before attaching evidence.'); return false; }
     if (!file.size || file.size > 25 * 1024 * 1024) { setError('Choose a non-empty evidence file up to 25 MB.'); return false; }
     let saved = currentReview.current;
     if (!saved) saved = await save('draft') ?? null;
@@ -117,7 +124,9 @@ export default function QualityReviewDialog({ eventKey = '', reference, meetingI
     finally { setBusy(false); }
   };
   const completed = template?.sections.flatMap(item => item.criteria).filter(item => (item.type || 'rating') === 'rating' ? Boolean(form?.criteria[item.id]?.rating) : item.type === 'image' ? Boolean(form?.images[item.id]?.length) : item.type === 'file' ? Boolean(form?.attachments?.[item.id]?.length) : form?.answers?.[item.id] != null && form.answers[item.id] !== '' && (!Array.isArray(form.answers[item.id]) || (form.answers[item.id] as string[]).length > 0)).length ?? 0;
-  const selected = review?.learner ?? context?.learners.find(item => item.id === learner);
+  const selected = teachingLecture || review?.learner || context?.learners.find(item => item.id === learner);
+  const lecture = review?.lecture ?? context?.snapshot.lecture;
+  const detailsTitle = teachingLecture ? 'Session and evidence details' : 'Learner and evidence details';
   const meeting = review?.meeting ?? context?.snapshot.meeting, coach = review?.coach ?? context?.snapshot.coach;
   const selectType = (kind: QualityReviewType) => {
     if (kind === formType || busy || (dirty && !window.confirm('Discard these unsaved answers and open the other quality form? Saved reviews and PDFs will remain available.'))) return;
@@ -139,37 +148,36 @@ export default function QualityReviewDialog({ eventKey = '', reference, meetingI
         {template && form && <fieldset disabled={busy} className="min-w-0">
           {!formType && <div className="mb-4 flex items-center gap-4"><img src="/assets/kbc-logo.png" alt="Kent Business College" className="h-16 w-32 object-contain" /><p className="text-sm text-foreground-600">Select the feedback form for this observation.</p></div>}
           <section aria-label="Choose quality form" className="mb-4 space-y-3 rounded-xl border border-background-200 bg-white p-4">
-            {reviewId || !choosingForm ? <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-semibold">{template.title}</p>{!reviewId && <button type="button" className={button} onClick={() => setChoosingForm(true)}>Choose another form</button>}</div>
+            {teachingLecture || reviewId || !choosingForm ? <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-semibold">{template.title}</p>{!teachingLecture && !reviewId && <button type="button" className={button} onClick={() => setChoosingForm(true)}>Choose another form</button>}</div>
               : <QualityFormCards value={formType} onChange={selectType} disabled={busy} />}
-            <p className="text-xs text-foreground-500">Choose the form yourself. Each form is saved independently for this learner and meeting; the calendar meeting type stays unchanged.</p>
+            <p className="text-xs text-foreground-500">{teachingLecture ? 'One teaching review for this lecture and tutor, covering the whole class.' : 'Choose the form yourself. Each form is saved independently for this learner and meeting; the calendar meeting type stays unchanged.'}</p>
             {formType && <Link className="inline-flex text-xs font-semibold text-primary-700 underline" to={`/curriculum/quality/forms?type=${formType}`} target="_blank" rel="noopener noreferrer">Edit form template</Link>}
           </section>
           {formType && <>
           <div className="mb-4 flex items-center gap-3"><img src="/assets/kbc-logo.png" alt="Kent Business College" className="h-16 w-32 object-contain" /><div><h3 className="font-bold">{template.title}</h3><p className="mt-1 text-xs text-foreground-500">Form version {template.version ?? 1}</p></div></div>
           <section aria-label="Review context" className="mb-4 grid gap-3 rounded-xl border border-background-200 bg-white p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            <div><p className="text-xs text-foreground-500">Coach / tutor observed</p><p className="mt-1 font-semibold">{coach?.name}</p></div>
+            <div><p className="text-xs text-foreground-500">{teachingLecture ? 'Tutor observed' : 'Coach / tutor observed'}</p><p className="mt-1 font-semibold">{coach?.name}</p></div>
             <div><p className="text-xs text-foreground-500">Observer</p><p className="mt-1 font-semibold">{review?.reviewer.name ?? context?.observer.name}</p></div>
-            <label className="grid gap-1 text-xs text-foreground-600">Learner{review ? <span className="mt-1 text-sm font-semibold">{review.learner.name}</span> : <select aria-label="Review learner" className={input} value={learner} onChange={event => {
-              if (!dirty || window.confirm('Discard this unsaved form and choose another learner?')) setLearner(event.target.value);
-            }}><option value="">Choose one learner</option>{context?.learners.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>}</label>
+            {teachingLecture ? <div><p className="text-xs text-foreground-500">Cohort / group</p><p className="mt-1 font-semibold">{[lecture?.cohort, lecture?.group].filter(Boolean).join(' / ') || 'Whole lecture'}</p></div> : <label className="grid gap-1 text-xs text-foreground-600">Learner{review ? <span className="mt-1 text-sm font-semibold">{review.learner?.name}</span> : <RecordingSelect ariaLabel="Review learner" value={learner} disabled={busy} onChange={value => {
+              if (!dirty || window.confirm('Discard this unsaved form and choose another learner?')) setLearner(value);
+            }} options={[{ value: '', label: 'Choose one learner' }, ...(context?.learners.map(row => ({ value: row.id, label: row.name })) ?? [])]} />}</label>}
             <div className="min-w-0"><p className="text-xs text-foreground-500">Meeting</p><p className="mt-1 break-words text-xs font-medium">{meeting?.title}</p><p className="mt-1 text-xs text-foreground-500">{meeting && meetingDate(meeting.startsAt, timeZone)}</p></div>
           </section>
           <div className="grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
             <label className="grid gap-2 text-xs font-semibold lg:hidden">Review section · {completed} questions answered
-              <select className={input} value={section} onChange={event => setSection(event.target.value)}>
-                {[{ id: 'details', title: 'Learner and evidence details' }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-              </select>
+              <RecordingSelect ariaLabel="Review section" value={section} onChange={setSection} disabled={busy}
+                options={[{ id: 'details', title: detailsTitle }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => ({ value: item.id, label: item.title }))} />
             </label>
             <nav aria-label="Review sections" className="hidden flex-col gap-1 rounded-xl border border-background-200 bg-white p-2 lg:flex">
               <p className="px-3 py-2 text-xs font-semibold text-foreground-500">{completed} of {template.sections.reduce((sum, item) => sum + item.criteria.length, 0)} criteria rated</p>
-              {[{ id: 'details', title: 'Learner and evidence details' }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => <button type="button" key={item.id}
+              {[{ id: 'details', title: detailsTitle }, ...template.sections, { id: 'actions', title: template.actionsTitle || 'SMART action plan' }].map(item => <button type="button" key={item.id}
                 aria-current={section === item.id ? 'step' : undefined} onClick={() => setSection(item.id)} className={`rounded-lg px-3 py-2 text-left text-xs leading-5 ${section === item.id ? 'bg-primary-600 font-semibold text-white' : 'text-foreground-700 hover:bg-primary-50'}`}>{item.title}</button>)}
             </nav>
             <div className="min-w-0 space-y-4">
               <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-xs leading-5 text-foreground-600">Record what you observed in this session. Use the recording, transcript and other evidence to support each judgement. No ratings are selected automatically.</p>
-              {section === 'details' && <section aria-label="Learner and evidence details" className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
-                <h3 className="font-bold">Learner and evidence details</h3>
-                <div className="grid gap-4 sm:grid-cols-2">{([['employer', 'Employer', 'text'], ['programme', 'Programme / standard', 'text'], ['activityDate', 'Activity date', 'date'], ['startDate', 'Start date', 'date'], ['endDate', 'Planned end date', 'date']] as const).map(([key, label, type]) =>
+              {section === 'details' && <section aria-label={detailsTitle} className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
+                <h3 className="font-bold">{detailsTitle}</h3>
+                <div className="grid gap-4 sm:grid-cols-2">{([['employer', 'Employer', 'text'], ['programme', 'Programme / standard', 'text'], ['activityDate', 'Activity date', 'date'], ['startDate', 'Start date', 'date'], ['endDate', 'Planned end date', 'date']] as const).filter(([key]) => !teachingLecture || key === 'programme' || key === 'activityDate').map(([key, label, type]) =>
                   <label key={key} className="grid gap-1 text-xs font-semibold">{label}<input className={input} type={type} maxLength={300} value={form.header[key]} onChange={event => update({ ...form, header: { ...form.header, [key]: event.target.value } })} /></label>)}</div>
                 <fieldset><legend className="mb-2 text-sm font-semibold">Evidence you relied on</legend><p className="mb-3 text-xs text-foreground-500">Select the sources you reviewed. Add page numbers or video times in each criterion’s evidence.</p>
                   <div className="flex flex-wrap gap-3">{[['recording', 'Recording'], ['transcript', 'Transcript'], ['ai', 'AI analysis'], ['portfolio', 'LMS / portfolio'], ['other', 'Other evidence']].map(([key, label]) =>
@@ -177,7 +185,7 @@ export default function QualityReviewDialog({ eventKey = '', reference, meetingI
                 </fieldset>
               </section>}
               <QualityEvidenceFiles reviewId={review?.id} files={evidenceFiles} ids={form.attachments?.evidence ?? []} busy={busy} onUpload={attachEvidence} onRemove={(id, key) => update({ ...form, attachments: { ...form.attachments, [key]: (form.attachments?.[key] ?? []).filter(value => value !== id) } })} />
-              <QualityQuestions template={template} sectionId={section} form={form} onChange={update}
+              <QualityQuestions template={template} sectionId={section} form={form} onChange={update} disabled={busy}
                 renderFiles={key => <QualityEvidenceFiles section={key} reviewId={review?.id} files={evidenceFiles} ids={form.attachments?.[key] ?? []} busy={busy} onUpload={attachEvidence} onRemove={(id, group) => update({ ...form, attachments: { ...form.attachments, [group]: (form.attachments?.[group] ?? []).filter(value => value !== id) } })} />}
                 renderImages={(key, label) => <section aria-label={label} className="rounded-xl border border-dashed border-primary-200 bg-white p-4">
                 <h4 className="text-sm font-semibold">{label}</h4><p className="mt-1 text-xs text-foreground-500">Save the draft before uploading. Up to two images here, 20 per review.</p>

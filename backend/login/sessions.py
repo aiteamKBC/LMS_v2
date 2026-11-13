@@ -28,6 +28,7 @@ import logging
 from django.conf import settings
 from django.utils import timezone
 
+from . import session_cache
 from .models import LoginSession
 from .security import (
     generate_token,
@@ -146,12 +147,25 @@ def resolve_session(token):
     """
     if not token:
         return None
+    token_hash = hash_token(token)
 
-    session = (
-        LoginSession.objects.select_related("account")
-        .filter(token_hash=hash_token(token), revoked_at__isnull=True)
-        .first()
-    )
+    def read():
+        return (
+            LoginSession.objects.select_related("account")
+            .filter(token_hash=token_hash, revoked_at__isnull=True)
+            .first()
+        )
+
+    # A live session seen in the last minute (login.session_cache); the checks
+    # below run on it exactly as on a database row. None means read the row.
+    session = session_cache.lookup(token_hash)
+    if session is None:
+        session = read()
+        if (session is not None and session.expires_at > timezone.now()
+                and session.account.is_active):
+            # Only a live session is stored, after a second read made under
+            # the account's current cache version.
+            session = session_cache.remember(token_hash, session, read)
     if session is None:
         # DEBUG, not INFO, and deliberately so: this is the one rejection whose
         # volume a stranger controls. A revoked cookie and a fabricated one look
@@ -279,9 +293,11 @@ def touch_session(session):
         return None
 
     target = renewal_target(session, now)
+    # The account is known: the version bump these updates owe the session
+    # cache needs no extra read to find it.
     live = LoginSession.objects.filter(
         pk=session.pk, revoked_at__isnull=True, expires_at__gt=now
-    )
+    ).with_cache_targets({session_cache.NAMESPACE: [session.account_id]})
 
     if live.filter(expires_at__lt=target).update(expires_at=target, last_seen_at=now):
         session.expires_at = target

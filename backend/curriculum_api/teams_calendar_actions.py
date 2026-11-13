@@ -377,6 +377,9 @@ def persist_move(series, rows, module, command, snapshot):
         cursor.execute('''UPDATE curriculum.live_session_occurrences SET scheduled_start = %s, scheduled_end = %s,
                           graph_event_id = %s, updated_at = %s WHERE id = %s AND live_session_id = %s''',
                        [command['start'], command['end'], command['eventId'], now, command['occurrenceId'], series['id']])
+    # Raw SQL above: retire this module's cached learner content.
+    from . import content_cache
+    content_cache.note_modules([module['module_catalogue_id']])
     # Components already carrying this stable occurrence/session identity
     # feed learner activities and training plans. Never update other sessions.
     settings = {'sessionDate': exception['date'], 'sessionDay': datetime.fromisoformat(exception['date']).strftime('%A'),

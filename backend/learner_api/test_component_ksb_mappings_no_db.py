@@ -8,6 +8,20 @@ from .tests_weekly_learning import FakeCursor
 
 
 class ComponentKsbMappingReadTests(SimpleTestCase):
+    def test_cached_regular_hours_keep_independent_course_hours_and_null_values(self):
+        connection = MagicMock(vendor='postgresql')
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('FREE', 1.5)]
+        with patch.object(learner_detail, 'connections', {'enrolment': connection}), \
+                patch.object(learner_detail, '_cached_expected_otjh', return_value={'REGULAR': 2, 'UNSET': None}), \
+                patch('curriculum_api.learning_storage.enabled', return_value=True):
+            result = learner_detail._otjh_by_component_id(
+                [{'componentId': cid} for cid in ('FREE', 'REGULAR', 'UNSET')])
+        self.assertEqual(result, {'FREE': 1.5, 'REGULAR': 2.0, 'UNSET': None})
+        statement, params = cursor.execute.call_args.args
+        self.assertIn('"curriculum"."learning_components"', statement)
+        self.assertEqual(params, [['FREE']])
+
     def resolve(self, inline=None, mapping_rows=None, **options):
         class Cursor(FakeCursor):
             def execute(self, sql, params=None):

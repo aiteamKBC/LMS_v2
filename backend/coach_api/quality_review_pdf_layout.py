@@ -155,7 +155,9 @@ def render(review, images, attachments=()):
     header = data['header']
     story.append(detail_grid([
         ('Coach / tutor observed', review['coach']['name']), ('Observer', review['reviewer']['name']),
-        ('Learner / cohort', review['learner']['name']), ('Employer', header['employer']),
+        ('Cohort / group' if review.get('scope') == 'teaching' else 'Learner / cohort',
+         ' / '.join(filter(None, [review.get('lecture', {}).get('cohort'), review.get('lecture', {}).get('group')]))
+         if review.get('scope') == 'teaching' else review['learner']['name']), ('Employer', header['employer']),
         ('Programme / standard', header['programme']), ('Activity date', formatted_date(header['activityDate'])),
         ('Start date', formatted_date(header['startDate'])), ('Planned end date', formatted_date(header['endDate'])),
     ]))

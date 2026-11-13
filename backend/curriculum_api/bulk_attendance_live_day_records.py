@@ -14,8 +14,9 @@ from django.views.decorators.http import require_GET
 from learner_api.models import LearnerProfile
 
 from .models import LiveSession, LiveSessionLearnerAttendance, LiveSessionOccurrence, ModuleAuthoringModule
-from .bulk_attendance_live_recovery import parallel_recovery_links
+from .parallel_attendance_register import saved_parallel_links
 from .session_results_policy import instant
+from .bulk_attendance_recorded import apply_recorded_outcomes
 
 
 def _local_date(value):
@@ -100,7 +101,7 @@ def bulk_attendance_live_day_records(request):
             LiveSessionOccurrence.objects.using(database)
             .filter(live_session_id__in=module_by_live_session)
             .exclude(status__in=["cancelled", "deleted"])
-            .values("id", "live_session_id", "scheduled_start")
+            .values("id", "live_session_id", "scheduled_start", "scheduled_end")
         )
         occurrence_ids = [
             occurrence["id"]
@@ -120,7 +121,7 @@ def bulk_attendance_live_day_records(request):
             )
         )
         aptem_by_profile = _aptem_ids_by_profile({row["learner_profile_id"] for row in register_rows})
-        covered, guests = parallel_recovery_links(register_rows, database=database)
+        covered, guests = saved_parallel_links(register_rows, database=database)
         records = [
             {
                 "recordKey": f"live:{row['id']}",
@@ -128,13 +129,13 @@ def bulk_attendance_live_day_records(request):
                 "moduleCatalogueId": row["module_catalogue_id"],
                 "occurrenceId": row["occurrence_id"],
                 "attendance": row["attendance_status"],
-                **covered.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
-                **guests.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
+                **covered.get((row["learner_profile_id"], str(row["occurrence_id"]), str(row["module_catalogue_id"])), {}),
+                **guests.get((row["learner_profile_id"], str(row["occurrence_id"]), str(row["module_catalogue_id"])), {}),
             }
             for row in register_rows
             if row["learner_profile_id"] in aptem_by_profile
         ]
-        return JsonResponse({"records": records})
+        return JsonResponse({"records": apply_recorded_outcomes(records)})
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except DatabaseError:
@@ -187,7 +188,7 @@ def bulk_attendance_live_month_records(request):
             LiveSessionOccurrence.objects.using(database)
             .filter(live_session_id__in=list(session_by_id), scheduled_start__gte=start, scheduled_start__lt=end)
             .exclude(status__in=["cancelled", "canceled", "deleted", "failed", "superseded"])
-            .values("id", "live_session_id", "scheduled_start", "session_number")
+            .values("id", "live_session_id", "scheduled_start", "scheduled_end", "session_number")
         )
         occurrences.sort(key=lambda row: (row["scheduled_start"], row["session_number"], row["id"]))
         occurrence_ids = [row["id"] for row in occurrences]
@@ -198,8 +199,8 @@ def bulk_attendance_live_month_records(request):
             .values("id", "occurrence_id", "module_catalogue_id", "learner_profile_id", "attendance_status")
         ) if occurrence_ids else []
         aptem_by_profile = _aptem_ids_by_profile({row["learner_profile_id"] for row in register_rows})
-        covered, guests = parallel_recovery_links(register_rows, database=database)
-        return JsonResponse({
+        covered, guests = saved_parallel_links(register_rows, database=database)
+        payload = {
             "occurrences": [
                 {
                     "id": row["id"],
@@ -217,13 +218,15 @@ def bulk_attendance_live_month_records(request):
                     "moduleCatalogueId": row["module_catalogue_id"],
                     "learnerId": aptem_by_profile[row["learner_profile_id"]],
                     "attendance": row["attendance_status"],
-                    **covered.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
-                    **guests.get((row["learner_profile_id"], str(row["occurrence_id"])), {}),
+                    **covered.get((row["learner_profile_id"], str(row["occurrence_id"]), str(row["module_catalogue_id"])), {}),
+                    **guests.get((row["learner_profile_id"], str(row["occurrence_id"]), str(row["module_catalogue_id"])), {}),
                 }
                 for row in register_rows
                 if row["learner_profile_id"] in aptem_by_profile
             ],
-        })
+        }
+        payload['records'] = apply_recorded_outcomes(payload['records'])
+        return JsonResponse(payload)
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except DatabaseError:

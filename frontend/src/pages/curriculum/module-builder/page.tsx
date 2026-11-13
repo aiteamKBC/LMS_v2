@@ -1,4 +1,7 @@
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
+import { useWeekPointDrafts, type WeekPointDrafts } from './useWeekPointDrafts';
+import { WebWeekPointsEditor } from './WebWeekPointsEditor';
+import { WeekPointsNavigation } from './WeekPointsNavigation';
 import { componentSessionTitle } from '../shared/sessionDisplayTitle';
 import { ModuleLearnerCount } from './ModuleLearnerCount';
 import { catalogueModuleActive, useCatalogueActivity } from './useCatalogueActivity';
@@ -212,7 +215,9 @@ import {
 import { RichTextDraft } from './RichTextEditor';
 import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
 import { useOffScheduleRuns } from './useOffScheduleRuns';
-import { offScheduleRunLabel, offScheduleRunSentence } from '../teams-meetings/offScheduleRuns';
+import { offScheduleRunLabel } from '../teams-meetings/offScheduleRuns';
+import { OffScheduleRunDetails } from '../teams-meetings/OffScheduleRunDetails';
+import { KsbRemapNotice } from './KsbRemapNotice';
 import { reviewDateLabel } from '../teams-meetings/calendarTime';
 import { linkedRecordingsOf, moveComponentToWeek, relinkCopiedComponents, withLinkedRecordings, withRecordingLink, type RecordingLinkContext } from '../shared/entities/liveSessionRecordingLink';
 
@@ -1617,10 +1622,13 @@ function ModuleBuilderContent() {
   // Serialising the whole module is the dirty check, the auto-save trigger and
   // the "is this still what we sent" comparison, so it is done once per render
   // rather than three times.
+  const pointDrafts = useWeekPointDrafts(workingModule?.catalogueId || workingModule?.id || '', workingModule?.weekStructure.map(week => week.id) || []);
+  const { save: savePointDrafts, discard: discardPointDrafts, signature: pointDraftSignature } = pointDrafts;
   const workingModuleSnapshot = useMemo(() => moduleSnapshot(workingModule), [workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
     workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
-  ) || videoFiles.hasPending;
+  ) || videoFiles.hasPending || Boolean(pointDraftSignature);
+  const workspaceSaveSnapshot = workingModuleSnapshot + pointDraftSignature;
   const workspaceSaveStatus: WorkspaceSaveStatus = workingModuleProgrammeArchived
     ? 'locked'
     : saving
@@ -2467,7 +2475,7 @@ function ModuleBuilderContent() {
     // Marking the pre-normalisation snapshot alone left the two disagreeing, so
     // a refused save came straight back round as a second attempt at the same
     // payload -- the one thing a refusal must not do.
-    autoSaveAttemptRef.current = sentSnapshot;
+    autoSaveAttemptRef.current = sentSnapshot + pointDraftSignature;
     try {
       if (!pendingFields) setWorkingModule(moduleToSave);
       // The copy the server holds at that revision, so only what the reader
@@ -2539,6 +2547,7 @@ function ModuleBuilderContent() {
         if (savedModuleSnapshotRef.current) savedModuleSnapshotRef.current = moduleSnapshot(apply(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem));
         setWorkingModule(current => current?.catalogueId === saved.catalogueId ? apply(current) : current);
       });
+      await savePointDrafts(saved.catalogueId || saved.id, saved.weekStructure.map(week => week.id));
       setStorageVersion(version => version + 1);
       setActionMessage(pendingFields ? 'Available changes saved. Reserved fields and unresolved choices remain in your draft.' : null);
       setSaveFailure(null);
@@ -2634,7 +2643,7 @@ function ModuleBuilderContent() {
       setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_UNREADABLE_NOTICE });
     }
     return null;
-  }, [collaboration, curriculumProgrammes, ksbSets, reload, selectedComponent?.id, selectedComponent?.type, setModuleConflicts, standards, uploadPendingVideos, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+  }, [pointDraftSignature, savePointDrafts, collaboration, curriculumProgrammes, ksbSets, reload, selectedComponent?.id, selectedComponent?.type, setModuleConflicts, standards, uploadPendingVideos, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
   /**
    * `persistWorkingModule` and the live merge, readable from inside each other.
    *
@@ -2679,12 +2688,12 @@ function ModuleBuilderContent() {
     // A save is already in flight. `saving` is a dependency, so the edits made
     // during it are picked up the moment it settles.
     if (saving) return;
-    if (autoSaveAttemptRef.current === workingModuleSnapshot) return;
+    if (autoSaveAttemptRef.current === workspaceSaveSnapshot) return;
     const timer = window.setTimeout(() => {
       // Stamped with the state being attempted, so a refusal cannot loop: the
       // module is still dirty afterwards, and dirty is this effect's trigger.
       // Editing again produces a different state, which is a new attempt.
-      autoSaveAttemptRef.current = workingModuleSnapshot;
+      autoSaveAttemptRef.current = workspaceSaveSnapshot;
       void persistWorkingModule('auto-save');
     }, AUTO_SAVE_QUIET_MS);
     // Every further edit cancels the pending save and starts the wait again, so
@@ -2697,7 +2706,7 @@ function ModuleBuilderContent() {
     saving,
     workingModule,
     workingModuleProgrammeArchived,
-    workingModuleSnapshot,
+    workspaceSaveSnapshot,
   ]);
 
   /**
@@ -3411,10 +3420,11 @@ function ModuleBuilderContent() {
       return;
     }
     if (result.isDenied) {
+      discardPointDrafts(workingModule?.catalogueId || workingModule?.id || '');
       const restored = restoreSavedWorkingModule();
       await onNavigate(restored);
     }
-  }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
+  }, [discardPointDrafts, workingModule, hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
 
   const pendingSelectionRef = useRef<{ catalogueId: string; selection: Selection } | null>(null);
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
@@ -3647,15 +3657,7 @@ function ModuleBuilderContent() {
               module={workingModule}
             />
           )}
-          {workingModule.ksbRemapReport?.unmatched?.length ? (
-            <details data-testid="module-ksb-remap-report" className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] text-amber-900">
-              <summary className="cursor-pointer font-bold">KSB remap review required ({workingModule.ksbRemapReport.unmatched.length} unmatched)</summary>
-              <p className="mt-2">This duplicate was created successfully, but the following source mappings were not found in the destination Programme:</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {workingModule.ksbRemapReport.unmatched.map((entry, index) => <li key={`${entry.path || entry.code}-${index}`}>{entry.code || 'Unknown code'} — {entry.reason || 'Review this mapping.'}</li>)}
-              </ul>
-            </details>
-          ) : null}
+          <KsbRemapNotice report={workingModule.ksbRemapReport} onReview={() => { void openKsbMap(workingModule); }} />
 
           {/* The receipt for a merge that has already happened -- their work is
               in the weeks on screen by the time this renders.
@@ -3745,6 +3747,7 @@ function ModuleBuilderContent() {
           >
           <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)_290px] 2xl:grid-cols-[420px_minmax(560px,1fr)_310px]">
             <CourseStructure
+              pointDrafts={pointDrafts}
               module={workingModule}
               selection={selection}
               dragState={dragState}
@@ -3810,6 +3813,7 @@ function ModuleBuilderContent() {
                   <EditScope kind="component" id={selectedComponent.id}>
                   <WeekComponentEditor
                     component={selectedComponent}
+                    onSelectComponent={componentId => { void requestSelectionChange({ kind: 'component', weekId: selectedWeek.id, componentId }); }}
                     selfStudyOnly={workingModule.isFreeCourse}
                     displayWeek={selectedWeek}
                     onChange={updates => updateWorkingModule(module =>
@@ -3830,6 +3834,8 @@ function ModuleBuilderContent() {
               ) : selectedWeek ? (
                 <EditScope kind="week" id={selectedWeek.id}>
                 <ModuleWeekPanel
+                  pointDrafts={pointDrafts}
+                  saving={saving}
                   week={selectedWeek}
                   module={workingModule}
                   groupOptions={componentGroupOptions}
@@ -4787,7 +4793,8 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ pointDrafts, module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onMoveComponentToWeek, recordingLinks, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+  pointDrafts: WeekPointDrafts;
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -5222,12 +5229,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 </p>
               </div>
             ) : (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
-                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                  <AppIcon className="ri-calendar-close-line text-sm"></AppIcon>
+              <div className="rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+                <p className="flex items-center gap-1.5 text-[13px] font-semibold leading-5 text-foreground-700">
+                  <AppIcon className="ri-calendar-event-line text-base text-primary-600"></AppIcon>
                   No delivery date in this calendar week
                 </p>
-                <p className="mt-1 text-[10px] leading-4 text-amber-800">
+                <p className="mt-1 text-[12px] leading-5 text-foreground-600">
                   {moduleStartDate && moduleStartWeekday && deliveryDays ? (
                     <>
                       This module starts on {moduleStartWeekday}, {formatDateLabel(moduleStartDate)}. Its delivery day{deliveryDays.includes(',') ? 's are' : ' is'} {deliveryDays}, which {deliveryDays.includes(',') ? 'do' : 'does'} not fall within this opening calendar week.
@@ -5246,7 +5253,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   strip alone: run down the card's full height so an expanded
                   week's components stay under it. */}
               {weekHolidayNotices.length > 0 && (
-                <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] rounded-l-xl bg-amber-400"></span>
+                <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] rounded-l-xl bg-primary-200"></span>
               )}
               <div
                 draggable
@@ -5286,15 +5293,14 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     <span>{totalOtjh.toFixed(1)}h</span>
                     {!hasDeliveryDate && (
                       <>
-                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
-                        <span className="font-semibold text-amber-700">No delivery date this week</span>
+                        <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
+                        <span className="text-[12px] font-semibold text-foreground-500">No delivery date this week</span>
                       </>
                     )}
                     {offScheduleByWeek.has(week.id) && (
                       <>
-                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
-                        <span className="truncate font-semibold text-amber-700"
-                          title={offScheduleByWeek.get(week.id)!.runs.map(run => offScheduleRunSentence(run, iso => reviewDateLabel(iso, offScheduleByWeek.get(week.id)!.timeZone))).join(' ')}>
+                        <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
+                        <span className="font-semibold text-foreground-500">
                           {offScheduleRunLabel(offScheduleByWeek.get(week.id)!.runs)}
                         </span>
                       </>
@@ -5367,6 +5373,20 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       warns and stops there -- the session keeps its date, its
                       week and its Teams meeting. */}
                   <WeekComponentRail
+                    componentSectionKey={componentId => pointDrafts.get(module.catalogueId || module.id, week.id)?.points
+                      .find(point => point.componentIds.includes(componentId))?.id || null}
+                    renderComponentList={(items, searchTerm) => <WeekPointsNavigation
+                      key={`${module.catalogueId || module.id}:${week.id}`}
+                      moduleId={module.catalogueId || module.id}
+                      weekId={week.id}
+                      drafts={pointDrafts}
+                      components={items.flatMap(item => item.members || [item.component])}
+                      selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
+                      onSelect={componentId => onSelectComponent(week.id, componentId)}
+                      renderActivity={componentId => items.find(item => item.component.id === componentId)?.node}
+                      expandAll={Boolean(searchTerm)}
+                      revealComponentId={focusedComponentId}
+                    />}
                     selfStudyOnly={module.isFreeCourse}
                     weekId={week.id}
                     displayWeek={week}
@@ -5786,7 +5806,9 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // different: it copies real authored components out of the library instead
 // of creating empty ones. The only saved-template control on this screen is
 // "From template" in the Course structure rail, which builds a whole new week.
-function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
+function ModuleWeekPanel({ pointDrafts, saving, week, module, groupOptions, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
+  pointDrafts: WeekPointDrafts;
+  saving: boolean;
   week: ModuleWeek;
   module: ModuleCatalogueItem;
   groupOptions: GroupOption[];
@@ -5801,11 +5823,7 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
   return (
     <section className="space-y-4">
       {offSchedule && (
-        <div role="note" className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-900">
-          {offSchedule.runs.map(run => (
-            <p key={`${run.runStartUtc}-${run.runEndUtc}`}>{offScheduleRunSentence(run, iso => reviewDateLabel(iso, offSchedule.timeZone))}</p>
-          ))}
-        </div>
+        <OffScheduleRunDetails key={week.id} runs={offSchedule.runs} when={iso => reviewDateLabel(iso, offSchedule.timeZone)} />
       )}
       <div className="grid gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-5">
         <div className="min-w-0">
@@ -5829,6 +5847,8 @@ function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKs
           </button>
         </div>
       </div>
+
+      <WebWeekPointsEditor key={`${module.catalogueId || module.id}:${week.id}`} moduleId={module.catalogueId || module.id} weekId={week.id} drafts={pointDrafts} busy={saving} />
 
       <WeekOverviewPanel
         components={week.components}

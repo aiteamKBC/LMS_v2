@@ -3,6 +3,28 @@ import type { SubmissionAttempt } from './assignmentAttempts';
 import { readLearnerJson } from './learnerRead';
 import { invalidateWeeklyProgress } from './weeklyLearning';
 import type { MonthlyAssignment } from './monthlyAssignment';
+import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
+import type { ActivityTimeChoice } from '@/lib/activityTimeDecision';
+
+export interface ReflectionTimeOperation {
+  id: string;
+  choice: ActivityTimeChoice;
+  reason: string;
+  expectedReflectionSeconds: number;
+  expectedProgressEntryId: number;
+}
+
+export interface LectureReflectionTime {
+  seconds: number;
+  progressEntryId: number;
+  addedAt: string;
+  countedSeconds: number;
+  lectureSeconds?: number;
+  inputSeconds?: number;
+  choice?: ActivityTimeChoice;
+  operationId?: string;
+  reason?: string;
+}
 
 export interface LearningReflectionSubmissionInput {
   learnerKind: 'commercial' | 'apprenticeship';
@@ -30,6 +52,15 @@ export interface LearningReflectionSubmissionInput {
   actualTimeHours: string;
   /** A corrected reflection duration takes precedence when restoring a draft. */
   reflectionTimeEdited?: boolean;
+  /** Optional lecture writing time, added once on final submission. */
+  additionalReflectionSeconds?: number;
+  /** Server-owned receipt; sending it never creates credit. */
+  lectureReflectionTime?: LectureReflectionTime;
+  reflectionTimeOperation?: ReflectionTimeOperation;
+  lectureReflectionTimeHistory?: LectureReflectionTime[];
+  lectureReflectionAttempts?: Array<{ status: string; submittedAt?: string; coachFeedback?: string;
+    reviewedBy?: string; reviewedAt?: string; content: Partial<LearningReflectionSubmissionInput> }>;
+  declaredCompletedAt?: string;
   completedDuringPaidHours: string;
   dateCompleted: string;
   otjhConfirmed: boolean;
@@ -37,6 +68,8 @@ export interface LearningReflectionSubmissionInput {
   qualityScore: number;
   /** Assignment wizard fields. Other reflection flows omit these. */
   submissionMode?: 'draft' | 'submit';
+  /** A deliberate Save draft click; background autosaves omit this intent. */
+  reflectionDraftIntent?: 'manual';
   assignmentAnswer?: string;
   whatYouLearned?: string;
   businessImpact?: string;
@@ -63,6 +96,7 @@ export interface HistoricalAssignmentContent {
 }
 
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
+  lectureReflectionPendingTime?: { operation: ReflectionTimeOperation; seconds: number };
   submissionAttempts?: SubmissionAttempt[];
   /** Server-owned provenance; learners cannot request the import exemption. */
   submissionOrigin?: 'learner' | 'imported_legacy' | 'classified_legacy' | 'coach';
@@ -129,7 +163,7 @@ export async function loadLearningReflectionSubmission(input: {
 
 export async function saveLearningReflectionSubmission(
   input: LearningReflectionSubmissionInput,
-): Promise<{ id: string; status: string; submissionAttempts?: SubmissionAttempt[] }> {
+): Promise<{ id: string; status: string; submissionAttempts?: SubmissionAttempt[]; lectureReflectionTime?: LectureReflectionTime }> {
   let response: Response;
   try {
     response = await learningFetch('/learner_api/reflection/submissions/', {
@@ -142,15 +176,24 @@ export async function saveLearningReflectionSubmission(
   }
 
   const text = await response.text();
-  let data: { id?: string; status?: string; error?: string; submissionAttempts?: SubmissionAttempt[] };
+  let data: { id?: string; status?: string; error?: string; submissionAttempts?: SubmissionAttempt[]; lectureReflectionTime?: LectureReflectionTime;
+    validation?: { reason?: string; holidayName?: string } };
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
     throw new Error(`Unexpected response (${response.status}).`);
   }
   if (!response.ok) {
+    if (response.status === 409 && data.validation) throw new CompletionValidationError(data.error || 'Please confirm when the reflection was completed.',
+      (data.validation.reason || '') as WorkingRuleReason | '', data.validation.holidayName || '');
     throw new Error(data.error || `Could not save the reflection (${response.status}).`);
   }
+  if (input.submissionMode !== 'draft' && (input.additionalReflectionSeconds || 0) > 0 && (!data.lectureReflectionTime?.progressEntryId
+    || (data.lectureReflectionTime.inputSeconds ?? data.lectureReflectionTime.seconds) !== input.additionalReflectionSeconds
+    || (input.reflectionTimeOperation && data.lectureReflectionTime.operationId !== input.reflectionTimeOperation.id))) {
+    throw new Error('Your reflection was saved, but its additional time was not confirmed. Refresh the reflection to check its recorded time before trying again.');
+  }
   invalidateWeeklyProgress(input.learnerKind, input.learnerId, input.activityId);
-  return { id: data.id || '', status: data.status || '', submissionAttempts: data.submissionAttempts };
+  return { id: data.id || '', status: data.status || '', submissionAttempts: data.submissionAttempts,
+    ...(data.lectureReflectionTime ? { lectureReflectionTime: data.lectureReflectionTime } : {}) };
 }

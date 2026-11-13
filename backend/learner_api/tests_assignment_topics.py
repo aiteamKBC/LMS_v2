@@ -263,12 +263,36 @@ class SharedTopicCoachingTests(SimpleTestCase):
                     lookup.assert_called_once_with(kind, 101, "shared-mcm")
                     self.assertEqual(cursor.execute.call_args.args[1], [kind, "101", "COMP-TOPICS"])
 
-    def test_a_different_client_booking_cannot_replace_the_shared_booking(self):
-        payload = self.booking_payload()
-        payload["monthlyAssignment"]["meetingKey"] = "replacement"
-        with patch("learner_api.calendar._learner_calendar_record", return_value=self.meeting()):
-            prepare_topic_save(self.booked_cursor(), payload)
-        self.assertEqual(payload["monthlyAssignment"]["meetingKey"], "shared-mcm")
+    def test_explicit_owned_booking_replaces_the_link_without_rewriting_prior_topics(self):
+        from copy import deepcopy
+        from .monthly_assignment import booked_coaching
+        for kind in ("commercial", "apprenticeship"):
+            with self.subTest(kind=kind):
+                payload = self.booking_payload(kind)
+                payload["monthlyAssignment"]["meetingKey"] = "replacement"
+                cursor = self.booked_cursor()
+                previous = deepcopy(cursor.fetchall.return_value)
+                with patch("learner_api.calendar._learner_calendar_record", return_value=self.meeting()) as lookup, patch(
+                        "learner_api.monthly_assignment.resubmission_booking_satisfied", return_value=False):
+                    prepare_topic_save(cursor, payload)
+                    self.assertEqual(payload["monthlyAssignment"]["meetingKey"], "replacement")
+                    self.assertTrue(booked_coaching(payload))
+                self.assertEqual(payload["monthlyAssignment"]["reflection"], "Keep this answer")
+                self.assertEqual(cursor.fetchall.return_value, previous)
+                lookup.assert_called_once_with(kind, 101, "replacement")
+
+    def test_invalid_explicit_booking_is_not_hidden_by_another_topics_valid_booking(self):
+        from .monthly_assignment import booked_coaching
+        for record in (None, self.meeting(status="cancelled"), self.meeting(event_type="review")):
+            with self.subTest(record=record):
+                payload = self.booking_payload()
+                payload["monthlyAssignment"]["meetingKey"] = "invalid-selection"
+                with patch("learner_api.calendar._learner_calendar_record", side_effect=lambda kind, learner, key:
+                           record if key == "invalid-selection" else self.meeting()), patch(
+                        "learner_api.monthly_assignment.resubmission_booking_satisfied", return_value=False):
+                    prepare_topic_save(self.booked_cursor(), payload)
+                    self.assertEqual(payload["monthlyAssignment"]["meetingKey"], "invalid-selection")
+                    self.assertFalse(booked_coaching(payload))
 
     def test_cancelled_unowned_and_wrong_type_meetings_are_not_inherited(self):
         for record in (None, self.meeting(status="cancelled"), self.meeting(event_type="review")):

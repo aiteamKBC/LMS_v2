@@ -1,8 +1,10 @@
 """Read and download Teams recordings without creating a curriculum link or archive."""
+import asyncio
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 from urllib.error import URLError
 from django.core import signing
+from django.core.handlers.asgi import ASGIRequest
 from django.db import DatabaseError
 from django.http import JsonResponse, StreamingHttpResponse
 from django.views.decorators.http import require_GET
@@ -61,7 +63,7 @@ class RecordingRedirect(HTTPRedirectHandler):
         return redirected
 
 
-def recording_stream(path):
+def recording_stream(path, *, asynchronous=False):
     from coach_api.views import get_graph_settings, microsoft_graph_token
     base = get_graph_settings()['base_url'].rstrip('/')
     if urlsplit(base).scheme != 'https' or urlsplit(base).hostname != 'graph.microsoft.com':
@@ -81,7 +83,18 @@ def recording_stream(path):
                 yield chunk
         finally:
             source.close()
-    response = StreamingHttpResponse(chunks(), content_type='video/mp4')
+    async def async_chunks():
+        # Match the established coaching transport: ASGI must not adapt a sync
+        # iterator by buffering an entire lecture before starting the download.
+        try:
+            while True:
+                chunk = await asyncio.to_thread(source.read, 256 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            source.close()
+    response = StreamingHttpResponse(async_chunks() if asynchronous else chunks(), content_type='video/mp4')
     response['Content-Disposition'] = 'attachment; filename="teams-recording.mp4"'
     response['Cache-Control'] = 'private, no-store'
     if source.headers.get('Content-Length', '').isdigit():
@@ -99,7 +112,7 @@ def external_recordings(request):
         if recording_id:
             if not any(row['id'] == recording_id for row in rows):
                 return JsonResponse({'error': 'Recording not found for this calendar occurrence.'}, status=404)
-            return recording_stream(f'{path}/{quote(recording_id, safe="")}')
+            return recording_stream(f'{path}/{quote(recording_id, safe="")}', asynchronous=isinstance(request, ASGIRequest))
         response = JsonResponse({'title': str(event.get('subject') or 'Teams meeting'), 'linkedToLms': False,
             'recordings': [{'id': row['id'], 'startsAt': row['createdDateTime'], 'endsAt': row['endDateTime']} for row in rows]})
         response['Cache-Control'] = 'private, no-store'

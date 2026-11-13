@@ -73,7 +73,23 @@
   color: #fff;
 }
 
-:global([data-theme='dark']) .learningPage .sourceTabs button[aria-selected='true'] {
+:global([data-theme='dark'] .dashboard-theme .workspace-main) .learningPage .sourceTabs button[aria-selected='true'] {
+  background: #5e378d;
+  color: #fff;
+}
+
+:global([data-theme='dark']) .learningPage .teachingToggle {
+  background: #283b56;
+  border-color: var(--kbc-border);
+}
+
+:global([data-theme='dark'] .dashboard-theme .workspace-main) .learningPage :is(.sourceTabs, .teachingToggle) button:not([aria-selected='true']):not([aria-pressed='true']) {
+  background: #392a4b;
+  border-color: #60477c;
+  color: #eadcf9;
+}
+
+:global([data-theme='dark']) .learningPage .teachingToggle button[aria-pressed='true'] {
   background: #5e378d;
   color: #fff;
 }
@@ -422,9 +438,19 @@
 .stat .progressRing { display: grid; flex: 0 0 auto; place-items: center; width: 65px; height: 65px; border-radius: 50%; background: conic-gradient(var(--learner-purple, #673ab7) var(--kbc-ring-progress), #edf0f5 0); }
 .progressRing span { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: #fff; color: var(--learner-navy, #182d48); font-size: 15px; font-weight: 750; }
 .toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(145px, .65fr) minmax(145px, .65fr) auto; align-items: end; gap: 12px; margin: 0 0 22px; }
-.sourceTabs { grid-column: 1 / -1; display: inline-flex; width: fit-content; padding: 3px; border: 1px solid #ded7ef; border-radius: 10px; background: #f5f1fc; }
-.sourceTabs button { min-height: 34px; padding: 7px 18px; border-radius: 7px; color: #62458a; font-size: 12px; font-weight: 700; }
-.sourceTabs button[aria-selected='true'] { background: var(--learner-purple, #673ab7); color: #fff; box-shadow: 0 2px 6px #673ab72b; }
+.filterGroups { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: center; justify-self: center; width: min(100%, 1052px); gap: 18px 16px; min-width: 0; container: filterRow / inline-size; }
+.sectionFilter { display: flex; flex: 0 1 auto; align-items: center; justify-content: center; width: max-content; max-width: 100%; min-width: 0; }
+.sourceFilter, .teachingFilter { display: flex; flex: 1 1 270px; flex-direction: column; align-items: flex-start; width: min(100%, 348px); gap: 6px; min-width: 0; max-width: 348px; color: #637388; font-size: 12px; font-weight: 600; }
+.sourceTabs { display: flex; max-width: 100%; width: 100%; gap: 4px; padding: 3px; border: 1px solid #ded7ef; border-radius: 10px; background: #fff; }
+:global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button { flex: 1; min-width: 0; min-height: 34px; padding: 7px 8px; border: 1px solid #ddd0ef; border-radius: 7px; background: #fff; color: #59368e; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+:global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button[aria-selected='true'] { border-color: var(--learner-purple, #673ab7); background: var(--learner-purple, #673ab7); color: #fff; box-shadow: 0 2px 6px #673ab72b; }
+:global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button:not([aria-selected='true']):hover { background: #e2d4f4; }
+:global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button:focus-visible { outline: 2px solid var(--learner-purple, #673ab7); outline-offset: 2px; }
+.teachingToggle { display: flex; width: 100%; gap: 4px; padding: 3px; border: 1px solid #ded7ef; border-radius: 12px; background: #fff; }
+.learningPage .teachingToggle button { flex: 1; min-width: 0; min-height: 38px; padding: 8px 12px; border: 1px solid #ddd0ef; border-radius: 9px; background: #fff; color: #59368e; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.learningPage .teachingToggle button[aria-pressed='true'] { border-color: var(--learner-purple, #673ab7); background: var(--learner-purple, #673ab7); color: #fff; box-shadow: 0 2px 7px #673ab72b; }
+.learningPage .teachingToggle button:not([aria-pressed='true']):hover { background: #e2d4f4; }
+.learningPage .teachingToggle button:focus-visible { outline: 2px solid var(--learner-purple, #673ab7); outline-offset: 2px; }
 .search { display: flex; align-items: center; flex: 1 1 220px; gap: 10px; height: 43px; padding: 0 13px; border: 1px solid #dfe6ee; border-radius: 9px; background: #fff; color: #637388; }
 .search input { min-width: 0; width: 100%; height: 100%; outline: none; background: transparent; color: var(--learner-navy, #182d48); font-size: 13px; }
 .search:focus-within { outline: 2px solid var(--learner-purple, #673ab7); outline-offset: 2px; }
@@ -606,6 +632,13 @@
 .workspace button:focus-visible, .workspace a:focus-visible, .workspace select:focus-visible { outline: 2px solid var(--learner-purple, #673ab7); outline-offset: 3px; }
 
 @container subjects (min-width: 1160px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@container filterRow (min-width: 900px) {
+  .filterGroupsWithSections .sourceFilter, .filterGroupsWithSections .teachingFilter { position: relative; }
+  .filterGroupsWithSections .sourceFilter::before, .filterGroupsWithSections .teachingFilter::before {
+    content: ''; position: absolute; left: -9px; bottom: 2px; width: 2px; height: 36px;
+    border-radius: 2px; background: var(--learner-purple, #673ab7); opacity: .55;
+  }
+}
 @container learning (max-width: 1280px) {
   .catalogueLayout { grid-template-columns: minmax(0, 1fr); }
   .catalogueAside { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -844,6 +877,11 @@
 .learningPage .heroTag { top: 16px; right: 16px; font-size: 8px; }
 .learningPage .journeyDots { bottom: 13px; left: 24px; }
 .learningPage .catalogueTabs { margin: 8px 0 12px; }
+.learningPage .sectionFilter .catalogueTabs { width: max-content; max-width: 100%; margin: 0; padding-bottom: 0; overflow: visible; }
+@container filterRow (max-width: 300px) {
+  .sectionFilter { flex-basis: 100%; width: 100%; }
+  .learningPage .sectionFilter .catalogueTabs { width: 100%; flex-wrap: wrap; justify-content: center; }
+}
 .learningPage .stats { gap: 10px; margin-bottom: 12px; }
 .learningPage .stat {
   min-height: 78px;
@@ -859,10 +897,12 @@
 .learningPage .progressRing span { width: 34px; height: 34px; }
 .learningPage .catalogueLayout { gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(250px, 280px); }
 .learningPage .catalogueAside { gap: 12px; }
-.learningPage .toolbar { gap: 9px; margin-bottom: 14px; grid-template-columns: minmax(170px, 1fr) minmax(130px, .52fr) minmax(145px, .56fr) auto; }
+.learningPage .toolbar { gap: 16px; margin: 24px 0; grid-template-columns: minmax(170px, 1fr) minmax(130px, .52fr) minmax(145px, .56fr) auto; }
 .learningPage .search { height: 38px; }
 .learningPage .selectLabel { gap: 2px; font-size: 10px; }
 .learningPage .selectLabel select { height: 38px; font-size: 11px; }
+.learningPage .sourceFilter, .learningPage .teachingFilter { gap: 6px; font-size: 10px; }
+.learningPage .teachingToggle button { min-height: 34px; padding: 6px 10px; font-size: 11px; }
 .learningPage .viewToggle button { min-height: 30px; padding: 6px 9px; }
 .learningPage .subjectHeading { margin-bottom: 10px; }
 .learningPage .subjectHeading h2 { font-size: 17px !important; }
@@ -983,6 +1023,9 @@
   .learningPage .stats { grid-template-columns: minmax(0, 1fr); }
   .learningPage .toolbar { grid-template-columns: minmax(0, 1fr); }
   .learningPage .toolbar .search, .learningPage .viewToggle { grid-column: 1; }
+  .learningPage .sourceFilter, .learningPage .teachingFilter { width: 100%; }
+  .learningPage .sourceTabs { width: 100%; }
+  :global(.dashboard-theme .workspace-main) .learningPage .sourceTabs button { flex: 1; min-width: 0; padding-inline: 6px; }
 }
 @media (max-width: 700px) {
   .learningPage .hero { flex-direction: column; }
@@ -1024,6 +1067,9 @@
 .learningPage .grid .moduleCard .status { font-size: 14px; }
 
 /* The list uses the same readable hierarchy while keeping its compact rows. */
+/* Nested current/previous records must not each fill the whole group's height. */
+.learningPage .list .moduleCard,
+.learningPage .grid > section .moduleCard { height: auto; }
 .learningPage .list .cardButton { height: auto; min-height: 157px; flex-basis: auto; }
 .learningPage .list .cardButton > div:first-child { width: 136px; height: auto; }
 .learningPage .list .cover { height: 100%; min-height: 0; }

@@ -53,6 +53,14 @@ beforeEach(() => {
 });
 
 describe('WorkspaceSwitcher', () => {
+  it('opens HR System for a super-admin without changing account identity', async () => {
+    signedIn();
+    renderAt('/workspace/admin');
+    await userEvent.click(trigger());
+    await userEvent.click(screen.getByRole('menuitem', { name: /HR System/ }));
+    expect(path()).toBe('/workspace/hr-system');
+    expect(switchRole).not.toHaveBeenCalled();
+  });
   it('uses the prominent shared trigger treatment for an administrator', () => {
     signedIn();
     renderAt('/workspace/coach');
@@ -226,6 +234,19 @@ describe('WorkspaceSwitcher', () => {
     await user.click(screen.getByText('Support'));
     expect(path()).toBe('/support/ticket-queue');
     expect(switchRole).not.toHaveBeenCalled();
+  });
+
+  it('opens My Courses from Enrolment and marks it current without switching roles', async () => {
+    signedIn();
+    const user = userEvent.setup();
+    renderAt('/users');
+    await user.click(trigger());
+    await user.click(screen.getByRole('menuitem', { name: /My Courses/ }));
+    expect(path()).toBe('/my-courses');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(switchRole).not.toHaveBeenCalled();
+    await user.click(trigger());
+    expect(screen.getByRole('menuitem', { name: /My Courses/ })).toHaveAttribute('aria-current', 'true');
   });
 
   it('ticks the section you are in rather than offering it as a move', async () => {

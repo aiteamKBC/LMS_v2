@@ -50,6 +50,7 @@ it('suggests a current lecture and confirms with email only', async () => {
   await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
   expect(await screen.findByText('Attendance confirmed successfully.')).toBeVisible();
   expect(qrAttendanceApi.confirm).toHaveBeenCalledExactlyOnceWith('csrf', 'student@example.test', 'M1', 'O1');
+  expect(screen.queryByText(/This lecture is with another group/)).not.toBeInTheDocument();
 });
 
 it('keeps a future unassigned module visible but prevents selecting or confirming its lecture', async () => {
@@ -281,6 +282,82 @@ it('applies the server today suggestion even when it is not currently running', 
   await identify();
   expect(await screen.findByRole('radio')).toBeChecked();
   expect(screen.getByLabelText('Choose Module')).toHaveTextContent('Module One');
+});
+
+it('keeps matching other groups collapsed and selects a lecture without confirming', async () => {
+  const other = { ...lecture, id: 'OTHER', moduleId: 'M2', group: 'Group B', title: 'Group B lecture', matchingModuleIds: ['M1', 'M2'] };
+  vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [lecture], otherGroupLectures: [other],
+    selection: { moduleId: 'M1', occurrenceId: 'O1' } });
+  vi.mocked(qrAttendanceApi.lectures).mockImplementation(async (_csrf, _email, moduleId) => ({
+    lectures: moduleId === 'M2' ? [other] : [lecture], suggestedOccurrenceId: moduleId === 'M2' ? 'OTHER' : 'O1',
+  }));
+  const user = await identify();
+  const heading = await screen.findByText('Other groups available today (1)');
+  const section = heading.closest('details')!;
+  expect(section).not.toHaveAttribute('open');
+  await user.click(heading);
+  expect(section).toHaveAttribute('open');
+  expect(within(section).getByText('Unassigned Module')).toBeVisible();
+  expect(within(section).getByText('Group B · October')).toBeVisible();
+  await user.click(within(section).getByRole('button', { name: /Choose lecture/ }));
+  expect(await screen.findByRole('radio', { name: /Group B lecture/ })).toBeChecked();
+  expect(screen.getByLabelText('Choose Module')).toHaveTextContent('Unassigned Module');
+  expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeEnabled();
+  expect(qrAttendanceApi.confirm).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
+  expect(await screen.findByText('Attendance confirmed successfully.')).toBeVisible();
+  expect(screen.getByText(/This lecture is with another group/)).toBeVisible();
+  expect(qrAttendanceApi.confirm).toHaveBeenCalledExactlyOnceWith('csrf', 'student@example.test', 'M2', 'OTHER');
+});
+
+it('shows the other-group notice for an existing attendance confirmation', async () => {
+  const other = { ...lecture, id: 'OTHER', moduleId: 'M2', group: 'Group B', matchingModuleIds: ['M1', 'M2'] };
+  vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [other], otherGroupLectures: [other],
+    selection: { moduleId: 'M2', occurrenceId: 'OTHER' } });
+  vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [other], suggestedOccurrenceId: 'OTHER' });
+  vi.mocked(qrAttendanceApi.confirm).mockResolvedValue({ recorded: true, alreadyRecorded: true,
+    confirmedAt: '2026-11-07T11:01:00Z', message: 'Your attendance has already been recorded.' });
+  const user = await identify();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Attendance' })).toBeEnabled());
+  await user.click(screen.getByRole('button', { name: 'Confirm Attendance' }));
+  expect(await screen.findByText('Your attendance has already been recorded.')).toBeVisible();
+  expect(screen.getByText(/This lecture is with another group/)).toBeVisible();
+});
+
+it('only shows other-group lectures matching the chosen module', async () => {
+  const match = { ...lecture, id: 'MATCH', moduleId: 'M2', group: 'Group B', title: 'Matching lecture', matchingModuleIds: ['M1', 'M2'] };
+  const unrelated = { ...lecture, id: 'UNRELATED', moduleId: 'M3', group: 'Group C', title: 'Unrelated lecture', matchingModuleIds: ['M3'] };
+  vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [lecture],
+    selection: { moduleId: 'M1', occurrenceId: 'O1' }, otherGroupLectures: [match, unrelated] });
+  const user = await identify();
+  await user.click(await screen.findByText('Other groups available today (1)'));
+  expect(screen.getByText('Matching lecture')).toBeVisible();
+  expect(screen.queryByText('Unrelated lecture')).not.toBeInTheDocument();
+});
+
+it('does not show other-group suggestions for another day', async () => {
+  const future = { ...lecture, id: 'FUTURE', moduleId: 'M2', startsAt: '2026-11-08T10:00:00Z' };
+  vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [], otherGroupLectures: [future] });
+  await identify();
+  expect(screen.queryByText(/Other groups available today/)).not.toBeInTheDocument();
+});
+
+it('reveals the automatically selected lecture inside the list without scrolling the page', async () => {
+  const past = { ...lecture, id: 'PAST', startsAt: '2026-11-06T10:00:00Z', current: false };
+  const today = { ...lecture, id: 'TODAY', title: 'Today lecture', current: false };
+  vi.mocked(qrAttendanceApi.lookup).mockResolvedValue({ modules, suggestions: [today],
+    selection: { moduleId: 'M1', occurrenceId: 'TODAY' } });
+  vi.mocked(qrAttendanceApi.lectures).mockResolvedValue({ lectures: [past, today], suggestedOccurrenceId: 'TODAY' });
+  const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect');
+  rect.mockImplementation(function (this: Element) {
+    if (this.classList.contains('qr-attendance-lectures')) return { top: 100, bottom: 300 } as DOMRect;
+    if (this.classList.contains('qr-lecture-card')) return { top: 450, bottom: 520 } as DOMRect;
+    return { top: 0, bottom: 0 } as DOMRect;
+  });
+
+  await identify();
+  expect(await screen.findByRole('radio', { name: /Today lecture/ })).toBeChecked();
+  expect(screen.getByRole('region', { name: 'Available lectures' }).scrollTop).toBe(220);
 });
 
 it('loads the unique current module but waits for a choice between tied lecture candidates', async () => {

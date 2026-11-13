@@ -29,6 +29,9 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
             CREATE TABLE curriculum.live_session_occurrences (
                 id text,live_session_id text,session_number integer,scheduled_start text,scheduled_end text,status text);
             CREATE TABLE curriculum.components (id text,settings_json text);
+            CREATE TABLE Learner.learners (id integer,aptem_id integer);
+            INSERT INTO Learner.learners VALUES (70,7001),(80,8001);
+            CREATE TABLE Learner.source_lms_attendance (source_key text,aptem_id integer);
             CREATE TABLE Learner.learner_progress_entries (
                 source_payload text,time_tracking_session_ref text,module_ref text,component_ref text,
                 curriculum_component_ref text,learner_id integer,deleted_at text,actual_seconds integer,
@@ -148,6 +151,27 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
         self.assertEqual(self.rows()[0]['actual_hours'], 2)
         self.db.execute("UPDATE Learner.learner_progress_entries SET actual_basis='staff:module-progress'")
         self.assertEqual(self.rows(), [])
+
+    def test_delayed_kbc_import_is_not_added_to_the_same_present_session_again(self):
+        self.lecture()
+        self.allocation(payload={'original_source_ref': 'att:known-key',
+            'kbc_attendance': {'date': '2026-10-15', 'module': 'Synthetic module'}})
+        self.db.execute("INSERT INTO Learner.source_lms_attendance VALUES ('known-key',7001)")
+        self.assertEqual(self.rows(), [])
+        # Date alone, an unvalidated key, or another module cannot consume a live session.
+        self.db.execute('UPDATE Learner.source_lms_attendance SET aptem_id=8001')
+        self.assertEqual(len(self.rows()), 1)
+        self.db.execute('UPDATE Learner.source_lms_attendance SET aptem_id=7001')
+        self.db.execute("UPDATE curriculum.live_sessions SET module_title='Other module'")
+        self.assertEqual(len(self.rows()), 1)
+
+    def test_kbc_date_module_match_is_refused_for_multiple_live_occurrences(self):
+        self.lecture()
+        self.lecture('O2')
+        self.allocation(payload={'original_source_ref': 'att:known-key',
+            'kbc_attendance': {'date': '2026-10-15', 'module': 'Synthetic module'}})
+        self.db.execute("INSERT INTO Learner.source_lms_attendance VALUES ('known-key',7001)")
+        self.assertEqual(len(self.rows()), 2)
 
     def test_known_occurrence_allocations_and_zero_corrections_are_not_duplicated(self):
         self.lecture()

@@ -39,6 +39,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('Aptem booking from a coach list', () => {
+  it('keeps an available mid-month MCM default and books the same imported review', async () => {
+    const definition = importedBookingDefinition();
+    definition.template = { ...definition.template, name: 'Monthly Coaching Meeting', reviewTypeCode: 'aptem_mcm' };
+    definition.instance = { ...definition.instance, targetDate: '2026-09-15' };
+    fetchForm.mockResolvedValue(definition);
+    mount({ event: { ...event, source: 'mcr', title: 'Monthly Coaching Meeting', targetDate: '2026-09-15' } });
+    await selectTime();
+    expect(screen.getByLabelText('Date')).toHaveValue('2026-09-15');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm booking' }));
+    await waitFor(() => expect(book).toHaveBeenCalledExactlyOnceWith('imported-review:31', expect.objectContaining({
+      scheduledDate: '2026-09-15', scheduledTime: '09:00', durationMinutes: 60,
+    })));
+  });
+
   it('reschedules an in-progress review only when the server permits it', async () => {
     const current = scheduledImportedBooking();
     current.localStatus = 'in-progress';

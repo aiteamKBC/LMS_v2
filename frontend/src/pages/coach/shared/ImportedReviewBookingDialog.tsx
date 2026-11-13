@@ -76,7 +76,7 @@ export default function ImportedReviewBookingDialog({ event, viewingAsCoach, onC
       .then(data => {
         if (controller.signal.aborted) return;
         setDefinition(data);
-        setDate(initialReviewBookingDate(data, reviewCategory(event) === 'mcr'));
+        setDate(initialReviewBookingDate(data));
         setTime(data.booking?.scheduledTime || '09:00');
         setDuration(initialReviewBookingDuration(data));
       })

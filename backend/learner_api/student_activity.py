@@ -29,6 +29,7 @@ from .student_activity_data import (summarize_activities, read_curriculum_schedu
                                     apply_curriculum_schedules, read_activity_sources,
                                     read_activity_source_issues)
 from . import subject_store, subject_source
+from . import subject_cache
 import logging
 from .subject_content import (ContentUnavailable, build_material, public_quiz, as_list)
 from .builder_activity_dates import read_builder_activity_dates
@@ -207,15 +208,13 @@ def _live_subjects(source, aptem_id):
 
 def _activity_sources(enrolment_id, group_ids):
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
-        module_ids = [row[0] for row in cursor.fetchall()]
+        module_ids = [row[0] for row in subject_cache.subject_rows(cursor, CURRENT_SUBJECTS_SQL, enrolment_id)]
         return read_activity_sources(cursor, group_ids, module_ids)
 
 
 def _activity_source_issues(enrolment_id, group_ids):
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
-        module_ids = [row[0] for row in cursor.fetchall()]
+        module_ids = [row[0] for row in subject_cache.subject_rows(cursor, CURRENT_SUBJECTS_SQL, enrolment_id)]
         return read_activity_source_issues(cursor, group_ids, module_ids)
 
 
