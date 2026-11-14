@@ -6,6 +6,7 @@ from django.db import connections
 from django.http import JsonResponse
 from django.utils import timezone
 from curriculum_api.week_visibility import visible_week_sql
+from curriculum_api.learning_storage import read_sql
 
 
 def learning_schedule(context):
@@ -13,18 +14,18 @@ def learning_schedule(context):
     from curriculum_api.views import cohort_selected_holidays_by_cohort, module_session_plan_for_count, module_stored_session_count
     mid = context['module_id']
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('''SELECT m.*, m.module_catalogue_id AS id,
+        cursor.execute(read_sql('''SELECT m.*, m.module_catalogue_id AS id,
             coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
             coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
             coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
             FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-            WHERE m.module_catalogue_id=%s AND m.deleted_at IS NULL''', [mid])
+            WHERE m.module_catalogue_id=%s AND m.deleted_at IS NULL''', cursor.db), [mid])
         found = rows(cursor)
         if not found:
             raise LookupError('Course not found.')
         row = found[0]
-        cursor.execute('''SELECT learning_outcomes FROM curriculum.weeks WHERE module_catalogue_id=%s
-            AND ''' + visible_week_sql('weeks') + ''' ORDER BY display_order,week_number,id''', [mid])
+        cursor.execute(read_sql('''SELECT learning_outcomes FROM curriculum.weeks WHERE module_catalogue_id=%s
+            AND ''' + visible_week_sql('weeks') + ''' ORDER BY display_order,week_number,id''', cursor.db), [mid])
         weeks = cursor.fetchall()
     result = plan_module(row)
     result['learning_outcomes'] = list(dict.fromkeys(value for week in weeks for value in (week[0] if isinstance(week[0], list) else []) if isinstance(value, str) and value.strip()))

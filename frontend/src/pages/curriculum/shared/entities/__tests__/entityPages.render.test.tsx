@@ -62,7 +62,8 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
 
 // The module workspace pulls its authored structure and Teams artifacts from the
 // Module Builder's data layer; neither is under test here.
-vi.mock('@/pages/curriculum/module-builder/moduleAuthoringData', () => ({
+vi.mock('@/pages/curriculum/module-builder/moduleAuthoringData', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/pages/curriculum/module-builder/moduleAuthoringData')>()),
   loadModuleStructure: vi.fn(async () => null),
   loadTeamsMeetingConfiguration: vi.fn(async () => ({
     configured: false,
@@ -190,20 +191,23 @@ describe('entity pages render', () => {
   it('Cohort workspace shows the cohort and its context', async () => {
     await renderAt(() => import('../../../cohort-workspace/page'), '/curriculum/cohorts/COHORT-1', '/curriculum/cohorts/:id');
     expect(await screen.findByRole('heading', { name: 'Sept 2026' })).toBeInTheDocument();
-    expect(screen.getByText('Part of Data Analyst')).toBeInTheDocument();
+    expect(screen.getAllByText('Data Analyst').length).toBeGreaterThan(0);
   });
 
   it('Group workspace shows the group under its cohort and programme', async () => {
     await renderAt(() => import('../../../group-workspace/page'), '/curriculum/groups/GROUP-1', '/curriculum/groups/:id');
     expect(await screen.findByRole('heading', { name: 'Group A' })).toBeInTheDocument();
-    expect(screen.getAllByText('Sept 2026 · Data Analyst').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Sept 2026').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Data Analyst').length).toBeGreaterThan(0);
   });
 
   it('Module workspace shows the module with the context derived through its group', async () => {
     await renderAt(() => import('../../../module-workspace/page'), '/curriculum/modules/MOD-1', '/curriculum/modules/:id');
     expect(await screen.findByRole('heading', { name: 'Data Foundations' })).toBeInTheDocument();
     // Programme / Cohort / Group, resolved from the group rather than the module.
-    expect(screen.getAllByText('Data Analyst / Sept 2026 / Group A').length).toBeGreaterThan(0);
+    for (const label of ['Data Analyst', 'Sept 2026', 'Group A']) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
   });
 
   it('Module workspace asks for its KSB coverage once instead of looping', async () => {

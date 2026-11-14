@@ -56,6 +56,8 @@ const FREE_COURSES_PROGRAMME_ID = 'FREE-COURSES';
 interface FreeCourseOption {
   freeCourseId: string;
   courseName: string;
+  moduleId?: string;
+  hours?: number;
 }
 
 function freeCoursesEqual(a: FreeCourseAssignment[], b: FreeCourseAssignment[]) {
@@ -265,6 +267,25 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   }, [needsPlacement, readOnly, place.programme, place.cohort]);
 
   const chosen = useMemo(() => new Set(plan.map((m) => m.moduleId)), [plan]);
+  const standaloneByModule = useMemo(() => new Map(
+    (data?.standaloneCourses ?? []).map(course => [course.moduleId, course]),
+  ), [data?.standaloneCourses]);
+  const coreModules = useMemo(() => plan.filter(module => !module.isFreeCourse && !standaloneByModule.has(module.moduleId)), [plan, standaloneByModule]);
+  const additionalModules = useMemo(() => plan.filter(module => module.isFreeCourse || standaloneByModule.has(module.moduleId)), [plan, standaloneByModule]);
+  const apprenticeship = (data?.learner.learnerType ?? 'apprenticeship') === 'apprenticeship';
+  const displayedFreeCourses: FreeCourseOption[] = [
+    ...additionalModules.map(module => {
+      const course = standaloneByModule.get(module.moduleId);
+      return { freeCourseId: course?.freeCourseId ?? module.moduleId, moduleId: module.moduleId,
+        courseName: module.moduleTitle, hours: module.hours };
+    }),
+    ...freeCourses.filter(course => !plan.some(module => standaloneByModule.get(module.moduleId)?.freeCourseId === course.freeCourseId)),
+  ];
+  const allFreeCourseOptions: FreeCourseOption[] = [
+    ...(data?.standaloneCourses ?? []).filter(course => [...(data?.available ?? []), ...(data?.plan ?? []), ...(data?.preset ?? [])]
+      .some(module => module.moduleId === course.moduleId && !module.orphaned)),
+    ...freeCourseOptions.filter(course => !(data?.standaloneCourses ?? []).some(item => item.freeCourseId === course.freeCourseId)),
+  ];
 
   // Anything on the programme that isn't already on the plan. Derived from the
   // full catalogue rather than the server's `available`, so a module removed in
@@ -274,7 +295,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     const catalogue = [...data.available, ...data.preset, ...data.plan];
     const seen = new Set<string>();
     const unique = catalogue.filter((m) => {
-      if (seen.has(m.moduleId) || chosen.has(m.moduleId) || m.orphaned) return false;
+      if (seen.has(m.moduleId) || chosen.has(m.moduleId) || m.orphaned || m.isFreeCourse || standaloneByModule.has(m.moduleId)) return false;
       seen.add(m.moduleId);
       return true;
     });
@@ -286,12 +307,13 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       ? scoped.filter((m) =>
           `${m.moduleTitle} ${m.groupName} ${m.programmeName}`.toLowerCase().includes(q))
       : scoped;
-  }, [data, chosen, search, pickerProgramme]);
+  }, [data, chosen, search, pickerProgramme, standaloneByModule]);
 
   const moduleHours = useMemo(
-    () => plan.reduce((sum, m) => sum + Number(m.hours || 0), 0),
-    [plan],
+    () => coreModules.reduce((sum, m) => sum + Number(m.hours || 0), 0),
+    [coreModules],
   );
+  const freeCourseHours = additionalModules.reduce((sum, module) => sum + Number(module.hours || 0), 0);
 
   // Recurring Reviews the learner attends. Server-generated from the Review
   // Engine, so they do not change as modules are added or removed here — they
@@ -324,7 +346,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
 
   // The whole off-the-job commitment: taught modules plus the reviews that
   // count towards OTJH. The footer figure staff read is this one.
-  const totalHours = moduleHours + meetingHours;
+  const totalHours = moduleHours + meetingHours + (apprenticeship ? 0 : freeCourseHours);
 
   const dirty = useMemo(() => {
     if (!data) return false;
@@ -369,9 +391,16 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     setSearch('');
   };
 
-  // Free courses carry no hours/KSBs, so they are added and removed as a plain
-  // list — no catalogue tree to pull in like a module.
+  // Builder courses share the same plan as Module Builder assignments. Only
+  // unmigrated legacy courses remain in the separate assignment list.
   const addFreeCourse = (option: FreeCourseOption) => {
+    if (option.moduleId) {
+      const module = [...(data?.available ?? []), ...(data?.plan ?? []), ...(data?.preset ?? [])]
+        .find(item => item.moduleId === option.moduleId);
+      if (module && !chosen.has(module.moduleId)) add(module);
+      setFreeCoursePicker('');
+      return;
+    }
     freeDirtyRef.current = true;
     setFreeCourses((rows) =>
       rows.some((f) => f.freeCourseId === option.freeCourseId)
@@ -387,7 +416,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
 
   const resetToGroup = () => {
     dirtyRef.current = true;
-    if (data) setPlan(data.preset);
+    if (data) setPlan([...new Map([...data.preset, ...additionalModules].map(module => [module.moduleId, module])).values()]);
   };
 
   /**
@@ -487,7 +516,8 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
               'A programme, cohort and group decide which modules this plan can hold.'
             ) : (
               <>
-                {plan.length} module{plan.length === 1 ? '' : 's'}
+                {coreModules.length} module{coreModules.length === 1 ? '' : 's'}
+                {displayedFreeCourses.length > 0 && ` · ${displayedFreeCourses.length} free course${displayedFreeCourses.length === 1 ? '' : 's'}`}
                 {meetings.length > 0 && ` · ${meetings.length} meeting${meetings.length === 1 ? '' : 's'}`} ·{' '}
                 <strong className="text-foreground-800">{formatHours(totalHours)}</strong> total
               </>
@@ -694,7 +724,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                 </tr>
               </thead>
               <tbody>
-                {plan.length === 0 && (
+                {coreModules.length === 0 && (
                   <tr>
                     <td colSpan={readOnly ? 5 : 6} className="py-8 text-center text-foreground-400">
                       {readOnly
@@ -703,7 +733,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                     </td>
                   </tr>
                 )}
-                {plan.map((m) => (
+                {coreModules.map((m) => (
                   <tr key={m.moduleId} className="border-t border-foreground-200/50">
                     <td className="py-2 px-3 text-foreground-900">
                       {m.moduleTitle}
@@ -786,91 +816,6 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
               </tfoot>
             </table>
           </div>
-
-          {/* Recurring Reviews that count as off-the-job training. A separate
-              table because these are not chosen here: Curriculum's Review
-              templates and the learner's own start date generate them, so
-              there is nothing to add or remove — only hours to account for. */}
-          {/* Always rendered, even with no rows: see meetingsEmptyMessage. */}
-          <div>
-              <div className="flex items-baseline justify-between gap-3 mb-2">
-                <h3 className="text-[13px] font-semibold text-foreground-800">Meetings</h3>
-                <span className="text-[11px] text-foreground-500">
-                  Scheduled from this learner&apos;s start date — not editable here
-                </span>
-              </div>
-              <div className="rounded-xl border border-foreground-200/60 overflow-hidden">
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr className="bg-background-100/60 text-left">
-                      <th className="py-2 px-3 font-semibold text-foreground-600">Meeting</th>
-                      <th className="py-2 px-3 font-semibold text-foreground-600">Frequency</th>
-                      <th className="py-2 px-3 font-semibold text-foreground-600">Start</th>
-                      <th className="py-2 px-3 font-semibold text-foreground-600">End</th>
-                      <th className="py-2 px-3 font-semibold text-foreground-600 text-right">Hours</th>
-                      {!readOnly && <th className="py-2 px-3 w-10" />}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {meetings.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={readOnly ? 5 : 6}
-                          className="py-6 px-3 text-center text-foreground-400"
-                        >
-                          {meetingsEmptyMessage}
-                        </td>
-                      </tr>
-                    )}
-                    {meetings.map((m) => (
-                      <tr key={m.reviewTemplateId} className="border-t border-foreground-200/50">
-                        <td className="py-2 px-3 text-foreground-900">
-                          {m.name}
-                          {/* Where the hours come from, so a total that looks
-                              large can be checked against its own arithmetic. */}
-                          <span className="ml-2 text-[11px] text-foreground-500">
-                            {formatHours(m.hoursEach)} × {m.occurrences}
-                          </span>
-                        </td>
-                        <td className="py-2 px-3 text-foreground-500">{m.recurrenceLabel || '—'}</td>
-                        <td className="py-2 px-3 whitespace-nowrap text-foreground-500">
-                          {formatPlanDate(m.startDate)}
-                        </td>
-                        <td className="py-2 px-3 whitespace-nowrap text-foreground-500">
-                          {formatPlanDate(m.endDate)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-medium text-foreground-700">
-                          {formatHours(m.hours)}
-                        </td>
-                        {!readOnly && <td className="py-2 px-3" />}
-                      </tr>
-                    ))}
-                  </tbody>
-                  {meetings.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t-2 border-foreground-300/50 bg-background-100/40">
-                        <td className="py-2 px-3 font-semibold text-foreground-700" colSpan={4}>
-                          Meetings total
-                        </td>
-                        <td className="py-2 px-3 text-right font-bold text-foreground-900">
-                          {formatHours(meetingHours)}
-                        </td>
-                        {!readOnly && <td />}
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              </div>
-              {/* The two tables above are halves of one commitment. Only worth
-                  printing once meetings actually add something: with none, it
-                  would just restate the modules total directly beneath it. */}
-              {meetings.length > 0 && (
-                <div className="mt-2 flex items-baseline justify-end gap-2 text-[13px]">
-                  <span className="font-semibold text-foreground-700">Plan total</span>
-                  <strong className="text-foreground-900">{formatHours(totalHours)}</strong>
-                </div>
-              )}
-            </div>
 
           {/* Add a module from anywhere in the catalogue. Absent when viewing:
               nothing here is meaningful without a save. */}
@@ -960,31 +905,32 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
             </div>
           )}
 
-          {/* Free courses — optional extras assigned to the learner. Held apart
-              from the modules above: no hours, no KSBs, no progress, and no
-              programme/group needed. */}
-          <div>
-            <div className="flex items-baseline justify-between gap-3 mb-2">
+          {/* Additional learning is assigned separately from programme modules. */}
+          <section aria-label="Assigned free courses">
+            <div className="mb-2 space-y-1">
               <h3 className="text-[13px] font-semibold text-foreground-800">Free courses</h3>
-              <span className="text-[11px] text-foreground-500">Extras — no hours or KSBs</span>
+              <p className="text-[11px] text-foreground-500">{apprenticeship
+                ? 'Additional learning: excluded from planned hours. Actual hours follow the usual completion rules.'
+                : 'Additional learning. Course hours are included in the plan total.'}</p>
             </div>
 
-            {freeCourses.length === 0 ? (
+            {displayedFreeCourses.length === 0 ? (
               <p className="text-[12px] text-foreground-400">
                 {readOnly ? 'No free courses assigned.' : 'No free courses assigned yet — add one below.'}
               </p>
             ) : (
               <ul className="rounded-xl border border-foreground-200/60 divide-y divide-foreground-200/40">
-                {freeCourses.map((f) => (
+                {displayedFreeCourses.map((f) => (
                   <li key={f.freeCourseId} className="flex items-center justify-between gap-3 px-3 py-2">
                     <span className="text-[13px] text-foreground-900 inline-flex items-center gap-2 min-w-0">
                       <i className="ri-gift-line text-primary-600 shrink-0" />
                       <span className="truncate">{f.courseName || f.freeCourseId}</span>
                     </span>
+                    {f.moduleId && <span className="ml-auto shrink-0 text-[12px] text-foreground-600">{formatHours(f.hours ?? 0)}</span>}
                     {!readOnly && (
                       <button
                         type="button"
-                        onClick={() => removeFreeCourse(f.freeCourseId)}
+                        onClick={() => f.moduleId ? remove(f.moduleId) : removeFreeCourse(f.freeCourseId)}
                         title={`Remove ${f.courseName || f.freeCourseId}`}
                         className="text-foreground-400 hover:text-red-600 cursor-pointer shrink-0"
                       >
@@ -997,11 +943,11 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
             )}
 
             {!readOnly && (() => {
-              const assigned = new Set(freeCourses.map((f) => f.freeCourseId));
-              const available = freeCourseOptions.filter((o) => !assigned.has(o.freeCourseId));
+              const assigned = new Set(displayedFreeCourses.map((f) => f.freeCourseId));
+              const available = allFreeCourseOptions.filter((o) => !assigned.has(o.freeCourseId));
               // Distinguish "still loading" from "genuinely none left": an empty
               // dropdown during the cold-cache fetch otherwise reads as broken.
-              const placeholder = freeCoursesLoading
+              const placeholder = freeCoursesLoading && available.length === 0
                 ? 'Loading free courses…'
                 : available.length === 0
                   ? 'No free courses to add'
@@ -1012,7 +958,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                     className={`${inputClass} sm:max-w-[20rem]`}
                     value={freeCoursePicker}
                     onChange={(e) => setFreeCoursePicker(e.target.value)}
-                    disabled={freeCoursesLoading || available.length === 0}
+                    disabled={available.length === 0}
                     aria-label="Free course to add"
                   >
                     <option value="">{placeholder}</option>
@@ -1025,7 +971,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                     className={btnSecondary}
                     disabled={!freeCoursePicker}
                     onClick={() => {
-                      const option = freeCourseOptions.find((o) => o.freeCourseId === freeCoursePicker);
+                      const option = allFreeCourseOptions.find((o) => o.freeCourseId === freeCoursePicker);
                       if (option) addFreeCourse(option);
                     }}
                   >
@@ -1034,7 +980,92 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                 </div>
               );
             })()}
-          </div>
+          </section>
+
+          {/* Recurring Reviews that count as off-the-job training. A separate
+              table because these are not chosen here: Curriculum's Review
+              templates and the learner's own start date generate them, so
+              there is nothing to add or remove — only hours to account for. */}
+          {/* Always rendered, even with no rows: see meetingsEmptyMessage. */}
+          <div>
+              <div className="flex items-baseline justify-between gap-3 mb-2">
+                <h3 className="text-[13px] font-semibold text-foreground-800">Meetings</h3>
+                <span className="text-[11px] text-foreground-500">
+                  Scheduled from this learner&apos;s start date — not editable here
+                </span>
+              </div>
+              <div className="rounded-xl border border-foreground-200/60 overflow-hidden">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="bg-background-100/60 text-left">
+                      <th className="py-2 px-3 font-semibold text-foreground-600">Meeting</th>
+                      <th className="py-2 px-3 font-semibold text-foreground-600">Frequency</th>
+                      <th className="py-2 px-3 font-semibold text-foreground-600">Start</th>
+                      <th className="py-2 px-3 font-semibold text-foreground-600">End</th>
+                      <th className="py-2 px-3 font-semibold text-foreground-600 text-right">Hours</th>
+                      {!readOnly && <th className="py-2 px-3 w-10" />}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {meetings.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={readOnly ? 5 : 6}
+                          className="py-6 px-3 text-center text-foreground-400"
+                        >
+                          {meetingsEmptyMessage}
+                        </td>
+                      </tr>
+                    )}
+                    {meetings.map((m) => (
+                      <tr key={m.reviewTemplateId} className="border-t border-foreground-200/50">
+                        <td className="py-2 px-3 text-foreground-900">
+                          {m.name}
+                          {/* Where the hours come from, so a total that looks
+                              large can be checked against its own arithmetic. */}
+                          <span className="ml-2 text-[11px] text-foreground-500">
+                            {formatHours(m.hoursEach)} × {m.occurrences}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-foreground-500">{m.recurrenceLabel || '—'}</td>
+                        <td className="py-2 px-3 whitespace-nowrap text-foreground-500">
+                          {formatPlanDate(m.startDate)}
+                        </td>
+                        <td className="py-2 px-3 whitespace-nowrap text-foreground-500">
+                          {formatPlanDate(m.endDate)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-medium text-foreground-700">
+                          {formatHours(m.hours)}
+                        </td>
+                        {!readOnly && <td className="py-2 px-3" />}
+                      </tr>
+                    ))}
+                  </tbody>
+                  {meetings.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-foreground-300/50 bg-background-100/40">
+                        <td className="py-2 px-3 font-semibold text-foreground-700" colSpan={4}>
+                          Meetings total
+                        </td>
+                        <td className="py-2 px-3 text-right font-bold text-foreground-900">
+                          {formatHours(meetingHours)}
+                        </td>
+                        {!readOnly && <td />}
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+              {/* Planned total follows the learner type; additional learning
+                  never increases an apprenticeship target. */}
+              {meetings.length > 0 && (
+                <div className="mt-2 flex items-baseline justify-end gap-2 text-[13px]">
+                  <span className="font-semibold text-foreground-700">Plan total</span>
+                  <strong className="text-foreground-900">{formatHours(totalHours)}</strong>
+                </div>
+              )}
+            </div>
+
         </div>
       )}
     </Modal>

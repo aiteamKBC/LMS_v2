@@ -42,6 +42,7 @@ def _learner():
 
 class PlanSaveAdvancesLearnerTests(SimpleTestCase):
     def setUp(self):
+        self.enterContext(patch('learner_api.free_course_catalogue.builder_free_courses', return_value=[]))
         self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
         self.enterContext(patch('learner_api.learning_plan.sync_learning_plan_mirror'))
 

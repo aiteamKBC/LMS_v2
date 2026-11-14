@@ -14,7 +14,7 @@ export function catalogueToday() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
-export function useCatalogueActivity(refreshKey: string, accountScope = '') {
+export function useCatalogueActivity(refreshKey: string, accountScope = '', { revalidateOnMount = false }: { revalidateOnMount?: boolean } = {}) {
   const key = refreshKey ? JSON.stringify([accountScope, refreshKey]) : '';
   const [result, setResult] = useState<{ key: string; data: ModuleCatalogueActivities | null; error: string }>({ key: '', data: null, error: '' });
   const [loading, setLoading] = useState(true);
@@ -35,7 +35,7 @@ export function useCatalogueActivity(refreshKey: string, accountScope = '') {
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
   }, [key]);
   const reload = useCallback(() => load(true), [load]);
-  useEffect(() => { load(false); return () => request.current?.abort(); }, [load]);
+  useEffect(() => { load(revalidateOnMount); return () => request.current?.abort(); }, [load, revalidateOnMount]);
   useRefreshOnReturn(() => load(false), { enabled: Boolean(key) });
   useRefreshOnRemoteWrite(reload, { enabled: Boolean(key) });
   useEffect(() => {

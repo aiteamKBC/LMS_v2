@@ -247,7 +247,7 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
             manager=MagicMock();manager.only.return_value.filter.return_value.first.return_value=profile
             content=native([component()])
             def modules(cur,ids,**kwargs):
-                kwargs['identity_metadata'].update(module_titles={'M1':'One'},weeks=[],covers={},imported_courses={},live_credit_components=[])
+                kwargs['identity_metadata'].update(module_titles={'M1':'One'},weeks=[],covers={},imported_courses={},live_credit_components=[],free_course_module_ids=['M1'])
                 return {'M1':{'id':'M1','title':'One'}}
             with ExitStack() as stack:
                 stack.enter_context(patch.object(models.LearnerProfile,'objects',manager))
@@ -265,12 +265,13 @@ class MyLearningIdentityProjectionTests(SimpleTestCase):
                 import_read=stack.enter_context(patch.object(subject_origins,'read_imported_courses',return_value={}))
                 replacements=stack.enter_context(patch.object(subject_origins,'read_replacement_courses',return_value={}))
                 stack.enter_context(patch.object(previous_learning_groups,'read_previous_learning_groups',return_value={}))
-                learning.load_context(source,{'id':9},selected,
+                context = learning.load_context(source,{'id':9},selected,
                     **({'include_personal_replacements': True} if personal else {}))
             self.assertEqual(replacements.call_args.kwargs, {'include_personal': True} if personal else {})
             entries.assert_called_once_with({'id':9},lineage_only=True,monthly_summary=True,**({'catalogue_summary':True} if selected is None else {'dashboard_metadata':True}))
             self.assertEqual(read.call_args.kwargs['assigned_modules'],[{'moduleId':'M1'}])
             if selected is None:
+                self.assertEqual(context[9]['free_course_module_ids'], ['M1'])
                 module_read.assert_called_once();builder.assert_not_called()
                 import_read.assert_not_called()
                 credits.assert_called_once_with(source,components=[])
@@ -398,13 +399,15 @@ class MyLearningEndpointTests(SimpleTestCase):
         self.assertEqual(response.status_code,405)
 
 
-def fixture_responses():
+def fixture_responses(*, standalone=False, kind='commercial'):
     """Execute both production projections over one synthetic, mocked source."""
     from . import course_catalogue_display, training_plan_dashboard, weekly_learning, dashboard_training, teams_attendance, live_session_progress, builder_activity_dates, subject_store
     source=SimpleNamespace(pk=7,id=7,email='synthetic@example.test',username='Synthetic learner',programme='Example programme',cohort='',group='',aptem_id=7,_case_file_profile=SimpleNamespace(pk=9))
     owner={'id':9,'name':'Synthetic learner','programme':'Example programme','programme_planned_hours':20,'aptem_id':7}
     modules={mid:{'id':mid,'title':title,'description':'','start_date':'2026-01-01','end_date':'2026-12-31','tutor_name':'Example tutor','coach_name':'','total_otjh':10,'educational_session_count':2}
         for mid,title in [('M1','Example module'),('M2','Another module')]}
+    if standalone:
+        modules['M1']['source_type'] = 'free_course'
     content=native([component('C1',component='Example reading',hasReadingContent=True),component('Q1',component='Final test',type='quiz',isQuiz=True,quizMeta={'quizId':1,'questions':1}),component('C2','M2',hasReadingContent=True)])
     content.update(id='7',programme='Example programme',cohort='',group='',week=[],modules=['Example module','Another module'])
     for item in content['components']:
@@ -422,6 +425,7 @@ def fixture_responses():
     meta['current_subjects']=[{'id':mid,'title':row['title']} for mid,row in modules.items()]
     meta['builder_subjects']={f'current:{mid}':{'id':mid,'title':row['title']} for mid,row in modules.items()}
     meta['modules']=modules
+    meta['free_course_module_ids'] = ['M1'] if standalone else []
     context=([{'moduleId':'M1'},{'moduleId':'M2'}],['M1','M2'],records,content,[course],definitions,
         {('50','material:1'),('50','quiz:3')},set(),{'50':2},meta,[])
     def query(sql,params):
@@ -445,15 +449,28 @@ def fixture_responses():
         stack.enter_context(patch.object(live_session_progress,'read_live_credits',return_value=[]))
         stack.enter_context(patch.object(builder_activity_dates,'read_builder_activity_dates',return_value={}))
         stack.enter_context(patch.object(weekly_learning,'build_learning_content_summary',side_effect=selected_content))
-        result={'catalogue':learning.read_catalogue(source,'commercial',owner),
-            'module':learning.read_module(source,'commercial',owner,'current:M1'),
-            'legacyModule':learning.read_module(source,'commercial',owner,'legacy:50')}
+        result={'catalogue':learning.read_catalogue(source,kind,owner),
+            'module':learning.read_module(source,kind,owner,'current:M1'),
+            'legacyModule':learning.read_module(source,kind,owner,'legacy:50')}
     for key in ('module','legacyModule'):
         result[key]['schedule']['generatedAt']='2026-10-18T00:00:00+00:00'
     return result
 
 
 class MyLearningSharedFixtureTests(SimpleTestCase):
+    def test_free_courses_leave_my_courses_but_keep_content_access_and_actual_hours(self):
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                result = fixture_responses(standalone=True, kind=kind)
+                catalogue = result['catalogue']
+                self.assertEqual({card['id'] for card in catalogue['modules']}, {'current:M2', 'legacy:50'})
+                self.assertEqual(catalogue['summary']['current'], dict(subjects=1, total=1, completed=0, percent=0))
+                self.assertEqual(catalogue['summary']['subjectCount'], 2)
+                # Includes the accepted hour in standalone M1, plus two historic hours.
+                self.assertEqual(catalogue['otjh'], {'actual': 3, 'planned': 20})
+                self.assertEqual({c['moduleId'] for c in result['module']['detail']['components']}, {'M1'})
+                self.assertEqual(result['module']['detail']['componentProgress'][0]['componentId'], 'C1')
+
     def test_production_contract_matches_shared_frontend_fixture_without_full_initial_responses(self):
         from pathlib import Path
         fixture=Path(__file__).parents[2]/'frontend/src/test/myLearningFixtures.json'

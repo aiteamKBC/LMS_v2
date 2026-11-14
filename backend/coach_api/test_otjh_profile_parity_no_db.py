@@ -200,6 +200,7 @@ class OtjhParityTests(SimpleTestCase):
              patch("coach_api.dashboard_view.schedule_coach_dashboard_refresh"), \
              patch("coach_api.dashboard_view.snapshot_needs_refresh", return_value=False), \
              patch("coach_api.dashboard_cache.cache_dashboard_section"), \
+             patch("coach_api.activity_plan_snapshots.attach_snapshots") as attach_snapshots, \
              patch("coach_api.services.dashboard.sections.timezone.localdate", return_value=date(2026,1,1)), \
              patch("coach_api.services.dashboard.service.timezone.localdate", return_value=date(2026,1,1)):
             first = unwrap(coach_dashboard_section)(request, "learners")
@@ -207,6 +208,8 @@ class OtjhParityTests(SimpleTestCase):
         import json
         self.assertEqual(first.status_code, 200, first.content)
         self.assertEqual(second.status_code, 200, second.content)
+        self.assertEqual(attach_snapshots.call_count, 2)
+        self.assertEqual([call.args[0] for call in attach_snapshots.call_args_list], [request.coach_email] * 2)
         a, b = [json.loads(response.content)["results"][0]["otjh"] for response in (first, second)]
         self.assertEqual(a["completed"],10)
         self.assertEqual(a["targetToDate"],10)

@@ -10,8 +10,8 @@ import { StudentActivityPanel } from './SubjectWorkspace';
 import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
 
 vi.mock('./DeferredStudentMaterial', () => ({
-  DeferredStudentMaterial: ({ groupId, activityId, reviewQuiz, readOnly }: { groupId: number; activityId: number; reviewQuiz?: boolean; readOnly?: boolean }) =>
-    <div>{reviewQuiz && readOnly ? 'Saved quiz review' : 'Source material'} {groupId}/{activityId}</div>,
+  DeferredStudentMaterial: ({ groupId, activityId, reviewQuiz }: { groupId: number; activityId: number; reviewQuiz?: boolean }) =>
+    <div>{reviewQuiz ? 'Saved quiz review' : 'Source material'} {groupId}/{activityId}</div>,
 }));
 vi.mock('@/api/learnerCertificates', () => ({
   fetchLearnerCertificateTemplate: vi.fn().mockResolvedValue({ template: null, csrfToken: '' }),

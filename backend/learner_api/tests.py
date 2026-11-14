@@ -1005,8 +1005,13 @@ class ScriptedCursor:
 
 
 class ScriptedConnection:
+    # This fixture represents ordinary pre-cutover storage. Supply the same
+    # cursor/connection contract used by the storage-aware SELECT router.
+    vendor = 'sqlite'
+
     def __init__(self, cursor):
         self._cursor = cursor
+        cursor.db = self
 
     def cursor(self):
         return self

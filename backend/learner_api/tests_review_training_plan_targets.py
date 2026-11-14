@@ -265,8 +265,13 @@ class ReviewConsumerTests(SimpleTestCase):
         live = {'owner': {'id': 42}, 'otjh': {'actual': 0, 'planned': 5},
                 'ksb': {'status': 'empty', 'completed': 0, 'total': 0},
                 'nativeComponents': detail['components'], 'historicalComponents': 0,
+                'requiredActivities': [{'completed': False, 'dueDate': '2026-09-01'}],
+                'mainActivities': {'nativeComponents': detail['components'],
+                                   'historicalComponents': 0, 'retainedComponents': 0},
                 'retainedComponents': 0, 'modules': [{'completed': 0, 'total': 1}]}
         with patch.object(review_progress_snapshot, "read_live_inputs", return_value=live), \
+             patch('learner_api.training_plan_targets.resolve_training_plan_week_starts',
+                          return_value=WeekScheduleResolution({'W1': date(2026, 9, 1)}, [])), \
              patch.object(review_progress_snapshot, "coach_otjh_target_to_date", return_value=5), \
              patch.object(
                  review_progress_snapshot, "calculate_training_plan_targets", return_value=resolved,

@@ -28,10 +28,11 @@ describe('explicitly reconciled imported booking', () => {
       expect(canRescheduleReconciledReview({ ...event, ...fields })).toBe(false);
     }
     expect(reviewActionMatrix({ ...event, reconciledReview: false }).schedule).toBe('Reschedule');
-    expect(reviewActionMatrix({ ...event, calendarEventKey: null }).schedule).toBeNull();
+    expect(reviewActionMatrix({ ...event, calendarEventKey: null }).schedule).toBe('Schedule');
   });
   it('does not turn closed or started imported reviews into bookable Native reviews', () => {
-    for (const status of ['not-scheduled', 'in-progress', 'awaiting-signature', 'completed', 'cancelled'] as const) {
+    expect(reviewActionMatrix({ ...event, status: 'not-scheduled' }).schedule).toBe('Schedule');
+    for (const status of ['in-progress', 'awaiting-signature', 'completed', 'cancelled'] as const) {
       expect(canRescheduleReconciledReview({ ...event, status })).toBe(false);
       expect(reviewActionMatrix({ ...event, status }).schedule).toBeNull();
     }

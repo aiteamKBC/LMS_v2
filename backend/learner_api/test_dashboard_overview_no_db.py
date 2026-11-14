@@ -426,9 +426,9 @@ class OverviewProjectionTests(SimpleTestCase):
         cursor = MagicMock()
         cursor.fetchone.return_value = ('576.125',)
         cursor.__enter__.return_value = cursor
-        with patch.object(schedule, 'connections', {'enrolment': SimpleNamespace(cursor=lambda: cursor)}), \
+        with patch.object(schedule, 'connections', {'enrolment': SimpleNamespace(vendor='sqlite', cursor=lambda: cursor)}), \
              patch.object(schedule, 'plan_module_ids') as resolve:
-            self.assertEqual(schedule.plan_planned_hours(object(), {'id': 17}, ids=['M1', 'M2']), 576.12)
+            self.assertEqual(schedule.plan_planned_hours(object(), {'id': 17, 'learner_type': 'commercial'}, ids=['M1', 'M2']), 576.12)
             resolve.assert_not_called()
             sql, params = cursor.execute.call_args.args
             self.assertIn('sum(total_otjh)', sql)

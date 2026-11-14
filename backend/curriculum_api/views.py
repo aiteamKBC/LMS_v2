@@ -40,6 +40,7 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
+from .learning_storage import native_only, with_course_storage
 from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload, pricing_values
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
@@ -392,6 +393,7 @@ def scoped_curriculum_read(fn):
         bound.apply_defaults()
         key = (
             fn.__qualname__,
+            native_only(),
             _scope_memo_key(tuple(bound.arguments.items())),
         )
         hash(key)
@@ -1177,6 +1179,10 @@ def table_name(table):
 
 
 def column_names(table):
+    if native_only():
+        from .free_course_contract import COLUMNS
+        if table in COLUMNS:
+            return {name for name, _ in COLUMNS[table]}
     cache_key = f'{CURRICULUM_SCHEMA}.{table}'
     if cache_key in _TABLE_COLUMNS_CACHE:
         return _TABLE_COLUMNS_CACHE[cache_key]
@@ -5847,6 +5853,10 @@ def update_rows(table, where_sql, where_params, payload, allow_null_columns=None
     values = filtered_payload(table, payload, allow_null_columns=allow_null_columns)
     if not values:
         raise ValueError(f'No writable columns found for {table}.')
+    if native_only():
+        from .free_course_contract import COLUMNS
+        if table in COLUMNS:
+            return update_authoring_rows(table, where_sql, where_params, values)
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in values)
     query = f'update {table_name(table)} set {assignments} where {where_sql} returning *'
     note_previous_content_modules(table, where_sql=where_sql, where_params=where_params, payloads=[values])
@@ -11079,6 +11089,7 @@ def delivery_slots_by_catalogue(
 
 def authoring_session_links_by_catalogue(
     module_catalogue_ids, *, modules_by_catalogue=None, groups_by_id=None, holidays_by_cohort=None,
+    week_rows=None, component_rows=None,
 ):
     """Every authored live session of each module, in course-structure order.
 
@@ -11117,7 +11128,7 @@ def authoring_session_links_by_catalogue(
         return {}
     try:
         placeholders = ','.join(['%s'] * len(module_catalogue_ids))
-        week_rows = active_week_rows(authoring_fetch_all(
+        week_rows = active_week_rows(week_rows if week_rows is not None else authoring_fetch_all(
             AUTHORING_WEEKS_TABLE,
             f'module_catalogue_id in ({placeholders})',
             module_catalogue_ids,
@@ -11126,7 +11137,7 @@ def authoring_session_links_by_catalogue(
         # Full rows, because `settings_json` is where a component's own date
         # lives -- affordable only because the type filter runs in SQL and
         # leaves roughly one row per week instead of the whole 24 MB column.
-        component_rows = active_component_rows(authoring_fetch_all(
+        component_rows = active_component_rows(component_rows if component_rows is not None else authoring_fetch_all(
             AUTHORING_COMPONENTS_TABLE,
             f'module_catalogue_id in ({placeholders}) and {LIVE_SESSION_TYPE_SQL}',
             module_catalogue_ids,
@@ -11684,7 +11695,7 @@ def cohort_holiday_period_end(cohort):
     return format_date(calculate_cohort_end_date(start_date, months))
 
 
-def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None, groups_by_id=None):
+def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None, groups_by_id=None, *, session_links=None):
     """The live sessions each authored module delivers, from its own structure.
 
     **One live-session component is one session.** The course structure decides
@@ -11720,7 +11731,7 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
     # `module_delivery_row` takes a group that delivers on no day at its word --
     # so every primary would come back undated. The planner reads the real
     # group rows instead.
-    live_sessions_by_catalogue = authoring_session_links_by_catalogue(
+    live_sessions_by_catalogue = session_links if session_links is not None else authoring_session_links_by_catalogue(
         [clean_str(module.get('module_catalogue_id')) for module in modules],
         modules_by_catalogue={clean_str(module.get('module_catalogue_id')): module for module in modules},
         holidays_by_cohort=holidays_by_cohort,
@@ -14931,7 +14942,7 @@ def authoring_component_counts_by_catalogue():
             params.extend(retired)
         rows = fetch_all(
             f'select {quote_ident("module_catalogue_id")} as catalogue_id, count(*) as total '
-            f'from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} '
+            f'from {learning_read_table(AUTHORING_COMPONENTS_TABLE)} '
             f'where {" and ".join(clauses)} '
             f'group by {quote_ident("module_catalogue_id")}',
             params,
@@ -15041,6 +15052,9 @@ def ensure_module_authoring_tables():
     path below, which still owns the DDL.
     """
     global _AUTHORING_TABLES_READY
+    if native_only():
+        schema_gate.require_tables('free_courses', 'free_course_weeks', 'free_programme_components')
+        return
     if _AUTHORING_TABLES_READY:
         return
     if not schema_gate.runtime_bootstrap_allowed():
@@ -15958,12 +15972,17 @@ def authoring_select_sql(table, where_sql='', order_sql='', *, ensure_tables=Tru
         select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
     else:
         select_list = '*'
-    query = f'select {select_list} from {authoring_table_name(table)}'
+    query = f'select {select_list} from {learning_read_table(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
         query += f' order by {order_sql}'
     return query
+
+
+def learning_read_table(table):
+    from .learning_storage import read_table
+    return read_table(table)
 
 
 # Off unless set: measured 2026-10-21 against a Neon branch through the pooler,
@@ -16258,7 +16277,8 @@ def free_programme_fetch_all(table, where_sql='', params=None, order_sql='', col
     """
     ensure_free_programme_tables()
     selection = ', '.join(quote_ident(column) for column in columns) if columns else '*'
-    query = f'select {selection} from {authoring_table_name(table)}'
+    from .learning_storage import free_read_table
+    query = f'select {selection} from {free_read_table(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
@@ -16303,6 +16323,7 @@ def free_programme_delete(table, where_sql, params=None):
         cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])
 
 
+@with_course_storage
 def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     """Insert-or-update one authoring row.
 
@@ -16322,6 +16343,12 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     values['updated_at'] = datetime.utcnow()
     if 'created_at' not in values:
         values['created_at'] = datetime.utcnow()
+    from .learning_storage import upsert as save_free_row
+    independent = save_free_row(table, values)
+    if independent is not None:
+        versioning.record_rows(table, [independent])
+        note_live_rows(table, [independent])
+        return independent
     columns = list(values.keys())
     placeholders = ', '.join(['%s'] * len(columns))
     update_columns = [column for column in columns if column not in set(key_columns) | {'created_at'}]
@@ -16360,6 +16387,7 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     return saved
 
 
+@with_course_storage
 def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
     ensure_module_authoring_tables()
     writable = column_names(table)
@@ -16377,6 +16405,20 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
     if not payloads:
         return
     now = datetime.utcnow()
+    from .learning_storage import upsert as save_free_row
+    ordinary, independent = [], []
+    for payload in payloads:
+        row = save_free_row(table, {'created_at': now, 'updated_at': now, **payload})
+        if row is None:
+            ordinary.append(payload)
+        else:
+            independent.append(row)
+    if independent:
+        versioning.record_rows(table, independent)
+        note_live_rows(table, independent)
+    payloads = ordinary
+    if not payloads:
+        return
     all_columns = []
     seen_columns = set()
     for payload in payloads:
@@ -16582,13 +16624,22 @@ def update_authoring_rows(table, where_sql, where_params, payload):
     key_value = ' '.join(clean_str(value) for value in where_params)
     note_previous_content_modules(table, where_sql=where_sql, where_params=where_params,
                                   payloads=[{column: payload[column] for column in columns}])
+    from .learning_storage import update as update_free_rows
+    independent = update_free_rows(table, where_sql, where_params, {key: payload[key] for key in columns})
+    if native_only():
+        from .free_course_contract import COLUMNS
+        if table in COLUMNS:
+            log_curriculum_storage('update', table, rows=independent, entity_id=key_value)
+            versioning.record_rows(table, independent)
+            note_live_rows(table, independent)
+            return independent
     with connection.cursor() as cursor:
         if connection.vendor == 'postgresql':
             cursor.execute(
                 f'update {authoring_table_name(table)} set {assignments} where {where_sql} returning *',
                 params,
             )
-            rows = rows_as_dicts(cursor)
+            rows = rows_as_dicts(cursor) + independent
             log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
             versioning.record_rows(table, rows)
             note_live_rows(table, rows)
@@ -17602,6 +17653,7 @@ def mapping_response(row):
     }
 
 
+@with_course_storage
 def authoring_module_exists(module_catalogue_id):
     rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     return rows[0] if rows else None
@@ -18275,7 +18327,7 @@ def component_summary_source_rows(catalogue_ids):
     if 'is_programme_deleted' in columns:
         clauses.append(f'{quote_ident("is_programme_deleted")} is not true')
     where = ' and '.join(f'({clause})' for clause in clauses)
-    table = authoring_table_name(AUTHORING_COMPONENTS_TABLE)
+    table = learning_read_table(AUTHORING_COMPONENTS_TABLE)
     settings = quote_ident('settings_json')
     # Every column active_component_rows() and the bucket key read; a column
     # this table does not carry is selected as null, as a row without it reads.
@@ -18522,7 +18574,7 @@ def library_component_rows(*, search='', types=None, programme_ids=None, origins
             quote_ident(column) for column in LIBRARY_LIST_COLUMNS
             if has_column(AUTHORING_COMPONENTS_TABLE, column)
         )
-    query = f'select {columns} from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}'
+    query = f'select {columns} from {learning_read_table(AUTHORING_COMPONENTS_TABLE)}'
     if where_sql:
         query += f' where {where_sql}'
     query += ' order by updated_at desc, display_order, id limit %s offset %s'
@@ -20895,6 +20947,7 @@ STRUCTURE_REVISION_SOURCES = (
 )
 
 
+@with_course_storage
 def module_structure_revision(module_catalogue_id, *, source_rows=None):
     """Fingerprint of everything a structure PATCH would replace.
 
@@ -21038,6 +21091,9 @@ def lock_module_structure_row(module_catalogue_id):
     """
     if connection.vendor != 'postgresql':
         return
+    from .learning_storage import course
+    if course(clean_str(module_catalogue_id), lock=True):
+        return
     with connection.cursor() as cursor:
         cursor.execute(
             'select 1 from %s where %s = %%s for update'
@@ -21129,6 +21185,13 @@ def lock_record_row(table, where_sql, params):
     """
     if connection.vendor != 'postgresql':
         return
+    if native_only():
+        from .learning_storage import course, free_rows
+        from .free_course_contract import COLUMNS
+        if table in COLUMNS:
+            for row in free_rows(table, where_sql, params):
+                course(row['module_catalogue_id'], lock=True)
+            return
     with connection.cursor() as cursor:
         cursor.execute(
             'select 1 from %s where %s for update' % (table_name(table), where_sql),
@@ -21209,6 +21272,7 @@ def week_template_revision(template_id):
     ))
 
 
+@with_course_storage
 def module_record_revision(identifier):
     """Fingerprint of the module a drawer PATCH writes.
 
@@ -21462,6 +21526,7 @@ def row_in_module_archive(row, markers, bounds=None):
         return True
 
 
+@with_course_storage
 def read_module_structure_with_revision(module_catalogue_id):
     """Read each owned row once for both the editable payload and its guard.
 
@@ -21513,6 +21578,7 @@ def with_item_fingerprints(payload):
     return {**payload, 'itemFingerprints': structure_fingerprints(payload)}
 
 
+@with_course_storage
 def get_authoring_structure_payload(module_catalogue_id, include_archived=False, *, source_rows=None):
     """The module's authored structure.
 
@@ -21868,7 +21934,7 @@ def live_component_rows_without_content(module_ids):
     if 'is_programme_deleted' in columns:
         clauses.append(f'component.{quote_ident("is_programme_deleted")} is not true')
     where = ' and '.join(f'({clause})' for clause in clauses)
-    table = f'{authoring_table_name(AUTHORING_COMPONENTS_TABLE)} as component'
+    table = f'{learning_read_table(AUTHORING_COMPONENTS_TABLE)} as component'
     # The order first, from the ids alone, then the rows in id batches. Paging
     # the row query with LIMIT/OFFSET made Postgres sort -- and so strip --
     # every row ahead of the offset again on each page: ~21 s for the largest
@@ -22239,7 +22305,7 @@ def authoring_module_content_counts():
     ]
     query = (
         f'select {", ".join(group_columns)}, count(*) as {quote_ident("row_count")} '
-        f'from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}'
+        f'from {learning_read_table(AUTHORING_COMPONENTS_TABLE)}'
         + (f' where {where_sql}' if where_sql else '')
         + f' group by {", ".join(group_columns)}'
     )
@@ -22254,7 +22320,7 @@ def authoring_module_content_counts():
     )
     query = (
         f'select {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")} '
-        f'from {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}'
+        f'from {learning_read_table(AUTHORING_KSB_MAPPINGS_TABLE)}'
         + (f' where {where_sql}' if where_sql else '')
         + f' group by {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")}'
     )
@@ -23568,6 +23634,7 @@ MODULE_ARCHIVED_SAVE_REFUSED = (
 )
 
 
+@with_course_storage
 def save_module_authoring_structure(
     module_catalogue_id, payload, *, repair_links=True, write_changed_only=False,
     light=False, stored_rows=None, stored_structure=None, build_result=True,
@@ -24115,6 +24182,8 @@ def save_module_authoring_structure(
             calendar = calendars[0]
             occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')", [calendar['id']], 'session_number')
             attach_teams_meeting_to_module_weeks(module_catalogue_id, calendar, live_session_row_to_component_settings(calendar), occurrences)
+    from .learning_storage import refresh_totals
+    refresh_totals(module_catalogue_id)
     invalidate_curriculum_cache()
     if not build_result:
         return {'catalogueId': module_catalogue_id, 'qualityChecklist': checklist}
@@ -24714,6 +24783,7 @@ def archive_module_child_quizzes(module_catalogue_id, *, include_deleted_childre
     return archive_ids
 
 
+@with_course_storage
 def delete_module_authoring_structure(module_catalogue_id):
     module_catalogue_id = clean_str(module_catalogue_id)
     ensure_module_authoring_tables()
@@ -26852,6 +26922,7 @@ def curriculum_modules(request):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_collection(request):
     if request.method == 'GET':
         return curriculum_modules(request)
@@ -26861,13 +26932,20 @@ def curriculum_module_collection(request):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    from .learning_storage import creation_unavailable_response, is_free_course_payload
+    storage_error = creation_unavailable_response(payload)
+    if storage_error is not None:
+        return storage_error
+    is_free_course = is_free_course_payload(payload)
+    if is_free_course:
+        payload = {**payload, 'isFreeCourse': True}
     try:
         module_weekly_schedule(payload)
     except ValueError as exc:
         return json_error(str(exc), fields=['weeklySchedule'])
     module_type = clean_str(payload.get('moduleType') or payload.get('module_type') or payload.get('sourceType') or payload.get('source_type')).lower()
     has_authoring_shape = bool(payload.get('weekStructure') is not None or payload.get('completionCriteria') is not None or payload.get('advancedDetails') is not None)
-    is_authoring_request = module_type in {'authoring', 'module_builder', 'builder'} or (payload.get('title') and (not payload.get('name') or has_authoring_shape))
+    is_authoring_request = is_free_course or module_type in {'authoring', 'module_builder', 'builder'} or (payload.get('title') and (not payload.get('name') or has_authoring_shape))
     if is_authoring_request:
         requested_catalogue_id = first_clean_payload_value(payload, 'catalogueId', 'moduleCatalogueId', 'module_catalogue_id')
         module_catalogue_id = find_existing_authoring_catalogue_id_for_payload(payload) or unique_module_catalogue_id(requested_catalogue_id)
@@ -26877,7 +26955,7 @@ def curriculum_module_collection(request):
             # is the archive's Restore, which brings its weeks back with it.
             module_catalogue_id = unique_module_catalogue_id()
         existing_live_module = authoring_module_exists(module_catalogue_id)
-        if existing_live_module and (existing_live_module.get('source_type') == 'free_course') != (payload.get('isFreeCourse') is True):
+        if existing_live_module and (existing_live_module.get('source_type') == 'free_course') != is_free_course:
             return json_error('This identifier belongs to a different course type. Create a new course instead.', status=400)
         if existing_live_module and truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')):
             # A duplicate is its own module. Matching it to a same-titled module
@@ -26903,7 +26981,7 @@ def curriculum_module_collection(request):
             }, status=200)
         module_payload = {
             'catalogueId': module_catalogue_id,
-            'isFreeCourse': payload.get('isFreeCourse') is True,
+            'isFreeCourse': is_free_course,
             **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload},
             'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'),
             'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme',
@@ -27267,6 +27345,7 @@ def curriculum_module_structure_resolve(request):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_structure(request, module_catalogue_id):
     module_catalogue_id = clean_str(module_catalogue_id)
     # Existence-first, so a request for a stored module does not summarise every
@@ -27349,6 +27428,13 @@ def curriculum_module_structure(request, module_catalogue_id):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    if not stored_catalogue_id:
+        # The Builder can create its first saved draft through this PATCH as
+        # well as through the collection POST. Guard both before any write.
+        from .learning_storage import creation_unavailable_response
+        storage_error = creation_unavailable_response(payload)
+        if storage_error is not None:
+            return storage_error
     try:
         module_weekly_schedule(payload)
     except ValueError as exc:
@@ -32618,6 +32704,7 @@ def curriculum_readiness_validation(request):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_component_detail(request, module_catalogue_id, component_id):
     if request.method != 'DELETE':
         return json_error('Method not allowed.', status=405)
@@ -32640,6 +32727,7 @@ def curriculum_module_component_detail(request, module_catalogue_id, component_i
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_week_detail(request, module_catalogue_id, week_id):
     if request.method != 'DELETE':
         return json_error('Method not allowed.', status=405)
@@ -32702,6 +32790,7 @@ def _update_module_cover(request, identifier, payload):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_detail(request, identifier):
     if request.method not in {'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
@@ -34844,6 +34933,7 @@ def curriculum_archived_module_structure(request, module_catalogue_id):
 
 
 @csrf_exempt
+@with_course_storage
 def curriculum_module_restore(request, identifier):
     """Take a module, and everything archived under it, back out of the archive."""
     if request.method != 'POST':
@@ -35551,6 +35641,13 @@ def curriculum_sessions(request):
             session for session in payload['sessions']
             if requested in (clean_str(session.get('moduleCatalogueId')), clean_str(session.get('moduleId')))
         ])
+    if curriculum_visibility(request) == 'operational':
+        # Training rows are projected from these same normalized authoring
+        # modules, so prefer_authoring_module_sessions discards their generated
+        # copies. Read the surviving authored sessions without building learner
+        # counts, programme/KSB statistics and every module's content first.
+        from .delivery_dashboard import calendar_sessions
+        return calendar_sessions(request)
     return curriculum_collection_response(get_cached_payload(request), 'sessions')
 
 

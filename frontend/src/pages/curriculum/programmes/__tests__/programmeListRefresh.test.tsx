@@ -147,8 +147,9 @@ describe('programme list refresh after a create', () => {
     });
 
     expect(await screen.findByText('New')).toBeTruthy();
-    // First, so a paginated list cannot hide it on a page nobody is looking at.
-    expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual(['New', 'Existing']);
+    // The canonical collection keeps the existing ordering while appending
+    // the new record immediately, before the collection refresh returns.
+    expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual(['Existing', 'New']);
   });
 
   it('does not duplicate a programme the list already knows', async () => {

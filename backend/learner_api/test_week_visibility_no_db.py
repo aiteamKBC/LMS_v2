@@ -126,8 +126,11 @@ class WeekReaderPathTests(SimpleTestCase):
 
     def test_live_resolution_reads_weeks_through_the_shared_rule(self):
         cursor = ScriptedCursor([[('MOD-1', 'Module 1')], [], []])
+        connection = ScriptedConnection(cursor)
+        connection.vendor = 'sqlite'
+        cursor.db = connection
         weeks = [{'module': 'Module 1', 'week': 'Week 1', 'moduleId': 'MOD-1', 'weekId': 'WEEK-1'}]
-        with patch.object(detail, 'connections', {'enrolment': ScriptedConnection(cursor)}):
+        with patch.object(detail, 'connections', {'enrolment': connection}):
             detail._resolve_from_master(['Module 1'], weeks, [])
         week_query = cursor.queries[1]
         self.assertIn('FROM curriculum.weeks', week_query)

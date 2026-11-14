@@ -1,4 +1,4 @@
-"""Live, read-only projection of classified Aptem assignments. Never imports rows."""
+"""Read-only projection of classified and explicitly restored Aptem assignments."""
 import json
 import mimetypes
 
@@ -42,17 +42,63 @@ CLASSIFIED_SQL = '''
 '''
 
 
+RESTORED_SQL = '''
+    SELECT e.evidence_id, e.learner_id AS aptem_id, e.component_id,
+      e.evidence_name, e.component_name, e.evidence_status,
+      e.file_blob, e.report_blob, e.feedbacks, e.submission_date,
+      e.source_hash, e.updated_at AS source_updated_at,
+      coalesce((e.completed_date_override AT TIME ZONE 'Europe/London')::date,
+               (e.completed_date AT TIME ZONE 'Europe/London')::date,
+               (e.submission_date AT TIME ZONE 'Europe/London')::date) AS activity_date,
+      coalesce((e.completed_date_override AT TIME ZONE 'Europe/London')::date,
+               (e.completed_date AT TIME ZONE 'Europe/London')::date) AS original_completed_date,
+      a."FullName" AS learner_name, a."Program Name" AS programme_name,
+      NULL::bigint AS run_id, 'imported_legacy' AS submission_origin
+    FROM enrolment."Created_users" u
+    JOIN "LMS"."Aptem_users" a ON a."ID"::text = btrim(u.aptem_id)
+      AND nullif(lower(btrim(u."Email")), '') = lower(btrim(a."Email"))
+    JOIN "Learner".legacy_assignment_visibility r
+      ON r.enrolment_id=u.id AND r.aptem_id=a."ID" AND r.revoked_at IS NULL
+    JOIN fetching_evidence.evidence_items e
+      ON e.learner_id=r.aptem_id AND e.evidence_id=r.evidence_id
+      AND e.component_id=r.component_id
+    WHERE lower(btrim(u."Learner_type")) = %s AND u.id::text = %s
+      AND e.evidence_kind='File' AND nullif(e.file_blob, '') IS NOT NULL
+      AND (%s = '' OR 'aptem:' || a."ID"::text || ':evidence:' || e.evidence_id::text = %s)
+    ORDER BY e.evidence_id
+'''
+
+
+def restored_rows(kind, learner_id, activity_id=''):
+    with connections['enrolment'].cursor() as cur:
+        # The additive registry may be installed after the reader. Missing
+        # classification must never cause an upload to be graded or completed.
+        cur.execute('SELECT to_regclass(\'"Learner".legacy_assignment_visibility\')')
+        if not cur.fetchone()[0]:
+            return []
+        cur.execute(RESTORED_SQL, [kind, str(learner_id), activity_id, activity_id])
+        columns = [column[0] for column in cur.description]
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
 def classified_rows(kind, learner_id, activity_id=''):
     with connections['enrolment'].cursor() as cur:
         cur.execute(CLASSIFIED_SQL, [kind, str(learner_id), activity_id, activity_id])
         columns = [column[0] for column in cur.description]
-        return [dict(zip(columns, row)) for row in cur.fetchall()]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+    by_id = {row['evidence_id']: row for row in rows}
+    for row in restored_rows(kind, learner_id, activity_id):
+        # A later classification run can include a restored upload. Keep the
+        # original classified projection and show that evidence only once.
+        by_id.setdefault(row['evidence_id'], row)
+    return [by_id[key] for key in sorted(by_id)]
 
 
 def classified_submission(row, kind, learner_id):
     evidence_id = row['evidence_id']
     activity_id = f"aptem:{row['aptem_id']}:evidence:{evidence_id}"
     completed = row['activity_date'].isoformat() if row['activity_date'] else ''
+    original_completed = row.get('original_completed_date', row['activity_date'])
     feedbacks = row.get('feedbacks')
     if isinstance(feedbacks, str):
         try:
@@ -70,9 +116,9 @@ def classified_submission(row, kind, learner_id):
         'learnerName': row['learner_name'], 'programmeName': row['programme_name'],
         'activityTitle': row['evidence_name'], 'moduleTitle': row['component_name'],
         'weekTitle': '', 'status': (row['evidence_status'] or 'unknown').lower(),
-        'dateCompleted': completed,
+        'dateCompleted': original_completed.isoformat() if original_completed else '',
         'submittedAt': row['submission_date'].isoformat() if row['submission_date'] else None,
-        'submissionOrigin': 'classified_legacy', 'locked': True,
+        'submissionOrigin': row.get('submission_origin', 'classified_legacy'), 'locked': True,
         'monthlyAssignment': {'version': 2, 'month': completed[:7], 'step': 0},
         'legacyAssignment': {
             'runId': row['run_id'], 'aptemLearnerId': row['aptem_id'],
