@@ -1,8 +1,8 @@
 """Assigning imported learners to their coach, from the audit snapshot.
 
 The assignment has to land in two places or it does not work: the enrolment
-record is what the directory shows, and ``Learner.learners.coach_email`` is what
-every coach surface actually scopes on. Writing only the first looks correct in
+record is what the directory shows, and ``Learner.learners.coach_id`` is what
+every coach surface resolves through ``curriculum.coaches``. Writing only the first looks correct in
 the directory while every coach workspace stays empty — which is the failure
 these guard.
 """
@@ -48,15 +48,17 @@ class AssignmentContractTests(SimpleTestCase):
     def test_the_enrolment_record_is_written(self):
         source = self._source()
 
-        self.assertIn("coach_name=coach_name, coach_email=coach_email", source)
+        self.assertIn("coach_name=coach_name", source)
+        self.assertIn("coach_email=coach_email", source)
 
     def test_the_mirror_the_workspace_reads_is_written_too(self):
-        # The one that matters: Learner.learners.coach_email is what the
-        # caseload, marking queue and timetable all scope on.
+        # The one that matters: Learner.learners.coach_id is what the
+        # caseload, marking queue and timetable resolve canonically.
         source = self._source()
 
         self.assertIn("LearnerProfile.objects.filter(", source)
         self.assertIn("enrolment_id=row[\"enrolment_id\"]", source)
+        self.assertIn(".update(coach_id=coach[\"coach_id\"])", source)
 
     def test_the_mirror_is_matched_by_enrolment_id_not_a_stale_pk(self):
         # The bug this replaces: when sync_active_user had just created the

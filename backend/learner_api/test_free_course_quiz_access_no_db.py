@@ -2,7 +2,7 @@
 import json
 from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
@@ -166,6 +166,23 @@ class FreeCourseQuizReadAccessTests(SimpleTestCase):
         self.assertNotIn("isCorrect", serialised)
         self.assertNotIn("explanation", serialised)
         self.assertNotIn("This explains the answer key.", serialised)
+
+
+class FreeCourseQuizStatusTests(SimpleTestCase):
+    def owner_result(self, status):
+        database = MagicMock()
+        cursor = database.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = ("FREEWEEK-1", None, status, 1, 1)
+        with patch.object(free_courses_view, "connections", {"enrolment": database}):
+            result = free_courses_view._quiz_owner_is_valid(7, "FREE-1", "FREEWEEK-1")
+        return result, cursor.execute.call_args.args[0]
+
+    def test_only_published_canonical_quiz_is_available(self):
+        published, sql = self.owner_result("published")
+        draft, _ = self.owner_result("draft")
+        self.assertTrue(published)
+        self.assertFalse(draft)
+        self.assertIn("q.status", sql)
 
 
 class GenericQuizCompatibilityTests(SimpleTestCase):

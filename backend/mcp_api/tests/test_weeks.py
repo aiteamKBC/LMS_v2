@@ -5,7 +5,7 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
-from curriculum_api import video_imports
+from curriculum_api import learning_storage, video_imports
 from curriculum_api import views as curriculum
 from mcp_api import dispatch
 from mcp_api.tests.test_components import ComponentTestCase, MODULE
@@ -175,6 +175,26 @@ class CreateWeekLockTests(WeekTestCase):
             with self.assertRaisesRegex(weeks.ToolError, "no longer exists"):
                 with REAL_LOCK(target):
                     self.fail("must not create when the module disappeared")
+
+    def test_free_course_lock_uses_native_course_storage(self):
+        connection = mock.MagicMock()
+        connection.features.has_select_for_update = True
+        cursor = connection.cursor.return_value.__enter__.return_value
+        target = {"module_id": "FC1", "week_id": "WEEK-MCP1", "week_number": 3}
+        with mock.patch.object(weeks, "connection", connection), \
+                mock.patch.object(weeks.transaction, "atomic", mock.MagicMock()), \
+                mock.patch.object(learning_storage, "course", return_value={"id": "FC-ROW"}) as course:
+            cursor.fetchone.side_effect = [None]
+            with REAL_LOCK(target):
+                pass
+            course.assert_called_once_with("FC1", lock=True)
+            (call,) = cursor.execute.call_args_list
+            self.assertIn("curriculum.free_course_weeks", call.args[0])
+            self.assertEqual(call.args[1], ["FC-ROW", 3, "WEEK-MCP1"])
+            cursor.fetchone.side_effect = [(1,)]
+            with self.assertRaisesRegex(weeks.ToolError, "already used"):
+                with REAL_LOCK(target):
+                    self.fail("must not create when the free-course week number is taken")
 
 
 class CreateWeekRealSaveContractTests(SimpleTestCase):

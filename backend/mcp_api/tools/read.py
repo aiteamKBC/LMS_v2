@@ -18,6 +18,8 @@ most 20 matches with the total, and never guess between them.
 """
 from __future__ import annotations
 
+from curriculum_api import free_course_catalogue
+
 from ..dispatch import call_api
 from . import ToolError, ToolResult, tool
 
@@ -316,23 +318,28 @@ def list_module_weeks(request, arguments):
 # --- free courses --------------------------------------------------------------------------
 
 @tool("find_free_courses",
-      "List the free courses, optionally filtered by name. Each free course is a standalone module in no programme: "
-      "use its module_id with list_module_weeks, get_module_structure and the content tools, and leave programme_id "
-      "out. Free courses hold self-study content only (no live sessions) and do not use KSBs.",
+      "List canonical Free Courses, optionally filtered by name. free_course_id is the course identity; module_id is "
+      "a compatibility alias only and must not be used to infer a curriculum module. Free Courses hold self-study "
+      "content only (no live sessions) and do not use KSBs.",
       {"type": "object", "properties": {"query": _QUERY, "include_archived": _ARCHIVED}, "additionalProperties": False})
 def find_free_courses(request, arguments):
-    include_archived = bool(arguments.get("include_archived"))
-    query = {"compact": "1", **({"visibility": "all"} if include_archived else {})}
-    _status, data = call_api(request, "GET", f"{CURRICULUM}/modules/", query=query)
-    rows = [row for row in _results(data)
-            if (row.get("isFreeCourse") is True or _s(row.get("sourceType")) == "free_course")
-            and (include_archived or not _archived(row))
-            and _matches(row, _s(arguments.get("query")), "name", "title", "description")]
-    rows.sort(key=lambda row: _s(row.get("name") or row.get("title")).casefold())
+    # The canonical course table has no archive/status column. Existing rows are
+    # current; inactive content is represented by week status and is filtered by
+    # the learner/detail readers. Keep include_archived accepted for API parity.
+    rows = free_course_catalogue.courses(columns=[
+        "id", "course_name", "description", "week_count",
+    ])
+    rows = [row for row in rows
+            if _matches(row, _s(arguments.get("query")), "course_name", "description")]
+    rows.sort(key=lambda row: _s(row.get("course_name")).casefold())
     shown, total = _capped(rows)
-    items = [{"module_id": _module_id(row), "name": _s(row.get("name") or row.get("title")),
-              "weeks": row.get("weeks"), "status": _s(row.get("authoringStatus") or row.get("status"))}
-             for row in shown]
+    items = [{
+        "free_course_id": _s(row.get("id")),
+        "module_id": _s(row.get("id")),
+        "name": _s(row.get("course_name")),
+        "weeks": row.get("week_count"),
+        "status": "active",
+    } for row in shown]
     lines = [_count_note(len(items), total, "free courses")]
     lines += [f"- {item['name']} (module_id {item['module_id']}, {item['weeks'] or 0} week(s))" for item in items]
     return ToolResult("\n".join(lines), {"free_courses": items, "total": total})

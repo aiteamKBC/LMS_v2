@@ -264,6 +264,11 @@ class AuthoredLiveSessionSourceTests(SimpleTestCase):
         self.assertEqual([key[:10] for key in keys], ['2026-09-17', '2026-09-18', '2026-09-24'])
 
     def test_the_expected_instants_keep_a_booked_components_own_clock(self):
+        # Once the series exists, unassigned components are pending rather than
+        # booked on it. Make every expected occurrence a confirmed series slot.
+        for number, row in enumerate(self.components, 1):
+            row['settings_json'] = {**row['settings_json'],
+                'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': number}
         self.components[1]['settings_json'] = {
             **self.components[1]['settings_json'], 'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 2,
         }

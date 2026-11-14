@@ -18,6 +18,7 @@ from django.db import DatabaseError, IntegrityError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from curriculum_api.learning_storage import read_table
 
 from curriculum_api.canonical_read_sql import current_status_sql, standard_ksb_join_sql
 
@@ -77,9 +78,10 @@ def _component_meta(component_id):
     """Live (type, title) for a component (curriculum.components).
     Returns (None, None) if not found / on error."""
     try:
-        with connections["enrolment"].cursor() as cur:
+        database = connections["enrolment"]
+        with database.cursor() as cur:
             cur.execute(
-                "SELECT type, title FROM curriculum.components WHERE id = %s",
+                f"SELECT type, title FROM {read_table('components', database)} WHERE id = %s",
                 [component_id],
             )
             row = cur.fetchone()
@@ -152,7 +154,8 @@ def _assignment_form_ready(component_id, kind, learner_id, assignment_topic=""):
 
 def _component_ksb_mappings(component_id):
     try:
-        with connections["enrolment"].cursor() as cur:
+        database = connections["enrolment"]
+        with database.cursor() as cur:
             cur.execute(
                 f"SELECT standard_ksb.ksb_code, mapping.weight "
                 f"FROM curriculum.ksb_mappings mapping "

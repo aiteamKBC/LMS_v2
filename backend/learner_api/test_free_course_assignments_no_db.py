@@ -105,12 +105,14 @@ class AssignmentServiceTests(SimpleTestCase):
 
     def test_row_builder_uses_one_based_positions_and_never_progress(self):
         manager = Mock()
+        manager.select_for_update.return_value.filter.return_value = []
         with patch.object(api.LearnerFreeCourse.objects, "using", return_value=manager), \
              patch.object(LearnerFreeCourseProgress, "objects") as progress:
             api._replace_assignment_rows(501, ["B", "A"], {"A": "Alpha", "B": "Beta"})
         rows = manager.bulk_create.call_args.args[0]
         self.assertEqual([(row.free_course_ref, row.position) for row in rows], [("B", 1), ("A", 2)])
-        manager.filter.assert_called_once_with(learner_id=501)
+        manager.select_for_update.return_value.filter.assert_called_once_with(learner_id=501)
+        manager.filter.assert_not_called()
         progress.assert_not_called()
 
 

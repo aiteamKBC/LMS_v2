@@ -1,14 +1,14 @@
-"""Learner-scoped read of the free courses assigned to a learner.
+"""Learner-scoped read of legacy and Module Builder free-course assignments.
 
 Free courses are authored in the canonical curriculum tables and assigned to a
-canonical ``Learner.learners`` identity through
-``Learner.learner_free_courses``. The legacy
-``enrolment.Created_users.Free_courses`` JSON is not an entitlement source.
+canonical ``Learner.learners`` identity through ``Learner.learner_free_courses``.
+The legacy ``enrolment.Created_users.Free_courses`` JSON is not an entitlement
+source.
 
-These views are the learner-facing counterpart: the list returns lightweight
-cards for current assignments, and an assignment-scoped detail request returns
-one course's authored week/activity tree. Completion is stored separately from
-Programme progress, hours and KSBs.
+Module Builder courses are assigned through the normal training plan. Their
+cards link to the normal module workspace so hours and progress retain the
+same rules as other modules. Only legacy assignments use the week/activity tree
+below. Completion is stored separately from Programme progress, hours and KSBs.
 
 Identity is resolved SERVER-SIDE and never trusted from the client (same gate as
 ``learner_detail``/``training_plan``): the caller supplies only the
@@ -289,7 +289,8 @@ def free_courses(request, kind, pk):
     """Return lightweight cards for this learner's current assignments.
 
     Component settings, media and quiz metadata are loaded only when one course
-    is opened through :func:`free_course_detail`.
+    is opened through :func:`free_course_detail`. Canonical assignments are the
+    sole entitlement source; normal Learning Plan modules are unrelated.
     """
     source, error = _resolve_source(kind, pk)
     if error is not None:
@@ -510,18 +511,20 @@ def _quiz_owner_is_valid(quiz_id, course_id, week_id):
     """Accept exact canonical ownership or an unchanged legacy normal owner."""
     with connections["enrolment"].cursor() as cursor:
         cursor.execute(
-            "select q.free_course_week_id,q.week_id,"
+            "select q.free_course_week_id,q.week_id,q.status,"
             "count(l.id) filter (where l.free_course_id=%s and l.free_course_week_id=%s "
             "and l.module_catalogue_id is null and l.week_id is null),"
             "count(l.id) filter (where l.free_course_id is not null or l.free_course_week_id is not null) "
             "from curriculum.quizzes q left join curriculum.quiz_course_links l on l.quiz_id=q.id "
-            "where q.id=%s group by q.id,q.free_course_week_id,q.week_id",
+            "where q.id=%s group by q.id,q.free_course_week_id,q.week_id,q.status",
             [course_id, week_id, quiz_id],
         )
         row = cursor.fetchone()
     if not row:
         return False
-    canonical_week, normal_week, exact_links, canonical_links = row
+    canonical_week, normal_week, status, exact_links, canonical_links = row
+    if clean_str(status).lower() != "published":
+        return False
     if canonical_week:
         return str(canonical_week) == week_id and not normal_week and exact_links == 1 and canonical_links == 1
     # The 110 legacy references remain read-only and usable only while they

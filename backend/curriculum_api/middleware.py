@@ -84,6 +84,9 @@ class CurriculumChangeLogMiddleware:
             return response
         after = shared_curriculum_epoch()
         if after > before:
+            # Downstream response middleware can invalidate derived summaries
+            # only for real catalogue changes, not telemetry/read-only POSTs.
+            request.curriculum_changed = True
             # Stored the way the client names it -- the browser talks to
             # `/curriculum_api` + path, and the same string is what a same-browser
             # write already broadcasts, so both routes invalidate identically.

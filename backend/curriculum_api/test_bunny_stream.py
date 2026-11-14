@@ -53,6 +53,59 @@ class BunnyTransportTests(unittest.TestCase):
         self.assertFalse(kwargs['allow_redirects'])
         self.assertEqual(kwargs['headers']['Content-Type'], 'application/octet-stream')
 
+    def test_free_courses_use_only_the_shared_collection_name(self):
+        self.http.request.side_effect = [response({'items': []}), response({'guid': VIDEO_ID})]
+        self.assertEqual(self.client.free_course_collection(), VIDEO_ID)
+        call = self.http.request.call_args
+        self.assertEqual(call.args, ('POST', 'https://video.bunnycdn.com/library/798153/collections'))
+        self.assertEqual(call.kwargs['json'], {'name': 'Free course'})
+
+    def test_free_course_reuses_shared_collection_in_later_page(self):
+        self.http.request.side_effect = [response({'items': [{'guid': str(i), 'name': f'Other {i}'} for i in range(100)]}),
+            response({'items': [{'guid': VIDEO_ID, 'name': 'Free course'}]})]
+        self.assertEqual(self.client.free_course_collection(), VIDEO_ID)
+        self.assertTrue(all(call.args[0] == 'GET' for call in self.http.request.call_args_list))
+        self.assertEqual(self.http.request.call_args.kwargs['params']['page'], 2)
+
+    def test_free_course_retry_recovers_collection_after_a_lost_create_response(self):
+        self.http.request.side_effect = [response({'items': []}), requests.Timeout('private address'),
+            response({'items': [{'guid': VIDEO_ID, 'name': 'Free course'}]})]
+        with self.assertRaises(VideoImportError):
+            self.client.free_course_collection()
+        self.assertEqual(self.client.free_course_collection(), VIDEO_ID)
+        self.assertEqual(sum(call.args[0] == 'POST' for call in self.http.request.call_args_list), 1)
+
+    def test_free_course_ambiguous_or_invalid_collections_do_not_claim_success(self):
+        for data in ({'items': [{'guid': VIDEO_ID, 'name': 'Free course'}] * 2},
+                     {'items': [{'guid': '', 'name': 'Free course'}]}, {'items': None}):
+            with self.subTest(data=data):
+                self.http.reset_mock()
+                self.http.request.return_value = response(data)
+                with self.assertRaises(VideoImportError):
+                    self.client.free_course_collection()
+                self.assertEqual(self.http.request.call_args.args[0], 'GET')
+
+    def test_named_course_collection_does_not_override_shared_destination(self):
+        self.http.request.side_effect = [response({'items': [{'guid': 'old', 'name': 'Independent study'}]}),
+            response({'guid': VIDEO_ID})]
+        self.assertEqual(self.client.free_course_collection(), VIDEO_ID)
+        self.assertEqual(self.http.request.call_args.kwargs['json'], {'name': 'Free course'})
+
+    def test_free_course_metadata_identifies_the_course_and_type_in_shared_collection(self):
+        self.http.request.return_value = response({'success': True})
+        self.client.metadata(VIDEO_ID, {'free_course_module_id': 'FREE-1',
+            'free_course_name': 'Independent study', 'course_type': 'free_course',
+            'collection_name': 'Free course'}, 'Introduction')
+        tags = {tag['property']: tag['value'] for tag in self.http.request.call_args.kwargs['json']['metaTags']}
+        self.assertEqual(tags, {'lms.free_course_module_id': 'FREE-1',
+            'lms.free_course_name': 'Independent study', 'lms.course_type': 'free_course',
+            'lms.collection_name': 'Free course', 'lms.title': 'Introduction'})
+
+    def test_free_course_video_title_uses_course_name_without_programme_aliases(self):
+        name = 'Managing Successful Programmes for beginners'
+        scope = {'free_course_module_id': 'FREE-1', 'free_course_name': name, 'module_title': name}
+        self.assertEqual(video_title('asset', 'Introduction', scope), f'{name} — Introduction [LMS:asset]')
+
     def test_api_failure_never_exposes_upstream_text(self):
         for status in (401, 403, 429, 500):
             with self.subTest(status=status):

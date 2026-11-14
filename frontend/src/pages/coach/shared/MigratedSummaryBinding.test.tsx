@@ -5,6 +5,9 @@ import { ReviewInstanceModal } from './ReviewInstanceModal';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 import * as api from '@/api/reviewInstances';
 import type { CoachMeetingArtifactsResponse, MigratedSummaryBinding } from './calendarEvents';
+import { reviewAttendanceLinks } from './reviewAttendanceLinks';
+
+vi.mock('./reviewAttendanceLinks', () => ({ reviewAttendanceLinks: vi.fn() }));
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { user: { fullName: 'Synthetic coach' } } }) }));
 const identity = vi.hoisted(() => ({ viewAs: false, email: 'coach@example.invalid' }));
@@ -43,6 +46,10 @@ function result(binding: MigratedSummaryBinding = { fieldKey: 'recap', state: 'N
 function mount() { return render(<ReviewInstanceModal instanceId={id} onClose={vi.fn()} />); }
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(reviewAttendanceLinks).mockResolvedValue({
+    version: 'v1', learner: null, targets: [], candidates: [], activeLinks: [], history: [], canReschedule: false,
+    attendance: { reports: [], records: [], reportCount: 0, participantCount: 0, attendedCount: 0, absentCount: 0 },
+  });
   identity.viewAs = false;
   identity.email = 'coach@example.invalid';
   vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(definition());

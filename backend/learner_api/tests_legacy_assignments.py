@@ -4,7 +4,7 @@ from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from django.test import RequestFactory, SimpleTestCase
-from .legacy_assignments import classified_rows, classified_submission, open_legacy_assignment_document
+from .legacy_assignments import classified_rows, classified_submission, open_legacy_assignment_document, restored_rows
 
 
 def source_row():
@@ -52,7 +52,8 @@ class LegacyAssignmentTests(SimpleTestCase):
                 cursor.fetchall.return_value = [(evidence_id,)]
                 connection = MagicMock()
                 connection.cursor.return_value.__enter__.return_value = cursor
-                with patch('learner_api.legacy_assignments.connections', {'enrolment': connection}):
+                with patch('learner_api.legacy_assignments.connections', {'enrolment': connection}), \
+                     patch('learner_api.legacy_assignments.restored_rows', return_value=[]):
                     self.assertEqual(classified_rows(kind, learner_id, activity_id),
                                      [{'evidence_id': evidence_id}])
                 self.assertEqual(cursor.execute.call_args.args[1],
@@ -99,7 +100,8 @@ class LegacyAssignmentTests(SimpleTestCase):
         cursor.fetchall.return_value = [(20128,)]
         connection = MagicMock()
         connection.cursor.return_value.__enter__.return_value = cursor
-        with patch('learner_api.legacy_assignments.connections', {'enrolment': connection}):
+        with patch('learner_api.legacy_assignments.connections', {'enrolment': connection}), \
+             patch('learner_api.legacy_assignments.restored_rows', return_value=[]):
             self.assertEqual(classified_rows('commercial', '125'), [{'evidence_id': 20128}])
         sql, params = cursor.execute.call_args.args
         self.assertEqual(params, ['commercial', '125', '', ''])
@@ -135,3 +137,72 @@ class LegacyAssignmentTests(SimpleTestCase):
             response = open_legacy_assignment_document(self.request(), 20128)
         self.assertEqual(response.status_code, 404)
         read.assert_not_called()
+
+
+class RestoredAssignmentTests(SimpleTestCase):
+    def test_restoration_does_not_duplicate_a_later_classified_upload(self):
+        cursor = MagicMock()
+        cursor.description = [('evidence_id',), ('run_id',)]
+        cursor.fetchall.return_value = [(701, 19)]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        with patch('learner_api.legacy_assignments.connections', {'enrolment': connection}), \
+             patch('learner_api.legacy_assignments.restored_rows', return_value=[
+                 {'evidence_id': 701, 'run_id': None}, {'evidence_id': 702, 'run_id': None},
+             ]) as restored:
+            self.assertEqual(classified_rows('commercial', 501), [
+                {'evidence_id': 701, 'run_id': 19}, {'evidence_id': 702, 'run_id': None},
+            ])
+        restored.assert_called_once_with('commercial', 501, '')
+
+    def test_no_registry_preserves_existing_deployments_without_writes(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (None,)
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        with patch('learner_api.legacy_assignments.connections', {'enrolment': connection}):
+            self.assertEqual(restored_rows('commercial', 501), [])
+        cursor.execute.assert_called_once()
+        self.assertTrue(cursor.execute.call_args.args[0].startswith('SELECT to_regclass'))
+
+    def test_registry_read_requires_owner_component_active_restore_and_requested_file(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = ('registry',)
+        cursor.description = [('evidence_id',)]
+        cursor.fetchall.return_value = [(701,)]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind), patch('learner_api.legacy_assignments.connections', {'enrolment': connection}):
+                self.assertEqual(restored_rows(kind, 501, 'aptem:601:evidence:701'), [{'evidence_id': 701}])
+            sql, params = cursor.execute.call_args.args
+            self.assertEqual(params, [kind, '501', 'aptem:601:evidence:701', 'aptem:601:evidence:701'])
+            for gate in ('r.enrolment_id=u.id', 'r.aptem_id=a."ID"', 'r.revoked_at IS NULL',
+                         'e.learner_id=r.aptem_id', 'e.evidence_id=r.evidence_id',
+                         'e.component_id=r.component_id', 'u."Email"'):
+                self.assertIn(gate, sql)
+
+    def test_unassessed_and_referred_uploads_keep_status_dates_and_read_only_files(self):
+        for status in ('PendingAssessment', 'Referred', 'Accepted'):
+            with self.subTest(status=status):
+                row = {**source_row(), 'evidence_status': status, 'run_id': None,
+                       'submission_origin': 'imported_legacy'}
+                result = classified_submission(row, 'commercial', '501')
+                self.assertEqual(result['status'], status.lower())
+                self.assertEqual(result['legacyAssignment']['sourceStatus'], status)
+                self.assertIsNone(result['legacyAssignment']['runId'])
+                self.assertEqual(result['submittedAt'], row['submission_date'].isoformat())
+                self.assertEqual(result['dateCompleted'], row['activity_date'].isoformat())
+                self.assertEqual(result['submissionOrigin'], 'imported_legacy')
+                self.assertTrue(result['locked'])
+                self.assertEqual(len(result['legacyAssignment']['documents']), 2)
+                self.assertNotIn('actualTimeHours', result)
+                self.assertNotIn('assignmentAnswer', result)
+
+    def test_restored_upload_without_completion_keeps_only_its_submission_date(self):
+        row = {**source_row(), 'evidence_status': 'PendingAssessment',
+               'original_completed_date': None, 'submission_origin': 'imported_legacy', 'run_id': None}
+        result = classified_submission(row, 'commercial', '501')
+        self.assertEqual(result['dateCompleted'], '')
+        self.assertEqual(result['submittedAt'], row['submission_date'].isoformat())
+        self.assertEqual(result['monthlyAssignment']['month'], row['activity_date'].isoformat()[:7])

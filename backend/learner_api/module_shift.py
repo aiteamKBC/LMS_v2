@@ -61,6 +61,7 @@ from .active_users import (
     recompute_completed_hours,
     refresh_learner_ksb_snapshot,
     sync_active_user,
+    validate_training_plan_relationships,
 )
 from .identity import learner_profile_for_source
 from .learner_progression import advance_learner
@@ -74,7 +75,7 @@ from .learning_plan import (
     _saved_modules,
     sync_learning_plan_mirror,
 )
-from .mappers import _s, training_plan_field
+from .mappers import ValidationError, _s, training_plan_field
 from .placement_links import placement_ids
 from .models import (
     EnrolmentUser,
@@ -992,6 +993,9 @@ def _replace_mirrored_module(profile, from_id, target):
     ``False`` asks the caller to use the full repair path when an old/incomplete
     mirror cannot be updated safely.
     """
+    validated = validate_training_plan_relationships([target])
+    target_module = validated[0]
+
     matches = list(LearnerTrainingPlanModule.objects.filter(
         learner=profile, curriculum_module_id=from_id,
     )[:2])
@@ -999,34 +1003,87 @@ def _replace_mirrored_module(profile, from_id, target):
         return False
 
     module_row = matches[0]
-    module_row.module_ref = _s(target.get("moduleId")) or None
+    module_row.curriculum_module_id = target_module["module_id"]
     module_row.save(update_fields=["curriculum_module"])
-    module_row.weeks.all().delete()
 
-    weeks = [week for week in target.get("weeks") or [] if isinstance(week, dict)]
-    week_rows = LearnerTrainingPlanWeek.objects.bulk_create([
-        LearnerTrainingPlanWeek(
-            plan_module=module_row,
-            position=position,
-            week_ref=_s(week.get("weekId")) or None,
-            week_title=_s(week.get("weekTitle")),
-        )
-        for position, week in enumerate(weeks, 1)
-    ])
-    if any(row.pk is None for row in week_rows):
-        week_rows = list(module_row.weeks.all().order_by("position", "id"))
+    # Preserve existing week/component row IDs by reconciling stable positions.
+    # The previous implementation deleted every week and cascaded every
+    # component even when the target had the same shape.
+    existing_weeks = list(
+        module_row.weeks.prefetch_related("components").order_by("position", "id")
+    )
+    existing_by_position = {row.position: row for row in existing_weeks}
+    week_rows_by_position = {}
+    week_updates = []
+    week_creates = []
+    for position, week in enumerate(target_module["weeks"], 1):
+        row = existing_by_position.get(position)
+        if row is None:
+            row = LearnerTrainingPlanWeek(
+                plan_module=module_row,
+                position=position,
+                curriculum_week_id=week["week_id"],
+            )
+            week_creates.append(row)
+        else:
+            if row.curriculum_week_id != week["week_id"]:
+                row.curriculum_week_id = week["week_id"]
+                week_updates.append(row)
+        week_rows_by_position[position] = row
 
-    LearnerTrainingPlanComponent.objects.bulk_create([
-        LearnerTrainingPlanComponent(
-            plan_week=week_row,
-            position=position,
-            component_ref=_s(component.get("componentId")) or None,
-            component_title=_s(component.get("componentTitle")),
+    if week_updates:
+        LearnerTrainingPlanWeek.objects.bulk_update(week_updates, ["curriculum_week"])
+    if week_creates:
+        created = LearnerTrainingPlanWeek.objects.bulk_create(week_creates)
+        if any(row.pk is None for row in created):
+            saved = {
+                row.position: row for row in module_row.weeks
+                .filter(position__in=[item.position for item in week_creates])
+                .order_by("position", "id")
+            }
+            for row in week_creates:
+                week_rows_by_position[row.position] = saved[row.position]
+
+    target_positions = set(week_rows_by_position)
+    surplus_week_ids = [row.pk for row in existing_weeks if row.position not in target_positions]
+    if surplus_week_ids:
+        LearnerTrainingPlanWeek.objects.filter(pk__in=surplus_week_ids).delete()
+
+    component_updates = []
+    component_creates = []
+    surplus_component_ids = []
+    for position, week in enumerate(target_module["weeks"], 1):
+        week_row = week_rows_by_position[position]
+        existing_components = {
+            row.position: row for row in getattr(week_row, "_prefetched_objects_cache", {})
+            .get("components", [])
+        }
+        target_components = week["components"]
+        for component_position, component in enumerate(target_components, 1):
+            component_id = component["component_id"]
+            row = existing_components.get(component_position)
+            if row is None:
+                component_creates.append(LearnerTrainingPlanComponent(
+                    plan_week=week_row,
+                    position=component_position,
+                    curriculum_component_id=component_id,
+                ))
+            elif row.curriculum_component_id != component_id:
+                row.curriculum_component_id = component_id
+                component_updates.append(row)
+        surplus_component_ids.extend(
+            row.pk for component_position, row in existing_components.items()
+            if component_position > len(target_components)
         )
-        for week_row, week in zip(week_rows, weeks)
-        for position, component in enumerate(week.get("components") or [], 1)
-        if isinstance(component, dict)
-    ], batch_size=1000)
+
+    if component_updates:
+        LearnerTrainingPlanComponent.objects.bulk_update(
+            component_updates, ["curriculum_component"], batch_size=1000,
+        )
+    if component_creates:
+        LearnerTrainingPlanComponent.objects.bulk_create(component_creates, batch_size=1000)
+    if surplus_component_ids:
+        LearnerTrainingPlanComponent.objects.filter(pk__in=surplus_component_ids).delete()
     return True
 
 
@@ -1303,6 +1360,8 @@ def module_shift(request, pk):
             # A review left behind because the target already had one of its own.
             "reviewsKept": counts["reviewsKept"],
         })
+    except ValidationError as exc:
+        return _error(str(exc), 400)
     except DatabaseError as exc:
         logger.exception("module_shift: save failed")
         return _error(f"Database error: {exc}", 502)

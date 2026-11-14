@@ -1,7 +1,7 @@
 """Save enrolment fields and mirror learner-specific dates and coach contact."""
 from django.db import transaction
 
-from .coach_assignment import case_owner_coach
+from .coach_assignment import case_owner_coach, coach_id_for_contact
 from .identity import learner_profile_for_source
 
 
@@ -23,7 +23,7 @@ def _save_enrolment_fields(user, fields):
         fields = {**fields, **contact}
         for field, value in contact.items():
             setattr(user, field, value)
-        profile_fields.update(contact)
+        profile_fields["coach_id"] = coach_id_for_contact(contact)
         # Imported ownership is a separate, explicit outcome of reassignment.
         # Resolve without opportunistically repairing an identity link.
         profile = learner_profile_for_source(user, heal=False)

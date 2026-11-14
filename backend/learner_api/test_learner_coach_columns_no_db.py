@@ -72,11 +72,114 @@ class SchemaProbeTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             coach.learner_coach_sql('l', 'rag', 'default')
 
-    def test_model_fields_keep_their_plain_migration_state(self):
+    def test_model_coach_aliases_are_not_physical_columns(self):
         from .models import LearnerProfile
-        for name, path in (('coach_name', 'django.db.models.TextField'),
-                           ('coach_email', 'django.db.models.EmailField')):
-            self.assertEqual(LearnerProfile._meta.get_field(name).deconstruct()[1], path)
+
+        concrete = {field.name for field in LearnerProfile._meta.concrete_fields}
+        for name in ('coach_name', 'coach_email'):
+            field = LearnerProfile._meta.get_field(name)
+            self.assertFalse(field.concrete)
+            self.assertIsNone(field.column)
+            self.assertNotIn(name, concrete)
+        self.assertEqual(LearnerProfile._meta.get_field('coach_record').column, 'coach_id')
+
+    def test_profile_insert_and_update_name_only_canonical_coach_id(self):
+        from django.db.models import Q
+        from django.db.models.sql.subqueries import InsertQuery, UpdateQuery
+        from .models import LearnerProfile
+
+        profile = LearnerProfile(full_name='Synthetic', email='synthetic@example.test',
+                                 lifecycle_status='active', coach_id='COACH-1')
+        insert = InsertQuery(LearnerProfile)
+        fields = [field for field in LearnerProfile._meta.local_concrete_fields
+                  if not field.generated and not field.auto_created]
+        insert.insert_values(fields, [profile])
+        insert_sql = insert.get_compiler('default').as_sql()[0][0]
+        update = UpdateQuery(LearnerProfile)
+        update.add_update_values({'coach_id': 'COACH-2'})
+        update.add_q(Q(pk=profile.pk or 1))
+        update_sql = update.get_compiler('default').as_sql()[0]
+        for sql in (insert_sql, update_sql):
+            self.assertIn('"coach_id"', sql)
+            self.assertNotIn('"coach_name"', sql)
+            self.assertNotIn('"coach_email"', sql)
+            self.assertNotIn('"learning_plan"', sql)
+
+    def test_profile_create_and_update_execute_on_isolated_canonical_schema(self):
+        from django.db.models import Q
+        from django.db.models.sql.subqueries import InsertQuery, UpdateQuery
+        from .models import LearnerProfile
+
+        database = sqlite3.connect(':memory:')
+        self.addCleanup(database.close)
+        database.execute("ATTACH DATABASE ':memory:' AS 'Learner'")
+        database.execute('''CREATE TABLE "Learner".learners (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL,
+            coach_id TEXT NULL
+        )''')
+        profile = LearnerProfile(
+            full_name='Synthetic Learner', email='learner@example.test',
+            lifecycle_status='active', coach_id='COACH-1',
+        )
+        insert_fields = [LearnerProfile._meta.get_field(name)
+                         for name in ('full_name', 'email', 'lifecycle_status', 'coach_record')]
+        insert = InsertQuery(LearnerProfile)
+        insert.insert_values(insert_fields, [profile])
+        insert_sql, insert_params = insert.get_compiler('default').as_sql()[0]
+        database.execute(insert_sql.replace('%s', '?'), insert_params)
+
+        update = UpdateQuery(LearnerProfile)
+        update.add_update_values({'coach_id': None})
+        update.add_q(Q(email='learner@example.test'))
+        update_sql, update_params = update.get_compiler('default').as_sql()
+        database.execute(update_sql.replace('%s', '?'), update_params)
+
+        columns = {row[1] for row in database.execute('pragma Learner.table_info(learners)')}
+        stored_coach_id = database.execute(
+            'select coach_id from "Learner".learners where email=?',
+            ['learner@example.test'],
+        ).fetchone()[0]
+        self.assertIsNone(stored_coach_id)
+        self.assertIn('coach_id', columns)
+        self.assertTrue({'coach_name', 'coach_email', 'learning_plan'}.isdisjoint(columns))
+
+    def test_legacy_coach_writes_are_rejected(self):
+        from .models import LearnerProfile
+
+        with self.assertRaisesRegex(ValueError, 'read-only'):
+            LearnerProfile(coach_email='legacy@example.test')
+        with self.assertRaisesRegex(ValueError, 'read-only'):
+            LearnerProfile.objects.filter(pk=1).update(coach_name='Legacy')
+
+    def test_chat_profile_defaults_use_canonical_nullable_relationships(self):
+        from types import SimpleNamespace
+        from chat.views import _learner_profile_defaults
+        from .models import LearnerProfile
+
+        source = SimpleNamespace(
+            pk=501,
+            username='Synthetic Learner',
+            phone_number='',
+            programme_status='Active',
+            status='',
+            learner_type='commercial',
+            programme_id='PROGRAMME-1',
+            cohort_id=None,
+            group_id=None,
+        )
+        defaults = _learner_profile_defaults(source, 'synthetic@example.test')
+        profile = LearnerProfile(**defaults)
+        self.assertEqual(profile.enrolment_id, 501)
+        self.assertEqual(profile.programme_id, 'PROGRAMME-1')
+        self.assertIsNone(profile.cohort_id)
+        self.assertIsNone(profile.group_id)
+        self.assertIsNone(profile.aptem_id)
+        for legacy in ('coach_name', 'coach_email', 'learning_plan',
+                       'programme', 'cohort', 'group_name'):
+            self.assertNotIn(legacy, defaults)
 
     def test_monthly_log_queries_use_the_canonical_coach_expression(self):
         from . import monthly_log_sources

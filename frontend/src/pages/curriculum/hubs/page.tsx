@@ -5,7 +5,11 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import type { CurriculumProgramme } from '@/lib/curriculumApi';
+import type { ReactNode } from 'react';
 import { curriculumNavItems } from '@/mocks/navigation';
+import DeliveryHubContent from './DeliveryHubContent';
+import { useDeliveryOverview } from './useDeliveryData';
 
 type HubKind = 'library' | 'delivery' | 'quality';
 type HubCard = {
@@ -93,8 +97,41 @@ function NotBuiltPanel() {
 }
 
 function CurriculumHub({ kind }: { kind: HubKind }) {
+  // Delivery has no programme-list consumer. Do not mount that reader (or its
+  // refresh subscriptions) merely to render the shared shell.
+  return kind === 'delivery' ? <DeliveryHub /> : <ReferenceHub kind={kind} />;
+}
+
+function HubShell({ kind, children }: { kind: HubKind; children: ReactNode }) {
+  const copy = HUB_COPY[kind];
+  return <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
+    workspaceLabel="Curriculum Studio" pageTitle={copy.title} pageSubtitle={copy.description}
+    userName="Rachel Myers" userRole="Curriculum Designer">{children}</WorkspaceShell>;
+}
+
+function DeliveryHub() {
+  const { data, loading, error, reload } = useDeliveryOverview();
+  const modules = data?.modules ?? []; const cohorts = data?.cohorts ?? []; const groups = data?.groups ?? [];
+  return <HubShell kind="delivery"><DeliveryHubContent overview={data} loading={loading} error={error}
+    unavailable={!data && !loading && Boolean(error)} onRetry={reload} description={HUB_COPY.delivery.description}
+    cards={hubCards('delivery', { modules: modules.length, cohorts: cohorts.length, groups: groups.length, sessions: 0, draftModules: 0, mappingGaps: 0 })}
+    attentionItems={[
+      { label: 'Groups without a coach', value: groups.filter(group => isMissingAssignment(group.coach)).length, href: '/curriculum/groups', icon: 'ri-user-search-line' },
+      { label: 'Modules without a tutor', value: modules.filter(module => isMissingAssignment(module.tutor)).length, href: '/curriculum/module-builder', icon: 'ri-user-settings-line' },
+      { label: 'Planned or inactive cohorts', value: cohorts.filter(cohort => normalise(cohort.status) !== 'active').length, href: '/curriculum/cohorts', icon: 'ri-calendar-todo-line' },
+    ]} /></HubShell>;
+}
+
+function ReferenceHub({ kind }: { kind: 'library' | 'quality' }) {
+  const programmes = useCurriculumProgrammes();
+  return <CurriculumHubView kind={kind} programmes={programmes.programmes}
+    programmesLoading={programmes.loading} programmesError={programmes.error} />;
+}
+
+function CurriculumHubView({ kind, programmes, programmesLoading = false, programmesError = null }: {
+  kind: 'library' | 'quality'; programmes: CurriculumProgramme[]; programmesLoading?: boolean; programmesError?: string | null;
+}) {
   const { data, loading: dataLoading, error: dataError } = useCurriculumData({ compact: true });
-  const { programmes, loading: programmesLoading, error: programmesError } = useCurriculumProgrammes();
   const loading = dataLoading || programmesLoading;
   const error = dataError || programmesError;
   const modules = useMemo(() => data?.modules ?? [], [data?.modules]);
@@ -131,16 +168,7 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
   });
 
   return (
-    <WorkspaceShell
-      role="curriculum"
-      roleLabel="Curriculum Designer"
-      navItems={curriculumNavItems}
-      workspaceLabel="Curriculum Studio"
-      pageTitle={copy.title}
-      pageSubtitle={copy.description}
-      userName="Rachel Myers"
-      userRole="Curriculum Designer"
-    >
+    <HubShell kind={kind}>
       <main className={`min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 ${kind === 'library' ? 'curriculum-library-page' : ''}`}>
         <div className="mx-auto max-w-[1560px] space-y-4">
           <WorkspaceHeroBanner
@@ -158,8 +186,6 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
                 className={`inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-[12px] font-bold text-white ${
                   kind === 'library'
                     ? 'bg-[#b27715] shadow-[0_6px_16px_rgba(178,119,21,0.28)] transition-all duration-200 hover:bg-[#965f0d] hover:shadow-[0_9px_20px_rgba(178,119,21,0.38)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px'
-                    : kind === 'delivery'
-                    ? 'bg-[linear-gradient(135deg,#8f5f0e_0%,#b27715_45%,#d39a2c_100%)] shadow-[0_6px_16px_rgba(178,119,21,0.28)] transition-all duration-200 hover:bg-[linear-gradient(135deg,#9f6d16_0%,#c08422_45%,#dfa645_100%)] hover:shadow-[0_9px_20px_rgba(178,119,21,0.38)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px'
                     : 'bg-primary-600 shadow-sm transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2'
                 }`}
               >
@@ -188,18 +214,6 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
             </div>
           </section>
 
-          {kind === 'delivery' && (
-            <LiveAttentionPanel
-              title="Delivery setup to finish"
-              description="Assignments that can block a clean launch."
-              items={[
-                { label: 'Groups without a coach', value: unassignedCoaches.length, href: '/curriculum/groups', icon: 'ri-user-search-line' },
-                { label: 'Modules without a tutor', value: unassignedTutors.length, href: '/curriculum/module-builder', icon: 'ri-user-settings-line' },
-                { label: 'Planned or inactive cohorts', value: Math.max(0, cohorts.length - activeCohorts.length), href: '/curriculum/cohorts', icon: 'ri-calendar-todo-line' },
-              ]}
-            />
-          )}
-
           {kind === 'quality' && (
             <LiveAttentionPanel
               title="Checks that need attention"
@@ -215,7 +229,7 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
           {kind === 'quality' && <NotBuiltPanel />}
         </div>
       </main>
-    </WorkspaceShell>
+    </HubShell>
   );
 }
 
