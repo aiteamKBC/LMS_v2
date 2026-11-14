@@ -16,7 +16,8 @@ import { dirtyFields, projectAvailable } from './collaborationProtocol';
 import { ModuleEditReservedError } from './moduleAuthoringData';
 import { confirmModuleSave, sameAuthoredModule } from './confirmModuleSave';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
-import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import catalogueStyles from './ModuleCatalogue.module.css';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -190,7 +191,8 @@ import { appendWeekTemplateCopies } from './weekTemplateImport';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
-import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbImportSource, type KsbProfileEntry } from './ksbExcel';
+import { buildKsbMappingPrompt, ksbImportNotice, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbImportSource, type KsbProfileEntry } from './ksbExcel';
+import { reviewKsbImport } from './ksbImportReview';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
@@ -764,7 +766,7 @@ function ModuleBuilderContent() {
   const [aiMaterialOpen, setAiMaterialOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
-  const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string; downloadableModule?: ModuleCatalogueItem } | null>(null);
+  const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string; icon?: 'success' | 'warning'; downloadableModule?: ModuleCatalogueItem } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
@@ -924,6 +926,7 @@ function ModuleBuilderContent() {
   const autoSaveArmedRef = useRef(false);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
+  const ksbImportBusyRef = useRef(false);
   const moduleTemplateImportInputRef = useRef<HTMLInputElement>(null);
   // Both revalidate rather than skipCache. The request still goes to the network
   // every time, and every curriculum write calls invalidate_curriculum_cache() on
@@ -2760,7 +2763,9 @@ function ModuleBuilderContent() {
   // Read a filled KSB sheet back onto the components and stage the change as an
   // unsaved edit — the person reviews it and saves like any other authoring change.
   const importKsbSheet = useCallback(async (file: File) => {
-    if (!workingModule) return;
+    if (!workingModule || ksbImportBusyRef.current) return;
+    ksbImportBusyRef.current = true;
+    const snapshot = JSON.stringify(workingModule);
     setActionMessage(null);
     setNoticeAlert(null);
     try {
@@ -2780,15 +2785,22 @@ function ModuleBuilderContent() {
           allowedCodes: workspaceKsbProfileEntries.map(entry => entry.code),
         }
         : undefined;
-      const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule, source);
+      const { module: nextModule, summary, cancelled } = await importModuleKsbWorkbook(file, workingModule, source, {
+        review: reviewKsbImport,
+        isCurrent: () => JSON.stringify(workingModuleRef.current) === snapshot,
+      });
+      if (cancelled) return;
       if (!summary.rowsWithKsbs) {
         setActionMessage('No KSBs were found in the uploaded sheet. Fill the KSBs column before re-uploading.');
         return;
       }
-      updateWorkingModule(() => nextModule);
-      setNoticeAlert({ title: 'KSB sheet imported', message: describeKsbImport(summary), downloadableModule: nextModule });
+      if (summary.componentsUpdated) updateWorkingModule(() => nextModule);
+      const notice = ksbImportNotice(summary);
+      setNoticeAlert({ title: notice.title, message: notice.text, icon: notice.icon, downloadableModule: nextModule });
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to read the uploaded KSB sheet.');
+    } finally {
+      ksbImportBusyRef.current = false;
     }
   }, [updateWorkingModule, workingModule, workingModuleScopeLock?.ksbSourceId, workspaceKsbProfileEntries, workspaceKsbProfileValue]);
 
@@ -3558,7 +3570,7 @@ function ModuleBuilderContent() {
     showCurriculumAlert({
       title: noticeAlert.title,
       text: noticeAlert.message,
-      icon: 'success',
+      icon: noticeAlert.icon || 'success',
       confirmButtonText: 'OK',
       denyButtonText: noticeAlert.downloadableModule ? 'Download valid file' : undefined,
       onDeny: noticeAlert.downloadableModule
@@ -4074,8 +4086,12 @@ function ModuleBuilderContent() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-4 sm:p-5 space-y-4">
-        <div className="rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm">
+      <div className={catalogueStyles.page}>
+        <div className={catalogueStyles.backdrop} aria-hidden="true">
+          <img src="/assets/patterns/kbc-ibis-wreath.webp" alt="" className={catalogueStyles.ibis} decoding="async" />
+          <img src="/assets/patterns/kbc-horse-growth.webp" alt="" className={catalogueStyles.horse} decoding="async" />
+        </div>
+        <div className={catalogueStyles.summary}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
@@ -4099,7 +4115,7 @@ function ModuleBuilderContent() {
               </button>
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-background-200 pt-3">
+          <div className={catalogueStyles.summaryStats}>
             <BuilderStatChip icon="ri-stack-line" label="Modules" value={catalogueModules.length} />
             <BuilderStatChip icon="ri-route-line" label="Deliveries" value={deliveryStats.deliveries} />
             <BuilderStatChip icon="ri-presentation-line" label="With tutor" value={deliveryStats.withTutor} />
@@ -4141,8 +4157,8 @@ function ModuleBuilderContent() {
           </div>
         )}
 
-        <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
-          <div className="space-y-3 border-b border-background-200 px-4 py-4">
+        <div className={catalogueStyles.catalogue}>
+          <div className={`space-y-3 ${catalogueStyles.toolbar}`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0 flex-[1_1_22rem]">
                 <div className="flex flex-wrap items-center gap-2">
@@ -4273,7 +4289,7 @@ function ModuleBuilderContent() {
             <span>{catalogueActivity.error}</span>
             <button type="button" onClick={catalogueActivity.reload} className="font-semibold underline">Retry activity check</button>
           </div>}
-          <div className="module-catalogue-scroll max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
+          <div className={`module-catalogue-scroll ${catalogueStyles.list}`}>
             {/* The skeleton stands in for a catalogue that has never been read.
                 Once rows are on screen a re-read keeps them there: somebody
                 else's save moves the shared epoch while this reader is part-way
@@ -4283,7 +4299,7 @@ function ModuleBuilderContent() {
             {(loading && !modules.length) || (catalogueMode === 'active' && !catalogueActivity.data && !catalogueActivity.error) ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
-              <div className="space-y-3">
+              <div className={catalogueStyles.moduleList}>
                 {filtered.map(module => (
                   <ModuleCatalogueCard
                     key={module.catalogueId}
@@ -8563,6 +8579,30 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
+function CatalogueCover({ url, title }: { url: string; title: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) return <div role="img" aria-label={`Cover unavailable for ${title}`} className={catalogueStyles.coverFallback}>
+    <AppIcon name="ri-image-line" size={28} aria-hidden="true" />
+    <span>Image unavailable</span>
+  </div>;
+
+  return <img src={url} alt={`Cover for ${title}`} className={catalogueStyles.cover} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+}
+
+function CatalogueDescription({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const descriptionId = useId();
+
+  return <div className={`${catalogueStyles.descriptionBlock} ${expanded ? catalogueStyles.descriptionOpen : ''}`}>
+    <p id={descriptionId} className={expanded ? catalogueStyles.expandedDescription : catalogueStyles.description}>{text}</p>
+    <button type="button" aria-expanded={expanded} aria-controls={descriptionId} onClick={() => setExpanded(value => !value)} className={catalogueStyles.descriptionToggle}>
+      <AppIcon name={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+      {expanded ? 'Show less' : 'Show full description'}
+    </button>
+  </div>;
+}
+
 function ModuleCatalogueCard({
   module,
   source,
@@ -8603,31 +8643,36 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
+  const imageActionLabel = module.coverImage ? 'Change image' : 'Upload image';
 
   return (
-    <article className={`group relative overflow-hidden rounded-2xl border bg-background-50 shadow-sm transition-smooth hover:shadow-md ${hasContent ? 'border-foreground-200/70 hover:border-primary-200/80' : 'border-amber-200/70 hover:border-amber-300'}`}>
-      <span className={`absolute inset-y-0 left-0 w-1 ${hasContent ? 'bg-primary-400' : 'bg-amber-400'}`} aria-hidden="true"></span>
-      <div className="flex flex-wrap items-start gap-4 p-4 pl-5">
-        <div className="min-w-0 flex-[1_1_28rem]">
-          <div className="flex items-start gap-3">
-            <span className={`hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl sm:flex ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
+    <article
+      className={`${catalogueStyles.card} ${hasContent ? '' : catalogueStyles.emptyCard}`}
+    >
+      <header className={`${catalogueStyles.cardHeading} ${module.coverImage ? catalogueStyles.coverHeader : ''}`}>
+        <div className={catalogueStyles.cardMain}>
+        <div className={catalogueStyles.cardHeader}>
+            {!module.coverImage && <span className={`hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl sm:flex ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
               <AppIcon className={hasContent ? 'ri-layout-4-line text-lg' : 'ri-draft-line text-lg'}></AppIcon>
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
+            </span>}
+            <div className={catalogueStyles.identity}>
                 <h3 className="max-w-full break-words text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
+              <div className={catalogueStyles.badges}>
                 {module.isFreeCourse && <span className="shrink-0 whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 ring-1 ring-emerald-200">Free course</span>}
                 {module.isForSale && module.price && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900 ring-1 ring-amber-200">
                   For sale · {new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(module.price))}
                 </span>}
-                <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${source === 'old_lms' ? 'bg-blue-50 text-blue-800 ring-blue-200' : source === 'new_lms' ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white ring-violet-400/30 shadow-sm shadow-violet-600/20' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
+                <span className={source === 'new_lms' ? catalogueStyles.newLms : `inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ${source === 'old_lms' ? 'bg-blue-50 text-blue-800 ring-blue-200' : 'bg-background-100 text-foreground-500 ring-background-200'}`}>
                   {source !== 'unknown' && <AppIcon className={`${source === 'new_lms' ? 'ri-stack-line' : 'ri-archive-line'} text-[10px]`} />}
                   {source === 'old_lms' ? 'Old LMS' : source === 'new_lms' ? 'New LMS' : 'Source not set'}
                 </span>
-                {active && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800 ring-1 ring-emerald-200" title="Started module with a non-cancelled Teams teaching date that has not passed">
+                {active && <span className={catalogueStyles.active} title="Started module with a non-cancelled Teams teaching date that has not passed">
                   <AppIcon className="ri-checkbox-circle-line text-[10px]" />
                   Active
                 </span>}
+                <span className={catalogueStyles.learnerBadge}>
+                  <ModuleLearnerCount moduleId={moduleLearnerIdentifier(module)} moduleName={module.title} onOpen={onLearners} refreshKey={module.sourceModule} />
+                </span>
                 {!hasContent && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">
                     <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
@@ -8635,25 +8680,46 @@ function ModuleCatalogueCard({
                   </span>
                 )}
               </div>
-              {subLabel && <p className="mt-1 break-words text-[11px] font-medium text-foreground-500">{subLabel}</p>}
-              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            </div>
+          </div>
+      <div className={catalogueStyles.cardBody}>
+          {subLabel && <CatalogueDescription text={subLabel} />}
+          <div className={catalogueStyles.facts}>
+            <div className={catalogueStyles.overviewRow}>
+              <div className={catalogueStyles.programme}>
                 <ModuleFactPill
                   icon="ri-graduation-cap-line"
                   label={module.isFreeCourse ? 'Course' : 'Programme'}
                   value={module.isFreeCourse ? 'Independent' : cleanModuleMeta(module.programmeName) || 'Not set'}
                   tone={cleanModuleMeta(module.programmeName) ? 'accent' : 'muted'}
                 />
-                <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} ${weekCount === 1 ? 'week' : 'weeks'}`} />
-                <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} ${componentCount === 1 ? 'component' : 'components'}`} tone={hasContent ? 'default' : 'muted'} />
-                <ModuleMetricPill icon="ri-time-line" label={`${formatHoursMinutes(componentOtjh)} OTJH`} tone={componentOtjh ? 'default' : 'muted'} />
               </div>
-              <ModuleDeliveryRows module={module} teamsSummary={teamsSummary} expectedSessions={module.sessionsNumber || weekCount} />
+              <div className={catalogueStyles.metrics}>
+                <ModuleMetricPill icon="ri-stack-line" value={String(weekCount)} label={weekCount === 1 ? 'week' : 'weeks'} />
+                <ModuleMetricPill icon="ri-puzzle-line" value={String(componentCount)} label={componentCount === 1 ? 'component' : 'components'} tone={hasContent ? 'default' : 'muted'} />
+                <ModuleMetricPill icon="ri-time-line" value={formatHoursMinutes(componentOtjh)} label="OTJH" tone={componentOtjh ? 'default' : 'muted'} />
+              </div>
             </div>
+              <ModuleDeliveryRows module={module} teamsSummary={teamsSummary} expectedSessions={module.sessionsNumber || weekCount} />
           </div>
+      </div>
         </div>
+        <div className={module.coverImage ? catalogueStyles.mediaPanel : catalogueStyles.emptyMedia}>
+          <button type="button" onClick={onSettings} className={catalogueStyles.imageAction} aria-label={imageActionLabel} title={`${imageActionLabel} for ${module.title}`}>
+            <AppIcon name={module.coverImage ? 'ri-image-edit-line' : 'ri-image-add-line'} size={17} />
+          </button>
+          {module.coverImage && <div className={catalogueStyles.coverFrame}>
+            <CatalogueCover key={module.coverImage} url={module.coverImage} title={module.title} />
+          </div>}
+        </div>
+      </header>
 
-        <div className="flex min-w-0 flex-[1_1_30rem] flex-wrap items-center gap-1.5 [&>button]:shrink-0 [&>button]:whitespace-nowrap [&>a]:shrink-0 [&>a]:whitespace-nowrap xl:justify-end">
-          <ModuleLearnerCount moduleId={moduleLearnerIdentifier(module)} moduleName={module.title} onOpen={onLearners} refreshKey={module.sourceModule} />
+      <div className={catalogueStyles.actions}>
+        <div className={catalogueStyles.primaryActions}>
+          <button onClick={onBuild} className={`${catalogueStyles.buildAction} inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 hover:shadow`}>
+            <AppIcon name="ri-hammer-line" size={16}></AppIcon>
+            Edit components
+          </button>
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}
@@ -8672,11 +8738,8 @@ function ModuleCatalogueCard({
             <AppIcon name={ksbMapLoading ? 'ri-loader-4-line' : 'ri-node-tree'} className={ksbMapLoading ? 'animate-spin' : ''} size={15}></AppIcon>
             {ksbMapLoading ? 'Loading module KSBs...' : 'Review module KSBs'}
           </button>
-          <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 hover:shadow">
-            <AppIcon name="ri-hammer-line" size={15}></AppIcon>
-            Edit components
-          </button>
-          <span className="mx-0.5 hidden h-6 w-px shrink-0 bg-background-200 xl:block" aria-hidden="true"></span>
+        </div>
+        <div className={catalogueStyles.secondaryActions}>
           <ModuleCardActionButton label={module.isFreeCourse ? 'Edit course' : 'Edit module'} icon="ri-edit-line" onClick={onSettings} />
           <ModuleCardActionButton label={module.isFreeCourse ? 'Duplicate free course' : 'Duplicate module'} icon="ri-file-copy-line" onClick={onDuplicate} />
           {module.isFreeCourse && <ModuleCardActionButton label="Move to module" icon="ri-arrow-right-line" onClick={onMove} />}
@@ -8695,7 +8758,7 @@ function ModuleCardActionButton({ label, icon, onClick, tone = 'default' }: { la
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold transition-smooth focus:outline-none focus:ring-2 focus:ring-offset-1 ${classes}`}
+      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold transition-smooth focus:outline-none focus:ring-2 focus:ring-offset-1 ${classes} ${tone === 'danger' ? catalogueStyles.dangerAction : ''}`}
     >
       <AppIcon name={icon} size={15}></AppIcon>
       {label}
@@ -9279,12 +9342,13 @@ function ModuleFact({ icon, label, value, tone = 'default', title, children }: {
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${FACT_TONE_CLASSES[tone]}`}
+      className={`${catalogueStyles.deliveryFact} ${FACT_TONE_CLASSES[tone]} ${label === 'Runs' ? catalogueStyles.deliveryHighlight : ''}`}
+      data-fact={label}
       title={title || `${label}: ${value}`}
     >
       <AppIcon className={`${icon} text-[12px] opacity-70`}></AppIcon>
       <span className="text-[9px] font-bold uppercase tracking-wide opacity-70">{label}</span>
-      <span className="font-bold">{children || value}</span>
+      <span className={label === 'Teams' ? catalogueStyles.teamsStatus : 'font-bold'} data-tone={label === 'Teams' ? tone : undefined}>{children || value}</span>
     </span>
   );
 }
@@ -9301,58 +9365,62 @@ function ModuleFact({ icon, label, value, tone = 'default', title, children }: {
 function DeliveryScopeValue({ usage }: { usage: ModuleDeliveryUsage }) {
   const cohort = cleanModuleMeta(usage.cohort);
   const group = cleanModuleMeta(usage.group);
-  if (!cohort && !group) return <>{formatDeliveryUsage(usage)}</>;
+  if (!cohort && !group) return <span className={catalogueStyles.scopePart}><span className={catalogueStyles.scopeLabel}>Cohort / group</span><span>{formatDeliveryUsage(usage)}</span></span>;
   const cohortId = String(usage.cohortId || '').trim();
   const groupId = String(usage.groupId || '').trim();
   const linkClass = 'rounded-sm underline decoration-dotted underline-offset-2 transition-smooth hover:decoration-solid hover:text-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-300';
   return (
-    <span className="inline-flex items-center gap-1">
-      {cohort && (cohortId ? (
-        <Link
-          to={workspaceEditPath(`/curriculum/cohorts/${encodeURIComponent(cohortId)}`)}
-          className={linkClass}
-          title={`Open ${cohort} and edit this cohort`}
-        >
-          {cohort}
-        </Link>
-      ) : (
-        <span>{cohort}</span>
-      ))}
-      {cohort && group && <span className="opacity-50" aria-hidden="true">/</span>}
-      {group && (groupId ? (
-        <Link
-          to={workspaceEditPath(namedCurriculumWorkspacePath('groups', groupId, group))}
-          className={linkClass}
-          title={`Open ${group} and edit this group`}
-        >
-          {group}
-        </Link>
-      ) : (
-        <span>{group}</span>
-      ))}
+    <span className={catalogueStyles.scopeValues}>
+      {cohort && <span className={catalogueStyles.scopePart}>
+        <span className={catalogueStyles.scopeLabel}>Cohort</span>
+        {cohortId ? (
+          <Link
+            to={workspaceEditPath(`/curriculum/cohorts/${encodeURIComponent(cohortId)}`)}
+            className={linkClass}
+            title={`Open ${cohort} and edit this cohort`}
+          >
+            {cohort}
+          </Link>
+        ) : (
+          <span title={cohort}>{cohort}</span>
+        )}
+      </span>}
+      {group && <span className={catalogueStyles.scopePart}>
+        <span className={catalogueStyles.scopeLabel}>Group</span>
+        {groupId ? (
+          <Link
+            to={workspaceEditPath(namedCurriculumWorkspacePath('groups', groupId, group))}
+            className={linkClass}
+            title={`Open ${group} and edit this group`}
+          >
+            {group}
+          </Link>
+        ) : (
+          <span title={group}>{group}</span>
+        )}
+      </span>}
     </span>
   );
 }
 
-function ModuleMetricPill({ icon, label, tone = 'default' }: { icon: string; label: string; tone?: 'default' | 'muted' }) {
+function ModuleMetricPill({ icon, value, label, tone = 'default' }: { icon: string; value: string; label: string; tone?: 'default' | 'muted' }) {
   const classes = tone === 'muted'
     ? 'border-amber-200 bg-amber-50 text-amber-700'
     : 'border-background-200 bg-background-50 text-foreground-600';
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${classes}`}>
+    <span role="group" aria-label={`${value} ${label}`} className={`${catalogueStyles.metric} ${icon === 'ri-time-line' ? catalogueStyles.hours : ''} ${classes}`}>
       <AppIcon className={`${icon} text-[11px]`}></AppIcon>
-      {label}
+      <span><strong>{value}</strong><span>{label}</span></span>
     </span>
   );
 }
 
 function BuilderStatChip({ icon, label, value }: { icon: string; label: string; value: number }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-100 px-2.5 py-1.5 text-[11px] font-semibold text-foreground-600">
-      <AppIcon className={`${icon} text-[13px] text-primary-600`}></AppIcon>
-      {label}
-      <span className="font-heading text-[13px] font-black text-foreground-950">{value}</span>
-    </span>
+    <div className={catalogueStyles.summaryStat}>
+      <AppIcon className={icon}></AppIcon>
+      <div><strong>{value}</strong><span>{label}</span></div>
+    </div>
   );
 }
 
@@ -9382,41 +9450,38 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
     );
   }
   const teams = teamsMeetingLabel(teamsSummary);
-  const rowClasses = 'flex flex-wrap items-center gap-2 py-1.5';
+  const rowClasses = catalogueStyles.deliveryRow;
   return (
-    <div className="mt-3 divide-y divide-background-200/70">
+    <div className={catalogueStyles.deliveryRows}>
       {usages.map(usage => {
         const sessions = usage.sessions || 0;
         const facts = (
           <>
-            <ModuleFact
-              icon="ri-group-line"
-              label="Cohort / group"
-              value={formatDeliveryUsage(usage)}
-              tone="accent"
-            >
+            <span className={`${catalogueStyles.deliveryScope} ${catalogueStyles.deliveryHighlight}`} title={`Cohort / group: ${formatDeliveryUsage(usage)}`}>
               <DeliveryScopeValue usage={usage} />
-            </ModuleFact>
+            </span>
             <ModuleFact
               icon="ri-calendar-event-line"
               label="Runs"
               value={`${formatDateLabel(usage.startDate)} – ${formatDateLabel(usage.endDate)}`}
             />
-            {sessions > 0 && sessions !== expectedSessions && (
+            <span className={catalogueStyles.meetingFacts}>
               <ModuleFact
-                icon="ri-calendar-2-line"
-                label="Sessions"
-                value={String(sessions)}
-                tone="warning"
-                title={`Sessions: ${sessions} in this delivery, which differs from the module plan`}
+                icon="ri-vidicon-line"
+                label="Teams"
+                value={teams.text}
+                tone={teams.tone}
               />
-            )}
-            <ModuleFact
-              icon="ri-vidicon-line"
-              label="Teams"
-              value={teams.text}
-              tone={teams.tone}
-            />
+              {sessions > 0 && sessions !== expectedSessions && (
+                <ModuleFact
+                  icon="ri-calendar-2-line"
+                  label="Sessions"
+                  value={String(sessions)}
+                  tone="warning"
+                  title={`Sessions: ${sessions} in this delivery, which differs from the module plan`}
+                />
+              )}
+            </span>
           </>
         );
         if (!usage.deliveryModuleId) {

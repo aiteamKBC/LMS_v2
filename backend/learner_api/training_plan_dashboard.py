@@ -29,6 +29,7 @@ from . import canonical_learning
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.canonical_read_sql import module_expected_otjh_sql
+from curriculum_api.learning_storage import read_sql
 
 log = logging.getLogger(__name__)
 
@@ -390,7 +391,13 @@ def plan_planned_hours(source, owner, *, ids=None):
     the same modules the dashboard lists. Callers use it only when the SSOT
     holds no programme plan for the enrolment. ``ids`` lets a caller that has
     already resolved ``plan_module_ids`` for this source skip resolving it again.
+    Standalone courses contribute to commercial plans, not apprenticeship targets.
     """
+    from .planned_learning import learner_type
+    apprenticeship = learner_type(source, owner) == 'apprenticeship'
+    # Keep every assignment available for learning and actual hours. Only the
+    # planned aggregate excludes additional courses for apprentices.
+    hours_sql = "CASE WHEN source_type = 'free_course' THEN 0 ELSE total_otjh END" if apprenticeship else 'total_otjh'
     with connections['enrolment'].cursor() as cur:
         if ids is None:
             ids, _ = plan_module_ids(cur, source, owner)
@@ -406,7 +413,7 @@ def plan_planned_hours(source, owner, *, ids=None):
         ''', [ids])
         total = cur.fetchone()[0]
     total = number(total)
-    return round(total, 2) if total else None
+    return round(total, 2) if total is not None and (total or apprenticeship) else None
 
 
 def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=False, navigation_only=False):
@@ -453,7 +460,7 @@ def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=Fal
             FROM ({statement}) monthly_session_bounds
             WHERE occurrence_id IS NOT NULL OR repeat_pattern IS NULL OR repeat_pattern IN ('none','')
             GROUP BY module_id'''
-    cur.execute(statement, [ids, *([] if navigation_only else [email]),
+    cur.execute(read_sql(statement, connections['enrolment']), [ids, *([] if navigation_only else [email]),
                             *(bound.astimezone(timezone.utc).replace(tzinfo=None) for bound, _ in bounds if bound)])
     return rows(cur)
 
@@ -639,7 +646,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
             # module's cohort holidays -- including the ones a delivery team
             # unticked. It is not published to the learner.
             description_column = 'm.description' if rich_modules else "''::text AS description"
-            cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,{description_column},m.start_date,m.end_date,
+            cur.execute(read_sql(f'''SELECT m.module_catalogue_id AS id,m.title,{description_column},m.start_date,m.end_date,
                 {module_tutor_name_sql('m')} AS tutor_name,
                 {group_coach_name_sql('g')} AS coach_name,
                 {module_placement_names_sql('m')},{module_expected_otjh_sql('m')} AS total_otjh,(SELECT COUNT(*) FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id AND {visible_week_sql('w')}) AS weeks_number,m.sessions_number,
@@ -648,7 +655,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                 coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
                 coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
                 FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-                WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
+                WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', connections['enrolment']), [ids])
             module_rows = rows(cur)
             modules = [plan_module(row) for row in module_rows]
             by_id = {module['id']: module for module in modules}
@@ -677,12 +684,12 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                 ) live_counts ON live_counts.module_catalogue_id=w.module_catalogue_id
                     AND live_counts.week_id=w.id'''
                 live_params = [ids, ids]
-            cur.execute(f'''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,{outcomes_column},
+            cur.execute(read_sql(f'''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,{outcomes_column},
                 w.holiday_note_enabled,w.holiday_note,{live_sessions}
                 FROM curriculum.weeks w {live_join}
                 WHERE w.module_catalogue_id=ANY(%s)
                   AND ''' + visible_week_sql('w') + '''
-                ORDER BY w.display_order,w.week_number,w.id''', live_params)
+                ORDER BY w.display_order,w.week_number,w.id''', connections['enrolment']), live_params)
             for row in rows(cur):
                 week_counts[row['module_catalogue_id']] += 1
                 outcomes = [text for text in (clean_text(o) if isinstance(o, str) else '' for o in as_list(row['learning_outcomes'])) if text]

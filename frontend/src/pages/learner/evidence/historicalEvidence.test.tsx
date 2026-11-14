@@ -124,9 +124,9 @@ describe('Previous evidence in the learner library', () => {
   });
   it('retries document preparation without losing the evidence details', async () => {
     const normal = vi.mocked(fetch).getMockImplementation()!;
-    let failed = false;
+    let failures = 0;
     vi.mocked(fetch).mockImplementation(async (...args) => {
-      if (String(args[0]).includes('/open/') && !failed) { failed = true; return new Response(JSON.stringify({ error: 'Storage unavailable' }), { status: 503 }); }
+      if (String(args[0]).includes('/open/') && failures++ < 2) { return new Response(JSON.stringify({ error: 'Storage unavailable' }), { status: 503 }); }
       return normal(...args);
     });
     show();

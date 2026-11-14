@@ -196,9 +196,9 @@ describe("One person's curriculum activity", () => {
     fetchPersonActivity.mockResolvedValue(activity({ changes: [first, edited] }));
     renderPage();
     await screen.findByText('Assignment 5');
-    const firstBadge = screen.getAllByText('First recorded').find(element => element.tagName === 'SPAN');
+    const firstBadge = screen.getByText('First seen');
     expect(firstBadge).toBeTruthy();
-    expect(firstBadge).toHaveAttribute('title', expect.stringContaining('first activity for this record'));
+    expect(firstBadge).toHaveAttribute('title', expect.stringContaining('does not prove that it was created'));
     await userEvent.selectOptions(screen.getByLabelText('Activity'), 'recorded');
     expect(screen.getByText('Assignment 5')).toBeInTheDocument();
     expect(screen.queryByText('Digital Marketing')).not.toBeInTheDocument();

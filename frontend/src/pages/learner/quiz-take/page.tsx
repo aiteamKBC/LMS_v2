@@ -28,6 +28,7 @@ import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
 import { ActivityPlanDetails } from '@/pages/learner/video-watch/ActivityPlanDetails';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
 import { ReflectionWindow } from '@/components/feature/ReflectionWindow';
+import { ActivityKsbMappings } from '@/components/feature/ActivityKsbMappings';
 import { SavedReflection } from '@/components/feature/SavedReflection';
 import { formatClock } from "@/components/feature/ReflectionWindow.helpers";
 import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
@@ -516,6 +517,10 @@ export default function QuizTakePage() {
     });
   };
 
+  const quizKsbMappings = detail?.components?.find(component => String(component.quizMeta?.quizId ?? '') === String(quizId)
+    && (!moduleTitle || component.module === moduleTitle)
+    && (!weekTitle || component.week === weekTitle))?.ksbMappings;
+
   return (
     <WorkspaceShell
       role="learner"
@@ -547,6 +552,7 @@ export default function QuizTakePage() {
         ) : phase === 'intro' ? (
           <>
           <PreviousLearningNotice learning={placement?.weekComponents.find(component => String(component.quizMeta?.quizId) === String(quizId))?.previousLearning} kind={kind} learnerId={id} />
+          <ActivityKsbMappings mappings={quizKsbMappings} learnerKsbs={learnerKsbs} />
           <IntroScreen
             quiz={quiz}
             allocatedHours={placement?.weekComponents.find(component => String(component.quizMeta?.quizId) === String(quizId))?.expectedOtjh}
@@ -578,9 +584,7 @@ export default function QuizTakePage() {
             plannedHours={quizPlannedHours}
             actualTimeUnit="minutes"
             learnerKsbs={learnerKsbs}
-            autoKsbs={detail?.components?.find(component => String(component.quizMeta?.quizId ?? '') === String(quizId)
-              && (!moduleTitle || component.module === moduleTitle)
-              && (!weekTitle || component.week === weekTitle))?.ksbMappings ?? []}
+            autoKsbs={quizKsbMappings ?? []}
             elapsedSeconds={elapsedSeconds}
             submitting={submitting}
             submitError={submitError}

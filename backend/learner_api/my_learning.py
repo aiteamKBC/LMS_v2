@@ -20,6 +20,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.canonical_read_sql import module_expected_otjh_sql
+from curriculum_api.learning_storage import read_sql
 
 from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
@@ -317,6 +318,7 @@ def catalogue_module_rows(cur, ids, *, identity_metadata):
         ORDER BY w.display_order,w.week_number,w.id''',[ids])
     weeks = rows(cur)
     identity_metadata.update(module_titles={r['id']:r['title'] for r in found},
+        free_course_module_ids=[r['id'] for r in found if r.get('source_type') == 'free_course'],
         weeks=[(r['id'],r['module_catalogue_id'],r['title'],r['week_number'],r['display_order']) for r in weeks],
         covers={f"current:{r['id']}":_builder_cover_url(r.get('cover_image_url')) for r in found},
         quiz_modules={r['id']:{'module':r['title'],'programmeId':r.get('programme_id') or '',
@@ -695,15 +697,17 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
                 completed=bool(item['completed']), schedule=item.get('schedule') or {},
             ) for item in items]
         cards.append(subject)
+    return cards, {} if search is not None else card_totals(cards)
+
+
+def card_totals(cards):
     def totals(source):
         rows = [c for c in cards if c['source'] == source]
         total, complete = sum(c['activityCount'] for c in rows), sum(c['completedActivityCount'] for c in rows)
         weighted = sum(c['progress'] * c['activityCount'] for c in rows)
         return {'subjects': len(rows), 'total': total, 'completed': complete, 'percent': round(weighted/total, 2) if total else 0}
-    if search is not None:
-        return cards, {}
-    return cards, {'current': totals('current'), 'previous': totals('legacy'),
-                   'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
+    return {'current': totals('current'), 'previous': totals('legacy'),
+            'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
 
 
 def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False):
@@ -834,12 +838,12 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             if c.get('componentId') and c.get('moduleId') in settings_modules))
         if settings_ids and purpose != 'search':
             with projection_stage('replacement_settings'):
-                cur.execute('''SELECT id,jsonb_build_object('legacySettings',
+                cur.execute(read_sql('''SELECT id,jsonb_build_object('legacySettings',
                     CASE WHEN jsonb_typeof(settings_json->'legacySettings')='object' THEN
                         jsonb_build_object('sourceLessonId',settings_json->'legacySettings'->'sourceLessonId',
                                            'sourceMaterialKey',settings_json->'legacySettings'->'sourceMaterialKey')
                     ELSE settings_json->'legacySettings' END)
-                    FROM curriculum.components WHERE module_catalogue_id=ANY(%s) AND id=ANY(%s)''',
+                    FROM curriculum.components WHERE module_catalogue_id=ANY(%s) AND id=ANY(%s)''', connections['enrolment']),
                     [settings_modules, settings_ids])
                 settings = dict(cur.fetchall())
         with projection_stage('activity_dates'):
@@ -849,7 +853,8 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         definitions, done, started, hours, record_ids = course_facts(owner, records, selected_courses)
     metadata = dict(covers=covers, builder_subjects=builder, current_subjects=current, activity_dates=dates,
         imported_courses=imports, replacement_courses=replacements, previous_learning_groups=groups,
-        replacement_settings=settings, record_ids=record_ids, modules=modules)
+        replacement_settings=settings, record_ids=record_ids, modules=modules,
+        free_course_module_ids=resolved.get('free_course_module_ids', []) if resolved is not None else [])
     metadata['progress_transfers'] = transfers
     return assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits
 
@@ -861,6 +866,13 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False):
     with projection_stage('card_aggregation'):
         cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits,
                                        show_current_replacements=True)
+        # Standalone assignments open from Free courses. Keep their ownership,
+        # content and actual-hours records intact; this is only the My courses list.
+        free_ids = set(metadata.get('free_course_module_ids', []))
+        if free_ids:
+            cards = [card for card in cards if (card.get('moduleId') or (
+                card['id'][8:] if card['id'].startswith('current:') else None)) not in free_ids]
+            summary = card_totals(cards)
     if upcoming_only:
         # Reuse native completion before selecting deadlines, just as the
         # initial catalogue does. No cover or programme metric reads on expansion.
@@ -1043,10 +1055,10 @@ def read_module(source, kind, owner, subject_id):
                 candidate_ids = [ident for ident, placement in continuation_dates.items()
                                  if teaching_date(placement) > cutoff['afterDate']]
                 if candidate_ids:
-                    cur.execute(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
+                    cur.execute(read_sql(f'''SELECT DISTINCT c.week_id FROM curriculum.components c
                         JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
                         WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
-                          AND {visible_child_sql('c')} AND {visible_week_sql('w')}''', [scope_ids,candidate_ids])
+                          AND {visible_child_sql('c')} AND {visible_week_sql('w')}''', connections['enrolment']), [scope_ids,candidate_ids])
                     continuation_weeks = [row[0] for row in cur.fetchall()]
     selected = copy(source)
     native_scope_ids = scope_ids if subject_id.startswith('current:') or continuation_weeks else []

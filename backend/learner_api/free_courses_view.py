@@ -1,14 +1,14 @@
-"""Learner-scoped read of the free courses assigned to a learner.
+"""Learner-scoped read of legacy and Module Builder free-course assignments.
 
 Free courses are authored in the canonical curriculum tables and assigned to a
-canonical ``Learner.learners`` identity through
-``Learner.learner_free_courses``. The legacy
-``enrolment.Created_users.Free_courses`` JSON is not an entitlement source.
+canonical ``Learner.learners`` identity through ``Learner.learner_free_courses``.
+The legacy ``enrolment.Created_users.Free_courses`` JSON is not an entitlement
+source.
 
-These views are the learner-facing counterpart: the list returns lightweight
-cards for current assignments, and an assignment-scoped detail request returns
-one course's authored week/activity tree. Completion is stored separately from
-Programme progress, hours and KSBs.
+Module Builder courses are assigned through the normal training plan. Their
+cards link to the normal module workspace so hours and progress retain the
+same rules as other modules. Only legacy assignments use the week/activity tree
+below. Completion is stored separately from Programme progress, hours and KSBs.
 
 Identity is resolved SERVER-SIDE and never trusted from the client (same gate as
 ``learner_detail``/``training_plan``): the caller supplies only the
@@ -49,6 +49,8 @@ from .learner_detail import (
 from .free_course_selectors import VALID_LEARNER_KINDS, assigned_course_ids, canonical_learner
 from .mappers import _s
 from .models import FREE_PROGRESS_ACTIVE, LearnerFreeCourseProgress, LearnerProfile
+from .free_course_catalogue import builder_free_courses
+from .learning_plan import _effective_plan_ids, request_preset_cache
 from .quizzes import _fetch_quiz, _grade_question, _scrub_answer_key
 from quiz_api.answer_keys import quiz_submission_error
 
@@ -289,7 +291,8 @@ def free_courses(request, kind, pk):
     """Return lightweight cards for this learner's current assignments.
 
     Component settings, media and quiz metadata are loaded only when one course
-    is opened through :func:`free_course_detail`.
+    is opened through :func:`free_course_detail`. Builder courses are included
+    as links to their module workspace (they don't use the tree below).
     """
     source, error = _resolve_source(kind, pk)
     if error is not None:
@@ -299,8 +302,15 @@ def free_courses(request, kind, pk):
         assigned_ids = assigned_course_ids(source)
     except DatabaseError:
         return _error("Could not read the learner's free course assignments.", 503)
+    try:
+        builder_courses = builder_free_courses(_effective_plan_ids(source, request_preset_cache(source)))
+    except DatabaseError:
+        return _error("Could not read the free course catalogue.", 503)
+    builder_ids = {course['freeCourseId'] for course in builder_courses}
+    # Builder courses link to the workspace; remove them from the legacy-tree path.
+    assigned_ids = [aid for aid in assigned_ids if aid not in builder_ids]
     if not assigned_ids:
-        response = JsonResponse({"freeCourses": []})
+        response = JsonResponse({"freeCourses": builder_courses})
         response["Cache-Control"] = "private, no-store"
         return response
 
@@ -360,7 +370,7 @@ def free_courses(request, kind, pk):
             "progressPercentage": round((completed_count / activity_count) * 100) if activity_count else 0,
         })
 
-    response = JsonResponse({"freeCourses": result})
+    response = JsonResponse({"freeCourses": [*builder_courses, *result]})
     response["Cache-Control"] = "private, no-store"
     return response
 

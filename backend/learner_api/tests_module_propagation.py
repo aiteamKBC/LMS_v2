@@ -31,6 +31,9 @@ def learner(**changes):
 
 
 class ModuleAssignmentTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('learner_api.free_course_catalogue.builder_free_courses', return_value=[]))
+
     def test_both_plan_columns_use_the_same_precedence_for_reads_and_writes(self):
         for training in ([MODULE], json.dumps([MODULE])):
             source = learner(training_plan=training, learning_plan=[{'moduleId': 'OLD'}])

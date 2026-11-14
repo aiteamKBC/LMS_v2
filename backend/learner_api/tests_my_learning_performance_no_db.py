@@ -146,12 +146,22 @@ class CataloguePerformanceTests(SimpleTestCase):
         self.assertEqual(resolved['quiz_modules']['M1']['programmeId'],'P')
         self.assertEqual(resolved['live_credit_components'],[])
         self.assertEqual(resolved['imported_courses'],{'current:M1':'legacy:50'})
+        self.assertEqual(resolved['free_course_module_ids'], [])
         self.assertNotIn('curriculumSlots',modules['M1'])
         module_sql=cur.execute.call_args_list[0].args[0]
         week_sql=cur.execute.call_args_list[1].args[0]
         self.assertIn('WHERE EXISTS (SELECT 1 FROM requested',module_sql)
         self.assertNotIn('(SELECT CASE WHEN count(*)=1',module_sql)
         self.assertNotIn('curriculum.components',week_sql)
+
+    def test_standalone_identity_survives_card_metadata_projection_until_conversion(self):
+        for source_type, expected in [('free_course', ['M1']), ('module_authoring', [])]:
+            cursor = MagicMock()
+            cursor.description = [(key,) for key in ('id', 'title', 'source_type')]
+            cursor.fetchall.side_effect = [[('M1', 'Skills', source_type)], []]
+            resolved = {}
+            learning.catalogue_module_rows(cursor, ['M1'], identity_metadata=resolved)
+            self.assertEqual(resolved['free_course_module_ids'], expected)
 
     def test_native_identity_read_reuses_raw_live_credit_keys_and_skips_empty_quiz_lookup(self):
         from . import learner_detail

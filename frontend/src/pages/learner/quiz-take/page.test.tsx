@@ -35,7 +35,7 @@ vi.mock('@/components/feature/ReflectionWindow.helpers', () => ({
 }));
 const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ componentId: 'PROGRAMME-Q1', quizMeta: { quizId: 1 }, reflectionRequired: false }] };
 function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
-const renderPage = (kind = 'commercial') => render(<MemoryRouter initialEntries={[`/quiz/${kind}/501/1`]}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
+const renderPage = (kind = 'commercial', search = '') => render(<MemoryRouter initialEntries={[`/quiz/${kind}/501/1${search}`]}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
 
 describe('quiz requirements loading', () => {
   beforeEach(() => {
@@ -67,6 +67,22 @@ describe('quiz requirements loading', () => {
       },
     });
   });
+  it.each(['commercial', 'apprenticeship'])('shows the %s quiz mappings from the requested module and week', async kind => {
+    const mapped = (module: string, week: string, code: string) => ({
+      quizMeta: { quizId: 1 }, module, week,
+      ksbMappings: [{ code, description: `${code} description`, weight: 20, classification: 'main' }],
+    });
+    mocks.detail.mockResolvedValue({ ...detail, components: [
+      mapped('Other', 'Week 2', 'K99'), mapped('Marketing', 'Week 1', 'S99'),
+      mapped('Marketing', 'Week 2', 'K1'),
+    ] });
+    renderPage(kind, '?module=Marketing&week=Week%202');
+    const panel = await screen.findByRole('region', { name: 'Mapped KSBs' });
+    expect(panel).toHaveTextContent('K1 description');
+    expect(panel).not.toHaveTextContent(/K99|S99/);
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
   it.each(['commercial', 'apprenticeship'])('reopens the %s quiz reflection using the original quiz submission identity', async kind => {
     mocks.detail.mockResolvedValue({ ...detail, quizAttempts: [{ quizId: 1, attempt: 1, submittedAt: '2026-10-01T09:00:00Z', passed: true }] });
     mocks.loadReflection.mockResolvedValue({ status: 'accepted', learningReflection: 'Saved quiz learning.', coachFeedback: 'Quiz reflection accepted.' });

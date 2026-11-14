@@ -6,8 +6,8 @@ import type { KsbMappingType } from './componentAuthoringModel';
 // We export one row per component — its title and description are what ChatGPT
 // reads to decide the KSBs — and the operator pastes codes back into the `KSBs`
 // column, then re-uploads the same file. `Component ID` is the join key that
-// survives the trip: rows are matched on it, never on title (which ChatGPT may
-// rephrase) or position (which a reordered sheet would break).
+// survives the trip. Across copies, a unique week/title/type match may be
+// suggested, but only applied after review. Row position is never a join key.
 const DATA_SHEET = 'Components';
 const GUIDE_SHEET = 'How to fill';
 
@@ -30,7 +30,7 @@ interface ParsedKsb {
 export interface KsbImportSummary {
   /** Rows in the sheet that carried at least one KSB code. */
   rowsWithKsbs: number;
-  /** Components in the module that a filled row matched by id. */
+  /** Components updated by ID or by a reviewed, unambiguous suggestion. */
   componentsUpdated: number;
   /** Total KSB codes applied across all matched components. */
   codesApplied: number;
@@ -38,11 +38,51 @@ export interface KsbImportSummary {
   unmatchedIds: string[];
   /** Malformed tokens skipped, e.g. `X9` or an empty code. */
   skippedTokens: string[];
+  /** Rows skipped because their identity or destination was not unique. */
+  ambiguousIds?: string[];
+  suggestedMatches?: number;
 }
 
 export interface KsbImportResult {
   module: ModuleCatalogueItem;
   summary: KsbImportSummary;
+  cancelled?: boolean;
+}
+
+interface KsbWorkbookRow {
+  rowNumber: number;
+  sourceId: string;
+  weekNumber: string;
+  weekTitle: string;
+  title: string;
+  type: string;
+  ksbs: ParsedKsb[];
+}
+
+export interface KsbImportPreviewRow extends KsbWorkbookRow {
+  status: 'id' | 'suggested' | 'ambiguous' | 'unmatched';
+  target?: {
+    componentId: string;
+    weekNumber: string;
+    weekTitle: string;
+    title: string;
+    type: string;
+    currentKsbs: string;
+  };
+}
+
+export interface KsbImportPreview {
+  rows: KsbImportPreviewRow[];
+  skippedTokens: string[];
+}
+
+interface KsbImportOptions {
+  /** Without a reviewer, import only exact IDs; suggestions never auto-apply. */
+  review?: (preview: KsbImportPreview) => Promise<boolean>;
+  /** Abort if the destination changed while reading the file or reviewing it. */
+  isCurrent?: () => boolean;
+  /** A standalone week has a title but no module week number. */
+  weekTitle?: string;
 }
 
 /** The KSB source the imported sheet was authored against. */
@@ -147,10 +187,21 @@ Return the SAME spreadsheet with the "${COL_KSBS}" column updated — the pre-fi
 /** A one-line summary of what an import changed, for a toast or status line. */
 export function describeKsbImport(summary: KsbImportSummary): string {
   const parts = [`Applied ${summary.codesApplied} KSB code${summary.codesApplied === 1 ? '' : 's'} across ${summary.componentsUpdated} component${summary.componentsUpdated === 1 ? '' : 's'}.`];
-  if (summary.unmatchedIds.length) parts.push(`${summary.unmatchedIds.length} row${summary.unmatchedIds.length === 1 ? '' : 's'} matched no component here (deleted since export, or the sheet is from a different module) and ${summary.unmatchedIds.length === 1 ? 'was' : 'were'} skipped.`);
+  if (summary.unmatchedIds.length) parts.push(`${summary.unmatchedIds.length} row${summary.unmatchedIds.length === 1 ? '' : 's'} matched no component uniquely here and ${summary.unmatchedIds.length === 1 ? 'was' : 'were'} skipped.`);
+  if (summary.ambiguousIds?.length) parts.push(`${summary.ambiguousIds.length} skipped rows had duplicate IDs or conflicting matches.`);
+  if (summary.suggestedMatches) parts.push(`${summary.suggestedMatches} components were matched by week, title and type after review.`);
   if (summary.skippedTokens.length) parts.push(`Ignored ${summary.skippedTokens.length} invalid code${summary.skippedTokens.length === 1 ? '' : 's'}: ${summary.skippedTokens.slice(0, 8).join(', ')}${summary.skippedTokens.length > 8 ? '…' : ''}.`);
-  parts.push('Review the mappings, then save to persist them.');
+  parts.push(summary.componentsUpdated ? 'Review the mappings, then save to persist them.' : 'No components were changed. Export a sheet from this destination or review the week, title and type columns.');
   return parts.join(' ');
+}
+
+export function ksbImportNotice(summary: KsbImportSummary): { title: string; text: string; icon: 'warning' | 'success' } {
+  const warning = !summary.codesApplied || !summary.componentsUpdated || summary.unmatchedIds.length > 0 || summary.skippedTokens.length > 0;
+  return {
+    title: !summary.codesApplied ? 'No KSB codes applied' : warning ? 'KSB sheet partially imported' : 'KSB sheet imported',
+    text: describeKsbImport(summary),
+    icon: warning ? 'warning' : 'success',
+  };
 }
 
 // main → hard, possible → possible, everything else soft: the same mapping the
@@ -280,9 +331,9 @@ async function writeKsbWorkbook(rows: ExportRow[], fileNameBase: string): Promis
   return { rows: data.length, fileName };
 }
 
-// The read path — parse the sheet into componentId → filled KSBs. Shared by the
-// module and week imports; the caller decides which components to fold it onto.
-async function readKsbWorkbook(file: File, source?: KsbImportSource): Promise<{ byId: Map<string, ParsedKsb[]>; rowsWithKsbs: number; skippedTokens: string[] }> {
+// Keep individual rows and their context: duplicates must remain visible rather
+// than silently becoming a last-row-wins overwrite.
+async function readKsbWorkbook(file: File, source?: KsbImportSource): Promise<{ rows: KsbWorkbookRow[]; skippedTokens: string[] }> {
   const XLSX = await import('xlsx');
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
@@ -298,12 +349,11 @@ async function readKsbWorkbook(file: File, source?: KsbImportSource): Promise<{ 
   }
 
   const skippedTokens: string[] = [];
-  const byId = new Map<string, ParsedKsb[]>();
+  const filledRows: KsbWorkbookRow[] = [];
   const allowedCodes = source?.allowedCodes
     ? new Set(source.allowedCodes.map(code => code.trim().toUpperCase()).filter(Boolean))
     : null;
-  let rowsWithKsbs = 0;
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     const id = String(row[COL_COMPONENT_ID] ?? '').trim();
     const cell = String(row[COL_KSBS] ?? '').trim();
     if (!id || !cell) continue;
@@ -317,10 +367,93 @@ async function readKsbWorkbook(file: File, source?: KsbImportSource): Promise<{ 
       : parsed;
     // Keep a filled row even when all codes were invalid. Applying an empty
     // result clears stale mappings instead of leaving them to fail on save.
-    rowsWithKsbs += 1;
-    byId.set(id, valid);
+    filledRows.push({
+      rowNumber: typeof row.__rowNum__ === 'number' ? row.__rowNum__ + 1 : index + 2,
+      sourceId: id,
+      weekNumber: String(row[COL_WEEK] ?? '').trim(),
+      weekTitle: String(row[COL_WEEK_TITLE] ?? '').trim(),
+      title: String(row[COL_TITLE] ?? '').trim(),
+      type: String(row[COL_TYPE] ?? '').trim(),
+      ksbs: valid,
+    });
   }
-  return { byId, rowsWithKsbs, skippedTokens };
+  return { rows: filledRows, skippedTokens };
+}
+
+function matchText(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function matchesContext(row: KsbWorkbookRow, target: ExportRow): boolean {
+  if (!row.title || !row.type || (!row.weekNumber && !row.weekTitle)) return false;
+  if (matchText(row.title) !== matchText(target.component.title) || matchText(row.type) !== matchText(target.component.type)) return false;
+  if (row.weekNumber) {
+    const number = Number(row.weekNumber);
+    if (!Number.isInteger(number) || number < 1 || number !== target.weekNumber) return false;
+  }
+  return !row.weekTitle || matchText(row.weekTitle) === matchText(target.weekTitle);
+}
+
+function planKsbImport(rows: KsbWorkbookRow[], targets: ExportRow[]): KsbImportPreviewRow[] {
+  const idCounts = new Map<string, number>();
+  rows.forEach(row => idCounts.set(row.sourceId, (idCounts.get(row.sourceId) || 0) + 1));
+  const exactIds = new Set(rows.map(row => row.sourceId));
+  const planned = rows.map((row): KsbImportPreviewRow => {
+    if (idCounts.get(row.sourceId)! > 1) return { ...row, status: 'ambiguous' };
+    const exact = targets.filter(target => target.component.id === row.sourceId);
+    const candidates = exact.length ? exact : targets.filter(target => matchesContext(row, target));
+    if (!candidates.length) return { ...row, status: 'unmatched' };
+    if (candidates.length !== 1 || (!exact.length && exactIds.has(candidates[0].component.id))) {
+      return { ...row, status: 'ambiguous' };
+    }
+    const { component, weekNumber, weekTitle } = candidates[0];
+    return {
+      ...row,
+      status: exact.length ? 'id' : 'suggested',
+      target: {
+        componentId: component.id,
+        weekNumber: String(weekNumber),
+        weekTitle,
+        title: component.title,
+        type: component.type,
+        currentKsbs: componentCurrentCells(component.ksbMappings),
+      },
+    };
+  });
+  const claims = new Map<string, number>();
+  planned.forEach(row => {
+    if (row.target) claims.set(row.target.componentId, (claims.get(row.target.componentId) || 0) + 1);
+  });
+  return planned.map(row => row.target && claims.get(row.target.componentId)! > 1
+    ? { ...row, target: undefined, status: 'ambiguous' }
+    : row);
+}
+
+async function resolveKsbImport(file: File, targets: ExportRow[], source: KsbImportSource | undefined, options: KsbImportOptions) {
+  const { rows, skippedTokens } = await readKsbWorkbook(file, source);
+  const planned = planKsbImport(rows, targets);
+  const assertCurrent = () => {
+    if (options.isCurrent && !options.isCurrent()) {
+      throw new Error('The destination changed while the KSB sheet was being reviewed. Import the file again to review the latest content.');
+    }
+  };
+  assertCurrent();
+  const needsReview = Boolean(options.review && planned.some(row => row.status !== 'id'));
+  const cancelled = needsReview && !(await options.review!({ rows: planned, skippedTokens }));
+  if (!cancelled) assertCurrent();
+  const accepted = cancelled ? [] : planned.filter(row => row.status === 'id' || (needsReview && row.status === 'suggested'));
+  const byId = new Map(accepted.map(row => [row.target!.componentId, row.ksbs]));
+  const acceptedRows = new Set(accepted);
+  const summary: KsbImportSummary = {
+    rowsWithKsbs: rows.length,
+    componentsUpdated: byId.size,
+    codesApplied: accepted.reduce((count, row) => count + row.ksbs.length, 0),
+    unmatchedIds: planned.filter(row => !acceptedRows.has(row)).map(row => row.sourceId),
+    skippedTokens,
+    ambiguousIds: planned.filter(row => row.status === 'ambiguous').map(row => row.sourceId),
+    suggestedMatches: accepted.filter(row => row.status === 'suggested').length,
+  };
+  return { byId, summary, cancelled };
 }
 
 // Fold parsed KSBs onto one component. A filled row replaces the component's KSB
@@ -387,28 +520,23 @@ export function exportModuleKsbWorkbook(module: ModuleCatalogueItem, options: { 
 }
 
 /** Apply a filled sheet back onto the module's components, matching by id. */
-export async function importModuleKsbWorkbook(file: File, module: ModuleCatalogueItem, source?: KsbImportSource): Promise<KsbImportResult> {
-  const { byId, rowsWithKsbs, skippedTokens } = await readKsbWorkbook(file, source);
-
-  const matchedIds = new Set<string>();
-  let componentsUpdated = 0;
-  let codesApplied = 0;
+export async function importModuleKsbWorkbook(file: File, module: ModuleCatalogueItem, source?: KsbImportSource, options: KsbImportOptions = {}): Promise<KsbImportResult> {
+  const targets = module.weekStructure.flatMap(week => week.components.map(component => ({ weekNumber: week.weekNumber, weekTitle: week.title, component })));
+  const { byId, summary, cancelled } = await resolveKsbImport(file, targets, source, options);
+  if (!byId.size) return { module, summary, cancelled };
   const weekStructure = module.weekStructure.map(week => ({
     ...week,
     components: week.components.map(component => {
       const parsed = byId.get(component.id);
       if (!parsed) return component;
-      matchedIds.add(component.id);
-      componentsUpdated += 1;
-      codesApplied += parsed.length;
       return applyParsedToComponent(component, parsed, source);
     }),
   }));
 
-  const unmatchedIds = [...byId.keys()].filter(id => !matchedIds.has(id));
   return {
     module: { ...module, weekStructure },
-    summary: { rowsWithKsbs, componentsUpdated, codesApplied, unmatchedIds, skippedTokens },
+    summary,
+    cancelled,
   };
 }
 
@@ -419,24 +547,19 @@ export function exportWeekKsbWorkbook(weekTitle: string, components: ModuleCompo
 }
 
 /** Apply a filled sheet back onto a single week's components, matching by id. */
-export async function importWeekKsbWorkbook(file: File, components: ModuleComponent[], source?: KsbImportSource): Promise<{ components: ModuleComponent[]; summary: KsbImportSummary }> {
-  const { byId, rowsWithKsbs, skippedTokens } = await readKsbWorkbook(file, source);
-
-  const matchedIds = new Set<string>();
-  let componentsUpdated = 0;
-  let codesApplied = 0;
+export async function importWeekKsbWorkbook(file: File, components: ModuleComponent[], source?: KsbImportSource, options: KsbImportOptions = {}): Promise<{ components: ModuleComponent[]; summary: KsbImportSummary; cancelled?: boolean }> {
+  const targets = components.map(component => ({ weekNumber: '' as const, weekTitle: options.weekTitle || '', component }));
+  const { byId, summary, cancelled } = await resolveKsbImport(file, targets, source, options);
+  if (!byId.size) return { components, summary, cancelled };
   const next = components.map(component => {
     const parsed = byId.get(component.id);
     if (!parsed) return component;
-    matchedIds.add(component.id);
-    componentsUpdated += 1;
-    codesApplied += parsed.length;
     return applyParsedToComponent(component, parsed, source);
   });
 
-  const unmatchedIds = [...byId.keys()].filter(id => !matchedIds.has(id));
   return {
     components: next,
-    summary: { rowsWithKsbs, componentsUpdated, codesApplied, unmatchedIds, skippedTokens },
+    summary,
+    cancelled,
   };
 }

@@ -117,7 +117,9 @@ describe('OTJ hours activity log', () => {
     // Match the coach dashboard: 14 of the 30 programme days have elapsed, so
     // target-to-date is 120 * 14 / 30 = 56 hours.
     expect(within(chart).getByRole('progressbar', { name: 'Overall off-the-job hours progress' }))
-      .toHaveAttribute('aria-valuenow', '1');
+      // The chart is against its 10-hour monthly plan; target-to-date above
+      // remains the separately calculated 56-hour programme target.
+      .toHaveAttribute('aria-valuenow', '7');
     expect(within(chart).getByText('-99% (-55.3h)')).toBeVisible();
   });
 

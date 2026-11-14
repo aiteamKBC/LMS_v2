@@ -117,6 +117,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<Learner[]>([]);
   const [loading, setLoading] = useState(true);
+  const initialLoadPending = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [serverFilterData, setServerFilterData] = useState<Record<string, { urgency?: number }>>({});
@@ -169,10 +170,15 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
     return `${CASELOAD_ENDPOINT}?${query}`;
   }, [currentPage, dashboard, filters.cohort, filters.group, filters.programStatus, filters.search, sortDirection, sortKey, statusFilter]);
   const pageCacheKey = `${(accountEmail || '').trim().toLowerCase()}::${authenticatedCoachEmail.trim().toLowerCase()}`;
+  const retryActivityPlans = useCallback(() => {
+    invalidateDashboardLearners(pageCacheKey);
+    setReloadToken(value => value + 1);
+  }, [pageCacheKey]);
 
   useEffect(() => {
     if (!isInitialized) return;
     const controller = new AbortController();
+    initialLoadPending.current = false;
 
     async function loadCaseload() {
       const cached = dashboard ? getDashboardLearnerPageCache(pageCacheKey) : undefined;
@@ -222,6 +228,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
         return;
       }
 
+      initialLoadPending.current = true;
       try {
         const { caseload: data, analytics } = dashboard
           ? { caseload: await fetchDashboardLearners(controller.signal, pageCacheKey), analytics: null }
@@ -250,7 +257,10 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
         setError('Unable to load live learner data right now.');
         setLearners([]);
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          initialLoadPending.current = false;
+          setLoading(false);
+        }
       }
     }
 
@@ -258,8 +268,34 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
     return () => controller.abort();
   }, [accountEmail, authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, dashboard, embedded, embeddedLearners, hasAccount, isInitialized, pageCacheKey, reloadToken]);
 
-  // --- derived data ---------------------------------------------------------
+  // Read saved summaries in one request; never start overlapping row builds.
+  useEffect(() => {
+    if (!dashboard || !isInitialized || !hasAccount || !authenticatedCoachEmail) return;
+    const controller = new AbortController();
+    let pending = false;
+    const refresh = async () => {
+      if (document.visibilityState === 'hidden' || initialLoadPending.current || pending || controller.signal.aborted) return;
+      pending = true;
+      try {
+        invalidateDashboardLearners(pageCacheKey);
+        const data = await fetchDashboardLearners(controller.signal, pageCacheKey);
+        if (!controller.signal.aborted) {
+          setError(null);
+          setLearners((data.results || data.learners || []).map(normalizeDashboardRow));
+          setServerFilterData(data.learnerFilterData || {});
+          setServerFilterOptions(data.filterOptions || null);
+        }
+      } catch {
+        if (!controller.signal.aborted) setLearners(rows => rows.map(row => ({ ...row, activityPlanState: 'unavailable' })));
+      } finally { pending = false; }
+    };
+    const interval = window.setInterval(() => { void refresh(); }, 15000);
+    const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    document.addEventListener('visibilitychange', visible);
+    return () => { controller.abort(); window.clearInterval(interval); document.removeEventListener('visibilitychange', visible); };
+  }, [dashboard, isInitialized, hasAccount, authenticatedCoachEmail, pageCacheKey, reloadToken]);
 
+  // --- derived data ---------------------------------------------------------
   // The one expensive computation on the page, and the only place risk is
   // decided. Keyed on the learner list, so filtering and sorting never redo it.
   const visibleLearners = useMemo(() => learners.filter(isVisibleCaseloadLearner), [learners]);
@@ -353,7 +389,8 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
         case 'name': return learner.name;
         case 'otjh': return dashboard ? numeric(learner.otjhProgressAsOfToday) : numeric(learner.overallProgress, learner.overallProgressAvailable);
         case 'ksb': return numeric(learner.ksbProgress, learner.ksbProgressAvailable);
-        case 'components': return learner.componentsPlanned ? numeric(((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100) : null;
+        case 'components': return dashboard ? numeric(learner.activityPlan?.percent)
+          : learner.componentsPlanned ? numeric(((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100) : null;
         case 'attendance': return numeric(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable);
         case 'start-date': return date(learner.startDate);
         case 'activity': return date([learner.lastActivity, learner.attendanceLastSession, learner.lastSubmittedEvidence, learner.lastContact].find(hasValue));
@@ -457,7 +494,12 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
       state: {
         learnerId: learner.id,
         learnerName: learner.name,
-        activitySnapshot: {
+        activitySnapshot: dashboard ? {
+          learnerId: learner.id,
+          completed: learner.activityPlan?.completed ?? null,
+          total: learner.activityPlan?.total ?? null,
+          percent: learner.activityPlan?.percent ?? null,
+        } : {
           learnerId: learner.id,
           completed: learner.componentsCompleted ?? null,
           total: learner.componentsPlanned ?? null,
@@ -477,7 +519,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
         ...(tab ? { tab } : {}),
       },
     });
-  }, [navigate]);
+  }, [navigate, dashboard]);
 
   const handleOpenProfile = useCallback((learner: Learner) => openProfile(learner), [openProfile]);
 
@@ -659,6 +701,8 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
               onOpenProfile={handleOpenProfile}
               onOpenLearnerPage={openLearnerPage}
               today={today}
+              showActivityPlan={dashboard}
+              retryActivityPlans={retryActivityPlans}
             />
           )}
 

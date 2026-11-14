@@ -78,7 +78,9 @@ class CurriculumChangeLogMiddlewareTests(SimpleTestCase):
             return middleware(request)
 
     def test_attributes_the_span_to_the_path_that_was_written(self):
-        self.run_request(self.factory.post('/curriculum_api/curriculum/modules/'), [7, 9])
+        request = self.factory.post('/curriculum_api/curriculum/modules/')
+        self.run_request(request, [7, 9])
+        self.assertTrue(request.curriculum_changed)
         self.assertEqual(
             recent_curriculum_changes(),
             [{'path': '/curriculum/modules/', 'lo': 7, 'hi': 9}],
@@ -106,7 +108,9 @@ class CurriculumChangeLogMiddlewareTests(SimpleTestCase):
         self.assertEqual(recent_curriculum_changes(), [])
 
     def test_a_write_that_did_not_move_the_counter_records_nothing(self):
-        self.run_request(self.factory.post('/curriculum_api/curriculum/modules/'), [3, 3])
+        request = self.factory.post('/curriculum_api/curriculum/modules/')
+        self.run_request(request, [3, 3])
+        self.assertFalse(getattr(request, 'curriculum_changed', False))
         self.assertEqual(recent_curriculum_changes(), [])
 
     def test_leaves_other_apis_alone(self):

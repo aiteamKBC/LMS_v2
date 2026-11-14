@@ -22,6 +22,8 @@ export interface LearningPlanModule {
   programmeName: string;
   /** Off-the-job hours for this module (curriculum.modules.total_otjh). */
   hours: number;
+  /** Standalone additional learning, shown separately from programme modules. */
+  isFreeCourse?: boolean;
   /**
    * The module's delivery window (curriculum.modules start_date/end_date), as
    * YYYY-MM-DD — '' when the module has not been scheduled. Read-only: it is
@@ -80,10 +82,13 @@ export interface LearningPlanTotals {
   moduleCount: number;
   /** Module hours alone — the modules table's own subtotal. */
   moduleHours: number;
+  freeCourseCount?: number;
+  freeCourseHours?: number;
+  plannedFreeCourseHours?: number;
   meetingCount: number;
   /** Meeting hours alone — the meetings table's own subtotal. */
   meetingHours: number;
-  /** moduleHours + meetingHours: the whole commitment. */
+  /** Core modules + meetings; additional course hours only for commercial learners. */
   totalHours: number;
 }
 
@@ -99,6 +104,7 @@ export interface LearningPlanResponse {
     cohort: string;
     group: string;
     programmeStatus: string;
+    learnerType?: 'apprenticeship' | 'commercial';
   };
   /** The current plan — the saved one, or the group preset if never saved. */
   plan: LearningPlanModule[];
@@ -109,6 +115,8 @@ export interface LearningPlanResponse {
   freeCourses: FreeCourseAssignment[];
   /** Opaque optimistic-concurrency token for the ordered assignment list. */
   freeCourseAssignmentVersion: string;
+  /** Builder courses use `plan` module ids for assignment and hours. */
+  standaloneCourses?: { freeCourseId: string; moduleId: string; courseName: string }[];
   /** The learner's group's modules, for "reset to group default". */
   preset: LearningPlanModule[];
   /** Every catalogue module not already on the plan, for the add picker. */

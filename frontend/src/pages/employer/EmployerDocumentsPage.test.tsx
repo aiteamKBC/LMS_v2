@@ -91,7 +91,8 @@ describe('All documents', () => {
     expect(within(sidebar).getAllByRole('link').map(link => [link.textContent, link.getAttribute('href')])).toEqual([
       ['Home', '/employers/9'],
       ['My learners', '/employers/9/learners'],
-      ['Progress reviews', '/employers/9/reviews'],
+      ['Progress & Gateway reviews', '/employers/9/reviews'],
+      ['Feedback', '/employers/9/feedback'],
       ['Documents', '/employers/9/documents'],
     ]);
     expect(screen.getByTestId('workspace')).toHaveAttribute('data-appearance', 'learner');
