@@ -102,6 +102,7 @@ function isDerivedWeekField(path: string): boolean {
  */
 const ATOMIC_MODULE_FIELDS = new Set([
   'weeklySchedule',
+  'scheduleMode',
   'sessionHolidays',
   'weekStructure[*].learningOutcomes',
   'epaRequirements',
@@ -158,6 +159,7 @@ const FIELD_LABELS: Record<string, string> = {
   endTime: 'end time',
   sessionsNumber: 'number of sessions',
   weeklySchedule: 'weekly schedule',
+  scheduleMode: 'schedule source',
   sessionHolidays: 'holiday selection',
   tutor: 'tutor',
   coach: 'coach',

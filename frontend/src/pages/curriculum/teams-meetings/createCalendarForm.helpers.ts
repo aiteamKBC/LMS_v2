@@ -1,6 +1,7 @@
 import { formatCalendarDateTime, getCalendarTimeZone, parseUtcInstant, zonedNaiveToUtcIso, type TeamsMeetingInput } from '../module-builder/moduleAuthoringData';
 import { emailList } from "../module-builder/EmailChipsInput.helpers";
 import { cleanText } from '../shared/entities/model';
+import type { CurriculumModule } from '@/lib/curriculumApi';
 import { calendarInputError, normalizedClock, clockLabel } from './calendarTime';
 
 
@@ -150,6 +151,8 @@ export function teamsGapNote(plannedUtc: string, teamsUtc: string, hasCalendar: 
  * copy of that page.
  */
 export interface TeamsSchedulePreviewRow {
+  scheduleMode?: 'group' | 'custom';
+  weeklySchedule?: CurriculumModule['weeklySchedule'];
   timeZone?: string;
   name: string;
   sessions: TeamsPlannedSession[];

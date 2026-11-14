@@ -56,7 +56,7 @@ describe('module drawer group-owned scheduling', () => {
   it('shows module dates and a read-only summary of the selected Group schedule', () => {
     drawer();
 
-    expect(screen.queryByRole('combobox', { name: /Sessions per week/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /Sessions per week/i })).toHaveTextContent('1');
     expect(screen.queryByRole('group', { name: /Delivery days/i })).not.toBeInTheDocument();
     expect(screen.getByLabelText(/^Start date/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^End date/i)).toBeInTheDocument();
@@ -102,5 +102,66 @@ describe('module drawer group-owned scheduling', () => {
        endDate: '2026-10-01',
       weeklySchedule: [{ day: 'Wednesday', startTime: '10:00', endTime: '12:00' }],
     })));
+  });
+
+  it.each([2, 3, 7])('creates %i sessions per week without multiplying the authored weeks', async count => {
+    drawer();
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Custom delivery');
+    fireEvent.change(screen.getByRole('spinbutton', { name: /^Weeks/ }), { target: { value: '4' } });
+    await choose('Sessions per week', String(count));
+    const extraDays = ['Mon', 'Tue', 'Thu', 'Fri', 'Sat', 'Sun'].slice(0, count - 1);
+    for (const day of extraDays) await userEvent.click(screen.getByRole('button', { name: day }));
+    await choose('Tutor', 'Tutor One');
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    await waitFor(() => expect(createGroupModule).toHaveBeenCalledWith('GROUP-1', expect.objectContaining({
+      scheduleMode: 'custom', weeks: 4, sessionsNumber: 4 * count,
+      weeklySchedule: expect.any(Array),
+    })));
+    expect(vi.mocked(createGroupModule).mock.calls[0][1].weeklySchedule).toHaveLength(count);
+    expect(group.weekDays).toBe('Wednesday');
+  });
+
+  it('checks the tutor against every custom day and its independent time', async () => {
+    drawer();
+    await choose('Sessions per week', '2');
+    await userEvent.click(screen.getByRole('button', { name: 'Thu' }));
+    fireEvent.change(screen.getByLabelText('Thursday start time', { exact: false }), { target: { value: '18:00' } });
+    fireEvent.change(screen.getByLabelText('Thursday end time', { exact: false }), { target: { value: '19:00' } });
+    await waitFor(() => expect(previewTutorAvailabilityRoster).toHaveBeenLastCalledWith(expect.objectContaining({
+      startDate: '2026-09-01', sessionsNumber: 2, weekDays: 'Wednesday, Thursday',
+      weeklySchedule: [
+        { day: 'Wednesday', startTime: '10:00', endTime: '12:00' },
+        { day: 'Thursday', startTime: '18:00', endTime: '19:00' },
+      ],
+    })));
+  });
+
+  it('blocks a custom count with missing days before saving', async () => {
+    drawer();
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Missing day');
+    await choose('Tutor', 'Tutor One');
+    await choose('Sessions per week', '2');
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+    expect(screen.getByText('Choose 2 delivery days to match the sessions per week.')).toBeInTheDocument();
+    expect(createGroupModule).not.toHaveBeenCalled();
+  });
+
+  it('reopens Custom and returns to the original once-weekly Group flow when 1 is chosen', async () => {
+    drawer(moduleFormTarget({
+      id: 'MOD-CUSTOM', name: 'Custom module', programmeId: 'PROG-1', cohortId: 'COHORT-1', groupId: 'GROUP-1',
+      scheduleMode: 'custom', weeks: 4, sessionsNumber: 8, weekDays: 'Monday, Thursday',
+      weeklySchedule: [{ day: 'Monday', startTime: '09:00', endTime: '11:00' }, { day: 'Thursday', startTime: '18:00', endTime: '19:00' }],
+      startDate: '2026-09-07', endDate: '2026-10-04', tutor: 'Tutor One',
+    } as CurriculumModule)!);
+    expect(screen.getByRole('combobox', { name: /Sessions per week/i })).toHaveTextContent('2');
+    expect(screen.getByLabelText('Thursday start time', { exact: false })).toHaveValue('18:00');
+    await choose('Sessions per week', '1');
+    expect(screen.queryByRole('group', { name: /Delivery days/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+    await waitFor(() => expect(updateCurriculumModule).toHaveBeenCalledWith('MOD-CUSTOM', expect.objectContaining({
+      scheduleMode: 'group', sessionsNumber: 4, weekDays: 'Wednesday', startTime: '10:00', endTime: '12:00',
+    })));
+    expect(vi.mocked(updateCurriculumModule).mock.calls[0][1]).not.toHaveProperty('weeks');
   });
 });

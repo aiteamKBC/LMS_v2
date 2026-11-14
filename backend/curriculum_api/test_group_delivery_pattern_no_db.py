@@ -48,6 +48,19 @@ GROUP = {'session_week_day': 'Thursday', 'session_start_time': '09:00', 'session
 
 
 class GroupFirstTests(unittest.TestCase):
+    def test_explicit_custom_days_and_per_day_clocks_outrank_group_defaults(self):
+        module = {
+            'schedule_mode': 'custom', 'session_week_day': 'Monday, Thursday',
+            'weekly_schedule': [
+                {'day': 'Monday', 'startTime': '14:00', 'endTime': '16:00'},
+                {'day': 'Thursday', 'startTime': '18:00', 'endTime': '19:00'},
+            ],
+        }
+        self.assertEqual(views['module_delivery_row'](module, GROUP), module)
+        self.assertEqual(self.clock(module, session_date='2026-09-07'), ('14:00', '16:00'))
+        self.assertEqual(self.clock(module), ('18:00', '19:00'))
+        self.assertEqual(GROUP['session_week_day'], 'Thursday')
+
     def clock(self, module, group=GROUP, session_date='2026-09-03'):
         return views['module_session_clock'](module, group, session_date)[:2]
 

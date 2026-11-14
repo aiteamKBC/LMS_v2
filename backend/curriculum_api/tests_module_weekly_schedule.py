@@ -76,6 +76,35 @@ class GraphCalendar:
 
 
 class ModuleWeeklyScheduleTests(CurriculumPersistenceTransactionHarness):
+    def test_custom_delivery_creates_dated_components_and_survives_a_group_schedule_change(self):
+        tree = self.tree_payload()
+        tree['cohorts'][0]['groups'][0]['modules'] = []
+        self.assertEqual(self.post_json('/curriculum_api/curriculum/programmes/tree/', tree).status_code, 200)
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
+            'moduleName': 'Custom weekly delivery', 'startDate': '2026-09-07',
+            'weeks': 4, 'sessionsNumber': 8, 'weeklySchedule': SLOTS,
+            'scheduleMode': 'custom', 'tutor': 'Tutor One',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        module_id = response.json()['created'][0]['catalogueId']
+        structure = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(structure['scheduleMode'], 'custom')
+        self.assertEqual(structure['weeksNumber'], 4)
+        self.assertEqual(structure['sessionsNumber'], 8)
+        self.assertEqual([len(week['components']) for week in structure['weekStructure']], [2] * 4)
+        self.assertEqual([component['settings']['sessionDate'] for week in structure['weekStructure'] for component in week['components']],
+                         ['2026-09-07', '2026-09-10', '2026-09-14', '2026-09-17', '2026-09-21', '2026-09-24', '2026-09-28', '2026-10-01'])
+        before = copy.deepcopy(structure['weekStructure'])
+        response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {
+            'weekDays': 'Friday', 'startTime': '13:00', 'endTime': '15:00',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        after = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(after['weeklySchedule'], SLOTS)
+        self.assertEqual(after['weekStructure'], before)
+        catalogue = views.authoring_summary_catalogue_item(views.authoring_catalogue_summaries()[module_id])
+        self.assertEqual(catalogue['scheduleMode'], 'custom')
+
     def create_module(self):
         response = self.post_json('/curriculum_api/curriculum/modules/', {
             'moduleType': 'authoring', 'title': 'Independent weekday times',

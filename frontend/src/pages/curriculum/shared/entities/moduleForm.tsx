@@ -122,6 +122,7 @@ const MODULE_FIELD_LABELS: Record<string, string> = {
   cohortId: 'cohort',
   groupIds: 'groups',
   sessionsNumber: 'number of weeks',
+  deliveryPattern: 'weekly schedule',
   tutor: 'tutor',
   status: 'status',
   description: 'description',
@@ -131,10 +132,6 @@ const MODULE_FIELD_LABELS: Record<string, string> = {
 };
 
 const UNASSIGNED = 'unassigned';
-// Delivery days and clock controls belong to the Group editor. Keep the old
-// controls in this drawer's source for the derived schedule helpers, but never
-// render them as editable module fields.
-const showInheritedScheduleControls = false;
 const TRUE_FLAGS = new Set(['1', 'true', 'yes', 'y', 'on']);
 const FALSE_FLAGS = new Set(['0', 'false', 'no', 'n', 'off']);
 
@@ -221,6 +218,7 @@ export function ModuleFormDrawer({
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [sessionsNumber, setSessionsNumber] = useState('1');
   const [sessionsPerWeek, setSessionsPerWeek] = useState('1');
+  const [scheduleMode, setScheduleMode] = useState<'group' | 'custom'>('group');
   const [weekDays, setWeekDays] = useState('');
   const [groupStartTime, setGroupStartTime] = useState('');
   const [groupEndTime, setGroupEndTime] = useState('');
@@ -309,9 +307,9 @@ export function ModuleFormDrawer({
   // halves independently -- a colleague's days with this reader's times -- would
   // produce a timetable neither of them chose, and this form is what the Teams
   // calendar is built from, so that timetable would be booked.
-  const deliveryPattern = { sessionsPerWeek, weekDays, groupStartTime, groupEndTime, weeklyTimes };
+  const deliveryPattern = { scheduleMode, sessionsPerWeek, weekDays, groupStartTime, groupEndTime, weeklyTimes };
   const liveValues = {
-    name, programmeId, cohortId, groupIds, sessionsNumber, sessionsPerWeek, weekDays,
+    name, programmeId, cohortId, groupIds, sessionsNumber, scheduleMode, sessionsPerWeek, weekDays,
     groupStartTime, groupEndTime, weeklyTimes, startDate, targetEndDate, tutor, status,
     description, color, coverImage, deliveryPattern, pricing,
   };
@@ -423,9 +421,11 @@ export function ModuleFormDrawer({
     // never been given a slot at all is the other case, and still leaves the
     // module its own pattern.
     const parentGroupPattern = groupDeliveryPattern(parentGroup);
-    const initialWeekDays = parentGroupPattern && !parentGroupPattern.days
+    const initialScheduleMode = record?.scheduleMode || storedDelivery?.scheduleMode || 'group';
+    const initialWeekDays = initialScheduleMode !== 'custom' && parentGroupPattern && !parentGroupPattern.days
       ? ''
       : canonicalDeliveryDays(record?.weekDays || storedDelivery?.weekDays || parentGroup?.weekDays || '');
+    const initialWeeklySchedule = record?.weeklySchedule || storedDelivery?.weeklySchedule || [];
     const initial = {
       name: cleanText(record?.name),
       programmeId: resolvedProgrammeId,
@@ -441,8 +441,9 @@ export function ModuleFormDrawer({
       // Weeks box, which then saved back multiplied again on every round-trip.
       sessionsNumber: String(record?.deliveryWeeks || record?.weeks || record?.sessionsNumber || storedDelivery?.sessions || 1),
       sessionsPerWeek: String(Math.max(1, deliveryDayIndexes(initialWeekDays).length)),
+      scheduleMode: initialScheduleMode,
       weekDays: initialWeekDays,
-      weeklyTimes: Object.fromEntries((record?.weeklySchedule || storedDelivery?.weeklySchedule || []).map(slot => [slot.day, { startTime: slot.startTime, endTime: slot.endTime }])),
+      weeklyTimes: Object.fromEntries(initialWeeklySchedule.map(slot => [slot.day, { startTime: slot.startTime, endTime: slot.endTime }])),
       groupStartTime: cleanText(record?.startTime || storedDelivery?.startTime)
         || groupDeliveryPattern(parentGroup)?.startTime
         || '',
@@ -479,6 +480,7 @@ export function ModuleFormDrawer({
       initial.groupEndTime = '';
     }
     const storedPattern = {
+      scheduleMode: initial.scheduleMode,
       sessionsPerWeek: initial.sessionsPerWeek,
       weekDays: initial.weekDays,
       groupStartTime: initial.groupStartTime,
@@ -517,6 +519,7 @@ export function ModuleFormDrawer({
     setGroupIds(coEdit.take(verdict, 'groupIds', initial.groupIds));
     setSessionsNumber(coEdit.take(verdict, 'sessionsNumber', initial.sessionsNumber));
     const mergedPattern = coEdit.take(verdict, 'deliveryPattern', storedPattern);
+    setScheduleMode(mergedPattern.scheduleMode);
     setSessionsPerWeek(mergedPattern.sessionsPerWeek);
     setWeekDays(mergedPattern.weekDays);
     setWeeklyTimes(mergedPattern.weeklyTimes);
@@ -660,16 +663,16 @@ export function ModuleFormDrawer({
    * the cohort's holidays.
    */
   const applyGroupPattern = () => {
-    if (!groupPattern?.days || !groupPattern.startTime || !groupPattern.endTime) return;
-    const days = groupPattern.days;
+    const days = groupPattern?.days || '';
+    setScheduleMode('group');
     setWeekDays(days);
     setSessionsPerWeek(String(Math.max(1, deliveryDayIndexes(days).length)));
     setWeeklyTimes(Object.fromEntries(days.split(', ').filter(Boolean).map(day => [
       day,
-      { startTime: groupPattern.startTime, endTime: groupPattern.endTime },
+      { startTime: groupPattern?.startTime || '', endTime: groupPattern?.endTime || '' },
     ])));
-    setGroupStartTime(groupPattern.startTime);
-    setGroupEndTime(groupPattern.endTime);
+    setGroupStartTime(groupPattern?.startTime || '');
+    setGroupEndTime(groupPattern?.endTime || '');
     setTargetEndDate('');
   };
   const scheduleComplete = !selectedGroup || deliveryDaysPerWeek === Number(sessionsPerWeek);
@@ -681,8 +684,8 @@ export function ModuleFormDrawer({
   // was fetched for is compared against it below, so a plan left over from the
   // previous weeks value is never read as this one's answer.
   const planInputs = useMemo(
-    () => JSON.stringify([startDate, totalSessions, weekDays, weeklySchedule, cohortHolidays.map(holiday => holiday.id)]),
-    [cohortHolidays, startDate, totalSessions, weekDays, weeklySchedule],
+    () => JSON.stringify([scheduleMode, scheduleMode === 'custom' ? targetEndDate : '', startDate, totalSessions, weekDays, weeklySchedule, cohortHolidays.map(holiday => holiday.id)]),
+    [cohortHolidays, scheduleMode, targetEndDate, startDate, totalSessions, weekDays, weeklySchedule],
   );
   useEffect(() => {
     if (!open || !startDate || weeksEntered <= 0 || !scheduleComplete || !validWeeklyTimes) { setPlan(null); setPlanFor(''); setPlanLoading(false); return undefined; }
@@ -692,6 +695,7 @@ export function ModuleFormDrawer({
       previewModuleSessionPlan({
         startDate,
         numberOfSessions: totalSessions,
+        ...(scheduleMode === 'custom' ? { weeksNumber: weeksEntered, endDate: targetEndDate || projectModuleEndDate(startDate, weeksEntered) } : {}),
         weeklySchedule,
         weekDays,
         holidays: cohortHolidays,
@@ -701,7 +705,7 @@ export function ModuleFormDrawer({
         .finally(() => { if (active) setPlanLoading(false); });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [cohortHolidays, open, planInputs, scheduleComplete, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered]);
+  }, [cohortHolidays, open, planInputs, scheduleComplete, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered, scheduleMode, targetEndDate]);
 
   // The module's own calendar span -- start date plus the whole weeks entered.
   // Independent of the generated session plan, which answers a different
@@ -754,21 +758,22 @@ export function ModuleFormDrawer({
   // These are the same fields the save uses.
   // ==========================================================================
   const conflictSlot = useMemo(() => (
-    groupWeeklySchedule.length > 0 && groupStartDate && groupTotalSessions > 0
+    (scheduleMode === 'custom' ? weeklySchedule.length > 0 && scheduleComplete && validWeeklyTimes && startDate && totalSessions > 0 : groupWeeklySchedule.length > 0 && groupStartDate && groupTotalSessions > 0)
       ? {
-        startDate: groupStartDate,
-        sessionsNumber: groupTotalSessions,
-        weekDays: groupPattern?.days || undefined,
-        weeklySchedule: groupWeeklySchedule,
-        startTime: groupWeeklySchedule[0]?.startTime || undefined,
-        endTime: groupWeeklySchedule[0]?.endTime || undefined,
+        startDate: scheduleMode === 'custom' ? startDate : groupStartDate,
+        sessionsNumber: scheduleMode === 'custom' ? totalSessions : groupTotalSessions,
+        ...(scheduleMode === 'custom' ? { scheduleMode, weeksNumber: weeksEntered, endDate } : {}),
+        weekDays: scheduleMode === 'custom' ? weekDays : groupPattern?.days || undefined,
+        weeklySchedule: scheduleMode === 'custom' ? weeklySchedule : groupWeeklySchedule,
+        startTime: (scheduleMode === 'custom' ? weeklySchedule[0]?.startTime : groupWeeklySchedule[0]?.startTime) || undefined,
+        endTime: (scheduleMode === 'custom' ? weeklySchedule[0]?.endTime : groupWeeklySchedule[0]?.endTime) || undefined,
         cohortId: cohortId || cleanText(selectedGroup?.cohortId) || undefined,
         holidays: cohortHolidays,
         // Editing: the module must not be reported as blocking its own slot.
         moduleCatalogueId: module?.id || undefined,
       }
       : null
-  ), [cohortHolidays, cohortId, groupPattern?.days, groupStartDate, groupTotalSessions, groupWeeklySchedule, module?.id, selectedGroup?.cohortId]);
+  ), [cohortHolidays, cohortId, groupPattern?.days, groupStartDate, groupTotalSessions, groupWeeklySchedule, module?.id, selectedGroup?.cohortId, scheduleMode, weeklySchedule, scheduleComplete, validWeeklyTimes, startDate, totalSessions, weekDays, weeksEntered, endDate]);
   // Destructured rather than used through the hook's return value, which is a
   // fresh object every render: the memos below key off the parts that actually
   // move, so a keystroke in the name field does not rebuild the picker.
@@ -849,7 +854,7 @@ export function ModuleFormDrawer({
   // to the group, so this names the group rather than pointing at the Delivery
   // days control above -- that control is the module's answer for a group that
   // states no slot at all, and a grouped module does not save through it.
-  const groupDeliveryDayMissing = Boolean(selectedGroup && groupPattern && !groupPattern.days);
+  const groupDeliveryDayMissing = scheduleMode !== 'custom' && Boolean(selectedGroup && groupPattern && !groupPattern.days);
   // Whether this drawer is putting a name against the module rather than
   // leaving the one it already had. A create always is.
   const assigningTutor = Boolean(cleanText(tutor)) && (!module || cleanText(tutor) !== cleanText(baseline.current?.tutor ?? ''));
@@ -977,6 +982,7 @@ export function ModuleFormDrawer({
     const group = groups.find(item => sameIdentifier(item.id, nextPrimaryId));
     if (group?.cohortId && !cohortId) setCohortId(group.cohortId);
     if (!sameIdentifier(nextPrimaryId, primaryGroupId)) {
+      setScheduleMode('group');
       const pattern = groupDeliveryPattern(group);
       const nextDays = canonicalDeliveryDays(group?.weekDays || '');
       setWeekDays(nextDays);
@@ -1085,6 +1091,8 @@ export function ModuleFormDrawer({
       if (!startDate) { setError('Choose the module start date.'); return; }
       if (!endDate) { setError('Choose the module end date.'); return; }
       if (!tutor) { setError('Choose the tutor who delivers this module.'); return; }
+      if (scheduleMode === 'custom' && !scheduleComplete) { setError(`Choose ${sessionsPerWeek} delivery days to match the sessions per week.`); return; }
+      if (scheduleMode === 'custom' && !validWeeklyTimes) { setError("Set each day's start and end time, with the end after the start."); return; }
       // Pre-empted rather than sent, for the same reason the clash below is: the
       // save refuses this and the sentence is already on screen under Tutor.
       // Only when this drawer is actually assigning the tutor — a module that
@@ -1095,7 +1103,7 @@ export function ModuleFormDrawer({
       // unknown or newly created clashes still come back from the server.
     }
     const weeks = Math.max(1, Math.round(Number(sessionsNumber) || 1));
-    const primaryWeekDays = canonicalDeliveryDays(selectedGroup?.weekDays || '');
+    const primaryWeekDays = scheduleMode === 'custom' ? weekDays : canonicalDeliveryDays(selectedGroup?.weekDays || '');
     const sessions = Math.round(weeks * Math.max(1, deliveryDayIndexes(primaryWeekDays).length));
 
     const programme = programmes.find(item => sameIdentifier(programmeIdentity(item), programmeId))
@@ -1185,11 +1193,12 @@ export function ModuleFormDrawer({
      * their own defaults and holidays; only the primary end date was previewed.
      */
     const attachToGroup = (group: CurriculumGroup) => {
-      const groupWeekDays = canonicalDeliveryDays(group.weekDays || '');
+      const custom = scheduleMode === 'custom' && sameIdentifier(group.id, primaryGroupId);
+      const groupWeekDays = custom ? weekDays : canonicalDeliveryDays(group.weekDays || '');
       const groupDeliveryDays = deliveryDayIndexes(groupWeekDays).length;
       const groupCohort = cohorts.find(item => sameIdentifier(item.id, group.cohortId));
       const pattern = groupDeliveryPattern(group);
-      const groupSchedule = pattern?.days && pattern.startTime && pattern.endTime
+      const groupSchedule = custom ? weeklySchedule : pattern?.days && pattern.startTime && pattern.endTime
         ? pattern.days.split(', ').map(day => ({ day, startTime: pattern.startTime, endTime: pattern.endTime }))
         : [];
        return createGroupModule(group.id, {
@@ -1209,9 +1218,10 @@ export function ModuleFormDrawer({
           || undefined,
         tutor: tutor || undefined,
         weeklySchedule: groupSchedule,
+        scheduleMode: custom ? 'custom' : 'group',
         weekDays: groupWeekDays || undefined,
-        startTime: pattern?.startTime || undefined,
-        endTime: pattern?.endTime || undefined,
+        startTime: groupSchedule[0]?.startTime || undefined,
+        endTime: groupSchedule[0]?.endTime || undefined,
         color,
         coverImage,
         notes: description,
@@ -1234,8 +1244,8 @@ export function ModuleFormDrawer({
         // An untouched box must leave the authored weeks exactly as they are.
         const weeksChanged = String(sessionsNumber).trim() !== String(baseline.current?.sessionsNumber ?? '').trim();
         const primaryPattern = groupDeliveryPattern(selectedGroup);
-        const primaryWeekDays = canonicalDeliveryDays(selectedGroup?.weekDays || '');
-        const primarySchedule = primaryPattern?.days && primaryPattern.startTime && primaryPattern.endTime
+        const primaryWeekDays = scheduleMode === 'custom' ? weekDays : canonicalDeliveryDays(selectedGroup?.weekDays || '');
+        const primarySchedule = scheduleMode === 'custom' ? weeklySchedule : primaryPattern?.days && primaryPattern.startTime && primaryPattern.endTime
           ? primaryPattern.days.split(', ').map(day => ({ day, startTime: primaryPattern.startTime, endTime: primaryPattern.endTime }))
           : [];
         const patchPayload = renameOnly ? { name: trimmed } : {
@@ -1267,9 +1277,10 @@ export function ModuleFormDrawer({
           groupId: primaryGroupId || undefined,
           groupName: selectedGroup?.name || undefined,
           weeklySchedule: primarySchedule,
+          scheduleMode,
           weekDays: primaryWeekDays || undefined,
-          startTime: primaryPattern?.startTime || undefined,
-          endTime: primaryPattern?.endTime || undefined,
+          startTime: primarySchedule[0]?.startTime || undefined,
+          endTime: primarySchedule[0]?.endTime || undefined,
         };
         // The server resizes the stored weeks to the count this sends. Said
         // first, so the author decides -- "No" saves nothing at all.
@@ -1337,7 +1348,7 @@ export function ModuleFormDrawer({
           navigate,
           // The group's hour and the weeks just saved, so a push from the dialog
           // sends this form's own plan rather than re-deriving one.
-          sessionTimes: { startTime: primaryPattern?.startTime || '', endTime: primaryPattern?.endTime || '' },
+          ...(scheduleMode === 'custom' ? {} : { sessionTimes: { startTime: primaryPattern?.startTime || '', endTime: primaryPattern?.endTime || '' } }),
           weeks: weeksEntered,
         });
         if (!warned) {
@@ -1479,8 +1490,8 @@ export function ModuleFormDrawer({
       open={open}
       title={isFreeCourse ? (module ? 'Edit free course' : 'Free course') : module ? 'Edit module' : 'Add module'}
       subtitle={isFreeCourse ? 'Independent self-study content. Assign it directly to commercial or apprenticeship learners; hours follow the normal module rules.' : module
-        ? 'Placement, module dates and tutor. Delivery days and times are read from the selected Group.'
-        : 'Where the module lives. Set its dates here; delivery days and times come from the selected Group.'}
+        ? 'Placement, module dates and tutor. Keep the Group timetable or set a custom weekly schedule.'
+        : 'Where the module lives. Set its dates and weekly live sessions for this delivery.'}
       banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
@@ -1619,7 +1630,9 @@ export function ModuleFormDrawer({
         required={Boolean(selectedGroups.length)}
         hint={
           isFreeCourse ? 'How many authored weeks the free course contains.' : selectedGroups.length
-            ? 'How many authored weeks the module contains. Its sessions use the selected Group delivery pattern.'
+            ? scheduleMode === 'custom'
+              ? 'How many authored weeks the module contains. Each week holds the selected live sessions.'
+              : 'How many authored weeks the module contains. Its sessions use the selected Group delivery pattern.'
             : 'How many authored weeks the module contains. Delivery dates are set when it is assigned to a Group.'
         }
       >
@@ -1627,32 +1640,38 @@ export function ModuleFormDrawer({
       </FormField>
       {!isFreeCourse && <p className="-mt-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] leading-5 text-primary-800">
         <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
-        The selected Group supplies the delivery days and session times. The module start and end dates belong to this module.
+        {scheduleMode === 'custom'
+          ? 'This module uses a custom weekly schedule. Create and Update Teams use these saved days and times.'
+          : 'The selected Group supplies the delivery days and session times. The module start and end dates belong to this module.'}
       </p>}
       {showSchedule && selectedGroup && (
         <div className="space-y-4 rounded-lg border border-background-200 bg-background-50 p-4">
-          {showInheritedScheduleControls && <>
           <FormField
             label="Sessions per week"
             required
             hint={otherGroupCount
               ? `Schedule for ${selectedGroup.name}. Other selected groups use their own delivery days and times.`
-              : 'One session per selected day. All dates share one Teams series link when you create the series.'}
+              : 'One session per selected weekday. Create and Update Teams use the saved schedule.'}
           >
             <SelectControl
               value={sessionsPerWeek}
               options={Array.from({ length: 7 }, (_, index) => ({ value: String(index + 1), label: String(index + 1) }))}
               onChange={value => {
+                if (value === '1' && deliveryDayIndexes(groupPattern?.days || '').length === 1) { applyGroupPattern(); return; }
+                setScheduleMode('custom');
                 setSessionsPerWeek(value);
                 setWeekDays(weekDays.split(',').map(day => day.trim()).filter(Boolean).slice(0, Number(value)).join(', '));
                 setTargetEndDate('');
               }}
             />
           </FormField>
-          <FormField label="Delivery days" as="group" required hint={`Choose ${sessionsPerWeek} day${sessionsPerWeek === '1' ? '' : 's'} each week (${deliveryDaysPerWeek} selected).`}>
+          {scheduleMode === 'custom' && <FormField label="Delivery days" as="group" required hint={`Choose ${sessionsPerWeek} day${sessionsPerWeek === '1' ? '' : 's'} each week (${deliveryDaysPerWeek} selected).`}>
             <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={value => { setWeekDays(value); setTargetEndDate(''); }} />
-          </FormField>
-          </>}
+          </FormField>}
+          {scheduleMode === 'custom' && <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[12px] font-semibold text-primary-700">Custom · {sessionsPerWeek} session{sessionsPerWeek === '1' ? '' : 's'} per week · {modulePatternLabel}</p>
+            <button type="button" onClick={applyGroupPattern} className="rounded-lg border border-primary-300 px-3 py-1.5 text-[12px] font-semibold text-primary-700">Use Group schedule</button>
+          </div>}
           {/* The group's own timetable, stated as the group's rather than merged
               into the fields above. A module inherits it and may then differ, and
               "this module runs to its own schedule" is a fact the reader has to
@@ -1667,7 +1686,9 @@ export function ModuleFormDrawer({
                 {groupPattern?.durationMinutes ? ` (${durationLabel(groupPattern.durationMinutes)} a session)` : ''}
               </p>
               <p className="mt-1 text-[12px] text-foreground-600">Coach: {cleanText(selectedGroup.coach) || 'Not assigned'}</p>
-              {!groupPattern?.startTime || !groupPattern?.endTime ? (
+              {scheduleMode === 'custom' ? (
+                <p className="mt-1 text-[12px] text-primary-700">Custom applies to this module delivery only. The Group schedule stays unchanged.</p>
+              ) : !groupPattern?.startTime || !groupPattern?.endTime ? (
                 <p className="mt-1 text-[12px] text-amber-700">
                   This group has no {groupPattern?.startTime ? 'end' : groupPattern?.endTime ? 'start' : 'start and end'} time
                   set, so the times below start at 09:00 - 10:00. Set the group&apos;s schedule for this module to follow it.
@@ -1684,7 +1705,7 @@ export function ModuleFormDrawer({
               )}
             </div>
           </>
-          {showInheritedScheduleControls && <>{weeklySchedule.map(slot => (
+          {scheduleMode === 'custom' && <>{weeklySchedule.map(slot => (
             <div key={slot.day} className="rounded-lg border border-background-200 p-3">
               <p className="mb-2 text-[12px] font-semibold">{slot.day}</p>
               <div className="grid gap-4 sm:grid-cols-2">
