@@ -799,7 +799,7 @@ describe('coach attendance overview', () => {
     expect(row.querySelectorAll('[data-status]')).toHaveLength(1);
     expect(row.querySelectorAll('[data-status="absent"]')).toHaveLength(after === 'absent' ? 1 : 0);
     expect(row.querySelectorAll('[data-status="present"]')).toHaveLength(after === 'present' ? 1 : 0);
-    expect(vi.mocked(coachFetch).mock.calls.slice(callsBefore)).toHaveLength(2);
+    await waitFor(() => expect(vi.mocked(coachFetch).mock.calls.slice(callsBefore)).toHaveLength(2));
     expect(vi.mocked(coachFetch).mock.calls.at(-1)![0]).toContain('/options?programmeId=programme-1&includeModules=1');
     fireEvent.change(status, { target: { value: before } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply bulk update' }));
