@@ -7,10 +7,31 @@ from django.test import RequestFactory, SimpleTestCase
 from django.db import DatabaseError
 
 from curriculum_api import free_course_catalogue as catalogue
+from curriculum_api import free_course_authoring as authoring
 from curriculum_api import views
 
 
 class CanonicalFreeCourseCatalogueTests(SimpleTestCase):
+    def test_compatibility_catalogue_get_uses_canonical_courses_only(self):
+        rows = [{
+            "id": "FREE-1", "course_name": "Canonical",
+            "week_count": 2, "component_count": 4,
+        }]
+        with mock.patch.object(authoring.free_course_catalogue, "courses", return_value=rows) as courses, \
+             mock.patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role="staff")):
+            response = authoring.catalogue(
+                RequestFactory().get("/curriculum/free-courses/"),
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual(payload["results"][0]["courseId"], "FREE-1")
+        self.assertIsNone(payload["results"][0]["moduleCatalogueId"])
+        self.assertTrue(payload["results"][0]["editable"])
+        self.assertTrue(payload["results"][0]["structureUrl"].endswith("/FREE-1/authoring/"))
+        courses.assert_called_once_with(columns=[
+            "id", "course_name", "week_count", "component_count",
+        ])
+
     def test_batch_uses_one_execute_and_preserves_result_order(self):
         cursor = mock.MagicMock()
         cursor.description = [("id",)]

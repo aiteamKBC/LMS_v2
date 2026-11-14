@@ -16,6 +16,7 @@ from django.db.models.query import QuerySet
 from django.test import RequestFactory, SimpleTestCase
 
 from learner_api.models import EnrolmentUser, LearnerProfile
+from learner_api import learner_coach_columns
 from . import case_file, views
 from .caseload_placement import annotate_placement_labels, filter_options, placement_names
 
@@ -70,27 +71,34 @@ class CaseloadDashboardProjectionTests(SimpleTestCase):
         with patch.object(views, 'learner_ksbs_relation_exists', return_value=False):
             recorder, _ = run_recorded(lambda: views.fetch_caseload_dashboard_profiles('coach@example.test'))
         fields = [name for name in recorder.calls[0] if name != 'coach_rag']
-        sql = str(LearnerProfile.objects.annotate(coach_email_key=Lower(Trim('coach_email')))
-                  .filter(coach_email_key='coach@example.test').only(*fields).query)
-        for column in ('"programme_id"', '"cohort_id"', '"group_id"', '"coach_email"'):
+        with patch.object(learner_coach_columns, 'learner_coach_keyed', return_value=True):
+            sql = str(LearnerProfile.objects.annotate(coach_email_key=Lower(Trim('coach_email')))
+                      .filter(coach_email_key='coach@example.test').only(*fields).query)
+        for column in ('"programme_id"', '"cohort_id"', '"group_id"'):
             self.assertIn(column, sql)
+        self.assertIn('curriculum.coaches', sql)
+        self.assertNotIn('learners.coach_email', sql)
 
 
 class CaseFileShellProjectionTests(SimpleTestCase):
     def test_owner_scoped_shell_uses_ids_and_only_coach_rag_remains_blocked(self):
         recorder, result = run_recorded(lambda: views.fetch_case_file_shell('coach@example.test', 101))
         fields = set(recorder.calls[0])
-        self.assertTrue({'programme_id', 'cohort_id', 'group_id', 'coach_email'} <= fields)
+        self.assertTrue({'programme_id', 'cohort_id', 'group_id'} <= fields)
+        self.assertNotIn('coach_email', fields)  # derived query alias, never a physical column
         self.assertTrue(PROPERTY_NAMES.isdisjoint(fields))
         self.assertEqual(fields - concrete(LearnerProfile), {'coach_rag'})
         self.assertEqual(recorder.errors, ["LearnerProfile has no field named 'coach_rag'"])
         self.assertEqual(result, (None, None))                                       # unchanged not-found shape
 
     def test_shell_still_filters_by_learner_and_owning_coach(self):
-        query = (LearnerProfile.objects.annotate(coach_email_key=Lower(Trim('coach_email')))
-                 .filter(id=101, coach_email_key='coach@example.test').only('id', 'programme_id').query)
-        sql = str(query)
-        self.assertIn('LOWER(TRIM("Learner"."learners"."coach_email"))', sql.replace('\n', ' '))
+        with patch.object(learner_coach_columns, 'learner_coach_keyed', return_value=True):
+            query = (LearnerProfile.objects.annotate(coach_email_key=Lower(Trim('coach_email')))
+                     .filter(id=101, coach_email_key='coach@example.test').only('id', 'programme_id').query)
+            sql = str(query)
+        self.assertIn('LOWER(TRIM((SELECT learner_coach.email FROM curriculum.coaches',
+                      sql.replace('\n', ' '))
+        self.assertNotIn('learners.coach_email', sql)
 
 
 class CaseFileContextProjectionTests(SimpleTestCase):

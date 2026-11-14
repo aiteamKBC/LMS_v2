@@ -1,8 +1,8 @@
-"""Free courses assigned to a learner from the Learning Plan modal.
+"""Free Course activity mapping and legacy payload normalisation.
 
-The feature stores free courses as a *pure assignment record*: no hours, no KSBs,
-no progress, kept in their own ``Created_users."Free_courses"`` column and
-read/written by ``learner_api.learning_plan``. These tests pin the normaliser
+Canonical assignments live in ``Learner.learner_free_courses``. The legacy
+``Created_users.Free_courses`` normaliser is compatibility code, not an
+entitlement or write source. These tests pin the normaliser
 that guarantees the stored shape — it drops anything a client tries to smuggle in
 (hours, KSBs, unknown keys), dedupes, and rejects a non-list.
 

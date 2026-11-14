@@ -724,11 +724,8 @@ _component_fields = {
 
 
 def _course(course_id):
-    rows = v.free_programme_fetch_all(v.FREE_COURSES_TABLE, 'id = %s', [course_id],
-        columns=['id', 'module_catalogue_id', 'deleted_at', 'converted_at'])
-    if not rows or rows[0].get('deleted_at') or rows[0].get('converted_at'):
-        return None
-    return rows[0]
+    rows = free_course_catalogue.courses(course_ids=[course_id], columns=['id'])
+    return rows[0] if rows else None
 
 
 def _active_module(course):
@@ -746,19 +743,17 @@ def _reply(data, *, status=200):
 @require_role('admin', 'staff')
 @require_GET
 def catalogue(request):
-    """Expose free-course IDs and their canonical Builder identities to clients."""
+    """Compatibility catalogue backed by canonical Free Course identities."""
     try:
-        rows = v.free_programme_fetch_all(v.FREE_COURSES_TABLE,
-            'deleted_at is null and converted_at is null', order_sql='display_order, course_name, id',
-            columns=['id', 'course_name', 'module_catalogue_id', 'week_count', 'component_count'])
-        active = {row['module_catalogue_id'] for row in v.authoring_fetch_all(
-            v.AUTHORING_MODULES_TABLE, "source_type = 'free_course' and deleted_at is null",
-            columns=['module_catalogue_id', 'is_programme_deleted'])
-            if not v.curriculum_row_effectively_deleted(row)}
+        rows = free_course_catalogue.courses(columns=[
+            'id', 'course_name', 'week_count', 'component_count',
+        ])
         results = [{**row, 'courseId': row['id'], 'courseName': row['course_name'],
-                    'moduleCatalogueId': row.get('module_catalogue_id'),
-                    'editable': row.get('module_catalogue_id') in active,
-                    'structureUrl': '/curriculum_api/curriculum/free-courses/' + quote(row['id'], safe='') + '/structure/'}
+                    # Retained response keys only; there is no module relation.
+                    'moduleCatalogueId': None,
+                    'editable': True,
+                    'structureUrl': '/curriculum_api/curriculum/free-courses/'
+                                    + quote(row['id'], safe='') + '/authoring/'}
                    for row in rows]
         return _reply({'results': results, 'count': len(results)})
     except DatabaseError:

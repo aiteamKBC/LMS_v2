@@ -335,10 +335,11 @@ def admin_requests(request, account, request_id=None):
         raise ValueError('Invalid offset')
     with connections['enrolment'].cursor() as cursor:
         cursor.execute(f'''SELECT r.id,r.enrolment_id,r.learner_kind,r.status,r.requested_at,r.approved_at,
-            l.full_name,l.programme,jsonb_agg(i.snapshot ORDER BY i.course_ref)
+            l.full_name,p.name,jsonb_agg(i.snapshot ORDER BY i.course_ref)
             FROM {store.REQUESTS} r JOIN "Learner".learners l ON l.id=r.learner_id AND l.enrolment_id=r.enrolment_id
+            LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
             JOIN {store.ITEMS} i ON i.request_id=r.id AND i.enrolment_id=r.enrolment_id
-            GROUP BY r.id,l.full_name,l.programme
+            GROUP BY r.id,l.full_name,p.name
             ORDER BY (r.status='pending') DESC,r.requested_at DESC,r.id LIMIT 51 OFFSET %s''', [offset])
         rows = cursor.fetchall()
     result = [{'requestId': str(row[0]), 'learnerId': str(row[1]), 'learnerKind': row[2], 'status': row[3],

@@ -11,11 +11,12 @@ Older databases copy the coach onto the learner row (``coach_name``,
   NULL or names no coach. NULL (not '') keeps caseload filters fail-closed: an
   unassigned learner never equals any owner email, not even an empty one.
 
-Writes are not translated: on the canonical schema a write naming
-coach_name/coach_email still fails on the missing column, explicitly.
+The ORM names are query-only aliases. They are not concrete model columns, so
+INSERT/UPDATE never names the retired copies. Assignments must use ``coach_id``.
 """
 import time
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError, connections, models
 from django.db.models.expressions import Col
 
@@ -73,22 +74,49 @@ class LearnerCoachCol(Col):
     """A coach field's column, or its value through coach_id on the canonical schema."""
 
     def as_sql(self, compiler, connection):
-        if not learner_coach_keyed(connection.alias):
-            return super().as_sql(compiler, connection)
         table = compiler.quote_name_unless_alias(self.alias or self.target.model._meta.db_table)
         return learner_coach_sql(table, self.target.coach_attribute, connection.alias), ()
+
+
+class LearnerCoachDescriptor:
+    """Read a selected query alias, falling back to the canonical relation."""
+
+    def __init__(self, field):
+        self.field = field
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        selected = f"_learner_coach_{self.field.coach_attribute}"
+        if selected in instance.__dict__:
+            return instance.__dict__[selected]
+        if not getattr(instance, "coach_id", None):
+            return None
+        try:
+            coach = instance.coach_record
+        except ObjectDoesNotExist:
+            return None
+        return getattr(coach, self.field.coach_attribute, None)
+
+    def __set__(self, instance, value):
+        raise ValueError(
+            f"{self.field.name} is read-only; assign LearnerProfile.coach_id instead."
+        )
 
 
 class _LearnerCoachFieldMixin:
     coach_attribute = None
 
+    def get_attname_column(self):
+        # Query alias only: no physical column, and therefore no ORM write.
+        return self.get_attname(), None
+
+    def contribute_to_class(self, cls, name, private_only=False):
+        super().contribute_to_class(cls, name, private_only=True)
+        setattr(cls, self.attname, LearnerCoachDescriptor(self))
+
     def get_col(self, alias, output_field=None):
         return LearnerCoachCol(alias, self, output_field)
-
-    def deconstruct(self):
-        # Same migration state as the plain field: only the read SQL differs.
-        name, _, args, kwargs = super().deconstruct()
-        return name, f'django.db.models.{self.__class__.__mro__[2].__name__}', args, kwargs
 
 
 class LearnerCoachTextField(_LearnerCoachFieldMixin, models.TextField):

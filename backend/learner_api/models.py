@@ -260,6 +260,17 @@ class PlacementGroup(models.Model):
         db_table = 'curriculum"."groups'
 
 
+class PlacementCoach(models.Model):
+    id = models.CharField(max_length=255, primary_key=True)
+    name = models.TextField()
+    email = models.EmailField(max_length=320)
+    status = models.CharField(max_length=32)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."coaches'
+
+
 def _learner_placement_names(record, *, by_enrolment):
     """Display labels from the canonical learner's FK relationships only."""
     from .placement_links import placement_profile
@@ -615,6 +626,39 @@ class StaffUser(models.Model):
 class LearnerProfileQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
     """Bulk writes retire the linked learners' cached subject rows."""
 
+    COACH_ALIASES = frozenset({"coach_name", "coach_email"})
+
+    def only(self, *fields):
+        # Query aliases are always selected by LearnerProfileManager below;
+        # remove them from Django's concrete-field mask.
+        concrete = tuple(field for field in fields if field not in self.COACH_ALIASES)
+        return super().only(*(concrete or ("coach_id",)))
+
+    def update(self, **kwargs):
+        unsupported = self.COACH_ALIASES.intersection(kwargs)
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(f"{names} are read-only; update coach_id instead.")
+        return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        unsupported = self.COACH_ALIASES.intersection(fields)
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(f"{names} are read-only; update coach_id instead.")
+        return super().bulk_update(objs, fields, batch_size=batch_size)
+
+
+class LearnerProfileManager(models.Manager.from_queryset(LearnerProfileQuerySet)):
+    def get_queryset(self):
+        # Preserve the historical object attributes with two fixed canonical
+        # expressions. This is the same bounded query shape as before, never a
+        # relation lookup per learner.
+        return super().get_queryset().annotate(
+            _learner_coach_name=models.F("coach_name"),
+            _learner_coach_email=models.F("coach_email"),
+        )
+
 
 class LearnerPlanModuleQuerySet(VersionBumpQuerySetMixin, AuditedQuerySet):
     """Bulk writes (the mirror rebuild) retire the learner's cached subject rows."""
@@ -715,8 +759,11 @@ class LearnerProfile(models.Model):
     otjh_status = models.CharField(max_length=50, blank=True)
     # Read through coach_id -> curriculum.coaches on the canonical schema (which
     # has no copied coach columns), and as the copied columns on the legacy one.
-    # See learner_coach_columns; writes are not translated.
-    coach_id = models.CharField(max_length=255, null=True, blank=True)
+    # See learner_coach_columns; these display aliases are read-only.
+    coach_record = PlacementForeignKey(
+        PlacementCoach, db_column='coach_id', on_delete=models.PROTECT,
+        related_name='+', null=True, blank=True,
+    )
     coach_name = LearnerCoachTextField(blank=True)
     coach_email = LearnerCoachEmailField(max_length=320, blank=True)
 
@@ -747,9 +794,14 @@ class LearnerProfile(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    objects = models.Manager.from_queryset(LearnerProfileQuerySet)()
+    objects = LearnerProfileManager()
 
     def save(self, *args, **kwargs):
+        update_fields = set(kwargs.get("update_fields") or ())
+        unsupported = LearnerProfileQuerySet.COACH_ALIASES.intersection(update_fields)
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(f"{names} are read-only; update coach_id instead.")
         self.__dict__.pop('_placement_names', None)
         return super().save(*args, **kwargs)
 
@@ -821,19 +873,19 @@ class LearnerProfile(models.Model):
                 for item in assignment.profile_version.definitions.all()
             ]
 
-        # Compatibility fallback while existing environments are migrated.
-        try:
-            return [
-                {
-                    "code": item.code,
-                    "number": item.number,
-                    "type": item.ksb_type,
-                    "description": item.description,
-                }
-                for item in self.assigned_ksbs.all()
-            ]
-        except DatabaseError:
-            return []
+        # The retained Development snapshot has a different physical and
+        # semantic shape from the retired LearnerKsb ORM model.  Read it through
+        # the narrow adapter so missing rows remain [] while database failures
+        # stay visible to the endpoint instead of being disguised as no KSBs.
+        from .legacy_ksbs import read_legacy_learner_ksbs
+
+        cache_name = "_legacy_ksbs_cache"
+        if cache_name not in self.__dict__:
+            self.__dict__[cache_name] = read_legacy_learner_ksbs(
+                self.pk,
+                using=self._state.db or "enrolment",
+            )
+        return self.__dict__[cache_name]
 
     @property
     def training_plan(self):
@@ -1229,18 +1281,15 @@ class LearnerFreeCourse(models.Model):
     """Canonical Free Course assignment owned by ``Learner.learners``.
 
     This table, not ``Created_users.Free_courses``, is the learner-facing
-    assignment source. Includes both legacy free courses and Builder courses
-    (which carry a ``moduleId`` for workspace navigation). It deliberately
-    carries no hours, KSBs or component tree. ``free_course_title`` is retained
-    only because it exists in the schema; readers resolve the official title from
-    ``curriculum.free_courses.course_name``.
+    assignment source. It deliberately carries no title snapshot, module
+    identity, hours, KSBs or component tree; readers resolve canonical content
+    from ``curriculum.free_courses``.
     Database migration 0026 enforces the cross-schema course relationship.
     Assignment records do not themselves award hours.
     """
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="free_courses")
     position = models.PositiveIntegerField()
     free_course_ref = models.TextField()
-    free_course_title = models.TextField(blank=True)
 
     class Meta:
         managed = False
