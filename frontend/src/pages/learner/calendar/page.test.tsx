@@ -69,7 +69,7 @@ beforeEach(() => {
   vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: null, category: 'reviews', reviews: [] });
   localStorage.clear();
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('calendar exports', () => {
   it.each(['catch-up', 'mcr', 'progress-review'])('exports the full source year and UK clock for %s', async source => {
@@ -116,6 +116,19 @@ describe('calendar exports', () => {
 });
 
 describe('learner calendar actions', () => {
+  it('clears retired personal reminders without cancelling other calendar reminders', async () => {
+    vi.stubGlobal('Notification', class { static permission = 'granted'; });
+    const timer = vi.spyOn(globalThis, 'setTimeout');
+    const personal = { id: 'custom-legacy', eventTitle: 'Personal study', eventDate: '23 Sep', eventTime: '10:00', reminderMinutes: 15 };
+    const session = { id: 'catch-up:retained', eventTitle: 'Coach session', eventDate: '23 Sep', eventTime: '11:00', reminderMinutes: 15 };
+    localStorage.setItem('calendarNotifications', JSON.stringify([personal, session]));
+    setup();
+    await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
+    expect(JSON.parse(localStorage.getItem('calendarNotifications') || '[]')).toEqual([session]);
+    expect(timer.mock.calls.some(([, delay]) => delay === 45 * 60_000)).toBe(false);
+    expect(timer.mock.calls.some(([, delay]) => delay === 105 * 60_000)).toBe(true);
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('does not offer personal event creation for %s learners and preserves calendar actions', async kind => {
     vi.mocked(useLinkedLearner).mockReturnValue({ kind, id: '125' });
     setup();

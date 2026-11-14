@@ -438,7 +438,12 @@ function scheduleEventNotification(eventId: string, eventTitle: string, eventDat
 
 function restoreNotifications() {
   const scheduled = JSON.parse(localStorage.getItem('calendarNotifications') || '[]');
-  scheduled.forEach((n: { id: string; eventTitle: string; eventDate: string; eventTime: string; reminderMinutes: number }) => {
+  // Personal events are retired; their saved reminders must not be restored.
+  const active = scheduled.filter((n: { id: string }) => !n.id.startsWith('custom-'));
+  if (active.length !== scheduled.length) {
+    localStorage.setItem('calendarNotifications', JSON.stringify(active));
+  }
+  active.forEach((n: { id: string; eventTitle: string; eventDate: string; eventTime: string; reminderMinutes: number }) => {
     scheduleEventNotification(n.id, n.eventTitle, n.eventDate, n.eventTime, n.reminderMinutes);
   });
 }
