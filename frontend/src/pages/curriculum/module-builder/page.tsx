@@ -16,7 +16,7 @@ import { dirtyFields, projectAvailable } from './collaborationProtocol';
 import { ModuleEditReservedError } from './moduleAuthoringData';
 import { confirmModuleSave, sameAuthoredModule } from './confirmModuleSave';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
-import { Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import catalogueStyles from './ModuleCatalogue.module.css';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -54,7 +54,12 @@ import {
   type CurriculumStaffProfile,
   type CurriculumStandard,
   type CurriculumTeamsMeetingSummary,
+  fetchFreeCourseAuthoringCatalogue,
 } from '@/lib/curriculumApi';
+// The Free courses tab hosts the free-course catalogue (curriculum.free_courses)
+// that used to live under Library. Loaded on first use; it carries its own
+// editors and drag-and-drop.
+const FreeCoursesWorkspace = lazy(() => import('../free-courses/page').then(module => ({ default: module.FreeCoursesWorkspace })));
 // The delivery side of a module -- which cohort and group run it, when it runs
 // and whether its Teams series exists -- used to live on a separate Curriculum
 // -> Modules page. This catalogue lists it now, and each delivery row opens the
@@ -754,6 +759,20 @@ function ModuleBuilderContent() {
   const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
   const [createFreeCourse, setCreateFreeCourse] = useState(false);
   const [movingFreeCourse, setMovingFreeCourse] = useState<ModuleCatalogueItem | null>(null);
+  // Free courses tab: totals from curriculum.free_courses, and a request that
+  // opens the Add free course wizard inside the tab.
+  const [freeCourseCounts, setFreeCourseCounts] = useState<{ total: number; shown: number } | null>(null);
+  const [freeCourseAddRequest, setFreeCourseAddRequest] = useState(0);
+  const handleFreeCourseCounts = useCallback((total: number, shown: number) => setFreeCourseCounts({ total, shown }), []);
+  const clearFreeCourseAddRequest = useCallback(() => setFreeCourseAddRequest(0), []);
+  useEffect(() => {
+    // The tab badge is visible before the tab is opened, so read the count once.
+    const controller = new AbortController();
+    fetchFreeCourseAuthoringCatalogue(controller.signal)
+      .then(catalogue => setFreeCourseCounts(previous => previous ?? { total: catalogue.courses.length, shown: catalogue.courses.length }))
+      .catch(() => { /* the badge stays "—"; the tab itself reports its own load error */ });
+    return () => controller.abort();
+  }, []);
   // Programme -> cohort -> group tree plus the holiday list: read only by the
   // module form, so it is fetched the first time that drawer opens rather than
   // on every Module Builder load.
@@ -4120,7 +4139,7 @@ function ModuleBuilderContent() {
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <button onClick={() => { setCreateFreeCourse(true); setCreateOpen(true); }} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-4 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-wait disabled:opacity-70">
+              <button onClick={() => { changeFilter(() => setCatalogueMode('free')); setFreeCourseAddRequest(request => request + 1); }} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-4 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-wait disabled:opacity-70">
                 <AppIcon className="ri-add-line"></AppIcon>
                 Free course
               </button>
@@ -4178,7 +4197,7 @@ function ModuleBuilderContent() {
               <div className="min-w-0 flex-[1_1_22rem]">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
-                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
+                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{freeCoursesOnly ? (freeCourseCounts ? freeCourseCounts.shown : '—') : filtered.length} shown</span>
                   <span className={`text-[10px] font-semibold ${catalogueMode === 'active' ? 'text-emerald-700' : 'text-foreground-500'}`}>{freeCoursesOnly ? 'Free courses' : allModules ? 'All modules' : 'Active modules'}</span>
                 </div>
                 <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
@@ -4219,7 +4238,7 @@ function ModuleBuilderContent() {
                       <AppIcon className="ri-book-open-line hidden text-sm sm:inline-block" />
                       Free courses
                     </span>
-                    <span className="shrink-0 rounded-md bg-background-50/70 px-1.5 py-0.5 text-[10px] tabular-nums" aria-hidden="true">{loading && !modules.length ? '—' : freeCourses.length}</span>
+                    <span className="shrink-0 rounded-md bg-background-50/70 px-1.5 py-0.5 text-[10px] tabular-nums" aria-hidden="true">{freeCourseCounts ? freeCourseCounts.total : '—'}</span>
                   </button>
                 </div>
                 <button
@@ -4311,7 +4330,19 @@ function ModuleBuilderContent() {
                 through their own work, and replacing what they are reading with
                 grey bars loses their scroll position and their place for no
                 reason. The subtitle already says a read is in flight. */}
-            {(loading && !modules.length) || (catalogueMode === 'active' && !catalogueActivity.data && !catalogueActivity.error) ? (
+            {freeCoursesOnly ? (
+              <div className="p-4">
+                <Suspense fallback={<ModuleListSkeleton />}>
+                  <FreeCoursesWorkspace
+                    embedded
+                    search={search}
+                    addRequest={freeCourseAddRequest}
+                    onAddHandled={clearFreeCourseAddRequest}
+                    onCountChange={handleFreeCourseCounts}
+                  />
+                </Suspense>
+              </div>
+            ) : (loading && !modules.length) || (catalogueMode === 'active' && !catalogueActivity.data && !catalogueActivity.error) ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
               <div className={catalogueStyles.moduleList}>

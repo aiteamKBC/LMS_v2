@@ -97,7 +97,6 @@ const CurriculumBulkAttendance = lazyRoute(() => import("../pages/curriculum/bul
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CoachingQualityReviewsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityReviewsPage"));
 const CoachingQualityFormsPage = lazyRoute(() => import("../pages/coaching-recordings/QualityFormsPage"));
-const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
 const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
@@ -1195,10 +1194,6 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/quality",
     element: <CurriculumQualityHub />,
-  },
-  {
-    path: "/curriculum/free-courses",
-    element: <CurriculumFreeCourses />,
   },
   {
     path: "/curriculum/module-builder",

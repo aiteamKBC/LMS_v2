@@ -17,7 +17,7 @@ class AttendanceCorrectionTests(SimpleTestCase):
         self.manager.select_for_update.return_value.filter.return_value.first.return_value = None
         self.source = patch.dict(api.SOURCE_MODELS, {'commercial': SimpleNamespace(all_learners=SimpleNamespace(
             filter=lambda **kwargs: SimpleNamespace(first=lambda: SimpleNamespace(id=70))))}).start()
-        patch.object(api, 'assigned_module_ids', return_value=['module']).start()
+        patch.object(api, 'assigned_module_ids_by_profile', return_value={7: {'module'}}).start()
         self.native = patch.object(api, 'read_native_occurrences', return_value=[{'session_id': 'occ'}]).start()
         self.roster = [{'learner_profile_id': 7, 'learner_email': 'learner@example.invalid'}]
         self.occurrence = SimpleNamespace(id='occ', scheduled_end=datetime.now(timezone.utc) - timedelta(hours=1))
@@ -54,7 +54,7 @@ class AttendanceCorrectionTests(SimpleTestCase):
         self.manager.update_or_create.assert_not_called()
 
     def test_assignment_change_and_future_session_are_rejected(self):
-        with patch.object(api, 'assigned_module_ids', return_value=[]):
+        with patch.object(api, 'assigned_module_ids_by_profile', return_value={7: set()}):
             with self.assertRaises(api.CorrectionError):
                 self.write()
         self.occurrence.scheduled_end = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -147,7 +147,7 @@ class AttendanceCorrectionPersistenceTests(TestCase):
         with patch.object(api.LearnerProfile, 'objects') as profiles, \
                 patch.dict(api.SOURCE_MODELS, {'commercial': SimpleNamespace(all_learners=SimpleNamespace(
                     filter=lambda **kwargs: SimpleNamespace(first=lambda: source)))}), \
-                patch.object(api, 'assigned_module_ids', return_value=['module']), \
+                patch.object(api, 'assigned_module_ids_by_profile', return_value={7: {'module'}}), \
                 patch.object(api, 'read_native_occurrences', return_value=[{'session_id': 'occ'}]):
             profiles.select_for_update.return_value.get.return_value = SimpleNamespace(id=7, enrolment_id=70)
             result = api.save_correction('module', occurrence, 'occ', [{'learner_profile_id': 7}],

@@ -30,7 +30,9 @@ def effective_module_register_rows(module_catalogue_id, occurrences):
     """Project current plan membership; saved evidence is merged separately."""
     if not module_catalogue_id or not occurrences:
         return []
-    from .learner_compat import module_roster  # learner_api roster, or its by-id read on the normalised schema
+    # Membership from the normalized plan records (the roster's rule), never the
+    # legacy Created_users Learning_plan/Training_plan.
+    from .attendance_membership import module_roster
     members = module_roster(module_catalogue_id)
     return [{
         **member, 'occurrence_id': occurrence['id'],

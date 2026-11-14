@@ -31,7 +31,40 @@ def adopted_courses():
     return result
 
 
-def adoption_snapshot():
+def select_courses(courses, include=None, exclude=None):
+    """Narrow the catalogue to an explicit course list. Unknown ids stop the run."""
+    known = {row['id'] for row in courses}
+    include, exclude = set(include or ()), set(exclude or ())
+    unknown = (include | exclude) - known
+    if unknown:
+        raise ValueError('Unknown free course id(s): ' + ', '.join(sorted(unknown)))
+    if include & exclude:
+        raise ValueError('A course cannot be both included and excluded: ' + ', '.join(sorted(include & exclude)))
+    return [row for row in courses if (not include or row['id'] in include) and row['id'] not in exclude]
+
+
+def canonical_assignments(course_ids):
+    """{enrolment id: [course id, ...]} from ``"Learner".learner_free_courses``.
+
+    That table, not ``Created_users.Free_courses``, is the learner-facing
+    assignment source (see ``learner_api.models.LearnerFreeCourse``); on the
+    normalized database the JSON column holds only a stale subset.
+    """
+    from learner_api.models import LearnerFreeCourse, LearnerProfile
+    rows = list(LearnerFreeCourse.objects.filter(free_course_ref__in=course_ids)
+                .order_by('learner_id', 'position', 'id').values('id', 'learner_id', 'position', 'free_course_ref'))
+    owners = dict(LearnerProfile.objects.filter(pk__in={row['learner_id'] for row in rows})
+                  .values_list('id', 'enrolment_id'))
+    if any(owners.get(row['learner_id']) is None for row in rows):
+        raise ValueError('A free-course assignment belongs to a learner with no enrolment link; adoption stopped.')
+    by_owner = defaultdict(list)
+    for row in rows:
+        if row['free_course_ref'] not in by_owner[owners[row['learner_id']]]:
+            by_owner[owners[row['learner_id']]].append(row['free_course_ref'])
+    return rows, dict(by_owner)
+
+
+def adoption_snapshot(include=None, exclude=None):
     from . import views
     from learner_api.models import EnrolmentUser, LearnerFreeCourseProgress, LearnerProfile
     courses = views.free_programme_fetch_all(views.FREE_COURSES_TABLE, order_sql='display_order, id')
@@ -39,6 +72,7 @@ def adoption_snapshot():
     # adopted records stay available for resuming learner/history migration.
     courses = [row for row in courses if not row.get('managed_by_builder') or
                row.get('module_catalogue_id') == adopted_id('MOD', row['id'], row['id'])]
+    courses = select_courses(courses, include, exclude)
     weeks = views.free_programme_fetch_all(views.FREE_PROGRAMME_MODULES_TABLE, order_sql='display_order, week_number, id')
     components = views.free_programme_fetch_all(views.FREE_PROGRAMME_COMPONENTS_TABLE,
         'programme_id = %s', ['FREE-COURSES'], 'display_order, id')
@@ -57,11 +91,12 @@ def adoption_snapshot():
     if errors:
         raise ValueError('Legacy content validation failed: ' + json.dumps(Counter(error['message'] for error in errors)))
     course_ids = set(course_by_id)
-    selected_ids = []
+    assignment_rows, assignments_by_owner = canonical_assignments(course_ids)
+    selected_ids = set(assignments_by_owner)
     for row in EnrolmentUser.all_learners.values('id', 'free_courses'):
         assignments = row['free_courses'] if isinstance(row['free_courses'], list) else []
         if any(isinstance(item, dict) and item.get('freeCourseId') in course_ids for item in assignments):
-            selected_ids.append(row['id'])
+            selected_ids.add(row['id'])
     # The detailed plans are large. Only the selected learners belong in this
     # restore point; loading every learner's plan needlessly times out remotely.
     learners = list(EnrolmentUser.all_learners.filter(pk__in=selected_ids).values(
@@ -87,7 +122,9 @@ def adoption_snapshot():
         completion_fields(history, profile_id=history['learner_id'],
                           module=payload, week=week, component=component)
     return {'courses': courses, 'weeks': weeks, 'components': components, 'payloads': payloads,
-            'learners': learners, 'profiles': profiles, 'progress': progress}
+            'learners': learners, 'profiles': profiles, 'progress': progress,
+            'assignmentRows': assignment_rows,
+            'assignmentsByOwner': {str(owner): ids for owner, ids in assignments_by_owner.items()}}
 
 
 def history_owners(progress):
@@ -108,7 +145,9 @@ def snapshot_counts(snapshot):
     return {'courses': len(snapshot['payloads']),
             'weeks': sum(len(p['weekStructure']) for p in snapshot['payloads']),
             'components': sum(len(w['components']) for p in snapshot['payloads'] for w in p['weekStructure']),
-            'assignedLearners': len(snapshot['learners']), 'historicalCompletions': len(snapshot['progress'])}
+            'assignedLearners': len(snapshot['learners']), 'historicalCompletions': len(snapshot['progress']),
+            'assignments': len(snapshot.get('assignmentRows') or []),
+            'courseIds': [p['sourceId'] for p in snapshot['payloads']]}
 
 
 def save_backup(snapshot, path):
@@ -138,7 +177,9 @@ def adopt_course(payload):
 
 
 def adopt_learners(snapshot):
-    from learner_api.models import EnrolmentUser, LearnerProfile, LearnerProgressEntry, LearnerFreeCourseProgress
+    from learner_api.models import (
+        EnrolmentUser, LearnerFreeCourse, LearnerProfile, LearnerProgressEntry, LearnerFreeCourseProgress,
+    )
     from learner_api.active_users import current_component_fk
     from . import learner_assignments as assignments
     from . import views
@@ -146,9 +187,13 @@ def adopt_learners(snapshot):
     mapping = {p['sourceId']: p for p in snapshot['payloads']}
     content = {c['settings']['legacyFreeComponentId']: (p, w, c)
                for p in snapshot['payloads'] for w in p['weekStructure'] for c in w['components']}
-    owner_ids = sorted({row['id'] for row in snapshot['learners']} | set(history_owners(snapshot['progress']).values()))
+    assignments_by_owner = {int(owner): ids for owner, ids in (snapshot.get('assignmentsByOwner') or {}).items()}
+    owner_ids = sorted({row['id'] for row in snapshot['learners']} | set(assignments_by_owner)
+                       | set(history_owners(snapshot['progress']).values()))
+    # The modules adopted just before this call must be in the catalogue read.
+    views.invalidate_curriculum_cache()
     catalogue = {entry['moduleId']: entry for entry in assignments.plans._all_modules()}
-    changed, imported = 0, 0
+    changed, imported, moved_rows = 0, 0, 0
     for owner_id in owner_ids:
         with transaction.atomic(using=alias):
             learner = EnrolmentUser.all_learners.select_for_update().get(pk=owner_id)
@@ -179,15 +224,31 @@ def adopt_learners(snapshot):
                 imported += 1
             old = learner.free_courses if isinstance(learner.free_courses, list) else []
             selected = [item for item in old if isinstance(item, dict) and item.get('freeCourseId') in mapping]
-            if selected:
-                target_ids = list(dict.fromkeys(mapping[item['freeCourseId']]['catalogueId'] for item in selected))
+            course_ids = list(dict.fromkeys([*assignments_by_owner.get(owner_id, []),
+                                             *(item['freeCourseId'] for item in selected)]))
+            if course_ids:
+                target_ids = list(dict.fromkeys(mapping[course_id]['catalogueId'] for course_id in course_ids))
                 if set(target_ids) - catalogue.keys():
                     raise ValueError('An adopted course is unavailable for assignment.')
-                learner.free_courses = [item for item in old if item not in selected]
-                learner.save(update_fields=['free_courses'])
-                target = {'scope': 'module', 'moduleIds': target_ids}
-                if not assignments._assign(learner, target, catalogue, {}):
-                    assignments.plans.sync_learning_plan_mirror(learner, strict=True)
+                # One module at a time through the drawer's own assignment, which
+                # adds just that module's plan rows and never rebuilds the rest.
+                # Already-assigned modules are skipped, so a rerun adds nothing.
+                cache = {}
+                for module_id in target_ids:
+                    cache.pop('_moduleMembers', None)
+                    cache.pop('_assignmentModules', None)
+                    assignments._assign(learner, {'scope': 'module', 'id': module_id, 'moduleIds': [module_id]},
+                                        catalogue, cache)
+                # The module assignment is committed in this same transaction, so
+                # the learner-facing free-course rows can go: leaving them would
+                # show the course twice in My Learning. Only the adopted courses.
+                if selected:
+                    learner.free_courses = [item for item in old if item not in selected]
+                    learner.save(update_fields=['free_courses'])
+                profile_ids = list(LearnerProfile.objects.filter(enrolment_id=owner_id).values_list('id', flat=True))
+                deleted, _ = LearnerFreeCourse.objects.using(alias).filter(
+                    learner_id__in=profile_ids, free_course_ref__in=course_ids).delete()
+                moved_rows += deleted
                 changed += 1
     views.invalidate_curriculum_cache()
-    return {'learnersUpdated': changed, 'completionsImported': imported}
+    return {'learnersUpdated': changed, 'completionsImported': imported, 'assignmentRowsMoved': moved_rows}
