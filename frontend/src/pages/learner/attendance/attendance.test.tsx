@@ -13,7 +13,6 @@ import { clearAllCachedResources } from '@/api/cachedRequest';
 
 const learnerIdentity = vi.hoisted(() => ({ kind: 'apprenticeship', id: '12' }));
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => learnerIdentity }));
-vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
 
 const lecture = (overrides: Partial<AttendanceLecture> = {}): AttendanceLecture => ({
@@ -51,11 +50,6 @@ beforeEach(() => {
     const url = String(input);
     if (init?.method === 'POST') {
       posts.push({ url, body: init.body });
-      if (url.endsWith('/attend/')) {
-        const { lectureId } = JSON.parse(String(init.body));
-        expect(new Headers(init.headers).get('X-CSRFToken')).toBe('test-csrf');
-        return new Response(JSON.stringify({ lectureId, status: 'completed', creditedMinutes: 120, creditedHours: 2, alreadyRecorded: false }));
-      }
       if (url.endsWith('/mode/')) {
         payload = { ...payload, mode: { ...payload.mode, requestedMode: 'lazy', status: 'pending', emailSent: true, remindersEnabled: false } };
         return new Response(JSON.stringify(payload.mode));
@@ -307,40 +301,64 @@ describe('Attendance lecture workspace', () => {
     await waitFor(() => expect(screen.queryByRole('article', { name: 'Cancelled lecture' })).not.toBeInTheDocument());
   });
 
-  it('features today ahead of future lectures and credits its full hours once', async () => {
+  it.each(['apprenticeship', 'commercial'])('opens the %s lecture component without confirming attendance or crediting hours', async kind => {
+    learnerIdentity.kind = kind;
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
+    const componentHref = `/learner/component/${kind}/12/week-one`;
     payload.lectures = [lecture({ id: 'later', date: '2026-10-01', status: 'upcoming' }),
       lecture({ id: 'today', title: 'Today lecture', date: '2026-09-14', status: 'upcoming', durationMinutes: 120,
-        tutor: 'Tutor Alex', coach: 'Coach Sam', canReportAbsence: true })];
+        componentHref, tutor: 'Tutor Alex', coach: 'Coach Sam', canReportAbsence: true })];
     mount();
     const card = await screen.findByRole('region', { name: 'Today lecture' });
     expect(within(card).getByText('Tutor Alex')).toBeInTheDocument();
     expect(within(card).getByText('Coach Sam')).toBeInTheDocument();
-    const attend = within(card).getByRole('button', { name: 'Attend' });
-    expect(attend).toBeEnabled();
-    fireEvent.click(attend);
-    fireEvent.click(attend);
-    expect(await within(card).findByRole('button', { name: 'Attended' })).toBeDisabled();
-    expect(posts).toHaveLength(1);
-    expect(JSON.parse(String(posts[0].body))).toEqual({ lectureId: 'today' });
-    expect(within(card).getByRole('status')).toHaveTextContent('2 hours credited');
-    expect(within(await screen.findByRole('article', { name: 'Today lecture' })).getByText('Attended')).toBeInTheDocument();
-    expect(within(card).getByRole('button', { name: 'Report Absence' })).toBeDisabled();
+    expect(within(card).queryByRole('button', { name: 'Attend' })).not.toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Report Absence' })).not.toBeInTheDocument();
+    const view = within(card).getByRole('link', { name: 'View session' });
+    expect(view).toHaveAttribute('href', componentHref);
+    fireEvent.click(view);
+    expect(screen.getByTestId('location')).toHaveTextContent(componentHref);
+    expect(posts).toHaveLength(0);
+    expect(within(card).queryByText(/hours credited/)).not.toBeInTheDocument();
+    expect(within(screen.getByRole('article', { name: 'Today lecture' })).getByText('Upcoming')).toBeInTheDocument();
+    expect(peekAttendanceWorkspace(kind as 'commercial' | 'apprenticeship', '12')!.lectures.find(row => row.id === 'today')?.status).toBe('upcoming');
   });
 
-  it('opens the same preselected absence popup from the future card and the table', async () => {
+  it('keeps absence reporting in the header and lecture table without duplicating it on the featured card', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
     payload.lectures = [lecture({ id: 'future', title: 'Future lecture', date: '2026-10-01', status: 'upcoming', canReportAbsence: true }),
       lecture({ id: 'distant', title: 'Distant lecture', date: '2026-12-01', status: 'upcoming', canReportAbsence: true })];
     mount();
     const card = await screen.findByRole('region', { name: 'Future lecture' });
-    expect(within(card).getByRole('button', { name: 'Attend' })).toBeDisabled();
-    fireEvent.click(within(card).getByRole('button', { name: 'Report Absence' }));
+    expect(within(card).queryByRole('button', { name: 'Report Absence' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Report absence' }));
     expect(await screen.findByRole('dialog', { name: 'Report Absence' })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
+    expect(screen.getByLabelText('Lecture *')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close absence report' }));
     fireEvent.click(within(screen.getByRole('article', { name: 'Future lecture' })).getByRole('button', { name: 'Report Absence' }));
     await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
+  });
+
+  it.each(['apprenticeship', 'commercial'])('opens the finished %s training-week component rather than its monthly attendance log', async kind => {
+    learnerIdentity.kind = kind;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-21T12:00:00Z'));
+    const componentHref = `/learner/component/${kind}/12/week-one`;
+    payload.lectures = [lecture({ id: 'week-one', title: 'This week lecture', moduleId: 'native:business', date: '2026-09-17',
+      componentHref, source: 'microsoft-teams', startsAt: '2026-09-17T09:00:00Z', endsAt: '2026-09-17T10:00:00Z' }),
+    lecture({ id: 'week-two', title: 'Next week lecture', moduleId: 'native:business', date: '2026-09-24', status: 'upcoming' })];
+    schedulePayload.modules = [planModule('business', 'Business', { curriculumSlots: ['2026-09-17', '2026-09-24'].map((date, index) => ({
+      slotNumber: index + 1, date, day: 'Thursday', type: 'live-session', sessionNumber: index + 1, holidays: [],
+    })) })];
+    mount();
+    const card = await screen.findByRole('region', { name: 'This week lecture' });
+    const view = within(card).getByRole('link', { name: 'View session' });
+    expect(view).toHaveAttribute('href', componentHref);
+    expect(within(card).queryByRole('link', { name: 'Join meeting' })).not.toBeInTheDocument();
+    expect(within(card).queryByRole('link', { name: 'View recording' })).not.toBeInTheDocument();
+    fireEvent.click(view);
+    expect(screen.getByTestId('location')).toHaveTextContent(componentHref);
+    expect(screen.getByTestId('location')).not.toHaveTextContent('monthly-logs');
+    expect(posts).toHaveLength(0);
   });
 
   it('shows the approved alternative session link in the attendance popup', async () => {
@@ -585,17 +603,16 @@ describe('Attendance lecture workspace', () => {
     expect(within(dialog).getByRole('radio', { name: /Coach catch-up/ })).toBeChecked();
   });
 
-  it('keeps Attend retryable when saving fails and does not display credited hours', async () => {
+  it('does not navigate to an unrelated activity when the lecture has no mapped component', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
-    payload.lectures = [lecture({ title: 'Today lecture', date: '2026-09-14', status: 'upcoming' })];
+    payload.lectures = [lecture({ title: 'Today lecture', date: '2026-09-14', status: 'upcoming',
+      activities: [{ id: 'other', title: 'Other activity', type: 'video', completed: false, href: '/learner/video/apprenticeship/12/unrelated' }] })];
     mount();
     const card = await screen.findByRole('region', { name: 'Today lecture' });
-    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST'
-      ? new Response(JSON.stringify({ error: 'Attendance could not be saved.' }), { status: 503 }) : originalFetch(input, init));
-    fireEvent.click(within(card).getByRole('button', { name: 'Attend' }));
-    expect(await within(card).findByRole('alert')).toHaveTextContent('Attendance could not be saved.');
-    expect(within(card).getByRole('button', { name: 'Attend' })).toBeEnabled();
+    expect(within(card).getByRole('button', { name: 'View session' })).toBeDisabled();
+    expect(within(card).getByRole('status')).toHaveTextContent('Session content is not linked yet');
+    expect(within(card).queryByRole('link', { name: 'View session' })).not.toBeInTheDocument();
+    expect(posts).toHaveLength(0);
     expect(within(card).queryByText(/hours credited/)).not.toBeInTheDocument();
   });
 

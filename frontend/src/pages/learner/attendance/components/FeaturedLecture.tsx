@@ -1,13 +1,14 @@
 import { useId } from 'react';
+import { Link } from 'react-router-dom';
 import type { AttendanceLecture } from '@/api/attendanceLectures';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Panel } from '@/components/ui/Panel';
 import { isLectureJoinable, isLectureLive, lectureJoinUrl, lectureToday } from '../liveLecture';
 import styles from '../attendance.module.css';
 
-export default function FeaturedLecture({ lecture, now, timeZone, busy, canAttend, error, notice, onAttend, onReport }: {
-  lecture: AttendanceLecture | null; now: number; timeZone?: string; busy: boolean; canAttend: boolean;
-  error: string; notice: string; onAttend: (lecture: AttendanceLecture) => void; onReport: (lecture: AttendanceLecture) => void;
+export default function FeaturedLecture({ lecture, now, timeZone, error, notice }: {
+  lecture: AttendanceLecture | null; now: number; timeZone?: string;
+  error: string; notice: string;
 }) {
   const headingId = useId();
   const helpId = useId();
@@ -18,26 +19,24 @@ export default function FeaturedLecture({ lecture, now, timeZone, busy, canAtten
   const today = lecture.date === lectureToday(now, timeZone);
   const attended = ['completed', 'late'].includes(lecture.status);
   const live = isLectureLive(lecture, now);
+  const end = Date.parse(lecture.endsAt || '');
+  const ended = Number.isFinite(end) ? end <= now : lecture.date < lectureToday(now, timeZone);
   const joinUrl = lectureJoinUrl(lecture);
   const hasDuration = Number.isFinite(lecture.durationMinutes) && (lecture.durationMinutes || 0) > 0;
   const hours = hasDuration ? Number((lecture.durationMinutes! / 60).toFixed(2)) : null;
   const nativeTeams = lecture.source === 'microsoft-teams';
-  // Timed Teams lectures share the list's join window; a date-only legacy row can be joined on its date.
-  const canJoin = Boolean(joinUrl) && (nativeTeams ? isLectureJoinable(lecture, now) : today);
-  const help = nativeTeams ? 'Attendance is verified using Teams attendance records.' : attended ? `Attendance recorded${lecture.creditedMinutes != null ? ` · ${Number((lecture.creditedMinutes / 60).toFixed(2))} hours credited` : ''}.` :
-    !canAttend ? 'Attendance can be recorded by the learner or an administrator.' :
-      !today ? 'Attend will be available on the lecture date.' :
-        !hasDuration ? 'The lecture duration is not available yet. Please contact support.' :
-          `Select Attend today to receive the full ${hours} ${hours === 1 ? 'hour' : 'hours'} of attendance.`;
+  const canJoin = Boolean(joinUrl) && isLectureJoinable(lecture, now);
+  const help = ended ? 'Open this session to view its recording when published.'
+    : 'Open this session for the live meeting and its recordings when published.';
   return <section aria-labelledby={headingId}>
     <Panel className={styles.featuredLecture}>
       <div className={styles.featuredTop}>
         <div className={styles.featuredIdentity}>
           <span className={styles.featuredIcon}><AppIcon className="ri-presentation-line" /></span>
-          <div><p className={styles.featuredEyebrow}>{today ? "Today's lecture" : 'Your next lecture'}</p>
+          <div><p className={styles.featuredEyebrow}>{today ? "Today's lecture" : ended ? "This week's lecture" : 'Your next lecture'}</p>
             <h2 id={headingId}>{lecture.title}</h2><p className={styles.featuredModule}>{lecture.module}</p></div>
         </div>
-        <span className={styles.featuredBadge} data-live={live}>{attended ? 'Attended' : live ? 'Live now' : today ? 'Today' : 'Upcoming'}</span>
+        <span className={styles.featuredBadge} data-live={live}>{live ? 'Live now' : attended ? 'Attended' : ended ? 'Session ended' : today ? 'Today' : 'Upcoming'}</span>
       </div>
       {lecture.contentSummary && <p className={styles.featuredSummary}>{lecture.contentSummary}</p>}
       <dl className={styles.featuredDetails}>
@@ -48,13 +47,15 @@ export default function FeaturedLecture({ lecture, now, timeZone, busy, canAtten
         <Detail icon="ri-timer-line" label="Duration" value={hours == null ? 'To be confirmed' : `${hours} ${hours === 1 ? 'hour' : 'hours'}`} />
       </dl>
       <div className={styles.featuredFooter}>
-        <div><p id={helpId}>{help}</p>{lecture.startTime && <p className={styles.featuredTimezone}>Times shown in {timeZone || 'Europe/London'}.</p>}</div>
+        <div><p id={helpId}>{help}</p>
+          <p>{nativeTeams ? 'Attendance is verified using Teams attendance records.' : 'Opening a session does not record attendance.'}</p>
+          {!lecture.componentHref && <p role="status">Session content is not linked yet. Please contact your tutor.</p>}
+          {lecture.startTime && <p className={styles.featuredTimezone}>Times shown in {timeZone || 'Europe/London'}.</p>}</div>
         <div className={styles.featuredActions}>
-          <button type="button" className={`primary-action ${styles.attendButton}`} disabled={nativeTeams || busy || attended || !today || !hasDuration || !canAttend}
-            aria-describedby={helpId} onClick={() => onAttend(lecture)}><AppIcon className="ri-checkbox-circle-line" />{busy ? 'Saving…' : attended ? 'Attended' : 'Attend'}</button>
-          <button type="button" className={styles.reportButton} disabled={busy || !lecture.canReportAbsence}
-            onClick={() => onReport(lecture)}><AppIcon className="ri-calendar-close-line" />{lecture.absenceReport ? 'Absence reported' : 'Report Absence'}</button>
-          {canJoin && joinUrl && <a className={styles.joinSession} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-external-link-line" /></a>}
+          {lecture.componentHref
+            ? <Link className={`primary-action ${styles.sessionButton}`} to={lecture.componentHref} aria-describedby={helpId}><AppIcon className="ri-presentation-line" />View session</Link>
+            : <button type="button" className={`primary-action ${styles.sessionButton}`} disabled aria-describedby={helpId}><AppIcon className="ri-presentation-line" />View session</button>}
+          {canJoin && joinUrl && <a className={styles.joinSession} href={joinUrl} target="_blank" rel="noopener noreferrer">Join meeting<AppIcon className="ri-external-link-line" /></a>}
         </div>
       </div>
       {error && <p role="alert" className={styles.attendError}>{error}</p>}
