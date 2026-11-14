@@ -12,6 +12,8 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from curriculum_api.learning_storage import read_sql
+
 
 class MyLearningScheduleTests(unittest.TestCase):
     def test_combined_schedule_omits_unused_readers_and_batches_session_counts(self):
@@ -20,13 +22,13 @@ class MyLearningScheduleTests(unittest.TestCase):
                     if isinstance(n, ast.FunctionDef) and n.name == 'read_dashboard')
         cursor = Mock()
         connection = Mock()
+        connection.vendor = 'sqlite'
         connection.cursor.return_value.__enter__ = Mock(return_value=cursor)
         connection.cursor.return_value.__exit__ = Mock(return_value=False)
         forbidden = Mock(side_effect=AssertionError('Unrelated projection was read'))
         canonical = SimpleNamespace(targets_for=forbidden, entries_for=Mock(return_value=[]))
         module = {'id': 'M1', 'title': 'One', 'educational_session_count': 0,
                   'description': 'unused', 'learning_outcomes': []}
-        from curriculum_api.learning_storage import read_sql
         scope = dict(__package__='learner_api', defaultdict=defaultdict, read_sql=read_sql,
             datetime=datetime, timezone=timezone, canonical_learning=canonical, date_only=lambda v: v,
             LearnerProfile=SimpleNamespace(objects=forbidden), connections={'enrolment': connection},
